@@ -199,8 +199,8 @@ def test_nested_ids_and_list_items_are_rewritten() -> None:
         "session_id": "s0",
         "runs": [{"session_id": "s1"}, {"session_id": None}, {"parent_session_id": "s2"}],
     }
-    # Not a valid job_runs: dropped whole, never half-rewritten.
-    assert rewrite_from_remote(frame, MCH, "ezer") is None
+    # Not a valid job_runs, but session-scoped: passed on whole, every id rewritten.
+    assert rewrite_from_remote(frame, MCH, "ezer") == _rewrite_ids(frame, MCH)
     rewritten = _rewrite_ids(frame, MCH)
     assert rewritten["session_id"] == bridged_id("s0", MCH)
     assert rewritten["runs"][0]["session_id"] == bridged_id("s1", MCH)
@@ -236,10 +236,22 @@ def test_an_unknown_type_with_a_session_id_passes_and_without_one_drops() -> Non
     assert validate_downstream(newer) is None
 
 
-def test_a_malformed_known_frame_is_dropped() -> None:
-    bad = {"type": "assistant_delta", "session_id": "s1", "seq": "not a number"}
-    assert validate_downstream(bad) is False
-    assert rewrite_from_remote(bad, MCH, "ezer") is None
+def test_a_malformed_known_frame_with_a_session_id_still_passes() -> None:
+    """Version skew: a newer computer's state value must not open a seq gap."""
+    newer = {"type": "session_state", "session_id": "s1", "seq": 7, "state": "hibernating"}
+    assert validate_downstream(newer) is False
+    assert rewrite_from_remote(newer, MCH, "ezer") == {
+        **newer,
+        "session_id": bridged_id("s1", MCH),
+    }
+    error = {"type": "error", "session_id": "s1", "code": 3, "message": "x"}
+    out = rewrite_from_remote(error, MCH, "ezer")
+    assert out is not None and out["session_id"] == bridged_id("s1", MCH)
+    assert out["machine"] == MCH and out["message"] == "x"
+
+
+def test_a_malformed_frame_without_a_session_id_is_dropped() -> None:
+    assert rewrite_from_remote({"type": "error", "code": 3, "message": "x"}, MCH, "ezer") is None
 
 
 def _row(sid: str, **extra: Any) -> dict[str, Any]:
@@ -271,9 +283,19 @@ def test_a_session_list_comes_back_bridged_one_hop_and_tagged() -> None:
     assert {row["machine"] for row in out["sessions"]} == {MCH}
 
 
-def test_a_malformed_session_list_is_dropped_whole() -> None:
-    frame = {"type": "session_list", "sessions": [_row("s1"), "junk"]}
-    assert rewrite_from_remote(frame, MCH, "ezer") is None
+def test_a_skewed_session_list_loses_only_its_bad_rows() -> None:
+    frame = {
+        "type": "session_list",
+        "sessions": [_row("s1"), "junk", _row("s2", state="hibernating"), _row("s3")],
+    }
+    out = rewrite_from_remote(frame, MCH, "ezer")
+    assert out is not None
+    assert [r["session_id"] for r in out["sessions"]] == [
+        bridged_id("s1", MCH),
+        bridged_id("s3", MCH),
+    ]
+    junk = rewrite_from_remote({"type": "session_list", "sessions": "junk"}, MCH, "ezer")
+    assert junk is not None and junk["sessions"] == []
 
 
 def test_remote_rows_drop_bridged_and_empty_ids() -> None:

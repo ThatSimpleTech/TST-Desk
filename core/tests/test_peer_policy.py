@@ -20,6 +20,7 @@ from websockets.asyncio.client import ClientConnection
 from tests.machine_helpers import Fleet, ask, recv, recv_until, window
 from tstd import protocol
 from tstd.daemon import Daemon
+from tstd.hub import REMOTE_SETUP_STATE_DROPS
 from tstd.peer_policy import (
     APPROVAL_VERBS,
     FORWARDED_VERBS,
@@ -236,3 +237,18 @@ async def test_a_remote_peer_setup_state_has_no_devices_or_address(daemon: Daemo
                 assert key not in state, (token[:0], key)
     async with window(daemon, token=machine_key, path="/phone") as hub:
         assert (await ask(hub, {"type": "get_setup_state"}))["code"] == "not_allowed"
+
+
+async def test_a_remote_peer_removing_itself_hears_no_devices_or_address(daemon: Daemon) -> None:
+    # The self-removal reply leaves by its own path (it must beat the
+    # close) and still gets the remote-peer scrub (A.11).
+    daemon.remote_devices.add("Other phone")
+    for kind, features in (("phone", None), ("machine", ["bridge"])):
+        device, key = daemon.remote_devices.add("me", kind=kind)
+        async with window(daemon, features, token=key, path="/phone") as me:
+            forget = {"type": "remove_remote_device", "device_id": device.id}
+            reply = await ask(me, forget, "setup_state")
+        assert reply["type"] == "setup_state", reply
+        for field in REMOTE_SETUP_STATE_DROPS:
+            assert field not in reply, (kind, field)
+    assert [d.name for d in daemon.remote_devices.summaries()] == ["Other phone"]

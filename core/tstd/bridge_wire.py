@@ -9,10 +9,10 @@ Up the lane only the top-level ``session_id`` changes. Down the lane
 every session-id field changes (``session_id`` and any ``*_session_id``,
 at any depth, list items included), the frame is validated first, and
 the invariant holds: a frame that carries a ``session_id`` is never
-dropped. Frames without one are machine-wide state for the other
-computer (its jobs, its settings, its pairing) and are dropped, except
-``session_list`` (merged by the hub) and ``error`` (named for the
-computer it came from).
+dropped, not even a malformed one. Frames without one are machine-wide
+state for the other computer (its jobs, its settings, its pairing) and
+are dropped, except ``session_list`` (merged by the hub, bad rows left
+out) and ``error`` (named for the computer it came from).
 """
 
 from __future__ import annotations
@@ -22,9 +22,12 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from pydantic import ValidationError
+
 from .logging import get_logger
 from .protocol import (
     HandshakeError,
+    SessionSummary,
     UnknownMessageTypeError,
     parse_daemon_event,
 )
@@ -121,6 +124,23 @@ def _probe(frame: dict[str, Any]) -> dict[str, Any]:
     return probe
 
 
+def _valid_rows(rows: list[Any], mch: str) -> list[Any]:
+    """The rows of a skewed ``session_list`` this computer can read."""
+    kept: list[Any] = []
+    for row in rows:
+        try:
+            SessionSummary.model_validate(row)
+        except ValidationError:
+            continue
+        kept.append(row)
+    if len(kept) != len(rows):
+        log.warning(
+            "dropped malformed session rows from another computer",
+            extra={"extra_fields": {"machine": mch, "dropped": len(rows) - len(kept)}},
+        )
+    return kept
+
+
 def validate_downstream(frame: dict[str, Any]) -> bool | None:
     """True for a known, well-formed event; None for an unknown type; False if malformed."""
     try:
@@ -136,11 +156,13 @@ def rewrite_from_remote(frame: dict[str, Any], mch: str, name: str) -> dict[str,
     """One downstream frame as the viewer sees it, or None to drop it.
 
     A ``session_list`` comes back with its rows made bridged (the hub
-    merges it). An ``error`` gets ``machine``; without a session id its
-    message also names the computer. A frame for a session id with a
-    colon (already bridged: a second hop) is dropped. An unknown type
-    with a session id (a newer computer) still passes, so a lane never
-    opens a seq gap; a malformed known type is dropped and logged.
+    merges it); when it fails validation only its bad rows go. An
+    ``error`` gets ``machine``; without a session id its message also
+    names the computer. A frame for a session id with a colon (already
+    bridged: a second hop) is dropped. A frame with a session id always
+    passes, unknown or malformed (a newer computer, say), so a lane never
+    opens a seq gap that would reconnect the viewer's whole socket; a
+    malformed one is logged. Without a session id it is dropped.
     """
     kind = frame.get("type")
     if not isinstance(kind, str):
@@ -156,16 +178,26 @@ def rewrite_from_remote(frame: dict[str, Any], mch: str, name: str) -> dict[str,
     if not has_id and kind not in _KEPT_WITHOUT_ID:
         return None
     valid = validate_downstream(frame)
-    if valid is False or (valid is None and not has_id):
-        log.warning(
-            "dropped a malformed frame from another computer",
-            extra={"extra_fields": {"machine": mch, "type": kind}},
-        )
-        return None
     if kind == "session_list":
+        sessions = frame.get("sessions")
+        rows = sessions if isinstance(sessions, list) else []
+        if valid is not True:
+            rows = _valid_rows(rows, mch)
         out = {key: value for key, value in frame.items() if key != "sessions"}
-        out["sessions"] = remote_rows(frame.get("sessions") or [], mch)
+        out["sessions"] = remote_rows(rows, mch)
         return out
+    if valid is not True:
+        if not has_id:
+            log.warning(
+                "dropped a malformed frame from another computer",
+                extra={"extra_fields": {"machine": mch, "type": kind}},
+            )
+            return None
+        if valid is False:
+            log.warning(
+                "passed on a malformed session frame from another computer",
+                extra={"extra_fields": {"machine": mch, "type": kind}},
+            )
     out = _rewrite_ids(frame, mch)
     if kind == "error":
         out["machine"] = mch

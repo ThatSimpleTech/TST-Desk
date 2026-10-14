@@ -12654,6 +12654,14 @@ computer). Until then a phone sees its one hub's computers.
 - A malformed `add_machine` gets a fixed `bad_request` message instead of
   the validation text, which would quote a code back.
 - At most 16 paired computers (`machine_limit`).
+- Review fixes: a parked computer (refused, locked, outdated) answers
+  verbs at once with `machine_unreachable` carrying its reason, and its
+  lanes wait dormant (recording attach/detach) until Try now or the
+  5-minute retry brings it back; a viewer joining never wakes it. Re-pairing
+  relinks open lanes in place instead of dropping them. A malformed frame
+  with a session id is passed on with a warning (never dropped); a skewed
+  `session_list` loses only its bad rows. A dial URL must name exactly the
+  checked host, and a `.ts.net` name must be plain DNS labels.
 
 **Rationale:** The daemon already owns sessions, approvals and the one
 socket every client speaks; a hub keeps the window, the shell's CSP and the

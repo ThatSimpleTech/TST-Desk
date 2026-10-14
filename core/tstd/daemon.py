@@ -3391,8 +3391,10 @@ class Daemon:
             )
         else:
             reply = (await self._setup_state_event()).model_dump_json()
+        # Through the reply chokepoint: a remote peer removing itself must
+        # not get this computer's device list and address (TD-5015).
         with contextlib.suppress(websockets.exceptions.ConnectionClosed):
-            await connection.send(scrub_wire_json(reply))
+            await connection.send(scrub_wire_json(self.hub.finish(reply, connection)))
         await self.ws_server.close_device(device_id)
 
     async def _handle_start_pairing(self) -> str:

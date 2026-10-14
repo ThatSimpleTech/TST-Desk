@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import deque
-from collections.abc import Awaitable, Callable, Coroutine, Iterable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -78,7 +78,7 @@ class MachineHost(Protocol):
 
     def machines_changed(self) -> None: ...
 
-    def lane_links(self, mch: str) -> Iterable[UpstreamLink]: ...
+    def wake_lanes(self, mch: str) -> None: ...
 
 
 class MachineState:
@@ -145,8 +145,14 @@ class MachineState:
             await link.stop()
 
     def reset_backoff(self) -> None:
+        """ "Try now": dial again, parked or not."""
         if self.link is not None:
             self.link.reset_backoff()
+
+    def nudge(self) -> None:
+        """A viewer arrived: dial again unless refused, locked or outdated."""
+        if self.link is not None:
+            self.link.nudge()
 
     def refresh(self, *, force: bool = False) -> None:
         """Ask for the computer's own rows (one request in flight at a time)."""
@@ -182,8 +188,7 @@ class MachineState:
     async def _on_open(self) -> None:
         self.routes.clear()
         self.refresh(force=True)
-        for link in self._host.lane_links(self.mch):
-            link.reset_backoff()
+        self._host.wake_lanes(self.mch)
 
     async def _on_frame(self, frame: dict[str, Any]) -> None:
         kind = frame.get("type")

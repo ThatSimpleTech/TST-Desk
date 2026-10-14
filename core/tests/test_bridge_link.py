@@ -119,6 +119,22 @@ def _key(value: str) -> Callable[[], Any]:
     return get
 
 
+async def _short_sleep(seconds: float) -> None:
+    await asyncio.sleep(min(seconds, 0.01))
+
+
+def _hanging_dial(monkeypatch: pytest.MonkeyPatch) -> asyncio.Event:
+    """Every dial from here on hangs (a black-holed host) until the event is set."""
+    hang = asyncio.Event()
+
+    async def dial(*_args: Any) -> Any:
+        await hang.wait()
+        raise OSError("timed out")
+
+    monkeypatch.setattr("tstd.bridge_link.dial", dial)
+    return hang
+
+
 def _fake_sleep(clock: Clock) -> Any:
     async def sleep(seconds: float) -> None:
         clock.advance(seconds)
@@ -147,9 +163,79 @@ async def test_nobody_there_backs_off_and_turns_unreachable_after_60_s() -> None
     finally:
         await link.stop()
     assert link.delays[:8] == [1, 2, 4, 8, 16, 30, 30, 30]
-    # 1+2+4+8+16 = 31 s waited: still connecting; past 60 s: unreachable.
+    # Every sleep here moves the clock, so 60 s pass at once: unreachable, once.
     assert probe.statuses[0] == "unreachable" and probe.statuses.count("unreachable") == 1
     assert link.status == "unreachable" and probe.opened == 0
+
+
+async def test_a_black_holed_host_turns_unreachable_at_60_s_mid_dial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = Clock()
+    _hanging_dial(monkeypatch)
+    link = _link(1, _key("k" * 64), _Probe(), clock=clock, sleep=_short_sleep)
+    link.start()
+    try:
+        await asyncio.sleep(0.05)
+        clock.advance(59.5)
+        await asyncio.sleep(0.05)
+        assert link.status == "connecting"
+        clock.advance(0.5)
+        await eventually(lambda: link.status == "unreachable", within=2)
+        assert link.delays == []  # still the first dial
+    finally:
+        await link.stop()
+
+
+async def test_after_a_drop_unreachable_comes_60_s_later_even_mid_dial(
+    other: _Other, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = Clock()
+    _, key = other.devices.add("hub", kind="machine")
+    link = _link(other.ws.port, _key(key), _Probe(), clock=clock, sleep=_short_sleep)
+    link.start()
+    try:
+        await eventually(lambda: link.is_open)
+        clock.advance(600)  # a long healthy stretch counts for nothing
+        _hanging_dial(monkeypatch)
+        for conn in list(other.ws._connections):
+            await conn.close(1001)
+        await eventually(lambda: link.status == "connecting")
+        clock.advance(59.5)
+        await asyncio.sleep(0.05)
+        assert link.status == "connecting"
+        clock.advance(0.5)
+        await eventually(lambda: link.status == "unreachable", within=2)
+    finally:
+        await link.stop()
+
+
+async def test_try_now_during_a_dial_is_kept(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+    gate = asyncio.Event()
+
+    async def dial(*_args: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            await gate.wait()
+        raise OSError("refused")
+
+    monkeypatch.setattr("tstd.bridge_link.dial", dial)
+    stalled = asyncio.Event()
+
+    async def sleep(_seconds: float) -> None:
+        await stalled.wait()  # only a wake ends a wait
+
+    link = _link(1, _key("k" * 64), _Probe(), sleep=sleep)
+    link.start()
+    try:
+        await eventually(lambda: calls == 1)
+        link.reset_backoff()  # "Try now" while the first dial hangs
+        gate.set()
+        await eventually(lambda: calls == 2)
+    finally:
+        await link.stop()
 
 
 async def test_try_now_skips_the_wait(other: _Other) -> None:
@@ -269,6 +355,36 @@ async def test_a_locked_keychain_parks_as_locked_and_a_missing_key_as_refused() 
         try:
             await eventually(lambda link=link, status=status: link.status == status)  # type: ignore[misc]
             assert link.detail == detail and link.delays == []
+        finally:
+            await link.stop()
+
+
+async def test_a_viewer_nudge_never_wakes_a_parked_link_but_try_now_does(other: _Other) -> None:
+    reads = {"n": 0}
+
+    async def locked() -> str:
+        reads["n"] += 1
+        raise KeychainLockedError("locked")
+
+    async def wrong() -> str:
+        reads["n"] += 1
+        return "f" * 64
+
+    for get, port, status in (
+        (locked, _free_port(), "locked"),
+        (wrong, other.ws.port, "refused"),
+    ):
+        reads["n"] = 0
+        link = _link(port, get, _Probe())
+        link.start()
+        try:
+            await eventually(lambda link=link, status=status: link.status == status)  # type: ignore[misc]
+            for _ in range(5):
+                link.nudge()
+                await asyncio.sleep(0.02)
+            assert reads["n"] == 1, status  # no keychain prompt, no revoked-key dial
+            link.reset_backoff()
+            await eventually(lambda: reads["n"] == 2)
         finally:
             await link.stop()
 

@@ -19,6 +19,7 @@ import pytest
 from tests.fake_remote import FakeRemote, row
 from tests.machine_helpers import LOCAL, Clock, FakeKeychain, eventually
 from tstd.bridge import Bridge
+from tstd.bridge_link import LOCKED_MESSAGE, Sleep
 from tstd.bridge_machine import Timings
 from tstd.machines import MachineRecord, MachineRegistry
 
@@ -47,7 +48,14 @@ class _Viewer:
 class _Hub:
     """The Bridge with the Hub's callbacks recorded."""
 
-    def __init__(self, tmp: Path, remote: FakeRemote, timings: Timings, clock: Any) -> None:
+    def __init__(
+        self,
+        tmp: Path,
+        remote: FakeRemote,
+        timings: Timings,
+        clock: Any,
+        link_sleep: Sleep = _fast_sleep,
+    ) -> None:
         self.registry = MachineRegistry(tmp)
         self.registry.load()
         self.registry.put(
@@ -70,7 +78,7 @@ class _Hub:
             on_machines=self._on_machines,
             policy=LOCAL,
             clock=clock,
-            link_sleep=_fast_sleep,
+            link_sleep=link_sleep,
             timings=timings,
         )
 
@@ -220,7 +228,7 @@ async def test_an_unreachable_computer_answers_at_once(tmp_path: Path, remote: F
         made.bridge.viewer_connected(_Viewer())
         control = made.bridge._machines[MCH].link
         assert control is not None
-        # The first failed dial starts the 60 s streak; then time passes.
+        # The 60 s count starts with the link; then time passes.
         await eventually(lambda: bool(control.delays))
         assert made.bridge.status_of(MCH) == "connecting"
         clock.advance(61)
@@ -338,3 +346,81 @@ async def test_second_hop_and_machine_wide_frames_never_reach_the_viewer(
     await remote.emit("s1")
     assert (await viewer.next())["session_id"] == S1
     await viewer.nothing()
+
+
+# ── re-pairing and parked computers ──────────────────────────────────
+
+
+async def test_re_pairing_keeps_an_open_lane_streaming_from_where_it_was(
+    hub: _Hub, remote: FakeRemote
+) -> None:
+    viewer = _Viewer()
+    await _connected(hub, viewer)
+    hub.forward(viewer, type="attach", session_id=S1, from_seq=1)
+    await eventually(lambda: bool(remote.got("attach")))
+    await remote.emit("s1")
+    assert (await viewer.next())["seq"] == 1
+    # Re-paired: a new key, and the other computer dropped the old device.
+    remote.key = "n" * 64
+    hub.bridge.keys.put(MCH, remote.key)
+    await remote.drop()
+    record = hub.registry.get(MCH)
+    assert record is not None
+    await hub.bridge._install(record)
+    assert hub.forward(viewer, type="user_message", session_id=S1, content="again") is None
+    await eventually(lambda: len(remote.got("attach")) == 2)
+    assert remote.got("attach")[1][1]["from_seq"] == 2
+    got = await viewer.next()
+    assert (got["session_id"], got["seq"], got["delta"]) == (S1, 2, "again")
+    await viewer.nothing()
+
+
+async def test_removing_a_computer_answers_the_verbs_still_waiting(
+    hub: _Hub, remote: FakeRemote
+) -> None:
+    viewer = _Viewer()
+    hub.bridge.viewer_connected(viewer)
+    await remote.stop()  # the lane stays connecting
+    assert hub.forward(viewer, type="cancel", session_id=S1) is None
+    assert await hub.bridge.remove(MCH) is None
+    answer = await viewer.next(1)
+    assert (answer["code"], answer["session_id"]) == ("machine_unreachable", S1)
+
+
+async def _park_long(seconds: float) -> None:
+    # Backoff and the 60 s count stay quick; the 5-minute parked retry never comes.
+    await asyncio.sleep(0.05 if seconds < 100 else 3600)
+
+
+async def test_a_parked_computer_is_not_woken_by_viewers_or_verbs(
+    tmp_path: Path, remote: FakeRemote, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    keychain = FakeKeychain().install(monkeypatch)
+    keychain.keys[MCH] = KEY
+    keychain.locked = True
+    made = _Hub(tmp_path, remote, FAST, time.monotonic, link_sleep=_park_long)
+    try:
+        first = _Viewer()
+        made.bridge.viewer_connected(first)
+        await eventually(lambda: made.bridge.status_of(MCH) == "locked")
+        for _ in range(4):
+            made.bridge.viewer_connected(_Viewer())  # windows and phones come and go
+            await asyncio.sleep(0.02)
+        sent = made.forward(first, type="user_message", session_id=S1, content="x")
+        assert sent is not None and sent["code"] == "machine_unreachable"
+        assert sent["session_id"] == S1 and sent["message"] == LOCKED_MESSAGE.format(name="ezer")
+        approve = made.forward(first, type="approve", session_id=S1, tool_call_id="tc-1")
+        assert approve is not None and approve["code"] == "machine_unreachable"
+        assert made.forward(first, type="attach", session_id=S1, from_seq=1) is None
+        await asyncio.sleep(0.2)
+        assert keychain.reads == 1  # one prompt at most, not one per viewer or verb
+        assert not remote.conns
+        # "Try now" with the keychain open: both links dial and the attach goes.
+        keychain.locked = False
+        assert made.bridge.reconnect(MCH) is None
+        await eventually(lambda: made.bridge.status_of(MCH) == "connected")
+        await eventually(lambda: bool(remote.got("attach")))
+        await remote.emit("s1")
+        assert (await first.next())["seq"] == 1
+    finally:
+        await made.bridge.stop()

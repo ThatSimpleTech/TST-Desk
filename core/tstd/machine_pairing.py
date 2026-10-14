@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import ipaddress
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -48,17 +49,29 @@ UNREACHABLE_MESSAGE = (
 OUTDATED_MESSAGE = "That computer runs a TST Desk this one can't talk to. Update both computers."
 
 
+# One DNS label (RFC 1123). Anything else in a name (``/ ? # @ : %`` or
+# a space) would let a host that merely ends in ``.ts.net`` point the
+# socket URL at some other host.
+_DNS_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+
+
 def dial_allowed(host: str) -> bool:
     """The Tailscale rule: a Tailscale address, or a ``*.ts.net`` name."""
     cleaned = host.strip().strip("[]")
-    if not cleaned:
+    if not cleaned or "%" in cleaned:
+        # A zone id is never part of a Tailscale address, and Python
+        # accepts any text after the "%".
         return False
     try:
         ipaddress.ip_address(cleaned)
     except ValueError:
         name = cleaned.lower().rstrip(".")
         labels = name.split(".")
-        return name.endswith(".ts.net") and len(labels) >= 3 and all(labels)
+        return (
+            name.endswith(".ts.net")
+            and len(labels) >= 3
+            and all(_DNS_LABEL_RE.match(label) for label in labels)
+        )
     return is_tailscale_address(cleaned)
 
 
@@ -165,12 +178,29 @@ def hello_frame(key: str) -> str:
     )
 
 
+def checked_url(host: str, port: int, path: str = "") -> str:
+    """:func:`ws_url`, refused unless it dials exactly *host* and *port*.
+
+    The backstop to the rule: whatever a host string holds, the URL the
+    socket opens must name that same host and port, nothing else.
+    """
+    url = ws_url(host, port, path)
+    try:
+        parts = urlsplit(url)
+        same = parts.hostname == host.strip().strip("[]").lower() and parts.port == port
+    except ValueError:
+        same = False
+    if not same:
+        raise PairError("not_tailscale", NOT_TAILSCALE_MESSAGE)
+    return url
+
+
 async def dial(host: str, port: int, policy: DialPolicy) -> ClientConnection:
     """Open a socket to a paired computer. The rule is checked here, every time."""
     if not policy.allowed(host):
         raise PairError("not_tailscale", NOT_TAILSCALE_MESSAGE)
     return await connect(
-        ws_url(host, port, policy.path),
+        checked_url(host, port, policy.path),
         max_size=MAX_FRAME_BYTES,
         open_timeout=OPEN_TIMEOUT_SECONDS,
         close_timeout=CLOSE_TIMEOUT_SECONDS,

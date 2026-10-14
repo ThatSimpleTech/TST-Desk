@@ -6,9 +6,15 @@ for that one connection: replies arrive in order, attach and replay work
 as they do locally, and seq passes through untouched.
 
 The lane tracks the last seq it forwarded per session. After an upstream
-drop it re-attaches from one past it, so the viewer sees no gap and no
+drop, or a re-pairing that swaps its socket (:meth:`Lane.relink`), it
+re-attaches from one past it, so the viewer sees no gap and no
 duplicate. Verbs sent while it connects wait (10 s, 64 at most) and then
-fail with ``machine_unreachable`` naming their session.
+fail with ``machine_unreachable`` naming their session; so do any still
+waiting when the lane closes.
+
+A lane made while its computer is parked (refused, locked, outdated)
+does not dial: it only remembers what the viewer attached, and dials
+when the computer comes back (:meth:`Lane.wake`).
 """
 
 from __future__ import annotations
@@ -57,7 +63,9 @@ class LaneHost(Protocol):
 class Lane:
     """One viewer connection's socket to one computer."""
 
-    def __init__(self, bridge: LaneHost, viewer: Any, machine: MachineState) -> None:
+    def __init__(
+        self, bridge: LaneHost, viewer: Any, machine: MachineState, *, dial: bool = True
+    ) -> None:
         self._bridge = bridge
         self.viewer = viewer
         self.machine = machine
@@ -66,8 +74,13 @@ class Lane:
         self.pending: deque[tuple[float, dict[str, Any]]] = deque()
         self.touched = bridge.clock()
         self._expiry: asyncio.TimerHandle | None = None
-        self.link = bridge.new_link(machine, "lane", self._on_open, self._on_frame, None)
-        self.link.start()
+        self._closed = False
+        self.link = self._new_link()
+        if dial:
+            self.link.start()
+
+    def _new_link(self) -> UpstreamLink:
+        return self._bridge.new_link(self.machine, "lane", self._on_open, self._on_frame, None)
 
     @property
     def is_open(self) -> bool:
@@ -114,14 +127,17 @@ class Lane:
         self._expiry = None
         now = self._bridge.clock()
         while self.pending and now - self.pending[0][0] >= self._bridge.timings.queue_seconds:
-            _, upstream = self.pending.popleft()
-            sid = bridged_id(str(upstream.get("session_id", "")), self.machine.mch)
-            self._bridge.spawn(
-                self._bridge.deliver(self.viewer, self._bridge.unreachable(self.machine, sid))
-            )
+            self._fail(self.pending.popleft()[1])
         if self.pending:
             wait = self._bridge.timings.queue_seconds - (now - self.pending[0][0])
             self._expiry = asyncio.get_running_loop().call_later(max(wait, 0.01), self._expire)
+
+    def _fail(self, upstream: dict[str, Any]) -> None:
+        """Answer one verb that never went: ``machine_unreachable``, same session."""
+        sid = bridged_id(str(upstream.get("session_id", "")), self.machine.mch)
+        self._bridge.spawn(
+            self._bridge.deliver(self.viewer, self._bridge.unreachable(self.machine, sid))
+        )
 
     async def _on_open(self) -> None:
         # Re-attach first, from one past the last frame the viewer got, so
@@ -153,9 +169,37 @@ class Lane:
         if kind in ROW_EVENTS:
             self.machine.debounce_refresh()
 
+    @property
+    def dormant(self) -> bool:
+        """Made while its computer was parked, and not dialing yet."""
+        return not self._closed and not self.link.running
+
+    def wake(self) -> None:
+        """Dial now: the computer is back, or "Try now"."""
+        if self._closed:
+            return
+        self.link.start()
+        self.link.reset_backoff()
+
+    async def relink(self) -> None:
+        """A new socket to the computer's current address and key (re-pairing).
+
+        What the viewer attached and the seq it reached stay, so the new
+        socket re-attaches from one past it; queued verbs wait for it.
+        """
+        if self._closed:
+            return
+        old, self.link = self.link, self._new_link()
+        await old.stop()
+        if not self._closed:
+            self.link.start()
+
     async def stop(self) -> None:
+        """Close for good. Verbs still waiting hear ``machine_unreachable``."""
+        self._closed = True
         if self._expiry is not None:
             self._expiry.cancel()
             self._expiry = None
-        self.pending.clear()
+        while self.pending:
+            self._fail(self.pending.popleft()[1])
         await self.link.stop()

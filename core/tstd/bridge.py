@@ -20,11 +20,11 @@ import asyncio
 import contextlib
 import random
 import time
-from collections.abc import Awaitable, Callable, Coroutine, Iterator
+from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any
 
 from .bridge_lane import Lane
-from .bridge_link import Sleep, UpstreamLink
+from .bridge_link import PARKED_STATUSES, Sleep, UpstreamLink
 from .bridge_machine import DEFAULT_TIMINGS, MachineState, Timings
 from .bridge_pair import MachineKeys, forget_machine, pair_machine
 from .bridge_wire import rewrite_to_remote
@@ -101,10 +101,10 @@ class Bridge:
         with contextlib.suppress(Exception):
             await self._deliver(viewer, payload)
 
-    def unreachable(self, machine: MachineState, session_id: str) -> str:
+    def unreachable(self, machine: MachineState, session_id: str, detail: str | None = None) -> str:
         return build_error(
             "machine_unreachable",
-            f"{machine.name} isn't reachable right now. Try again when it is.",
+            detail or f"{machine.name} isn't reachable right now. Try again when it is.",
             session_id=session_id,
             machine=machine.mch,
         )
@@ -112,8 +112,10 @@ class Bridge:
     def machines_changed(self) -> None:
         self.spawn(self._on_machines())
 
-    def lane_links(self, mch: str) -> Iterator[UpstreamLink]:
-        return (lane.link for key, lane in list(self._lanes.items()) if key[1] == mch)
+    def wake_lanes(self, mch: str) -> None:
+        for key, lane in list(self._lanes.items()):
+            if key[1] == mch:
+                lane.wake()
 
     def new_link(
         self,
@@ -164,7 +166,11 @@ class Bridge:
         return bool(self._viewers)
 
     def viewer_connected(self, viewer: Any) -> None:
-        """A viewer finished its handshake: links up, backoff reset, rows fresh."""
+        """A viewer finished its handshake: links up, backoff reset, rows fresh.
+
+        A parked computer (refused, locked, outdated) stays parked: only
+        "Try now" or its own 5-minute retry dials it again (A.7).
+        """
         if self._stopped:
             return
         self._viewers.add(viewer)
@@ -173,7 +179,7 @@ class Bridge:
             self._linger = None
         for machine in self._machines.values():
             machine.start_control()
-            machine.reset_backoff()
+            machine.nudge()
             machine.refresh()
         if self._tick is None or self._tick.done():
             self._tick = asyncio.create_task(self._tick_loop(), name="bridge-tick")
@@ -242,12 +248,14 @@ class Bridge:
 
     # ── forwarding ────────────────────────────────────────────────────
 
-    def _ensure_lane(self, viewer: Any, machine: MachineState) -> Lane:
+    def _ensure_lane(self, viewer: Any, machine: MachineState, *, dial: bool = True) -> Lane:
         key = (viewer, machine.mch)
         lane = self._lanes.get(key)
         if lane is None:
-            lane = Lane(self, viewer, machine)
+            lane = Lane(self, viewer, machine, dial=dial)
             self._lanes[key] = lane
+        elif dial and lane.dormant:
+            lane.wake()  # made while its computer was parked
         return lane
 
     def forward(self, viewer: Any, frame: dict[str, Any]) -> str | None:
@@ -270,6 +278,11 @@ class Bridge:
                 machine=mch,
             )
         kind = frame.get("type")
+        status, detail = machine.current_status()
+        parked = status in PARKED_STATUSES
+        if parked and kind not in ("attach", "detach"):
+            # Refused, locked or outdated: answer now, never dial for it.
+            return self.unreachable(machine, sid, detail)
         lane = self._lanes.get((viewer, mch))
         if kind in APPROVAL_VERBS:
             # Never queued: the open lane, else the open control link.
@@ -280,7 +293,8 @@ class Bridge:
             if machine.send_approval(viewer, sid, upstream):
                 return None
             return self.unreachable(machine, sid)
-        lane = self._ensure_lane(viewer, machine)
+        # A parked computer's lane only remembers attaches until it is back.
+        lane = self._ensure_lane(viewer, machine, dial=not parked)
         raw = upstream["session_id"]
         if kind == "attach":
             lane.attach(raw, upstream)
@@ -291,7 +305,7 @@ class Bridge:
         if lane.is_open:
             lane.send(upstream)
             return None
-        if machine.current_status()[0] not in ("connecting", "connected"):
+        if status not in ("connecting", "connected"):
             return self.unreachable(machine, sid)
         return lane.enqueue(upstream, sid)
 
@@ -347,11 +361,15 @@ class Bridge:
             machine = MachineState(record, self)
             self._machines[record.id] = machine
         else:
+            # Re-paired: same mch, new address or key. Open lanes keep what
+            # their viewer attached and swap only their socket, so bridged
+            # panes keep streaming from where they were.
             await machine.stop_control()
-            for key in [k for k in self._lanes if k[1] == record.id]:
-                await self._lanes.pop(key).stop()
             machine.record = record
             machine.status, machine.detail = "connecting", None
+            for key, lane in list(self._lanes.items()):
+                if key[1] == record.id:
+                    await lane.relink()
         if self._viewers:
             machine.start_control()
 
@@ -385,8 +403,7 @@ class Bridge:
         if self._viewers:
             machine.start_control()
         machine.reset_backoff()
-        for link in self.lane_links(mch):
-            link.reset_backoff()
+        self.wake_lanes(mch)
         return None
 
     # ── lifecycle ─────────────────────────────────────────────────────

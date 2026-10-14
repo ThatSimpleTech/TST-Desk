@@ -6,10 +6,12 @@ with jitter; 45 s of silence forces a reconnect (the other computer pings
 every 15 s). The hub's control links and lanes both ride on it.
 
 Status: ``connecting`` until the first handshake, ``unreachable`` once
-60 s pass without one, ``connected`` while up. ``auth_failed`` or a 1008
+60 s pass without one (counted from the start or the drop, and marked
+even mid-dial), ``connected`` while up. ``auth_failed`` or a 1008
 "device removed" close is ``refused`` and stops retrying.
 ``version_unsupported`` is ``outdated`` and a locked keychain is
 ``locked``: both retry only on :meth:`reset_backoff` or every 5 minutes.
+:meth:`nudge` (a viewer arrived) never wakes those three.
 ``devices_unavailable`` keeps retrying. Only Tailscale hosts are dialed,
 checked before every dial (prime directive 3). Keys are never logged.
 """
@@ -41,6 +43,9 @@ from .machine_pairing import (
 log = get_logger("tstd.bridge_link")
 
 LinkStatus = Literal["connecting", "connected", "unreachable", "refused", "locked", "outdated"]
+
+# Parked: only "Try now" (or the 5-minute retry) dials again.
+PARKED_STATUSES: frozenset[LinkStatus] = frozenset({"refused", "locked", "outdated"})
 
 BACKOFF_FIRST_SECONDS = 1.0
 BACKOFF_CAP_SECONDS = 30.0
@@ -112,6 +117,7 @@ class UpstreamLink:
         self._outbox: asyncio.Queue[str] = asyncio.Queue()
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
+        self._watch: asyncio.Task[None] | None = None
         self._stopped = False
 
     # ── control ───────────────────────────────────────────────────────
@@ -124,15 +130,24 @@ class UpstreamLink:
     def running(self) -> bool:
         return self._task is not None and not self._task.done()
 
+    @property
+    def parked(self) -> bool:
+        return self.status in PARKED_STATUSES
+
     def start(self) -> None:
         if self.running:
             return
         self._stopped = False
         self._task = asyncio.create_task(self._run(), name=f"link:{self.label}")
+        self._begin_streak()
 
     async def stop(self) -> None:
         self._stopped = True
         self._wake.set()
+        watch = self._watch
+        self._end_streak()
+        if watch is not None:
+            await asyncio.gather(watch, return_exceptions=True)
         task, self._task = self._task, None
         ws = self._ws
         if ws is not None:
@@ -144,9 +159,19 @@ class UpstreamLink:
                 await task
 
     def reset_backoff(self) -> None:
-        """Try again now (a viewer arrived, "Try now", a fresh pairing)."""
+        """Try again now ("Try now", a fresh pairing), parked or not."""
         self._attempt = 0
         self._wake.set()
+
+    def nudge(self) -> None:
+        """A viewer arrived: retry now, unless parked (A.7).
+
+        A refused key stays refused and a locked keychain is not asked
+        again, so a window or phone reconnecting in a loop never re-dials
+        with a revoked key or pops the keychain prompt each time.
+        """
+        if not self.parked:
+            self.reset_backoff()
 
     def send(self, frame: str) -> bool:
         """Queue one frame on the open socket. False (nothing queued) when closed."""
@@ -166,15 +191,39 @@ class UpstreamLink:
             self._on_status()
 
     def _down_status(self, detail: str | None = None) -> None:
-        if self._streak_since is None:
-            self._streak_since = self._clock()
-        waited = self._clock() - self._streak_since
+        since = self._streak_since if self._streak_since is not None else self._begin_streak()
+        waited = self._clock() - since
         status: LinkStatus = "unreachable" if waited >= UNREACHABLE_AFTER_SECONDS else "connecting"
         self._set_status(status, detail)
 
+    def _begin_streak(self) -> float:
+        """Start the 60 s count to ``unreachable`` (link start, or a drop)."""
+        self._end_streak()
+        since = self._streak_since = self._clock()
+        self._watch = asyncio.create_task(self._watch_streak(), name=f"link-watch:{self.label}")
+        return since
+
+    def _end_streak(self) -> None:
+        self._streak_since = None
+        watch, self._watch = self._watch, None
+        if watch is not None:
+            watch.cancel()
+
+    async def _watch_streak(self) -> None:
+        """Mark ``unreachable`` 60 s into a streak, even while a dial hangs."""
+        while self._streak_since is not None:
+            left = UNREACHABLE_AFTER_SECONDS - (self._clock() - self._streak_since)
+            if left <= 0:
+                if self.status == "connecting":
+                    self._set_status("unreachable", self.detail)
+                return
+            await self._sleep(left)
+
     async def _wait(self, seconds: float | None) -> None:
-        """Sleep *seconds* (None: until woken), or until reset_backoff/stop."""
-        self._wake.clear()
+        """Sleep *seconds* (None: until woken), or until reset_backoff/stop.
+
+        A wake that came while dialing still counts: the wait ends at once.
+        """
         waker = asyncio.create_task(self._wake.wait())
         sleeper = asyncio.create_task(self._sleep(seconds)) if seconds is not None else None
         pending = {waker} if sleeper is None else {waker, sleeper}
@@ -184,6 +233,7 @@ class UpstreamLink:
             for task in pending:
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
+            self._wake.clear()
 
     async def _backoff(self) -> None:
         delay = backoff_delay(self._attempt, self._jitter())
@@ -192,8 +242,13 @@ class UpstreamLink:
         await self._wait(delay)
 
     async def _park(self, status: LinkStatus, detail: str, retry: float | None) -> None:
-        """Stop retrying until reset_backoff (or *retry* seconds)."""
+        """Stop retrying until reset_backoff (or *retry* seconds).
+
+        A wake from before this answer is spent: the attempt that just
+        failed was the retry it asked for.
+        """
         self._set_status(status, detail)
+        self._wake.clear()
         await self._wait(retry)
         self._attempt = 0
 
@@ -260,7 +315,8 @@ class UpstreamLink:
     async def _serve(self, ws: ClientConnection) -> str:
         self._ws = ws
         self._attempt = 0
-        self._streak_since = None
+        self._end_streak()
+        self._wake.clear()
         self._outbox = asyncio.Queue()
         self._set_status("connected")
         if self._on_seen is not None:
@@ -293,6 +349,8 @@ class UpstreamLink:
             writer.cancel()
             await asyncio.gather(writer, return_exceptions=True)
             self._ws = None
+            if not self._stopped:
+                self._begin_streak()
             if self._on_seen is not None:
                 self._on_seen(True)
 

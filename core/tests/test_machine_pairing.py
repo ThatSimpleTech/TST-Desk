@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 
@@ -20,6 +21,7 @@ from tstd.machine_pairing import (
     DialPolicy,
     PairError,
     PairTarget,
+    checked_url,
     dial,
     dial_allowed,
     hello_frame,
@@ -54,6 +56,43 @@ def test_tailscale_hosts_may_be_dialed(host: str) -> None:
 )
 def test_other_hosts_may_not(host: str) -> None:
     assert not dial_allowed(host)
+
+
+# Names that end in ".ts.net" but whose URL would open another host.
+URL_TRICKS = [
+    "evil.com/a.ts.net",
+    "evil.com:443/x.ts.net",
+    "evil.com?.ts.net",
+    "a@evil.com#.ts.net",
+    "evil.com#.ts.net",
+    "evil com.tail.ts.net",
+    "-ezer.tail.ts.net",
+    "fd7a:115c:a1e0::1%@evil.com",
+]
+
+
+@pytest.mark.parametrize("host", URL_TRICKS)
+def test_a_name_with_url_syntax_is_not_a_tailscale_name(host: str) -> None:
+    assert not dial_allowed(host)
+
+
+@pytest.mark.parametrize("host", URL_TRICKS)
+def test_a_link_or_typed_address_with_url_syntax_is_refused(host: str) -> None:
+    link = f"tstdesk://pair?h={quote(host, safe='')}&p=39079&c=ABCD2345"
+    for kwargs in ({"link": link}, {"host": host, "port": 39079, "code": "ABCD2345"}):
+        with pytest.raises(PairError) as raised:
+            parse_target(**kwargs)  # type: ignore[arg-type]
+        assert raised.value.code == "not_tailscale"
+
+
+@pytest.mark.parametrize("host", URL_TRICKS[:5])
+async def test_the_dial_url_must_name_exactly_the_checked_host(host: str) -> None:
+    # Even under a rule that allowed it, the socket never opens elsewhere.
+    with pytest.raises(PairError) as raised:
+        await dial(host, 39079, DialPolicy(allowed=lambda _host: True))
+    assert raised.value.code == "not_tailscale"
+    assert checked_url("ezer.tail1.ts.net", 39079) == "ws://ezer.tail1.ts.net:39079"
+    assert checked_url("[fd7a:115c:a1e0::1]", 1, "/phone") == "ws://[fd7a:115c:a1e0::1]:1/phone"
 
 
 async def test_dial_checks_the_rule_every_time() -> None:

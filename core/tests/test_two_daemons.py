@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
@@ -27,9 +28,11 @@ from tests.machine_helpers import (
     window,
 )
 from tstd.daemon import Daemon
+from tstd.logging import JSONFormatter
 from tstd.mock import MockProvider, Script
 from tstd.policy import PolicyConfig, PolicyRule, save_policy
 from tstd.remote_attach import load_remote_port
+from tstd.remote_devices import normalize_code
 
 VIEWER = ["machines"]
 
@@ -100,10 +103,12 @@ async def _open(ws: ClientConnection, workspace: Path) -> str:
     return str(opened["session_id"])
 
 
-async def _pair(hub: ClientConnection, other: Daemon) -> str:
+async def _pair(hub: ClientConnection, other: Daemon, codes: list[str] | None = None) -> str:
     """Pair *other* from the hub's window; its mch once it is connected."""
     async with window(other) as screen:
         code = (await ask(screen, {"type": "start_pairing"}, "pairing_code"))["code"]
+        if codes is not None:
+            codes.append(code)
         port = other.ws_server.port
         await hub.send(
             json.dumps({"type": "add_machine", "host": "127.0.0.1", "port": port, "code": code})
@@ -317,3 +322,84 @@ async def _collect(
                 seqs.append(frame["seq"])
         if stop(frame):
             return
+
+
+async def test_re_pairing_b_keeps_an_open_remote_pane_streaming(
+    tmp_path: Path, fleet: Fleet, keychain: FakeKeychain
+) -> None:
+    reply = Script(kind="stream", content="hello")
+    b = await fleet.start(tmp_path / "b", provider=MockProvider(default=reply))
+    a = await fleet.start(tmp_path / "a")
+    async with window(a, VIEWER) as hub:
+        async with window(b) as b_screen:
+            sid = await _open(b_screen, tmp_path / "ws-b")
+        mch = await _pair(hub, b)
+        remote = f"{sid}:{mch}"
+        await _rows_with(hub, remote)
+        seqs: list[int] = []
+        await hub.send(json.dumps({"type": "attach", "session_id": remote, "from_seq": 1}))
+        await hub.send(json.dumps({"type": "user_message", "session_id": remote, "content": "1"}))
+        await _collect(hub, remote, seqs, _for(remote, "turn_complete"))
+        before = len(seqs)
+
+        # Same computer, same address: B swaps the key and drops the old device.
+        assert await _pair(hub, b) == mch
+        assert [d.kind for d in b.remote_devices.summaries()] == ["machine"]
+        await hub.send(json.dumps({"type": "user_message", "session_id": remote, "content": "2"}))
+        await _collect(hub, remote, seqs, _for(remote, "turn_complete"))
+        # The window never re-attached: the hub's lane did, from where it was.
+        assert len(seqs) > before
+        assert seqs == list(range(1, len(seqs) + 1))
+
+
+async def test_no_key_or_code_reaches_a_log_a_reply_or_the_file(
+    tmp_path: Path, fleet: Fleet, keychain: FakeKeychain, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    # As setup_logging does: websockets never logs frames, whatever the level.
+    caplog.set_level(logging.INFO, logger="websockets")
+    reply = Script(kind="stream", content="hello")
+    b = await fleet.start(tmp_path / "b", provider=MockProvider(default=reply))
+    a = await fleet.start(tmp_path / "a")
+    codes: list[str] = []
+    answers: list[dict[str, Any]] = []
+    async with window(a, VIEWER) as hub:
+        async with window(b) as b_screen:
+            sid = await _open(b_screen, tmp_path / "ws-b")
+            code = (await ask(b_screen, {"type": "start_pairing"}, "pairing_code"))["code"]
+            codes.append(code)
+            bad = {"type": "add_machine", "host": "127.0.0.1", "port": "x", "code": code}
+            answers.append(await ask(hub, bad, "error"))
+            wrong = {"type": "add_machine", "host": "127.0.0.1", "port": b.ws_server.port}
+            wrong["code"] = "ZZZZ-ZZZZ"
+            codes.append(str(wrong["code"]))
+            await hub.send(json.dumps(wrong))
+            answers.append(await _until(hub, lambda f: f["type"] == "error"))
+        mch = await _pair(hub, b, codes)
+        key = keychain.keys[mch]
+        remote = f"{sid}:{mch}"
+        await _rows_with(hub, remote)
+        await hub.send(json.dumps({"type": "attach", "session_id": remote, "from_seq": 1}))
+        await hub.send(json.dumps({"type": "user_message", "session_id": remote, "content": "x"}))
+        await _until(hub, _for(remote, "turn_complete"))
+        listing = (tmp_path / "a" / "computers.yaml").read_text()
+        await ask(hub, {"type": "remove_machine", "machine": mch}, "machine_list")
+        await eventually(lambda: len(b.remote_devices) == 0, within=5)
+
+    secrets = {"key": key}
+    for i, shown in enumerate(codes):
+        secrets[f"code {i}"] = shown
+        secrets[f"code {i} bare"] = normalize_code(shown) or shown
+    formatter = JSONFormatter()
+    logged = "\n".join(formatter.format(record) for record in caplog.records)
+    places = {"log": logged, "replies": json.dumps(answers), "computers.yaml": listing}
+    # Names only, so a failure never prints a key or a code.
+    leaks = sorted(
+        f"{name} in {place}"
+        for name, secret in secrets.items()
+        for place, text in places.items()
+        if secret in text
+    )
+    assert leaks == []
+    assert {answer["code"] for answer in answers} <= {"bad_request", "pair_failed"}
+    assert caplog.records, "nothing was logged: the check would prove nothing"

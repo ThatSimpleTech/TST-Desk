@@ -737,7 +737,8 @@ async def test_a_phone_can_forget_itself_and_nothing_else(tmp_path: Path) -> Non
                 assert refused["code"] == "loopback_only"
                 state = await ask(phone, {"type": "remove_remote_device", "device_id": me.id})
                 assert state["type"] == "setup_state"
-                assert [d["id"] for d in state["remote_devices"]] == [other.id]
+                # TD-5015 (SPEC A.11): a remote peer never hears the device list.
+                assert "remote_devices" not in state and "remote_port" not in state
                 await asyncio.wait_for(phone.wait_closed(), 5)
                 assert phone.close_code == 1008
             assert [d["id"] for d in await presence(window)] == [other.id]
