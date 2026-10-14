@@ -250,3 +250,50 @@ tst-desk/
 │   └── src/
 └── .tst/                  ← per-workspace runtime (gitignored except rules/ and memory/)
 ```
+
+---
+
+## 12. Cursor Cloud specific instructions
+
+Setup, run and test commands live in the README "Development" section; use those. The
+Cursor environment's update script installs dependencies (`uv sync --frozen` in `core/`,
+`npm ci` in `ui/`). The notes below are the non-obvious caveats for that cloud VM. They do
+not replace the README or §10.
+
+### Toolchain
+- **Node:** use Node 24 (CI pins 24). The VM's default `node` on `PATH` is v22. A login
+  shell (`bash -l`) gets nvm's Node 24 from `~/.bashrc`; elsewhere, put
+  `~/.nvm/versions/node/v24.*/bin` first on `PATH` if `node --version` is wrong.
+- **uv** is in `~/.local/bin` (on `PATH` for login shells).
+- **Rust:** use current stable. The locked dependency tree needs Rust 1.89 or newer
+  (`notify-rust` 4.18 declares `rust-version = "1.89"`, and 46 locked crates use edition
+  2024), although `shell/Cargo.toml` still says `rust-version = "1.77.2"`.
+- **Sidecar sentinel:** `tauri-build` checks `bundle.externalBin` at compile time, so
+  `cargo clippy` and `cargo test` in `shell/` fail until `shell/binaries/tstd-<host triple>`
+  exists. An empty file is enough, as in CI:
+  `mkdir -p binaries && : > "binaries/tstd-$(rustc -vV | sed -n 's/^host: *//p')"`.
+
+### Keychain
+The checks need no D-Bus session or unlocked keyring. `core/tests/conftest.py` keeps the
+suite off the host Secret Service (TD-1105), and a missing or failing `secret-tool` is a
+`KeychainError`, not a crash. A bare `uv run pytest -q` and the mock end-to-end harness
+(`uv run python scripts/e2e_headless.py`) both pass without one. The other CI gates
+(`ruff check`, `ruff format --check`, `mypy tstd`; `npx tsc --noEmit`, `npm run test`,
+`npm run build`) never touch it.
+
+### Running the product headlessly
+`uv run tst run --workspace <dir> --message "..."` (from `core/`) starts `tstd` if none is
+live on its data dir, and needs a reachable OpenAI-compatible model endpoint. The daemon
+reads `config.yaml` from that data dir: `--data-dir`, or
+`${XDG_DATA_HOME:-~/.local/share}/tst-desk/` by default (TD-4843). A missing file is copied
+from `core/tstd/config.yaml`. To run with no network or key, copy `core/tstd/config.yaml`
+into a scratch dir with `active_preset: local` added at the top, serve an OpenAI-compatible
+model on `127.0.0.1:11434`, and pass `--data-dir <scratch>`. The `local` preset needs no key
+on loopback and takes the model name from the server's `/v1/models`.
+
+### What cannot run here
+- The Tauri desktop app (`npm run tauri:dev`, the `shell/` host) needs a display and
+  WebKitGTK, so it cannot run on this headless VM.
+- The `daemon_supervision` test `onefile_shape_attaches_and_group_kill_reaps_grandchild`
+  was seen to fail under the Cursor sandbox's process-group handling. That is the sandbox,
+  not a setup fault.
