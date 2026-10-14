@@ -464,6 +464,22 @@
     "type": "set_remote_attach",
     "enabled": true
   },
+  "pair": {
+    "type": "pair",
+    "code": "ABCD2345",
+    "device_name": "Pixel",
+    "version": 1
+  },
+  "start_pairing": {
+    "type": "start_pairing"
+  },
+  "cancel_pairing": {
+    "type": "cancel_pairing"
+  },
+  "remove_remote_device": {
+    "type": "remove_remote_device",
+    "device_id": "dev_0123456789ab"
+  },
   "ready": {
     "type": "ready",
     "seq": 1,
@@ -1023,6 +1039,8 @@
     "pinned_workspaces": [],
     "remote_attach_enabled": false,
     "remote_bind": null,
+    "remote_port": null,
+    "remote_devices": [],
     "credentials": [
       {
         "id": "openrouter",
@@ -1073,6 +1091,29 @@
     ],
     "speech_enabled": false,
     "speech_ready": false
+  },
+  "pairing_code": {
+    "type": "pairing_code",
+    "seq": 1,
+    "code": "ABCD2345",
+    "display_code": "ABCD-2345",
+    "host": "100.64.1.5",
+    "port": 48123,
+    "desktop_name": "desk",
+    "link": "tstdesk://pair?h=100.64.1.5&p=48123&c=ABCD2345&n=desk",
+    "qr_svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 29 29\"></svg>",
+    "expires_at": "2026-10-14T10:50:00Z"
+  },
+  "pairing_completed": {
+    "type": "pairing_completed",
+    "seq": 1,
+    "device": {
+      "id": "dev_0123456789ab",
+      "name": "Pixel",
+      "paired_at": "2026-10-14T10:41:00Z",
+      "last_seen": null,
+      "connected": false
+    }
   },
   "api_key_validated": {
     "type": "api_key_validated",
@@ -1589,5 +1630,13 @@
   "hello_ack": {
     "type": "hello_ack",
     "version": 1
+  },
+  "pair_ok": {
+    "type": "pair_ok",
+    "version": 1,
+    "device_id": "dev_0123456789ab",
+    "device_name": "Pixel",
+    "token": "0000000000000000000000000000000000000000000000000000000000000000",
+    "desktop_name": "desk"
   }
 }
