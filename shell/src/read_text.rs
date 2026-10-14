@@ -78,8 +78,17 @@ fn candidates(requested: &Path, workspace: Option<&str>, session_id: Option<&str
     out
 }
 
+/// A session dir name, or None. ':' is refused too (TD-5015): a bridged id
+/// (`<raw>:mch_…`) names a session on another computer, so it never has a
+/// local session dir, and on Windows ':' would name an alternate data stream.
 fn safe_session_id(id: &str) -> Option<&str> {
-    if id.is_empty() || id == "." || id == ".." || id.contains('/') || id.contains('\\') {
+    if id.is_empty()
+        || id == "."
+        || id == ".."
+        || id.contains('/')
+        || id.contains('\\')
+        || id.contains(':')
+    {
         return None;
     }
     Some(id)
@@ -87,4 +96,29 @@ fn safe_session_id(id: &str) -> Option<&str> {
 
 fn is_within(root: &Path, candidate: &Path) -> bool {
     candidate.strip_prefix(root).is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::safe_session_id;
+
+    #[test]
+    fn safe_session_id_keeps_a_plain_uuid() {
+        let id = "0f8c2a4e-1b3d-4c5e-8f90-123456789abc";
+        assert_eq!(safe_session_id(id), Some(id));
+    }
+
+    #[test]
+    fn safe_session_id_refuses_traversal_and_separators() {
+        for id in ["", ".", "..", "a/b", "a\\b", "../x"] {
+            assert_eq!(safe_session_id(id), None, "{id:?}");
+        }
+    }
+
+    #[test]
+    fn safe_session_id_refuses_a_bridged_id() {
+        assert_eq!(safe_session_id("0f8c2a4e-1b3d:mch_1a2b3c4d5e6f"), None);
+        assert_eq!(safe_session_id("a:b"), None);
+        assert_eq!(safe_session_id(":"), None);
+    }
 }
