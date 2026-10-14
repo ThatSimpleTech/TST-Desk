@@ -86,6 +86,11 @@ MACHINE_VERBS: frozenset[str] = frozenset(
 )
 VIEWER_MACHINE_VERBS: frozenset[str] = frozenset({"list_machines"})
 
+# Verbs only this computer may send, from any peer kind. ``drain`` holds
+# every local turn for a restart; a phone or another computer asking for
+# that is not the person at the keyboard deploying (TD-5023).
+LOOPBACK_VERBS: frozenset[str] = frozenset({"drain"})
+
 
 @dataclass(frozen=True)
 class PeerView:
@@ -128,6 +133,8 @@ def check(msg: ClientMessage, peer: PeerView, *, bridged: bool) -> str | None:
     Forwarding itself is the daemon's call; this only refuses.
     """
     sid = message_session_id(msg)
+    if msg.type in LOOPBACK_VERBS and (peer.remote or peer.machine):
+        return build_error("loopback_only", "Only the computer itself can do that.")
     if peer.machine:
         if msg.type not in MACHINE_PEER_VERBS:
             return build_error(

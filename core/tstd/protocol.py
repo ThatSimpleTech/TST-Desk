@@ -702,6 +702,21 @@ class Shutdown(ClientMessage):
     type: Literal["shutdown"] = "shutdown"
 
 
+class Drain(ClientMessage):
+    """Let open turns finish ahead of a restart (TD-5023). Loopback only.
+
+    New turns on this computer's sessions are refused with
+    ``daemon_draining`` while the daemon waits up to ``timeout_s`` for the
+    open ones, and for ``hold_s`` after, so the restart that follows cuts
+    nothing. The hold ends by itself. ``timeout_s=0, hold_s=0`` releases
+    a hold at once. Answered with ``drain_result``.
+    """
+
+    type: Literal["drain"] = "drain"
+    timeout_s: int = Field(default=30, ge=0, le=600)
+    hold_s: int = Field(default=120, ge=0, le=600)
+
+
 class ListSessions(ClientMessage):
     """Request the current session list (id, workspace, state, timestamps)."""
 
@@ -2184,6 +2199,24 @@ class MachineList(DaemonEvent):
     machines: list[MachineSummary] = Field(default_factory=list)
 
 
+class DrainResult(DaemonEvent):
+    """The answer to ``drain`` (TD-5023). Connection-scoped.
+
+    ``drained`` is true when no turn on this computer is still open.
+    ``running`` and ``awaiting_approval`` are session ids and nothing
+    else; a turn parked on an approval is listed, not waited on.
+    ``hold_until`` is when new turns are taken again (ISO 8601 UTC), or
+    None when no hold is up.
+    """
+
+    type: Literal["drain_result"] = "drain_result"
+    seq: int = 1
+    drained: bool
+    running: list[str] = Field(default_factory=list)
+    awaiting_approval: list[str] = Field(default_factory=list)
+    hold_until: str | None = None
+
+
 class GrokCommand(BaseModel):
     """One slash command advertised by the Grok ACP agent."""
 
@@ -2823,6 +2856,7 @@ ClientMessageT = Annotated[
     | MemoryReject
     | EndSession
     | Shutdown
+    | Drain
     | ListSessions
     | NewSession
     | ArchiveSession
@@ -2917,6 +2951,7 @@ DaemonEventT = Annotated[
     | PairingCode
     | PairingCompleted
     | MachineList
+    | DrainResult
     | ApiKeyValidated
     | DiagnosticsReport
     | UsageReport
@@ -3000,6 +3035,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "memory_reject",
         "end_session",
         "shutdown",
+        "drain",
         "list_sessions",
         "new_session",
         "archive_session",
@@ -3094,6 +3130,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "pairing_code",
         "pairing_completed",
         "machine_list",
+        "drain_result",
         "api_key_validated",
         "diagnostics_report",
         "usage_report",

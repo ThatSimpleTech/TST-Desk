@@ -25,6 +25,7 @@ from tstd.peer_policy import (
     APPROVAL_VERBS,
     FORWARDED_VERBS,
     LOOPBACK_PLAIN,
+    LOOPBACK_VERBS,
     MACHINE_PEER_VERBS,
     MACHINE_VERBS,
     PeerView,
@@ -57,6 +58,7 @@ NEVER_FOR_MACHINES = frozenset(
         "reconnect_machine",
         "open_workspace",
         "shutdown",
+        "drain",
         "save_job",
         "run_job",
         "set_cu_kill",
@@ -116,8 +118,22 @@ def test_every_client_type_not_listed_is_refused_for_a_machine_peer() -> None:
         if refusal is None:
             allowed.append(kind)
         else:
-            assert json.loads(refusal)["code"] == "not_allowed", kind
+            expected = "loopback_only" if kind in LOOPBACK_VERBS else "not_allowed"
+            assert json.loads(refusal)["code"] == expected, kind
     assert set(allowed) == MACHINE_PEER_VERBS
+
+
+def test_drain_is_loopback_only() -> None:
+    """TD-5023: a phone or another computer never holds this computer's turns."""
+    assert "drain" in protocol._KNOWN_CLIENT_TYPES
+    assert LOOPBACK_VERBS.isdisjoint(MACHINE_PEER_VERBS | FORWARDED_VERBS)
+    drain = _msg("drain", timeout_s=5, hold_s=5)
+    assert check(drain, LOOPBACK_PLAIN, bridged=False) is None
+    assert check(drain, VIEWER, bridged=False) is None
+    self_paired = PeerView(remote=False, machine=True, viewer=False)
+    for peer in (PHONE_VIEWER, PLAIN_REMOTE, MACHINE, self_paired):
+        refusal = check(drain, peer, bridged=False)
+        assert refusal is not None and json.loads(refusal)["code"] == "loopback_only", peer
 
 
 def test_a_machine_peer_never_reaches_a_bridged_id() -> None:

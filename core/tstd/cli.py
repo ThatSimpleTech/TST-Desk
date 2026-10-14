@@ -56,8 +56,10 @@ def _add_data_dir(parser: argparse.ArgumentParser) -> None:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse ``tst`` argv: ``run``, ``attach``, ``pair``, ``devices``, ``machines``."""
-    # Function-local: cli_pairing and cli_machines import this module's helpers.
+    """Parse ``tst`` argv: ``run``, ``attach``, ``pair``, ``devices``, ``machines``, ``drain``."""
+    # Function-local: cli_pairing, cli_machines and cli_drain import this
+    # module's helpers.
+    from .cli_drain import add_drain_command
     from .cli_machines import add_machine_commands
     from .cli_pairing import add_pairing_commands
 
@@ -97,6 +99,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     _add_data_dir(attach_p)
     add_pairing_commands(sub, _add_data_dir)
     add_machine_commands(sub, _add_data_dir)
+    add_drain_command(sub, _add_data_dir)
     return parser.parse_args(argv)
 
 
@@ -448,6 +451,10 @@ def main(argv: list[str] | None = None) -> int:
             from .cli_machines import run_machines_command
 
             return run_machines_command(args, data_dir)
+        if args.command == "drain":
+            from .cli_drain import run_drain_command
+
+            return run_drain_command(args, data_dir)
         print(f"unknown command: {args.command}", file=sys.stderr)
         return 2
     except CliError as e:

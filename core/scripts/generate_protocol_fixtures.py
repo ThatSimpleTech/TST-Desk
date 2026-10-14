@@ -67,6 +67,8 @@ from tstd.protocol import (
     Detach,
     DiagnosticCheck,
     DiagnosticsReport,
+    Drain,
+    DrainResult,
     EndSession,
     Error,
     ExportUsage,
@@ -321,6 +323,9 @@ FIXTURES = {
     "memory_reject": MemoryReject(session_id="sess-1", proposal_id="mp-1"),
     "end_session": EndSession(session_id="sess-1"),
     "shutdown": Shutdown(),
+    # Before a deploy restart (TD-5023); 0/0 releases the hold.
+    "drain": Drain(timeout_s=120, hold_s=120),
+    "drain_release": Drain(timeout_s=0, hold_s=0),
     "list_sessions": ListSessions(),
     # Session lifecycle (TD-1715): archive/restore, delete, move to project.
     "archive_session": ArchiveSession(session_id="sess-1"),
@@ -824,6 +829,14 @@ FIXTURES = {
                 detail="Can't reach desk. Trying again in 30 s.",
             ),
         ]
+    ),
+    # A drain that timed out with one turn still working and one parked on
+    # an approval; the hold runs on (TD-5023).
+    "drain_result": DrainResult(
+        drained=False,
+        running=["s1"],
+        awaiting_approval=["s2"],
+        hold_until="2026-10-14T10:47:00+00:00",
     ),
     "api_key_validated": ApiKeyValidated(ok=True, detail="Key accepted by provider."),
     # Diagnostics (TD-1104): connection-scoped like setup_state. Mixed rows so

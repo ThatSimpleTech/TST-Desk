@@ -435,6 +435,18 @@ export interface Shutdown extends ClientMessage {
   type: "shutdown";
 }
 
+/** Let open turns finish ahead of a restart (TD-5023). Loopback only; sent by
+ *  `tst drain`, not the window. New local turns get `daemon_draining` while
+ *  the daemon waits up to `timeout_s` for open ones, then for `hold_s` more.
+ *  0/0 releases the hold. Answered with `drain_result`. */
+export interface Drain extends ClientMessage {
+  type: "drain";
+  /** 0..600, default 30. */
+  timeout_s?: number;
+  /** 0..600, default 120. */
+  hold_s?: number;
+}
+
 export interface ListSessions extends ClientMessage {
   type: "list_sessions";
 }
@@ -850,6 +862,7 @@ export type ClientMessageUnion =
   | MemoryReject
   | EndSession
   | Shutdown
+  | Drain
   | ListSessions
   | NewSession
   | ArchiveSession
@@ -1453,6 +1466,18 @@ export interface MachineSummary {
 export interface MachineList extends DaemonEvent {
   type: "machine_list";
   machines: MachineSummary[];
+}
+
+/** Reply to drain (TD-5023). Connection-scoped, seq=1. Session ids only.
+ *  `hold_until` is ISO 8601 UTC, or null when no hold is up. Not in
+ *  DaemonEventUnion: only the connection that sent drain gets one, and the
+ *  window never sends drain. */
+export interface DrainResult extends DaemonEvent {
+  type: "drain_result";
+  drained: boolean;
+  running: string[];
+  awaiting_approval: string[];
+  hold_until: string | null;
 }
 
 /** Reply to start_pairing (TD-5014). Connection-scoped, seq=1. The code lives
