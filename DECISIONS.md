@@ -7973,10 +7973,13 @@ original branch were dropped as superseded. The numeric `error.code`
 restated status and maps it from `_STATUS_CODE_MAP` (and reads an error
 envelope's embedded status), so `_canonical_error_code` would have been
 a second copy. The "screenshot returns path, not base64" reversal:
-TD-1729 sends the pixels as a vision part and keeps only path and size
-in the tool text, which is the fix that entry wanted. Taking the old
-change would have left no `png_base64` for dispatch to peel, and the
-model would have lost the picture.
+TD-1729 sends the pixels as a vision part, which is the fix that entry
+wanted. Taking the old change would have left no `png_base64` for
+dispatch to peel, and the model would have lost the picture. The one
+part still missing was the saved path: TD-1729's tool text kept only
+size and mime. `desktop_screenshot` now adds the session-relative
+`path` from `persist_screen_frame` before dispatch peels the PNG, as
+`browser_screenshot` already did.
 
 ---
 

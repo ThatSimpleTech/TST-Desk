@@ -4687,8 +4687,9 @@ fix-up, which passes assistant messages through untouched.
 **Superseded at merge:** the branch also changed `desktop_screenshot` to
 return persist metadata instead of `png_base64`. TD-1729 had already
 solved that problem the other way: dispatch peels the PNG into a vision
-part and keeps path and size in the tool text. The old change would
-have left nothing to peel, so it was dropped.
+part. The old change would have left nothing to peel, so it was
+dropped. The saved path it wanted is now added to the tool text
+before the peel, next to width, height and mime.
 
 **Notes:** the plaintext scratchpad still must not enter
 `collected_content`. The array is not speech; it is provider state.

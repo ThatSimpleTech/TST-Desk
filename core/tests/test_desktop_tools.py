@@ -204,6 +204,9 @@ class TestScreenFrame:
         assert len(frames) == 1
         assert frames[0].path.startswith("screens/")
         assert frames[0].path.endswith(".png")
+        # The tool text names the saved file, like browser_screenshot (TD-1903).
+        assert body["path"] == frames[0].path
+        assert body["mime"] == "image/png"
         assert (session.persist_dir / frames[0].path).read_bytes().startswith(b"\x89PNG")
         sidecar = session.persist_dir / frames[0].path.replace(".png", ".dataurl")
         assert sidecar.read_text(encoding="utf-8").startswith("data:image/png;base64,")
