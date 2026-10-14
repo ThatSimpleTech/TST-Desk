@@ -33,6 +33,7 @@ mod daemon_pid;
 pub mod embeddings;
 #[cfg(all(test, unix))]
 pub(crate) mod fake_sidecar;
+pub(crate) mod log_files;
 mod shutdown;
 mod system_exit;
 
@@ -329,6 +330,7 @@ async fn run_supervision(h: DaemonHandle) {
             }
         };
         h.child_pid.store(pid as i32, Ordering::Relaxed);
+        log::info!("connected to tstd (pid {pid}, port {})", port_file.port);
         // Dup of the live socket. System quit writes the shutdown frame
         // on it from the main thread; this task keeps `ws`.
         h.exit_socket
@@ -427,6 +429,7 @@ async fn bump_restart(h: &DaemonHandle, restart: &mut u32) -> bool {
         emit(h, "stopped", None, *restart);
         return false;
     }
+    log::warn!("restarting tstd ({} of {MAX_RESTARTS})", *restart);
     h.set_status(DaemonStatus::Crashed { restart: *restart });
     emit(h, "crashed", None, *restart);
     // 500 ms · attempt → 500 ms, 1 s, 1.5 s before the first three restarts.
@@ -548,6 +551,7 @@ async fn acquire_daemon(data_dir: &Path) -> Result<(ChildWatch, ClientWs, PortFi
         let _ = child.wait().await;
         return Err("daemon exited before handing over its pid".into());
     };
+    log::info!("spawned tstd (pid {pid})");
     let port_file = match wait_for_port_file(data_dir, pid, PORT_FILE_TIMEOUT).await {
         Ok(pf) => pf,
         Err(e) => {
@@ -595,7 +599,7 @@ async fn wait_pid_gone(pid: u32) {
 
 /// Spawn the daemon child. `--parent-pid` is always the host pid
 /// (TD-2903): close keeps this process alive; force-quit is the orphan
-/// backstop.
+/// backstop. stderr goes to `logs/tstd.stderr.log` (TD-5021).
 pub fn spawn_daemon(data_dir: &Path) -> Result<tokio::process::Child, String> {
     spawn_daemon_with(data_dir, &resolve_command()?)
 }
@@ -616,7 +620,7 @@ pub fn spawn_daemon_with(
         .arg("--log-level")
         .arg("INFO")
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(log_files::tstd_stderr(data_dir));
     #[cfg(target_os = "macos")]
     {
         cmd.env(

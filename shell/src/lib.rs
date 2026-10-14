@@ -199,6 +199,7 @@ pub(crate) fn request_quit(app: &tauri::AppHandle) {
     if !begin_quit() {
         return;
     }
+    log::info!("quit requested; stopping tstd");
     let handle = app.state::<DaemonHandle>().inner().clone();
     let embeddings = app.state::<EmbeddingsHandle>().inner().clone();
     handle.request_shutdown();
@@ -307,13 +308,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
+            app.handle()
+                .plugin(daemon::log_files::host_log_plugin(&daemon::data_dir()))?;
+            log::info!(
+                "host started (pid {}, version {})",
+                std::process::id(),
+                app.package_info().version
+            );
             app.set_menu(build_app_menu(app)?)?;
             if let Err(e) = build_tray(app) {
                 log::warn!("tray icon not created: {e}");
