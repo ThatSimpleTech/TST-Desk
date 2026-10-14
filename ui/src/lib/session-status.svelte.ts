@@ -11,6 +11,7 @@
 // Pure TypeScript — no Tauri imports — so vitest can drive the reducer.
 
 import { DEFAULT_ATTACHMENT_LIMITS } from "./attachments";
+import { isBridged } from "./bridged-id";
 import type { ProtocolClient } from "./client";
 import { persistLastWorkspace } from "./last-workspace";
 import type { AttachmentLimits, BoundaryUpdate, DaemonEventUnion } from "./protocol";
@@ -103,8 +104,9 @@ export function ingestEvent(event: DaemonEventUnion): void {
     const bind = windowBindSessionId();
     if (bind !== null && event.session_id !== bind) return;
     // Adopt the first session we hear of. The open_workspace reply is a
-    // session_state event, so a plain open lands here.
-    if (session.sessionId === null) {
+    // session_state event, so a plain open lands here. Another computer's
+    // session is only ever followed on purpose (a click or a bind, TD-5015).
+    if (session.sessionId === null && (bind !== null || !isBridged(event.session_id))) {
       session.sessionId = event.session_id;
       if (pendingPath !== null) {
         session.workspacePath = pendingPath;
@@ -193,7 +195,8 @@ export function focusSession(
   session.sessionId = sessionId;
   if (workspacePath !== undefined) {
     session.workspacePath = workspacePath;
-    void persistLastWorkspace(workspacePath);
+    // The last workspace reopens here, so it is only ever a local path.
+    if (!isBridged(sessionId)) void persistLastWorkspace(workspacePath);
   }
   session.state = state;
   session.reason = null;
@@ -220,7 +223,21 @@ export function focusSession(
 export function retargetWorkspace(sessionId: string, workspacePath: string): void {
   if (session.sessionId !== sessionId) return;
   session.workspacePath = workspacePath;
-  void persistLastWorkspace(workspacePath);
+  if (!isBridged(sessionId)) void persistLastWorkspace(workspacePath);
+}
+
+/** The followed session's workspace when it is on this computer, else null
+ *  (TD-5015). Everything that reads this computer's disk for "the
+ *  workspace" (charter, commands, pins, instructions, memory files) binds
+ *  through here, never through whether the path happens to exist here. */
+export function localWorkspacePath(): string | null {
+  if (isBridged(session.sessionId)) return null;
+  return session.workspacePath;
+}
+
+/** True when the followed session lives on another computer. */
+export function followingRemoteSession(): boolean {
+  return isBridged(session.sessionId);
 }
 
 /** Pin a tier on the active session (a chip click). */

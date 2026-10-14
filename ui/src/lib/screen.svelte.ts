@@ -6,6 +6,7 @@
 // computer-use tool (browser_* or desktop_*) this session.
 
 import { onEvent } from "./connection-status.svelte.js";
+import { isBridged } from "./bridged-id";
 import { isTauri } from "./open-file";
 import type { DaemonEventUnion, ToolCall } from "./protocol";
 import { isCuTool, screenPreviewSidecar } from "./screen";
@@ -65,6 +66,10 @@ export function resetScreen(): void {
 }
 
 function reduce(event: DaemonEventUnion): void {
+	// Another computer's screen frames name files on that computer; the
+	// preview reads this one's disk (read_text_file), so it never follows them
+	// (TD-5015).
+	if ("session_id" in event && isBridged(event.session_id)) return;
 	if (event.type === "tool_call") {
 		rememberTool(event);
 		return;

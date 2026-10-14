@@ -5,6 +5,8 @@
 // the Tauri shell (browser dev, tests) opening is a no-op; the panel
 // still reads.
 
+import { isBridged } from "./bridged-id";
+
 /** True when running inside the Tauri shell. */
 export function isTauri(): boolean {
 	return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -22,4 +24,12 @@ export async function openInEditor(path: string): Promise<boolean> {
 	} catch {
 		return false;
 	}
+}
+
+/** Open a path a session's events named (TD-5015). Never for another
+ *  computer's session: the path is on that computer, and under a self-pair
+ *  it would even open here, so the gate is the id, not whether it exists. */
+export async function openSessionPath(sessionId: string | null, path: string): Promise<boolean> {
+	if (isBridged(sessionId)) return false;
+	return openInEditor(path);
 }

@@ -22,6 +22,7 @@ import pkg from "../../package.json";
 import {
 	checkpointNoticeCopy,
 	daemonErrorCopy,
+	machineErrorCopy,
 	sessionStateCopy,
 	turnFailureCopy,
 	type NoticeSpec,
@@ -154,6 +155,13 @@ export function notifyEvent(event: DaemonEventUnion): void {
 			notify(`checkpoint:${event.code}`, checkpointNoticeCopy(event.code, event.message));
 			break;
 		case "error":
+			// TD-5015: another computer's error (tagged `machine`, its message
+			// already "On <name>: …") gets a plain toast. The code-specific
+			// copy below names this computer's keychain, sessions and wizard.
+			if (event.machine) {
+				notify(`machine:${event.machine}:${event.code}`, machineErrorCopy(event.message));
+				break;
+			}
 			notify(`daemon:${event.code}`, daemonErrorCopy(event.code, event.message));
 			break;
 	}

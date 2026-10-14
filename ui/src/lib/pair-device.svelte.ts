@@ -97,7 +97,9 @@ export function reducePairing(event: DaemonEventUnion): void {
 	}
 	// start_pairing has no request id, so a machine-wide error that lands
 	// while we wait for a code (or names pairing) is the answer to it.
-	if (event.type === "error" && pairDialog.open && (event.session_id ?? null) === null) {
+	// TD-5015: an error another computer sent (tagged `machine`) is not this
+	// dialog's answer, even though it has no session id.
+	if (event.type === "error" && pairDialog.open && (event.session_id ?? null) === null && !event.machine) {
 		if (pairDialog.waiting || event.code.startsWith("pairing_")) {
 			pairDialog.waiting = false;
 			pairDialog.error = event.message;

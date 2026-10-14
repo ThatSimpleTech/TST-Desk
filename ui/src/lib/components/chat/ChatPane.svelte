@@ -22,7 +22,9 @@
 	} from "../../chat-store.svelte.js";
 	import { loadCommands, startCommands } from "../../commands.svelte.js";
 	import { ws } from "../../connection-status.svelte.js";
-	import { session, workspaceName } from "../../session-status.svelte.js";
+	import { localWorkspacePath, session, workspaceName } from "../../session-status.svelte.js";
+	import { machineNameFor, sessionMachineUp } from "../../machines.svelte.js";
+	import { unreachableNotice } from "../../machines";
 	import { settings } from "../../settings.svelte.js";
 	import { grok } from "../../grok.svelte.js";
 	import { canSend, formatTurnDuration, showCancel } from "../../chat-store";
@@ -46,9 +48,15 @@
 	});
 
 	$effect(() => {
-		const path = session.workspacePath;
+		// Slash commands are read from this computer's disk (TD-5015).
+		const path = localWorkspacePath();
 		if (path !== null) loadCommands(path);
 	});
+
+	// Another computer's session waits for that computer (TD-5015). Rows and
+	// the transcript stay readable; only sending is held.
+	const machineUp = $derived(sessionMachineUp(chat.sessionId));
+	const machineName = $derived(machineNameFor(chat.sessionId));
 
 	$effect(() => {
 		bindWakeup(session.sessionId);
@@ -152,8 +160,11 @@
 			onedit={editQueuedMessage}
 			onremove={removeQueuedMessage}
 		/>
+		{#if !machineUp && machineName !== null}
+			<p class="machine-notice" role="status">{unreachableNotice(machineName)}</p>
+		{/if}
 		<Composer
-			disabled={!canSend(chat.sessionId, ws.state)}
+			disabled={!canSend(chat.sessionId, ws.state, machineUp)}
 			running={showCancel(chat.turnState) || chat.awaitingFirstToken}
 			bind:value={draft}
 			limits={session.attachmentLimits}
@@ -257,6 +268,13 @@
 	}
 
 	.duration {
+		color: var(--color-ink-muted);
+	}
+
+	.machine-notice {
+		margin: 0;
+		padding: var(--space-2) var(--space-4);
+		font-size: var(--text-sm);
 		color: var(--color-ink-muted);
 	}
 

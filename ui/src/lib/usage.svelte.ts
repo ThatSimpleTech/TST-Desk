@@ -74,7 +74,8 @@ function reduce(event: DaemonEventUnion): void {
 	// An export that failed on the daemon side comes back as a typed error,
 	// not a usage_exported with a path that isn't there. Clear the in-flight
 	// flag or the buttons stay dead until a reload.
-	if (event.type === "error" && usage.exporting) {
+	// Another computer's error (it carries `machine`, TD-5015) is never this export's answer.
+	if (event.type === "error" && !event.machine && usage.exporting) {
 		usage.exporting = false;
 		usage.error = event.message;
 	}

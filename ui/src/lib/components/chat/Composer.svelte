@@ -24,7 +24,7 @@
 	import { clearPicks, design, removePick } from "../../design.svelte.js";
 	import type { AttachmentLimits, CommandEntry } from "../../protocol";
 	import { grok, matchingGrokCommands, runGrokCommand } from "../../grok.svelte.js";
-	import { session } from "../../session-status.svelte.js";
+	import { localWorkspacePath, session } from "../../session-status.svelte.js";
 	import { filterCommands, insertCommandBody, mergeSlashItems, slashQuery } from "../../slash-commands";
 	import { stack } from "../../stack-store.svelte.js";
 	import Icon from "../Icon.svelte";
@@ -69,7 +69,12 @@
 
 	const query = $derived(slashQuery(value));
 	const paletteOpen = $derived(query !== null && !slashDismissed);
-	const slashItems = $derived(mergeSlashItems(commands.items, stack.skills));
+	// Workspace commands are read from this computer's disk: they belong to
+	// the session only when its workspace is local (TD-5015).
+	const workspaceCommands = $derived(
+		localWorkspacePath() !== null && commands.workspacePath === localWorkspacePath() ? commands.items : [],
+	);
+	const slashItems = $derived(mergeSlashItems(workspaceCommands, stack.skills));
 	const visibleCommands = $derived(query === null ? [] : filterCommands(slashItems, query));
 
 	$effect(() => {
@@ -188,7 +193,7 @@
 	}
 
 	function handleFocus(): void {
-		const path = session.workspacePath;
+		const path = localWorkspacePath();
 		if (path !== null) loadCommands(path);
 	}
 

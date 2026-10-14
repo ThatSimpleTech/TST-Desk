@@ -57,4 +57,18 @@ describe("pickQuickEntrySession", () => {
 			),
 		).toEqual({ action: "open" });
 	});
+
+	// TD-5015: under a self-pair the remote copy has the same path, and is newer.
+	it("never picks another computer's session for a local folder", () => {
+		const remote = "s9:mch_0123456789ab";
+		expect(
+			pickQuickEntrySession(
+				[summary("s1", "/a", "2026-08-27T10:00:00Z"), summary(remote, "/a", "2026-08-27T12:00:00Z")],
+				"/a",
+			),
+		).toEqual({ action: "attach", sessionId: "s1" });
+		expect(pickQuickEntrySession([summary(remote, "/a", "2026-08-27T12:00:00Z")], "/a")).toEqual({
+			action: "open",
+		});
+	});
 });

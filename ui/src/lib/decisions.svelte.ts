@@ -11,6 +11,7 @@
 
 import { onEvent } from "./connection-status.svelte.js";
 import { session } from "./session-status.svelte.js";
+import { isBridged } from "./bridged-id";
 import type { DaemonEventUnion } from "./protocol";
 
 /** The per-workspace ledger, relative to the workspace root. Mirrors
@@ -121,6 +122,9 @@ export function filteredDecisions(): DecisionRow[] {
 
 /** Absolute ledger path for the active workspace, or null when none is open. */
 export function ledgerPath(): string | null {
-	if (session.workspacePath === null) return null;
-	return `${session.workspacePath}/${LEDGER_RELATIVE_PATH}`;
+	// The ledger opens with this computer's opener: never another computer's
+	// workspace, whose path may even exist here under a self-pair (TD-5015).
+	const workspace = isBridged(session.sessionId) ? null : session.workspacePath;
+	if (workspace === null) return null;
+	return `${workspace}/${LEDGER_RELATIVE_PATH}`;
 }

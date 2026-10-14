@@ -7,6 +7,7 @@
 
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
 import { artifactPreviewKind, isWorkspaceArtifact, type ArtifactPreviewKind } from "./artifacts";
+import { isBridged } from "./bridged-id";
 import { isTauri } from "./open-file";
 import type { Artifact, ArtifactEntry, DaemonEventUnion } from "./protocol";
 
@@ -89,14 +90,16 @@ export function bindArtifacts(sessionId: string | null, workspacePath: string | 
 		artifacts.error = null;
 		artifacts.loading = false;
 	}
-	if (sessionId !== null) {
+	// Another computer's artifacts are files on that computer, and previews
+	// read this one's disk (TD-5015): the pane says so instead of asking.
+	if (sessionId !== null && !isBridged(sessionId)) {
 		sendToDaemon({ type: "list_artifacts", session_id: sessionId });
 	}
 }
 
 export function selectArtifact(artifactId: string): boolean {
 	const item = artifacts.items.find((row) => row.artifact_id === artifactId);
-	if (item === undefined || artifacts.sessionId === null) return false;
+	if (item === undefined || artifacts.sessionId === null || isBridged(artifacts.sessionId)) return false;
 	artifacts.selectedId = artifactId;
 	artifacts.preview = null;
 	artifacts.error = null;
@@ -109,6 +112,7 @@ export function selectArtifact(artifactId: string): boolean {
 }
 
 function reduce(event: DaemonEventUnion): void {
+	if ("session_id" in event && isBridged(event.session_id)) return;
 	if (event.type === "artifact_list") {
 		if (event.session_id !== artifacts.sessionId) return;
 		artifacts.items = event.artifacts;

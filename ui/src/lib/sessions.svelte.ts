@@ -43,6 +43,7 @@ import { showHome, showProjects, showArtifacts, showScheduled, projects } from "
 import { railFunctions, type RailSurface } from "./rail";
 import { rowActivity, type BoundTurn, type RowActivity } from "./rail-activity";
 import { showCancel } from "./chat-store";
+import { isBridged, machineOf } from "./bridged-id";
 import type { DaemonEventUnion, SessionSummary } from "./protocol";
 
 export {
@@ -77,6 +78,9 @@ export interface SessionRow {
 	/** A turn is in flight (TD-1720). Daemon truth from session_list.busy;
 	 *  live events and the bound pane may update it in place. */
 	busy: boolean;
+	/** The paired computer this row lives on (`mch_…`), or null for this
+	 *  computer's own (TD-5015). Gates still read `machineOf(sessionId)`. */
+	machine: string | null;
 }
 
 export const sessions = $state({
@@ -169,6 +173,7 @@ function reduce(event: DaemonEventUnion): void {
 				title: s.title ?? null,
 				preset: s.preset ?? "",
 				busy: s.busy === true,
+				machine: s.machine ?? machineOf(s.session_id),
 			}))
 			.sort((a, b) => {
 				if (a.starred !== b.starred) return a.starred ? -1 : 1;
@@ -179,13 +184,21 @@ function reduce(event: DaemonEventUnion): void {
 		// attach it never re-ran.
 		const bound = sessions.rows.find((r) => r.sessionId === chat.sessionId);
 		if (bound !== undefined) retargetWorkspace(bound.sessionId, bound.workspacePath);
-		// Any list is an answer to something; a stale refusal outlives its click.
-		// Leave renameFor: a running turn refreshes the list constantly, and
-		// aborting an in-progress rename would make busy-session rename a lie.
-		sessions.refusal = null;
-		sessions.menuFor = null;
-		sessions.confirmDeleteFor = null;
-		sessions.moveFor = null;
+		// TD-5015: the hub pushes merged lists whenever another computer's
+		// rows change, so a list is no longer always the answer to a click.
+		// An open menu, confirm or picker stays while its row does; the
+		// actions close their own menus when they send. Leave renameFor: a
+		// running turn refreshes the list constantly, and aborting an
+		// in-progress rename would make busy-session rename a lie.
+		const present = new Set(sessions.rows.map((r) => r.sessionId));
+		const keep = (id: string | null): string | null => (id !== null && present.has(id) ? id : null);
+		sessions.menuFor = keep(sessions.menuFor);
+		sessions.confirmDeleteFor = keep(sessions.confirmDeleteFor);
+		sessions.moveFor = keep(sessions.moveFor);
+		// The refusal is shown inside one of those; with none left it is stale.
+		if (sessions.menuFor === null && sessions.confirmDeleteFor === null && sessions.moveFor === null) {
+			sessions.refusal = null;
+		}
 		return;
 	}
 	// A refused lifecycle action (TD-1715): the daemon owns "is a turn in
@@ -202,7 +215,13 @@ function reduce(event: DaemonEventUnion): void {
 
 	// The new_session reply arrives as the fresh session's first
 	// session_state — before the refreshed list names it. Focus immediately.
-	if (pendingNewAnchor !== null && event.session_id !== chat.sessionId) {
+	// Only a state from the anchor's own computer can be that reply (TD-5015):
+	// another computer's sessions keep reporting while the new one is made.
+	if (
+		pendingNewAnchor !== null &&
+		event.session_id !== chat.sessionId &&
+		machineOf(event.session_id) === machineOf(pendingNewAnchor)
+	) {
 		const anchor = pendingNewAnchor;
 		pendingNewAnchor = null;
 		// The new session shares the anchor's workspace by definition; the
@@ -335,7 +354,9 @@ export function boundTurn(): BoundTurn {
  *  no-op'ing — the chosen path goes through new_session_in_workspace. */
 export function newSession(): boolean {
 	if (pendingNewAnchor !== null) return false;
-	const anchor = chat.sessionId ?? sessions.rows[0]?.sessionId ?? null;
+	// A bound session on another computer grows there; unbound, the fallback
+	// anchor is this computer's own newest row (TD-5015).
+	const anchor = chat.sessionId ?? sessions.rows.find((r) => !isBridged(r.sessionId))?.sessionId ?? null;
 	if (anchor === null) {
 		// Unwired (tests, or a shell that never mounts the picker): stay the
 		// old silent no-op rather than throw.
@@ -415,7 +436,8 @@ export function activateRailFunction(id: RailSurface): boolean {
  *  creates one). Either way the window returns to Home so the chat is
  *  what you see. */
 export function newSessionInWorkspace(workspacePath: string): boolean {
-	const anchor = sessions.rows.find((r) => r.workspacePath === workspacePath);
+	// Projects are this computer's folders: only an own row anchors here.
+	const anchor = sessions.rows.find((r) => r.workspacePath === workspacePath && !isBridged(r.sessionId));
 	if (anchor === undefined) {
 		openWorkspace(workspacePath);
 		showHome();
@@ -424,6 +446,18 @@ export function newSessionInWorkspace(workspacePath: string): boolean {
 	if (pendingNewAnchor !== null) return false;
 	if (!sendToDaemon({ type: "new_session", session_id: anchor.sessionId })) return false;
 	pendingNewAnchor = anchor.sessionId;
+	showHome();
+	return true;
+}
+
+/** "+ New here" on another computer's section (TD-5015): a fresh session
+ *  in the workspace `anchorId` lives in, on that computer. The hub forwards
+ *  new_session with the anchor's raw id; the reply is focused on sight. */
+export function newSessionFrom(anchorId: string): boolean {
+	if (pendingNewAnchor !== null) return false;
+	if (!sessions.rows.some((r) => r.sessionId === anchorId)) return false;
+	if (!sendToDaemon({ type: "new_session", session_id: anchorId })) return false;
+	pendingNewAnchor = anchorId;
 	showHome();
 	return true;
 }

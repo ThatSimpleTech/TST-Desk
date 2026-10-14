@@ -9,6 +9,7 @@ import { onEvent } from "./connection-status.svelte.js";
 import { pending } from "./approval-store.svelte.js";
 import { chat, selectSession } from "./chat-store.svelte.js";
 import { isTauri } from "./open-file";
+import { isBridged } from "./bridged-id";
 import { focusSession } from "./session-status.svelte.js";
 import { selectRow, sessions } from "./sessions.svelte.js";
 import {
@@ -79,11 +80,13 @@ export function startCoworkerIndicator(injected?: CoworkerIndicatorBridge): () =
 	};
 }
 
+// The badge and the tray count what runs on this computer (TD-5015):
+// another computer's sessions never light this computer's tray.
 function seedStates(): void {
 	for (const row of sessions.rows) {
-		sessionStates.set(row.sessionId, row.state);
+		if (!isBridged(row.sessionId)) sessionStates.set(row.sessionId, row.state);
 	}
-	if (chat.sessionId !== null && chat.turnState !== null) {
+	if (chat.sessionId !== null && chat.turnState !== null && !isBridged(chat.sessionId)) {
 		sessionStates.set(chat.sessionId, chat.turnState);
 	}
 }
@@ -92,12 +95,12 @@ function ingest(event: DaemonEventUnion): void {
 	if (event.type === "session_list") {
 		sessionStates.clear();
 		for (const row of event.sessions) {
-			sessionStates.set(row.session_id, row.state);
+			if (!isBridged(row.session_id)) sessionStates.set(row.session_id, row.state);
 		}
 		syncBadge();
 		return;
 	}
-	if (event.type === "session_state") {
+	if (event.type === "session_state" && !isBridged(event.session_id)) {
 		sessionStates.set(event.session_id, event.state);
 		syncBadge();
 	}

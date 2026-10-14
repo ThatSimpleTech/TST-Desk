@@ -183,9 +183,11 @@ export function showCancel(turnState: SessionState["state"] | null): boolean {
   return turnState === "running" || turnState === "awaiting_approval";
 }
 
-/** The composer sends only when a session is bound and the socket is live. */
-export function canSend(sessionId: string | null, wsState: string): boolean {
-  return sessionId !== null && wsState === "connected";
+/** The composer sends only when a session is bound and the socket is live,
+ *  and, for another computer's session, while that computer is connected
+ *  (TD-5015; `machineUp` is always true for this computer's own). */
+export function canSend(sessionId: string | null, wsState: string, machineUp: boolean = true): boolean {
+  return sessionId !== null && wsState === "connected" && machineUp;
 }
 
 /** Turn-duration line (TD-1607). The wording lives in `duration.ts` so the

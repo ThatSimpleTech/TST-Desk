@@ -106,6 +106,7 @@ import {
   selectRow,
   newSession,
   newSessionInWorkspace,
+  newSessionFrom,
   setPickForNewSession,
   activateRailFunction,
   stateTone,
@@ -592,6 +593,7 @@ describe("presentation helpers", () => {
       title: null,
       preset: "",
       busy: false,
+      machine: null,
     };
     expect(rowTitle(row)).toBe("abc12345");
     expect(rowSubtitle(row, now)).toBe("api-server · 1h");
@@ -632,6 +634,7 @@ describe("presentation helpers", () => {
       title: null,
       preset: "budget",
       busy: false,
+      machine: null,
     };
     expect(rowSubtitle(row, now)).toBe("api-server · budget · 1h");
   });
@@ -647,6 +650,7 @@ describe("presentation helpers", () => {
       title: "Fix the rail titles",
       preset: "",
       busy: false,
+      machine: null,
     };
     expect(rowTitle(row)).toBe("Fix the rail titles");
   });
@@ -1008,5 +1012,80 @@ describe("a moved session keeps its binding", () => {
     mocks.chatState.sessionId = null;
     emit(sessionList([["s-live", "2026-08-14T09:00:00Z", "idle", "/ws/beta"]]));
     expect(mocks.retargets).toEqual([]);
+  });
+});
+
+describe("sessions on another computer (TD-5015)", () => {
+  const MCH = "mch_0123456789ab";
+  const REMOTE = `r1:${MCH}`;
+
+  it("tags each row with its computer, from the summary or the id", () => {
+    const event = sessionList([
+      ["own", "2026-08-14T09:00:00Z"],
+      [REMOTE, "2026-08-14T10:00:00Z"],
+    ]);
+    emit(event);
+    expect(sessions.rows.map((r) => [r.sessionId, r.machine])).toEqual([
+      [REMOTE, MCH],
+      ["own", null],
+    ]);
+  });
+
+  it("keeps a row's open menu, confirm and move picker across a refresh while the row is listed", () => {
+    emit(sessionList([["s-live", "2026-08-14T09:00:00Z"], [REMOTE, "2026-08-14T10:00:00Z"]]));
+    toggleRowMenu("s-live");
+    // Remote rows refresh the list often; that must not close the menu.
+    emit(sessionList([["s-live", "2026-08-14T09:00:00Z"], [REMOTE, "2026-08-14T10:05:00Z"]]));
+    expect(sessions.menuFor).toBe("s-live");
+    requestDelete(REMOTE);
+    emit(sessionList([["s-live", "2026-08-14T09:00:00Z"], [REMOTE, "2026-08-14T10:06:00Z"]]));
+    expect(sessions.confirmDeleteFor).toBe(REMOTE);
+    // …and clears them once the row is gone.
+    emit(sessionList([["s-live", "2026-08-14T09:00:00Z"]]));
+    expect(sessions.confirmDeleteFor).toBeNull();
+    requestMove("s-live");
+    emit(sessionList([["s-live", "2026-08-14T09:00:00Z"]]));
+    expect(sessions.moveFor).toBe("s-live");
+    emit(sessionList([]));
+    expect(sessions.moveFor).toBeNull();
+  });
+
+  it("starts a session on another computer from one of its rows", () => {
+    emit(sessionList([["own", "2026-08-14T09:00:00Z"], [REMOTE, "2026-08-14T10:00:00Z", "idle", "/remote/proj"]]));
+    expect(newSessionFrom("unknown-anchor")).toBe(false);
+    expect(newSessionFrom(REMOTE)).toBe(true);
+    expect(mocks.sent).toEqual([{ type: "new_session", session_id: REMOTE }]);
+    expect(newSessionFrom(REMOTE)).toBe(false); // one in flight
+    // A local session appearing meanwhile is not the new one.
+    emit(sessionState("local-fresh", "running"));
+    expect(mocks.chatSelects).toEqual([]);
+    emit(sessionState(`fresh:${MCH}`, "idle"));
+    expect(mocks.chatSelects).toEqual([[`fresh:${MCH}`, "idle"]]);
+    expect(mocks.focuses.at(-1)).toEqual({ id: `fresh:${MCH}`, state: "idle", workspacePath: "/remote/proj" });
+  });
+
+  it("does not take another computer's session for a local new session", () => {
+    emit(sessionList([["own", "2026-08-14T09:00:00Z"]]));
+    mocks.chatState.sessionId = "own";
+    newSession();
+    emit(sessionState(`other:${MCH}`, "running"));
+    expect(mocks.chatSelects).toEqual([]);
+    emit(sessionState("fresh-own", "running"));
+    expect(mocks.chatSelects).toEqual([["fresh-own", "running"]]);
+  });
+
+  it("anchors an unbound New on this computer's own newest row", () => {
+    emit(sessionList([["own", "2026-08-14T09:00:00Z"], [REMOTE, "2026-08-14T10:00:00Z"]]));
+    mocks.chatState.sessionId = null;
+    expect(newSession()).toBe(true);
+    expect(mocks.sent).toEqual([{ type: "new_session", session_id: "own" }]);
+  });
+
+  it("offers no move for another computer's row", () => {
+    emit(sessionList([[REMOTE, "2026-08-14T10:00:00Z", "idle", "/remote/proj"]]));
+    mocks.workspacesState.entries = [{ path: "/ws/beta", lastSeen: "2026-08-13T10:00:00Z" }];
+    expect(moveTargets(REMOTE)).toEqual([]);
+    requestMove(REMOTE);
+    expect(sessions.moveFor).toBeNull();
   });
 });

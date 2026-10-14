@@ -554,6 +554,14 @@ describe("composer and control predicates", () => {
     expect(canSend("s1", "reconnecting")).toBe(false);
     expect(canSend("s1", "disconnected")).toBe(false);
   });
+
+  it("composer waits while the session's computer is not connected (TD-5015)", () => {
+    const remote = "s1:mch_0123456789ab";
+    expect(canSend(remote, "connected", true)).toBe(true);
+    expect(canSend(remote, "connected", false)).toBe(false);
+    // The hub's own socket still has to be up.
+    expect(canSend(remote, "reconnecting", true)).toBe(false);
+  });
 });
 
 describe("first-token watchdog (TD-1713)", () => {

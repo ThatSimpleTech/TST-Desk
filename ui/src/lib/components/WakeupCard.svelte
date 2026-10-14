@@ -1,7 +1,7 @@
 <script lang="ts">
 	// Wake-up card (TD-4303): presentational view of autonomy_summary.
 	// One control opens the ledger in the OS editor and copies the branch.
-	import { session } from "../session-status.svelte.js";
+	import { localWorkspacePath } from "../session-status.svelte.js";
 	import { wakeup } from "../wakeup.svelte.js";
 	import { openBranchAndLedger } from "../wakeup";
 
@@ -9,7 +9,9 @@
 
 	async function openBoth(): Promise<void> {
 		if (wakeup.summary === null) return;
-		const result = await openBranchAndLedger(wakeup.summary, session.workspacePath);
+		// Another computer's ledger is on that computer: only the branch is
+		// copied (TD-5015).
+		const result = await openBranchAndLedger(wakeup.summary, localWorkspacePath());
 		copied = result.copied;
 	}
 </script>

@@ -5,16 +5,30 @@
 // cost accumulation with the per-tier breakdown, boundary updates, and
 // the picker/set-tier actions it sends back.
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { DEFAULT_ATTACHMENT_LIMITS } from "./attachments";
 import type { ProtocolClient } from "./client";
+
+// The last workspace is a host file; record what the store would write.
+const lastWorkspace = vi.hoisted(() => ({ persisted: [] as string[] }));
+vi.mock("./last-workspace", () => ({
+  persistLastWorkspace: (path: string) => {
+    lastWorkspace.persisted.push(path);
+    return Promise.resolve();
+  },
+}));
+
 import {
   session,
   bindClient,
+  focusSession,
+  followingRemoteSession,
   ingestEvent,
   liveModelLabel,
+  localWorkspacePath,
   openWorkspace,
   resetSession,
+  retargetWorkspace,
   setPlan,
   setSessionPreset,
   setTier,
@@ -75,6 +89,41 @@ describe("session adoption", () => {
     bindClient(null);
     openWorkspace("/x");
     expect(sent).toEqual([]);
+  });
+});
+
+describe("sessions on another computer (TD-5015)", () => {
+  const REMOTE = "s9:mch_0123456789ab";
+
+  beforeEach(() => {
+    lastWorkspace.persisted.length = 0;
+  });
+
+  it("never adopts another computer's session as the first one heard of", () => {
+    ingestEvent(sessionState(REMOTE));
+    expect(session.sessionId).toBeNull();
+    expect(attached).toEqual([]);
+    ingestEvent(sessionState("s1"));
+    expect(session.sessionId).toBe("s1");
+  });
+
+  it("follows a remote session it was pointed at, without touching the last workspace", () => {
+    focusSession(REMOTE, "idle", "/remote/proj");
+    expect(session.sessionId).toBe(REMOTE);
+    expect(session.workspacePath).toBe("/remote/proj");
+    expect(followingRemoteSession()).toBe(true);
+    expect(localWorkspacePath()).toBeNull();
+    retargetWorkspace(REMOTE, "/remote/other");
+    expect(session.workspacePath).toBe("/remote/other");
+    expect(lastWorkspace.persisted).toEqual([]);
+  });
+
+  it("still remembers this computer's own workspace", () => {
+    focusSession("s1", "idle", "/own/proj");
+    retargetWorkspace("s1", "/own/next");
+    expect(lastWorkspace.persisted).toEqual(["/own/proj", "/own/next"]);
+    expect(followingRemoteSession()).toBe(false);
+    expect(localWorkspacePath()).toBe("/own/next");
   });
 });
 

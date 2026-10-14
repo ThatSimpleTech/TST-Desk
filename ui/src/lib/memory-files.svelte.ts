@@ -60,6 +60,7 @@ function reduce(event: DaemonEventUnion): void {
 	}
 	if (
 		event.type === "error" &&
+		!event.machine && // TD-5015: another computer's error, not this column's
 		(event.code === "not_a_memory_file" || event.code === "memory_cap")
 	) {
 		memoryFiles.error = event.message;

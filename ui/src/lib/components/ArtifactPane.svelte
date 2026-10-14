@@ -17,8 +17,14 @@
 		workspaceOpenPath,
 	} from '../artifacts';
 	import { artifacts, selectArtifact } from '../artifacts.svelte.js';
+	import { machineNameFor } from '../machines.svelte.js';
+	import { staysOnCopy } from '../machines';
 
-	let empty = $derived(artifactsEmptyCopy(artifacts.sessionId !== null));
+	// Another computer's artifacts stay there (TD-5015).
+	let remoteName = $derived(machineNameFor(artifacts.sessionId));
+	let empty = $derived(
+		remoteName !== null ? staysOnCopy(remoteName) : artifactsEmptyCopy(artifacts.sessionId !== null),
+	);
 	let preview = $derived(artifacts.preview);
 	let canOpen = $derived(
 		preview !== null &&
@@ -37,7 +43,7 @@
 	}
 
 	async function openInOs(): Promise<void> {
-		if (preview === null) return;
+		if (preview === null || remoteName !== null) return;
 		await openArtifactInEditor(artifacts.workspacePath, preview.path, preview.artifactId);
 	}
 </script>

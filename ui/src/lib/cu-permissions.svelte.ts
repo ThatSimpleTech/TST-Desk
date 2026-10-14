@@ -12,6 +12,7 @@
 
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
 import { isTauri } from "./open-file";
+import { isBridged } from "./bridged-id";
 import type { CuPermissions, DaemonEventUnion } from "./protocol";
 
 const WINDOWS_REFUSE = new Set(["uipi", "secure_desktop"]);
@@ -142,6 +143,9 @@ function reduce(event: DaemonEventUnion): void {
 		applyReport(event);
 		return;
 	}
+	// Another computer's tool result is about that computer's grants; this
+	// panel describes this one's (TD-5015).
+	if (event.type === "tool_result" && isBridged(event.session_id)) return;
 	// First deny still opens the panel if the connection event is late —
 	// the tool result is the typed error the daemon already sent.
 	if (event.type === "tool_result" && event.error_code === "permission_denied") {

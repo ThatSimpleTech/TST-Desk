@@ -15,6 +15,7 @@
 		startWorkspaces,
 	} from '../workspaces.svelte.js';
 	import { onMount } from 'svelte';
+	import { machineNameFor } from '../machines.svelte.js';
 	import Icon from './Icon.svelte';
 
 	interface Props {
@@ -43,6 +44,15 @@
 	let displayName = $derived(
 		session.workspacePath !== null ? workspaceName(session.workspacePath) : null,
 	);
+
+	// Another computer's session: its folder is there, and the menu and the
+	// folder dialog are this computer's (TD-5015). The name stays readable.
+	let remoteName = $derived(machineNameFor(session.sessionId));
+	let buttonTitle = $derived(
+		remoteName !== null
+			? `${session.workspacePath ?? ''} on ${remoteName}`.trim()
+			: (session.workspacePath ?? 'Open a workspace'),
+	);
 </script>
 
 <!-- The name opens the recents menu (TD-1103 quick switch + per-entry remove);
@@ -54,14 +64,15 @@
 		aria-haspopup="menu"
 		aria-expanded={workspaces.menuOpen}
 		onclick={toggleWorkspaceMenu}
-		title={session.workspacePath ?? 'Open a workspace'}
+		disabled={remoteName !== null}
+		title={buttonTitle}
 	>
 		<span class="folder"><Icon name="folder" size={12} /></span>
 		<span>{displayName ?? 'Open workspace…'}</span>
 		<span class="chevron" aria-hidden="true"><Icon name="chevron-down" size={10} /></span>
 	</button>
 
-	{#if workspaces.menuOpen}
+	{#if workspaces.menuOpen && remoteName === null}
 		<button
 			class="ws-backdrop"
 			type="button"
@@ -125,8 +136,12 @@
 		white-space: nowrap;
 	}
 
-	.workspace:hover {
+	.workspace:hover:not(:disabled) {
 		background: var(--color-sunken);
+	}
+
+	.workspace:disabled {
+		cursor: default;
 	}
 
 	.folder {

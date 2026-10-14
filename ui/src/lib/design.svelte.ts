@@ -7,6 +7,7 @@
 // chip when `design_hit` arrives.
 
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
+import { isBridged } from "./bridged-id";
 import {
 	applyPicks,
 	canRunDesign,
@@ -80,6 +81,7 @@ export function toggleDesign(): boolean {
 		design.enabled = false;
 		return false;
 	}
+	if (isBridged(session.sessionId)) return false;
 	if (!canRunDesign({ actuating: design.actuating, hasPreview: screen.preview !== null })) {
 		return false;
 	}
@@ -130,6 +132,8 @@ export function clearPicks(): void {
 }
 
 function reduce(event: DaemonEventUnion): void {
+	// Design picks are made on this computer's screen preview (TD-5015).
+	if ("session_id" in event && isBridged(event.session_id)) return;
 	if (event.type === "tool_call") {
 		rememberTool(event);
 		return;

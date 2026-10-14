@@ -13,6 +13,7 @@
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
 import { openWorkspace } from "./session-status.svelte.js";
 import type { DaemonEventUnion } from "./protocol";
+import { isBridged } from "./bridged-id";
 
 /** localStorage key for paths the user removed from the menu. */
 export const HIDDEN_STORAGE_KEY = "tstdesk.hiddenRecentWorkspaces";
@@ -64,8 +65,10 @@ function reduce(event: DaemonEventUnion): void {
 	}
 	if (event.type !== "session_list") return;
 	// Dedupe sessions by workspace path, keeping the newest update per path.
+	// Recents open here, so only this computer's own rows count (TD-5015).
 	const byPath = new Map<string, string>();
 	for (const s of event.sessions) {
+		if (isBridged(s.session_id)) continue;
 		const prev = byPath.get(s.workspace_path);
 		if (prev === undefined || s.updated_at > prev) byPath.set(s.workspace_path, s.updated_at);
 	}
