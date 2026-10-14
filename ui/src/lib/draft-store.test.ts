@@ -211,6 +211,43 @@ describe("draft store", () => {
     expect(JSON.parse(storage.getItem(draftKey("s2")) ?? "null")).toMatchObject({ text: "for s2" });
   });
 
+  it("a window that changed nothing never overwrites another window's saved draft", () => {
+    // The main window and a session window both follow s1, on one storage.
+    const storage = memoryStorage();
+    const main = mounted(() => storage);
+    const popout = mounted(() => storage);
+    popout.state.draft = "typed in the session window";
+    popout.store.keepDraft();
+    vi.advanceTimersByTime(DRAFT_SAVE_DELAY_MS);
+
+    main.store.keepDraft();
+    main.store.selectSession("s2", null);
+    main.store.dispose();
+
+    expect(mounted(() => storage).state.draft).toBe("typed in the session window");
+  });
+
+  it("a draft another window sent does not come back from a window that restored it", () => {
+    const storage = memoryStorage();
+    storage.setItem(draftKey("s1"), JSON.stringify({ text: "send me", queued: [] }));
+    const sender = mounted(() => storage);
+    const viewer = mounted(() => storage);
+    expect(viewer.state.draft).toBe("send me");
+
+    sender.store.sendUserMessage("send me");
+    sender.state.draft = "";
+    sender.store.keepDraft();
+    sender.store.applyEvent(userTurn("s1", "send me"));
+    expect(storage.getItem(draftKey("s1"))).toBeNull();
+
+    // The viewer's pane effect re-runs with nothing typed, then it goes away.
+    viewer.store.keepDraft();
+    vi.advanceTimersByTime(DRAFT_SAVE_DELAY_MS);
+    viewer.store.dispose();
+
+    expect(storage.getItem(draftKey("s1"))).toBeNull();
+  });
+
   it("an emptied draft removes its key instead of storing blanks", () => {
     const storage = memoryStorage();
     const { store, state } = mounted(() => storage);

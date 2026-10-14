@@ -50,9 +50,10 @@ export interface ChatState {
   /** Seconds the last turn took, as measured by the daemon on turn_complete.
    *  The UI never times turns itself (AGENTS §6). Cleared on the next send. */
   lastTurnDuration: number | null;
-  /** The last turn_complete's error_code, cleared with lastTurnDuration.
-   *  "interrupted_by_restart" is a turn the daemon sealed after a restart
-   *  cut it off, and the pane offers Continue for it (TD-5019). */
+  /** The last turn_complete's error_code, cleared with lastTurnDuration and
+   *  when another turn starts. "interrupted_by_restart" is a turn the daemon
+   *  sealed after a restart cut it off, and the pane offers Continue for it
+   *  (TD-5019). */
   lastTurnError: string | null;
   /** The composer's text. Here rather than in the pane so each session keeps
    *  its own and a send the daemon refuses can come back to it (TD-5019). */
@@ -167,8 +168,9 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
   // Texts on their way to the daemon, until it starts or refuses each one.
   const sending: string[] = [];
 
-  function saveDraftNow(): void {
-    if (state.sessionId !== null) drafts.saveNow(state.sessionId, state.draft, state.queued);
+  /** Write the bound session's waiting draft save now, not after the debounce. */
+  function flushDraft(): void {
+    if (state.sessionId !== null) drafts.flush(state.sessionId);
   }
 
   // Closure-level so retryLastUserMessage can call it without `this` —
@@ -240,7 +242,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
   function switchSession(sessionId: string | null, turnState: SessionState["state"] | null): void {
     const moving = state.sessionId !== sessionId;
     // Saved before the bind clears the queue, so the rows leave with it.
-    if (moving) saveDraftNow();
+    if (moving) flushDraft();
     applyBind(state, { queue, wait, deps, onUnbind: resetDisclosures }, sessionId, turnState);
     forks.clear();
     if (moving) {
@@ -265,7 +267,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     switchSession,
     hold,
     sending,
-    saveDraftNow,
+    flushDraft,
   };
 
   return {
@@ -360,7 +362,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     removeQueuedMessage: queue.remove,
 
     dispose(): void {
-      saveDraftNow();
+      flushDraft();
       if (state.sessionId !== null) deps.detach(state.sessionId);
       deps.onBind?.(null);
       state.sessionId = null;

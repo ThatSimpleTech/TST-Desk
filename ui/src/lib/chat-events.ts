@@ -34,8 +34,8 @@ export interface ChatEventContext {
   hold: BindHold;
   /** Texts sent and not yet started or refused (TD-5023, draft-store.ts). */
   sending: string[];
-  /** Write the bound session's draft now (TD-5019). */
-  saveDraftNow: () => void;
+  /** Write the bound session's waiting draft save now (TD-5019). */
+  flushDraft: () => void;
 }
 
 /** Re-decide the pane's session from a list and apply the choice. */
@@ -121,13 +121,16 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
   switch (event.type) {
     case "user_turn": {
       if (event.session_id !== state.sessionId) return;
-      // The daemon took one of our sends: it leaves the saved draft now,
-      // not on the next keystroke (TD-5019).
-      if (takeSent(ctx.sending, event.content)) ctx.saveDraftNow();
+      // The daemon took one of our sends: the composer it emptied is saved
+      // now, not after the debounce (TD-5019).
+      if (takeSent(ctx.sending, event.content)) ctx.flushDraft();
       const already = state.messages.find(
         (m) => m.role === "user" && m.turnId === event.turn_id,
       );
       if (already !== undefined) return;
+      // A new turn, from this pane or another device: the cut one is no
+      // longer the last, so its Continue goes (TD-5019).
+      state.lastTurnError = null;
       const last = state.messages[state.messages.length - 1];
       if (
         last !== undefined &&

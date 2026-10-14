@@ -31,10 +31,13 @@ interface SavedDraft {
 
 export interface DraftStore {
   /** Save once DRAFT_SAVE_DELAY_MS pass without another call. The values
-   *  are read now, so an effect calling this tracks what it saves. */
+   *  are read now, so an effect calling this tracks what it saves. What
+   *  this window last restored or wrote for the session is not written
+   *  again. */
   schedule(sessionId: string, draft: string, queued: readonly QueuedMessage[]): void;
-  /** Save now, replacing any save still waiting for this session. */
-  saveNow(sessionId: string, draft: string, queued: readonly QueuedMessage[]): void;
+  /** Write the save still waiting for this session now. With none waiting
+   *  nothing is written: this window changed nothing since. */
+  flush(sessionId: string): void;
   /** The composer text a session comes back with: its queued rows, then its
    *  draft, a blank line apart. "" when nothing was kept or it can't be read. */
   restore(sessionId: string): string;
@@ -57,10 +60,28 @@ function isSavedDraft(value: unknown): value is SavedDraft {
   return typeof text === "string" && Array.isArray(queued) && queued.every((row) => typeof row === "string");
 }
 
+/** A session's saved rows then its draft, as one composer text. */
+function readDraft(storage: () => Storage | null, sessionId: string): string {
+  let saved: unknown;
+  try {
+    const raw = storage()?.getItem(draftKey(sessionId)) ?? null;
+    saved = raw === null ? null : JSON.parse(raw);
+  } catch {
+    return "";
+  }
+  if (!isSavedDraft(saved)) return "";
+  return [...saved.queued.map((row) => row.trim()), saved.text].filter((part) => part.trim() !== "").join("\n\n");
+}
+
 /** `storage` is a getter, not a Storage: reading `localStorage` itself
  *  throws where storage is disabled, and that throw belongs in the guard. */
 export function createDraftStore(storage: () => Storage | null = browserStorage): DraftStore {
   let pending: { sessionId: string; saved: SavedDraft; timer: ReturnType<typeof setTimeout> } | null = null;
+  // What this window last restored or wrote, per session. Windows share
+  // storage, and a session window can follow the session the main one shows:
+  // a copy left untouched here must not overwrite what the other one saved
+  // since, or bring back text it already sent.
+  const held = new Map<string, string>();
 
   function write(sessionId: string, saved: SavedDraft): void {
     try {
@@ -71,13 +92,14 @@ export function createDraftStore(storage: () => Storage | null = browserStorage)
       } else {
         store.setItem(draftKey(sessionId), JSON.stringify(saved));
       }
+      held.set(sessionId, JSON.stringify(saved));
     } catch {
       // Storage unavailable or full: the text stays in the composer, it
       // just won't outlive this window. Not worth a notice of its own.
     }
   }
 
-  function flush(): void {
+  function writePending(): void {
     if (pending === null) return;
     clearTimeout(pending.timer);
     const { sessionId, saved } = pending;
@@ -89,7 +111,7 @@ export function createDraftStore(storage: () => Storage | null = browserStorage)
   function settle(sessionId: string): void {
     if (pending === null) return;
     if (pending.sessionId !== sessionId) {
-      flush();
+      writePending();
       return;
     }
     clearTimeout(pending.timer);
@@ -100,25 +122,20 @@ export function createDraftStore(storage: () => Storage | null = browserStorage)
     schedule(sessionId, draft, queued) {
       const saved = snapshot(draft, queued);
       settle(sessionId);
-      pending = { sessionId, saved, timer: setTimeout(flush, DRAFT_SAVE_DELAY_MS) };
+      if (held.get(sessionId) === JSON.stringify(saved)) return;
+      pending = { sessionId, saved, timer: setTimeout(writePending, DRAFT_SAVE_DELAY_MS) };
     },
 
-    saveNow(sessionId, draft, queued) {
-      settle(sessionId);
-      write(sessionId, snapshot(draft, queued));
+    flush(sessionId) {
+      if (pending?.sessionId === sessionId) writePending();
     },
 
     restore(sessionId) {
-      if (pending?.sessionId === sessionId) flush();
-      let saved: unknown;
-      try {
-        const raw = storage()?.getItem(draftKey(sessionId)) ?? null;
-        saved = raw === null ? null : JSON.parse(raw);
-      } catch {
-        return "";
-      }
-      if (!isSavedDraft(saved)) return "";
-      return [...saved.queued.map((row) => row.trim()), saved.text].filter((part) => part.trim() !== "").join("\n\n");
+      if (pending?.sessionId === sessionId) writePending();
+      const text = readDraft(storage, sessionId);
+      // The composer comes back holding this, so a save of it is no change.
+      held.set(sessionId, JSON.stringify({ text, queued: [] } satisfies SavedDraft));
+      return text;
     },
   };
 }
@@ -133,10 +150,10 @@ export function createDraftStore(storage: () => Storage | null = browserStorage)
  *  only bounds what an echo that never matched would leave behind. */
 const MAX_SENDING = 8;
 
-/** A send went to the daemon. Attachment-only sends carry no text to give
- *  back, so they are not tracked. */
+/** A send went to the daemon. An attachment-only send is noted too, as "":
+ *  it has no text to give back, but a refusal of it must not take another
+ *  send's text instead. */
 export function noteSent(sending: string[], text: string): void {
-  if (text === "") return;
   sending.push(text);
   if (sending.length > MAX_SENDING) sending.shift();
 }
@@ -145,7 +162,7 @@ export function noteSent(sending: string[], text: string): void {
  *  The daemon folds a text attachment into the message after a blank line,
  *  so that echo starts with what was sent rather than equalling it. */
 export function takeSent(sending: string[], content: string): boolean {
-  const index = sending.findIndex((text) => content === text || content.startsWith(`${text}\n\n`));
+  const index = sending.findIndex((text) => text !== "" && (content === text || content.startsWith(`${text}\n\n`)));
   if (index < 0) return false;
   sending.splice(index, 1);
   return true;
@@ -161,7 +178,9 @@ export function refusedSend(sending: string[]): string | null {
 }
 
 /** Put a refused text back in the composer, ahead of anything typed since,
- *  and take its echo row out of the transcript: it was never sent. */
+ *  and take its echo row out of the transcript: it was never sent. An
+ *  attachment-only send gives back no text (its bytes were never kept), but
+ *  its row still goes. */
 export function returnToDraft(state: Pick<ChatState, "draft" | "messages">, text: string): void {
   for (let i = state.messages.length - 1; i >= 0; i--) {
     const row = state.messages[i];
@@ -170,5 +189,6 @@ export function returnToDraft(state: Pick<ChatState, "draft" | "messages">, text
       break;
     }
   }
+  if (text === "") return;
   state.draft = state.draft.trim() === "" ? text : `${text}\n\n${state.draft}`;
 }

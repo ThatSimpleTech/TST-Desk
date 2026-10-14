@@ -150,6 +150,20 @@ describe("a turn cut off by a restart", () => {
     expect(state.lastTurnError).toBeNull();
   });
 
+  it("a turn started on another device takes the Continue away", () => {
+    const { store, state, userSends } = bound();
+    replayCutTurn(store);
+    store.applyEvent(turnComplete("interrupted_by_restart"));
+    expect(state.lastTurnError).toBe("interrupted_by_restart");
+
+    // Continue clicked on the phone: this pane only sees the daemon's echo.
+    store.applyEvent({ type: "user_turn", session_id: "s1", turn_id: "t2", content: "Continue", seq: 12 });
+    store.applyEvent({ type: "assistant_delta", session_id: "s1", delta: "Picking up", seq: 13 });
+
+    expect(state.lastTurnError).toBeNull();
+    expect(userSends()).toEqual([]);
+  });
+
   it("a session switch forgets the last turn's error", () => {
     const { store, state } = bound();
     store.applyEvent(turnComplete("interrupted_by_restart"));
@@ -213,6 +227,24 @@ describe("a send refused while the daemon drains for a restart", () => {
     expect(reply?.complete).toBe(false);
     expect(showCancel(state.turnState)).toBe(true);
     expect(state.draft).toBe("steer now");
+  });
+
+  it("a refused attachment-only send takes only its own row back", () => {
+    const { store, state } = bound();
+    store.applyEvent({ type: "assistant_delta", session_id: "s1", delta: "Working", seq: 3 });
+    // Accepted before the hold, still waiting in the daemon's own queue.
+    store.sendUserMessage("steer");
+    store.sendQueuedNow(state.queued[0].id);
+    store.sendUserMessage("", [{ name: "shot.png", size: 1, content_b64: "eA==" }]);
+    store.sendQueuedNow(state.queued[0].id);
+
+    store.applyEvent(refusal("daemon_draining"));
+
+    // It had no text to give back, and "steer" was never refused.
+    expect(state.draft).toBe("");
+    expect(state.messages.filter((m) => m.role === "user").map((m) => m.text)).toEqual(["steer"]);
+    store.applyEvent({ type: "user_turn", session_id: "s1", turn_id: "t2", content: "steer", seq: 11 });
+    expect(state.messages.filter((m) => m.role === "user").map((m) => m.turnId)).toEqual(["t2"]);
   });
 
   it("ignores a refusal addressed at another session", () => {
