@@ -196,6 +196,24 @@ def test_empty_stray_system_message_adds_no_blank_lines() -> None:
     assert sent == [{"role": "system", "content": "PROMPT"}, {"role": "user", "content": "q"}]
 
 
+def test_echoed_reasoning_details_survive_the_system_merge() -> None:
+    """TD-1903's echo rides on the assistant message, which the merge
+    passes through untouched, so one system message and the array coexist."""
+    details = [{"type": "reasoning.encrypted", "data": "opaque", "index": 0}]
+    call = ToolCall(id="c1", function=FunctionCall(name="fs_read", arguments="{}"))
+    messages = [
+        ChatMessage(role="system", content="PROMPT"),
+        ChatMessage(role="system", content="SUMMARY"),
+        ChatMessage(role="user", content="read it"),
+        ChatMessage(role="assistant", content=None, tool_calls=[call], reasoning_details=details),
+        ChatMessage(role="tool", content="file text", tool_call_id="c1"),
+    ]
+    sent = body_messages(messages)
+    strict_template(sent)
+    assert [m["role"] for m in sent] == ["system", "user", "assistant", "tool"]
+    assert sent[2]["reasoning_details"] == details
+
+
 # ── Through the real loop ────────────────────────────────────────────
 
 

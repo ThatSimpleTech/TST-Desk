@@ -229,6 +229,17 @@ def test_image_bearing_calls_teach_nothing() -> None:
     assert loop_module._calibration_observer(counter, messages, None) is None
 
 
+def test_calls_echoing_reasoning_details_teach_nothing() -> None:
+    """An encrypted reasoning blob's length is not its token cost (TD-1903)."""
+    counter = _calibrated(None)
+    details = [{"type": "reasoning.encrypted", "data": "Z" * 4_000, "index": 0}]
+    messages = [
+        ChatMessage(role="user", content="x" * 4_000),
+        ChatMessage(role="assistant", content="done", reasoning_details=details),
+    ]
+    assert loop_module._calibration_observer(counter, messages, None) is None
+
+
 # ── Loop: the next call sees calibrated counts ──────────────────────────
 
 

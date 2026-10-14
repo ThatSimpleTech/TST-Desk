@@ -712,10 +712,19 @@ async def _stream_and_parse(
 
 
 def _carries_non_text(messages: list[ChatMessage]) -> bool:
-    """True when any message has a part the estimate cannot see."""
+    """True when any message has a part the estimate cannot size.
+
+    That is an image part, or echoed ``reasoning_details`` (TD-1903):
+    the estimate counts the array's JSON, but the provider bills the
+    thinking it stands for, and an encrypted blob's length says nothing
+    about that.
+    """
     return any(
-        isinstance(message.content, list)
-        and any(part.get("type") != "text" for part in message.content)
+        bool(message.reasoning_details)
+        or (
+            isinstance(message.content, list)
+            and any(part.get("type") != "text" for part in message.content)
+        )
         for message in messages
     )
 
