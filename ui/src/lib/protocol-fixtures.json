@@ -2,7 +2,10 @@
   "hello": {
     "type": "hello",
     "token": "test-token-abc",
-    "version": 1
+    "version": 1,
+    "features": [
+      "machines"
+    ]
   },
   "open_workspace": {
     "type": "open_workspace",
@@ -469,7 +472,16 @@
     "code": "ABCD2345",
     "device_name": "Pixel",
     "version": 1,
-    "replaces": null
+    "replaces": null,
+    "kind": "phone"
+  },
+  "pair_machine": {
+    "type": "pair",
+    "code": "ABCD2345",
+    "device_name": "desk",
+    "version": 1,
+    "replaces": null,
+    "kind": "machine"
   },
   "start_pairing": {
     "type": "start_pairing"
@@ -480,6 +492,31 @@
   "remove_remote_device": {
     "type": "remove_remote_device",
     "device_id": "dev_0123456789ab"
+  },
+  "add_machine": {
+    "type": "add_machine",
+    "link": "tstdesk://pair?h=100.64.1.5&p=39079&c=ABCD2345&n=ezer",
+    "host": null,
+    "port": null,
+    "code": null
+  },
+  "add_machine_address": {
+    "type": "add_machine",
+    "link": null,
+    "host": "100.64.1.5",
+    "port": 39079,
+    "code": "ABCD-2345"
+  },
+  "remove_machine": {
+    "type": "remove_machine",
+    "machine": "mch_0123456789ab"
+  },
+  "list_machines": {
+    "type": "list_machines"
+  },
+  "reconnect_machine": {
+    "type": "reconnect_machine",
+    "machine": "mch_0123456789ab"
   },
   "ready": {
     "type": "ready",
@@ -769,14 +806,16 @@
     "seq": 13,
     "session_id": null,
     "code": "test",
-    "message": "fail"
+    "message": "fail",
+    "machine": null
   },
   "error_with_session": {
     "type": "error",
     "seq": 14,
     "session_id": "sess-1",
     "code": "test",
-    "message": "fail"
+    "message": "fail",
+    "machine": null
   },
   "shell_output": {
     "type": "shell_output",
@@ -984,6 +1023,7 @@
         "event_count": 0,
         "archived": false,
         "starred": false,
+        "machine": null,
         "title": "hello world",
         "preset": "tst-default",
         "busy": false
@@ -997,6 +1037,7 @@
         "event_count": 12,
         "archived": true,
         "starred": true,
+        "machine": null,
         "title": null,
         "preset": "",
         "busy": false
@@ -1113,8 +1154,37 @@
       "name": "Pixel",
       "paired_at": "2026-10-14T10:41:00Z",
       "last_seen": null,
-      "connected": false
+      "connected": false,
+      "kind": "phone"
     }
+  },
+  "machine_list": {
+    "type": "machine_list",
+    "seq": 1,
+    "machines": [
+      {
+        "id": "mch_0123456789ab",
+        "name": "EZER",
+        "host": "100.64.1.5",
+        "port": 39079,
+        "status": "connected",
+        "last_seen": "2026-10-14T10:42:00Z",
+        "paired_at": "2026-10-14T10:41:00Z",
+        "same_computer": false,
+        "detail": null
+      },
+      {
+        "id": "mch_ba9876543210",
+        "name": "desk",
+        "host": "100.64.1.9",
+        "port": 39079,
+        "status": "unreachable",
+        "last_seen": null,
+        "paired_at": "2026-10-14T10:41:00Z",
+        "same_computer": true,
+        "detail": "Can't reach desk. Trying again in 30 s."
+      }
+    ]
   },
   "api_key_validated": {
     "type": "api_key_validated",
@@ -1630,7 +1700,9 @@
   },
   "hello_ack": {
     "type": "hello_ack",
-    "version": 1
+    "version": 1,
+    "machine_id": "mid_0123456789abcdef",
+    "desktop_name": "desk"
   },
   "pair_ok": {
     "type": "pair_ok",
@@ -1638,6 +1710,36 @@
     "device_id": "dev_0123456789ab",
     "device_name": "Pixel",
     "token": "0000000000000000000000000000000000000000000000000000000000000000",
-    "desktop_name": "desk"
-  }
+    "desktop_name": "desk",
+    "machine_id": "mid_0123456789abcdef"
+  },
+  "forwarded_verbs": [
+    "always_allow",
+    "approve",
+    "archive_session",
+    "attach",
+    "cancel",
+    "delete_session",
+    "deny",
+    "deny_verify",
+    "detach",
+    "end_session",
+    "fork_from",
+    "get_instruction_stack",
+    "list_sessions",
+    "memory_accept",
+    "memory_edit",
+    "memory_reject",
+    "new_session",
+    "rename_session",
+    "resume",
+    "run_verify",
+    "set_branch",
+    "set_plan",
+    "set_session_preset",
+    "set_session_star",
+    "set_tier",
+    "stop_turn",
+    "user_message"
+  ]
 }

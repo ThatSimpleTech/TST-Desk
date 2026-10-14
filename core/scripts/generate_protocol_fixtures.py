@@ -13,8 +13,10 @@ from pathlib import Path
 # Add core to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tstd.peer_policy import FORWARDED_VERBS
 from tstd.protocol import (
     PROTOCOL_VERSION,
+    AddMachine,
     AddPin,
     AlwaysAllow,
     ApiKeyValidated,
@@ -104,11 +106,14 @@ from tstd.protocol import (
     ListJobRuns,
     ListJobs,
     ListJobTemplates,
+    ListMachines,
     ListMemory,
     ListPins,
     ListPolicyRules,
     ListSessions,
     LogTrimmed,
+    MachineList,
+    MachineSummary,
     McpServerSummary,
     MemoryAccept,
     MemoryEdit,
@@ -130,7 +135,9 @@ from tstd.protocol import (
     PolicyRules,
     PolicyRuleSummary,
     Ready,
+    ReconnectMachine,
     RemoteDeviceSummary,
+    RemoveMachine,
     RemovePin,
     RemoveRemoteDevice,
     RenameSession,
@@ -192,11 +199,13 @@ from tstd.protocol import (
     UserTurn,
     ValidateApiKey,
     VerifyResult,
+    build_hello_ack,
+    build_pair_ok,
 )
 
 FIXTURES = {
     # Client messages
-    "hello": Hello(token="test-token-abc", version=1),
+    "hello": Hello(token="test-token-abc", version=1, features=["machines"]),
     "open_workspace": OpenWorkspace(path="/home/user/project"),
     "user_message": UserMessage(session_id="sess-1", content="hello world"),
     "fork_from": ForkFrom(session_id="sess-1", user_index=0, content="hello again"),
@@ -359,9 +368,17 @@ FIXTURES = {
     "set_remote_attach": SetRemoteAttach(enabled=True),
     # Phone pairing (TD-5014). `pair` is a first frame like `hello`.
     "pair": Pair(code="ABCD2345", device_name="Pixel", version=1),
+    # A hub pairing with another computer (TD-5015).
+    "pair_machine": Pair(code="ABCD2345", device_name="desk", version=1, kind="machine"),
     "start_pairing": StartPairing(),
     "cancel_pairing": CancelPairing(),
     "remove_remote_device": RemoveRemoteDevice(device_id="dev_0123456789ab"),
+    # Other computers (TD-5015). Loopback only; the code is a placeholder.
+    "add_machine": AddMachine(link="tstdesk://pair?h=100.64.1.5&p=39079&c=ABCD2345&n=ezer"),
+    "add_machine_address": AddMachine(host="100.64.1.5", port=39079, code="ABCD-2345"),
+    "remove_machine": RemoveMachine(machine="mch_0123456789ab"),
+    "list_machines": ListMachines(),
+    "reconnect_machine": ReconnectMachine(machine="mch_0123456789ab"),
     # Daemon events
     "ready": Ready(version="0.1.0", protocol_version=PROTOCOL_VERSION),
     "session_state": SessionState(session_id="sess-1", state="running", engine="native", seq=2),
@@ -784,6 +801,30 @@ FIXTURES = {
             id="dev_0123456789ab", name="Pixel", paired_at="2026-10-14T10:41:00Z"
         )
     ),
+    # One connected computer and one self-pair that is unreachable (TD-5015).
+    "machine_list": MachineList(
+        machines=[
+            MachineSummary(
+                id="mch_0123456789ab",
+                name="EZER",
+                host="100.64.1.5",
+                port=39079,
+                status="connected",
+                last_seen="2026-10-14T10:42:00Z",
+                paired_at="2026-10-14T10:41:00Z",
+            ),
+            MachineSummary(
+                id="mch_ba9876543210",
+                name="desk",
+                host="100.64.1.9",
+                port=39079,
+                status="unreachable",
+                paired_at="2026-10-14T10:41:00Z",
+                same_computer=True,
+                detail="Can't reach desk. Trying again in 30 s.",
+            ),
+        ]
+    ),
     "api_key_validated": ApiKeyValidated(ok=True, detail="Key accepted by provider."),
     # Diagnostics (TD-1104): connection-scoped like setup_state. Mixed rows so
     # consumers see every status — the fail row carries the concrete fix.
@@ -1148,17 +1189,18 @@ def main() -> None:
     fixtures = {}
     for name, msg in FIXTURES.items():
         fixtures[name] = json.loads(msg.model_dump_json())
-    # hello_ack is built as a plain dict, not a Pydantic model.
-    fixtures["hello_ack"] = {"type": "hello_ack", "version": PROTOCOL_VERSION}
+    # hello_ack is built as a plain dict, not a Pydantic model. machine_id
+    # and desktop_name say which computer answered (TD-5015).
+    fixtures["hello_ack"] = json.loads(
+        build_hello_ack(machine_id="mid_0123456789abcdef", desktop_name="desk")
+    )
     # pair_ok too (TD-5014). The key is a placeholder, never a real one.
-    fixtures["pair_ok"] = {
-        "type": "pair_ok",
-        "version": PROTOCOL_VERSION,
-        "device_id": "dev_0123456789ab",
-        "device_name": "Pixel",
-        "token": "0" * 64,
-        "desktop_name": "desk",
-    }
+    fixtures["pair_ok"] = json.loads(
+        build_pair_ok("dev_0123456789ab", "Pixel", "0" * 64, "desk", "mid_0123456789abcdef")
+    )
+    # Not a message: the verbs a hub forwards for bridged ids (TD-5015). A
+    # UI test pins its own list against this one.
+    fixtures["forwarded_verbs"] = sorted(FORWARDED_VERBS)
     output_path.write_text(json.dumps(fixtures, indent=2))
     print(f"Wrote {len(fixtures)} fixtures to {output_path}")
 
