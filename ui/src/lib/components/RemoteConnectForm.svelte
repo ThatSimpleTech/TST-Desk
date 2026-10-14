@@ -3,14 +3,20 @@
 	// while there is no working target. Pairing is the way in: scan the code
 	// the computer shows, or type it. The TD-3701 URL + token fields stay under
 	// "Use a token instead" for a computer that has not been paired with.
+	// A tstdesk://pair link the shell hands over is only offered, on a confirm
+	// card; it never pairs, or replaces the saved computer, by itself.
 	import {
+		acceptPairOffer,
 		connectRemote,
+		declinePairOffer,
 		pairFromTyped,
 		remoteAttach,
+		retrySavedConnection,
 		scanToPair,
 		useSavedTarget,
 	} from '../connection-status.svelte.js';
 	import { attachStore } from '../attach-store';
+	import { formatPairCode, linkAddress, pairOfferCopy } from '../pairing';
 
 	const durable = attachStore().durable;
 
@@ -29,6 +35,9 @@
 			? 'Connect to your computer'
 			: `Connect to ${remoteAttach.desktopName}`,
 	);
+	let offer = $derived(
+		remoteAttach.offer === null ? null : pairOfferCopy(remoteAttach.offer, remoteAttach.offerSaved),
+	);
 
 	function addressOf(url: string): string {
 		return url.replace(/^ws:\/\//, '');
@@ -38,6 +47,14 @@
 		if (remoteAttach.lastUrl === '') return;
 		if (wsUrl === '') wsUrl = remoteAttach.lastUrl;
 		if (address === '') address = addressOf(remoteAttach.lastUrl);
+	});
+
+	// A link waiting on the card fills the typed form, so typing it is one tap.
+	$effect(() => {
+		const link = remoteAttach.offer;
+		if (link === null) return;
+		address = linkAddress(link);
+		code = formatPairCode(link.code);
 	});
 
 	function onPair(event: SubmitEvent): void {
@@ -55,122 +72,151 @@
 	<div class="attach-overlay" role="dialog" aria-modal="true" aria-label="Connect to your computer">
 		<div class="attach">
 			<h1 class="title">{title}</h1>
-			<p class="body">
-				On the computer, open Settings, then Phones and devices, then Pair a phone.
-			</p>
-			{#if remoteAttach.storeNote !== null}
-				<p class="note" role="status">{remoteAttach.storeNote}</p>
-			{/if}
-			{#if remoteAttach.error !== null}
-				<p class="error" role="alert">{remoteAttach.error}</p>
-			{/if}
-
-			{#if remoteAttach.canScan}
-				<button
-					class="btn btn--primary btn--wide"
-					type="button"
-					disabled={remoteAttach.pairing}
-					onclick={scanToPair}
-					>{remoteAttach.pairing ? 'Pairing…' : 'Scan the code on your computer'}</button
-				>
-			{/if}
-			{#if remoteAttach.fallback !== null && !remoteAttach.pairing}
-				<button class="btn btn--wide" type="button" onclick={useSavedTarget}
-					>Back to {remoteAttach.fallback}</button
-				>
-			{/if}
-
-			{#if remoteAttach.canScan}
-				<button
-					class="disclosure"
-					type="button"
-					aria-expanded={typing}
-					onclick={() => (typing = !typing)}>Type the code instead</button
-				>
-			{/if}
-			{#if showTyped}
-				<form class="fields" onsubmit={onPair}>
-					<label class="field">
-						<span class="field-label">Address</span>
-						<input
-							class="field-input"
-							type="text"
-							name="address"
-							inputmode="url"
-							placeholder="100.x.x.x:port"
-							autocomplete="off"
-							spellcheck="false"
-							bind:value={address}
-						/>
-					</label>
-					<label class="field">
-						<span class="field-label">Code</span>
-						<input
-							class="field-input field-input--code"
-							type="text"
-							name="code"
-							placeholder="ABCD-2345"
-							autocomplete="off"
-							autocapitalize="characters"
-							spellcheck="false"
-							bind:value={code}
-						/>
-					</label>
-					<div class="actions">
-						<button class="btn btn--primary" type="submit" disabled={remoteAttach.pairing}
+			{#if offer !== null}
+				<div class="offer" role="group" aria-label="Pair with this computer?">
+					<p class="offer-question">{offer.question}</p>
+					{#if offer.replaces !== null}
+						<p class="body">{offer.replaces}</p>
+					{/if}
+					<div class="offer-actions">
+						<button
+							class="btn btn--primary"
+							type="button"
+							disabled={remoteAttach.pairing}
+							onclick={() => void acceptPairOffer()}
 							>{remoteAttach.pairing ? 'Pairing…' : 'Pair'}</button
 						>
+						<button class="btn" type="button" disabled={remoteAttach.pairing} onclick={declinePairOffer}
+							>{offer.decline}</button
+						>
 					</div>
-				</form>
+				</div>
 			{/if}
-
-			{#if durable}
-				<p class="hint">
-					This phone remembers the computer, encrypted, and reconnects on launch. Forget it in
-					Settings.
+			{#if remoteAttach.opening}
+				<p class="note" role="status">Opening the saved connection on this phone…</p>
+			{:else}
+				<p class="body">
+					On the computer, open Settings, then Phones and devices, then Pair a phone.
 				</p>
-			{/if}
-
-			<button
-				class="disclosure disclosure--small"
-				type="button"
-				aria-expanded={useToken}
-				onclick={() => (useToken = !useToken)}>Use a token instead</button
-			>
-			{#if useToken}
-				<form class="fields" onsubmit={onToken}>
-					<p class="hint">
-						Paste the Tailscale <code class="mono">ws://</code> address from Settings and the
-						token in <code class="mono">remote-token</code> (not <code class="mono">port.json</code>).
-					</p>
-					<label class="field">
-						<span class="field-label">WebSocket URL</span>
-						<input
-							class="field-input"
-							type="text"
-							name="ws"
-							inputmode="url"
-							placeholder="ws://100.x.x.x:port"
-							autocomplete="off"
-							spellcheck="false"
-							bind:value={wsUrl}
-						/>
-					</label>
-					<label class="field">
-						<span class="field-label">Remote token</span>
-						<input
-							class="field-input"
-							type="password"
-							name="token"
-							placeholder="contents of remote-token"
-							autocomplete="off"
-							bind:value={token}
-						/>
-					</label>
-					<div class="actions">
-						<button class="btn" type="submit">Connect</button>
+				{#if remoteAttach.storeNote !== null}
+					<div class="note-row">
+						<p class="note" role="status">{remoteAttach.storeNote}</p>
+						{#if remoteAttach.canRetryStore}
+							<button class="btn" type="button" onclick={retrySavedConnection}>Try again</button>
+						{/if}
 					</div>
-				</form>
+				{/if}
+				{#if remoteAttach.error !== null}
+					<p class="error" role="alert">{remoteAttach.error}</p>
+				{/if}
+
+				{#if remoteAttach.canScan}
+					<button
+						class="btn btn--primary btn--wide"
+						type="button"
+						disabled={remoteAttach.pairing}
+						onclick={scanToPair}
+						>{remoteAttach.pairing ? 'Pairing…' : 'Scan the code on your computer'}</button
+					>
+				{/if}
+				{#if remoteAttach.fallback !== null && !remoteAttach.pairing}
+					<button class="btn btn--wide" type="button" onclick={useSavedTarget}
+						>Back to {remoteAttach.fallback}</button
+					>
+				{/if}
+
+				{#if remoteAttach.canScan}
+					<button
+						class="disclosure"
+						type="button"
+						aria-expanded={typing}
+						onclick={() => (typing = !typing)}>Type the code instead</button
+					>
+				{/if}
+				{#if showTyped}
+					<form class="fields" onsubmit={onPair}>
+						<label class="field">
+							<span class="field-label">Address</span>
+							<input
+								class="field-input"
+								type="text"
+								name="address"
+								inputmode="url"
+								placeholder="100.x.x.x:port"
+								autocomplete="off"
+								spellcheck="false"
+								bind:value={address}
+							/>
+						</label>
+						<label class="field">
+							<span class="field-label">Code</span>
+							<input
+								class="field-input field-input--code"
+								type="text"
+								name="code"
+								placeholder="ABCD-2345"
+								autocomplete="off"
+								autocapitalize="characters"
+								spellcheck="false"
+								bind:value={code}
+							/>
+						</label>
+						<div class="actions">
+							<button class="btn btn--primary" type="submit" disabled={remoteAttach.pairing}
+								>{remoteAttach.pairing ? 'Pairing…' : 'Pair'}</button
+							>
+						</div>
+					</form>
+				{/if}
+
+				{#if durable}
+					<p class="hint">
+						This phone remembers the computer, encrypted, and reconnects on launch. Forget it in
+						Settings.
+					</p>
+				{/if}
+
+				<button
+					class="disclosure disclosure--small"
+					type="button"
+					aria-expanded={useToken}
+					onclick={() => (useToken = !useToken)}>Use a token instead</button
+				>
+				{#if useToken}
+					<form class="fields" onsubmit={onToken}>
+						<p class="hint">
+							Paste the Tailscale <code class="mono">ws://</code> address from Settings and the
+							token in <code class="mono">remote-token</code> (not <code class="mono">port.json</code>).
+						</p>
+						<label class="field">
+							<span class="field-label">WebSocket URL</span>
+							<input
+								class="field-input"
+								type="text"
+								name="ws"
+								inputmode="url"
+								placeholder="ws://100.x.x.x:port"
+								autocomplete="off"
+								spellcheck="false"
+								bind:value={wsUrl}
+							/>
+						</label>
+						<label class="field">
+							<span class="field-label">Remote token</span>
+							<input
+								class="field-input"
+								type="password"
+								name="token"
+								placeholder="contents of remote-token"
+								autocomplete="off"
+								bind:value={token}
+							/>
+						</label>
+						<div class="actions">
+							<button class="btn" type="submit">Connect</button>
+						</div>
+					</form>
+				{/if}
 			{/if}
 		</div>
 	</div>
@@ -266,6 +312,44 @@
 		font-size: var(--text-lg);
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
+	}
+
+	.note-row {
+		display: flex;
+		align-items: flex-start;
+		gap: var(--space-3);
+	}
+
+	.note-row .note {
+		flex: 1 1 auto;
+	}
+
+	.note-row .btn {
+		flex: 0 0 auto;
+	}
+
+	.offer {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-2);
+		padding: var(--space-4);
+		border: var(--border-width) solid var(--color-accent);
+		border-radius: var(--radius-lg);
+		background: var(--color-ground);
+	}
+
+	.offer-question {
+		margin: 0;
+		font-size: var(--text-base);
+		font-weight: var(--weight-medium);
+		color: var(--color-ink);
+		overflow-wrap: anywhere;
+	}
+
+	.offer-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-2);
 	}
 
 	.error {

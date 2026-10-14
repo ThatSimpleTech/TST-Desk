@@ -8,14 +8,18 @@ import {
   formatCountdown,
   formatPairCode,
   installPairingHandlers,
+  linkAddress,
   normalizePairCode,
   normalizeScanResult,
+  pairedWords,
   pairLinkFromTyped,
+  pairOfferCopy,
   parsePairLink,
   readAttachStatus,
   redeemPairing,
   refusedKeyMessage,
   relativeWords,
+  replacedKey,
   scanFailureMessage,
   startPairingScan,
   takePendingPairLink,
@@ -189,6 +193,20 @@ describe("redeemPairing (TD-5014)", () => {
     expect(h.timers[0].cleared).toBe(true);
   });
 
+  it("names the device key it replaces, and never a legacy token (TD-5014 addendum 1)", () => {
+    const h = harness();
+    void redeemPairing({ ...h.opts, replaces: KEY });
+    h.sockets[0].onopen?.();
+    expect(JSON.parse(h.sockets[0].sent[0])).toMatchObject({ type: "pair", replaces: KEY });
+
+    for (const replaces of [null, undefined, "legacy-remote-token", "A".repeat(64)]) {
+      const other = harness();
+      void redeemPairing({ ...other.opts, replaces });
+      other.sockets[0].onopen?.();
+      expect(JSON.parse(other.sockets[0].sent[0])).not.toHaveProperty("replaces");
+    }
+  });
+
   it("passes the daemon's error frame through", async () => {
     const h = harness();
     const pending = redeemPairing(h.opts);
@@ -360,6 +378,47 @@ describe("shell bridge (TD-5014)", () => {
   });
 });
 
+describe("re-pairing (TD-5014 addendum 1)", () => {
+  const link = { host: "100.64.7.7", port: 39079, code: "ABCD2345", desktopName: "ezer" };
+  const saved = { host: "100.64.7.7", port: 39079, token: KEY, deviceId: "dev_0123456789ab" };
+
+  it("replaces the saved device key on the computer that issued it", () => {
+    expect(replacedKey(saved, link)).toBe(KEY);
+  });
+
+  it("sends nothing for a legacy token, an empty record, or another computer", () => {
+    expect(replacedKey({ host: saved.host, port: saved.port, token: "legacy-token" }, link)).toBeNull();
+    expect(replacedKey(null, link)).toBeNull();
+    expect(replacedKey({ ...saved, host: "100.64.0.9" }, link)).toBeNull();
+    expect(replacedKey({ ...saved, port: 40000 }, link)).toBeNull();
+  });
+});
+
+describe("a link from the shell (TD-5014)", () => {
+  const link = { host: "100.64.7.7", port: 39079, code: "ABCD2345", desktopName: "ezer" };
+
+  it("asks before pairing, and says what it replaces", () => {
+    expect(pairOfferCopy(link, "office")).toEqual({
+      question: "Pair with ezer at 100.64.7.7?",
+      replaces: "This replaces office.",
+      decline: "Back to office",
+    });
+  });
+
+  it("has nothing to replace on a first pairing, and copes with no name", () => {
+    expect(pairOfferCopy({ ...link, desktopName: null }, null)).toEqual({
+      question: "Pair with the computer at 100.64.7.7?",
+      replaces: null,
+      decline: "Not now",
+    });
+  });
+
+  it("fills the typed form's address, bracketing IPv6", () => {
+    expect(linkAddress(link)).toBe("100.64.7.7:39079");
+    expect(linkAddress({ ...link, host: "fd7a:115c:a1e0::1" })).toBe("[fd7a:115c:a1e0::1]:39079");
+  });
+});
+
 describe("refusal copy (TD-5014)", () => {
   it("names the computer", () => {
     expect(refusedKeyMessage("ezer", true)).toBe(
@@ -382,6 +441,14 @@ describe("list wording (TD-5014)", () => {
     expect(relativeWords("2026-07-14T12:00:00Z", now)).toBe("3 months ago");
     expect(relativeWords("2024-10-14T12:00:00Z", now)).toBe("over a year ago");
     expect(relativeWords("nonsense", now)).toBe("at an unknown time");
+  });
+
+  it("says when a device was paired, so two phones with one name differ", () => {
+    const paired = new Date(2026, 9, 14, 10, 40).toISOString();
+    expect(pairedWords(paired, now)).toBe("Paired Oct 14 at 10:40 AM");
+    expect(pairedWords(new Date(2026, 9, 14, 22, 5).toISOString(), now)).toBe("Paired Oct 14 at 10:05 PM");
+    expect(pairedWords(new Date(2025, 0, 2, 0, 7).toISOString(), now)).toBe("Paired Jan 2, 2025 at 12:07 AM");
+    expect(pairedWords("nonsense", now)).toBe("Paired at an unknown time");
   });
 
   it("counts down without going negative", () => {

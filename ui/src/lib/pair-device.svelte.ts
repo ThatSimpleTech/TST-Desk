@@ -67,8 +67,17 @@ export function removeRemoteDevice(deviceId: string): void {
 	sendToDaemon({ type: "remove_remote_device", device_id: deviceId });
 }
 
+/** Ask for the device list now. The daemon pushes presence after that, so
+ *  "connected" and "last seen" stay live while the list is open. */
+export function refreshRemoteDevices(): void {
+	sendToDaemon({ type: "get_setup_state" });
+}
+
 export function reducePairing(event: DaemonEventUnion): void {
 	if (event.type === "pairing_code") {
+		// Starting may have turned remote attach on, and neither the code nor
+		// its errors carry a request id, so read the settings back.
+		refreshRemoteDevices();
 		// Only the window that asked shows a code.
 		if (!pairDialog.open) return;
 		pairDialog.offer = event;
@@ -78,7 +87,7 @@ export function reducePairing(event: DaemonEventUnion): void {
 	}
 	if (event.type === "pairing_completed") {
 		// Every loopback window hears this; each refreshes its device list.
-		sendToDaemon({ type: "get_setup_state" });
+		refreshRemoteDevices();
 		if (!pairDialog.open || pairDialog.offer === null) return;
 		pairDialog.paired = event.device;
 		pairDialog.offer = null;
@@ -92,6 +101,7 @@ export function reducePairing(event: DaemonEventUnion): void {
 		if (pairDialog.waiting || event.code.startsWith("pairing_")) {
 			pairDialog.waiting = false;
 			pairDialog.error = event.message;
+			refreshRemoteDevices();
 		}
 	}
 }

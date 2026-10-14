@@ -9,6 +9,7 @@
 // Neither the code nor the key is ever logged here.
 
 import type { SocketFactory, SocketLike } from "./client";
+import type { Pair } from "./protocol";
 import { nativeAttachBridge, type AttachStatus, type NativeAttachBridge } from "./attach-store";
 import {
   cleanName,
@@ -118,6 +119,9 @@ export interface RedeemOptions {
   deviceName: string;
   /** For the copy only; the daemon's own name wins once it answers. */
   desktopName?: string | null;
+  /** This phone's current device key, so the daemon drops the entry it
+   *  replaces. Sent only when it is one; never a legacy remote-token. */
+  replaces?: string | null;
   socketFactory?: SocketFactory;
   timeoutMs?: number;
   timers?: {
@@ -171,14 +175,7 @@ export function redeemPairing(opts: RedeemOptions): Promise<RedeemResult> {
     timer = timers.set(() => finish({ ok: false, message: noAnswer }), opts.timeoutMs ?? PAIR_TIMEOUT_MS);
     const live = socket;
     live.onopen = () => {
-      live.send(
-        JSON.stringify({
-          type: "pair",
-          code: opts.code,
-          device_name: cleanDeviceName(opts.deviceName),
-          version: PAIR_PROTOCOL_VERSION,
-        }),
-      );
+      live.send(JSON.stringify(pairFrame(opts)));
     };
     live.onmessage = (ev) => {
       const frame = parseFrame(ev.data);
@@ -191,6 +188,26 @@ export function redeemPairing(opts: RedeemOptions): Promise<RedeemResult> {
     live.onclose = () => finish({ ok: false, message: unreachable });
     live.onerror = () => finish({ ok: false, message: unreachable });
   });
+}
+
+function pairFrame(opts: RedeemOptions): Pair {
+  const frame: Pair = {
+    type: "pair",
+    code: opts.code,
+    device_name: cleanDeviceName(opts.deviceName),
+    version: PAIR_PROTOCOL_VERSION,
+  };
+  if (typeof opts.replaces === "string" && DEVICE_KEY.test(opts.replaces)) frame.replaces = opts.replaces;
+  return frame;
+}
+
+/** The key to send as `replaces` when re-pairing: the saved device key, and
+ *  only for the computer that issued it, so a key never goes to another one.
+ *  A record without a deviceId holds a legacy remote-token, which never goes. */
+export function replacedKey(saved: AttachTarget | null, link: PairLink): string | null {
+  if (saved === null || saved.deviceId === undefined) return null;
+  if (saved.host !== link.host || saved.port !== link.port) return null;
+  return DEVICE_KEY.test(saved.token) ? saved.token : null;
 }
 
 function parseFrame(data: unknown): Record<string, unknown> | null {
@@ -229,6 +246,30 @@ export function refusedKeyMessage(desktopName: string | null, durable: boolean):
   return durable
     ? `This phone isn't paired with ${computer} anymore. Scan the code on the computer again.`
     : `This browser isn't paired with ${computer} anymore. Enter a new code from the computer.`;
+}
+
+/** The daemon could not read its device list (an I/O error, not a verdict on
+ *  the key). The phone keeps its key and its normal retry; only auth_failed
+ *  means the key is gone. */
+export const DEVICES_UNAVAILABLE = "devices_unavailable";
+
+/** The confirm card for a link the shell handed over: a link is never
+ *  redeemed until the person says so, because it can come from anywhere. */
+export function pairOfferCopy(
+  link: PairLink,
+  savedName: string | null,
+): { question: string; replaces: string | null; decline: string } {
+  const who = link.desktopName === null ? "the computer" : link.desktopName;
+  return {
+    question: `Pair with ${who} at ${link.host}?`,
+    replaces: savedName === null ? null : `This replaces ${savedName}.`,
+    decline: savedName === null ? "Not now" : `Back to ${savedName}`,
+  };
+}
+
+/** "host:port" for the typed form, IPv6 bracketed as the form expects. */
+export function linkAddress(link: PairLink): string {
+  return daemonWsUrl(link.host, link.port).replace(/^ws:\/\//, "");
 }
 
 /** The name the computer lists this device under: the daemon's rule, applied
@@ -361,34 +402,5 @@ export function installPairingHandlers(handlers: PairingHandlers, scope: Scope =
   };
 }
 
-// ── Desktop list wording ─────────────────────────────────────────────
-
-function plural(count: number, unit: string): string {
-  return `${count} ${unit}${count === 1 ? "" : "s"} ago`;
-}
-
-/** "just now", "5 minutes ago", "yesterday"... for a device's last_seen. */
-export function relativeWords(iso: string, now: number = Date.now()): string {
-  const then = Date.parse(iso);
-  if (Number.isNaN(then)) return "at an unknown time";
-  const seconds = Math.max(0, Math.round((now - then) / 1000));
-  if (seconds < 60) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return plural(minutes, "minute");
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return plural(hours, "hour");
-  const days = Math.floor(hours / 24);
-  if (days === 1) return "yesterday";
-  if (days < 30) return plural(days, "day");
-  const months = Math.floor(days / 30);
-  if (months < 12) return plural(months, "month");
-  return "over a year ago";
-}
-
-/** "9:58" for a countdown to the code's expiry. Never negative. */
-export function formatCountdown(ms: number): string {
-  const total = Math.max(0, Math.ceil(ms / 1000));
-  const minutes = Math.floor(total / 60);
-  const seconds = total % 60;
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
-}
+// The desktop list's wording lives in device-words.ts; re-exported for callers.
+export { formatCountdown, pairedWords, relativeWords } from "./device-words";

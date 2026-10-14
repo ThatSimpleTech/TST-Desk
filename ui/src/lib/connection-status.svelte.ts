@@ -18,10 +18,10 @@
 import type { ClientMessageUnion, DaemonEventUnion } from "./protocol";
 import { ProtocolClient, type ConnectionState, type DaemonInfo, type SocketLike } from "./client";
 import { bindClient, ingestEvent, resetSession } from "./session-status.svelte.js";
-import { clearNotifications, notifyEvent } from "./notifications.svelte.js";
 import { watchResume } from "./resume";
 import { isTauri } from "./open-file";
 import { attachStore } from "./attach-store";
+import { clearNotifications, notify, notifyEvent } from "./notifications.svelte.js";
 import {
   daemonWsUrl,
   parseStoredAddress,
@@ -33,23 +33,27 @@ import {
   validateAttachTarget,
   type AttachTarget,
 } from "./remote-connect";
+import { attachStatusNote, DEVICES_UNAVAILABLE, readAttachStatus, refusedKeyMessage } from "./pairing";
+import { remoteAttach } from "./remote-attach.svelte.js";
 import {
-  attachStatusNote,
-  bridgeDeviceName,
-  canScanPairing,
-  COULD_NOT_SCAN,
-  installPairingHandlers,
-  pairLinkFromTyped,
-  parsePairLink,
-  readAttachStatus,
-  redeemPairing,
-  refusedKeyMessage,
-  scanFailureMessage,
-  startPairingScan,
-  takePendingPairLink,
-  type PairLinkParse,
-  type ScanResult,
-} from "./pairing";
+  bindPairingHost,
+  clearPairOffer,
+  offerPendingPairLink,
+  savedName,
+  unwatchPairing,
+  watchPairing,
+} from "./phone-pairing";
+import { StoreRetry, UnreachableWatch } from "./remote-watch";
+import { UNREACHABLE_AFTER_MS } from "./connection-banner";
+
+export { remoteAttach } from "./remote-attach.svelte.js";
+export {
+  acceptPairOffer,
+  declinePairOffer,
+  pairFromText,
+  pairFromTyped,
+  scanToPair,
+} from "./phone-pairing";
 
 type UnlistenFn = () => void;
 
@@ -67,38 +71,28 @@ export const daemon = $state<DaemonStatus>({ state: "stopped", port: null, resta
 // Latest validated daemon event, for subscribers that want the stream.
 export const lastEvent = $state<{ event: DaemonEventUnion | null }>({ event: null });
 
-/** Browser-only: the connect form is up because no ws+token is known yet. */
-export const remoteAttach = $state<{
-  needed: boolean;
-  error: string | null;
-  /** Address to prefill after a refused token (TD-5005). Never the token. */
-  lastUrl: string;
-  /** True when this device keeps the target after the app closes. */
-  durable: boolean;
-  /** The paired computer's name (TD-5014), for the banner and refusal copy. */
-  desktopName: string | null;
-  /** A pairing code is being redeemed. */
-  pairing: boolean;
-  /** The shell can open its QR scanner. */
-  canScan: boolean;
-  /** Why the shell could not open the saved connection, in plain words. */
-  storeNote: string | null;
-  /** A saved computer that still works, to go back to after a failed re-pair. */
-  fallback: string | null;
-}>({
-  needed: false,
-  error: null,
-  lastUrl: "",
-  durable: false,
-  desktopName: null,
-  pairing: false,
-  canScan: false,
-  storeNote: null,
-  fallback: null,
+let remoteTarget: AttachTarget | null = null;
+/** A target the durable store refused to save, retried once after hello_ack. */
+let unsavedTarget: AttachTarget | null = null;
+
+const COULD_NOT_SAVE = "This phone couldn't save the connection, so it will ask again next launch.";
+
+// TD-5014: Android's key store not answering at launch is usually brief, so
+// look again before settling on the form; and a saved computer that stays
+// silent gets "Can't reach" and "Pair again" in the banner.
+const storeRetry = new StoreRetry(reopenSavedTarget, () => {
+  remoteAttach.opening = false;
+  remoteAttach.canRetryStore = true;
+});
+const unreachable = new UnreachableWatch(UNREACHABLE_AFTER_MS, (on) => {
+  remoteAttach.unreachable = on;
 });
 
-let remoteTarget: AttachTarget | null = null;
-let stopPairingWatch: (() => void) | null = null;
+bindPairingHost({
+  saved: () => remoteTarget ?? loadStoredTarget(),
+  usePaired: usePairedTarget,
+  useSaved: useSavedTarget,
+});
 
 // Synchronous event fan-out (TD-1004). Consumers that append to a log (chat,
 // timeline) cannot ride `lastEvent` — two events inside one effect flush
@@ -172,7 +166,18 @@ function targetToInfo(target: AttachTarget): DaemonInfo {
 function persistRemoteTarget(target: AttachTarget): void {
   const store = attachStore();
   remoteAttach.durable = store.durable;
-  store.save(serializeAttach(target));
+  // TD-5014: the key store can refuse a write it takes a moment later. Try
+  // once more after the computer has taken the key, then say so.
+  unsavedTarget = store.save(serializeAttach(target)) || !store.durable ? null : target;
+}
+
+function retryUnsavedTarget(): void {
+  const target = unsavedTarget;
+  unsavedTarget = null;
+  if (target === null || target !== remoteTarget) return;
+  if (attachStore().save(serializeAttach(target))) return;
+  remoteAttach.storeNote = COULD_NOT_SAVE;
+  notify("attach-unsaved", { severity: "banner", title: "Connection not saved", body: COULD_NOT_SAVE });
 }
 
 function loadStoredTarget(): AttachTarget | null {
@@ -187,6 +192,7 @@ function handleRefusedToken(): void {
   const store = attachStore();
   const refused = remoteTarget;
   remoteTarget = null;
+  unsavedTarget = null;
   if (refused !== null) {
     const desktopName = refused.desktopName ?? null;
     store.save(serializeAddress({ host: refused.host, port: refused.port, desktopName }));
@@ -201,35 +207,28 @@ function handleRefusedToken(): void {
 /** Forget the saved computer on this device and show the attach form. */
 export function forgetRemoteTarget(): void {
   if (isTauri()) return;
+  // TD-5014: tell the computer first, so its list drops this phone now
+  // instead of keeping it as paired and never seen again.
+  const deviceId = remoteTarget?.deviceId;
+  if (deviceId !== undefined && ws.state === "connected") {
+    sendToDaemon({ type: "remove_remote_device", device_id: deviceId });
+  }
   client?.stop();
+  storeRetry.stop();
   attachStore().clear();
   remoteAttach.lastUrl = remoteTarget === null ? "" : daemonWsUrl(remoteTarget.host, remoteTarget.port);
   remoteTarget = null;
+  unsavedTarget = null;
+  clearPairOffer();
   remoteAttach.needed = true;
   remoteAttach.error = null;
   remoteAttach.desktopName = null;
   remoteAttach.fallback = null;
+  remoteAttach.opening = false;
+  remoteAttach.canRetryStore = false;
 }
 
-// ── Pairing (TD-5014) ────────────────────────────────────────────────
-
-/** "Scan the code on your computer". The result comes back through the shell. */
-export function scanToPair(): void {
-  remoteAttach.error = null;
-  if (!startPairingScan()) remoteAttach.error = COULD_NOT_SCAN;
-}
-
-/** A scanned QR or an opened tstdesk://pair link. */
-export function pairFromText(text: string): Promise<boolean> {
-  return pairWith(parsePairLink(text));
-}
-
-/** "Type the code instead": address + code. */
-export function pairFromTyped(address: string, code: string): Promise<boolean> {
-  return pairWith(pairLinkFromTyped(address, code));
-}
-
-/** Back to the saved computer after a failed re-pair. */
+/** Back to the saved computer after a failed or declined re-pair. */
 export function useSavedTarget(): void {
   remoteAttach.error = null;
   remoteAttach.fallback = null;
@@ -240,44 +239,33 @@ export function useSavedTarget(): void {
   void connect();
 }
 
-async function pairWith(parsed: PairLinkParse): Promise<boolean> {
-  if (remoteAttach.pairing) return false;
-  if (!parsed.ok) {
-    showPairFailure(parsed.error);
-    return false;
-  }
-  const { host, port, code, desktopName } = parsed.link;
+/** The banner's "Pair again" (TD-5014): the form over a computer that has
+ *  stopped answering. Nothing is forgotten; the saved computer keeps
+ *  retrying until a new pairing replaces it. */
+export function pairAgain(): void {
+  if (remoteTarget === null) return;
   remoteAttach.needed = true;
-  remoteAttach.pairing = true;
   remoteAttach.error = null;
-  remoteAttach.lastUrl = daemonWsUrl(host, port);
-  const result = await redeemPairing({ host, port, code, desktopName, deviceName: bridgeDeviceName() });
-  remoteAttach.pairing = false;
-  if (!result.ok) {
-    // The store is untouched: a wrong code or a dropped network is not a
-    // reason to forget a computer that still works.
-    showPairFailure(result.message);
-    return false;
-  }
-  usePairedTarget(result.target);
-  return true;
+  remoteAttach.fallback = savedName(remoteTarget);
 }
 
-function showPairFailure(message: string): void {
-  remoteAttach.needed = true;
-  remoteAttach.error = message;
-  const saved = remoteTarget ?? loadStoredTarget();
-  remoteAttach.fallback = saved === null ? null : (saved.desktopName ?? saved.host);
+/** "Try again" next to the note about a saved connection that would not open. */
+export function retrySavedConnection(): void {
+  storeRetry.retryNow();
 }
 
 function usePairedTarget(target: AttachTarget): void {
   const previous = remoteTarget;
+  storeRetry.stop();
   remoteTarget = target;
   persistRemoteTarget(target);
   remoteAttach.needed = false;
   remoteAttach.error = null;
   remoteAttach.fallback = null;
   remoteAttach.storeNote = null;
+  remoteAttach.opening = false;
+  remoteAttach.canRetryStore = false;
+  remoteAttach.note = null;
   remoteAttach.desktopName = target.desktopName ?? null;
   remoteAttach.lastUrl = daemonWsUrl(target.host, target.port);
   // Re-paired with the computer this socket is already on: keep the live
@@ -290,42 +278,78 @@ function usePairedTarget(target: AttachTarget): void {
   void connect();
 }
 
-function handleScan(result: ScanResult): void {
-  if (result.ok) {
-    void pairFromText(result.text);
-    return;
-  }
-  const message = scanFailureMessage(result.reason);
-  if (message !== null) remoteAttach.error = message;
-}
-
-/** Install the shell's scan / opened-link callbacks once per page. */
-function watchPairing(): void {
-  remoteAttach.canScan = canScanPairing();
-  if (stopPairingWatch !== null) return;
-  stopPairingWatch = installPairingHandlers({
-    onScan: handleScan,
-    onPairLink: (link) => void pairFromText(link),
-  });
-}
-
 /** True for the daemon's handshake refusal, not a provider's own auth error. */
 export function isHandshakeRefusal(event: DaemonEventUnion, state: ConnectionState): boolean {
-  return (
-    event.type === "error" &&
-    event.code === "auth_failed" &&
-    (event.session_id ?? null) === null &&
-    state !== "connected"
-  );
+  return handshakeError(event, state, "auth_failed");
+}
+
+/** TD-5014: the computer couldn't read its device list. Not a refusal: the
+ *  key stays, the client retries on its backoff, the banner says why. */
+export function isHandshakeNotice(
+  event: DaemonEventUnion,
+  state: ConnectionState,
+): event is Extract<DaemonEventUnion, { type: "error" }> {
+  return handshakeError(event, state, DEVICES_UNAVAILABLE);
+}
+
+function handshakeError(event: DaemonEventUnion, state: ConnectionState, code: string): boolean {
+  return event.type === "error" && event.code === code && (event.session_id ?? null) === null && state !== "connected";
+}
+
+/** Use a saved or URL target. The form goes away unless a link offer waits. */
+function adoptTarget(target: AttachTarget): void {
+  remoteTarget = target;
+  remoteAttach.durable = attachStore().durable;
+  remoteAttach.needed = remoteAttach.offer !== null;
+  if (remoteAttach.offer !== null) remoteAttach.offerSaved = savedName(target);
+  remoteAttach.error = null;
+  remoteAttach.storeNote = null;
+  remoteAttach.opening = false;
+  remoteAttach.canRetryStore = false;
+  remoteAttach.desktopName = target.desktopName ?? null;
+  daemon.state = "starting";
+  daemon.port = target.port;
+}
+
+/** A record with an address but no key is a refused key from last time. */
+function showKeptAddress(raw: string | null, durable: boolean): void {
+  const kept = parseStoredAddress(raw);
+  if (kept === null) return;
+  remoteAttach.lastUrl = daemonWsUrl(kept.host, kept.port);
+  remoteAttach.desktopName = kept.desktopName;
+  remoteAttach.error = refusedKeyMessage(kept.desktopName, durable);
+}
+
+/** One more look at a saved connection the key store would not open. True
+ *  once there is nothing left to retry. */
+function reopenSavedTarget(): boolean {
+  if (remoteTarget !== null) return true;
+  if (remoteAttach.pairing) return false;
+  const store = attachStore();
+  const raw = store.load();
+  const status = readAttachStatus();
+  const target = parseStoredAttach(raw);
+  if (target !== null) {
+    adoptTarget(target);
+    void connect();
+    return true;
+  }
+  if (status === "unavailable") return false;
+  remoteAttach.opening = false;
+  remoteAttach.canRetryStore = false;
+  remoteAttach.storeNote = attachStatusNote(status);
+  showKeptAddress(raw, store.durable);
+  return true;
 }
 
 function applyBrowserTarget(): boolean {
   if (typeof window === "undefined") return false;
   const store = attachStore();
   const raw = store.load();
+  const status = readAttachStatus();
   // TD-5014: say plainly when the shell could not open what it saved, so a
   // phone that "forgot" is diagnosable from the form itself.
-  remoteAttach.storeNote = attachStatusNote(readAttachStatus());
+  remoteAttach.storeNote = attachStatusNote(status);
   const resolved = resolveBrowserTarget({
     search: window.location.search,
     hash: window.location.hash,
@@ -335,28 +359,32 @@ function applyBrowserTarget(): boolean {
     remoteTarget = null;
     remoteAttach.needed = true;
     remoteAttach.error = resolved.error;
-    // A record with an address but no key is a refused key from last time.
-    const kept = resolved.error === null ? parseStoredAddress(raw) : null;
-    if (kept !== null) {
-      remoteAttach.lastUrl = daemonWsUrl(kept.host, kept.port);
-      remoteAttach.desktopName = kept.desktopName;
-      remoteAttach.error = refusedKeyMessage(kept.desktopName, store.durable);
+    if (resolved.error === null) {
+      showKeptAddress(raw, store.durable);
+      if (status === "unavailable") {
+        remoteAttach.opening = true;
+        storeRetry.start(typeof document === "undefined" ? null : document);
+      }
     }
     // Not a host failure — the user has not attached yet.
     daemon.state = "starting";
     return false;
   }
-  remoteTarget = resolved.target;
-  remoteAttach.needed = false;
-  remoteAttach.error = null;
-  remoteAttach.desktopName = resolved.target.desktopName ?? null;
-  persistRemoteTarget(resolved.target);
+  adoptTarget(resolved.target);
+  // A stored target is already saved; writing it back would only invent a
+  // failure to report.
+  if (resolved.from === "url") persistRemoteTarget(resolved.target);
   if (resolved.stripUrl) {
     window.history.replaceState(null, "", stripAttachFromUrl(window.location.href));
   }
-  daemon.state = "starting";
-  daemon.port = resolved.target.port;
   return true;
+}
+
+/** Phone-side bookkeeping on every connection state (TD-5014). */
+function watchRemoteState(state: ConnectionState): void {
+  if (state === "connected" || state === "stopped") remoteAttach.note = null;
+  if (state === "connected") retryUnsavedTarget();
+  unreachable.update(state, remoteTarget !== null);
 }
 
 function syncRemoteDaemonMirror(state: ConnectionState): void {
@@ -397,6 +425,10 @@ function makeClient(): void {
           handleRefusedToken();
           return;
         }
+        if (!isTauri() && isHandshakeNotice(event, ws.state)) {
+          remoteAttach.note = event.message;
+          return;
+        }
         lastEvent.event = event;
         for (const sub of eventSubs) sub(event);
         ingestEvent(event); // wire the session reducer (TD-1006)
@@ -405,6 +437,7 @@ function makeClient(): void {
       onStateChange(state) {
         ws.state = state;
         syncRemoteDaemonMirror(state);
+        if (!isTauri()) watchRemoteState(state);
         for (const sub of stateSubs) sub(state);
       },
     },
@@ -421,6 +454,7 @@ export function connectRemote(wsUrl: string, token: string): boolean {
     return false;
   }
   remoteTarget = parsed.target;
+  clearPairOffer();
   remoteAttach.needed = false;
   remoteAttach.error = null;
   remoteAttach.desktopName = null;
@@ -447,15 +481,11 @@ export async function connect(): Promise<void> {
   } else {
     watchPairing();
     if (remoteTarget === null) {
-      // TD-5014: a link the app was opened with wins, even over a saved
-      // target (that is how a phone re-pairs); success comes back here.
-      const pending = takePendingPairLink();
-      if (pending !== null) {
-        daemon.state = "starting";
-        void pairFromText(pending);
-        return;
-      }
-      if (!applyBrowserTarget()) return;
+      const ready = applyBrowserTarget();
+      // TD-5014: a link the app was opened with is only offered; the saved
+      // computer, if any, keeps connecting while the card waits.
+      offerPendingPairLink();
+      if (!ready) return;
     }
   }
   if (stopResumeWatch === null && typeof document !== "undefined" && typeof window !== "undefined") {
@@ -476,12 +506,17 @@ export function disconnect(): void {
   unlistenDaemon = null;
   stopResumeWatch?.();
   stopResumeWatch = null;
-  stopPairingWatch?.();
-  stopPairingWatch = null;
+  unwatchPairing();
+  storeRetry.stop();
+  unreachable.reset();
   remoteTarget = null;
+  unsavedTarget = null;
+  clearPairOffer();
   remoteAttach.needed = false;
   remoteAttach.error = null;
   remoteAttach.pairing = false;
   remoteAttach.fallback = null;
+  remoteAttach.opening = false;
+  remoteAttach.note = null;
   ws.state = "stopped";
 }

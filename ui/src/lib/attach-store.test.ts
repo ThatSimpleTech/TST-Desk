@@ -92,13 +92,27 @@ describe("attachStore (TD-5005)", () => {
     };
     const store = attachStore({ TstDeskNative: bridge });
     expect(store.load()).toBeNull();
-    expect(() => store.save("x")).not.toThrow();
+    expect(store.save("x")).toBe(false);
     expect(() => store.clear()).not.toThrow();
   });
 
   it("is a no-op with neither bridge nor sessionStorage", () => {
     const store = attachStore({});
-    store.save("x");
+    expect(store.save("x")).toBe(false);
     expect(store.load()).toBeNull();
+  });
+
+  it("says whether the save took (TD-5014)", () => {
+    expect(attachStore({ TstDeskNative: fakeBridge() }).save("raw")).toBe(true);
+    const refusing = { ...fakeBridge(), saveAttach: () => false };
+    expect(attachStore({ TstDeskNative: refusing }).save("raw")).toBe(false);
+    expect(attachStore({ sessionStorage: fakeSession() }).save("raw")).toBe(true);
+    const full = {
+      ...fakeSession(),
+      setItem: () => {
+        throw new Error("quota");
+      },
+    };
+    expect(attachStore({ sessionStorage: full }).save("raw")).toBe(false);
   });
 });

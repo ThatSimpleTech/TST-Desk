@@ -2,16 +2,21 @@
 	// Paired phones (TD-5014). Presentational over settings.remoteDevices,
 	// which only setup_state fills. Remove asks first, because the phone has
 	// to pair again afterwards. A phone viewing this list cannot change it:
-	// the daemon only takes pair/remove from the computer itself.
+	// the daemon only takes pair/remove from the computer itself. The paired
+	// date sits next to "last seen" so two phones with one name differ.
+	import { onMount } from 'svelte';
 	import { settings } from '../settings.svelte.js';
-	import { removeRemoteDevice } from '../pair-device.svelte.js';
-	import { relativeWords } from '../pairing';
+	import { refreshRemoteDevices, removeRemoteDevice } from '../pair-device.svelte.js';
+	import { pairedWords, relativeWords } from '../pairing';
 	import type { RemoteDeviceSummary } from '../protocol';
 
 	let { canManage }: { canManage: boolean } = $props();
 
 	let confirming = $state<string | null>(null);
 	let now = $state(Date.now());
+
+	// The daemon pushes presence from here on; this is the first read.
+	onMount(refreshRemoteDevices);
 
 	// "5 minutes ago" goes stale while Settings stays open.
 	$effect(() => {
@@ -46,6 +51,7 @@
 				<span class="who">
 					<span class="name">{device.name}</span>
 					<span class="seen">{seen(device)}</span>
+					<span class="seen">{pairedWords(device.paired_at, now)}</span>
 				</span>
 				{#if canManage}
 					{#if confirming === device.id}
