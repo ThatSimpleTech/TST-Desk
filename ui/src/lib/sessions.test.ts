@@ -6,7 +6,7 @@
 // does and drive the reducer with protocol-shaped events.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import type { ClientMessageUnion, DaemonEventUnion, SessionSummary } from "./protocol";
+import type { ClientMessageUnion, DaemonEventUnion, MachineSummary, SessionSummary } from "./protocol";
 
 // Captures the handlers the store registers, the messages it sends, and the
 // re-targeting calls it makes into the single-session stores.
@@ -135,6 +135,8 @@ import {
   toggleRowMenu,
 } from "./session-actions.svelte.js";
 import { railFunctions } from "./rail";
+import { machines, resetMachines } from "./machines.svelte.js";
+import { NEW_SESSION_REPLY_MS } from "./pending-new-session";
 import { projects, resetProjects, showArtifacts, showProjects, showScheduled } from "./projects.svelte.js";
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
@@ -222,6 +224,7 @@ beforeEach(() => {
   mocks.statusState.workspacePath = null;
   mocks.sendResult = true;
   mocks.wsState.state = "connected";
+  resetMachines();
   resetSessions();
   startSessions();
   mocks.sent.length = 0; // drop the start-time refresh from assertions
@@ -1079,6 +1082,77 @@ describe("sessions on another computer (TD-5015)", () => {
     mocks.chatState.sessionId = null;
     expect(newSession()).toBe(true);
     expect(mocks.sent).toEqual([{ type: "new_session", session_id: "own" }]);
+  });
+
+  function machineStatus(status: MachineSummary["status"]): void {
+    machines.list = [
+      {
+        id: MCH,
+        name: "ezer",
+        host: null,
+        port: null,
+        status,
+        last_seen: null,
+        paired_at: "2026-10-14T12:00:00Z",
+        same_computer: false,
+        detail: null,
+      },
+    ];
+  }
+
+  it("lets New work again after the hub refuses a new session on another computer", () => {
+    emit(sessionList([["own", "2026-08-14T09:00:00Z"], [REMOTE, "2026-08-14T10:00:00Z"]]));
+    expect(newSessionFrom(REMOTE)).toBe(true);
+    emit({
+      type: "error",
+      seq: 6,
+      session_id: REMOTE,
+      machine: MCH,
+      code: "machine_unreachable",
+      message: "ezer isn't reachable.",
+    });
+    mocks.chatState.sessionId = "own";
+    expect(newSession()).toBe(true);
+    expect(mocks.sent.at(-1)).toEqual({ type: "new_session", session_id: "own" });
+  });
+
+  it("lets New work again after a remote error with no session, or this daemon's unknown anchor", () => {
+    emit(sessionList([["own", "2026-08-14T09:00:00Z"], [REMOTE, "2026-08-14T10:00:00Z"]]));
+    expect(newSessionFrom(REMOTE)).toBe(true);
+    emit({ type: "error", seq: 6, machine: MCH, code: "session_not_found", message: "On ezer: not found" });
+    mocks.chatState.sessionId = "own";
+    expect(newSession()).toBe(true);
+    emit({ type: "error", seq: 7, code: "session_not_found", message: "Session 'own' not found" });
+    expect(newSession()).toBe(true);
+  });
+
+  it("frees New when the socket drops or no reply comes in time", () => {
+    vi.useFakeTimers();
+    try {
+      emit(sessionList([["own", "2026-08-14T09:00:00Z"], [REMOTE, "2026-08-14T10:00:00Z"]]));
+      mocks.chatState.sessionId = "own";
+      expect(newSession()).toBe(true);
+      expect(newSession()).toBe(false);
+      transitions("reconnecting");
+      expect(newSession()).toBe(true);
+      vi.advanceTimersByTime(NEW_SESSION_REPLY_MS - 1);
+      expect(newSession()).toBe(false);
+      vi.advanceTimersByTime(1);
+      expect(newSession()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("sends no new session to a computer that isn't connected", () => {
+    emit(sessionList([["own", "2026-08-14T09:00:00Z"], [REMOTE, "2026-08-14T10:00:00Z"]]));
+    machineStatus("unreachable");
+    expect(newSessionFrom(REMOTE)).toBe(false);
+    mocks.chatState.sessionId = REMOTE;
+    expect(newSession()).toBe(false);
+    expect(mocks.sent).toEqual([]);
+    machineStatus("connected");
+    expect(newSessionFrom(REMOTE)).toBe(true);
   });
 
   it("offers no move for another computer's row", () => {

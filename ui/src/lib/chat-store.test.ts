@@ -1385,3 +1385,78 @@ describe("fork (TD-1708)", () => {
   });
 });
 
+describe("sessions on another computer (TD-5015)", () => {
+  const MCH = "mch_0123456789ab";
+  const OLD = `old:${MCH}`;
+  const FRESH = `fresh:${MCH}`;
+  const OWN = { id: "own", updated: "2026-08-14T10:00:00Z" };
+  const OLD_ROW = { id: OLD, updated: "2026-08-14T09:00:00Z" };
+
+  function machineList(ids: string[]): DaemonEventUnion {
+    return {
+      type: "machine_list",
+      seq: 1,
+      machines: ids.map((id) => ({
+        id,
+        name: "ezer",
+        host: "100.64.7.7",
+        port: 39079,
+        status: "connected",
+        last_seen: null,
+        paired_at: "2026-10-14T12:00:00Z",
+        same_computer: false,
+        detail: null,
+      })),
+    };
+  }
+
+  function remoteListed() {
+    const { deps } = fakeDeps();
+    const state = createChatState();
+    const store = createChatStore(deps, state);
+    store.applyEvent(sessionList([OWN, OLD_ROW]));
+    return { store, state };
+  }
+
+  it("keeps a new remote session the hub's cached list doesn't name yet", () => {
+    const { store, state } = remoteListed();
+    store.selectSession(FRESH, "idle");
+    // The refresh after the new session's first state comes from the cache.
+    store.applyEvent(sessionList([OWN, OLD_ROW]));
+    expect(state.sessionId).toBe(FRESH);
+    // Named once, its absence later means it is gone.
+    store.applyEvent(sessionList([OWN, { id: FRESH, updated: "2026-08-14T11:00:00Z" }]));
+    expect(state.sessionId).toBe(FRESH);
+    store.applyEvent(sessionList([OWN]));
+    expect(state.sessionId).toBe("own");
+  });
+
+  it("moves off a listed remote session that a later list drops (deleted there)", () => {
+    const { store, state } = remoteListed();
+    store.selectSession(OLD, "idle");
+    store.applyEvent(sessionList([OWN]));
+    expect(state.sessionId).toBe("own");
+  });
+
+  it("lets a held session go when its computer is removed", () => {
+    const { store, state } = remoteListed();
+    store.selectSession(FRESH, "idle");
+    store.applyEvent(sessionList([OWN]));
+    store.applyEvent(machineList([MCH]));
+    expect(state.sessionId).toBe(FRESH);
+    store.applyEvent(machineList([]));
+    expect(state.sessionId).toBe("own");
+  });
+
+  it("holds the followed remote session across a reconnect to a restarted hub", () => {
+    const { store, state } = remoteListed();
+    store.selectSession(OLD, "idle");
+    store.reconnected();
+    // The restarted hub's first list has no remote rows until its link reports.
+    store.applyEvent(sessionList([OWN]));
+    expect(state.sessionId).toBe(OLD);
+    store.applyEvent(sessionList([OWN, OLD_ROW]));
+    expect(state.sessionId).toBe(OLD);
+  });
+});
+

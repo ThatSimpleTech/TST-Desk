@@ -51,6 +51,7 @@ import {
   unreachableNotice,
 } from "./machines";
 import { noteHandshake, resetHub } from "./hub.svelte.js";
+import { claimedInline } from "./inline-errors";
 import {
   ADD_TIMEOUT_MS,
   addMachine,
@@ -305,6 +306,25 @@ describe("machines store", () => {
     emit({ type: "error", seq: 4, code: "pair_failed", message: "x" } as DaemonEventUnion);
     expect(machines.adding).toBe(false);
     expect(machines.addError).toBe(addMachineError("pair_failed", "x"));
+  });
+
+  it("ignores another computer's relayed error, and claims its own so no global notice repeats it", () => {
+    addMachine({ address: "100.64.0.3:39079", code: "ABCD2345" });
+    const relayed = {
+      type: "error",
+      seq: 3,
+      code: "keychain_locked",
+      message: "On ezer: locked",
+      machine: "mch_0123456789ab",
+    } as DaemonEventUnion;
+    emit(relayed);
+    expect(machines.adding).toBe(true);
+    expect(claimedInline(relayed)).toBe(false);
+    const own = { type: "error", seq: 4, code: "keychain_locked", message: "locked" } as DaemonEventUnion;
+    emit(own);
+    expect(machines.adding).toBe(false);
+    expect(machines.addError).toBe(addMachineError("keychain_locked", "locked"));
+    expect(claimedInline(own)).toBe(true);
   });
 
   it("gives up on an add that never answers", () => {

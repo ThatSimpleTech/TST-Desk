@@ -9,6 +9,7 @@
 import { onEvent, onConnectionState, sendToDaemon, ws } from "./connection-status.svelte.js";
 import { hub } from "./hub.svelte.js";
 import { machineOf } from "./bridged-id";
+import { claimInline } from "./inline-errors";
 import { ADD_MACHINE_ERRORS, addMachineError, checkAddMachine, machineLabel, type AddMachineInput } from "./machines";
 import type { DaemonEventUnion, MachineSummary } from "./protocol";
 
@@ -97,7 +98,15 @@ function reduce(event: DaemonEventUnion): void {
     }
     return;
   }
-  if (event.type === "error" && machines.adding && !event.session_id && ADD_MACHINE_ERRORS.has(event.code)) {
+  // An error another computer relayed (tagged `machine`) is never this add's.
+  if (
+    event.type === "error" &&
+    machines.adding &&
+    !event.session_id &&
+    !event.machine &&
+    ADD_MACHINE_ERRORS.has(event.code)
+  ) {
+    claimInline(event);
     endAdd(addMachineError(event.code, event.message));
     return;
   }

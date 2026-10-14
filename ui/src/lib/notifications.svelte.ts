@@ -27,6 +27,7 @@ import {
 	turnFailureCopy,
 	type NoticeSpec,
 } from "./error-copy";
+import { claimedInline } from "./inline-errors";
 import type { DaemonEventUnion } from "./protocol";
 import { redact } from "./redact";
 import { session } from "./session-status.svelte.js";
@@ -155,6 +156,8 @@ export function notifyEvent(event: DaemonEventUnion): void {
 			notify(`checkpoint:${event.code}`, checkpointNoticeCopy(event.code, event.message));
 			break;
 		case "error":
+			// A form already showed it, in words for that flow (TD-5015).
+			if (claimedInline(event)) break;
 			// TD-5015: another computer's error (tagged `machine`, its message
 			// already "On <name>: …") gets a plain toast. The code-specific
 			// copy below names this computer's keychain, sessions and wizard.

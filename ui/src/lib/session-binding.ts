@@ -47,11 +47,18 @@ export interface BindContext {
   onUnbind?: () => void;
 }
 
-/** The whole auto-bind policy, in one place and free of effects. */
+/** The whole auto-bind policy, in one place and free of effects.
+ *
+ *  `held` is a session on another computer the pane was pointed at before
+ *  any list named it (TD-5015): the hub answers list_sessions from a cache
+ *  that trails that computer's events, so a session made there a moment ago,
+ *  or every remote row after the hub restarts, is missing for a while. Once a
+ *  list has named it, its absence means it is gone, as for an own session. */
 export function chooseBoundSession(
   summaries: readonly SessionSummary[],
   currentId: string | null,
   windowBind: string | null = null,
+  held: string | null = null,
 ): SessionBinding {
   if (windowBind !== null) {
     const bound = summaries.find((s) => s.session_id === windowBind);
@@ -86,6 +93,9 @@ export function chooseBoundSession(
     // a refresh must never stamp it over the local state (neither raising a
     // phantom turn nor standing down a real one).
     return { action: "keep", turnState: current.state === "running" ? null : current.state };
+  }
+  if (current === undefined && currentId !== null && currentId === held && isBridged(currentId)) {
+    return { action: "keep", turnState: null };
   }
   // Auto-bind liveness (TD-1711): a terminal session can never run another
   // turn (the daemon refuses its user_message with session_not_running).

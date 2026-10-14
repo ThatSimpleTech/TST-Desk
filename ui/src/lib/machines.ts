@@ -154,6 +154,12 @@ export function unreachableNotice(name: string): string {
   return `${name} isn't reachable. This session opens when it is.`;
 }
 
+/** An approval card's note while its computer is not connected: the hub
+ *  refuses a decision it can't deliver, so the buttons wait too. */
+export function approvalWaitCopy(name: string): string {
+  return `${name} isn't reachable. Approve or deny once it is.`;
+}
+
 /** "+ New here" with nothing to anchor on. */
 export function firstSessionCopy(name: string): string {
   return `Start the first session on ${name}; it shows up here.`;

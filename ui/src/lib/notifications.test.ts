@@ -22,6 +22,7 @@ import {
   toasts,
 } from "./notifications.svelte.js";
 import { ingestEvent, resetSession } from "./session-status.svelte.js";
+import { claimInline } from "./inline-errors";
 
 function turnComplete(errorCode: string | null): DaemonEventUnion {
   return {
@@ -296,6 +297,16 @@ describe("notification routing", () => {
     expect(banners[0].title).toBe("Keychain is locked");
     expect(banners[0].body).toContain("Keychain Access");
     expect(banners[0].body).toContain("Store key again");
+  });
+
+  it("an error a form already showed inline raises no notice (TD-5015)", () => {
+    // Settings > Computers' Add form claims its errors: the keychain banner
+    // above names the API-key wizard, which is not the flow the user is in.
+    const event = { type: "error", code: "keychain_locked", message: "locked", seq: 4 } as DaemonEventUnion;
+    claimInline(event);
+    notifyEvent(event);
+    expect(banners).toHaveLength(0);
+    expect(toasts).toHaveLength(0);
   });
 
   it("an interrupted session raises the tombstone banner", () => {

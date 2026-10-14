@@ -68,7 +68,7 @@
 	import { startQuickEntryPermission } from '../quick-entry-permission';
 	import { startCoworkerIndicator } from '../coworker-indicator.svelte.js';
 	import { isTauri } from '../open-file';
-	import { session } from '../session-status.svelte.js';
+	import { localWorkspacePath, session } from '../session-status.svelte.js';
 	import { startCuKill, setCuKill } from '../cu-kill.svelte.js';
 	import { startGrok } from '../grok.svelte.js';
 	import { startVoice } from '../voice.svelte.js';
@@ -256,7 +256,9 @@
 
 	$effect(() => {
 		if (projects.surface !== 'scheduled') return;
-		refreshJobs(session.workspacePath);
+		// The scheduler is this computer's: a remote session's path never
+		// prefills a job here (TD-5015).
+		refreshJobs(localWorkspacePath());
 	});
 
 	// The usage pane (TD-1706) reads the audit store, which the live event

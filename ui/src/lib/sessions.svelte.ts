@@ -44,6 +44,8 @@ import { railFunctions, type RailSurface } from "./rail";
 import { rowActivity, type BoundTurn, type RowActivity } from "./rail-activity";
 import { showCancel } from "./chat-store";
 import { isBridged, machineOf } from "./bridged-id";
+import { sessionMachineUp } from "./machines.svelte.js";
+import { failsPendingNew, pendingNewAnchor, setPendingNew } from "./pending-new-session";
 import type { DaemonEventUnion, SessionSummary } from "./protocol";
 
 export {
@@ -106,12 +108,6 @@ export const sessions = $state({
 	refusal: null as string | null,
 });
 
-// While an anchor id sits here, the first session_state that isn't the
-// attached session's own is the daemon's new_session reply — focus it on
-// sight. A state flip on a session owned by another window could steal the
-// focus in that window of a few frames; single-window use never notices.
-let pendingNewAnchor: string | null = null;
-
 // Coalesce refresh storms: a turn's state transitions each touch updated_at,
 // but one in-flight list_sessions covers them all.
 let listInFlight = false;
@@ -127,6 +123,8 @@ export function startSessions(): () => void {
 	const offEvents = onEvent(reduce);
 	const offStates = onConnectionState((state) => {
 		if (state === "connected") refresh();
+		// The reply to a new_session comes on the socket that sent it.
+		else setPendingNew(null);
 	});
 	// The rail can mount after the handshake completed; catch that case.
 	if (ws.state === "connected") refresh();
@@ -140,7 +138,7 @@ export function startSessions(): () => void {
 /** Reset for tests (also releases the start guard so start re-loads storage). */
 export function resetSessions(): void {
 	started = false;
-	pendingNewAnchor = null;
+	setPendingNew(null);
 	listInFlight = false;
 	sessions.rows = [];
 	sessions.filter = "";
@@ -210,6 +208,10 @@ function reduce(event: DaemonEventUnion): void {
 		sessions.moveFor = null;
 		return;
 	}
+	if (event.type === "error" && failsPendingNew(event)) {
+		setPendingNew(null);
+		return;
+	}
 	if (applyTurnEvidence(event)) return;
 	if (event.type !== "session_state") return;
 
@@ -218,12 +220,12 @@ function reduce(event: DaemonEventUnion): void {
 	// Only a state from the anchor's own computer can be that reply (TD-5015):
 	// another computer's sessions keep reporting while the new one is made.
 	if (
-		pendingNewAnchor !== null &&
+		pendingNewAnchor() !== null &&
 		event.session_id !== chat.sessionId &&
-		machineOf(event.session_id) === machineOf(pendingNewAnchor)
+		machineOf(event.session_id) === machineOf(pendingNewAnchor())
 	) {
-		const anchor = pendingNewAnchor;
-		pendingNewAnchor = null;
+		const anchor = pendingNewAnchor();
+		setPendingNew(null);
 		// The new session shares the anchor's workspace by definition; the
 		// anchor's row is the authoritative path, session-status the fallback.
 		const workspacePath =
@@ -353,7 +355,7 @@ export function boundTurn(): BoundTurn {
  *  anchor on, so the wired directory picker runs instead of silently
  *  no-op'ing — the chosen path goes through new_session_in_workspace. */
 export function newSession(): boolean {
-	if (pendingNewAnchor !== null) return false;
+	if (pendingNewAnchor() !== null) return false;
 	// A bound session on another computer grows there; unbound, the fallback
 	// anchor is this computer's own newest row (TD-5015).
 	const anchor = chat.sessionId ?? sessions.rows.find((r) => !isBridged(r.sessionId))?.sessionId ?? null;
@@ -367,8 +369,11 @@ export function newSession(): boolean {
 		});
 		return false;
 	}
+	// A computer that isn't connected can't answer; the chat pane already
+	// says it isn't reachable.
+	if (!sessionMachineUp(anchor)) return false;
 	if (!sendToDaemon({ type: "new_session", session_id: anchor })) return false;
-	pendingNewAnchor = anchor;
+	setPendingNew(anchor);
 	return true;
 }
 
@@ -443,9 +448,9 @@ export function newSessionInWorkspace(workspacePath: string): boolean {
 		showHome();
 		return true;
 	}
-	if (pendingNewAnchor !== null) return false;
+	if (pendingNewAnchor() !== null) return false;
 	if (!sendToDaemon({ type: "new_session", session_id: anchor.sessionId })) return false;
-	pendingNewAnchor = anchor.sessionId;
+	setPendingNew(anchor.sessionId);
 	showHome();
 	return true;
 }
@@ -454,10 +459,11 @@ export function newSessionInWorkspace(workspacePath: string): boolean {
  *  in the workspace `anchorId` lives in, on that computer. The hub forwards
  *  new_session with the anchor's raw id; the reply is focused on sight. */
 export function newSessionFrom(anchorId: string): boolean {
-	if (pendingNewAnchor !== null) return false;
+	if (pendingNewAnchor() !== null) return false;
 	if (!sessions.rows.some((r) => r.sessionId === anchorId)) return false;
+	if (!sessionMachineUp(anchorId)) return false;
 	if (!sendToDaemon({ type: "new_session", session_id: anchorId })) return false;
-	pendingNewAnchor = anchorId;
+	setPendingNew(anchorId);
 	showHome();
 	return true;
 }

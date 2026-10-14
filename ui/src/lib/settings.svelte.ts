@@ -10,6 +10,7 @@
 // Wiring mirrors doctor.svelte.ts: listens on the connection fan-out, sends
 // only via sendToDaemon — no client reference, no import cycle.
 
+import { isBridged } from "./bridged-id";
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
 import { reducePairing } from "./pair-device.svelte.js";
 import type { DaemonEventUnion, PolicyRuleSummary, RemoteDeviceSummary } from "./protocol";
@@ -250,7 +251,9 @@ function reduce(event: DaemonEventUnion): void {
 		settings.speechReady = event.speech_ready ?? false;
 		return;
 	}
-	if (event.type === "policy_rules") {
+	// A late reply for the local session the pane just left is not the
+	// remote session's (TD-5015).
+	if (event.type === "policy_rules" && !isBridged(settings.rulesSessionId)) {
 		settings.rules = event.rules;
 	}
 }
@@ -426,7 +429,9 @@ export function validateNamedKey(credential: string, apiKey?: string): void {
  */
 export function loadRules(sessionId: string | null): void {
 	settings.rulesSessionId = sessionId;
-	if (sessionId === null) {
+	// Another computer's rules live in its workspace, and the hub forwards no
+	// policy verb (TD-5015): the section says they stay there instead.
+	if (sessionId === null || isBridged(sessionId)) {
 		settings.rules = [];
 		return;
 	}
@@ -435,7 +440,7 @@ export function loadRules(sessionId: string | null): void {
 
 export function revokeRule(tool: string, args: string): void {
 	const sessionId = settings.rulesSessionId;
-	if (sessionId === null) return;
+	if (sessionId === null || isBridged(sessionId)) return;
 	// The daemon answers with a fresh policy_rules, so the list refreshes
 	// from the daemon rather than from a local splice.
 	sendToDaemon({ type: "revoke_policy_rule", session_id: sessionId, tool, args });

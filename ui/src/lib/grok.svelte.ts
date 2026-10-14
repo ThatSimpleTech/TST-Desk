@@ -98,12 +98,16 @@ export function setGrokMode(sessionId: string, mode: string): void {
 	sendToDaemon({ type: "set_grok_mode", session_id: sessionId, mode });
 }
 
-export function runGrokCommand(sessionId: string, name: string, argument = ""): void {
-	sendToDaemon({ type: "run_grok_command", session_id: sessionId, name, argument });
+/** False, with nothing sent, for another computer's session: the hub never
+ *  forwards Grok's commands or plan approval (TD-5015). */
+export function runGrokCommand(sessionId: string, name: string, argument = ""): boolean {
+	if (isBridged(sessionId)) return false;
+	return sendToDaemon({ type: "run_grok_command", session_id: sessionId, name, argument });
 }
 
-export function approveGrokPlan(sessionId: string, comment = ""): void {
-	sendToDaemon({ type: "approve_grok_plan", session_id: sessionId, comment });
+export function approveGrokPlan(sessionId: string, comment = ""): boolean {
+	if (isBridged(sessionId)) return false;
+	return sendToDaemon({ type: "approve_grok_plan", session_id: sessionId, comment });
 }
 
 export function openInTerminal(sessionId: string): void {
@@ -112,7 +116,10 @@ export function openInTerminal(sessionId: string): void {
 	sendToDaemon({ type: "open_in_terminal", session_id: sessionId });
 }
 
-export function matchingGrokCommands(query: string): GrokCommand[] {
+/** The slash palette's Grok commands. None for another computer's session:
+ *  the list is this computer's, and picking one could never be sent. */
+export function matchingGrokCommands(query: string, sessionId: string | null = null): GrokCommand[] {
+	if (isBridged(sessionId)) return [];
 	const q = query.trim().replace(/^\//, "").toLowerCase();
 	if (q === "") return grok.commands.slice(0, 12);
 	return grok.commands.filter(

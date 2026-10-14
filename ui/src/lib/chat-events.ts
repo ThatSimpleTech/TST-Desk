@@ -8,9 +8,19 @@ import type { BranchSnaps } from "./chat-fork";
 import type { ChatMessage, ChatState, ToolBlock } from "./chat-store";
 import type { MessageQueue } from "./chat-queue";
 import type { FirstTokenWait } from "./first-token-wait";
-import type { DaemonEventUnion, SessionState } from "./protocol";
+import { machineOf } from "./bridged-id";
+import type { DaemonEventUnion, SessionState, SessionSummary } from "./protocol";
 import { chooseBoundSession, isTerminal } from "./session-binding";
 import { windowBindSessionId } from "./window-bind";
+
+/** The bridged session the pane holds while no list has named it yet, and
+ *  the last list, so a hold released by a machine_list can be re-decided
+ *  without waiting for another list (TD-5015). The store sets `sessionId`
+ *  on each bind; the reducer releases it. */
+export interface BindHold {
+  sessionId: string | null;
+  lastList: readonly SessionSummary[];
+}
 
 /** Collaborators the reducer may touch. The store keeps the rest. */
 export interface ChatEventContext {
@@ -20,6 +30,22 @@ export interface ChatEventContext {
   forks: BranchSnaps;
   allocateId: () => string;
   switchSession: (sessionId: string | null, turnState: SessionState["state"] | null) => void;
+  hold: BindHold;
+}
+
+/** Re-decide the pane's session from a list and apply the choice. */
+function rebindFrom(ctx: ChatEventContext, summaries: readonly SessionSummary[]): void {
+  const { state } = ctx;
+  const choice = chooseBoundSession(summaries, state.sessionId, windowBindSessionId(), ctx.hold.sessionId);
+  if (choice.action === "bind") {
+    ctx.switchSession(choice.sessionId, choice.turnState);
+  } else if (choice.action === "unbind") {
+    ctx.switchSession(null, null);
+  } else if (choice.turnState !== null) {
+    // Staying put, and the refresh brought a turn state worth taking.
+    // A null there is the one that must not be taken (TD-1714).
+    state.turnState = choice.turnState;
+  }
 }
 
 function currentAssistant(ctx: ChatEventContext): ChatMessage {
@@ -214,20 +240,22 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       return;
     }
     case "session_list": {
-      const choice = chooseBoundSession(
-        event.sessions,
-        state.sessionId,
-        windowBindSessionId(),
-      );
-      if (choice.action === "bind") {
-        ctx.switchSession(choice.sessionId, choice.turnState);
-      } else if (choice.action === "unbind") {
-        ctx.switchSession(null, null);
-      } else if (choice.turnState !== null) {
-        // Staying put, and the refresh brought a turn state worth taking.
-        // A null there is the one that must not be taken (TD-1714).
-        state.turnState = choice.turnState;
+      const { hold } = ctx;
+      hold.lastList = event.sessions;
+      if (hold.sessionId !== null && event.sessions.some((s) => s.session_id === hold.sessionId)) {
+        hold.sessionId = null;
       }
+      rebindFrom(ctx, event.sessions);
+      return;
+    }
+    case "machine_list": {
+      // A held session whose computer was just removed will never be listed:
+      // let go now, since the list that dropped its rows may already be in.
+      const { hold } = ctx;
+      const mch = machineOf(hold.sessionId);
+      if (mch === null || event.machines.some((m) => m.id === mch)) return;
+      hold.sessionId = null;
+      rebindFrom(ctx, hold.lastList);
       return;
     }
     case "error": {

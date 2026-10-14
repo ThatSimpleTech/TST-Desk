@@ -172,7 +172,7 @@
 		refusal = null;
 	}
 
-	let slashHits = $derived(value.startsWith("/") ? matchingGrokCommands(value) : []);
+	let slashHits = $derived(value.startsWith("/") ? matchingGrokCommands(value, session.sessionId) : []);
 
 	function pickSlash(name: string): void {
 		if (session.sessionId === null) {
@@ -180,7 +180,8 @@
 			return;
 		}
 		const rest = value.replace(/^\/\S*\s*/, "");
-		runGrokCommand(session.sessionId, name, rest);
+		// The draft stays when nothing was sent.
+		if (!runGrokCommand(session.sessionId, name, rest)) return;
 		value = "";
 		attachments = [];
 		refusal = null;

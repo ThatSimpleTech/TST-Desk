@@ -268,6 +268,30 @@ describe("sessions on another computer (TD-5015)", () => {
     expect(choice).toEqual({ action: "keep", turnState: "idle" });
   });
 
+  it("keeps a held remote session the hub's cached list doesn't name yet", () => {
+    // A new session on the paired computer: its first session_state arrived,
+    // but the hub's cache refreshes a second later.
+    const fresh = "newraw:mch_0123456789ab";
+    const list = summaries([{ id: "own", updated: "2026-08-14T12:00:00Z" }]);
+    expect(chooseBoundSession(list, fresh, null, fresh)).toEqual({ action: "keep", turnState: null });
+  });
+
+  it("rebinds off a remote session once nothing holds it (deleted there, or never held)", () => {
+    const list = summaries([{ id: "own", updated: "2026-08-14T12:00:00Z" }]);
+    expect(chooseBoundSession(list, REMOTE)).toEqual({ action: "bind", sessionId: "own", turnState: "idle" });
+    // A hold only covers the id it names, and never an own session.
+    expect(chooseBoundSession(list, REMOTE, null, "other:mch_0123456789ab")).toEqual({
+      action: "bind",
+      sessionId: "own",
+      turnState: "idle",
+    });
+    expect(chooseBoundSession(list, "gone", null, "gone")).toEqual({
+      action: "bind",
+      sessionId: "own",
+      turnState: "idle",
+    });
+  });
+
   it("lets a window bind target a bridged id", () => {
     const choice = chooseBoundSession(
       summaries([
