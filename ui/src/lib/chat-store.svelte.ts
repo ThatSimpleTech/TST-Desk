@@ -75,6 +75,11 @@ export const sendUserMessage: (
   attachments?: readonly NewAttachment[],
 ) => boolean = store.sendUserMessage;
 export const retryLastUserMessage: () => boolean = store.retryLastUserMessage;
+/** Continue a turn a restart cut off (TD-5019). */
+export const continueTurn: () => boolean = store.continueTurn;
+/** Save the draft and queue once typing settles (TD-5019). Call it from an
+ *  effect: it reads both, so the effect re-runs on every edit. */
+export const keepDraft: () => void = store.keepDraft;
 export const forkFrom: (userIndex: number, content: string) => boolean = store.forkFrom;
 export const setBranch: (userIndex: number, siblingIndex: number) => boolean = store.setBranch;
 export const cancelTurn: () => boolean = store.cancelTurn;

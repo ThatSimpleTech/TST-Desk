@@ -274,6 +274,23 @@ describe("notification routing", () => {
     expect(toasts[0].body).toBe(message);
   });
 
+  it("a send refused while the daemon drains for a restart is a toast saying to resend (TD-5023)", () => {
+    const message = "TST Desk is about to restart. Your message was not sent; send it again in a few seconds.";
+    notifyEvent({ type: "error", code: "daemon_draining", message, session_id: "s1", seq: 3 } as DaemonEventUnion);
+    expect(banners).toHaveLength(0);
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].body).toBe("TST Desk is restarting — send it again in a few seconds.");
+    expect(toasts[0].title).not.toContain("daemon_draining");
+  });
+
+  it("a turn a restart cut off says so instead of 'unrecognised' (TD-5018)", () => {
+    notifyEvent(turnComplete("interrupted_by_restart"));
+    expect(banners).toHaveLength(0);
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].title).toBe("Turn cut off by a restart");
+    expect(toasts[0].body).not.toContain("unrecognised");
+  });
+
   it("a refused Delete/Move becomes a toast, not a banner (TD-1715)", () => {
     // Nothing is broken and no other work is blocked — the session is simply
     // busy — so this must not raise a blocking banner.

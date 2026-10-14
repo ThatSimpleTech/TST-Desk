@@ -175,6 +175,14 @@ const TURN_ERROR_COPY: Record<string, NoticeSpec> = {
 		title: "Response interrupted",
 		body: "The provider's stream dropped mid-turn. Resend to retry the turn.",
 	},
+	// TD-5018: TST Desk stopped mid-turn and the daemon closed the turn when
+	// it next started. A toast: Continue sits under the conversation
+	// (TD-5019), and nothing else is blocked.
+	interrupted_by_restart: {
+		severity: "toast",
+		title: "Turn cut off by a restart",
+		body: "TST Desk restarted before this reply finished. Click Continue to pick it up; the conversation is preserved.",
+	},
 };
 
 /** Copy for a failed turn's typed error code, or null to stay silent.
@@ -275,6 +283,16 @@ export function daemonErrorCopy(code: string, message: string): NoticeSpec {
 			severity: "toast",
 			title: "That session has ended",
 			body: message,
+		};
+	}
+	if (code === "daemon_draining") {
+		// TD-5023: a deploy asked the daemon to finish its turns before a
+		// restart, and it holds new ones until then. The text is back in the
+		// composer (TD-5019), so a toast: nothing is lost, only delayed.
+		return {
+			severity: "toast",
+			title: "Message not sent",
+			body: "TST Desk is restarting — send it again in a few seconds.",
 		};
 	}
 	if (code === "session_busy") {

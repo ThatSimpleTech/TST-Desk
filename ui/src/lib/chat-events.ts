@@ -7,6 +7,7 @@
 import type { BranchSnaps } from "./chat-fork";
 import type { ChatMessage, ChatState, ToolBlock } from "./chat-store";
 import type { MessageQueue } from "./chat-queue";
+import { refusedSend, returnToDraft, takeSent } from "./draft-store";
 import type { FirstTokenWait } from "./first-token-wait";
 import { machineOf } from "./bridged-id";
 import type { DaemonEventUnion, SessionState, SessionSummary } from "./protocol";
@@ -31,6 +32,10 @@ export interface ChatEventContext {
   allocateId: () => string;
   switchSession: (sessionId: string | null, turnState: SessionState["state"] | null) => void;
   hold: BindHold;
+  /** Texts sent and not yet started or refused (TD-5023, draft-store.ts). */
+  sending: string[];
+  /** Write the bound session's draft now (TD-5019). */
+  saveDraftNow: () => void;
 }
 
 /** Re-decide the pane's session from a list and apply the choice. */
@@ -116,6 +121,9 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
   switch (event.type) {
     case "user_turn": {
       if (event.session_id !== state.sessionId) return;
+      // The daemon took one of our sends: it leaves the saved draft now,
+      // not on the next keystroke (TD-5019).
+      if (takeSent(ctx.sending, event.content)) ctx.saveDraftNow();
       const already = state.messages.find(
         (m) => m.role === "user" && m.turnId === event.turn_id,
       );
@@ -210,11 +218,15 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       // Daemon-measured seconds — the duration line reports what the wire
       // said; the client never clocks turns itself (AGENTS §6).
       state.lastTurnDuration = event.duration;
+      state.lastTurnError = event.error_code ?? null;
       ctx.forks.saveActive(state);
       // The loop is free: the queue's head becomes the next turn (TD-1704).
       // Only here, never on a terminal session_state — the daemon refuses
       // sends to a dead session, so flushing into one would void the text.
-      ctx.queue.flushHead();
+      // Not after a turn a restart cut off either (TD-5018): the rows were
+      // queued behind a reply that never came, and sending one would answer
+      // for the user. They wait for Continue or a send of their own.
+      if (event.error_code !== "interrupted_by_restart") ctx.queue.flushHead();
       return;
     }
     case "session_state": {
@@ -259,13 +271,22 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       return;
     }
     case "error": {
-      // The daemon refused a send to a dead session (TD-1711): the turn
-      // will never start, so drop the waiting shimmer immediately — the
-      // toast (notifications, TD-1008) carries the actionable copy.
-      if (event.code !== "session_not_running") return;
+      // The daemon refused a send to a dead session (TD-1711), or held it
+      // while it drains for a restart (TD-5023): the turn will never start,
+      // so drop the waiting shimmer immediately — the toast (notifications,
+      // TD-1008) carries the actionable copy.
+      if (event.code !== "session_not_running" && event.code !== "daemon_draining") return;
       if (event.session_id != null && event.session_id !== state.sessionId) return;
-      sealInFlightAssistant(state);
       wait.end();
+      const refused = refusedSend(ctx.sending);
+      if (event.code === "session_not_running") {
+        sealInFlightAssistant(state);
+        return;
+      }
+      // A drain holds new turns while running ones finish, so a reply may
+      // still be streaming here: it is not sealed. The text goes back to
+      // the composer to send again once the restart is done (TD-5019).
+      if (refused !== null) returnToDraft(state, refused);
       return;
     }
     case "tool_call": {
