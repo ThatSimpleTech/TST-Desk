@@ -128,6 +128,8 @@ from .provider import (
     StreamChunk,
     Usage,
     content_as_text,
+    flatten_reasoning_details,
+    merge_reasoning_details,
 )
 from .provider import (
     ToolCall as ProviderToolCall,
@@ -291,7 +293,16 @@ async def _progress_check_gate(
         *messages,
         ChatMessage(role="user", content=PROGRESS_CHECK_INSTRUCTION),
     ]
-    content, tool_calls, failed, error_msg, _code, _raw, _finish = await _stream_and_parse(
+    (
+        content,
+        tool_calls,
+        failed,
+        error_msg,
+        _code,
+        _raw,
+        _finish,
+        _details,
+    ) = await _stream_and_parse(
         provider,
         model_slug,
         check_messages,
@@ -561,7 +572,16 @@ async def _stream_and_parse(
     *,
     emit_events: bool = True,
     on_usage: Callable[[Usage], None] | None = None,
-) -> tuple[str, dict[int, dict[str, str | int]], bool, str, str | None, str, str | None]:
+) -> tuple[
+    str,
+    dict[int, dict[str, str | int]],
+    bool,
+    str,
+    str | None,
+    str,
+    str | None,
+    list[dict[str, Any]] | None,
+]:
     """Call the provider, stream deltas, and accumulate tool calls.
 
     The request caps generation at the tier's ``max_output_tokens`` and
@@ -573,16 +593,19 @@ async def _stream_and_parse(
 
     Returns:
         A tuple of ``(collected_content, tool_calls, failed, error_msg,
-        error_code, raw_detail, finish_reason)``. ``error_code`` is the
-        provider's typed code (e.g. ``auth_failed``) so clients can key
-        tailored copy off it (TD-1008). ``raw_detail`` is the upstream
-        body for the log; it is empty unless the chunk is a
+        error_code, raw_detail, finish_reason, reasoning_details)``.
+        ``error_code`` is the provider's typed code (e.g. ``auth_failed``)
+        so clients can key tailored copy off it (TD-1008). ``raw_detail`` is
+        the upstream body for the log; it is empty unless the chunk is a
         ``ProviderError``. ``finish_reason`` is the last one the stream
         reported, or ``None``; ``"length"`` means the reply stopped at
-        ``max_output_tokens`` (TD-5008).
+        ``max_output_tokens`` (TD-5008). ``reasoning_details`` is the
+        OpenRouter array to echo on the next assistant message (TD-1903),
+        or ``None`` when the stream carried none.
     """
     collected_content = ""
     tool_calls: dict[int, dict[str, str | int]] = {}
+    collected_details: list[dict[str, Any]] = []
     failed = False
     error_msg = ""
     error_code: str | None = None
@@ -620,17 +643,25 @@ async def _stream_and_parse(
             raw_detail = chunk.detail
             break
 
-        # Stream reasoning delta (TD-1901).  Emitted, never accumulated:
-        # `collected_content` becomes the assistant message replayed to the
-        # provider on the next round trip, and feeding a model its own
+        # Stream reasoning delta (TD-1901).  The plaintext is emitted,
+        # never folded into `collected_content`: that string is replayed to
+        # the provider as assistant speech, and feeding a model its own
         # scratchpad back as something it said is both wrong and paid for.
         # A reasoning model spends minutes here, so this is also the only
         # sign of life the window gets before the answer starts.
-        if chunk.delta.reasoning and emit_events:
+        # `reasoning_details` is different: OpenRouter requires the raw
+        # array back on the next assistant message, so it is kept apart
+        # (TD-1903).
+        if chunk.delta.reasoning_details:
+            merge_reasoning_details(collected_details, chunk.delta.reasoning_details)
+        thinking = chunk.delta.reasoning
+        if thinking is None and chunk.delta.reasoning_details:
+            thinking = flatten_reasoning_details(chunk.delta.reasoning_details)
+        if thinking and emit_events:
             await session.event_log.add(
                 AssistantReasoning(
                     session_id=session.id,
-                    delta=chunk.delta.reasoning,
+                    delta=thinking,
                     seq=1,
                 )
             )
@@ -668,7 +699,16 @@ async def _stream_and_parse(
         if on_usage is not None:
             on_usage(usage)
 
-    return collected_content, tool_calls, failed, error_msg, error_code, raw_detail, finish_reason
+    return (
+        collected_content,
+        tool_calls,
+        failed,
+        error_msg,
+        error_code,
+        raw_detail,
+        finish_reason,
+        collected_details or None,
+    )
 
 
 def _carries_non_text(messages: list[ChatMessage]) -> bool:
@@ -1749,6 +1789,7 @@ async def agent_loop(
                 error_code,
                 raw_detail,
                 finish_reason,
+                reasoning_details,
             ) = await _stream_and_parse(
                 provider,
                 model_slug,
@@ -1910,6 +1951,7 @@ async def agent_loop(
                         role="assistant",
                         content=None,
                         tool_calls=provider_tool_calls,
+                        reasoning_details=reasoning_details,
                     )
                 )
                 # Answered now, so the model sees why and retries smaller.
@@ -1962,7 +2004,13 @@ async def agent_loop(
                     continue
                 # Without a dispatcher, fall through to emit turn_complete
             else:
-                messages.append(ChatMessage(role="assistant", content=collected_content or ""))
+                messages.append(
+                    ChatMessage(
+                        role="assistant",
+                        content=collected_content or "",
+                        reasoning_details=reasoning_details,
+                    )
+                )
                 await session.conversation_changed()
 
             # 2h. No tool calls (or no dispatcher) — turn is complete
