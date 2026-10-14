@@ -57,6 +57,8 @@ const KNOWN_EVENT_TYPES = new Set([
   "session_list",
   "policy_rules", // TD-803: was missing; settings events arrived as unknown
   "setup_state", // TD-1101 first-run wizard
+  "pairing_code", // TD-5014
+  "pairing_completed", // TD-5014
   "api_key_validated", // TD-1101
   "diagnostics_report", // TD-1104 doctor
   "usage_report", // TD-1706: was missing; the usage panel never loaded

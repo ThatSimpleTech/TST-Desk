@@ -20,6 +20,16 @@ export interface Hello extends ClientMessage {
   version: number;
 }
 
+/** First frame on a remote connection instead of hello (TD-5014): redeem a
+ *  pairing code for this device's own key. The daemon answers `pair_ok` or a
+ *  typed handshake error, then closes. */
+export interface Pair extends ClientMessage {
+  type: "pair";
+  code: string;
+  device_name: string;
+  version: number;
+}
+
 export interface OpenWorkspace extends ClientMessage {
   type: "open_workspace";
   path: string;
@@ -158,6 +168,22 @@ export interface SetRemoteAttach extends ClientMessage {
 /** New phone token (TD-5005). Drops remote clients; the token never crosses the wire. */
 export interface RotateRemoteToken extends ClientMessage {
   type: "rotate_remote_token";
+}
+
+/** Show a pairing code for a new phone (TD-5014). Loopback only; replies pairing_code. */
+export interface StartPairing extends ClientMessage {
+  type: "start_pairing";
+}
+
+/** Drop the active pairing code (TD-5014). Loopback only; replies setup_state. */
+export interface CancelPairing extends ClientMessage {
+  type: "cancel_pairing";
+}
+
+/** Forget one paired device and close only its connections (TD-5014). Loopback only. */
+export interface RemoveRemoteDevice extends ClientMessage {
+  type: "remove_remote_device";
+  device_id: string;
 }
 
 /** Pin or unpin a workspace on the Projects list (TD-2806). */
@@ -732,6 +758,7 @@ export interface GetSessionJobSource extends ClientMessage {
 
 export type ClientMessageUnion =
   | Hello
+  | Pair
   | OpenWorkspace
   | UserMessage
   | ForkFrom
@@ -813,6 +840,9 @@ export type ClientMessageUnion =
   | SetCuKill
   | SetRemoteAttach
   | RotateRemoteToken
+  | StartPairing
+  | CancelPairing
+  | RemoveRemoteDevice
   | ListJobs
   | SaveJob
   | DeleteJob
@@ -831,6 +861,18 @@ export type ClientMessageUnion =
 export interface HelloAck {
   type: "hello_ack";
   version: number;
+}
+
+/** Out-of-band reply to `pair` (TD-5014), like `hello_ack`: not a sequenced
+ *  event, never in `DaemonEventUnion`. `token` is this device's own key; it
+ *  goes straight to the attach store and is never shown or logged. */
+export interface PairOk {
+  type: "pair_ok";
+  version: number;
+  device_id: string;
+  device_name: string;
+  token: string;
+  desktop_name: string;
 }
 
 /** Application-level liveness frame (TD-1716): no session, no seq.
@@ -1314,6 +1356,38 @@ export interface SetupState extends DaemonEvent {
   // TD-4701: hold-to-talk. Additive, default off. The URL never arrives.
   speech_enabled?: boolean;
   speech_ready?: boolean;
+  // TD-5014: paired phones. Additive, default empty. Never a token or hash.
+  remote_devices?: RemoteDeviceSummary[];
+}
+
+/** One paired device (TD-5014). */
+export interface RemoteDeviceSummary {
+  id: string;
+  name: string;
+  paired_at: string;
+  last_seen: string | null;
+  connected: boolean;
+}
+
+/** Reply to start_pairing (TD-5014). Connection-scoped, seq=1. The code lives
+ *  in the daemon's memory and the pairing dialog only; `qr_svg` is made by the
+ *  daemon and shown as an image, never as markup. */
+export interface PairingCode extends DaemonEvent {
+  type: "pairing_code";
+  code: string;
+  display_code: string;
+  host: string;
+  port: number;
+  desktop_name: string;
+  link: string;
+  qr_svg: string;
+  expires_at: string;
+}
+
+/** A phone redeemed the code (TD-5014). Sent to every loopback window, seq=1. */
+export interface PairingCompleted extends DaemonEvent {
+  type: "pairing_completed";
+  device: RemoteDeviceSummary;
 }
 
 export interface McpServerSummary {
@@ -1776,6 +1850,8 @@ export type DaemonEventUnion =
   | SessionList
   | PolicyRules
   | SetupState
+  | PairingCode
+  | PairingCompleted
   | ApiKeyValidated
   | DiagnosticsReport
   | UsageReport

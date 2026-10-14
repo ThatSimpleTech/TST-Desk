@@ -9,6 +9,17 @@ export interface AttachTarget {
   host: string;
   port: number;
   token: string;
+  /** Set when the token is this device's own key from pairing (TD-5014). */
+  deviceId?: string;
+  /** The paired computer's name, for the banner and the refusal copy. */
+  desktopName?: string;
+}
+
+/** What survives a refused key (TD-5014): where and who, never a token. */
+export interface SavedAddress {
+  host: string;
+  port: number;
+  desktopName: string | null;
 }
 
 export type AttachParse =
@@ -181,24 +192,82 @@ export function parseAttachParams(
   return validateAttachTarget(ws ?? "", token ?? "", policy);
 }
 
-export function parseStoredAttach(raw: string | null): AttachTarget | null {
+const DEVICE_ID = /^dev_[0-9a-f]{12}$/;
+export const MAX_NAME_CHARS = 64;
+
+/** The daemon's device_name rule (TD-5014): no control characters, trimmed,
+ *  at most 64 characters. Also applied to a desktop name read from a link or
+ *  the store, since both are text someone else wrote. */
+export function cleanName(raw: string): string {
+  const visible = Array.from(raw)
+    .filter((ch) => {
+      const code = ch.codePointAt(0) ?? 0;
+      return code >= 0x20 && !(code >= 0x7f && code <= 0x9f);
+    })
+    .join("");
+  return Array.from(visible.trim()).slice(0, MAX_NAME_CHARS).join("").trim();
+}
+
+function storedRecord(raw: string | null): Record<string, unknown> | null {
   if (raw === null || raw === "") return null;
   try {
     const value: unknown = JSON.parse(raw);
-    if (typeof value !== "object" || value === null) return null;
-    const rec = value as Record<string, unknown>;
-    if (typeof rec.host !== "string" || typeof rec.port !== "number" || typeof rec.token !== "string") {
-      return null;
-    }
-    const checked = validateAttachTarget(daemonWsUrl(rec.host, rec.port), rec.token);
-    return checked.ok ? checked.target : null;
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+    return value as Record<string, unknown>;
   } catch {
     return null;
   }
 }
 
+function storedName(rec: Record<string, unknown>): string | null {
+  if (typeof rec.desktopName !== "string") return null;
+  const name = cleanName(rec.desktopName);
+  return name === "" ? null : name;
+}
+
+export function parseStoredAttach(raw: string | null): AttachTarget | null {
+  const rec = storedRecord(raw);
+  if (rec === null) return null;
+  if (typeof rec.host !== "string" || typeof rec.port !== "number" || typeof rec.token !== "string") {
+    return null;
+  }
+  const checked = validateAttachTarget(daemonWsUrl(rec.host, rec.port), rec.token);
+  if (!checked.ok) return null;
+  // TD-5014: a 0.1.5 record has neither extra field and stays valid.
+  const target: AttachTarget = checked.target;
+  if (typeof rec.deviceId === "string" && DEVICE_ID.test(rec.deviceId)) target.deviceId = rec.deviceId;
+  const name = storedName(rec);
+  if (name !== null) target.desktopName = name;
+  return target;
+}
+
+/** The address part of any saved record, including one whose key was refused. */
+export function parseStoredAddress(raw: string | null): SavedAddress | null {
+  const rec = storedRecord(raw);
+  if (rec === null || typeof rec.host !== "string" || typeof rec.port !== "number") return null;
+  const parsed = parseWsUrl(daemonWsUrl(rec.host, rec.port));
+  if (!parsed.ok) return null;
+  return { host: parsed.host, port: parsed.port, desktopName: storedName(rec) };
+}
+
 export function serializeAttach(target: AttachTarget): string {
-  return JSON.stringify({ host: target.host, port: target.port, token: target.token });
+  const record: Record<string, string | number> = {
+    host: target.host,
+    port: target.port,
+    token: target.token,
+  };
+  if (target.deviceId !== undefined) record.deviceId = target.deviceId;
+  if (target.desktopName !== undefined) record.desktopName = target.desktopName;
+  return JSON.stringify(record);
+}
+
+/** A refused key's record (TD-5014). The token is emptied, not omitted: the
+ *  shell's shape check wants the field, and an empty one never loads as a
+ *  target, so the next launch asks to pair instead of retrying a dead key. */
+export function serializeAddress(address: SavedAddress): string {
+  const record: Record<string, string | number> = { host: address.host, port: address.port, token: "" };
+  if (address.desktopName !== null) record.desktopName = address.desktopName;
+  return JSON.stringify(record);
 }
 
 export function resolveBrowserTarget(input: {
