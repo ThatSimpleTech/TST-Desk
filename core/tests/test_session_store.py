@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
+import os
 import sys
 import tempfile
+import time
 from pathlib import Path
+
+import pytest
 
 from tstd.session_store import SessionStore
 
@@ -396,3 +402,73 @@ class TestSessionPreset:
             rec = SessionStore(Path(tmp)).get("s1")
             assert rec is not None
             assert rec.preset == "local"
+
+
+def _leftover_temps(directory: Path) -> list[Path]:
+    return list(directory.glob(".sessions.json.*.tmp"))
+
+
+def _slow_replace(monkeypatch: pytest.MonkeyPatch, delay: float = 0.02) -> None:
+    """Hold every rename open long enough for a second writer to overlap it."""
+    real_replace = os.replace
+
+    def slow(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+        time.sleep(delay)
+        real_replace(src, dst)
+
+    monkeypatch.setattr("tstd.session_store.os.replace", slow)
+
+
+async def test_overlapping_writes_are_not_dropped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """TD-5016: writers that overlap each land, in order, with no leftovers.
+
+    One shared temp name and no lock let a second rename find the file
+    already moved, and that write was dropped (tstd.log 2026-10-14).
+    """
+    store = SessionStore(tmp_path)
+    ids = [f"s{i}" for i in range(20)]
+    for sid in ids:
+        await store.upsert(sid, "/ws", "idle")
+    _slow_replace(monkeypatch)
+
+    with caplog.at_level(logging.WARNING, logger="tstd.session_store"):
+        await asyncio.gather(
+            *(store.update_state(sid, f"state-{sid}") for sid in ids),
+            *(store.maybe_set_title(sid, f"Title {sid}") for sid in ids),
+        )
+
+    assert not [r for r in caplog.records if r.getMessage() == "failed to write session store"]
+    reloaded = {r.session_id: r for r in SessionStore(tmp_path).records()}
+    assert sorted(reloaded) == sorted(ids)
+    for sid in ids:
+        assert reloaded[sid].state == f"state-{sid}"
+        assert reloaded[sid].title == f"Title {sid}"
+        assert reloaded[sid].auto_title == f"Title {sid}"
+    assert _leftover_temps(tmp_path) == []
+
+
+async def test_a_failed_write_removes_its_own_temp_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = SessionStore(tmp_path)
+    await store.upsert("s1", "/ws", "idle")
+
+    def refuse(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("tstd.session_store.os.replace", refuse)
+    with caplog.at_level(logging.WARNING, logger="tstd.session_store"):
+        await store.update_state("s1", "running")
+
+    assert [r for r in caplog.records if r.getMessage() == "failed to write session store"]
+    assert _leftover_temps(tmp_path) == []
+    # The last good write is still the file on disk.
+    rec = SessionStore(tmp_path).get("s1")
+    assert rec is not None
+    assert rec.state == "idle"

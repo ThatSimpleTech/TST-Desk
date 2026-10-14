@@ -9,8 +9,10 @@ snapshot is still a tombstone; a row with one is revived.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
+import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -89,6 +91,9 @@ class SessionStore:
         self._path = data_dir / _STORE_FILE
         self._records: dict[str, SessionRecord] = {}
         self._loaded = False
+        # One write at a time (TD-5016). Overlapping writers used to share
+        # one temp name, and the second rename found it already moved.
+        self._write_lock = asyncio.Lock()
         self._load()
 
     async def upsert(
@@ -280,23 +285,42 @@ class SessionStore:
         )
 
     async def _persist(self) -> None:
-        """Write records atomically off the event loop."""
-        await asyncio.to_thread(self._persist_sync)
+        """Write records atomically off the event loop, one write at a time.
 
-    def _persist_sync(self) -> None:
-        payload = [asdict(r) for r in self._records.values()]
+        The payload is built on the loop under the lock, so the thread never
+        reads ``_records`` while the loop changes it, and the last write to
+        land holds every change made before it took the lock.
+        """
+        async with self._write_lock:
+            payload = [asdict(r) for r in self._records.values()]
+            await asyncio.to_thread(self._persist_sync, payload)
+
+    def _persist_sync(self, payload: list[dict[str, object]]) -> None:
+        tmp: str | None = None
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self._path.with_name(f".{_STORE_FILE}.{os.getpid()}.tmp")
-            tmp.write_text(json.dumps(payload, indent=2))
+            # A unique temp name per write, created 0600 by mkstemp.
+            fd, tmp = tempfile.mkstemp(
+                dir=self._path.parent, prefix=f".{_STORE_FILE}.", suffix=".tmp"
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(json.dumps(payload, indent=2))
+                f.flush()
+                os.fsync(f.fileno())
             # Owner-only before the rename. POSIX mode bits only: on Windows
             # os.chmod can merely toggle the read-only flag, so this is a
             # silent no-op there — ACL-based restriction is a separate
             # hardening story (TD-1406).
-            tmp.chmod(0o600)
+            os.chmod(tmp, 0o600)
             os.replace(tmp, self._path)
+            tmp = None
         except OSError as e:
             log.warning(
                 "failed to write session store",
                 extra={"extra_fields": {"path": str(self._path), "error": str(e)}},
             )
+        finally:
+            # Set only while this write's own temp file is still there.
+            if tmp is not None:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp)

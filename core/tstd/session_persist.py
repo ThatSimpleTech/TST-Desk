@@ -9,9 +9,11 @@ tombstone, not an empty thread pretending to be the old one.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
+import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,7 +22,7 @@ from typing import Any, cast
 from .config import DEFAULT_LOG_MAX_EVENTS
 from .logging import get_logger
 from .protocol import DaemonEvent, HandshakeError, parse_daemon_event
-from .provider import ChatMessage, FunctionCall, ToolCall
+from .provider import ChatMessage, FunctionCall, MessageContent, ToolCall
 
 log = get_logger("tstd.session_persist")
 
@@ -33,6 +35,29 @@ def _write_all(fd: int, text: str) -> None:
     view = memoryview(text.encode("utf-8"))
     while view:
         view = view[os.write(fd, view) :]
+
+
+def _replace_with(path: Path, text: str) -> None:
+    """Swap ``text`` in for ``path`` through a temp file only this call uses.
+
+    A shared temp name let one writer rename away another's file, so the
+    second rename failed and that write was lost (TD-5016). ``mkstemp``
+    creates the file 0600 in the same syscall: no world-readable instant.
+    A failed write removes its own temp file before the error goes up.
+    """
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        try:
+            _write_all(fd, text)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 @dataclass(frozen=True)
@@ -56,6 +81,32 @@ def chat_message_to_dict(message: ChatMessage) -> dict[str, Any]:
     from .provider import ChatCompletionRequest
 
     return ChatCompletionRequest._message_to_dict(message)
+
+
+def _content_from_dict(content: object) -> MessageContent | None:
+    """A string, or the text and image_url parts the save path writes.
+
+    Attachments and screenshots are saved as a list of parts (TD-4705).
+    Any other part type is still a load error, so nothing is guessed at.
+    """
+    if content is None or isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        raise ValueError("content must be a string or a list of parts")
+    for part in content:
+        if not isinstance(part, dict):
+            raise ValueError("content part is not an object")
+        kind = part.get("type")
+        if kind == "text":
+            if not isinstance(part.get("text"), str):
+                raise ValueError("text content part needs a string text")
+        elif kind == "image_url":
+            image = part.get("image_url")
+            if not isinstance(image, dict) or not isinstance(image.get("url"), str):
+                raise ValueError("image_url content part needs a string url")
+        else:
+            raise ValueError(f"unknown content part type {kind!r}")
+    return cast(list[dict[str, Any]], content)
 
 
 def chat_message_from_dict(data: dict[str, Any]) -> ChatMessage:
@@ -86,9 +137,7 @@ def chat_message_from_dict(data: dict[str, Any]) -> ChatMessage:
     role = data["role"]
     if role not in ("system", "user", "assistant", "tool"):
         raise ValueError(f"unknown chat role {role!r}")
-    content = data.get("content")
-    if content is not None and not isinstance(content, str):
-        raise ValueError("content must be a string")
+    content = _content_from_dict(data.get("content"))
     tool_call_id = data.get("tool_call_id")
     if tool_call_id is not None and not isinstance(tool_call_id, str):
         raise ValueError("tool_call_id must be a string")
@@ -162,10 +211,12 @@ class SessionPersist:
             return AppendResult(earliest_seq=earliest, trimmed=len(kept) < len(loaded))
 
     def save_conversation(self, session_id: str, messages: list[ChatMessage]) -> None:
+        """Replace the snapshot. Under the write lock, like every other writer."""
         payload = [chat_message_to_dict(m) for m in messages]
         path = self.dir_for(session_id)
         path.mkdir(parents=True, exist_ok=True)
-        self._write_json(path / _CONVERSATION, payload)
+        with self._write_lock:
+            self._write_json(path / _CONVERSATION, payload)
 
     def load(self, session_id: str) -> LoadedSession | None:
         """Read what is on disk. ``None`` if this session has no directory.
@@ -246,42 +297,22 @@ class SessionPersist:
 
     @staticmethod
     def _rewrite_events(path: Path, events: list[DaemonEvent]) -> None:
-        """Replace ``events.jsonl`` with ``events``. Temp + replace, mode 0o600."""
-        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        """Replace ``events.jsonl`` with ``events``. Unique temp + replace, 0o600."""
         try:
-            # Created 0600 in the same syscall: no world-readable instant.
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            try:
-                _write_all(fd, "".join(event.model_dump_json() + "\n" for event in events))
-            finally:
-                os.close(fd)
-            tmp.chmod(0o600)
-            os.replace(tmp, path)
+            _replace_with(path, "".join(event.model_dump_json() + "\n" for event in events))
             path.chmod(0o600)
         except OSError as e:
             log.warning(
                 "failed to rotate session events",
                 extra={"extra_fields": {"path": str(path), "error": str(e)}},
             )
-            if tmp.exists():
-                tmp.unlink(missing_ok=True)
 
     @staticmethod
     def _write_json(path: Path, payload: object) -> None:
-        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
         try:
-            # Created 0600 in the same syscall: no world-readable instant.
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            try:
-                _write_all(fd, json.dumps(payload))
-            finally:
-                os.close(fd)
-            tmp.chmod(0o600)
-            os.replace(tmp, path)
+            _replace_with(path, json.dumps(payload))
         except OSError as e:
             log.warning(
                 "failed to write session snapshot",
                 extra={"extra_fields": {"path": str(path), "error": str(e)}},
             )
-            if tmp.exists():
-                tmp.unlink(missing_ok=True)
