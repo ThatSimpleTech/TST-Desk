@@ -33,8 +33,8 @@ android {
         applicationId = "com.thatsimpletech.tstdesk"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.1.5"
+        versionCode = 7
+        versionName = "0.1.6"
     }
 
     buildTypes {
@@ -75,5 +75,10 @@ tasks.configureEach {
 }
 
 dependencies {
+    // TD-5014: offline QR scanner (zxing decoding on the phone, no Play
+    // services module download). Pinned exactly; it brings zxing core only.
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     testImplementation("junit:junit:4.13.2")
+    // Real org.json for JVM tests; android.jar's copy is a stub there.
+    testImplementation("org.json:json:20240303")
 }
