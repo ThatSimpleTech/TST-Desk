@@ -201,9 +201,19 @@ export interface RemoveRemoteDevice extends ClientMessage {
  *  by a pushed `machine_list` or an `error` (pair_failed, pair_locked,
  *  machine_unreachable, not_tailscale, machine_limit, machine_busy,
  *  keychain_locked). The code is never echoed back. */
-export type AddMachine =
-  | { type: "add_machine"; link: string }
-  | { type: "add_machine"; host: string; port: number; code: string };
+export interface AddMachineByLink extends ClientMessage {
+  type: "add_machine";
+  link: string;
+}
+
+export interface AddMachineByCode extends ClientMessage {
+  type: "add_machine";
+  host: string;
+  port: number;
+  code: string;
+}
+
+export type AddMachine = AddMachineByLink | AddMachineByCode;
 
 /** Forget a paired computer (TD-5015). Loopback only; replies machine_list. */
 export interface RemoveMachine extends ClientMessage {
