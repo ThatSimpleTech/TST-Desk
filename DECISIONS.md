@@ -11909,7 +11909,7 @@ stop the user asked for.
 
 ## TD-5004 — Nested steering has a budget, and home has no nested walk (Class B)
 
-2026-10-08. A phone session opened on `/home/thatsimple` walked every
+2026-10-08. A phone session opened on the home folder (`~`) walked every
 repo and worktree under it and loaded 73 `AGENTS.md`/`CLAUDE.md` files,
 about 310 KB, into the system prompt. Every turn overflowed the model
 (792,560 tokens against a 65,536 window). Nested steering is not scoped
