@@ -13,15 +13,26 @@ import contextlib
 import json
 import logging
 import os
+import subprocess
+import sys
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
 from websockets.asyncio.client import connect
 
+from tests.test_daemon_shutdown import (
+    _quiet_budget,
+    _read_log,
+    _shutting_down_reasons,
+    _spawn,
+    _stop,
+    _wait_until_serving,
+)
 from tstd.daemon import Daemon
 from tstd.protocol import PROTOCOL_VERSION
-from tstd.ws import create_port_file_path
+from tstd.ws import create_port_file_path, read_port_file
 
 
 async def _wait_for_port_file(path: Path, seconds: float = 10.0) -> dict:
@@ -36,7 +47,9 @@ async def _wait_for_port_file(path: Path, seconds: float = 10.0) -> dict:
 
 
 async def _shutdown_via_message(data_dir: Path, *, foreign_pid: int | None) -> Path:
-    daemon = Daemon(data_dir=data_dir)
+    # The websocket path arms the budget now (TD-5021); in-process it must
+    # not be able to end pytest.
+    daemon = Daemon(data_dir=data_dir, shutdown_budget=_quiet_budget())
     runner = asyncio.create_task(daemon.run())
     port_file = create_port_file_path(data_dir)
     try:
@@ -91,3 +104,36 @@ class TestShutdownMessage:
             port_file = await _shutdown_via_message(Path(tmp), foreign_pid=foreign)
             kept = json.loads(port_file.read_text(encoding="utf-8"))
             assert kept["pid"] == foreign
+
+
+async def _send_shutdown(data_dir: Path) -> None:
+    info = read_port_file(data_dir)
+    assert info is not None
+    async with connect(f"ws://127.0.0.1:{info['port']}") as ws:
+        await ws.send(
+            json.dumps({"type": "hello", "token": info["token"], "version": PROTOCOL_VERSION})
+        )
+        ack = json.loads(await ws.recv())
+        assert ack["type"] == "hello_ack"
+        await ws.send(json.dumps({"type": "shutdown"}))
+
+
+def test_shutdown_message_with_a_hung_phase_exits_inside_the_budget(tmp_path: Path) -> None:
+    """TD-5021: the websocket path arms the 5 s budget too."""
+    data_dir = tmp_path / "scratch"
+    proc = _spawn([sys.executable, "-m", "tests.shutdown_child", str(data_dir)])
+    try:
+        _wait_until_serving(proc)
+        asyncio.run(_send_shutdown(data_dir))
+        sent = time.monotonic()
+        try:
+            code = proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            raise AssertionError("daemon still running 10s after shutdown") from None
+        assert time.monotonic() - sent < 6.0
+        assert code == 1
+        text = _read_log(data_dir)
+        assert "shutdown exceeded" in text
+        assert _shutting_down_reasons(text) == ["websocket"]
+    finally:
+        _stop(proc)

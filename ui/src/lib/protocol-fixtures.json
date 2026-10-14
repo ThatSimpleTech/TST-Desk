@@ -304,6 +304,16 @@
   "shutdown": {
     "type": "shutdown"
   },
+  "drain": {
+    "type": "drain",
+    "timeout_s": 120,
+    "hold_s": 120
+  },
+  "drain_release": {
+    "type": "drain",
+    "timeout_s": 0,
+    "hold_s": 0
+  },
   "list_sessions": {
     "type": "list_sessions"
   },
@@ -1185,6 +1195,18 @@
         "detail": "Can't reach desk. Trying again in 30 s."
       }
     ]
+  },
+  "drain_result": {
+    "type": "drain_result",
+    "seq": 1,
+    "drained": false,
+    "running": [
+      "s1"
+    ],
+    "awaiting_approval": [
+      "s2"
+    ],
+    "hold_until": "2026-10-14T10:47:00+00:00"
   },
   "api_key_validated": {
     "type": "api_key_validated",

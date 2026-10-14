@@ -111,6 +111,24 @@ app again — it depends on the desktop. There is no macOS `Reopen` event on Lin
 While hidden, a running session or a parked approval updates the window title
 (the cheap Linux / Windows badge path). OS notifications still fire.
 
+### Restarting for a deploy
+
+Let open turns finish first, so a restart does not cut one (TD-5023):
+
+1. `cd core && uv run tst drain --timeout 120`
+2. Replace the AppImage.
+3. Restart the host.
+
+`tst drain` waits up to `--timeout` seconds for open turns, then keeps
+refusing new ones for `--hold` seconds (default 120) so the restart lands
+on a quiet daemon. It exits 0 when drained, 2 when a turn is still running
+or waiting on an approval (it prints only the session ids), and 1 when no
+daemon is running; it never starts one. `tst drain --release` lifts the
+hold if you change your mind. A turn cut anyway is closed as "Not
+finished" when the daemon comes back (TD-5018), and a second `tstd` on the
+same data dir waits up to 10 s for the first to exit before giving up
+(TD-5022).
+
 ---
 
 ## 6. Things that are not different

@@ -14,7 +14,7 @@ from tstd.audit import AuditStore
 from tstd.audit_writer import AuditWriter
 from tstd.daemon import Daemon
 from tstd.mock import MockProvider, Script
-from tstd.protocol import AssistantDelta, Error, UserTurn
+from tstd.protocol import AssistantDelta, Error, TurnComplete, UserTurn
 from tstd.provider import ChatMessage
 from tstd.session_persist import SessionPersist
 from tstd.session_store import SessionStore
@@ -81,6 +81,12 @@ class TestRestoreHonesty:
             "sid-1",
             AssistantDelta(session_id="sid-1", delta="4", seq=2),
         )
+        # The turn finished before the restart, so there is nothing to seal
+        # (TD-5018 seals a turn with no turn_complete).
+        persist.append_event(
+            "sid-1",
+            TurnComplete(session_id="sid-1", tokens=2, cost=0, tier="brain", duration=0.1, seq=3),
+        )
         persist.save_conversation(
             "sid-1",
             [
@@ -104,7 +110,7 @@ class TestRestoreHonesty:
             assert turns[0].content == "What is 2+2?"
 
             await sess.add_user_message("Again")
-            await wait_for_turn(sess, 1)
+            await wait_for_turn(sess, 2)
             assert sess.conversation[-1].content == "still 4"
             assert mock.calls
             # The model saw the saved turn, not an empty thread.

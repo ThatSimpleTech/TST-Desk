@@ -7,18 +7,28 @@ process is up.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
 import signal
 import subprocess
 import sys
 import threading
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import pytest
 
+from tests.machine_helpers import ask, eventually, window
 from tstd.cli import daemon_argv
+from tstd.daemon import Daemon
 from tstd.logging import LOG_FILE_NAME, log_directory, user_data_dir
+from tstd.mock import MockProvider, Script
+from tstd.protocol import SessionState
+from tstd.provider import ChatMessage
+from tstd.session_persist import SessionPersist
+from tstd.session_store import SessionStore
 from tstd.shutdown_budget import SHUTDOWN_BUDGET_SECONDS, ShutdownBudget
 from tstd.ws import create_port_file_path
 
@@ -81,6 +91,12 @@ def _read_log(data_dir: Path) -> str:
     return (log_directory(data_dir) / LOG_FILE_NAME).read_text(encoding="utf-8")
 
 
+def _shutting_down_reasons(text: str) -> list[object]:
+    """The ``reason`` of every "shutting down" line in a JSON log (TD-5021)."""
+    lines = [json.loads(line) for line in text.splitlines() if line.strip()]
+    return [line.get("reason") for line in lines if line.get("message") == "shutting down"]
+
+
 def _rewrite_pid(port: Path, pid: int) -> None:
     data = json.loads(port.read_text(encoding="utf-8"))
     data["pid"] = pid
@@ -141,6 +157,7 @@ def test_signal_stops_daemon_and_removes_port_file(tmp_path: Path, sig: int) -> 
         text = _read_log(data_dir)
         assert "signal received" in text
         assert "shutdown complete" in text
+        assert _shutting_down_reasons(text) == ["signal"]
     finally:
         _stop(proc)
 
@@ -254,3 +271,113 @@ class TestShutdownBudget:
 
         monkeypatch.setattr(sys, "platform", "win32")
         install_posix_shutdown_signals(lambda: None)
+
+
+# ── why it stopped (TD-5018, TD-5021) ────────────────────────────────
+
+
+def _quiet_budget() -> ShutdownBudget:
+    """A real budget that cannot end the pytest process if it fires."""
+    return ShutdownBudget(exit_process=lambda _code: None)
+
+
+async def _reasons_for(
+    daemon: Daemon,
+    trigger: Callable[[], Awaitable[None]],
+    caplog: pytest.LogCaptureFixture,
+) -> list[object]:
+    """Run *daemon*, pull *trigger*, and read every "shutting down" reason."""
+    with caplog.at_level(logging.INFO, logger="tstd.daemon"):
+        runner = asyncio.create_task(daemon.run())
+        await eventually(lambda: daemon.ws_server.port > 0 or runner.done(), within=10)
+        try:
+            await trigger()
+            await asyncio.wait_for(runner, timeout=10)
+        finally:
+            if not runner.done():
+                daemon._shutdown_event.set()
+                await asyncio.wait_for(runner, timeout=10)
+    return [
+        record.__dict__.get("extra_fields", {}).get("reason")
+        for record in caplog.records
+        if record.getMessage() == "shutting down"
+    ]
+
+
+class TestShutdownReason:
+    async def test_websocket(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        daemon = Daemon(data_dir=tmp_path / "d", shutdown_budget=_quiet_budget())
+
+        async def trigger() -> None:
+            async with window(daemon) as ws:
+                await ws.send(json.dumps({"type": "shutdown"}))
+                await eventually(daemon._shutdown_event.is_set)
+
+        assert await _reasons_for(daemon, trigger, caplog) == ["websocket"]
+
+    async def test_host_gone(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        sleeper = await asyncio.create_subprocess_exec(
+            sys.executable, "-c", "import time; time.sleep(60)"
+        )
+        daemon = Daemon(
+            data_dir=tmp_path / "d", parent_pid=sleeper.pid, shutdown_budget=_quiet_budget()
+        )
+        daemon._parent_poll_interval = 0.05
+
+        async def trigger() -> None:
+            try:
+                sleeper.kill()
+            except PermissionError:
+                pytest.skip("the OS vetoed the test's own kill (TD-605)")
+            await asyncio.wait_for(sleeper.wait(), 5)
+
+        try:
+            assert await _reasons_for(daemon, trigger, caplog) == ["host_gone"]
+        finally:
+            if sleeper.returncode is None:
+                sleeper.kill()
+                await asyncio.wait_for(sleeper.wait(), 5)
+
+    async def test_shutdown_during_a_drain_hold_is_the_drain(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        daemon = Daemon(data_dir=tmp_path / "d", shutdown_budget=_quiet_budget())
+
+        async def trigger() -> None:
+            async with window(daemon) as ws:
+                held = await ask(
+                    ws, {"type": "drain", "timeout_s": 0, "hold_s": 60}, "drain_result"
+                )
+                assert held["drained"] is True
+                await ws.send(json.dumps({"type": "shutdown"}))
+                await eventually(daemon._shutdown_event.is_set)
+
+        assert await _reasons_for(daemon, trigger, caplog) == ["drain"]
+        # The path that asked is kept beside it.
+        line = next(r for r in caplog.records if r.getMessage() == "shutting down")
+        assert line.__dict__["extra_fields"] == {"reason": "drain", "trigger": "websocket"}
+
+    async def test_shutdown_cancels_sessions_for_the_daemon(self, tmp_path: Path) -> None:
+        """TD-5018: the cancelled state says the daemon stopped, not the user."""
+        data_dir = tmp_path / "d"
+        workspace = tmp_path / "ws"
+        data_dir.mkdir()
+        workspace.mkdir()
+        await SessionStore(data_dir).upsert("sid-1", str(workspace), "running")
+        persist = SessionPersist(data_dir)
+        persist.prepare("sid-1")
+        persist.save_conversation("sid-1", [ChatMessage(role="user", content="hi")])
+        daemon = Daemon(
+            data_dir=data_dir,
+            provider=MockProvider(default=Script(kind="stream")),
+            shutdown_budget=_quiet_budget(),
+        )
+        await daemon._restore_sessions()
+        sess = daemon.session_registry.get("sid-1")
+        assert sess is not None and sess.state == "running"
+        await daemon._shutdown()
+        loaded = SessionPersist(data_dir).load("sid-1")
+        assert loaded is not None
+        states = [e for e in loaded.events if isinstance(e, SessionState)]
+        assert states[-1].state == "cancelled"
+        assert states[-1].reason == "daemon shutdown"

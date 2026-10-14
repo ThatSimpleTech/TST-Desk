@@ -274,6 +274,7 @@ _OUTBOUND_CAPABLE = {
     "e2e_m10.py": "the M10 exit harness, a protocol client of our own loopback daemon",
     "cli.py": "tst run; dials only 127.0.0.1 from the daemon port file",
     "cli_pairing.py": "tst pair / tst devices; dials only 127.0.0.1 from the daemon port file",
+    "cli_drain.py": "tst drain; dials only 127.0.0.1 from the daemon port file (TD-5023)",
     "bridge_link.py": "dials only a paired computer's Tailscale address (TD-5015)",
     "machine_pairing.py": "dials only a paired computer's Tailscale address (TD-5015)",
     "tools/web_search.py": "web_search; destinations are search.base_url + fallbacks from config",

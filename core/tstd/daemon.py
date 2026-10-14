@@ -15,8 +15,9 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -101,6 +102,7 @@ from .cu_indicators import (
     set_current_prefs,
 )
 from .cu_policy import CuPolicy, load_cu_policy, save_cu_policy
+from .data_dir_lock import acquire_data_dir_lock
 from .desktop import DesktopDriver, desktop_driver_from_config
 from .desktop.grounding_client import GroundingClient
 from .desktop.host_probe import host_permissions
@@ -214,6 +216,8 @@ from .protocol import (
     Detach,
     DiagnosticCheck,
     DiagnosticsReport,
+    Drain,
+    DrainResult,
     EndSession,
     ExportUsage,
     FocusWindow,
@@ -316,6 +320,7 @@ from .protocol import (
     TierState,
     Transcribe,
     Transcript,
+    TurnComplete,
     UsageExported,
     UsageReport,
     UsageRollup,
@@ -426,6 +431,7 @@ from .shutdown_phases import (
 from .speech import transcribe as transcribe_speech
 from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
+from .turn_seal import INTERRUPTED_BY_RESTART, open_turn, repair_cut_conversation
 from .voice import (
     MAX_AUDIO_BYTES,
     VoiceError,
@@ -482,6 +488,70 @@ class DaemonState:
     @property
     def uptime(self) -> float:
         return time.time() - self.started_at
+
+
+# How often a drain looks at the open turns, and how long shutdown lets
+# them finish before it cancels them (TD-5023).
+DRAIN_POLL_SECONDS = 0.2
+SHUTDOWN_SETTLE_SECONDS = 1.5
+DRAINING_MESSAGE = (
+    "TST Desk is about to restart. Your message was not sent; send it again in a few seconds."
+)
+# Every message that starts a new turn on this computer. A drain hold
+# refuses them all, since the restart would cut the turn. Approve, deny,
+# stop and resume only let an open turn finish, so they still pass.
+_TURN_STARTS = (UserMessage, ForkFrom, RunGrokCommand, ApproveGrokPlan, StartAutonomy, RunJob)
+
+
+class DrainHold:
+    """When new local turns are refused (TD-5023).
+
+    A ``drain`` holds for a while and the hold ends by itself, so a drain
+    nobody follows with a restart never leaves the daemon refusing
+    messages. Shutdown closes it for good. The check runs on the
+    monotonic clock; ``until`` is the wall-clock time the reply names.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._ends: float | None = None
+        self._until: datetime | None = None
+        self._closed = False
+        self._generation = 0
+
+    @property
+    def active(self) -> bool:
+        return self._closed or (self._ends is not None and self._clock() < self._ends)
+
+    @property
+    def until(self) -> str | None:
+        """ISO time the hold ends, or None when there is no timed hold."""
+        if self._closed or self._until is None or not self.active:
+            return None
+        return self._until.isoformat()
+
+    @property
+    def generation(self) -> int:
+        """Bumped by every :meth:`hold_for`, so a drain sees it was replaced."""
+        return self._generation
+
+    def hold_for(self, seconds: float) -> int:
+        """Refuse new turns for *seconds* from now; 0 releases the hold.
+
+        Returns the new :attr:`generation`.
+        """
+        self._generation += 1
+        if seconds <= 0:
+            self._ends = None
+            self._until = None
+        else:
+            self._ends = self._clock() + seconds
+            self._until = datetime.now(UTC) + timedelta(seconds=seconds)
+        return self._generation
+
+    def close(self) -> None:
+        """Shutdown: refuse new turns until the process ends."""
+        self._closed = True
 
 
 def _parent_alive(pid: int) -> bool:
@@ -790,6 +860,14 @@ class Daemon:
         self.state = DaemonState()
         self._shutdown_event = asyncio.Event()
         self._shutdown_budget = shutdown_budget if shutdown_budget is not None else ShutdownBudget()
+        # Why this process is stopping, for the "shutting down" line, and
+        # the path that asked when the reason is a drain. The first request
+        # wins (TD-5021).
+        self._shutdown_reason: str | None = None
+        self._shutdown_trigger: str | None = None
+        # Refuses new local turns during a drain and for all of shutdown
+        # (TD-5023).
+        self._drain = DrainHold()
         self._tasks: list[asyncio.Task[Any]] = []
         self.session_registry = SessionRegistry()
         self._session_store = SessionStore(self.data_dir)
@@ -1675,9 +1753,21 @@ class Daemon:
         host also kills this process a few seconds after asking it to
         stop, which is shorter than a close handshake against a client
         that never answers.
+
+        New local turns are refused from the first line, and a turn that
+        is still working gets ``SHUTDOWN_SETTLE_SECONDS`` to finish
+        before the loops are cancelled (TD-5023). The log line names why
+        this process is stopping (TD-5021).
         """
+        self._drain.close()
         release_port_file(self.data_dir)
-        log.info("shutting down")
+        # An unnamed reason is an embedder setting the event itself, or
+        # serve failing before anything asked.
+        fields = {"reason": self._shutdown_reason or "other"}
+        if self._shutdown_reason == "drain" and self._shutdown_trigger is not None:
+            fields["trigger"] = self._shutdown_trigger
+        log.info("shutting down", extra={"extra_fields": fields})
+        await self._wait_for_open_turns(SHUTDOWN_SETTLE_SECONDS)
         phases = ShutdownPhases()
         flight = ProviderFlight()
 
@@ -1712,7 +1802,9 @@ class Daemon:
         for session in sessions:
             runner = self.session_registry.get_runner(session.id)
             if runner is not None:
-                await phases.run(f"cancel {session.id[:8]}", runner.cancel())
+                await phases.run(
+                    f"cancel {session.id[:8]}", runner.cancel(reason="daemon shutdown")
+                )
 
         # Cancel streaming tasks
         for task in list(self._streaming_tasks.values()):
@@ -1760,9 +1852,104 @@ class Daemon:
         a callback that logs first never sets the event if that lock is
         stuck, and the process stays up until something else kills it.
         """
+        self._request_shutdown("signal")
+        log.info("signal received")
+
+    def _request_shutdown(self, reason: str) -> None:
+        """Ask for shutdown and start the 5 s budget (TD-5021).
+
+        Every trigger comes through here (the signal, the host going away,
+        the websocket ``shutdown``), so none of them can hang for good.
+        Logs nothing, for the reason ``_on_signal`` gives: the caller logs
+        after. A request while a drain hold is up is the restart the drain
+        was for, so its reason is ``drain``; *reason* is kept as the
+        trigger, so the log still says which path it was.
+        """
+        if self._shutdown_reason is None:
+            self._shutdown_reason = "drain" if self._drain.active else reason
+            self._shutdown_trigger = reason
         self._shutdown_event.set()
         self._shutdown_budget.arm(self.data_dir)
-        log.info("signal received")
+
+    async def _open_local_turns(self) -> tuple[list[str], list[str]]:
+        """``(running, awaiting_approval)``: ids of this computer's open turns.
+
+        The registry holds only local sessions; a bridged row lives in the
+        hub. A paused turn is waiting on the person too, but not on an
+        approval, so it is listed as running.
+        """
+        running: list[str] = []
+        waiting: list[str] = []
+        for sess in await self.session_registry.list_sessions():
+            if not sess.turn_in_flight:
+                continue
+            (waiting if sess.state == "awaiting_approval" else running).append(sess.id)
+        return running, waiting
+
+    async def _wait_for_open_turns(
+        self, seconds: float, *, stop: Callable[[], bool] | None = None
+    ) -> None:
+        """Poll until no local turn is still working, *seconds* pass, or *stop*.
+
+        Only a ``running`` turn can finish by itself. One parked on an
+        approval or paused for the person is not waited on.
+        """
+        deadline = time.monotonic() + seconds
+        while stop is None or not stop():
+            sessions = await self.session_registry.list_sessions()
+            if not any(s.turn_in_flight and s.state == "running" for s in sessions):
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            await asyncio.sleep(min(DRAIN_POLL_SECONDS, remaining))
+
+    async def _drain_turns(self, msg: Drain) -> str:
+        """Hold new local turns, let open ones finish, save, answer (TD-5023).
+
+        The hold covers the wait and then ``hold_s`` more: long enough to
+        swap the build and restart the host, and it ends by itself. 0/0
+        releases it and changes nothing else.
+
+        Shutdown, a release or a later drain ends the wait early, and this
+        drain then leaves the hold as it finds it. The server's close waits
+        for this handler, so a drain still polling would hold shutdown
+        until the budget killed the process; and a release must not come
+        back when the turn it gave up on finishes.
+        """
+        release = msg.timeout_s == 0 and msg.hold_s == 0
+        if release:
+            self._drain.hold_for(0)
+        else:
+            mine = self._drain.hold_for(msg.timeout_s + msg.hold_s)
+
+            def superseded() -> bool:
+                return self._shutdown_event.is_set() or self._drain.generation != mine
+
+            await self._wait_for_open_turns(msg.timeout_s, stop=superseded)
+            if not superseded():
+                self._drain.hold_for(msg.hold_s)
+            for sess in await self.session_registry.list_sessions():
+                if sess.state not in TERMINAL_STATES:
+                    await sess.conversation_changed()
+        running, waiting = await self._open_local_turns()
+        log.info(
+            "drain released" if release else "drained",
+            extra={
+                "extra_fields": {
+                    "timeout_s": msg.timeout_s,
+                    "hold_s": msg.hold_s,
+                    "running": len(running),
+                    "awaiting_approval": len(waiting),
+                }
+            },
+        )
+        return DrainResult(
+            drained=not running and not waiting,
+            running=running,
+            awaiting_approval=waiting,
+            hold_until=self._drain.until,
+        ).model_dump_json()
 
     async def _restore_sessions(self) -> None:
         """Rehydrate the registry. Revive only when a conversation snapshot exists.
@@ -1835,7 +2022,13 @@ class Daemon:
         await channel_notify(self.config, channel, summary)
 
     async def run_due_jobs(self, now: datetime | None = None) -> list[str]:
-        """Wake due jobs against this daemon. Tests call this directly."""
+        """Wake due jobs against this daemon. Tests call this directly.
+
+        Nothing fires during a drain hold (TD-5023). A due job stays due,
+        so the first tick after the hold runs it.
+        """
+        if self._drain.active:
+            return []
         when = now if now is not None else datetime.now(UTC)
         ran = await run_due_jobs(
             self.data_dir,
@@ -1939,8 +2132,8 @@ class Daemon:
         """
         while not self._shutdown_event.is_set():
             if not _parent_alive(parent_pid):
+                self._request_shutdown("host_gone")
                 log.warning("parent process gone, shutting down to avoid orphan")
-                self._shutdown_event.set()
                 return
             await asyncio.sleep(self._parent_poll_interval)
 
@@ -2032,6 +2225,16 @@ class Daemon:
         handled = await self.hub.intercept(msg, _connection)
         if handled is not NOT_HANDLED:
             return cast("str | None", handled)
+
+        # TD-5023: after the hub, so a bridged id was already forwarded to
+        # the computer that runs it. Approve, deny and stop still pass, so
+        # open turns can finish.
+        if isinstance(msg, _TURN_STARTS) and self._drain.active:
+            sid = getattr(msg, "session_id", None)
+            return build_error("daemon_draining", DRAINING_MESSAGE, session_id=sid)
+
+        if isinstance(msg, Drain):
+            return await self._drain_turns(msg)
 
         if isinstance(msg, OpenWorkspace):
             # Validate before creating anything (TD-1103): a nonexistent or
@@ -2964,8 +3167,8 @@ class Daemon:
             return await self._memory_files_reply(found.workspace_path)
 
         if isinstance(msg, Shutdown):
+            self._request_shutdown("websocket")
             log.info("shutdown requested via websocket")
-            self._shutdown_event.set()
             return None
 
         if isinstance(msg, SetCuKill):
@@ -2983,7 +3186,15 @@ class Daemon:
     async def _revive_session(
         self, session_id: str, workspace_path: str, loaded: LoadedSession
     ) -> None:
-        """Start a loop on a persisted conversation. Does not invent messages."""
+        """Start a loop on a persisted conversation.
+
+        Invents one thing only: the seal on a turn a restart cut in half
+        (TD-5018). Its open tool calls get a reply that says they may have
+        partly run, and the turn ends with a failed ``turn_complete``, so
+        the window stops showing it as running and the next request is
+        one a provider accepts. Once sealed the log has its
+        ``turn_complete``, so a second restore finds nothing to seal.
+        """
         sess = await self.session_registry.restore(session_id, workspace_path, "idle")
         record = self._session_store.get(session_id)
         if record is not None and record.engine == "grok":
@@ -2995,9 +3206,13 @@ class Daemon:
         self._bind_session_preset(sess, record.preset if record is not None else "")
         if loaded.events:
             sess.event_log.replace(loaded.events)
+        cut = open_turn(loaded.events)
         if loaded.conversation is not None:
-            sess.conversation[:] = loaded.conversation
+            conversation = loaded.conversation
+            sess.conversation[:] = repair_cut_conversation(conversation) if cut else conversation
         await self._attach_session_runtime(sess)
+        if cut:
+            await self._seal_cut_turn(sess)
         try:
             source = boundary_source(workspace_path)
         except ConfigError as e:
@@ -3013,6 +3228,28 @@ class Daemon:
                 }
             },
         )
+
+    async def _seal_cut_turn(self, sess: Session) -> None:
+        """End a turn the last daemon died in the middle of (TD-5018).
+
+        Runs after the persist hooks are attached, so the seal and the
+        repaired conversation both reach disk.
+        """
+        tier = sess.router.active_tier if sess.router is not None else "brain"
+        await sess.event_log.add(
+            TurnComplete(
+                session_id=sess.id,
+                tokens=0,
+                cost=0,
+                tier=tier,
+                duration=0,
+                failed=True,
+                error_code=INTERRUPTED_BY_RESTART,
+                seq=1,
+            )
+        )
+        await sess.conversation_changed()
+        log.info("sealed cut turn", extra={"extra_fields": {"session_id": sess.id}})
 
     async def _run_distill(
         self,
@@ -4276,12 +4513,25 @@ def main() -> None:
     data_dir = Path(args.data_dir) if args.data_dir else user_data_dir()
     setup_logging(level=args.log_level, log_dir=log_directory(data_dir))
 
+    # TD-5022: one daemon per data dir, held until this process ends. A
+    # previous daemon still inside its shutdown budget gets to finish.
+    lock = acquire_data_dir_lock(data_dir)
+    if lock is None:
+        log.error(
+            "another tstd owns this data dir",
+            extra={"extra_fields": {"data_dir": str(data_dir)}},
+        )
+        raise SystemExit(1)
+
     async def _run() -> None:
         daemon = Daemon(data_dir=data_dir, parent_pid=args.parent_pid)
         await daemon.run()
 
-    with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(_run())
+    try:
+        with contextlib.suppress(KeyboardInterrupt):
+            asyncio.run(_run())
+    finally:
+        lock.release()
 
 
 if __name__ == "__main__":

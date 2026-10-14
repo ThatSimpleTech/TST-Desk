@@ -498,8 +498,12 @@ class Session:
         )
         await self.event_log.add(event)
 
-    async def cancel(self) -> None:
-        """Request cancellation of this session."""
+    async def cancel(self, reason: str = "cancelled by user") -> None:
+        """Request cancellation of this session.
+
+        *reason* lands on the ``cancelled`` state event. Daemon shutdown
+        passes its own so the log does not blame the user (TD-5018).
+        """
         self._cancel_event.set()
         # Nothing will answer the queued turns now.
         self._open_turns = 0
@@ -507,7 +511,7 @@ class Session:
         for pending in self._pending_approvals.values():
             pending.future.cancel()
         if self._state in ("running", "awaiting_approval", "paused"):
-            await self.set_state("cancelled", reason="cancelled by user")
+            await self.set_state("cancelled", reason=reason)
         await self.close_cu_session()
         # Wake a loop parked in wait_for_resume so it observes cancellation.
         self._resume_event.set()
@@ -1046,9 +1050,9 @@ class SessionRunner:
             if self.session.state not in ("complete", "failed", "cancelled"):
                 await self.session.set_state("failed", reason=str(e))
 
-    async def cancel(self) -> None:
+    async def cancel(self, reason: str = "cancelled by user") -> None:
         """Cancel the session and its loop."""
-        await self.session.cancel()
+        await self.session.cancel(reason)
         if self._task and not self._task.done():
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

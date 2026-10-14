@@ -9,10 +9,19 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
 
+from tests.test_daemon_shutdown import (
+    _quiet_budget,
+    _read_log,
+    _shutting_down_reasons,
+    _spawn,
+    _stop,
+    _wait_until_serving,
+)
 from tstd.coworker import save_coworker
 from tstd.daemon import Daemon, _parent_alive
 from tstd.ws import create_port_file_path
@@ -69,6 +78,37 @@ class TestWatchdog:
         await _parent_death(coworker=True, foreign_pid=None)
 
 
+def test_parent_death_with_a_hung_phase_exits_inside_the_budget(tmp_path: Path) -> None:
+    """TD-5021: the watchdog arms the 5 s budget, so a stuck close still ends."""
+    data_dir = tmp_path / "scratch"
+    sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    proc = _spawn([sys.executable, "-m", "tests.shutdown_child", str(data_dir), str(sleeper.pid)])
+    try:
+        _wait_until_serving(proc)
+        try:
+            sleeper.kill()
+        except PermissionError:
+            pytest.skip("the OS vetoed the test's own kill (TD-605)")
+        # Reaped, or os.kill(pid, 0) still reads the zombie as alive.
+        sleeper.wait(timeout=5)
+        gone = time.monotonic()
+        try:
+            code = proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            raise AssertionError("daemon still running 10s after its parent died") from None
+        assert time.monotonic() - gone < 6.0
+        assert code == 1
+        text = _read_log(data_dir)
+        assert "shutdown exceeded" in text
+        assert _shutting_down_reasons(text) == ["host_gone"]
+    finally:
+        _stop(proc)
+        if sleeper.poll() is None:
+            with contextlib.suppress(PermissionError):
+                sleeper.kill()
+            sleeper.wait(timeout=5)
+
+
 async def _parent_death(*, coworker: bool, foreign_pid: int | None) -> None:
     sleeper = await asyncio.create_subprocess_exec(
         sys.executable, "-c", "import time; time.sleep(60)"
@@ -78,7 +118,11 @@ async def _parent_death(*, coworker: bool, foreign_pid: int | None) -> None:
             data_dir = Path(tmp)
             if coworker:
                 save_coworker(tmp, True)
-            daemon = Daemon(data_dir=data_dir, parent_pid=sleeper.pid)
+            # The watchdog arms the budget now (TD-5021); in-process it must
+            # not be able to end pytest.
+            daemon = Daemon(
+                data_dir=data_dir, parent_pid=sleeper.pid, shutdown_budget=_quiet_budget()
+            )
             # Aggressive poll so the test stays fast.
             daemon._parent_poll_interval = 0.05
             runner = asyncio.create_task(daemon.run())
