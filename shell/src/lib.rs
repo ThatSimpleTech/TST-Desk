@@ -7,6 +7,7 @@ pub mod daemon;
 mod quick_entry;
 mod read_text;
 mod session_window;
+mod single_instance;
 mod tray;
 mod updater;
 
@@ -120,9 +121,9 @@ fn raise_window(app: &tauri::AppHandle, window: &WebviewWindow) {
     emit_window_visibility(app, true);
 }
 
-/// Tray Show and macOS Reopen. With every window closed under Keep
-/// running (TD-5020) there is nothing to raise, so this opens a desk
-/// window instead of doing nothing.
+/// Tray Show, macOS Reopen and a second launch (TD-5024). With every
+/// window closed under Keep running (TD-5020) there is nothing to
+/// raise, so this opens a desk window instead of doing nothing.
 pub(crate) fn show_any_window(app: &tauri::AppHandle) {
     let windows = app.webview_windows();
     match show_target(windows.keys().map(String::as_str), is_quitting()) {
@@ -310,6 +311,9 @@ fn build_app_menu(app: &tauri::App) -> tauri::Result<Menu<tauri::Wry>> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // TD-5024: first, so a second launch hands over and exits before
+        // any other plugin, window or daemon supervisor starts in it.
+        .plugin(single_instance::plugin())
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_denylist(&[quick_entry::WINDOW_LABEL])
