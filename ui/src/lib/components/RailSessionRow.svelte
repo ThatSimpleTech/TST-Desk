@@ -41,8 +41,22 @@
 		toggleRowMenu
 	} from '../session-actions.svelte.js';
 
-	let { row, active, onselect }: { row: SessionRow; active: boolean; onselect: () => void } =
-		$props();
+	// TD-5015: `remote` marks a session another computer runs (no Move or
+	// Schedule here); `offline` greys it while that computer is unreachable,
+	// in the muted ink token rather than opacity so it stays AA.
+	let {
+		row,
+		active,
+		onselect,
+		remote = false,
+		offline = false
+	}: {
+		row: SessionRow;
+		active: boolean;
+		onselect: () => void;
+		remote?: boolean;
+		offline?: boolean;
+	} = $props();
 
 	let menuOpen = $derived(sessions.menuFor === row.sessionId);
 	let confirming = $derived(sessions.confirmDeleteFor === row.sessionId);
@@ -114,6 +128,7 @@
 	<div class="row" class:row-active={active}>
 		<button
 			class="open"
+			class:open-offline={offline}
 			type="button"
 			data-rail-row={row.sessionId}
 			aria-current={active ? 'true' : undefined}
@@ -145,7 +160,7 @@
 
 	{#if menuOpen}
 		<div class="menu" role="group" aria-label={`Actions for session ${rowTitleFull(row)}`}>
-			{#each rowActions(row.archived, row.starred) as action (action.id)}
+			{#each rowActions(row.archived, row.starred, remote) as action (action.id)}
 				<button
 					class="action"
 					class:action-danger={action.danger}
@@ -258,6 +273,11 @@
 	   a 260px column is a ring drawn over the next row. */
 	.open:focus-visible {
 		outline-offset: -2px;
+	}
+
+	.open-offline,
+	.open-offline .row-sub {
+		color: var(--color-ink-muted);
 	}
 
 	/* The state dot. Its rules used to live only in SessionRail, whose

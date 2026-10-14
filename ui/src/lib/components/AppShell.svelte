@@ -73,7 +73,9 @@
 	import { startGrok } from '../grok.svelte.js';
 	import { startVoice } from '../voice.svelte.js';
 	import { resolveShortcut, sessionSlot } from '../shortcuts';
-	import { groupRowsByRecency, railOrder, sessionIdAtSlot, stepSessionId } from '../rail';
+	import { sessionIdAtSlot, stepSessionId } from '../rail';
+	import { sessionOrderAcross } from '../machines';
+	import { machines } from '../machines.svelte.js';
 	import { chat, cancelTurn } from '../chat-store.svelte.js';
 	import { showCancel } from '../chat-store';
 	import { workspaces, closeWorkspaceMenu } from '../workspaces.svelte.js';
@@ -142,8 +144,10 @@
 	// The rail's rows in the order it draws them (navigation round, 2026-09):
 	// what ⌘⌥↑ / ⌘⌥↓ step through and what ⌘1…⌘9 index into. Read at the
 	// keypress rather than derived, so the shell keeps no copy of the rail.
+	// TD-5015: with other computers paired it walks each computer's block
+	// in turn; with none it is the single list's order, unchanged.
 	function sessionOrder(): string[] {
-		return railOrder(groupRowsByRecency(visibleRows()));
+		return sessionOrderAcross(visibleRows(), machines.list);
 	}
 
 	// Top-most first, matching DOM order at the same --z-modal (settings is
