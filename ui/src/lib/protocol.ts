@@ -18,6 +18,10 @@ export interface Hello extends ClientMessage {
   type: "hello";
   token: string;
   version: number;
+  /** Opt-ins (TD-5015, max 8). `"machines"` makes this connection a viewer:
+   *  its session_list also carries other computers' rows and it gets
+   *  `machine_list`. An older daemon ignores the field. */
+  features?: string[];
 }
 
 /** First frame on a remote connection instead of hello (TD-5014): redeem a
@@ -31,6 +35,9 @@ export interface Pair extends ClientMessage {
   /** This phone's current device key when it is re-pairing, so the daemon
    *  drops the entry it replaces. Never a legacy remote-token. */
   replaces?: string | null;
+  /** TD-5015: a hub pairing another computer sends "machine". Phones omit
+   *  it (the daemon's default is "phone"). */
+  kind?: "phone" | "machine";
 }
 
 export interface OpenWorkspace extends ClientMessage {
@@ -188,6 +195,31 @@ export interface CancelPairing extends ClientMessage {
 export interface RemoveRemoteDevice extends ClientMessage {
   type: "remove_remote_device";
   device_id: string;
+}
+
+/** Pair another computer (TD-5015). Loopback only; runs as a task, answered
+ *  by a pushed `machine_list` or an `error` (pair_failed, pair_locked,
+ *  machine_unreachable, not_tailscale, machine_limit, machine_busy,
+ *  keychain_locked). The code is never echoed back. */
+export type AddMachine =
+  | { type: "add_machine"; link: string }
+  | { type: "add_machine"; host: string; port: number; code: string };
+
+/** Forget a paired computer (TD-5015). Loopback only; replies machine_list. */
+export interface RemoveMachine extends ClientMessage {
+  type: "remove_machine";
+  machine: string;
+}
+
+/** The paired computers (TD-5015). Loopback and viewers; replies machine_list. */
+export interface ListMachines extends ClientMessage {
+  type: "list_machines";
+}
+
+/** Dial a computer now, resetting its backoff (TD-5015). Loopback only. */
+export interface ReconnectMachine extends ClientMessage {
+  type: "reconnect_machine";
+  machine: string;
 }
 
 /** Pin or unpin a workspace on the Projects list (TD-2806). */
@@ -847,6 +879,10 @@ export type ClientMessageUnion =
   | StartPairing
   | CancelPairing
   | RemoveRemoteDevice
+  | AddMachine
+  | RemoveMachine
+  | ListMachines
+  | ReconnectMachine
   | ListJobs
   | SaveJob
   | DeleteJob
@@ -865,6 +901,10 @@ export type ClientMessageUnion =
 export interface HelloAck {
   type: "hello_ack";
   version: number;
+  /** TD-5015: this daemon's identity (`mid_<16hex>`, not a secret) and its
+   *  computer's name, sent only after auth. Absent from an older daemon. */
+  machine_id?: string | null;
+  desktop_name?: string | null;
 }
 
 /** Out-of-band reply to `pair` (TD-5014), like `hello_ack`: not a sequenced
@@ -877,6 +917,8 @@ export interface PairOk {
   device_name: string;
   token: string;
   desktop_name: string;
+  /** TD-5015: the paired daemon's identity. Absent from an older daemon. */
+  machine_id?: string | null;
 }
 
 /** Application-level liveness frame (TD-1716): no session, no seq.
@@ -1277,6 +1319,10 @@ export interface SessionSummary {
   /** A turn is in flight (TD-1720). Distinct from `state: "running"`,
    *  which is loop liveness (TD-1714). Additive. */
   busy?: boolean;
+  /** TD-5015: the paired computer this row lives on (`mch_<12hex>`), or
+   *  null/absent for the answering daemon's own. Its id is then bridged:
+   *  `<raw>:<machine>`. */
+  machine?: string | null;
 }
 
 export interface SessionList extends DaemonEvent {
@@ -1371,6 +1417,32 @@ export interface RemoteDeviceSummary {
   paired_at: string;
   last_seen: string | null;
   connected: boolean;
+  /** TD-5015: a phone or another computer's hub. Missing = phone. */
+  kind?: "phone" | "machine";
+}
+
+/** A paired computer's link, as the hub reports it (TD-5015). */
+export type MachineStatus = "connected" | "connecting" | "unreachable" | "refused" | "locked" | "outdated";
+
+/** One computer this daemon paired (TD-5015). Never a key or a code. Phones
+ *  get `host`/`port` null. */
+export interface MachineSummary {
+  id: string;
+  name: string;
+  host: string | null;
+  port: number | null;
+  status: MachineStatus;
+  last_seen: string | null;
+  paired_at: string;
+  /** The link reaches this daemon itself (machine_id equality): a self-pair. */
+  same_computer: boolean;
+  detail: string | null;
+}
+
+/** Reply to the machine verbs, also pushed to viewers on change (TD-5015). */
+export interface MachineList extends DaemonEvent {
+  type: "machine_list";
+  machines: MachineSummary[];
 }
 
 /** Reply to start_pairing (TD-5014). Connection-scoped, seq=1. The code lives
@@ -1518,6 +1590,9 @@ export interface Error extends DaemonEvent {
   session_id?: string | null;
   code: string;
   message: string;
+  /** TD-5015: set when another computer sent this error with no session id;
+   *  `message` then starts "On <name>: ". Local-only stores ignore these. */
+  machine?: string | null;
 }
 
 /** A browser screenshot written to the session dir (TD-1710). Path, not bytes. */
@@ -1856,6 +1931,7 @@ export type DaemonEventUnion =
   | SetupState
   | PairingCode
   | PairingCompleted
+  | MachineList
   | ApiKeyValidated
   | DiagnosticsReport
   | UsageReport

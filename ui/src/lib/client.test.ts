@@ -696,3 +696,112 @@ describe("session control messages (TD-1006)", () => {
     h.client.stop();
   });
 });
+
+// TD-5015: the window opts in as a viewer, learns its daemon's identity from
+// hello_ack, and a stop() that lands mid-open leaves no live socket behind.
+describe("machines (TD-5015)", () => {
+  it("sends hello.features with machines", async () => {
+    const h = buildClient();
+    await h.client.start();
+    h.sockets[0].onopen?.();
+    const hello = JSON.parse(h.sockets[0].sent[0]);
+    expect(hello).toEqual({ type: "hello", token: "t", version: 1, features: ["machines"] });
+    h.client.stop();
+  });
+
+  it("hands hello_ack's identity to the sink before the state turns connected", async () => {
+    const seen: string[] = [];
+    const sockets: FakeSocket[] = [];
+    const client = new ProtocolClient(
+      {
+        async getDaemonInfo() {
+          return { port: 9000, token: "t" };
+        },
+        socketFactory: () => {
+          const s = new FakeSocket();
+          sockets.push(s);
+          return s;
+        },
+      },
+      {
+        onHandshake: (ack) => seen.push(`ack:${ack.machine_id}:${ack.desktop_name}`),
+        onStateChange: (state) => seen.push(state),
+      },
+    );
+    await client.start();
+    sockets[0].onopen?.();
+    sockets[0].onmessage?.({
+      data: JSON.stringify({ type: "hello_ack", version: 1, machine_id: "mid_0123456789abcdef", desktop_name: "ezer" }),
+    });
+    expect(seen).toEqual(["connecting", "ack:mid_0123456789abcdef:ezer", "connected"]);
+    client.stop();
+  });
+
+  it("does not open a socket when stop() lands while daemon info is pending", async () => {
+    let release: (info: { port: number; token: string }) => void = () => {};
+    const sockets: FakeSocket[] = [];
+    const client = new ProtocolClient({
+      getDaemonInfo: () => new Promise((resolve) => (release = resolve)),
+      socketFactory: () => {
+        const s = new FakeSocket();
+        sockets.push(s);
+        return s;
+      },
+    });
+    const opening = client.start();
+    client.stop();
+    release({ port: 9000, token: "t" });
+    await opening;
+    expect(sockets).toHaveLength(0);
+    expect(client.connectionState).toBe("stopped");
+  });
+
+  it("lets only the newest of two overlapping opens own a socket", async () => {
+    const releases: Array<(info: { port: number; token: string }) => void> = [];
+    const sockets: FakeSocket[] = [];
+    const client = new ProtocolClient({
+      getDaemonInfo: () => new Promise((resolve) => releases.push(resolve)),
+      socketFactory: () => {
+        const s = new FakeSocket();
+        sockets.push(s);
+        return s;
+      },
+    });
+    const first = client.start();
+    client.stop();
+    const second = client.start();
+    releases[0]({ port: 9000, token: "t" });
+    releases[1]({ port: 9000, token: "t" });
+    await first;
+    await second;
+    expect(sockets).toHaveLength(1);
+    client.stop();
+  });
+
+  it("never dispatches a frame from a socket it has replaced", async () => {
+    const h = buildClient();
+    await h.client.start();
+    h.servers[0].handshake();
+    h.client.attach("s1");
+    // A gap forces a reconnect: the old socket is disowned, but a late frame
+    // can still arrive on it.
+    h.servers[0].push(JSON.stringify({ type: "session_state", session_id: "s1", state: "idle", seq: 5 }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.sockets.length).toBe(2);
+    h.onEvent.mockClear();
+    h.servers[0].push(JSON.stringify({ type: "session_state", session_id: "s1", state: "idle", seq: 1 }));
+    expect(h.onEvent).not.toHaveBeenCalled();
+    expect(h.client.lastSeq("s1")).toBe(0);
+    h.client.stop();
+  });
+
+  it("knows machine_list", async () => {
+    const h = buildClient();
+    await h.client.start();
+    h.servers[0].handshake();
+    h.servers[0].push(JSON.stringify({ type: "machine_list", seq: 1, machines: [] }));
+    expect(h.onEvent).toHaveBeenCalledWith({ type: "machine_list", seq: 1, machines: [] });
+    expect(h.client.unknownEventCount).toBe(0);
+    h.client.stop();
+  });
+});
