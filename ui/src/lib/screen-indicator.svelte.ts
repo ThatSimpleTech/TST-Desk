@@ -5,6 +5,7 @@
 // and cu_kill_state killed=true. Prefs live in the settings store.
 
 import { onEvent } from "./connection-status.svelte.js";
+import { isBridged } from "./bridged-id";
 import type { DaemonEventUnion, ToolCall } from "./protocol";
 import {
 	cuIndicatorsLive,
@@ -96,6 +97,9 @@ function watchReducedMotion(): () => void {
 }
 
 function reduce(event: DaemonEventUnion): void {
+	// The glow and cursor show this computer's screen being driven. Another
+	// computer's CU turn moves that computer's pointer (TD-5015).
+	if ("session_id" in event && isBridged(event.session_id)) return;
 	if (event.type === "tool_call") {
 		rememberTool(event);
 		return;

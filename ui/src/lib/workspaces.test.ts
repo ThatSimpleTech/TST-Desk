@@ -121,6 +121,20 @@ describe("derive recents from session_list", () => {
 		expect(workspaces.entries).toHaveLength(12);
 		expect(workspaces.entries[0].path).toBe("/p/14");
 	});
+
+	it("lists only this computer's own folders (TD-5015)", () => {
+		const event = sessionList([
+			["/own", "2026-08-10T00:00:00Z"],
+			["/theirs", "2026-08-12T00:00:00Z"],
+			["/own", "2026-08-14T00:00:00Z"],
+		]);
+		if (event.type !== "session_list") throw new Error("unreachable");
+		event.sessions[1].session_id = "s1:mch_0123456789ab";
+		// A newer remote copy of /own must not bump its date either.
+		event.sessions[2].session_id = "s2:mch_0123456789ab";
+		emit(event);
+		expect(visibleRecents().map((r) => [r.path, r.lastSeen])).toEqual([["/own", "2026-08-10T00:00:00Z"]]);
+	});
 });
 
 describe("switch (AC: quick switch)", () => {

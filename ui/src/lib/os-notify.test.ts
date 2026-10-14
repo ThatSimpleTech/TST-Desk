@@ -30,6 +30,7 @@ import {
 	startOsNotify,
 	type OsNotifyBridge,
 } from "./os-notify.svelte.js";
+import { machines } from "./machines.svelte.js";
 
 function approval(): DaemonEventUnion {
 	return {
@@ -119,6 +120,28 @@ describe("noticeFor", () => {
 		expect(n?.body).toContain("[REDACTED]");
 		expect(n?.body).not.toContain(key);
 	});
+
+	it("names the computer for another computer's session (TD-5015)", () => {
+		const remote = "s1:mch_0123456789ab";
+		const nameOf = (mch: string) => (mch === "mch_0123456789ab" ? "EZER" : null);
+		expect(noticeFor({ ...approval(), session_id: remote } as DaemonEventUnion, nameOf)?.title).toBe(
+			"Approval needed on EZER",
+		);
+		expect(noticeFor({ ...turn(), session_id: remote } as DaemonEventUnion, nameOf)?.title).toBe(
+			"Turn complete on EZER",
+		);
+		expect(noticeFor({ ...turn(true), session_id: remote } as DaemonEventUnion, nameOf)?.title).toBe(
+			"Turn failed on EZER",
+		);
+		// A handle the list doesn't name yet still says it is elsewhere.
+		expect(noticeFor({ ...approval(), session_id: remote } as DaemonEventUnion)?.title).toBe(
+			"Approval needed on another computer",
+		);
+		// The notice keeps the bridged id, so Approve reaches the remote.
+		expect(noticeFor({ ...approval(), session_id: remote } as DaemonEventUnion, nameOf)?.sessionId).toBe(remote);
+		// This computer's own sessions are unchanged.
+		expect(noticeFor(approval(), nameOf)?.title).toBe("Approval needed");
+	});
 });
 
 describe("shouldNotify", () => {
@@ -154,6 +177,29 @@ describe("handleOsEvent", () => {
 			sessionId: "s1",
 			toolCallId: "tc-1",
 		});
+	});
+
+	it("titles a remote approval with the listed computer's name (TD-5015)", async () => {
+		const { impl, sent } = bridge();
+		impl.isPermissionGranted = vi.fn(async () => true);
+		startOsNotify(impl);
+		setWindowFocused(false);
+		machines.list = [
+			{
+				id: "mch_0123456789ab",
+				name: "EZER",
+				host: null,
+				port: null,
+				status: "connected",
+				last_seen: null,
+				paired_at: "2026-10-01T09:00:00Z",
+				same_computer: false,
+				detail: null,
+			},
+		];
+		await handleOsEvent({ ...approval(), session_id: "s1:mch_0123456789ab" } as DaemonEventUnion);
+		machines.list = [];
+		expect(sent[0]?.title).toBe("Approval needed on EZER");
 	});
 
 	it("notifies an unfocused turn completion", async () => {

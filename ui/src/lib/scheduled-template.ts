@@ -177,6 +177,7 @@ export function applyTemplateEvent(
 	}
 	if (
 		event.type === "error" &&
+		!event.machine && // TD-5015: another computer's error
 		(event.code === "template_invalid" ||
 			event.code === "template_builtin" ||
 			event.code === "template_not_found")
@@ -186,7 +187,7 @@ export function applyTemplateEvent(
 		state.error = event.message;
 		return { handled: true, clearJobSave: false };
 	}
-	if (event.type === "error" && event.code === "session_not_found" && flags.awaitingSource) {
+	if (event.type === "error" && !event.machine && event.code === "session_not_found" && flags.awaitingSource) {
 		flags.awaitingSource = false;
 		state.loading = false;
 		state.error = event.message;

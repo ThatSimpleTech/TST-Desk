@@ -17,6 +17,9 @@
 	} from '../connection-status.svelte.js';
 	import { attachStore } from '../attach-store';
 	import { formatPairCode, linkAddress, pairOfferCopy } from '../pairing';
+	import { hub } from '../hub.svelte.js';
+	import { alsoSeesFor } from '../machines';
+	import { machines } from '../machines.svelte.js';
 
 	const durable = attachStore().durable;
 
@@ -37,6 +40,16 @@
 	);
 	let offer = $derived(
 		remoteAttach.offer === null ? null : pairOfferCopy(remoteAttach.offer, remoteAttach.offerSaved),
+	);
+
+	// TD-5015: when the link names the hub this phone last listed computers
+	// from, say which other computers come with it. Otherwise it isn't known.
+	let alsoSees = $derived(
+		remoteAttach.offer !== null &&
+			remoteAttach.offer.desktopName !== null &&
+			remoteAttach.offer.desktopName === hub.desktopName
+			? alsoSeesFor(machines.list)
+			: null,
 	);
 
 	function addressOf(url: string): string {
@@ -77,6 +90,9 @@
 					<p class="offer-question">{offer.question}</p>
 					{#if offer.replaces !== null}
 						<p class="body">{offer.replaces}</p>
+					{/if}
+					{#if alsoSees !== null}
+						<p class="body">{alsoSees}</p>
 					{/if}
 					<div class="offer-actions">
 						<button

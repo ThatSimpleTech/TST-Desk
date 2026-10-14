@@ -249,8 +249,18 @@ export const DELETE_CONFIRM =
  *  the two shelves, so offering the other is offering a no-op. Whether Delete
  *  and Move can actually run is the daemon's call — it alone knows if a turn
  *  is in flight — so they are always offered and the refusal comes back typed
- *  (§6: the UI never derives truth it wasn't given). */
-export function rowActions(archived: boolean, starred = false): RailRowAction[] {
+ *  (§6: the UI never derives truth it wasn't given).
+ *
+ *  A row on another computer (`remote`, TD-5015) drops Move and Schedule:
+ *  both name this computer's projects and scheduler, and the hub never
+ *  forwards them. Open in terminal is never a row action; its other entry
+ *  points gate on the same id. */
+export function rowActions(archived: boolean, starred = false, remote = false): RailRowAction[] {
+	const all = allRowActions(archived, starred);
+	return remote ? all.filter((a) => a.id !== "move" && a.id !== "schedule") : all;
+}
+
+function allRowActions(archived: boolean, starred: boolean): RailRowAction[] {
 	return [
 		starred
 			? {

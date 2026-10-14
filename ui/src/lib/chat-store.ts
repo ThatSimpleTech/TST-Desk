@@ -15,7 +15,8 @@ import {
   type AttachmentChip,
   type NewAttachment,
 } from "./attachments";
-import { applyChatEvent } from "./chat-events";
+import { isBridged } from "./bridged-id";
+import { applyChatEvent, type BindHold } from "./chat-events";
 import { createBranchSnaps } from "./chat-fork";
 import { createMessageQueue, type QueuedMessage } from "./chat-queue";
 import { createFirstTokenWait } from "./first-token-wait";
@@ -148,6 +149,10 @@ export interface ChatStore {
    *  first-token wait from the wall clock instead of trusting a timer that
    *  was frozen through it. */
   resume(): void;
+  /** The socket handshook again. The daemon may have restarted, and a
+   *  restarted hub lists no other computer's rows until its links report,
+   *  so a followed remote session is held until a list names it (TD-5015). */
+  reconnected(): void;
   refreshSessions(): boolean;
   /** Hand one queued row to the daemon now, ahead of the rows before it
    *  (TD-1704) — the steer. It leaves the local queue either way. */
@@ -183,9 +188,11 @@ export function showCancel(turnState: SessionState["state"] | null): boolean {
   return turnState === "running" || turnState === "awaiting_approval";
 }
 
-/** The composer sends only when a session is bound and the socket is live. */
-export function canSend(sessionId: string | null, wsState: string): boolean {
-  return sessionId !== null && wsState === "connected";
+/** The composer sends only when a session is bound and the socket is live,
+ *  and, for another computer's session, while that computer is connected
+ *  (TD-5015; `machineUp` is always true for this computer's own). */
+export function canSend(sessionId: string | null, wsState: string, machineUp: boolean = true): boolean {
+  return sessionId !== null && wsState === "connected" && machineUp;
 }
 
 /** Turn-duration line (TD-1607). The wording lives in `duration.ts` so the
@@ -269,10 +276,15 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
   }
 
   const forks = createBranchSnaps();
+  const hold: BindHold = { sessionId: null, lastList: [] };
 
   function switchSession(sessionId: string | null, turnState: SessionState["state"] | null): void {
     applyBind(state, { queue, wait, deps, onUnbind: resetDisclosures }, sessionId, turnState);
     forks.clear();
+    // A session on another computer that the last list didn't name (a new
+    // one made there just now) is held until a list does (TD-5015).
+    const listed = hold.lastList.some((s) => s.session_id === sessionId);
+    hold.sessionId = isBridged(sessionId) && !listed ? sessionId : null;
   }
 
   const eventCtx = {
@@ -285,6 +297,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       return `m${nextId}`;
     },
     switchSession,
+    hold,
   };
 
   return {
@@ -356,6 +369,10 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
      *  re-attach in connection-status. */
     resume: wait.resume,
 
+    reconnected(): void {
+      if (isBridged(state.sessionId)) hold.sessionId = state.sessionId;
+    },
+
     refreshSessions(): boolean {
       return deps.send({ type: "list_sessions" });
     },
@@ -368,6 +385,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       if (state.sessionId !== null) deps.detach(state.sessionId);
       deps.onBind?.(null);
       state.sessionId = null;
+      hold.sessionId = null;
       state.turnState = null;
       state.messages = [];
       resetDisclosures();

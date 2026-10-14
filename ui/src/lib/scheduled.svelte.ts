@@ -359,6 +359,7 @@ function reduce(event: DaemonEventUnion): void {
 	}
 	if (
 		event.type === "error" &&
+		!event.machine && // another computer's error is never this scheduler's (TD-5015)
 		(event.code === "job_invalid" || event.code === "job_not_found" || event.code === "job_running")
 	) {
 		savePending = false;

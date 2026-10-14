@@ -74,7 +74,8 @@ function reduce(event: DaemonEventUnion): void {
 		applyStart(event.ready, event.error);
 		return;
 	}
-	if (event.type === "error" && event.code === "invalid_charter") {
+	// TD-5015: an error tagged `machine` came from another computer.
+	if (event.type === "error" && !event.machine && event.code === "invalid_charter") {
 		charter.error = event.message;
 		charter.saving = false;
 		charter.starting = false;

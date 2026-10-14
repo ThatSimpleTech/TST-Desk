@@ -1,7 +1,7 @@
 <script lang="ts">
 	import EmptyState from './EmptyState.svelte';
 	import { grok } from '../grok.svelte.js';
-	import { isTauri, openInEditor } from '../open-file';
+	import { isTauri, openSessionPath } from '../open-file';
 	import { showRightPane } from '../right-pane.svelte.js';
 
 	let src = $state<string | null>(null);
@@ -30,7 +30,7 @@
 
 	function openFile(): void {
 		const path = grok.preview?.path;
-		if (path) void openInEditor(path);
+		if (path) void openSessionPath(grok.sessionId, path);
 	}
 </script>
 

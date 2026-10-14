@@ -6,8 +6,28 @@
 	import { onDestroy } from 'svelte';
 	import { cancelPairDialog, pairDialog, requestPairingCode } from '../pair-device.svelte.js';
 	import { formatCountdown } from '../pairing';
+	import { alsoSeesFor } from '../machines';
+	import { machines } from '../machines.svelte.js';
 
 	let now = $state(Date.now());
+	// TD-5015: a phone paired here reaches every computer this one paired.
+	let alsoSees = $derived(alsoSeesFor(machines.list));
+	let copied = $state<'yes' | 'no' | null>(null);
+
+	// TD-5015: another computer can't scan, so the link can be pasted into
+	// its Settings → Computers → Add a computer instead.
+	async function copyLink(link: string): Promise<void> {
+		try {
+			await navigator.clipboard.writeText(link);
+			copied = 'yes';
+		} catch {
+			copied = 'no';
+		}
+	}
+
+	$effect(() => {
+		if (!pairDialog.open || pairDialog.offer === null) copied = null;
+	});
 
 	$effect(() => {
 		if (!pairDialog.open) return;
@@ -88,8 +108,20 @@
 					<code class="mono">{address}</code> and the code above.
 				</p>
 				<p class="countdown">Expires in {formatCountdown(remaining)}</p>
+				{#if alsoSees !== null}
+					<p class="body">{alsoSees}</p>
+				{/if}
+				<p class="body">
+					Pairing another computer? Copy the link and paste it in its Settings → Computers.
+				</p>
+				{#if copied !== null}
+					<p class="body" role="status">
+						{copied === 'yes' ? 'Link copied.' : "Couldn't copy. Type the address and code instead."}
+					</p>
+				{/if}
 				<div class="actions">
 					<button class="btn" type="button" onclick={cancelPairDialog}>Cancel</button>
+					<button class="btn" type="button" onclick={() => offer !== null && copyLink(offer.link)}>Copy link</button>
 				</div>
 			{/if}
 		</div>

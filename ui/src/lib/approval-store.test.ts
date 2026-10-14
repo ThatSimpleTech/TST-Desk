@@ -7,7 +7,7 @@
 // reattach produces (TD-1003's from_seq contract).
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { ApprovalRequest, ToolResult } from "./protocol";
+import type { ApprovalRequest, DaemonEventUnion, MachineSummary, ToolResult } from "./protocol";
 
 // Captures the handler the store registers and every message it sends.
 const connection = vi.hoisted(() => {
@@ -28,7 +28,8 @@ vi.mock("./connection-status.svelte.js", () => ({
   sendToDaemon: connection.send,
 }));
 
-import { alwaysAllow, approve, bindApprovals, deny, pending } from "./approval-store.svelte.js";
+import { alwaysAllow, approve, bindApprovals, canDecide, deny, pending } from "./approval-store.svelte.js";
+import { machines, resetMachines } from "./machines.svelte.js";
 
 function request(toolCallId: string, overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
   return {
@@ -58,12 +59,13 @@ function result(toolCallId: string, errorCode: string | null = null): ToolResult
   };
 }
 
-function emit(event: ApprovalRequest | ToolResult): void {
+function emit(event: ApprovalRequest | ToolResult | DaemonEventUnion): void {
   for (const handler of connection.handlers) handler(event);
 }
 
 beforeEach(() => {
   bindApprovals(null);
+  resetMachines();
   pending.splice(0, pending.length);
   connection.send.mockClear();
   connection.send.mockReturnValue(true);
@@ -219,5 +221,80 @@ describe("decision actions", () => {
       tool_call_id: "tc-1",
     });
     expect(pending).toHaveLength(0);
+  });
+});
+
+describe("approvals for another computer's session (TD-5015)", () => {
+  const MCH = "mch_0123456789ab";
+  const REMOTE = `r1:${MCH}`;
+
+  function machineStatus(status: MachineSummary["status"]): void {
+    machines.list = [
+      {
+        id: MCH,
+        name: "ezer",
+        host: null,
+        port: null,
+        status,
+        last_seen: null,
+        paired_at: "2026-10-14T12:00:00Z",
+        same_computer: false,
+        detail: null,
+      },
+    ];
+  }
+
+  function unreachable(sessionId: string): DaemonEventUnion {
+    return {
+      type: "error",
+      seq: 1,
+      session_id: sessionId,
+      machine: MCH,
+      code: "machine_unreachable",
+      message: "ezer isn't reachable.",
+    };
+  }
+
+  beforeEach(() => {
+    bindApprovals(REMOTE);
+    machineStatus("connected");
+  });
+
+  it("sends nothing and keeps the card while that computer is not connected", () => {
+    emit(request("tc-1", { session_id: REMOTE }));
+    machineStatus("unreachable");
+    expect(canDecide(pending[0]!)).toBe(false);
+    approve(pending[0]!);
+    deny(pending[0]!);
+    alwaysAllow(pending[0]!);
+    expect(connection.send).not.toHaveBeenCalled();
+    expect(pending.map((p) => p.toolCallId)).toEqual(["tc-1"]);
+  });
+
+  it("brings the card back when the hub could not deliver the decision", () => {
+    emit(request("tc-1", { session_id: REMOTE }));
+    approve(pending[0]!);
+    expect(pending).toHaveLength(0);
+    emit(unreachable("other:" + MCH));
+    expect(pending).toHaveLength(0);
+    emit(unreachable(REMOTE));
+    expect(pending.map((p) => p.toolCallId)).toEqual(["tc-1"]);
+  });
+
+  it("forgets a delivered decision once its tool_result lands", () => {
+    emit(request("tc-1", { session_id: REMOTE }));
+    approve(pending[0]!);
+    emit({ ...result("tc-1"), session_id: REMOTE });
+    emit(unreachable(REMOTE));
+    expect(pending).toHaveLength(0);
+  });
+
+  it("never holds this computer's own approvals back", () => {
+    bindApprovals("s1");
+    machineStatus("unreachable");
+    emit(request("tc-1"));
+    expect(canDecide(pending[0]!)).toBe(true);
+    approve(pending[0]!);
+    expect(connection.send).toHaveBeenCalledTimes(1);
   });
 });

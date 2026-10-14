@@ -7,7 +7,9 @@
 	import { onMount } from 'svelte';
 	import Icon from './Icon.svelte';
 	import { alwaysAllowLabel, isAlwaysAllowable, isDangerous } from '../approval';
-	import { alwaysAllow, approve, deny } from '../approval-store.svelte.js';
+	import { alwaysAllow, approve, canDecide, deny } from '../approval-store.svelte.js';
+	import { approvalWaitCopy } from '../machines';
+	import { machineNameFor } from '../machines.svelte.js';
 	import { classifyDiffLine, diffLines } from '../entry-view';
 	import type { PendingApproval } from '../approval';
 
@@ -20,6 +22,8 @@
 	let dangerous = $derived(isDangerous(approval));
 	let alwaysAllowable = $derived(isAlwaysAllowable(approval));
 	let ruleLabel = $derived(alwaysAllowLabel(approval));
+	// TD-5015: another computer's call waits for that computer to be reachable.
+	let waiting = $derived(canDecide(approval) ? null : approvalWaitCopy(machineNameFor(approval.sessionId) ?? ''));
 	let note = $state('');
 	// "Always allow" is a scope on the approval, not a third verb: ticking it
 	// turns Approve into the rule-writing form of itself.
@@ -137,11 +141,12 @@
 				bind:value={note}
 				aria-label="Optional denial note"
 			/>
+			{#if waiting !== null}<p class="waiting" role="status">{waiting}</p>{/if}
 			<div class="buttons">
-				<button class="btn btn--deny" type="button" onclick={() => deny(approval, note)}>
+				<button class="btn btn--deny" type="button" disabled={waiting !== null} onclick={() => deny(approval, note)}>
 					Deny <kbd aria-hidden="true">Esc</kbd>
 				</button>
-				<button class="btn btn--approve" type="button" onclick={decide}>
+				<button class="btn btn--approve" type="button" disabled={waiting !== null} onclick={decide}>
 					{remember && alwaysAllowable ? 'Always allow' : 'Approve'} <kbd aria-hidden="true">⏎</kbd>
 				</button>
 			</div>
@@ -364,6 +369,16 @@
 			background var(--transition-fast),
 			border-color var(--transition-fast),
 			color var(--transition-fast);
+	}
+
+	.btn:disabled {
+		cursor: not-allowed;
+	}
+
+	.waiting {
+		margin: 0;
+		font-size: var(--text-xs);
+		color: var(--color-ink-secondary);
 	}
 
 	.btn kbd {

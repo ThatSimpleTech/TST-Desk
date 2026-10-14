@@ -8,6 +8,8 @@
 	// Three states, not two: rules live in a workspace, so "no session yet" is
 	// a different claim from "no rules saved" and reads differently.
 	import EmptyState from './EmptyState.svelte';
+	import { staysOnCopy } from '../machines';
+	import { machineNameFor } from '../machines.svelte.js';
 	import { settings, revokeRule, setLoadGlobalMemory, setSkipAllApprovals } from '../settings.svelte.js';
 
 	interface Props {
@@ -15,6 +17,8 @@
 		sessionId: string | null;
 	}
 	let { sessionId }: Props = $props();
+	// TD-5015: another computer's workspace keeps its own rules.
+	let remoteName = $derived(machineNameFor(sessionId));
 </script>
 
 <div class="skip-all">
@@ -60,6 +64,8 @@
 
 {#if sessionId === null}
 	<EmptyState align="start" body="Open a workspace to see the rules saved for it." />
+{:else if remoteName !== null}
+	<EmptyState align="start" body={staysOnCopy(remoteName)} />
 {:else if settings.rules.length === 0}
 	<EmptyState align="start" body="No always-allow rules saved for this workspace." />
 {:else}

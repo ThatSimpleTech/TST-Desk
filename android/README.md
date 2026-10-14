@@ -39,4 +39,6 @@ Install with `adb install -r` that file, or copy it to the phone and open it. Un
 
 ## Upgrading
 
+0.1.7 (TD-5015) changes no Kotlin: it bundles the UI that also lists sessions on the other computers your paired computer has added (Settings → Computers there), and it installs over 0.1.6 the same way.
+
 0.1.6 installs over 0.1.5 when both are built with the same debug keystore (`~/.android/debug.keystore` on the build machine). An over-the-top install keeps the app's data, so the saved computer stays. A build from a different keystore cannot install over it: Android asks to uninstall first, and uninstalling deletes the saved computer, so you pair again.

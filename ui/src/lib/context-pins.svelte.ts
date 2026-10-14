@@ -55,7 +55,8 @@ function reduce(event: DaemonEventUnion): void {
 		contextPins.error = null;
 		return;
 	}
-	if (event.type === "error" && event.code === "outside_workspace") {
+	// TD-5015: an error tagged `machine` came from another computer.
+	if (event.type === "error" && !event.machine && event.code === "outside_workspace") {
 		contextPins.error = event.message;
 	}
 }

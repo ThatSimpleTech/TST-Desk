@@ -7,7 +7,8 @@
 	import { entries } from '../timeline-store.svelte.js';
 	import { baseName, dirName } from '../files';
 	import { stackSessionWrites, WORK_EMPTY_COPY } from '../work';
-	import { openInEditor } from '../open-file';
+	import { openSessionPath } from '../open-file';
+	import { session } from '../session-status.svelte.js';
 	import DiffPreview from './DiffPreview.svelte';
 	import Icon from './Icon.svelte';
 
@@ -18,8 +19,9 @@
 		expanded = expanded === id ? null : id;
 	}
 
+	// Another computer's writes are files on that computer (TD-5015).
 	function open(path: string): void {
-		void openInEditor(path);
+		void openSessionPath(session.sessionId, path);
 	}
 </script>
 

@@ -8,6 +8,7 @@
 import {
   attachToSession,
   detachFromSession,
+  onConnectionState,
   onDaemonEvent,
   onResume,
   sendToDaemon,
@@ -42,6 +43,7 @@ const store = createChatStore(
 
 let unsubscribe: (() => void) | null = null;
 let unsubscribeResume: (() => void) | null = null;
+let unsubscribeState: (() => void) | null = null;
 
 /** Start following the daemon: subscribe to the event stream and ask for the
  *  session list so a session binds. Idempotent. */
@@ -51,6 +53,9 @@ export function initChat(): void {
   // TD-1716: the first-token watchdog is a timer, and a suspended webview's
   // timers do not fire — so the wait is re-judged from the clock on resume.
   unsubscribeResume = onResume(() => store.resume());
+  unsubscribeState = onConnectionState((state) => {
+    if (state === "connected") store.reconnected();
+  });
   store.refreshSessions();
 }
 
@@ -60,6 +65,8 @@ export function teardownChat(): void {
   unsubscribe = null;
   unsubscribeResume?.();
   unsubscribeResume = null;
+  unsubscribeState?.();
+  unsubscribeState = null;
   store.dispose();
 }
 

@@ -45,6 +45,8 @@ import {
 } from "./phone-pairing";
 import { StoreRetry, UnreachableWatch } from "./remote-watch";
 import { UNREACHABLE_AFTER_MS } from "./connection-banner";
+import { noteHandshake } from "./hub.svelte.js";
+import { refusedForBridged } from "./bridged-id";
 
 export { remoteAttach } from "./remote-attach.svelte.js";
 export {
@@ -147,6 +149,9 @@ function handleResume(): void {
 
 /** Send a client→daemon message. False when no handshaken socket exists. */
 export function sendToDaemon(msg: ClientMessageUnion): boolean {
+  // A verb the hub won't forward for another computer's session would only
+  // ask this daemon about a session it doesn't own (TD-5015).
+  if (refusedForBridged(msg)) return false;
   return client?.send(msg) ?? false;
 }
 
@@ -433,6 +438,9 @@ function makeClient(): void {
         for (const sub of eventSubs) sub(event);
         ingestEvent(event); // wire the session reducer (TD-1006)
         notifyEvent(event); // turn failures / pauses / errors into notices (TD-1008)
+      },
+      onHandshake(ack) {
+        noteHandshake(ack); // before "connected", so stores see who answered (TD-5015)
       },
       onStateChange(state) {
         ws.state = state;

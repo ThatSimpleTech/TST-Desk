@@ -32,6 +32,7 @@
 	import CuPolicyPane from './CuPolicyPane.svelte';
 	import SettingsJudgments from './SettingsJudgments.svelte';
 	import PairedDevices from './PairedDevices.svelte';
+	import SettingsMachines from './SettingsMachines.svelte';
 	import PairDeviceDialog from './PairDeviceDialog.svelte';
 	import { openPairDialog } from '../pair-device.svelte.js';
 	import Icon from './Icon.svelte';
@@ -44,6 +45,7 @@
 	const SECTION_LABEL: Record<SettingsSection, string> = {
 		appearance: 'Appearance',
 		devices: 'Phones and devices',
+		machines: 'Computers',
 		computer: 'Computer use',
 		engine: 'Engine',
 		model: 'Model',
@@ -172,13 +174,15 @@
 							address only.
 						{/if}
 					</p>
-					<div class="keep-running">
-						<p class="keep-title">Paired phones</p>
-						{#if onComputer}
+					<!-- TD-5015: a phone no longer gets the hub's device list, which
+					     now names its computers' links too. -->
+					{#if onComputer}
+						<div class="keep-running">
+							<p class="keep-title">Paired phones</p>
 							<button class="choice" type="button" onclick={openPairDialog}>Pair a phone</button>
-						{/if}
-					</div>
-					<PairedDevices canManage={onComputer} />
+						</div>
+						<PairedDevices canManage={onComputer} />
+					{/if}
 					{#if !onComputer}
 						<p class="hint">Pair or remove phones in Settings on the computer.</p>
 						<div class="keep-running">
@@ -229,6 +233,8 @@
 					{#if onComputer}
 						<PairDeviceDialog />
 					{/if}
+				{:else if settings.section === 'machines'}
+					<SettingsMachines />
 				{:else if settings.section === 'computer'}
 					<CuPolicyPane />
 					<SettingsJudgments />

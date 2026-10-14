@@ -4,8 +4,21 @@
 // or there is not. Focus and permission live in the store — this file
 // does not know about Tauri.
 
+import { machineOf } from "./bridged-id";
 import type { DaemonEventUnion, JobEntry } from "./protocol";
 import { redact } from "./redact";
+
+/** The name a paired computer is shown under, by its `mch_` handle
+ *  (TD-5015). Null for a handle the list doesn't name yet. */
+export type MachineNamer = (machine: string) => string | null;
+
+/** "Approval needed", or "Approval needed on EZER" for another computer's
+ *  session. A handle with no name yet still says it is elsewhere. */
+function onWhere(base: string, sessionId: string | undefined, nameOf: MachineNamer | undefined): string {
+	const machine = machineOf(sessionId);
+	if (machine === null) return base;
+	return `${base} on ${nameOf?.(machine) ?? "another computer"}`;
+}
 
 export interface OsNotice {
 	title: string;
@@ -18,11 +31,11 @@ export interface OsNotice {
 }
 
 /** What the OS should say for this event, or null if it is not a notify. */
-export function noticeFor(event: DaemonEventUnion): OsNotice | null {
+export function noticeFor(event: DaemonEventUnion, nameOf?: MachineNamer): OsNotice | null {
 	if (event.type === "approval_request") {
 		const classB = event.decision_class === "B";
 		return {
-			title: "Approval needed",
+			title: onWhere("Approval needed", event.session_id, nameOf),
 			// The daemon redacts at event-log insertion; this is the same belt
 			// the diagnostics report gets — a notification banner is a human-
 			// facing surface too (TD-4801).
@@ -40,7 +53,7 @@ export function noticeFor(event: DaemonEventUnion): OsNotice | null {
 	}
 	if (event.type === "turn_complete") {
 		return {
-			title: event.failed ? "Turn failed" : "Turn complete",
+			title: onWhere(event.failed ? "Turn failed" : "Turn complete", event.session_id, nameOf),
 			body: event.failed
 				? redact(event.error_code ?? "The turn did not finish")
 				: "The agent finished a turn",

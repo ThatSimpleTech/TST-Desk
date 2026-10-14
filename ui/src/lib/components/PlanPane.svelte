@@ -1,21 +1,27 @@
 <script lang="ts">
 	import EmptyState from './EmptyState.svelte';
 	import { approveGrokPlan, grok } from '../grok.svelte.js';
+	import { staysOnCopy } from '../machines';
+	import { machineNameFor } from '../machines.svelte.js';
 	import { session } from '../session-status.svelte.js';
 
 	let comment = $state('');
 
 	function approve(): void {
 		if (session.sessionId === null) return;
-		approveGrokPlan(session.sessionId, comment);
-		comment = '';
+		if (approveGrokPlan(session.sessionId, comment)) comment = '';
 	}
 
 	let hasPlan = $derived(grok.planMarkdown.length > 0 || grok.planEntries.length > 0);
+	// TD-5015: Grok's plan for another computer's session stays there; the
+	// plan held here is this computer's last one.
+	let remoteName = $derived(machineNameFor(session.sessionId));
 </script>
 
 <div class="plan">
-	{#if !hasPlan}
+	{#if remoteName !== null}
+		<EmptyState align="start" body={staysOnCopy(remoteName)} />
+	{:else if !hasPlan}
 		<EmptyState
 			align="start"
 			body="When Grok is in plan mode, the plan lands here. Approve it to start implementing, or type a revision note first."

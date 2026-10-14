@@ -248,6 +248,13 @@ export function sessionStateCopy(state: string, reason: string | null): NoticeSp
 
 // ── Daemon error events ──────────────────────────────────────────────────
 
+/** Copy for an error another computer sent with no session (TD-5015). The
+ *  hub already prefixed "On <name>: ", so the message is shown as is; a
+ *  toast, because nothing on this computer is broken. */
+export function machineErrorCopy(message: string): NoticeSpec {
+	return { severity: "toast", title: "Another computer reported a problem", body: message };
+}
+
 /** Copy for a daemon `error` event: code + daemon-authored message (already human). */
 export function daemonErrorCopy(code: string, message: string): NoticeSpec {
 	if (code === "keychain_locked") {

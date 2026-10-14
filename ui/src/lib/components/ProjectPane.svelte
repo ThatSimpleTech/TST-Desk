@@ -37,6 +37,7 @@
 	} from '../sessions.svelte.js';
 	import { toggleArchivedView } from '../session-actions.svelte.js';
 	import { archivedToggle } from '../rail';
+	import { isBridged } from '../bridged-id';
 	import InstructionsColumn from './InstructionsColumn.svelte';
 	import MemoryColumn from './MemoryColumn.svelte';
 	import ContextColumn from './ContextColumn.svelte';
@@ -46,10 +47,14 @@
 	let pinned = $derived(pinnedProjects(workspaces.entries, workspaces.pinned));
 	let recentsList = $derived(unpinnedRecents(workspaces.entries, workspaces.pinned));
 	let selected = $derived(projects.selectedPath);
+	// A project is a folder on this computer: its recents are this
+	// computer's own sessions, even when another computer (or a self-pair)
+	// has a folder at the same path (TD-5015).
+	let ownRows = $derived(sessions.rows.filter((r) => !isBridged(r.sessionId)));
 	let recents = $derived(
 		selected === null
 			? []
-			: projectSessions(sessions.rows, selected, { archived: sessions.showArchived }),
+			: projectSessions(ownRows, selected, { archived: sessions.showArchived }),
 	);
 	let shelf = $derived(archivedToggle(sessions.showArchived));
 
