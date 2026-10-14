@@ -12830,6 +12830,15 @@ appended, one `.1` at 5 MB) and, in release builds, its own lifecycle to
 a host log that cannot be opened is reported on stderr and skipped, and a
 failed rollover keeps appending.
 
+The host now reads its supervision socket the whole time it supervises.
+It used to hold that socket without reading it, so pings went unanswered
+and tstd's keepalive closed it about 40 s after launch. Any later Quit
+sent its `shutdown` frame to a dead socket and ended in a SIGKILL after
+the 5 s grace, with a stale port.json left behind. Now each read sends
+the queued pong. If tstd closes the socket while it is still running,
+Quit and system quit fall back to SIGTERM, which runs the same graceful
+shutdown (TD-4842).
+
 ## TD-5022 — One tstd per data folder, through an OS lock (Class B)
 
 2026-10-14. `tstd main()` takes an exclusive lock on

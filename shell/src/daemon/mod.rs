@@ -319,7 +319,7 @@ async fn run_supervision(h: DaemonHandle) {
 
         emit(&h, "starting", None, 0);
 
-        let (mut watch, ws, port_file, pid) = match acquire_daemon(&h.data_dir).await {
+        let (mut watch, mut ws, port_file, pid) = match acquire_daemon(&h.data_dir).await {
             Ok(acquired) => acquired,
             Err(e) => {
                 log::error!("{e}");
@@ -346,9 +346,9 @@ async fn run_supervision(h: DaemonHandle) {
             port: port_file.port,
         });
         emit(&h, "connected", Some(port_file.port), 0);
-        // Taken only on the shutdown arm. The crash arm drops it, which
-        // is the same as `ws` falling out of scope at the end of the loop.
-        let mut socket = Some(ws);
+        // Cleared when the daemon closes the socket while still running.
+        // Quit then asks with SIGTERM instead of a frame nobody reads.
+        let mut socket_open = true;
 
         // Supervise: the listener exits, or a shutdown request from the host.
         let shutdown_req = h.shutdown_notify.clone();
@@ -389,11 +389,18 @@ async fn run_supervision(h: DaemonHandle) {
                 }
                 h.set_status(DaemonStatus::Stopping);
                 emit(&h, "stopping", None, 0);
-                let held = socket.take().expect("supervision socket");
-                graceful_shutdown(&h, held, &mut watch, pid).await;
+                graceful_shutdown(&h, socket_open.then_some(ws), &mut watch, pid).await;
                 finish_stopped(&h);
                 return;
             }
+            never = async {
+                shutdown::read_until_closed(&mut ws).await;
+                socket_open = false;
+                // The dup is dead too: system quit falls back to SIGTERM.
+                h.exit_socket.store(None);
+                log::info!("tstd closed the supervision socket (pid {pid})");
+                std::future::pending::<std::convert::Infallible>().await
+            } => match never {},
         }
 
         // The child exited. If the host is quitting we are done already;
@@ -703,7 +710,7 @@ pub async fn connect_handshake(port: u16, token: &str) -> Result<ClientWs, Strin
 /// Send `shutdown`, wait until the leader is reaped, SIGKILL only at the grace.
 async fn graceful_shutdown(
     h: &DaemonHandle,
-    ws: ClientWs,
+    ws: Option<ClientWs>,
     watch: &mut ChildWatch,
     spawned_pid: u32,
 ) {
