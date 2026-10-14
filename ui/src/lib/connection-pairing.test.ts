@@ -5,7 +5,7 @@
 // bridge for the Android Keystore store, and redeemPairing is stubbed so no
 // socket opens. Each test loads a fresh module, as a relaunch would.
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonEventUnion } from "./protocol";
 import type { RedeemResult } from "./pairing";
 
@@ -112,6 +112,12 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 type Hooks = { __tstDeskOnPairLink: (raw: unknown) => void; __tstDeskOnScan: (raw: unknown) => void };
 const hooks = () => globalThis as unknown as Hooks;
+
+// The first import transforms the whole connection graph. On a loaded
+// machine that alone can pass the 5 s test timeout; later imports reuse it.
+beforeAll(async () => {
+  await import("./connection-status.svelte.js");
+}, 60_000);
 
 beforeEach(() => {
   mocks.clients.length = 0;

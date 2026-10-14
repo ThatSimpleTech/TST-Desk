@@ -12493,3 +12493,68 @@ on its first turn keeps a flat map until the next session starts. A
 session whose preset is switched while idle (TD-1721) keeps the map
 sized for the brain it started on. The window half of that predates
 TD-5013.
+
+## TD-5014 — Pair a phone with a code; each device keeps its own key (Class B; reverses part of TD-5005)
+
+2026-10-14. Adam, in chat: "How can I systematically get the information
+to set up the mobile app? Asking you is not a good way... it needs to
+connect automatically. Once it's set up, it should be remembered... it
+could have a dedicated port to that phone... But it needs to be
+remembered because this is not working." The phone last reached EZER on
+2026-10-08 at 21:10Z, with no refusal logged since, so the phone itself
+had lost its saved computer. Setting it up again meant reading the
+`remote-token` file, which is what he asked not to have to do.
+
+**Decision:** Pairing replaces the paste. Settings → Phones and devices →
+"Pair a phone" (or `tst pair` in a terminal) shows a QR code, an 8-character
+code and the address. The phone scans it in the app, opens the
+`tstdesk://pair` link, or takes the code typed. Its first frame on the
+Tailscale listener is `pair` instead of `hello`. A good code mints that
+device its own 256-bit key, returned once in `pair_ok`; the phone saves it
+in the Keystore vault and reconnects with `hello`. The code is Crockford
+base32 (40 bits), lives only in daemon memory, expires after 10 minutes, is
+single use, and five wrong tries burn it. Keys are stored as sha256 only,
+in `remote-devices.yaml` (0600, atomic), with name, paired and last-seen
+times. Settings lists each device, live connected or not, and Remove drops
+just that device's key and sockets. The phone's "Forget this computer"
+removes its own entry, and re-pairing sends the old key so it replaces its
+own entry instead of piling up duplicates. The new verbs are loopback
+only, except that self-removal. Devices outlive remote attach being
+turned off; the legacy `remote-token` keeps working and still rotates
+alone. The listener port is reused across restarts even when remote attach
+starts off.
+
+Remembering, on the phone: the vault drops its blob only when the blob
+cannot authenticate, never on a busy Keystore; the Keystore key is
+regenerated only when it does not exist; a save that fails discards the
+key and tries once more, and a save that still fails is shown. The shell's
+local page port is remembered, so WebView storage survives launches. A
+refused key keeps the address and asks to scan again; a network failure
+never clears anything, and after a minute offers "Pair again" without
+forgetting the old computer until a new pairing succeeds.
+
+**Rationale:** The QR carries everything the phone needs, so nobody reads
+a file or asks Claude. Per-device keys give Adam's "dedicated" connection
+without per-device listeners: a port is not a secret, one listener is
+one Tailscale bind, and a key can be revoked alone. The `pair` frame is
+the one new pre-auth input; it is bounded by the code's lifetime, the
+five-try burn and the tailnet. A pairing link from another app or page is
+never redeemed on its own: it fills the form and asks, and says which
+saved computer it would replace, because any app can fire a link and a
+silent redeem could point the phone at another tailnet machine. Only the
+in-app scanner and the typed form redeem directly.
+
+**Dependencies:** `segno` (BSD-3, pure Python) draws the QR in the daemon,
+for the Settings dialog (as an `<img>` data URL, never raw HTML) and the
+terminal. `com.journeyapps:zxing-android-embedded:4.3.0` with
+`com.google.zxing:core:3.4.1` (Apache-2.0) scans on the phone, offline,
+hosted in a plain-Activity `ScanActivity` so no AndroidX is added. Camera
+permission is asked at scan time.
+
+**Rejected:** A listener port per device (no security from the port, more
+binds, more to remember). Google's code scanner (it downloads a Play
+services module: a network call the user did not make). Rendering the QR
+in the UI with an npm package (the CLI needs one too; one library in one
+place). Auto-redeeming pairing links (above). Storing keys in plain text
+next to the hashes (prime directive 2). mDNS discovery (Tailscale carries
+no multicast).

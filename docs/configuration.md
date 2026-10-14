@@ -428,9 +428,19 @@ in `{user_data_dir}/remote-devices.yaml` (readable by you only). Up to 32
 devices can be paired. `tst devices` lists them and `tst devices remove <id>`
 (or Settings) forgets one and closes only its connections. Turning remote
 attach off stops the listener but keeps the list, so paired phones connect
-again when it is turned back on. Only the computer itself can pair or remove
-devices; a connected phone cannot. If the file is damaged it is renamed to
-`remote-devices.yaml.corrupt-<time>` and the list starts empty.
+again when it is turned back on, on the same port. Only the computer itself
+can pair or remove devices, with one exception: a phone's "Forget this
+computer" removes that phone's own entry. Pairing the same phone again
+replaces its old entry instead of adding a second one. Settings shows each
+device's paired date, last seen, and whether it is connected right now. If
+the file is damaged it is renamed to `remote-devices.yaml.corrupt-<time>` and
+the list starts empty. If it only cannot be read (permissions, a disk error),
+it is left alone: phones are told to keep retrying, not that their key is gone,
+and pairing waits until it can be read again.
+
+A pairing link opened from another app or a web page never pairs on its own:
+the phone shows "Pair with … at …?" and which saved computer it would
+replace. Only the in-app scanner and the typed code pair directly.
 
 **Attach with the token (the older way, TD-3701).** Open the same TST Desk UI
 in a browser (the desktop window is Tauri; a phone is not). Connect with
