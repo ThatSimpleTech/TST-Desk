@@ -21,7 +21,12 @@ from websockets.asyncio.client import connect
 from tests.test_remote_attach import _ask, _connect_and_handshake, _fake_serve
 from tstd.config import RemoteConfig
 from tstd.daemon import Daemon
-from tstd.protocol import PROTOCOL_VERSION, RotateRemoteToken, parse_client_message
+from tstd.protocol import (
+    PROTOCOL_VERSION,
+    RotateRemoteToken,
+    SetRemoteAttach,
+    parse_client_message,
+)
 from tstd.remote_attach import (
     load_remote_attach,
     load_remote_port,
@@ -247,5 +252,65 @@ async def test_a_restart_reuses_the_remembered_port_and_token(
         assert daemon.ws_server.port == 47_811
         assert ("127.0.0.1", 47_811) in recorded and (_EXTRA, 47_811) in recorded
         assert daemon.ws_server.remote_token == "ab" * 32
+    finally:
+        await _halt(task)
+
+
+@pytest.mark.asyncio
+async def test_off_restart_on_keeps_the_port_the_phones_dial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    save_remote_attach(tmp_path, False, "tailscale0")
+    save_remote_port(tmp_path, 47_812)
+    recorded: list[tuple[str, int]] = []
+    monkeypatch.setattr("tstd.ws.serve", _fake_serve(recorded))
+    daemon, task = await _run(tmp_path)
+    try:
+        # Off at start, loopback still takes the remembered port...
+        assert recorded == [("127.0.0.1", 47_812)]
+        await daemon._handle_set_remote_attach(SetRemoteAttach(enabled=True))
+        # ...so turning it on puts Tailscale there, not on a random port.
+        assert recorded == [("127.0.0.1", 47_812), (_EXTRA, 47_812)]
+        assert load_remote_port(tmp_path) == 47_812
+    finally:
+        await _halt(task)
+
+
+@pytest.mark.asyncio
+async def test_a_port_never_tried_does_not_replace_the_remembered_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recorded: list[tuple[str, int]] = []
+    monkeypatch.setattr("tstd.ws.serve", _fake_serve(recorded))
+    daemon, task = await _run(tmp_path)  # nothing remembered: a random port
+    try:
+        assert daemon.ws_server.preferred_port == 0
+        save_remote_port(tmp_path, 47_813)  # remembered after this start chose
+        await daemon._handle_set_remote_attach(SetRemoteAttach(enabled=True))
+        assert daemon.ws_server.port != 47_813
+        assert load_remote_port(tmp_path) == 47_813
+    finally:
+        await _halt(task)
+
+
+@pytest.mark.asyncio
+async def test_a_busy_remembered_port_is_replaced_by_the_one_in_use(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    save_remote_attach(tmp_path, False, "tailscale0")
+    save_remote_port(tmp_path, 47_814)
+    fake = _fake_serve([])
+
+    async def busy_once(handler: object, host: str, port: int, **kwargs: Any) -> Any:
+        if port == 47_814:
+            raise OSError("address in use")
+        return await fake(handler, host, port, **kwargs)
+
+    monkeypatch.setattr("tstd.ws.serve", busy_once)
+    daemon, task = await _run(tmp_path)
+    try:
+        assert daemon.ws_server.preferred_port == 47_814
+        await daemon._handle_set_remote_attach(SetRemoteAttach(enabled=True))
+        assert load_remote_port(tmp_path) == daemon.ws_server.port != 47_814
     finally:
         await _halt(task)

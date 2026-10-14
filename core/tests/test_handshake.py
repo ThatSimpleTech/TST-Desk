@@ -58,6 +58,22 @@ class TestHello:
         with pytest.raises(HandshakeError, match="bad_request"):
             parse_hello('["hello"]')
 
+    @pytest.mark.parametrize(
+        "frame",
+        [
+            {"type": "hello", "token": "ab" * 32, "version": "one"},
+            {"type": "hello", "token": "ab" * 32, "version": -1},
+            {"type": "hello", "token": ["ab" * 32], "version": 1},
+            {"type": "start_pairing", "token": "ab" * 32},
+        ],
+    )
+    def test_a_malformed_hello_never_quotes_the_token(self, frame: dict[str, object]) -> None:
+        with pytest.raises(HandshakeError) as caught:
+            parse_hello(json.dumps(frame))
+        assert caught.value.code == "bad_request"
+        assert caught.value.message == "Malformed hello message"
+        assert "ab" * 32 not in str(caught.value)
+
     def test_hello_model_validation(self) -> None:
         """Hello directly validates via Pydantic."""
         hello = Hello(token="abc", version=1)
@@ -224,6 +240,28 @@ class TestHandshakeIntegration:
                 assert msg["code"] == "version_unsupported"
 
             await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_a_malformed_hello_logs_and_returns_no_token(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        secret = "cd" * 32
+        with tempfile.TemporaryDirectory() as tmp:
+            server = WebSocketServer(Path(tmp), ping_interval=0)
+            await server.start()
+            try:
+                with caplog.at_level("DEBUG"):
+                    async with connect(f"ws://127.0.0.1:{server.port}") as ws:
+                        await ws.send(
+                            json.dumps({"type": "hello", "token": secret, "version": "x"})
+                        )
+                        msg = json.loads(await ws.recv())
+            finally:
+                await server.stop()
+        assert msg == {"type": "error", "code": "bad_request", "message": "Malformed hello message"}
+        ours = [r for r in caplog.records if r.name.startswith("tstd")]
+        assert "handshake rejected" in " ".join(r.getMessage() for r in ours)
+        assert secret not in " ".join(f"{r.getMessage()} {r.__dict__}" for r in ours)
 
     @pytest.mark.asyncio
     async def test_invalid_json_rejected(self) -> None:

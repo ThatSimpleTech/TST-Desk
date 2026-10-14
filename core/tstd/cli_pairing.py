@@ -68,10 +68,18 @@ async def _with_daemon(data_dir: Path, body: Callable[[Any], Awaitable[int]]) ->
         raise CliError("the daemon closed the connection") from e
 
 
+def _address(host: object, port: object) -> str:
+    """``host:port``, with an IPv6 host bracketed so the port reads apart."""
+    text = str(host)
+    if ":" in text and not text.startswith("["):
+        text = f"[{text}]"
+    return f"{text}:{port}"
+
+
 def _print_pairing_code(event: dict[str, Any]) -> None:
     link = str(event.get("link") or "")
     print(f"Pair a phone with {event.get('desktop_name')}")
-    print(f"Address: {event.get('host')}:{event.get('port')}")
+    print(f"Address: {_address(event.get('host'), event.get('port'))}")
     print(f"Code:    {event.get('display_code')}")
     print(f"Link:    {link}")
     print()

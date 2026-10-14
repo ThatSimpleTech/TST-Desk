@@ -468,7 +468,8 @@
     "type": "pair",
     "code": "ABCD2345",
     "device_name": "Pixel",
-    "version": 1
+    "version": 1,
+    "replaces": null
   },
   "start_pairing": {
     "type": "start_pairing"

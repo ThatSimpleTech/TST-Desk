@@ -203,6 +203,50 @@ def test_remove_forgets_the_device(tmp_path: Path) -> None:
     assert [s.id for s in _registry(tmp_path).summaries()] == [b.id]
 
 
+def test_a_failed_remove_keeps_the_device(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    reg = _registry(tmp_path)
+    a, key_a = reg.add("A")
+    before = (tmp_path / REMOTE_DEVICES_FILE).read_text(encoding="utf-8")
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("tstd.remote_devices.os.replace", boom)
+    with pytest.raises(OSError):
+        reg.remove(a.id)
+    # Memory still matches the file, which still holds the key.
+    assert reg.verify(key_a) == a.id and a.id in reg
+    assert (tmp_path / REMOTE_DEVICES_FILE).read_text(encoding="utf-8") == before
+
+
+def test_an_unreadable_file_is_kept_and_never_written_over(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    reg = _registry(tmp_path)
+    summary, key = reg.add("Phone")
+    path = tmp_path / REMOTE_DEVICES_FILE
+    saved = tmp_path / "saved.yaml"
+    path.rename(saved)
+    path.mkdir()  # reading a directory is an OSError, as a permission error is
+    with caplog.at_level(logging.WARNING, logger="tstd.remote_devices"):
+        again = _registry(tmp_path)
+        again.load()
+    assert not again.available and len(again) == 0
+    assert again.verify(key) is None
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1, "one warning, not one per retry"
+    assert "set aside" not in warnings[0].getMessage()
+    with pytest.raises(OSError):
+        again.add("Another")
+    assert len(again) == 0
+    assert path.is_dir() and not list(tmp_path.glob(f"{REMOTE_DEVICES_FILE}.corrupt-*"))
+    # Readable again: the next load recovers without a restart.
+    path.rmdir()
+    saved.rename(path)
+    again.load()
+    assert again.available and again.verify(key) == summary.id
+
+
 def test_the_thirty_third_device_is_refused(tmp_path: Path) -> None:
     reg = _registry(tmp_path)
     for i in range(MAX_DEVICES):

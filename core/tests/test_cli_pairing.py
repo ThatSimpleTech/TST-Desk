@@ -12,7 +12,7 @@ import pytest
 
 from tests.test_pairing import pair, running_daemon
 from tstd import cli
-from tstd.cli_pairing import list_devices, pair_device, remove_device
+from tstd.cli_pairing import _print_pairing_code, list_devices, pair_device, remove_device
 from tstd.daemon import Daemon
 
 
@@ -61,6 +61,28 @@ async def test_pair_no_wait_prints_the_code_and_leaves_it_active(
     assert f"Address: 100.64.1.5:{daemon.ws_server.port}" in out
     assert "Link:    tstdesk://pair?h=100.64.1.5&p=" in out
     assert "The code expires in 10 minutes." in out
+
+
+@pytest.mark.parametrize(
+    ("host", "want"),
+    [
+        ("100.64.1.5", "Address: 100.64.1.5:47811"),
+        ("fd7a:115c:a1e0::1", "Address: [fd7a:115c:a1e0::1]:47811"),
+    ],
+)
+def test_the_address_brackets_an_ipv6_host(
+    host: str, want: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _print_pairing_code(
+        {
+            "desktop_name": "desk",
+            "host": host,
+            "port": 47811,
+            "display_code": "ABCD-2345",
+            "link": "tstdesk://pair?c=ABCD2345",
+        }
+    )
+    assert want in capsys.readouterr().out.splitlines()
 
 
 async def _printed_code(capsys: pytest.CaptureFixture[str]) -> tuple[str, str]:
