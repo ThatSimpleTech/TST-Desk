@@ -39,6 +39,8 @@ Install with `adb install -r` that file, or copy it to the phone and open it. Un
 
 ## Upgrading
 
+0.1.8 (TD-5016..5024, TD-3819..3821) changes no Kotlin: it bundles the UI that shows "Cut off by a restart" with a Continue button, keeps a draft per session, puts unsent text back in the composer when the computer is draining for an update, and adds the Email settings pane. It installs over 0.1.7 the same way.
+
 0.1.7 (TD-5015) changes no Kotlin: it bundles the UI that also lists sessions on the other computers your paired computer has added (Settings → Computers there), and it installs over 0.1.6 the same way.
 
 0.1.6 installs over 0.1.5 when both are built with the same debug keystore (`~/.android/debug.keystore` on the build machine). An over-the-top install keeps the app's data, so the saved computer stays. A build from a different keystore cannot install over it: Android asks to uninstall first, and uninstalling deletes the saved computer, so you pair again.
