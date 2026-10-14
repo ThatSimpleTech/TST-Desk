@@ -9,7 +9,8 @@ leaves it running; it is not the host, so it does not pass
 ``run`` opens a workspace and prints one turn. ``attach`` follows a
 session the daemon already owns: replay + live text, detach on SIGINT.
 A TTY can answer ``approval_request``; a non-TTY does not hang on stdin.
-``pair`` and ``devices`` (TD-5014) live in ``cli_pairing``.
+``pair`` and ``devices`` (TD-5014) live in ``cli_pairing``; ``machines``
+(TD-5015) in ``cli_machines``.
 """
 
 from __future__ import annotations
@@ -55,8 +56,9 @@ def _add_data_dir(parser: argparse.ArgumentParser) -> None:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse ``tst`` argv: ``run``, ``attach``, ``pair`` and ``devices``."""
-    # Function-local: cli_pairing imports this module's helpers.
+    """Parse ``tst`` argv: ``run``, ``attach``, ``pair``, ``devices``, ``machines``."""
+    # Function-local: cli_pairing and cli_machines import this module's helpers.
+    from .cli_machines import add_machine_commands
     from .cli_pairing import add_pairing_commands
 
     parser = argparse.ArgumentParser(
@@ -94,6 +96,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     _add_data_dir(attach_p)
     add_pairing_commands(sub, _add_data_dir)
+    add_machine_commands(sub, _add_data_dir)
     return parser.parse_args(argv)
 
 
@@ -441,6 +444,10 @@ def main(argv: list[str] | None = None) -> int:
             from .cli_pairing import run_pairing_command
 
             return run_pairing_command(args, data_dir)
+        if args.command == "machines":
+            from .cli_machines import run_machines_command
+
+            return run_machines_command(args, data_dir)
         print(f"unknown command: {args.command}", file=sys.stderr)
         return 2
     except CliError as e:
