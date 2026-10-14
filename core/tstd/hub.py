@@ -143,7 +143,7 @@ class Hub:
         peer = self._ws.peer_view(connection)
         if kind == "session_list" and peer.viewer:
             return merge_session_list(reply, self.bridge.cached_rows())
-        if kind == "setup_state" and self._ws.peer_is_remote(connection):
+        if kind == "setup_state" and peer.remote:
             return scrub_setup_state(reply)
         return reply
 
