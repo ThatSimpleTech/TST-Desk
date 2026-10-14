@@ -7946,6 +7946,43 @@ asked for.
 
 ---
 
+## 2026-08-22 — TD-1903: echo OpenRouter `reasoning_details` (Class B)
+
+**Decision:** `ChatMessage` and `Delta` carry an opaque
+`reasoning_details` list. The stream parser flattens `text` / `summary`
+into `Delta.reasoning` for the existing UI and watchdog. The loop
+accumulates the raw array and puts it on the assistant message of the
+next request. Persist writes it through the same `_message_to_dict`
+path. The plaintext scratchpad still never enters `collected_content`.
+
+**Rationale:** TD-1901 said accept `reasoning` or `reasoning_content`
+and do not invent a third spelling. OpenRouter standardized a third:
+`reasoning_details`. Live `stealth/ox-alpha` streamed that array and
+nothing Desk parsed, so a 200 became `empty_completion`. Tool loops
+require the array echoed unmodified. This is the OpenRouter agent
+dialect, not a local-only quirk.
+
+**Alternative rejected:** Sending `reasoning: {enabled: true}` and
+hoping a string field appears. The array is what the next request
+must carry. Also rejected: stuffing the flattened string into
+`content` — that is the TD-1901 defect.
+
+**Merged 2026-10-14 onto the TD-5016 stack.** Two other parts of the
+original branch were dropped as superseded. The numeric `error.code`
+429 mapping: the stack already treats a numeric provider code as a
+restated status and maps it from `_STATUS_CODE_MAP` (and reads an error
+envelope's embedded status), so `_canonical_error_code` would have been
+a second copy. The "screenshot returns path, not base64" reversal:
+TD-1729 sends the pixels as a vision part, which is the fix that entry
+wanted. Taking the old change would have left no `png_base64` for
+dispatch to peel, and the model would have lost the picture. The one
+part still missing was the saved path: TD-1729's tool text kept only
+size and mime. `desktop_screenshot` now adds the session-relative
+`path` from `persist_screen_frame` before dispatch peels the PNG, as
+`browser_screenshot` already did.
+
+---
+
 ## 2026-08-24 — TD-2001: X11 backend, AT-SPI is not the primary path (Class B)
 
 **Decision:** `mcp/tst-cu-mcp` on Linux is a Windows-shaped raw X11

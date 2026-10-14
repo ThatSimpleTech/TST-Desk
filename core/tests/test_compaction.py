@@ -102,6 +102,16 @@ def test_estimate_counts_content_and_tool_arguments() -> None:
     assert method == HeuristicTokenCounter().count("x").method
 
 
+def test_estimate_counts_echoed_reasoning_details() -> None:
+    """The array goes out on every later request (TD-1903), so it counts."""
+    details = [{"type": "reasoning.text", "text": pad("think", 400), "index": 0}]
+    bare = ChatMessage(role="assistant", content="ok")
+    echoed = ChatMessage(role="assistant", content="ok", reasoning_details=details)
+    without, _ = estimate_tokens([bare], COUNTER)
+    with_details, _ = estimate_tokens([echoed], COUNTER)
+    assert with_details - without >= 100
+
+
 # ── Compaction point ───────────────────────────────────────────────────
 
 

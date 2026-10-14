@@ -29,7 +29,9 @@ from tstd.provider import (
     ToolCall,
     ToolDefinition,
     Usage,
+    flatten_reasoning_details,
     is_context_overflow,
+    merge_reasoning_details,
 )
 
 # ── Mock ASGI server ───────────────────────────────────────────────────
@@ -1109,3 +1111,85 @@ class TestReasoningDeltas:
         """``reasoning: ""`` normalises to None rather than an empty event."""
         chunk = self._chunk(client, {"content": "x", "reasoning": ""})
         assert chunk.delta.reasoning is None
+
+
+# ── Tests: OpenRouter reasoning_details (TD-1903) ──────────────────────
+
+
+class TestReasoningDetails:
+    @staticmethod
+    def _chunk(client: ProviderClient, delta: dict[str, Any]) -> StreamChunk:
+        parsed = client._parse_stream_chunk(
+            json.dumps({"id": "c1", "choices": [{"index": 0, "delta": delta}]})
+        )
+        assert parsed is not None
+        return parsed
+
+    def test_details_flatten_to_reasoning(self, client: ProviderClient) -> None:
+        chunk = self._chunk(
+            client,
+            {
+                "content": "",
+                "reasoning_details": [
+                    {
+                        "type": "reasoning.text",
+                        "text": "Let me think",
+                        "format": "anthropic-claude-v1",
+                        "index": 0,
+                    }
+                ],
+            },
+        )
+        assert chunk.delta.reasoning == "Let me think"
+        assert chunk.delta.reasoning_details is not None
+        assert chunk.delta.reasoning_details[0]["text"] == "Let me think"
+        assert not chunk.delta.content
+
+    def test_summary_and_encrypted_flatten(self, client: ProviderClient) -> None:
+        chunk = self._chunk(
+            client,
+            {
+                "reasoning_details": [
+                    {"type": "reasoning.summary", "summary": "Plan", "index": 0},
+                    {"type": "reasoning.encrypted", "data": "abc", "index": 1},
+                ]
+            },
+        )
+        assert chunk.delta.reasoning == "Plan[REDACTED]"
+
+    def test_encrypted_only_is_still_a_reasoning_chunk(self, client: ProviderClient) -> None:
+        chunk = self._chunk(
+            client,
+            {"reasoning_details": [{"type": "reasoning.encrypted", "data": "x", "index": 0}]},
+        )
+        assert chunk.delta.reasoning == "[REDACTED]"
+
+    def test_string_reasoning_wins_for_ui(self, client: ProviderClient) -> None:
+        chunk = self._chunk(
+            client,
+            {
+                "reasoning": "shown",
+                "reasoning_details": [{"type": "reasoning.text", "text": "hidden", "index": 0}],
+            },
+        )
+        assert chunk.delta.reasoning == "shown"
+        assert chunk.delta.reasoning_details is not None
+
+    def test_merge_same_index_concatenates_text(self) -> None:
+        acc: list[dict[str, Any]] = []
+        merge_reasoning_details(acc, [{"type": "reasoning.text", "text": "Let ", "index": 0}])
+        merge_reasoning_details(acc, [{"type": "reasoning.text", "text": "me think", "index": 0}])
+        assert acc == [{"type": "reasoning.text", "text": "Let me think", "index": 0}]
+        assert flatten_reasoning_details(acc) == "Let me think"
+
+    def test_message_to_dict_echoes_details(self) -> None:
+        details = [{"type": "reasoning.text", "text": "x", "index": 0}]
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[
+                ChatMessage(role="assistant", content=None, reasoning_details=details),
+            ],
+        )
+        body = req.to_dict()
+        assert body["messages"][0]["reasoning_details"] == details
+        assert "content" not in body["messages"][0]

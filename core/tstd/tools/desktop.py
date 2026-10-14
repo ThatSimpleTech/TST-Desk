@@ -178,7 +178,7 @@ def peel_screenshot_png(raw: str) -> tuple[str, bytes | None]:
 
     50k chars of base64 in a tool message blows a 32k local window
     (ezer-forge). The pixels go to the model as a vision part; ``output``
-    keeps path/size only.
+    keeps the saved path (when the session persists) and the size.
     """
     png = _png_from_driver_json(raw)
     try:
@@ -231,7 +231,12 @@ async def desktop_screenshot(
         raw = await driver.screenshot(display=display)
     png = _png_from_driver_json(raw)
     if png is not None:
-        await persist_screen_frame(session, png, tool_call_id=tool_call_id or None)
+        frame = await persist_screen_frame(session, png, tool_call_id=tool_call_id or None)
+        if frame["path"]:
+            # Like browser_screenshot, the text names the saved file (TD-1903).
+            body = json.loads(raw)
+            body.setdefault("path", frame["path"])
+            raw = json.dumps(body)
     return raw
 
 

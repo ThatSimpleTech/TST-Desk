@@ -65,7 +65,9 @@ def estimate_tokens(
     the request body serializes it, and ``MESSAGE_OVERHEAD_TOKENS`` per
     message (TD-5007). Tool definitions are a fixed few thousand tokens
     on every call; leaving them out let a 32k tier overflow while the
-    estimate said it fit. Returns (total, counter method).
+    estimate said it fit. Echoed ``reasoning_details`` (TD-1903) go out
+    on every later call too, so they count as the body serializes them.
+    Returns (total, counter method).
     """
     total = 0
     methods: set[str] = set()
@@ -83,6 +85,8 @@ def estimate_tokens(
             text += "".join(
                 tc.function.arguments for tc in message.tool_calls if tc.function is not None
             )
+        if message.reasoning_details:
+            text += json.dumps(message.reasoning_details)
         add(text)
     for tool in tools or ():
         add(json.dumps(tool_definition_payload(tool)))
