@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import random
-from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass, field
+import re
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any, Literal
@@ -39,6 +40,66 @@ _STATUS_CODE_MAP: dict[int, str] = {
     503: "service_unavailable",
     504: "gateway_timeout",
 }
+
+
+def _coerce_reasoning_details(raw: Any) -> list[dict[str, Any]] | None:
+    """Keep only object items from an OpenRouter ``reasoning_details`` array."""
+    if not isinstance(raw, list) or not raw:
+        return None
+    items = [item for item in raw if isinstance(item, dict)]
+    return items or None
+
+
+def flatten_reasoning_details(details: list[dict[str, Any]]) -> str | None:
+    """Turn OpenRouter detail objects into the string the UI already streams.
+
+    ``reasoning.text`` / ``reasoning.summary`` become visible thinking.
+    Encrypted-only details still yield a non-empty marker so the first-token
+    watchdog (TD-1713) does not treat a thinking model as hung.
+    """
+    parts: list[str] = []
+    for item in details:
+        typ = str(item.get("type", ""))
+        if typ.endswith(".text") or typ == "text":
+            text = item.get("text")
+            if isinstance(text, str) and text:
+                parts.append(text)
+        elif typ.endswith(".summary") or typ == "summary":
+            summary = item.get("summary")
+            if isinstance(summary, str) and summary:
+                parts.append(summary)
+        elif typ.endswith(".encrypted"):
+            parts.append("[REDACTED]")
+    if parts:
+        return "".join(parts)
+    return "[REDACTED]" if details else None
+
+
+def merge_reasoning_details(acc: list[dict[str, Any]], incoming: list[dict[str, Any]]) -> None:
+    """Reassemble streamed ``reasoning_details`` in chunk order.
+
+    Same ``index`` extends ``text`` / ``summary`` so a split thought becomes
+    one object. That assembled array is what the next request must echo.
+    """
+    for item in incoming:
+        idx = item.get("index")
+        if isinstance(idx, int):
+            for existing in acc:
+                if existing.get("index") == idx:
+                    for key in ("text", "summary"):
+                        add = item.get(key)
+                        if isinstance(add, str) and add:
+                            prev = existing.get(key)
+                            existing[key] = prev + add if isinstance(prev, str) else add
+                    for key, value in item.items():
+                        if key not in existing:
+                            existing[key] = value
+                    break
+            else:
+                acc.append(dict(item))
+        else:
+            acc.append(dict(item))
+
 
 # ── Data models ────────────────────────────────────────────────────────
 
@@ -97,6 +158,22 @@ def content_as_text(content: MessageContent | None) -> str:
     return "\n".join(parts)
 
 
+def tool_definition_payload(tool: ToolDefinition) -> dict[str, Any]:
+    """One ``tools`` entry exactly as the request body carries it.
+
+    The token estimate (TD-5007) counts this same shape, so the two
+    cannot drift apart.
+    """
+    function: dict[str, Any] = {}
+    if tool.function is not None:
+        function = {
+            "name": tool.function.name,
+            "description": tool.function.description,
+            "parameters": tool.function.parameters,
+        }
+    return {"type": tool.type, "function": function}
+
+
 @dataclass
 class ChatMessage:
     """A single message in the chat conversation."""
@@ -105,6 +182,72 @@ class ChatMessage:
     content: MessageContent | None = None
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
+    # OpenRouter tool-loop echo (TD-1903). Opaque; pass back unmodified.
+    reasoning_details: list[dict[str, Any]] | None = None
+
+
+def _prefix_content(prefix: str, content: MessageContent | None) -> MessageContent:
+    """*content* with *prefix* ahead of it, keeping image parts."""
+    if content is None or content == "" or content == []:
+        return prefix
+    if isinstance(content, str):
+        return f"{prefix}\n\n{content}"
+    return [{"type": "text", "text": prefix}, *content]
+
+
+def wire_messages(messages: Sequence[ChatMessage]) -> list[ChatMessage]:
+    """The messages as the request body carries them (TD-5142).
+
+    Strict local chat templates (Qwen 3.5 and later, Mistral) accept one
+    system message, first, and raise on any other. llama.cpp answers that
+    with a 500, so a session whose history has a second system message
+    fails every request from then on. Compaction stores its summary that
+    way (compaction.py), so the wire, not the stored conversation, fixes
+    it up:
+
+    - system messages before the first other message merge into one, in
+      order, a blank line apart. An automatic or whole-history /compact
+      summary sits there, right after the system prompt.
+    - a later system message (a /compact "from here" summary) goes ahead
+      of the next user message's own text, so it keeps its place in the
+      story. With no user message before the next assistant or tool
+      message, it joins the first system message instead: a user message
+      there could split a tool call from its results.
+
+    System messages carry text; image parts in one are dropped. A
+    conversation without a stray system message comes back as the same
+    messages, so the body (and the server's prompt cache) is unchanged.
+    """
+    if not any(m.role == "system" for m in messages[1:]):
+        return list(messages)
+
+    leading: list[str] = []
+    out: list[ChatMessage] = []
+    pending: list[str] = []
+    started = False
+    for message in messages:
+        if message.role == "system":
+            text = content_as_text(message.content)
+            if not started:
+                leading.append(text)
+            else:
+                pending.append(text)
+            continue
+        started = True
+        if pending:
+            prefix = "\n\n".join(t for t in pending if t)
+            pending = []
+            if message.role == "user":
+                if prefix:
+                    message = replace(message, content=_prefix_content(prefix, message.content))
+            else:
+                leading.append(prefix)
+        out.append(message)
+    leading.extend(pending)
+
+    if leading:
+        out.insert(0, ChatMessage(role="system", content="\n\n".join(t for t in leading if t)))
+    return out
 
 
 @dataclass
@@ -125,22 +268,10 @@ class ChatCompletionRequest:
         """Serialize to the OpenAI-compatible JSON request body."""
         d: dict[str, Any] = {
             "model": self.model,
-            "messages": [self._message_to_dict(m) for m in self.messages],
+            "messages": [self._message_to_dict(m) for m in wire_messages(self.messages)],
         }
         if self.tools:
-            d["tools"] = [
-                {
-                    "type": t.type,
-                    "function": {
-                        "name": t.function.name,
-                        "description": t.function.description,
-                        "parameters": t.function.parameters,
-                    }
-                    if t.function
-                    else {},
-                }
-                for t in self.tools
-            ]
+            d["tools"] = [tool_definition_payload(t) for t in self.tools]
             # OpenAI's default when tools are present. Some gateways (EZER
             # LiteLLM guided_json) treat an omitted tool_choice as "JSON in
             # content" and never fill message.tool_calls (TD-1724).
@@ -157,7 +288,10 @@ class ChatCompletionRequest:
         if self.stop is not None:
             d["stop"] = self.stop
         if self.extra_body:
-            d.update(self.extra_body)
+            # A tier's extra_body only fills in (TD-5008): what the caller
+            # set, such as the classifier's temperature 0.0, wins.
+            for key, value in self.extra_body.items():
+                d.setdefault(key, value)
         return d
 
     @staticmethod
@@ -181,6 +315,8 @@ class ChatCompletionRequest:
             ]
         if msg.tool_call_id is not None:
             d["tool_call_id"] = msg.tool_call_id
+        if msg.reasoning_details:
+            d["reasoning_details"] = msg.reasoning_details
         return d
 
 
@@ -225,11 +361,14 @@ class Delta:
     ``reasoning`` is a reasoning model's visible scratchpad, carried
     separately from ``content`` because it is not part of the answer: it
     is shown to the user but must never be replayed to the provider as
-    something the assistant said (TD-1901).
+    something the assistant said (TD-1901). ``reasoning_details`` is the
+    OpenRouter array that *must* be echoed on the next assistant
+    message after tools (TD-1903).
     """
 
     content: str | None = None
     reasoning: str | None = None
+    reasoning_details: list[dict[str, Any]] | None = None
     tool_calls: list[DeltaToolCall] | None = None
 
 
@@ -290,6 +429,7 @@ class ChatCompletionResponse:
                 role=msg_data.get("role", "assistant"),
                 content=msg_data.get("content"),
                 tool_calls=tool_calls,
+                reasoning_details=_coerce_reasoning_details(msg_data.get("reasoning_details")),
             ),
             finish_reason=choice.get("finish_reason"),
             usage=Usage.from_api_dict(data.get("usage")),
@@ -528,6 +668,54 @@ def is_context_overflow(status: int, body: str) -> bool:
         return False
     folded = body.casefold()
     return any(phrase in folded for phrase in _OVERFLOW_PHRASES)
+
+
+# A chat template that refuses the messages (TD-5142). The server could
+# not build a prompt, so the same request fails the same way every time:
+# llama.cpp reports "Jinja Exception: <reason>" as a 500, and Python
+# servers name jinja2's exceptions. The reason stops at the end of its
+# line or of the JSON string that quotes it.
+_TEMPLATE_ERROR = re.compile(
+    r"(?:Jinja Exception|jinja2\.exceptions\.\w+|TemplateError|TemplateSyntaxError)"
+    r":[ \t]*([^\"\\\n]*)",
+    re.IGNORECASE,
+)
+
+# Any other llama.cpp render failure (an unknown filter, a null operand)
+# comes wrapped as "While executing <node> at line L, column C in source:
+# ... Error: <reason>", with the newline raw or JSON-escaped.
+_LLAMA_TEMPLATE_WRAPPER = re.compile(
+    r"While executing \w+ at line \d+, column \d+ in source:.*?(?:\n|\\n)Error:"
+    r"[ \t]*([^\"\\\n]*)",
+    re.DOTALL,
+)
+
+# LiteLLM appends a failed fallback's error to the original one, which
+# keeps its own status. Only the text before this says why the request
+# failed; a template refusal from a fallback model must not stop the
+# retries a 503 from the primary deserves.
+_FALLBACK_TAIL = "Error doing the fallback:"
+
+
+def template_error_reason(text: str) -> str | None:
+    """The template's own reason when *text* reports a chat-template
+    failure ("" when it gives none), else None."""
+    own = text.split(_FALLBACK_TAIL, 1)[0]
+    match = _TEMPLATE_ERROR.search(own) or _LLAMA_TEMPLATE_WRAPPER.search(own)
+    if match is None:
+        return None
+    return match.group(1).strip()
+
+
+def template_error_message(reason: str) -> str:
+    """Plain copy for a chat-template refusal. Resending sends the same
+    messages, so it says so instead of asking for a retry."""
+    detail = f": {reason.rstrip('.')}." if reason else "."
+    return (
+        f"The model server's chat template refused this conversation{detail} "
+        "Resending won't help. Start a fresh session, or switch the tier "
+        "to another model in config.yaml."
+    )
 
 
 def context_length_message(provider_detail: str = "") -> str:
@@ -1027,19 +1215,27 @@ class ProviderClient:
         if is_context_overflow(status, body_text) or is_context_overflow(status, provider_msg):
             code = "context_overflow"
 
+        template_reason = template_error_reason(provider_msg)
+        if template_reason is None:
+            template_reason = template_error_reason(body_text)
+        if template_reason is not None and code != "context_overflow" and status not in (401, 413):
+            code = "template_error"
+
         # Override for known status codes that carry specific semantics
         if status == 401:
             code = "auth_failed"
         elif status == 413:
             code = "context_length_exceeded"
 
-        retryable = status in (429, 500, 502, 503, 504)
+        retryable = status in (429, 500, 502, 503, 504) and code != "template_error"
         retry_after = _parse_retry_after(response.headers.get("retry-after"))
 
         # Build actionable messages for known error types. Overflow copy
         # is one sentence — the raw body stays on ``detail`` for the log.
         if code == "context_overflow":
             message = "The request exceeded the model's context window."
+        elif code == "template_error":
+            message = template_error_message(template_reason or "")
         elif status == 401 or code == "auth_failed":
             message = auth_failure_message()
         elif status == 413 or code == "context_length_exceeded":
@@ -1109,14 +1305,18 @@ class ProviderClient:
         # Parse content delta
         content = delta_data.get("content")
 
-        # Reasoning delta (TD-1901).  Two spellings are in the wild and
-        # neither is in the OpenAI schema: Ollama emits ``reasoning``,
-        # DeepSeek and several OpenRouter passthroughs emit
-        # ``reasoning_content``.  Accept both, prefer neither — a provider
-        # sending one sends only one.  Empty strings normalise to None so
-        # a chunk carrying nothing but ``content: ""`` cannot be mistaken
-        # for a reasoning chunk.
-        reasoning = delta_data.get("reasoning") or delta_data.get("reasoning_content")
+        # Reasoning delta (TD-1901 / TD-1903).  Three spellings are in
+        # the wild and none is in the OpenAI schema: Ollama emits
+        # ``reasoning``, DeepSeek emits ``reasoning_content``, OpenRouter
+        # streams ``reasoning_details`` (array).  A string field wins for
+        # the UI when present; details still ride along for the tool-loop
+        # echo.  Empty strings normalise to None so a chunk carrying
+        # nothing but ``content: ""`` cannot be mistaken for thinking.
+        reasoning_raw = delta_data.get("reasoning") or delta_data.get("reasoning_content")
+        reasoning = reasoning_raw if isinstance(reasoning_raw, str) and reasoning_raw else None
+        reasoning_details = _coerce_reasoning_details(delta_data.get("reasoning_details"))
+        if reasoning is None and reasoning_details:
+            reasoning = flatten_reasoning_details(reasoning_details)
 
         # Parse tool call deltas
         tool_calls = None
@@ -1133,7 +1333,12 @@ class ProviderClient:
 
         return StreamChunk(
             id=data.get("id", ""),
-            delta=Delta(content=content, reasoning=reasoning, tool_calls=tool_calls),
+            delta=Delta(
+                content=content,
+                reasoning=reasoning,
+                reasoning_details=reasoning_details,
+                tool_calls=tool_calls,
+            ),
             finish_reason=finish_reason,
             usage=usage,
         )

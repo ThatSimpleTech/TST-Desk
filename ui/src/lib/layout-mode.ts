@@ -20,13 +20,17 @@ export interface ShellChrome {
   inspector: boolean;
 }
 
-/** Which chrome panes to paint. Wide always shows both. */
+/**
+ * Which chrome panes to paint.
+ * Wide shows both until the user collapses the inspector.
+ * Narrow hides both until the user opens one.
+ */
 export function shellChrome(
   width: number,
-  opts: { showRail?: boolean; showInspector?: boolean } = {},
+  opts: { showRail?: boolean; showInspector?: boolean; inspectorCollapsed?: boolean } = {},
 ): ShellChrome {
   if (!isNarrowViewport(width)) {
-    return { rail: true, inspector: true };
+    return { rail: true, inspector: !opts.inspectorCollapsed };
   }
   return {
     rail: Boolean(opts.showRail),

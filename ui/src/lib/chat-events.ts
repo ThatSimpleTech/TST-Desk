@@ -7,10 +7,21 @@
 import type { BranchSnaps } from "./chat-fork";
 import type { ChatMessage, ChatState, ToolBlock } from "./chat-store";
 import type { MessageQueue } from "./chat-queue";
+import { refusedSend, returnToDraft, takeSent } from "./draft-store";
 import type { FirstTokenWait } from "./first-token-wait";
-import type { DaemonEventUnion, SessionState } from "./protocol";
+import { machineOf } from "./bridged-id";
+import type { DaemonEventUnion, SessionState, SessionSummary } from "./protocol";
 import { chooseBoundSession, isTerminal } from "./session-binding";
 import { windowBindSessionId } from "./window-bind";
+
+/** The bridged session the pane holds while no list has named it yet, and
+ *  the last list, so a hold released by a machine_list can be re-decided
+ *  without waiting for another list (TD-5015). The store sets `sessionId`
+ *  on each bind; the reducer releases it. */
+export interface BindHold {
+  sessionId: string | null;
+  lastList: readonly SessionSummary[];
+}
 
 /** Collaborators the reducer may touch. The store keeps the rest. */
 export interface ChatEventContext {
@@ -20,6 +31,26 @@ export interface ChatEventContext {
   forks: BranchSnaps;
   allocateId: () => string;
   switchSession: (sessionId: string | null, turnState: SessionState["state"] | null) => void;
+  hold: BindHold;
+  /** Texts sent and not yet started or refused (TD-5023, draft-store.ts). */
+  sending: string[];
+  /** Write the bound session's waiting draft save now (TD-5019). */
+  flushDraft: () => void;
+}
+
+/** Re-decide the pane's session from a list and apply the choice. */
+function rebindFrom(ctx: ChatEventContext, summaries: readonly SessionSummary[]): void {
+  const { state } = ctx;
+  const choice = chooseBoundSession(summaries, state.sessionId, windowBindSessionId(), ctx.hold.sessionId);
+  if (choice.action === "bind") {
+    ctx.switchSession(choice.sessionId, choice.turnState);
+  } else if (choice.action === "unbind") {
+    ctx.switchSession(null, null);
+  } else if (choice.turnState !== null) {
+    // Staying put, and the refresh brought a turn state worth taking.
+    // A null there is the one that must not be taken (TD-1714).
+    state.turnState = choice.turnState;
+  }
 }
 
 function currentAssistant(ctx: ChatEventContext): ChatMessage {
@@ -90,10 +121,16 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
   switch (event.type) {
     case "user_turn": {
       if (event.session_id !== state.sessionId) return;
+      // The daemon took one of our sends: the composer it emptied is saved
+      // now, not after the debounce (TD-5019).
+      if (takeSent(ctx.sending, event.content)) ctx.flushDraft();
       const already = state.messages.find(
         (m) => m.role === "user" && m.turnId === event.turn_id,
       );
       if (already !== undefined) return;
+      // A new turn, from this pane or another device: the cut one is no
+      // longer the last, so its Continue goes (TD-5019).
+      state.lastTurnError = null;
       const last = state.messages[state.messages.length - 1];
       if (
         last !== undefined &&
@@ -184,11 +221,15 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       // Daemon-measured seconds — the duration line reports what the wire
       // said; the client never clocks turns itself (AGENTS §6).
       state.lastTurnDuration = event.duration;
+      state.lastTurnError = event.error_code ?? null;
       ctx.forks.saveActive(state);
       // The loop is free: the queue's head becomes the next turn (TD-1704).
       // Only here, never on a terminal session_state — the daemon refuses
       // sends to a dead session, so flushing into one would void the text.
-      ctx.queue.flushHead();
+      // Not after a turn a restart cut off either (TD-5018): the rows were
+      // queued behind a reply that never came, and sending one would answer
+      // for the user. They wait for Continue or a send of their own.
+      if (event.error_code !== "interrupted_by_restart") ctx.queue.flushHead();
       return;
     }
     case "session_state": {
@@ -214,30 +255,41 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       return;
     }
     case "session_list": {
-      const choice = chooseBoundSession(
-        event.sessions,
-        state.sessionId,
-        windowBindSessionId(),
-      );
-      if (choice.action === "bind") {
-        ctx.switchSession(choice.sessionId, choice.turnState);
-      } else if (choice.action === "unbind") {
-        ctx.switchSession(null, null);
-      } else if (choice.turnState !== null) {
-        // Staying put, and the refresh brought a turn state worth taking.
-        // A null there is the one that must not be taken (TD-1714).
-        state.turnState = choice.turnState;
+      const { hold } = ctx;
+      hold.lastList = event.sessions;
+      if (hold.sessionId !== null && event.sessions.some((s) => s.session_id === hold.sessionId)) {
+        hold.sessionId = null;
       }
+      rebindFrom(ctx, event.sessions);
+      return;
+    }
+    case "machine_list": {
+      // A held session whose computer was just removed will never be listed:
+      // let go now, since the list that dropped its rows may already be in.
+      const { hold } = ctx;
+      const mch = machineOf(hold.sessionId);
+      if (mch === null || event.machines.some((m) => m.id === mch)) return;
+      hold.sessionId = null;
+      rebindFrom(ctx, hold.lastList);
       return;
     }
     case "error": {
-      // The daemon refused a send to a dead session (TD-1711): the turn
-      // will never start, so drop the waiting shimmer immediately — the
-      // toast (notifications, TD-1008) carries the actionable copy.
-      if (event.code !== "session_not_running") return;
+      // The daemon refused a send to a dead session (TD-1711), or held it
+      // while it drains for a restart (TD-5023): the turn will never start,
+      // so drop the waiting shimmer immediately — the toast (notifications,
+      // TD-1008) carries the actionable copy.
+      if (event.code !== "session_not_running" && event.code !== "daemon_draining") return;
       if (event.session_id != null && event.session_id !== state.sessionId) return;
-      sealInFlightAssistant(state);
       wait.end();
+      const refused = refusedSend(ctx.sending);
+      if (event.code === "session_not_running") {
+        sealInFlightAssistant(state);
+        return;
+      }
+      // A drain holds new turns while running ones finish, so a reply may
+      // still be streaming here: it is not sealed. The text goes back to
+      // the composer to send again once the restart is done (TD-5019).
+      if (refused !== null) returnToDraft(state, refused);
       return;
     }
     case "tool_call": {

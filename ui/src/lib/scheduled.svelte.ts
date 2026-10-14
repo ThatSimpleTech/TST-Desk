@@ -344,9 +344,10 @@ function reduce(event: DaemonEventUnion): void {
 			cadence: event.cadence ?? scheduled.draft.cadence,
 			next_run: event.next_run ?? scheduled.draft.next_run,
 			deliver_to: event.deliver_to ?? scheduled.draft.deliver_to,
+			email_to: event.email_to ?? scheduled.draft.email_to,
 			paused: event.paused ?? scheduled.draft.paused,
 			// A sentence does not name a model, a lateness window, retries, a
-			// follow-on, or a calendar file.
+			// follow-on, a calendar file, or a max run time.
 			preset: scheduled.draft.preset,
 			engine: scheduled.draft.engine,
 			grace: scheduled.draft.grace,
@@ -354,11 +355,13 @@ function reduce(event: DaemonEventUnion): void {
 			then: scheduled.draft.then,
 			skip_calendar: scheduled.draft.skip_calendar,
 			skip_match: scheduled.draft.skip_match,
+			max_run: scheduled.draft.max_run,
 		};
 		return;
 	}
 	if (
 		event.type === "error" &&
+		!event.machine && // another computer's error is never this scheduler's (TD-5015)
 		(event.code === "job_invalid" || event.code === "job_not_found" || event.code === "job_running")
 	) {
 		savePending = false;

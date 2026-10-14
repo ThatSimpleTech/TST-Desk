@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bannerLabel, bannerTone } from "./connection-banner";
+import { bannerLabel, bannerOffersPairAgain, bannerTone } from "./connection-banner";
 
 describe("bannerLabel (TD-1304)", () => {
 	it("says Connected only when the socket has handshaken", () => {
@@ -26,6 +26,34 @@ describe("bannerLabel (TD-1304)", () => {
 
 	it("says Not connected while a browser attach is waiting (no host supervisor)", () => {
 		expect(bannerLabel("disconnected", "starting")).toBe("Not connected");
+	});
+
+	it("names the paired computer a phone is retrying (TD-5014)", () => {
+		expect(bannerLabel("reconnecting", "starting", "ezer")).toBe("Connecting to ezer…");
+		expect(bannerTone("reconnecting", "starting")).toBe("info");
+		expect(bannerLabel("connected", "connected", "ezer")).toBe("Connected");
+		expect(bannerLabel("reconnecting", "starting", null)).toBe("Connecting…");
+	});
+
+	it("says it can't reach the saved computer after a while, and offers to pair again (TD-5014)", () => {
+		const remote = { unreachable: true };
+		expect(bannerLabel("reconnecting", "starting", "ezer", remote)).toBe("Can’t reach ezer");
+		expect(bannerLabel("reconnecting", "starting", null, remote)).toBe("Can’t reach the computer");
+		expect(bannerTone("reconnecting", "starting", remote)).toBe("warning");
+		expect(bannerOffersPairAgain("reconnecting", remote)).toBe(true);
+		expect(bannerOffersPairAgain("reconnecting", {})).toBe(false);
+		expect(bannerLabel("connected", "connected", "ezer", remote)).toBe("Connected");
+		expect(bannerOffersPairAgain("connected", remote)).toBe(false);
+		expect(bannerOffersPairAgain("stopped", remote)).toBe(false);
+	});
+
+	it("shows a handshake note while it keeps retrying, without offering to pair (TD-5014)", () => {
+		const note = "This computer can't read its paired devices right now. Trying again.";
+		const remote = { unreachable: true, note };
+		expect(bannerLabel("reconnecting", "starting", "ezer", remote)).toBe(note);
+		expect(bannerTone("reconnecting", "starting", remote)).toBe("warning");
+		expect(bannerOffersPairAgain("reconnecting", remote)).toBe(false);
+		expect(bannerLabel("connected", "connected", "ezer", remote)).toBe("Connected");
 	});
 
 	it("says Daemon stopped on an orderly shutdown", () => {

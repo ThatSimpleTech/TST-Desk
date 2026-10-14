@@ -17,13 +17,15 @@
 	import EmptyState from './EmptyState.svelte';
 	import { stack } from '../stack-store.svelte.js';
 	import { cacheBadge, cacheLabel, formatTokens, memoryPlaceholderCopy, memoryReasonLabel, warningBadge } from '../stack-store';
-	import { openInEditor } from '../open-file';
+	import { openSessionPath } from '../open-file';
+	import { session } from '../session-status.svelte.js';
 	import Icon from './Icon.svelte';
 
 	const badge = $derived(cacheBadge(stack.lastCachedTokens, stack.cacheObserved));
 
+	// Another computer's stack names files on that computer (TD-5015).
 	function open(path: string): void {
-		void openInEditor(path);
+		void openSessionPath(session.sessionId, path);
 	}
 
 	function baseName(path: string): string {

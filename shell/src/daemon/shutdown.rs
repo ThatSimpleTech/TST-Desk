@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 
-use super::daemon_pid::{kill_spawned_group, pid_is_alive};
+use super::daemon_pid::{kill_spawned_group, pid_is_alive, term_spawned_group};
 use super::ClientWs;
 
 /// How long the host waits after asking the daemon to stop before SIGKILL.
@@ -65,6 +65,28 @@ pub(crate) fn exit_action(alive: bool, elapsed: Option<Duration>, grace: Duratio
 /// closes this socket from `stop()`, after it has logged the request and
 /// released the port file. We do not call `close().await`: that handshake
 /// is what used to outlast the grace (TD-4848).
+/// Read the supervision socket and drop what arrives, until the peer closes.
+///
+/// Reading is what answers the daemon's keepalive pings: tungstenite queues
+/// the pong and sends it on the next read. A socket nobody reads is closed
+/// by the server after ping_interval + ping_timeout (about 40 s), and Quit's
+/// shutdown frame then went to a dead socket and ended in SIGKILL.
+pub(crate) async fn read_until_closed(ws: &mut ClientWs) {
+    while let Some(Ok(_)) = ws.next().await {}
+}
+
+/// Ask the daemon to stop: the shutdown frame on a live socket, else
+/// SIGTERM to its group (TD-4842 runs the same graceful shutdown).
+async fn ask_to_stop(ws: Option<ClientWs>, leader_pid: u32, deadline: Instant) {
+    match ws {
+        Some(ws) => hold_until_peer_closes(ws, deadline).await,
+        None => {
+            log::info!("supervision socket is closed; SIGTERM daemon pid {leader_pid}");
+            term_spawned_group(leader_pid);
+        }
+    }
+}
+
 pub(crate) async fn hold_until_peer_closes(mut ws: ClientWs, deadline: Instant) {
     let _ = ws.send(Message::Text(SHUTDOWN_FRAME.into())).await;
     let _ = ws.flush().await;
@@ -84,22 +106,27 @@ pub(crate) async fn hold_until_peer_closes(mut ws: ClientWs, deadline: Instant) 
 }
 
 /// Deliver `shutdown`, then wait until the spawned leader is reaped.
-/// SIGKILL only if it is still running at `grace`.
+/// SIGKILL only if it is still running at `grace`. `None` means the
+/// daemon already closed the socket, so the ask is SIGTERM.
 pub(crate) async fn shutdown_and_reap(
-    ws: ClientWs,
+    ws: Option<ClientWs>,
     child: &mut tokio::process::Child,
     leader_pid: u32,
     grace: Duration,
 ) -> Reap {
     let deadline = Instant::now() + grace;
-    hold_until_peer_closes(ws, deadline).await;
+    ask_to_stop(ws, leader_pid, deadline).await;
     wait_spawned(child, leader_pid, deadline).await
 }
 
 /// Same delivery for a daemon the host attached to instead of spawned.
-pub(crate) async fn shutdown_attached(ws: ClientWs, leader_pid: u32, grace: Duration) -> Reap {
+pub(crate) async fn shutdown_attached(
+    ws: Option<ClientWs>,
+    leader_pid: u32,
+    grace: Duration,
+) -> Reap {
     let deadline = Instant::now() + grace;
-    hold_until_peer_closes(ws, deadline).await;
+    ask_to_stop(ws, leader_pid, deadline).await;
     wait_pid(leader_pid, deadline).await
 }
 

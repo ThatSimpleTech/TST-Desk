@@ -129,7 +129,7 @@ Ctrl+C sends `detach`, not `cancel`. An unknown id is the daemon's existing
 **Browser attach (TD-3701).** The same Svelte `ProtocolClient` — not a second
 app — works outside Tauri. A phone or laptop browser does not read `port.json`.
 It connects to `ws://<tailscale-ip>:<port>` (the extra listener from TD-3601)
-and presents the rotating `{user_data_dir}/remote-token` (TD-3602) in
+and presents `{user_data_dir}/remote-token` (TD-3602) in
 `hello.token`. The UI takes that pair from a connect form, or from
 `?ws=&token=` / `#ws=&token=` (hash preferred; the token is stripped from the
 address bar after read). Loopback in a browser still uses the port-file token.
@@ -137,9 +137,26 @@ There is no account and no hosted relay. The daemon still does not bind
 `0.0.0.0` / `::`; the form refuses those as connect targets too.
 
 The window is still only a viewer. Read transcript, send, and approve are the
-same client messages they are on the desktop. Settings will copy address +
-token (TD-3603); until then, the port is the one in `port.json` and the token
-is the contents of `remote-token`.
+same client messages they are on the desktop. Settings shows the address and
+port (TD-5005); the token is the contents of `remote-token`. Both stay the same
+across restarts: the port is remembered beside the remote-attach switch and the
+token file is kept at shutdown. Settings "New token" replaces it and drops every
+remote client that used it; turning remote attach off deletes it.
+
+**Pairing (TD-5014).** The token file is now the older way. The usual way is to pair: the
+computer shows a code and a QR (Settings, or `tst pair`), and the phone scans the QR, opens
+the link, or types the address and code. The code is 8 characters, lasts 10 minutes, works
+once, and stops working after 5 wrong tries; it lives only in the daemon's memory. Redeeming
+it gives that phone its own key, on the same port as everything else. The daemon keeps only a
+sha256 of each key, in `{user_data_dir}/remote-devices.yaml`, so each device can be listed and
+removed on its own (`tst devices`). Removing one closes only its connections. Turning remote
+attach off stops the listener but keeps the paired devices, so they connect again when it is
+turned back on. Pairing and removing are refused from a remote connection: only the computer
+itself can add or remove a device, except that a phone may remove its own entry ("Forget this
+computer"). A paired device connecting or dropping makes the daemon push a fresh `setup_state`
+to the computer's own windows, so the device list is live.
+
+**Android shell (TD-5001).** A sideload APK is that same UI in a WebView, not a second protocol and not a Play Store service. The page is served to the WebView from `127.0.0.1` inside the phone — an https page would refuse the daemon's cleartext `ws://` as mixed content — and the WebView refuses every other origin. The android UI build's attach parser accepts only a Tailscale address (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`, or `*.ts.net`). Desktop CSP stays `ws://127.0.0.1`. The APK is debug-signed for sideload. There is still no account and no relay. The shell keeps the attach target (address + token) sealed with an Android Keystore AES-GCM key and hands it to the page through a `TstDeskNative` bridge, so the phone reconnects on launch (TD-5005). A refused saved token is cleared and the form comes back with the address filled in. Settings on the phone has "Forget this computer". A plain browser tab still keeps the token in `sessionStorage` only.
 
 On a viewport narrower than 640px the same `AppShell` hides the session rail
 and the inspector so the phone is chat + approval. Either pane can be shown
@@ -214,7 +231,11 @@ saved**. The registry still knows the id and workspace. Events that reached
 disk can be replayed so the window shows what we actually have. The loop does
 not start, and a new message is refused — continuing without the conversation
 would be inventing context. A session that has both `events.jsonl` and
-`conversation.json` is revived as `running` instead.
+`conversation.json` is revived as `running` instead. When its last
+`user_turn` has no `turn_complete` (a restart cut the turn), revive seals it
+once: each unanswered tool call gets a "Not finished" tool reply, and the log
+gets a failed `turn_complete` with `error_code: interrupted_by_restart`. That
+seal is the only thing revive adds; nothing is sent to the model (TD-5018).
 
 Note that `running` spans the session's whole life, not one turn. "Is a turn in flight" is a
 separate question answered by `Session.turn_in_flight`, counted off `turn_complete` events —
@@ -248,7 +269,7 @@ discriminated unions (`ClientMessageT`, `DaemonEventT`) so parsing is total and 
    Missing the window is `handshake_timeout`.
 3. Daemon validates the version first, then the token. Loopback hellos present the port-file
    token. A non-loopback hello (the extra listener, or a non-loopback peer) must present the
-   rotating token in `{user_data_dir}/remote-token` — the port-file token is not enough. The
+   token in `{user_data_dir}/remote-token` — the port-file token is not enough. The
    protocol field is still `hello.token`. An out-of-range version fails with
    `version_unsupported` and a message naming the versions on both sides; a bad token fails with
    `auth_failed` and does not open a session. Either way the daemon sends a typed `error` frame
@@ -257,7 +278,20 @@ discriminated unions (`ClientMessageT`, `DaemonEventT`) so parsing is total and 
    on a timer, to handshaken clients only.
 
 `hello_ack` is a bare JSON object built by `build_hello_ack`, not a `DaemonEvent` — it precedes
-the event stream rather than joining it.
+the event stream rather than joining it. After the token checks out it also carries
+`machine_id` (`mid_` + 16 hex, minted once into `{user_data_dir}/machine-id`; an identity, not
+a secret) and `desktop_name`, so a hub can tell "the same computer at a new address" and "this
+is me" (TD-5015). `hello.features` is what the client opts into: `"machines"` asks to be a
+viewer, `"bridge"` says this is another computer's hub. Unknown names are ignored.
+
+A phone that is not paired yet sends `pair` instead of `hello` as its first frame (TD-5014).
+The daemon checks the one-time code, mints that device a key, answers with a bare `pair_ok`
+(built by `build_pair_ok`, out of band like `hello_ack`) and closes with 1000. The phone then
+reconnects and sends `hello` with that key in `hello.token`. On a remote connection the daemon
+accepts the key of any paired device or the older `remote-token`. A phone pairing again sends
+its current key as `replaces`, and the entry it verifies is removed once the new key is minted.
+When `remote-devices.yaml` cannot be read, a device-key hello gets `devices_unavailable`, which
+the phone treats as "retry", not as a refusal; only `auth_failed` means the key is gone.
 
 `ready` is declared in `DaemonEventT` and carries the daemon and protocol versions, but **no code
 in `core/tstd` constructs it**, so it is not on the wire in v0.1. It is documented below because
@@ -287,6 +321,76 @@ fails on drift in either direction — a union member with no frozenset entry is
 parser meant to accept it, and a frozenset entry with no union member admits a type nothing can
 validate.
 
+### Other computers: the hub (TD-5015)
+
+The local daemon is a one-hop **hub**. The window keeps its one loopback socket; the daemon
+dials the computers it paired with and folds their sessions into the same list. Nothing else
+changes shape: the CSP, the Rust shell and the Kotlin code are the same, and an old client sees
+exactly what it saw before.
+
+**Peer kinds** (`core/tstd/peer_policy.py`, pure):
+
+| Kind | Who | What it gets |
+|---|---|---|
+| Viewer | `hello.features` has `"machines"`, and the connection is loopback or a phone-kind device key | Own rows plus every paired computer's rows; `machine_list`; may act on bridged ids (the hub forwards). |
+| Machine peer | A device whose record says `kind: machine`, or any hello with `"bridge"` (the hub always sends it) | Deny by default: only `MACHINE_PEER_VERBS`, own sessions only, no broadcasts. A bridged id is `bridged_session`; any other verb is `not_allowed`. Never a viewer, so it never forwards. |
+| Everyone else | The CLI, the legacy `remote-token`, an old client | Own rows only, no `machine_list`: unchanged. |
+
+`MACHINE_PEER_VERBS` is the session verbs a hub needs (list, attach, detach, send, stop, the
+approval answers, verify, new and fork, branch, tier, plan, preset, rename, star, archive,
+delete, end, the instruction stack, the memory answers) plus the self `remove_remote_device`.
+Each was checked for a way to turn approvals off; the approval switches themselves
+(`set_skip_all_approvals`, `set_grok_mode`, `approve_grok_plan`, `start_autonomy`) and every
+key, credential, pairing, policy-rule, job, computer-use and machine-wide verb are not in it.
+`FORWARDED_VERBS`, what a hub forwards for a bridged id, is the same list minus the self
+removal; the protocol fixtures carry it as `forwarded_verbs`. A test walks
+`_KNOWN_CLIENT_TYPES`, so a new verb starts refused for machine peers until it is classified.
+
+**Ids.** A bridged session id is `<raw>:<mch>`, grammar
+`^(?P<raw>[^:]+):(?P<mch>mch_[0-9a-f]{12})$` (`core/tstd/bridge_wire.py`). `mch` is this hub's
+own handle for the computer (the `computers.yaml` id and the keychain account suffix), so
+re-pairing the same `machine_id` at a new address keeps every bridged id. A uuid4 raw id never
+matches. `seq` passes through untouched.
+
+**Links and lanes** (`core/tstd/bridge.py`, `bridge_machine.py`, `bridge_link.py`,
+`bridge_lane.py`):
+
+- While at least one viewer is handshaken, each paired computer has a **control link**: one
+  socket for presence, last seen and a cached `session_list`, refreshed on connect, on a viewer
+  connecting, every 30 s, and 1 s after a row event on a lane. Links stop 60 s after the last
+  viewer leaves. Backoff is 1, 2, 4 … capped at 30 s with jitter; 45 s of silence forces a
+  reconnect; 60 s without a handshake is `unreachable`. `auth_failed` or a "device removed"
+  close is `refused` and stops; `version_unsupported` is `outdated`; a locked keychain is
+  `locked` and retries every 5 minutes or on `reconnect_machine`.
+- A viewer's first verb for a bridged id opens a **lane**: that viewer's own 1:1 socket to that
+  computer, so attach, replay and seq mean what the other computer says for one connection. It
+  closes with its viewer, or after 5 idle minutes with nothing attached. After an upstream drop
+  it re-attaches from the last forwarded seq + 1: no gap, no duplicate.
+- Downstream frames are parsed with `parse_daemon_event`, every session-id field is rewritten
+  (a schema-walk test covers every event model), and the frame goes through `scrub_wire_json`
+  again.
+
+**Invariants:**
+
+- Nothing in the socket loop awaits the network. `list_sessions` answers from the cache,
+  `add_machine` runs as a task, and `Bridge.forward` only enqueues: a verb waits up to 10 s
+  (at most 64 frames) for its lane.
+- Approvals are never queued: `approve`, `deny` and `always_allow` go on the open lane, else
+  on the open control link, else get `machine_unreachable` at once.
+- A lane never drops a frame that has a session id. Frames without one are dropped, except
+  `session_list` (merged) and `error` (which gains `machine` and an "On <name>: " prefix).
+- One hop. A machine peer is never a viewer, upstream rows that already use the bridged grammar
+  are dropped, and any upstream `machine` field is replaced. A↔B pairs and self-pairing (every
+  row shows twice, `same_computer: true`) cannot loop.
+- Every `session_list` a viewer receives — the `list_sessions` reply and the five lifecycle
+  replies — is merged at the chokepoint and includes unreachable computers' last-known rows, so
+  a bound pane never loses its row. A merged list is pushed only when remote rows change.
+- The daemon never dials. Only `bridge_link.py` and `machine_pairing.py` do, and only to
+  hosts that pass the Tailscale rule (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`, `*.ts.net`),
+  checked at pair time and before every dial.
+- A remote peer's `setup_state` drops `remote_devices`, `remote_bind` and `remote_port`;
+  `focus_window` is loopback only; the `job_list` push is viewers only.
+
 ### Client → daemon
 
 Every message in `ClientMessageT`. "Session" says whether the message carries a `session_id`.
@@ -296,6 +400,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | Message | Session | Purpose |
 |---|---|---|
 | `hello` | — | Opening handshake: auth token plus protocol version. |
+| `pair` | — | First frame from a phone redeeming a pairing code, instead of `hello`: code, device name, protocol version. Remote peers only (loopback gets `bad_request`). Optional `replaces`: the phone's current key, whose entry is retired. Success is a bare `pair_ok` with the device's own key, then close 1000; failure is `pair_failed` or `pair_locked`, then close 1008 (TD-5014). |
 | `open_workspace` | — | Open a workspace directory as a new session. |
 | `user_message` | yes | Queue a user turn for the session's loop. |
 | `fork_from` | yes | Replace a past user turn and fork a sibling from there. Refused mid-turn. |
@@ -310,6 +415,8 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_coworker` | — | Turn coworker mode on or off. Machine-wide; persists `{user_data_dir}/coworker.yaml`. Acked with `setup_state` (TD-2905). |
 | `set_voice` | — | Turn hold-to-talk dictation on or off. Machine-wide; persists `{user_data_dir}/voice.yaml`. Default off. Acked with `setup_state` (TD-4701). |
 | `transcribe` | — | Hold-to-talk audio. POSTs a clip to `voice.base_url` or `speech.base_url`. Refused when dictation is off or no endpoint is configured. Acked with `transcript`. Not a tool (TD-4701). |
+| `set_email_notify` | — | Save SMTP settings for scheduled-job email (TD-3820). `password` is written to the keychain account `tst-smtp-password` and is not stored in config. Empty or omitted leaves the stored password alone. Acked with `setup_state`. |
+| `test_email` | — | Send one short sample report to `to` using the saved SMTP settings (TD-3820, TD-3821). The sample uses the same newsletter renderer as a scheduled report. Acked with `email_test_result`. |
 | `set_cu_indicators` | — | Computer-use glow, agent cursor, and real-display overlay. Machine-wide; persists `{user_data_dir}/cu-indicators.yaml`. Acked with `setup_state` (TD-3402). |
 | `set_workspace_pin` | — | Pin or unpin a workspace on the Projects list. Machine-wide. Acked with `setup_state` (TD-2806). |
 | `resume` | yes | Resume a session paused at a declared cap, after the cap was raised. |
@@ -339,7 +446,8 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `memory_reject` | yes | Reject a distill proposal. Writes nothing. |
 | `end_session` | yes | Run distill for this session (TD-2302). Not a kill. |
 | `shutdown` | — | Ask the daemon to shut down cleanly. Sent by the supervising host. |
-| `list_sessions` | — | Ask for the current session list. |
+| `drain` | — | Before a restart: wait up to `timeout_s` for open turns, then refuse every verb that starts a turn (`user_message`, `fork_from`, `run_grok_command`, `approve_grok_plan`, `start_autonomy`, `run_job`) with `daemon_draining` for `hold_s` more. Due jobs wait too; approve, deny, stop and resume still pass. `0`/`0` releases, and a release, a later drain or shutdown ends a drain's wait early. Loopback only (`loopback_only` for a phone or a paired computer). Answered with `drain_result`. Sent by `tst drain` (TD-5023). |
+| `list_sessions` | — | Ask for the current session list. A viewer's list also carries every paired computer's cached rows, answered from the cache without dialing (TD-5015). |
 | `new_session` | yes | Create a fresh session in an existing session's workspace. |
 | `archive_session` | yes | File a session away, or restore it. Never a kill. |
 | `set_session_star` | yes | Star or unstar a session. Machine-wide. Acked with `session_list` (TD-3003). |
@@ -375,9 +483,17 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_cu_policy` | — | Set machine-wide computer-use enable, background/full-control mode, unhide-on-finish and denied apps. Persists `~/.tst-cu-mcp/config.yaml`; the MCP server re-reads it on the next tool call. Acked with `setup_state` (TD-4830). |
 | `set_judgments` | — | Judgment-seam toggles: actuation verification, semantic no-progress breaker, candidate selection, confidence threshold, state cap, and the connector (`worker` or `typesafe`). Machine-wide; persists the `judgments:` block of the user config. All default off; every judgment fails closed. Takes effect on the next session. Acked with `setup_state` (TD-708 dev). |
 | `set_cu_kill` | — | Engage or clear the process-wide computer-use kill-switch. Capture still runs. Acked with `cu_kill_state` (TD-3404). |
-| `set_remote_attach` | — | Turn Tailscale remote attach on or off. Machine-wide; persists `{user_data_dir}/remote-attach.yaml`. On binds last-known / `tailscale0`; off drops the extra listener. Acked with `setup_state` (TD-3603). |
+| `set_remote_attach` | — | Turn Tailscale remote attach on or off. Machine-wide; persists `{user_data_dir}/remote-attach.yaml`. On binds last-known / `tailscale0`; off drops the extra listener and deletes `remote-token`. Acked with `setup_state` (TD-3603). |
+| `rotate_remote_token` | — | Replace `remote-token` and drop the remote clients that used it. Paired devices keep their own keys. Machine-wide; a no-op while remote attach is off. The token never crosses the wire. Acked with `setup_state` (TD-5005). |
+| `start_pairing` | — | Show a one-time pairing code for a new phone. Turns remote attach on first when it is off. Loopback only. Acked with `pairing_code`, or the error `pairing_unavailable` when no Tailscale address can be bound (TD-5014). |
+| `cancel_pairing` | — | Drop the active pairing code. Loopback only. Acked with `setup_state` (TD-5014). |
+| `remove_remote_device` | — | Forget one paired device and close only its connections. Loopback, or a phone removing its own entry; any other id from a remote peer gets `loopback_only`. An unknown id changes nothing; a file that cannot be written gets `remove_failed`. Acked with `setup_state` (TD-5014). A hub removing itself from another computer uses the same self-removal (TD-5015). |
+| `add_machine` | — | Pair another computer so its sessions show here: a `tstdesk://pair` `link`, or `host`, `port` and `code`. The host must be a Tailscale address or a `*.ts.net` name. Loopback only. Runs as a task; the answer is a pushed `machine_list`, or `pair_failed`, `pair_locked`, `machine_unreachable`, `not_tailscale`, `machine_limit`, `machine_busy` or `keychain_locked`. The code is never logged or echoed (TD-5015). |
+| `remove_machine` | — | Forget a paired computer: first, best effort, remove this hub from that computer's paired devices, then drop its key and its `computers.yaml` entry. Loopback only. Acked with `machine_list`; an unknown id is `machine_not_found` (TD-5015). |
+| `list_machines` | — | The paired computers. Loopback or a viewer. Acked with `machine_list` (TD-5015). |
+| `reconnect_machine` | — | Try a paired computer again now, resetting its backoff (and a `refused` or `locked` stop). Loopback only. Acked with `machine_list` (TD-5015). |
 | `list_jobs` | — | List persisted scheduled jobs. Acked with `job_list`. Does not run them (TD-3805). |
-| `save_job` | — | Create or replace a scheduled job from draft fields. Optional `preset` (a catalog name) and `engine` (`native` or `grok`) pin that job's model; omitted uses the window's current choice. On an edit, omitted keeps the stored pin and `""` clears it (TD-3812). Optional `grace` is a duration phrase or a number of seconds (how late a slot may be and still run); the job stores seconds. On an edit, omitted keeps the stored grace and `""` clears it; omitted on create means a late slot still runs once (TD-3813). Optional `retries` (0–3) is extra tries after a transient scheduled failure, and `retry_delay` is a duration phrase or seconds (default 10 minutes when retries is at least 1). On an edit, omitted retries keeps the stored count, 0 clears it, omitted delay keeps the stored seconds, and `""` means the default; both are ignored by Run now (TD-3814). An existing `id` edits that job and keeps its run receipt; on that edit an omitted cadence or next run keeps the stored value and an empty string clears it (TD-3810). Pause is this verb with `paused` set. Optional `then` is another job's id, started once after this job ends ok; on an edit, omitted keeps it and `""` clears it, and a cycle is refused. The child's own schedule is not moved (TD-3817). Does not run the job. Acked with `job_list` (TD-3805). |
+| `save_job` | — | Create or replace a scheduled job from draft fields. Optional `preset` (a catalog name) and `engine` (`native` or `grok`) pin that job's model; omitted uses the window's current choice. On an edit, omitted keeps the stored pin and `""` clears it (TD-3812). Optional `grace` is a duration phrase or a number of seconds (how late a slot may be and still run); the job stores seconds. On an edit, omitted keeps the stored grace and `""` clears it; omitted on create means a late slot still runs once (TD-3813). Optional `retries` (0–3) is extra tries after a transient scheduled failure, and `retry_delay` is a duration phrase or seconds (default 10 minutes when retries is at least 1). On an edit, omitted retries keeps the stored count, 0 clears it, omitted delay keeps the stored seconds, and `""` means the default; both are ignored by Run now (TD-3814). An existing `id` edits that job and keeps its run receipt; on that edit an omitted cadence or next run keeps the stored value and an empty string clears it (TD-3810). Pause is this verb with `paused` set. Optional `then` is another job's id, started once after this job ends ok; on an edit, omitted keeps it and `""` clears it, and a cycle is refused. The child's own schedule is not moved (TD-3817). Optional `max_run` is a duration phrase or seconds (1–60 minutes) for this job's turn; the job stores seconds. On an edit, omitted keeps it and `""` clears it so the job uses `scheduler.max_run_seconds`. Omitted on create means that too. Templates may carry it (TD-3819). Does not run the job. Acked with `job_list` (TD-3805). |
 | `delete_job` | — | Remove a scheduled job by id and its run history, and clear `then` on any job that pointed at this id. Acked with `job_list`. Unknown id is a typed error (TD-3805, TD-3811, TD-3817). |
 | `parse_job` | — | Turn natural language into a job draft. Does not persist. Acked with `job_draft`. Save is a second call (TD-3803). |
 | `run_job` | — | Fire one job now. Acked at once with `job_list` (`running` set); a second `job_list` is pushed when the turn finishes. Does not move `next_run` or `paused`, does not consult `grace`, and does not retry a transient failure (TD-3809, TD-3813, TD-3814). A turn that stops on an approval card records `waiting` and does not move the schedule; the same receipt is updated when that session finishes (TD-3815). Unknown id is `job_not_found`; a job already in flight is `job_running`. |
@@ -401,7 +517,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `user_turn` | session | A user message the loop accepted, so replay can show the user's side without inventing it. |
 | `conversation_reset` | session | The conversation forked or a sibling was selected. The viewer drops rows after that user turn and replaces it. |
 | `assistant_delta` | session | A streamed chunk of assistant output. |
-| `assistant_reasoning` | session | A streamed chunk of a reasoning model's thinking. Separate from `assistant_delta` because it is not part of the answer: the window folds it behind a disclosure, and it is never replayed to the provider as assistant speech. |
+| `assistant_reasoning` | session | A streamed chunk of a reasoning model's thinking. Separate from `assistant_delta` because it is not part of the answer: the window folds it behind a disclosure, and it is never replayed to the provider as assistant speech. OpenRouter `reasoning_details` flatten into this event for the UI; the raw array is echoed on the next assistant message after tools, not as speech. |
 | `tool_call` | session | A tool call about to execute, with its decision class. |
 | `tool_result` | session | The outcome of a tool call, with an error code and diff when applicable. |
 | `shell_output` | session | A streamed chunk of a shell command's stdout or stderr. |
@@ -411,7 +527,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `verify_result` | session | Interactive validator review of a write turn. Timeline only; not a chat bubble (TD-4204). |
 | `cost_update` | session | Accrued spend: this turn, this session, all time, by tier, and the classifier separately. |
 | `boundary_update` | session | The resolved workspace boundary and caps, and where they came from. |
-| `turn_complete` | session | A finished turn: tokens, cost, tier, duration, and any failure code. |
+| `turn_complete` | session | A finished turn: tokens, cost, tier, duration, and any failure code. A turn a restart cut is sealed once at revive with `failed`, zeros and `error_code: interrupted_by_restart` (TD-5018). |
 | `tier_state` | session | The active tier, any pinned override, slugs, preset, hosts (TD-1720), and plan-mode lock (TD-4603). Native-engine sessions only. |
 | `context_compacted` | session | Older turns were compacted to fit the context window. Never silent. |
 | `steering_reloaded` | session | Steering files were re-resolved after a detected change. |
@@ -426,9 +542,13 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `autonomy_start` | connection | Reply to `start_autonomy`: signed, ready, optional `session_id` of the daemon-owned run, or the refusal (TD-4003, TD-4101). |
 | `autonomy_summary` | session | Unattended-run wrap-up: stop reason, turns, spend, refusals (TD-4303). |
 | `memory_proposal` | session | Distill produced file diffs the user must accept, edit, or reject (TD-2401). |
-| `session_list` | connection | The current session list. Each row carries the catalog `preset` (TD-1721). `busy` is a turn in flight; `state: running` is loop liveness (TD-1714, TD-1720). |
+| `session_list` | connection | The current session list. Each row carries the catalog `preset` (TD-1721). `busy` is a turn in flight; `state: running` is loop liveness (TD-1714, TD-1720). Each row carries `machine`: null for this computer, else the `mch_` id of the paired computer it lives on, whose rows use bridged ids. Only viewers get other computers' rows (TD-5015). |
+| `machine_list` | connection | The paired computers: id, name, host, port, `status` (`connected`, `connecting`, `unreachable`, `refused`, `locked`, `outdated`), last seen, paired at, `same_computer` for a self-pair, and a `detail` line. Never a key. The reply to the four machine verbs, and pushed to viewers when one changes; never sent to a machine peer (TD-5015). |
+| `drain_result` | connection | Reply to `drain`, to that connection only: `drained`, the session ids still `running` or in `awaiting_approval` (ids only), and `hold_until` (null once released) (TD-5023). |
 | `policy_rules` | connection | The workspace's saved policy rules. |
-| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_engine` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_voice` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach` / `set_mcp_server` / `delete_mcp_server` / `set_judgments`. `remote_bind` is the bound Tailscale address, never a token. Carries `engine`, `grok_available`, `grok_binary`, `voice_enabled`, and `voice_has_endpoint`. `mcp_servers` is the listed MCP servers (id, transport, command, url, enabled) — never a secret. `speech_enabled` / `speech_ready` are hold-to-talk flags (TD-4701); the speech URL never appears. `judgments_*` echoes the judgment-seam toggles (TD-708 dev). |
+| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_engine` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_voice` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach` / `rotate_remote_token` / `cancel_pairing` / `remove_remote_device` / `set_mcp_server` / `delete_mcp_server` / `set_judgments` / `set_email_notify`. `remote_bind` is the bound Tailscale address, never a token. `remote_devices` lists paired devices (id, name, paired_at, last_seen, connected), never a key or its hash (TD-5014). Carries `engine`, `grok_available`, `grok_binary`, `voice_enabled`, and `voice_has_endpoint`. `mcp_servers` is the listed MCP servers (id, transport, command, url, enabled) — never a secret. `speech_enabled` / `speech_ready` are hold-to-talk flags (TD-4701); the speech URL never appears. `judgments_*` echoes the judgment-seam toggles (TD-708 dev). A remote peer (a phone or another computer) gets it without `remote_devices`, `remote_bind` and `remote_port` (TD-5015). `email` is the SMTP form (enabled, host, port, security, username, from_address, password_stored) for TD-3820; the password never appears. |
+| `pairing_code` | connection | Reply to `start_pairing`: the code (and `ABCD-2345` display form), host, port, desktop name, the `tstdesk://pair` link, a QR of it as standalone SVG, and when it expires (TD-5014). |
+| `pairing_completed` | connection | A phone redeemed the code. Carries that device's summary (never its key). Sent to the computer's own loopback windows only (TD-5014). |
 | `api_key_validated` | connection | The result of a key probe. Never carries the key. |
 | `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. |
 | `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |
@@ -438,17 +558,17 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `artifact_list` | connection | The artifacts `list_artifacts` asked for. |
 | `artifact` | connection | Metadata and path for `open_artifact`. Bytes stay on disk. |
 | `ping` | — | Application-level liveness. Belongs to no session; advances nothing. |
-| `error` | session | A typed error, usually in response to a bad message. |
+| `error` | session | A typed error, usually in response to a bad message. One from another computer without a session id carries `machine` and a message starting "On <name>: " (TD-5015). |
 | `screen_frame` | session | A computer-use screenshot (browser or desktop) was written to the session dir (TD-1710, TD-3401). Path, not bytes. |
 | `cu_kill_state` | connection | Process-wide computer-use kill-switch. Seq is fixed at 1 and it is not written to a session log (TD-3404). `killed=true` clears Screen-pane glow and cursor (TD-3402). |
 | `cu_session` | session | Computer-use episode open/close (TD-3407). `active=true` on the first `desktop_*` / `browser_*` tool of a turn; `false` on turn end, cancel, or kill-switch. The real-display ring and Screen-pane glow follow this tag. |
-| `focus_window` | connection | A `cu_session` closed and no other session still actuates — bring the local window forward (TD-4832). Live-only: never written to a session log, so attach replay cannot re-trigger it. The host shows, unminimizes, and focuses the window; a browser viewer no-ops; activation failures never fail the turn. |
+| `focus_window` | connection | A `cu_session` closed and no other session still actuates — bring the local window forward (TD-4832). Live-only: never written to a session log, so attach replay cannot re-trigger it. The host shows, unminimizes, and focuses the window; a browser viewer no-ops; activation failures never fail the turn. Sent to loopback connections only (TD-5015). |
 | `design_hit` | connection | Reply to `design_hit_test`: xpath, role, attributes, box, styles (TD-3403 / TD-3406). Not in the session log. |
 | `cu_permissions` | connection | macOS Screen Recording / Accessibility plus System Settings deep links (TD-3302), Windows UIPI / secure-desktop integrity (TD-3303), or Linux X11 no-gate / Wayland session limits (TD-2001). |
-| `job_list` | connection | The jobs `list_jobs` / `save_job` / `delete_job` / `run_job` asked for, and a push when a run finishes. Each job may name a pinned `preset` and `engine`. `grace` is seconds or null. `retries` is extra tries, `retry_delay` is seconds or null, and `attempt` is tries already used this slot (above 0, a window notice waits). `last_status` may be `missed` or `waiting` (parked on an approval card). `running` is true while a turn is in flight. `then` is the follow-on job's id, or null (TD-3805, TD-3809, TD-3812, TD-3813, TD-3814, TD-3815, TD-3817). |
+| `job_list` | connection | The jobs `list_jobs` / `save_job` / `delete_job` / `run_job` asked for, and a push when a run finishes. Each job may name a pinned `preset` and `engine`. `grace` is seconds or null. `retries` is extra tries, `retry_delay` is seconds or null, and `attempt` is tries already used this slot (above 0, a window notice waits). `last_status` may be `missed` or `waiting` (parked on an approval card). `running` is true while a turn is in flight. `then` is the follow-on job's id, or null. `max_run` is seconds or null (null uses `scheduler.max_run_seconds`) (TD-3805, TD-3809, TD-3812, TD-3813, TD-3814, TD-3815, TD-3817, TD-3819). The push when a run finishes goes to viewers only, never to a machine peer (TD-5015). |
 | `job_draft` | connection | Reply to `parse_job`: draft fields or a typed refusal. Not saved (TD-3803). |
 | `job_runs` | connection | Reply to `list_job_runs`: that job's runs, newest first. `scheduled_for` is null for Run now. `status` may be `missed` for a slot skipped for lateness, or `waiting` for a run parked on an approval card (that line is updated in place when the turn finishes). `attempt` and `attempts` are set when the job retries. `trigger` may be `chained`, and `note` names the parent job (TD-3811, TD-3813, TD-3814, TD-3815, TD-3817). |
-| `job_templates` | connection | Reply to `list_job_templates`, `save_job_template`, and `delete_job_template`. Built-ins first. `cadence` is the phrase, not cron. `next_run` may be an ISO instant or `tomorrow at H:MM`. Seq is fixed at 1 (TD-3816). |
+| `job_templates` | connection | Reply to `list_job_templates`, `save_job_template`, and `delete_job_template`. Built-ins first. `cadence` is the phrase, not cron. `next_run` may be an ISO instant or `tomorrow at H:MM`. `max_run` is seconds or null. Seq is fixed at 1 (TD-3816, TD-3819). |
 | `session_job_source` | connection | Reply to `get_session_job_source`: workspace, preset, engine, and instruction for one chat. Seq is fixed at 1. Does not save a job (TD-3816). |
 | `grok_commands` | session | Slash commands the Grok ACP agent advertised. |
 | `grok_plan` | session | Plan-mode markdown and entries from ACP `plan` updates. |
@@ -457,6 +577,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `grok_session_list` | connection | TUI sessions under `~/.grok/sessions`. |
 | `grok_extensions` | connection | Read-only MCP / skills / plugins from `~/.grok`. Never secrets. |
 | `transcript` | connection | Reply to `transcribe`: `ok`, `text` on success, `error` copy or a short `detail` code on failure. Never a URL (TD-4701). |
+| `email_test_result` | connection | Reply to `test_email`: `ok`, and on failure `error_class` plus `message`. The password and the message body are not included (TD-3820). |
 
 ### Adding a message
 

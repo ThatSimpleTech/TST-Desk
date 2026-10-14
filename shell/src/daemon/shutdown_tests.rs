@@ -4,7 +4,7 @@
 
 use std::time::{Duration, Instant};
 
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 #[cfg(unix)]
 use std::process::Stdio;
 use tokio::net::TcpListener;
@@ -13,7 +13,7 @@ use tokio::net::TcpListener;
 use super::super::fake_sidecar::Fake;
 #[cfg(unix)]
 use super::{block_until_leader_gone, shutdown_and_reap, Reap, SHUTDOWN_GRACE};
-use super::{hold_until_peer_closes, SHUTDOWN_FRAME};
+use super::{hold_until_peer_closes, read_until_closed, SHUTDOWN_FRAME};
 
 #[cfg(unix)]
 #[tokio::test]
@@ -24,7 +24,7 @@ async fn host_waits_for_a_slow_shutdown_and_does_not_sigkill() {
     let started = Instant::now();
     let reap = tokio::time::timeout(
         SHUTDOWN_GRACE + Duration::from_secs(3),
-        shutdown_and_reap(ws, &mut fake.child, pid, SHUTDOWN_GRACE),
+        shutdown_and_reap(Some(ws), &mut fake.child, pid, SHUTDOWN_GRACE),
     )
     .await
     .expect("shutdown wait hung");
@@ -62,7 +62,7 @@ async fn host_sigkills_when_shutdown_is_ignored_past_the_bound() {
     let started = Instant::now();
     let reap = tokio::time::timeout(
         Duration::from_secs(5),
-        shutdown_and_reap(ws, &mut fake.child, pid, grace),
+        shutdown_and_reap(Some(ws), &mut fake.child, pid, grace),
     )
     .await
     .expect("shutdown wait hung");
@@ -205,4 +205,80 @@ async fn shutdown_frame_is_held_until_the_peer_closes() {
         }
         other => panic!("expected the shutdown frame, got {other:?}"),
     }
+}
+
+/// The server's keepalive closed an unread supervision socket after ~40 s,
+/// so Quit's frame reached nobody. The reader must answer every ping and
+/// return once the peer closes.
+#[tokio::test]
+async fn supervision_reader_answers_pings_until_close() {
+    use tokio_tungstenite::tungstenite::Message;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut peer = tokio_tungstenite::accept_async(stream).await.unwrap();
+        let mut pongs = Vec::new();
+        for key in ["k1", "k2"] {
+            peer.send(Message::Text(r#"{"type":"ping"}"#.into()))
+                .await
+                .unwrap();
+            peer.send(Message::Ping(key.as_bytes().to_vec().into()))
+                .await
+                .unwrap();
+            let pong = tokio::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    match peer.next().await {
+                        Some(Ok(Message::Pong(data))) => break Some(data.to_vec()),
+                        Some(Ok(_)) => {}
+                        _ => break None,
+                    }
+                }
+            })
+            .await
+            .ok()
+            .flatten();
+            pongs.push(pong);
+        }
+        let _ = peer.close(None).await;
+        pongs
+    });
+
+    let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}"))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(6), read_until_closed(&mut ws))
+        .await
+        .expect("reader did not return after the peer closed");
+    let pongs = server.await.unwrap();
+    assert_eq!(
+        pongs,
+        vec![Some(b"k1".to_vec()), Some(b"k2".to_vec())],
+        "a keepalive ping went unanswered"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn quit_on_a_closed_socket_asks_with_sigterm() {
+    let mut fake = Fake::spawn("obey").await;
+    let pid = fake.pid();
+    let started = Instant::now();
+    let reap = tokio::time::timeout(
+        SHUTDOWN_GRACE + Duration::from_secs(3),
+        shutdown_and_reap(None, &mut fake.child, pid, SHUTDOWN_GRACE),
+    )
+    .await
+    .expect("shutdown wait hung");
+    let elapsed = started.elapsed();
+    assert!(
+        matches!(reap, Reap::Exited { code: Some(0) }),
+        "reap={reap:?} elapsed={elapsed:?} stderr={}",
+        fake.stderr_text()
+    );
+    assert_eq!(std::fs::read_to_string(&fake.how).unwrap(), "term");
+    assert!(
+        elapsed < SHUTDOWN_GRACE,
+        "waited out the whole grace: {elapsed:?}"
+    );
 }

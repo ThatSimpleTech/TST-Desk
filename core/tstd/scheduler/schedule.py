@@ -115,6 +115,9 @@ def record_run(
             "last_status": status,
             "last_summary": normalize_summary(summary),
             "last_session_id": session_id,
+            # A new fire does not inherit the previous mail outcome.
+            "last_delivery": None,
+            "last_delivery_error": None,
         }
     )
 

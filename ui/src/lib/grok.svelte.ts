@@ -1,6 +1,7 @@
 // Grok engine UI state: slash commands, plan, mode, preview, TUI sessions.
 
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
+import { isBridged } from "./bridged-id";
 import { showRightPane } from "./right-pane.svelte.js";
 import type {
 	DaemonEventUnion,
@@ -55,6 +56,10 @@ export function resetGrok(): void {
 }
 
 function reduce(event: DaemonEventUnion): void {
+	// Grok's plan, commands, mode and previews for another computer's
+	// session are that computer's: the hub forwards none of their verbs, and
+	// a preview path names that computer's disk (TD-5015).
+	if (event.type.startsWith("grok_") && "session_id" in event && isBridged(event.session_id)) return;
 	if (event.type === "grok_commands") {
 		grok.sessionId = event.session_id;
 		grok.commands = event.commands;
@@ -93,19 +98,28 @@ export function setGrokMode(sessionId: string, mode: string): void {
 	sendToDaemon({ type: "set_grok_mode", session_id: sessionId, mode });
 }
 
-export function runGrokCommand(sessionId: string, name: string, argument = ""): void {
-	sendToDaemon({ type: "run_grok_command", session_id: sessionId, name, argument });
+/** False, with nothing sent, for another computer's session: the hub never
+ *  forwards Grok's commands or plan approval (TD-5015). */
+export function runGrokCommand(sessionId: string, name: string, argument = ""): boolean {
+	if (isBridged(sessionId)) return false;
+	return sendToDaemon({ type: "run_grok_command", session_id: sessionId, name, argument });
 }
 
-export function approveGrokPlan(sessionId: string, comment = ""): void {
-	sendToDaemon({ type: "approve_grok_plan", session_id: sessionId, comment });
+export function approveGrokPlan(sessionId: string, comment = ""): boolean {
+	if (isBridged(sessionId)) return false;
+	return sendToDaemon({ type: "approve_grok_plan", session_id: sessionId, comment });
 }
 
 export function openInTerminal(sessionId: string): void {
+	// The terminal would open on this computer (TD-5015).
+	if (isBridged(sessionId)) return;
 	sendToDaemon({ type: "open_in_terminal", session_id: sessionId });
 }
 
-export function matchingGrokCommands(query: string): GrokCommand[] {
+/** The slash palette's Grok commands. None for another computer's session:
+ *  the list is this computer's, and picking one could never be sent. */
+export function matchingGrokCommands(query: string, sessionId: string | null = null): GrokCommand[] {
+	if (isBridged(sessionId)) return [];
 	const q = query.trim().replace(/^\//, "").toLowerCase();
 	if (q === "") return grok.commands.slice(0, 12);
 	return grok.commands.filter(

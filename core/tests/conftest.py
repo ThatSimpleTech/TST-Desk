@@ -18,6 +18,7 @@ are not about the cadence should not see it either.
 from __future__ import annotations
 
 import hashlib
+import os
 import sys
 import tempfile
 from collections.abc import Awaitable, Callable, Iterator
@@ -27,8 +28,11 @@ from typing import Any
 import pytest
 
 from tstd.config import ModelConfig, cached_config
+from tstd.context import calibration as calibration_module
+from tstd.context.calibration import CalibrationKey, CalibrationStore
 from tstd.context.embeddings import EmbeddingsClient
 from tstd.keychain import KeychainError
+from tstd.logging import LINUX_DATA_DIR_NAME, LINUX_LEGACY_DATA_DIR_NAME, user_data_dir
 
 _KEEP_REAL_PING_INTERVAL = {
     "test_default_interval_leaves_room_for_a_missed_frame",
@@ -38,6 +42,26 @@ _KEEP_REAL_PING_INTERVAL = {
 _KEEP_EMBEDDINGS_FROM_CONFIG = {
     "test_embeddings",
 }
+
+
+def _real_user_data_dirs() -> tuple[Path, ...]:
+    """The developer's own data folders, worked out with no side effect (TD-5013).
+
+    On Linux ``user_data_dir()`` renames a leftover reverse-DNS folder to
+    ``tst-desk``, so calling it here would change the real data area
+    just by collecting the suite. Both Linux names are guarded instead.
+    The macOS and Windows branches only build a path.
+    """
+    if sys.platform in ("darwin", "win32"):
+        return (user_data_dir(),)
+    xdg = os.environ.get("XDG_DATA_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".local" / "share"
+    return (base / LINUX_DATA_DIR_NAME, base / LINUX_LEGACY_DATA_DIR_NAME)
+
+
+# Read at import, before any fixture moves HOME. Nothing in the suite may
+# persist into these (TD-5013).
+_REAL_USER_DATA_DIRS = tuple(d.resolve() for d in _real_user_data_dirs())
 
 
 @pytest.fixture(autouse=True)
@@ -52,6 +76,40 @@ def _throwaway_home(
     cached_config.cache_clear()
     yield
     cached_config.cache_clear()
+
+
+class _NonLearningStore(CalibrationStore):
+    """A calibration store that never learns a ratio."""
+
+    def observe(
+        self, key: CalibrationKey, raw_estimate: int, prompt_tokens: int | None
+    ) -> float | None:
+        return None
+
+
+@pytest.fixture(autouse=True)
+def _no_token_calibration_from_canned_usage(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Loops in the suite do not learn token ratios by default (TD-5007).
+
+    ``MockProvider`` reports the same canned ``prompt_tokens`` whatever
+    was sent, so a ratio learned from it is not a measurement. It would
+    also leak: the store is daemon-wide and most tests share one mock
+    endpoint. Every test gets its own store that never learns. Tests of
+    calibration inject a real ``CalibrationStore`` into ``agent_loop`` or
+    patch this one back.
+
+    A daemon started in-process turns persistence on for this per-test
+    store (TD-5013). Its data dir is the test's own or, with HOME moved
+    by ``_throwaway_home``, a throwaway one, and a store that never
+    learns never saves. The teardown fails any test that left the
+    daemon-wide store pointed into the developer's real data folder.
+    """
+    monkeypatch.setattr(calibration_module, "_PROCESS_STORE", _NonLearningStore())
+    yield
+    path = calibration_module.process_calibration_store().path
+    assert path is None or not any(
+        path.resolve().is_relative_to(real) for real in _REAL_USER_DATA_DIRS
+    ), f"a test pointed token calibration at the real data folder: {path}"
 
 
 @pytest.fixture(autouse=True)
@@ -125,6 +183,14 @@ _KEYCHAIN_SEAMS = (
     "tstd.keychain.get_telegram_bot_url",
     "tstd.keychain.store_telegram_bot_url",
     "tstd.keychain.delete_telegram_bot_url",
+    # TD-5015: paired computers' keys. Callers reach them through the
+    # module (``keychain.get_machine_key``), so these are the only names.
+    "tstd.keychain.store_machine_key",
+    "tstd.keychain.get_machine_key",
+    "tstd.keychain.delete_machine_key",
+    "tstd.keychain.get_smtp_password",
+    "tstd.keychain.store_smtp_password",
+    "tstd.keychain.smtp_password_is_stored",
     "tstd.daemon.api_key_is_stored",
     "tstd.notify.slack.get_slack_webhook_url",
     "tstd.notify.ntfy.get_ntfy_topic_url",

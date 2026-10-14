@@ -20,6 +20,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .tokens import CHARS_PER_TOKEN
+
 # Entries deeper than this are excluded from the manifest.
 _DEFAULT_MAX_DEPTH = 8
 
@@ -41,6 +43,15 @@ _FALLBACK_IGNORE = frozenset(
         ".tst",
     }
 )
+
+# The map is the lowest-priority block in the brain prompt (TD-5006). It
+# gets this share of the brain tier's context window and is truncated past
+# it, so a large or non-repo folder cannot push the prompt past the model.
+MANIFEST_WINDOW_PERCENT = 15
+
+# Never shrink below this: a map too short to name the top-level layout is
+# not worth sending.
+_MIN_WINDOW_BYTES = 2_000
 
 # How long (in seconds) a cached manifest is considered fresh.
 _DEBOUNCE_SECONDS = 60
@@ -65,6 +76,20 @@ class ManifestConfig:
     max_entries: int = _DEFAULT_MAX_ENTRIES
     max_bytes: int = _DEFAULT_MAX_BYTES
     ignore_patterns: frozenset[str] = field(default_factory=frozenset)
+
+
+def manifest_config_for_window(
+    context_window: int, chars_per_token: float = CHARS_PER_TOKEN
+) -> ManifestConfig:
+    """Manifest limits for a brain tier with *context_window* tokens (TD-5006).
+
+    *chars_per_token* converts the token share to bytes. Callers pass the
+    brain endpoint's learned figure, ``4 / ratio`` (TD-5013): at a ratio
+    of 1.17 the flat 4 gave the map about 17.5% of the window in real
+    tokens, not 15%. The default is the flat 4.
+    """
+    budget = int(context_window * chars_per_token * MANIFEST_WINDOW_PERCENT // 100)
+    return ManifestConfig(max_bytes=max(_MIN_WINDOW_BYTES, min(_DEFAULT_MAX_BYTES, budget)))
 
 
 @dataclass(frozen=True)
@@ -166,8 +191,11 @@ class WorkspaceManifest:
         entries: list[str] = []
 
         for root, dirs, files in os.walk(workspace, followlinks=False):
-            # Prune ignored dirs
-            dirs[:] = sorted(d for d in dirs if d not in ignore)
+            # Prune ignored dirs. Hidden directories (.cache, .local, .npm)
+            # are tool state, not the user's files, and on a home folder they
+            # are almost every entry (TD-5006). A git repo lists what git
+            # tracks instead, so this only affects non-repo folders.
+            dirs[:] = sorted(d for d in dirs if d not in ignore and not d.startswith("."))
             root_path = Path(root)
             rel = root_path.relative_to(workspace)
             depth = len(rel.parts) if rel.parts else 0
@@ -232,9 +260,11 @@ class WorkspaceManifest:
 
         # Apply byte cap
         if len(text.encode("utf-8")) > config.max_bytes:
-            # Truncate at the byte boundary
+            # Truncate at the byte boundary, then back to the last whole line
             encoded = text.encode("utf-8")[: config.max_bytes]
-            text = encoded.decode("utf-8", errors="replace")
+            text = encoded.decode("utf-8", errors="ignore")
+            if "\n" in text:
+                text = text[: text.rindex("\n")]
             text += (
                 f"\n<!-- ... truncated at {config.max_bytes} bytes "
                 f"(limit: {config.max_bytes}) ... -->"

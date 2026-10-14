@@ -1,9 +1,13 @@
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { isNarrowViewport, NARROW_VIEWPORT_PX, narrowMediaQuery, shellChrome } from "./layout-mode";
 
-const SHELL = readFileSync(resolve(process.cwd(), "src/lib/components/AppShell.svelte"), "utf-8");
+const SHELL = readFileSync(
+  resolve(dirname(fileURLToPath(import.meta.url)), "components/AppShell.svelte"),
+  "utf-8",
+);
 
 describe("narrow viewport (TD-3701)", () => {
   it("treats width below 640 as one-pane", () => {
@@ -21,11 +25,19 @@ describe("narrow viewport (TD-3701)", () => {
       rail: true,
       inspector: true,
     });
+    expect(shellChrome(1024, { inspectorCollapsed: true })).toEqual({
+      rail: true,
+      inspector: false,
+    });
   });
 
   it("AppShell CSS uses the same breakpoint the helper names", () => {
     expect(SHELL).toContain(`@media ${narrowMediaQuery()}`);
     expect(SHELL).toContain("shell-show-rail");
     expect(SHELL).toContain("shell-show-inspector");
+    const mediaAt = SHELL.indexOf(`@media ${narrowMediaQuery()}`);
+    const hideAt = SHELL.indexOf("shell-hide-inspector");
+    expect(hideAt).toBeGreaterThan(-1);
+    expect(hideAt).toBeLessThan(mediaAt);
   });
 });

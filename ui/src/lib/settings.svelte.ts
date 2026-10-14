@@ -10,26 +10,34 @@
 // Wiring mirrors doctor.svelte.ts: listens on the connection fan-out, sends
 // only via sendToDaemon — no client reference, no import cycle.
 
+import { isBridged } from "./bridged-id";
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
-import type { DaemonEventUnion, PolicyRuleSummary } from "./protocol";
+import { reducePairing } from "./pair-device.svelte.js";
+import type { DaemonEventUnion, PolicyRuleSummary, RemoteDeviceSummary } from "./protocol";
 
 export type SettingsSection =
 	| "appearance"
+	| "devices"
+	| "machines"
 	| "computer"
 	| "engine"
 	| "model"
 	| "policy"
 	| "mcp"
 	| "key"
+	| "email"
 	| "about";
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	"appearance",
+	"devices",
+	"machines",
 	"computer",
 	"engine",
 	"model",
 	"policy",
 	"mcp",
 	"key",
+	"email",
 	"about",
 ] as const;
 
@@ -89,6 +97,9 @@ export const settings = $state({
 	remoteAttachEnabled: false,
 	/** Bound Tailscale address, never a token. */
 	remoteBind: null as string | null,
+	remotePort: null as number | null,
+	/** Paired phones (TD-5014). From setup_state; never a token or hash. */
+	remoteDevices: [] as RemoteDeviceSummary[],
 	/** Agent engine for new sessions. */
 	engine: "native" as "native" | "grok",
 	grokAvailable: false,
@@ -118,6 +129,18 @@ export const settings = $state({
 	/** Hold-to-talk (TD-4701). From setup_state; the URL never arrives. */
 	speechEnabled: false,
 	speechReady: false,
+	/** SMTP (TD-3820). From setup_state. The password is never stored here. */
+	emailEnabled: false,
+	emailHost: "",
+	emailPort: 587,
+	emailSecurity: "starttls" as "starttls" | "tls",
+	emailUsername: "",
+	emailFrom: "",
+	emailPasswordStored: false,
+	/** Last test_email result. Not cleared by setup_state. */
+	emailTestOk: null as boolean | null,
+	emailTestErrorClass: "",
+	emailTestMessage: "",
 });
 
 let started = false;
@@ -160,6 +183,8 @@ export function resetSettings(): void {
 	settings.cuShowOnRealDisplay = true;
 	settings.remoteAttachEnabled = false;
 	settings.remoteBind = null;
+	settings.remotePort = null;
+	settings.remoteDevices = [];
 	settings.engine = "native";
 	settings.grokAvailable = false;
 	settings.grokBinary = null;
@@ -181,10 +206,21 @@ export function resetSettings(): void {
 	settings.mcpServers = [];
 	settings.speechEnabled = false;
 	settings.speechReady = false;
+	settings.emailEnabled = false;
+	settings.emailHost = "";
+	settings.emailPort = 587;
+	settings.emailSecurity = "starttls";
+	settings.emailUsername = "";
+	settings.emailFrom = "";
+	settings.emailPasswordStored = false;
+	settings.emailTestOk = null;
+	settings.emailTestErrorClass = "";
+	settings.emailTestMessage = "";
 	started = false;
 }
 
 function reduce(event: DaemonEventUnion): void {
+	reducePairing(event);
 	if (event.type === "setup_state") {
 		settings.presets = event.presets;
 		settings.activePreset = event.active_preset;
@@ -207,6 +243,8 @@ function reduce(event: DaemonEventUnion): void {
 		settings.cuShowOnRealDisplay = event.cu_show_on_real_display ?? true;
 		settings.remoteAttachEnabled = event.remote_attach_enabled ?? false;
 		settings.remoteBind = event.remote_bind ?? null;
+		settings.remotePort = event.remote_port ?? null;
+		settings.remoteDevices = event.remote_devices ?? [];
 		settings.engine = event.engine ?? "native";
 		settings.grokAvailable = event.grok_available ?? false;
 		settings.grokBinary = event.grok_binary ?? null;
@@ -235,9 +273,25 @@ function reduce(event: DaemonEventUnion): void {
 		}));
 		settings.speechEnabled = event.speech_enabled ?? false;
 		settings.speechReady = event.speech_ready ?? false;
+		const email = event.email;
+		settings.emailEnabled = email?.enabled ?? false;
+		settings.emailHost = email?.host ?? "";
+		settings.emailPort = email?.port ?? 587;
+		settings.emailSecurity = email?.security === "tls" ? "tls" : "starttls";
+		settings.emailUsername = email?.username ?? "";
+		settings.emailFrom = email?.from_address ?? "";
+		settings.emailPasswordStored = email?.password_stored ?? false;
 		return;
 	}
-	if (event.type === "policy_rules") {
+	if (event.type === "email_test_result") {
+		settings.emailTestOk = event.ok ?? false;
+		settings.emailTestErrorClass = event.error_class ?? "";
+		settings.emailTestMessage = event.message ?? "";
+		return;
+	}
+	// A late reply for the local session the pane just left is not the
+	// remote session's (TD-5015).
+	if (event.type === "policy_rules" && !isBridged(settings.rulesSessionId)) {
 		settings.rules = event.rules;
 	}
 }
@@ -413,7 +467,9 @@ export function validateNamedKey(credential: string, apiKey?: string): void {
  */
 export function loadRules(sessionId: string | null): void {
 	settings.rulesSessionId = sessionId;
-	if (sessionId === null) {
+	// Another computer's rules live in its workspace, and the hub forwards no
+	// policy verb (TD-5015): the section says they stay there instead.
+	if (sessionId === null || isBridged(sessionId)) {
 		settings.rules = [];
 		return;
 	}
@@ -422,7 +478,7 @@ export function loadRules(sessionId: string | null): void {
 
 export function revokeRule(tool: string, args: string): void {
 	const sessionId = settings.rulesSessionId;
-	if (sessionId === null) return;
+	if (sessionId === null || isBridged(sessionId)) return;
 	// The daemon answers with a fresh policy_rules, so the list refreshes
 	// from the daemon rather than from a local splice.
 	sendToDaemon({ type: "revoke_policy_rule", session_id: sessionId, tool, args });
@@ -451,6 +507,11 @@ export function setVoice(enabled: boolean): void {
 /** Turn remote attach on or off (TD-3603). Acked with setup_state. */
 export function setRemoteAttach(enabled: boolean): void {
 	sendToDaemon({ type: "set_remote_attach", enabled });
+}
+
+/** New phone token (TD-5005). Acked with setup_state; the token stays in the file. */
+export function rotateRemoteToken(): void {
+	sendToDaemon({ type: "rotate_remote_token" });
 }
 
 /** Persist computer-use indicator prefs (TD-3402). Acked with setup_state. */
@@ -532,4 +593,33 @@ export function setMcpServerEnabled(id: string, enabled: boolean): void {
 export function deleteMcpServer(id: string): void {
 	if (id.trim() === "") return;
 	sendToDaemon({ type: "delete_mcp_server", id });
+}
+
+// ── Email (TD-3820) ──────────────────────────────────────────────────
+
+/** Persist SMTP settings. An empty password leaves the keychain item alone. */
+export function saveEmailNotify(input: {
+	enabled: boolean;
+	host: string;
+	port: number;
+	security: "starttls" | "tls";
+	username: string;
+	from_address: string;
+	password: string | null;
+}): void {
+	sendToDaemon({
+		type: "set_email_notify",
+		enabled: input.enabled,
+		host: input.host,
+		port: input.port,
+		security: input.security,
+		username: input.username,
+		from_address: input.from_address,
+		password: input.password,
+	});
+}
+
+/** Send one short test using the saved config and the keychain password. */
+export function sendTestEmail(to: string): void {
+	sendToDaemon({ type: "test_email", to });
 }

@@ -827,7 +827,7 @@ async def test_save_requires_the_file_and_the_list_shows_a_skip(tmp_path: Path) 
     path = _write(tmp_path, _all_day_for(_NOW))
     sent: list[str] = []
 
-    async def capture(payload: str) -> int:
+    async def capture(payload: str, **_audience: object) -> int:
         sent.append(payload)
         return 1
 

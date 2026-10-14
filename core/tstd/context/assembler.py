@@ -47,6 +47,27 @@ log = get_logger("tstd.context")
 # steering files (spec §4.3, TD-506).
 LINE_LIMIT = 200
 
+# Nested steering loads on every turn whatever the session touches, so a
+# tree full of repos (or worktree copies of one repo) can outgrow the
+# model's whole context window before the user types a word (TD-5004).
+# Nested files past this many tokens are left out, shallowest kept first.
+NESTED_TOKEN_BUDGET = 8_000
+
+NESTED_DUPLICATE_WARNING = "same text as a steering file already loaded; not loaded again"
+NESTED_BUDGET_WARNING = (
+    f"nested steering budget of {NESTED_TOKEN_BUDGET:,} tokens used up; not loaded"
+)
+
+
+def nested_budget_notice(left_out: list[str]) -> str:
+    """The Doctor note naming nested files the budget left out."""
+    shown = ", ".join(left_out[:5])
+    more = f" and {len(left_out) - 5} more" if len(left_out) > 5 else ""
+    return (
+        f"{len(left_out)} nested steering file(s) not loaded, over the "
+        f"{NESTED_TOKEN_BUDGET:,}-token budget: {shown}{more}"
+    )
+
 
 @dataclass(frozen=True)
 class ResolvedSource:
@@ -183,13 +204,22 @@ class ContextAssembler:
     ) -> AssembledSteering:
         """Synchronous variant of :meth:`assemble` (tests, CLI)."""
         sources = self._resolver.resolve(workspace_path)
-        notice = self._resolver.claude_global_notice()
-        notices = (notice,) if notice is not None else ()
+        notices = tuple(
+            n
+            for n in (
+                self._resolver.claude_global_notice(),
+                self._resolver.home_workspace_notice(workspace_path),
+            )
+            if n is not None
+        )
         resolved: list[ResolvedSource] = []
         parts: list[str] = []
         all_issues: list[str] = []
         pending: set[Path] = set()
         workspace_root = Path(workspace_path).resolve()
+        loaded_bodies: set[str] = set()
+        nested_tokens = 0
+        left_out: list[str] = []
         for source in sources:
             if source_filter is not None and not source_filter(source):
                 continue  # not part of this tier's context (TD-508)
@@ -214,6 +244,23 @@ class ContextAssembler:
                 # Dropping it silently would swap one silent failure for
                 # another; the inspector says so instead.
                 ignored_applies_to = True
+
+            # Nested dedupe and budget (TD-5004), decided before imports
+            # so a file left out never raises an import approval.
+            tokens = self._token_counter.count(body)
+            budget_warnings: tuple[str, ...] = ()
+            if active and source.precedence == Precedence.NESTED:
+                if body.strip() in loaded_bodies:
+                    active = False
+                    budget_warnings = (NESTED_DUPLICATE_WARNING,)
+                elif nested_tokens + tokens.count > NESTED_TOKEN_BUDGET:
+                    active = False
+                    budget_warnings = (NESTED_BUDGET_WARNING,)
+                    left_out.append(source.subtree or str(source.path))
+                else:
+                    nested_tokens += tokens.count
+            if active:
+                loaded_bodies.add(body.strip())
 
             # Process imports only for active sources — an inactive
             # scoped rule's imports would otherwise produce spurious
@@ -245,11 +292,17 @@ class ContextAssembler:
                     imports=imports,
                     token_count=self._token_counter.count(body),
                     line_count=line_count,
-                    warnings=self._warnings(line_count, ignored_applies_to),
+                    warnings=self._warnings(line_count, ignored_applies_to) + budget_warnings,
                 )
             )
             if active:
                 parts.append(self._render(source, body))
+        if left_out:
+            log.info(
+                "nested steering over budget",
+                extra={"extra_fields": {"left_out": len(left_out), "budget": NESTED_TOKEN_BUDGET}},
+            )
+            notices = (*notices, nested_budget_notice(left_out))
         return AssembledSteering(
             block="\n".join(parts),
             sources=resolved,

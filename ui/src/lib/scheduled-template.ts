@@ -18,6 +18,7 @@ import {
 	retriesDraftValue,
 	type JobDraftFields,
 } from "./scheduled";
+import { maxRunDraftValue } from "./scheduled-max-run";
 
 export interface TemplateFlags {
 	templateSavePending: boolean;
@@ -74,11 +75,13 @@ export function draftFromTemplate(
 		cadence: useCadence ? cadence : "",
 		next_run: useCadence || next === "" ? "" : resolveTemplateNextRun(next, now),
 		deliver_to: template.deliver_to,
+		email_to: template.email_to ?? "",
 		paused: false,
 		preset: template.preset ?? "",
 		engine: template.engine ?? "",
 		grace: graceDraftValue(template.grace),
 		retries: retriesDraftValue(template.retries),
+		max_run: maxRunDraftValue(template.max_run),
 		// A template does not name a follow-on or a calendar. Leaving the
 		// previous choice would create a link, or skip days, the template
 		// never had.
@@ -126,6 +129,12 @@ export function saveTemplateFromDraft(name: string, draft: JobDraftFields): Save
 	if (retries !== undefined) {
 		payload.retries = retries;
 		payload.retry_delay = RETRY_DELAY;
+	}
+	const maxRun = draft.max_run.trim();
+	if (maxRun !== "") payload.max_run = maxRun;
+	if (draft.deliver_to === "email") {
+		const address = draft.email_to.trim();
+		if (address !== "") payload.email_to = address;
 	}
 	return payload;
 }
@@ -177,6 +186,7 @@ export function applyTemplateEvent(
 	}
 	if (
 		event.type === "error" &&
+		!event.machine && // TD-5015: another computer's error
 		(event.code === "template_invalid" ||
 			event.code === "template_builtin" ||
 			event.code === "template_not_found")
@@ -186,7 +196,7 @@ export function applyTemplateEvent(
 		state.error = event.message;
 		return { handled: true, clearJobSave: false };
 	}
-	if (event.type === "error" && event.code === "session_not_found" && flags.awaitingSource) {
+	if (event.type === "error" && !event.machine && event.code === "session_not_found" && flags.awaitingSource) {
 		flags.awaitingSource = false;
 		state.loading = false;
 		state.error = event.message;

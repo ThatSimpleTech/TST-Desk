@@ -109,11 +109,43 @@ class DaemonEvent(BaseModel):
 
 
 class Hello(ClientMessage):
-    """Opening handshake: token + protocol version."""
+    """Opening handshake: token + protocol version.
+
+    ``features`` (TD-5015) is what the client opts into. ``"machines"``
+    makes a loopback or phone connection a *viewer*: its session lists
+    carry other computers' rows and it gets ``machine_list``.
+    ``"bridge"`` is what a hub sends when it dials another computer; it
+    makes the connection a machine peer. Unknown names are ignored, so
+    an old daemon ignores the whole field.
+    """
 
     type: Literal["hello"] = "hello"
     token: str = Field(min_length=1)
     version: int = Field(ge=0, description="Validated by validate_hello()")
+    features: list[Annotated[str, Field(max_length=32)]] = Field(default_factory=list, max_length=8)
+
+
+class Pair(ClientMessage):
+    """Redeem a pairing code as the first frame, instead of hello (TD-5014).
+
+    Remote peers only. Success is an out-of-band ``pair_ok`` carrying the
+    device's own key, then close 1000; the phone then reconnects with
+    ``hello``. ``code`` is normalized by the daemon, never logged.
+    ``device_name`` is cleaned on the daemon side (empty is "Unnamed device").
+    ``replaces`` is the phone's current device key when it has one: once
+    the new key is out, the device that key verifies as is removed and
+    its connections closed. A legacy remote-token there retires nothing.
+    Never logged.
+    """
+
+    type: Literal["pair"] = "pair"
+    code: str = Field(min_length=1)
+    device_name: str = ""
+    version: int = Field(ge=0, description="Validated like hello's version")
+    replaces: str | None = None
+    # TD-5015: another computer pairing as a hub sends "machine". It grants
+    # nothing: a machine-kind device gets fewer verbs than a phone.
+    kind: Literal["phone", "machine"] = "phone"
 
 
 class OpenWorkspace(ClientMessage):
@@ -339,6 +371,93 @@ class SetRemoteAttach(ClientMessage):
 
     type: Literal["set_remote_attach"] = "set_remote_attach"
     enabled: bool
+
+
+class RotateRemoteToken(ClientMessage):
+    """Replace the phone token and drop remote clients (TD-5005).
+
+    Machine-wide, no session. A no-op when remote attach is off. The
+    daemon answers with ``setup_state``. The new token is never sent on
+    the wire: it is read from ``{user_data_dir}/remote-token``.
+    """
+
+    type: Literal["rotate_remote_token"] = "rotate_remote_token"
+
+
+class StartPairing(ClientMessage):
+    """Show a pairing code for a new phone (TD-5014). Loopback only.
+
+    Machine-wide, no session. Turns remote attach on first when it is off,
+    and back off when that still binds no Tailscale address. Answered with
+    ``pairing_code``, or an error (never with a ``session_id``):
+    ``pairing_unavailable`` when no Tailscale address can be bound or the
+    paired devices file cannot be read, ``pairing_limit`` when full. A new
+    start replaces the code.
+    """
+
+    type: Literal["start_pairing"] = "start_pairing"
+
+
+class CancelPairing(ClientMessage):
+    """Drop the active pairing code (TD-5014). Loopback only; acked with ``setup_state``."""
+
+    type: Literal["cancel_pairing"] = "cancel_pairing"
+
+
+class RemoveRemoteDevice(ClientMessage):
+    """Forget one paired device and close its connections (TD-5014).
+
+    Loopback, or a phone naming the device it authenticated as ("Forget
+    this computer"); any other id from a remote peer is ``loopback_only``.
+    Acked with ``setup_state`` before the connections close, or the error
+    ``remove_failed`` when the file cannot be written (the connections
+    close anyway). An unknown id changes nothing.
+    """
+
+    type: Literal["remove_remote_device"] = "remove_remote_device"
+    device_id: str = Field(min_length=1)
+
+
+class AddMachine(ClientMessage):
+    """Pair another computer so its sessions show here (TD-5015). Loopback only.
+
+    Either ``link`` (a ``tstdesk://pair`` link) or ``host``, ``port`` and
+    ``code``. The host must be a Tailscale address or a ``*.ts.net`` name.
+    Runs in the background; the answer is a pushed ``machine_list`` or an
+    error: ``pair_failed``, ``pair_locked``, ``machine_unreachable``,
+    ``not_tailscale``, ``machine_limit``, ``machine_busy`` or
+    ``keychain_locked``. The code is never logged or echoed.
+    """
+
+    type: Literal["add_machine"] = "add_machine"
+    link: str | None = None
+    host: str | None = None
+    port: int | None = Field(default=None, ge=1, le=65535)
+    code: str | None = None
+
+
+class RemoveMachine(ClientMessage):
+    """Forget a paired computer (TD-5015). Loopback only. Answered with ``machine_list``.
+
+    Best effort, the hub first removes itself from that computer's
+    paired devices. ``machine_not_found`` for an unknown id.
+    """
+
+    type: Literal["remove_machine"] = "remove_machine"
+    machine: str = Field(min_length=1)
+
+
+class ListMachines(ClientMessage):
+    """The paired computers as ``machine_list`` (TD-5015). Loopback or a viewer."""
+
+    type: Literal["list_machines"] = "list_machines"
+
+
+class ReconnectMachine(ClientMessage):
+    """Try a paired computer again now, resetting the backoff (TD-5015). Loopback only."""
+
+    type: Literal["reconnect_machine"] = "reconnect_machine"
+    machine: str = Field(min_length=1)
 
 
 class Resume(ClientMessage):
@@ -581,6 +700,21 @@ class Shutdown(ClientMessage):
     """Ask the daemon to shut down cleanly (sent by the supervising host)."""
 
     type: Literal["shutdown"] = "shutdown"
+
+
+class Drain(ClientMessage):
+    """Let open turns finish ahead of a restart (TD-5023). Loopback only.
+
+    New turns on this computer's sessions are refused with
+    ``daemon_draining`` while the daemon waits up to ``timeout_s`` for the
+    open ones, and for ``hold_s`` after, so the restart that follows cuts
+    nothing. The hold ends by itself. ``timeout_s=0, hold_s=0`` releases
+    a hold at once. Answered with ``drain_result``.
+    """
+
+    type: Literal["drain"] = "drain"
+    timeout_s: int = Field(default=30, ge=0, le=600)
+    hold_s: int = Field(default=120, ge=0, le=600)
 
 
 class ListSessions(ClientMessage):
@@ -1039,7 +1173,7 @@ class SaveJob(ClientMessage):
     # On an update, None keeps the stored value and "" clears it (TD-3810).
     cadence: str | None = None
     next_run: str | None = None
-    deliver_to: Literal["window", "slack", "ntfy"] | None = None
+    deliver_to: Literal["window", "slack", "ntfy", "email"] | None = None
     paused: bool = False
     # IANA name ("America/Chicago") a cron cadence is read in. Omitted on an
     # edit keeps the job's current zone; None on create means UTC. The pane
@@ -1068,6 +1202,11 @@ class SaveJob(ClientMessage):
     # when retries is at least 1. Omitted on create with retries set is
     # that default. Ignored when retries is 0.
     retry_delay: str | int | None = None
+    # How long this job's turn may run (TD-3819). A phrase ("20 minutes")
+    # or a number of seconds, stored as seconds, from 1 to 60 minutes.
+    # On an edit, None keeps the stored limit and "" clears it so the
+    # job uses scheduler.max_run_seconds. Omitted on create means that too.
+    max_run: str | int | None = None
     # Another job's id to start once after this one ends ok (TD-3817).
     # On an edit, None keeps the stored id and "" clears it. Omitted on
     # create means no follow-on. A cycle is refused at save. The child's
@@ -1081,6 +1220,10 @@ class SaveJob(ClientMessage):
     # every event. On an edit, None keeps the stored list and "" clears it
     # back to every event. Omitted on create means every event.
     skip_match: str | None = None
+    # One address when ``deliver_to`` is email (TD-3820). On an edit, None
+    # keeps the stored address and "" clears it. Omitted on create with
+    # another channel means none. Pause omits it.
+    email_to: str | None = None
 
 
 class DeleteJob(ClientMessage):
@@ -1160,13 +1303,17 @@ class SaveJobTemplate(ClientMessage):
     instruction: str = ""
     cadence: str | None = None
     next_run: str | None = None
-    deliver_to: Literal["window", "slack", "ntfy"] | None = None
+    deliver_to: Literal["window", "slack", "ntfy", "email"] | None = None
     grace: str | int | None = None
     retries: int | None = None
     retry_delay: str | int | None = None
+    # Same phrases as a job. Omitted means the config limit (TD-3819).
+    max_run: str | int | None = None
     preset: str | None = None
     engine: str | None = None
     workspace: str | None = None
+    # One address when ``deliver_to`` is email (TD-3820). Omitted means none.
+    email_to: str | None = None
 
 
 class DeleteJobTemplate(ClientMessage):
@@ -1204,6 +1351,30 @@ class Transcribe(ClientMessage):
     type: Literal["transcribe"] = "transcribe"
     audio_b64: str = Field(min_length=1, max_length=2_800_000)
     mime: str = Field(default="audio/webm", min_length=1, max_length=128)
+
+
+class SetEmailNotify(ClientMessage):
+    """Save SMTP settings (TD-3820). Acked with ``setup_state``.
+
+    ``password`` is written to the keychain and never stored on
+    ``setup_state``. None or "" leaves the stored password alone.
+    """
+
+    type: Literal["set_email_notify"] = "set_email_notify"
+    enabled: bool = False
+    host: str = ""
+    port: int = 587
+    security: Literal["starttls", "tls"] = "starttls"
+    username: str = ""
+    from_address: str = ""
+    password: str | None = None
+
+
+class TestEmail(ClientMessage):
+    """Send one short test to ``to`` (TD-3820). Acked with ``email_test_result``."""
+
+    type: Literal["test_email"] = "test_email"
+    to: str = ""
 
 
 # ── Daemon → Client ────────────────────────────────────────────────────
@@ -1826,6 +1997,10 @@ class SessionSummary(BaseModel):
     # workspace. Additive with a default, so a client that ignores it
     # still sorts newest-first.
     starred: bool = False
+    # The paired computer this row lives on (TD-5015), as its ``mch_`` id;
+    # None is the answering daemon's own. Set by the hub, never trusted
+    # from upstream. Only viewers ever see a non-None value.
+    machine: str | None = None
     # Auto-title from the first non-empty user message (TD-3001). None
     # until then — the rail falls back to the short id. Additive.
     title: str | None = None
@@ -1886,6 +2061,35 @@ class McpServerSummary(BaseModel):
     enabled: bool = True
 
 
+class RemoteDeviceSummary(BaseModel):
+    """One paired device as the UI may see it (TD-5014). Never a key or hash.
+
+    Times are ``YYYY-MM-DDTHH:MM:SSZ``. ``last_seen`` is None until the
+    device first connects, and is written at most once a minute.
+    """
+
+    id: str
+    name: str
+    paired_at: str
+    last_seen: str | None = None
+    connected: bool = False
+    # TD-5015: "machine" is another computer's hub. A file entry written
+    # before the field reads as a phone.
+    kind: Literal["phone", "machine"] = "phone"
+
+
+class EmailNotifyState(BaseModel):
+    """SMTP settings on ``setup_state``. Never a password."""
+
+    enabled: bool = False
+    host: str = ""
+    port: int = 587
+    security: Literal["starttls", "tls"] = "starttls"
+    username: str = ""
+    from_address: str = ""
+    password_stored: bool = False
+
+
 class SetupState(DaemonEvent):
     """Response to ``get_setup_state``; also the ack for ``set_api_key`` and
     ``set_preset`` (TD-1101).
@@ -1931,6 +2135,10 @@ class SetupState(DaemonEvent):
     # ``remote_bind`` is the bound Tailscale address, never a token.
     remote_attach_enabled: bool = False
     remote_bind: str | None = None
+    # TD-5005: the listener port while remote attach is bound, else None.
+    remote_port: int | None = None
+    # TD-5014: paired devices. Additive; kept while remote attach is off.
+    remote_devices: list[RemoteDeviceSummary] = Field(default_factory=list)
     # TD-1717: named keys. Additive; an older client ignores them.
     # ``stored`` is a keychain probe, never the secret. ``tier_credentials``
     # is the configured binding (None = unbound). ``tier_loopback`` lets
@@ -1974,6 +2182,91 @@ class SetupState(DaemonEvent):
     # the daemon. An older client ignores both fields.
     speech_enabled: bool = False
     speech_ready: bool = False
+    # TD-3820: SMTP settings. Additive. ``password_stored`` is a presence
+    # probe — the password itself never leaves the keychain.
+    email: EmailNotifyState = Field(default_factory=EmailNotifyState)
+
+
+class PairingCode(DaemonEvent):
+    """Reply to ``start_pairing`` (TD-5014). Connection-scoped; loopback only.
+
+    ``code`` is 8 Crockford base32 characters, ``display_code`` the same
+    as ``ABCD-2345``. ``link`` is ``tstdesk://pair?h=&p=&c=&n=`` and
+    ``qr_svg`` a standalone black-on-white ``<svg>`` of that link.
+    ``expires_at`` is ``YYYY-MM-DDTHH:MM:SSZ``, 10 minutes after the start.
+    """
+
+    type: Literal["pairing_code"] = "pairing_code"
+    seq: int = 1
+    code: str
+    display_code: str
+    host: str
+    port: int
+    desktop_name: str
+    link: str
+    qr_svg: str
+    expires_at: str
+
+
+class PairingCompleted(DaemonEvent):
+    """A phone redeemed the code (TD-5014). Broadcast to loopback clients only."""
+
+    type: Literal["pairing_completed"] = "pairing_completed"
+    seq: int = 1
+    device: RemoteDeviceSummary
+
+
+MachineStatus = Literal["connected", "connecting", "unreachable", "refused", "locked", "outdated"]
+
+
+class MachineSummary(BaseModel):
+    """One paired computer as a viewer may see it (TD-5015). Never a key.
+
+    ``id`` is this hub's handle (``mch_`` + 12 hex), the suffix of every
+    bridged session id. ``host`` and ``port`` are None for phones.
+    ``same_computer`` is a self-pair (the other end has this daemon's
+    own ``machine_id``). ``detail`` says why a computer is not connected.
+    """
+
+    id: str
+    name: str
+    host: str | None = None
+    port: int | None = None
+    status: MachineStatus
+    last_seen: str | None = None
+    paired_at: str
+    same_computer: bool = False
+    detail: str | None = None
+
+
+class MachineList(DaemonEvent):
+    """The paired computers (TD-5015). Connection-scoped.
+
+    The reply to the four machine verbs, and pushed to viewers when one
+    changes. Never sent to a machine peer or a non-viewer remote peer.
+    """
+
+    type: Literal["machine_list"] = "machine_list"
+    seq: int = 1
+    machines: list[MachineSummary] = Field(default_factory=list)
+
+
+class DrainResult(DaemonEvent):
+    """The answer to ``drain`` (TD-5023). Connection-scoped.
+
+    ``drained`` is true when no turn on this computer is still open.
+    ``running`` and ``awaiting_approval`` are session ids and nothing
+    else; a turn parked on an approval is listed, not waited on.
+    ``hold_until`` is when new turns are taken again (ISO 8601 UTC), or
+    None when no hold is up.
+    """
+
+    type: Literal["drain_result"] = "drain_result"
+    seq: int = 1
+    drained: bool
+    running: list[str] = Field(default_factory=list)
+    awaiting_approval: list[str] = Field(default_factory=list)
+    hold_until: str | None = None
 
 
 class GrokCommand(BaseModel):
@@ -2235,6 +2528,9 @@ class Error(DaemonEvent):
     session_id: str | None = None
     code: str
     message: str
+    # TD-5015: the paired computer an error came from, or is about. A store
+    # that consumes unscoped errors ignores one that carries this.
+    machine: str | None = None
 
 
 class ScreenFrame(DaemonEvent):
@@ -2394,7 +2690,7 @@ class JobEntry(BaseModel):
     instruction: str
     cadence: str | None = None
     next_run: str | None = None
-    deliver_to: Literal["window", "slack", "ntfy"]
+    deliver_to: Literal["window", "slack", "ntfy", "email"]
     paused: bool = False
     timezone: str | None = None
     # None means the run uses the window's current preset and engine.
@@ -2410,6 +2706,9 @@ class JobEntry(BaseModel):
     retries: int = 0
     retry_delay: int | None = None
     attempt: int = 0
+    # Seconds this job's turn may run. None uses scheduler.max_run_seconds
+    # (TD-3819). The phrase is not on this event.
+    max_run: int | None = None
     # Another job's id, started once after this one ends ok (TD-3817).
     # None means this job stands alone. The child's schedule is separate.
     then: str | None = None
@@ -2426,6 +2725,12 @@ class JobEntry(BaseModel):
     last_status: Literal["ok", "failed", "missed", "waiting", "skipped"] | None = None
     last_summary: str | None = None
     last_session_id: str | None = None
+    # One address when ``deliver_to`` is email (TD-3820).
+    email_to: str | None = None
+    # Mail outcome of the last fire. Null unless that fire was email.
+    # Separate from ``last_status``.
+    last_delivery: Literal["ok", "failed"] | None = None
+    last_delivery_error: str | None = None
     # Not persisted. It mirrors the daemon's in-flight set, so a restart
     # cannot show a turn that is no longer happening (TD-3809).
     running: bool = False
@@ -2469,6 +2774,9 @@ class JobRunEntry(BaseModel):
     # Names the job whose ok run started a chained fire (TD-3817). Null
     # on a scheduled slot and on Run now.
     note: str | None = None
+    # Mail outcome for this fire (TD-3820). Null unless the channel is email.
+    delivery: Literal["ok", "failed"] | None = None
+    delivery_error: str | None = None
 
 
 class JobRuns(DaemonEvent):
@@ -2495,7 +2803,8 @@ class JobDraftReply(DaemonEvent):
     instruction: str | None = None
     cadence: str | None = None
     next_run: str | None = None
-    deliver_to: Literal["window", "slack", "ntfy"] | None = None
+    deliver_to: Literal["window", "slack", "ntfy", "email"] | None = None
+    email_to: str | None = None
     paused: bool = False
 
 
@@ -2512,13 +2821,16 @@ class JobTemplateEntry(BaseModel):
     instruction: str = ""
     cadence: str | None = None
     next_run: str | None = None
-    deliver_to: Literal["window", "slack", "ntfy"]
+    deliver_to: Literal["window", "slack", "ntfy", "email"]
     grace: int | None = None
     retries: int = 0
     retry_delay: int | None = None
+    # Seconds, or null to use scheduler.max_run_seconds (TD-3819).
+    max_run: int | None = None
     preset: str | None = None
     engine: Literal["native", "grok"] | None = None
     workspace: str | None = None
+    email_to: str | None = None
 
 
 class JobTemplates(DaemonEvent):
@@ -2563,10 +2875,25 @@ class Transcript(DaemonEvent):
     error: str | None = None
 
 
+class EmailTestResult(DaemonEvent):
+    """Reply to ``test_email`` (TD-3820). Connection-scoped.
+
+    ``error_class`` is the SMTP exception name. ``message`` is the public
+    text, already stripped of the password and the message body.
+    """
+
+    type: Literal["email_test_result"] = "email_test_result"
+    seq: int = 1
+    ok: bool = False
+    error_class: str = ""
+    message: str = ""
+
+
 # ── Discriminated unions ───────────────────────────────────────────────
 
 ClientMessageT = Annotated[
     Hello
+    | Pair
     | OpenWorkspace
     | UserMessage
     | Approve
@@ -2611,6 +2938,7 @@ ClientMessageT = Annotated[
     | MemoryReject
     | EndSession
     | Shutdown
+    | Drain
     | ListSessions
     | NewSession
     | ArchiveSession
@@ -2646,6 +2974,14 @@ ClientMessageT = Annotated[
     | ResetCuPermissions
     | SetCuKill
     | SetRemoteAttach
+    | RotateRemoteToken
+    | StartPairing
+    | CancelPairing
+    | RemoveRemoteDevice
+    | AddMachine
+    | RemoveMachine
+    | ListMachines
+    | ReconnectMachine
     | ListJobs
     | SaveJob
     | DeleteJob
@@ -2656,7 +2992,9 @@ ClientMessageT = Annotated[
     | SaveJobTemplate
     | DeleteJobTemplate
     | GetSessionJobSource
-    | Transcribe,
+    | Transcribe
+    | SetEmailNotify
+    | TestEmail,
     Field(discriminator="type"),
 ]
 
@@ -2694,6 +3032,10 @@ DaemonEventT = Annotated[
     | SessionList
     | PolicyRules
     | SetupState
+    | PairingCode
+    | PairingCompleted
+    | MachineList
+    | DrainResult
     | ApiKeyValidated
     | DiagnosticsReport
     | UsageReport
@@ -2715,6 +3057,7 @@ DaemonEventT = Annotated[
     | JobDraftReply
     | JobTemplates
     | SessionJobSource
+    | EmailTestResult
     | GrokCommands
     | GrokPlan
     | GrokMode
@@ -2732,6 +3075,7 @@ _daemon_event_adapter: TypeAdapter[DaemonEventT] = TypeAdapter(DaemonEventT)
 _KNOWN_CLIENT_TYPES = frozenset(
     {
         "hello",
+        "pair",
         "open_workspace",
         "user_message",
         "approve",
@@ -2776,6 +3120,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "memory_reject",
         "end_session",
         "shutdown",
+        "drain",
         "list_sessions",
         "new_session",
         "archive_session",
@@ -2811,6 +3156,14 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "reset_cu_permissions",
         "set_cu_kill",
         "set_remote_attach",
+        "rotate_remote_token",
+        "start_pairing",
+        "cancel_pairing",
+        "remove_remote_device",
+        "add_machine",
+        "remove_machine",
+        "list_machines",
+        "reconnect_machine",
         "list_jobs",
         "save_job",
         "delete_job",
@@ -2822,6 +3175,8 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "delete_job_template",
         "get_session_job_source",
         "transcribe",
+        "set_email_notify",
+        "test_email",
     }
 )
 _KNOWN_EVENT_TYPES = frozenset(
@@ -2859,6 +3214,10 @@ _KNOWN_EVENT_TYPES = frozenset(
         "session_list",
         "policy_rules",
         "setup_state",
+        "pairing_code",
+        "pairing_completed",
+        "machine_list",
+        "drain_result",
         "api_key_validated",
         "diagnostics_report",
         "usage_report",
@@ -2887,6 +3246,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "grok_session_list",
         "grok_extensions",
         "transcript",
+        "email_test_result",
     }
 )
 
@@ -2928,6 +3288,16 @@ def parse_client_message(raw: str) -> ClientMessageT:
     try:
         return _client_message_adapter.validate_python(data)
     except ValueError as e:
+        if data["type"] == "add_machine":
+            # A validation message quotes its input, so it would echo a code.
+            raise HandshakeError(
+                "bad_request", "Malformed add_machine: give a link, or host, port and code."
+            ) from None
+        if data["type"] == "set_email_notify":
+            # Same reason: the input may be the SMTP password (TD-3820).
+            raise HandshakeError(
+                "bad_request", "Malformed set_email_notify: check the email settings fields."
+            ) from None
         raise HandshakeError("bad_request", str(e)) from e
 
 
@@ -2954,14 +3324,99 @@ def parse_daemon_event(raw: str) -> DaemonEventT:
         raise HandshakeError("bad_request", str(e)) from e
 
 
+_MALFORMED_HELLO = "Malformed hello message"
+
+
 def parse_hello(raw: str) -> Hello:
-    """Parse a raw JSON string into a Hello message (for the handshake)."""
-    return parse_client_message(raw)  # type: ignore[return-value]
+    """Parse a raw JSON string into a Hello message (for the handshake).
+
+    The error is fixed text: a validation message echoes its input, and
+    the handshake rejection is logged and sent back, so it would carry
+    the token. An unknown ``type`` stays ``unknown_message``.
+    """
+    try:
+        msg = parse_client_message(raw)
+    except UnknownMessageTypeError:
+        raise
+    except HandshakeError:
+        raise HandshakeError("bad_request", _MALFORMED_HELLO) from None
+    if not isinstance(msg, Hello):
+        raise HandshakeError("bad_request", _MALFORMED_HELLO)
+    return msg
 
 
-def build_hello_ack() -> str:
-    """Build the server's handshake acknowledgement."""
-    return json.dumps({"type": "hello_ack", "version": PROTOCOL_VERSION})
+def build_hello_ack(machine_id: str | None = None, desktop_name: str | None = None) -> str:
+    """Build the server's handshake acknowledgement.
+
+    ``machine_id`` and ``desktop_name`` (TD-5015) say which computer this
+    is, so a hub can tell "same computer at a new address" and "this is
+    me". Sent only after the token checked out.
+    """
+    payload: dict[str, Any] = {"type": "hello_ack", "version": PROTOCOL_VERSION}
+    if machine_id is not None:
+        payload["machine_id"] = machine_id
+    if desktop_name is not None:
+        payload["desktop_name"] = desktop_name
+    return json.dumps(payload)
+
+
+def handshake_type(raw: str) -> str | None:
+    """The ``type`` of a first frame, or None when it has none.
+
+    Only picks the path (``pair`` or ``hello``); each path parses and
+    rejects the frame itself.
+    """
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    kind = data.get("type")
+    return kind if isinstance(kind, str) else None
+
+
+def parse_pair(raw: str) -> Pair:
+    """Parse a first-frame ``pair`` (TD-5014). Anything else is bad_request.
+
+    The error never quotes the frame: a validation message echoes its
+    input, and the handshake rejection is logged, so it would log the code.
+    """
+    try:
+        msg = parse_client_message(raw)
+    except HandshakeError:
+        raise HandshakeError(
+            "bad_request", "Malformed pair message: it needs code, device_name and version."
+        ) from None
+    if not isinstance(msg, Pair):
+        raise HandshakeError("bad_request", "Expected a pair message")
+    return msg
+
+
+def build_pair_ok(
+    device_id: str,
+    device_name: str,
+    token: str,
+    desktop_name: str,
+    machine_id: str | None = None,
+) -> str:
+    """The redeem reply (TD-5014). Out-of-band like ``hello_ack``: no seq.
+
+    Carries the device's key, so it goes straight to the socket — never
+    through a log or the event funnel. ``machine_id`` (TD-5015) is this
+    computer's identity, for a hub pairing it.
+    """
+    payload: dict[str, Any] = {
+        "type": "pair_ok",
+        "version": PROTOCOL_VERSION,
+        "device_id": device_id,
+        "device_name": device_name,
+        "token": token,
+        "desktop_name": desktop_name,
+    }
+    if machine_id is not None:
+        payload["machine_id"] = machine_id
+    return json.dumps(payload)
 
 
 def build_ping() -> str:
@@ -2969,18 +3424,26 @@ def build_ping() -> str:
     return Ping().model_dump_json()
 
 
-def build_error(code: str, message: str, session_id: str | None = None) -> str:
+def build_error(
+    code: str,
+    message: str,
+    session_id: str | None = None,
+    machine: str | None = None,
+) -> str:
     """Build a typed error message.
 
     The message passes through the shared redaction chokepoint (TD-1405):
     this envelope bypasses the event log — it is written straight to the
     socket — so it must scrub here rather than rely on ``event_log.add``.
     ``session_id`` (optional, TD-1711) lets the UI attribute the error to
-    the session whose message was refused.
+    the session whose message was refused. ``machine`` (TD-5015) marks an
+    error that came from, or is about, a paired computer.
     """
     payload: dict[str, str] = {"type": "error", "code": code, "message": redact_secrets(message)}
     if session_id is not None:
         payload["session_id"] = session_id
+    if machine is not None:
+        payload["machine"] = machine
     return json.dumps(payload)
 
 

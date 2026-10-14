@@ -73,7 +73,7 @@ boundary resting on it.
 
 Three files are written with `chmod(0o600)`: the session store (`sessions.json`), the port file
 (`port.json`, which carries the loopback auth token), and — when a non-loopback listener is
-up — `remote-token` (a rotating token distinct from the port file). **On Windows that chmod is a
+up — `remote-token` (a token distinct from the port file, kept across restarts). **On Windows that chmod is a
 no-op, and that is the decision, not an oversight.**
 
 `os.chmod` on Windows can only toggle the read-only attribute. `0o600` carries a write bit, so
@@ -148,8 +148,10 @@ Closing the window is not quitting the app (TD-2902).
   and parked approvals continue. OS notifications still fire while the window is gone.
   While hidden, a running session or a parked approval badges the dock / taskbar (or the
   taskbar tooltip). Clicking the app icon shows the window, focuses a parked approval if
-  there is one, and re-attaches; a second host process attaches to the live listener
-  instead of spawning another daemon.
+  there is one, and re-attaches. A second launch never starts a second host (TD-5024):
+  it hands over to the running one, which shows its window, and exits. With Keep running
+  on, closing every window in any order leaves the host in the tray (TD-5020); tray
+  **Show** or a second launch opens a new window.
 - **Quit** (menu / palette **Quit TST Desk**, or Cmd+Q) sends `shutdown`,
   reaps the process group, and leaves no listener. That is the TD-1002
   v0.1 contract, kept for Quit. Dock, AppleScript, logout, and restart

@@ -96,11 +96,12 @@ class TestDiscovery:
         assert _discover(ws, home) == ["ship"]
 
     def test_extra_frontmatter_key_omits_skill(self, tmp_path: Path) -> None:
+        # `license` is ignored since TD-5011; a key outside every list still skips.
         home = tmp_path / "home"
         ws = tmp_path / "ws"
         _write(
             ws / ".tst" / "skills" / "review" / "SKILL.md",
-            "---\ndescription: Review\nwhenToUse: After a diff\nlicense: MIT\n---\nbody\n",
+            "---\ndescription: Review\nwhenToUse: After a diff\nglobs: '*.py'\n---\nbody\n",
         )
         _write(
             ws / ".tst" / "skills" / "ship" / "SKILL.md",
@@ -110,11 +111,12 @@ class TestDiscovery:
         assert [s.name for s in skills] == ["ship"]
 
     def test_missing_required_key_skips(self, tmp_path: Path) -> None:
+        # `description` is the one required key; `whenToUse` falls back to it (TD-5011).
         home = tmp_path / "home"
         ws = tmp_path / "ws"
         _write(
             ws / ".tst" / "skills" / "review" / "SKILL.md",
-            "---\ndescription: Review\n---\nbody\n",
+            "---\nwhenToUse: After a diff\n---\nbody\n",
         )
         assert _discover(ws, home) == []
 

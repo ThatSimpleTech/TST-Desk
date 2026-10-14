@@ -265,7 +265,7 @@ async def test_a_fired_job_pushes_a_fresh_list_to_open_clients(tmp_path: Path) -
 
     sent: list[str] = []
 
-    async def capture(payload: str) -> int:
+    async def capture(payload: str, **_audience: object) -> int:
         sent.append(payload)
         return 1
 
@@ -293,7 +293,7 @@ async def test_no_due_job_pushes_nothing(tmp_path: Path) -> None:
 
     sent: list[str] = []
 
-    async def capture(payload: str) -> int:
+    async def capture(payload: str, **_audience: object) -> int:
         sent.append(payload)
         return 1
 

@@ -22,6 +22,7 @@ import {
   toasts,
 } from "./notifications.svelte.js";
 import { ingestEvent, resetSession } from "./session-status.svelte.js";
+import { claimInline } from "./inline-errors";
 
 function turnComplete(errorCode: string | null): DaemonEventUnion {
   return {
@@ -139,6 +140,15 @@ describe("error copy", () => {
     for (const code of ["rate_limited", "server_error", "bad_gateway", "service_unavailable", "gateway_timeout"]) {
       expect(turnFailureCopy(code)?.severity).toBe("toast");
     }
+  });
+
+  it("a chat-template refusal is a banner that says resending won't help", () => {
+    // TD-5142. The daemon does not retry it, so a "resend in a moment"
+    // toast would send the user round the same failure.
+    const spec = turnFailureCopy("template_error");
+    expect(spec?.severity).toBe("banner");
+    expect(spec?.body).toContain("won't help");
+    expect(spec?.body).toContain("fresh session");
   });
 
   it("Grok ACP engine faults are named toasts, not unrecognised codes", () => {
@@ -273,6 +283,23 @@ describe("notification routing", () => {
     expect(toasts[0].body).toBe(message);
   });
 
+  it("a send refused while the daemon drains for a restart is a toast saying to resend (TD-5023)", () => {
+    const message = "TST Desk is about to restart. Your message was not sent; send it again in a few seconds.";
+    notifyEvent({ type: "error", code: "daemon_draining", message, session_id: "s1", seq: 3 } as DaemonEventUnion);
+    expect(banners).toHaveLength(0);
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].body).toBe("TST Desk is restarting — send it again in a few seconds.");
+    expect(toasts[0].title).not.toContain("daemon_draining");
+  });
+
+  it("a turn a restart cut off says so instead of 'unrecognised' (TD-5018)", () => {
+    notifyEvent(turnComplete("interrupted_by_restart"));
+    expect(banners).toHaveLength(0);
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].title).toBe("Turn cut off by a restart");
+    expect(toasts[0].body).not.toContain("unrecognised");
+  });
+
   it("a refused Delete/Move becomes a toast, not a banner (TD-1715)", () => {
     // Nothing is broken and no other work is blocked — the session is simply
     // busy — so this must not raise a blocking banner.
@@ -296,6 +323,16 @@ describe("notification routing", () => {
     expect(banners[0].title).toBe("Keychain is locked");
     expect(banners[0].body).toContain("Keychain Access");
     expect(banners[0].body).toContain("Store key again");
+  });
+
+  it("an error a form already showed inline raises no notice (TD-5015)", () => {
+    // Settings > Computers' Add form claims its errors: the keychain banner
+    // above names the API-key wizard, which is not the flow the user is in.
+    const event = { type: "error", code: "keychain_locked", message: "locked", seq: 4 } as DaemonEventUnion;
+    claimInline(event);
+    notifyEvent(event);
+    expect(banners).toHaveLength(0);
+    expect(toasts).toHaveLength(0);
   });
 
   it("an interrupted session raises the tombstone banner", () => {

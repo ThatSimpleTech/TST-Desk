@@ -18,6 +18,7 @@
 // (AGENTS §6: the UI never derives truth it wasn't given).
 
 import { sendToDaemon } from "./connection-status.svelte.js";
+import { isBridged } from "./bridged-id";
 import { openSessionWindow } from "./open-session-window";
 import { openScheduledFromSession } from "./scheduled.svelte.js";
 import { closeRowMenus, sessions } from "./sessions.svelte.js";
@@ -68,6 +69,8 @@ export function setStarred(sessionId: string, starred: boolean): boolean {
 
 /** Open Scheduled with this chat filled in. Nothing is saved until Create. */
 export function scheduleThisChat(sessionId: string): boolean {
+	// The scheduler is this computer's; another computer's chat isn't its to copy.
+	if (isBridged(sessionId)) return false;
 	const sent = openScheduledFromSession(sessionId);
 	if (sent) closeRowMenus();
 	return sent;
@@ -87,6 +90,8 @@ export function renameSession(sessionId: string, title: string): boolean {
 }
 
 export function openInTerminal(sessionId: string): boolean {
+	// A terminal opens on this computer, in a folder that is on another (TD-5015).
+	if (isBridged(sessionId)) return false;
 	const sent = sendToDaemon({ type: "open_in_terminal", session_id: sessionId });
 	if (sent) closeRowMenus();
 	return sent;
@@ -115,6 +120,8 @@ export function confirmDelete(): boolean {
 /** Open a row's move-to-project picker. */
 export function requestMove(sessionId: string): void {
 	closeRowMenus();
+	// Projects are this computer's folders (TD-5015): no picker for another's row.
+	if (isBridged(sessionId)) return;
 	sessions.moveFor = sessionId;
 }
 
@@ -127,7 +134,7 @@ export function requestMove(sessionId: string): void {
  *  anyway. */
 export function moveTargets(sessionId: string): string[] {
 	const row = sessions.rows.find((r) => r.sessionId === sessionId);
-	if (row === undefined) return [];
+	if (row === undefined || isBridged(sessionId)) return [];
 	return workspaces.entries.map((e) => e.path).filter((p) => p !== row.workspacePath);
 }
 

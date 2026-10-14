@@ -3,6 +3,7 @@
 // Pure logic: given a target workspace path and a daemon session_list, choose
 // an existing live session or signal that open_workspace is needed.
 
+import { isBridged } from "./bridged-id";
 import { isTerminal } from "./session-binding";
 import type { SessionSummary } from "./protocol";
 
@@ -20,8 +21,10 @@ export function pickQuickEntrySession(
 		return { action: "none", reason: "no_path" };
 	}
 	const target = path.trim();
+	// Quick entry is a local folder: another computer's session in a folder
+	// of the same name is never the pick (TD-5015).
 	const live = sessions.filter(
-		(s) => s.workspace_path === target && !isTerminal(s.state),
+		(s) => s.workspace_path === target && !isTerminal(s.state) && !isBridged(s.session_id),
 	);
 	if (live.length === 0) {
 		return { action: "open" };

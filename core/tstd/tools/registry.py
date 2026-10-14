@@ -370,8 +370,12 @@ def _register_builtins(registry: ToolRegistry, *, search: SearchConfig | None = 
         Tool(
             name="fs_write",
             description="Write content to a file at the given path. "
+            "Use it to create a file or replace a whole file; for a change "
+            "inside an existing file, use fs_edit. "
             "Creates parent directories if they do not exist. "
-            "By default, overwrites the file; use append=True to append.",
+            "By default, overwrites the file; use append=True to append. "
+            "File contents are written with fs_write or fs_edit, not the "
+            "shell, so the change shows in the diff.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -402,6 +406,8 @@ def _register_builtins(registry: ToolRegistry, *, search: SearchConfig | None = 
         Tool(
             name="fs_edit",
             description="Replace an exact string in a file with a new string. "
+            "Use it for every change inside an existing file, instead of "
+            "sed -i or other shell edits. "
             "Fails if the target string is absent or appears more than once — "
             "include enough surrounding context to match exactly one place. "
             "For creating or rewriting whole files, use fs_write.",
@@ -436,7 +442,11 @@ def _register_builtins(registry: ToolRegistry, *, search: SearchConfig | None = 
             name="shell",
             description="Execute a shell command and return its output. "
             "The command runs in the session's workspace directory. "
-            "Use this for running scripts, compilers, tests, and other CLI tools.",
+            "Use this for running scripts, compilers, tests, and other CLI tools. "
+            "Do not write file contents with it (sed -i, redirects, heredocs, "
+            "tee, inline scripts); use fs_edit or fs_write, which show the "
+            "change in the diff. Deleting, moving, formatters, code generators "
+            "and package managers are fine here.",
             parameters={
                 "type": "object",
                 "properties": {

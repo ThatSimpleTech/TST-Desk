@@ -8,6 +8,7 @@
 //
 // The store keeps the wiring: it reads the choice and calls the effect.
 
+import { isBridged } from "./bridged-id";
 import type { MessageQueue } from "./chat-queue";
 import type { ChatDeps, ChatState } from "./chat-store";
 import type { FirstTokenWait } from "./first-token-wait";
@@ -46,11 +47,18 @@ export interface BindContext {
   onUnbind?: () => void;
 }
 
-/** The whole auto-bind policy, in one place and free of effects. */
+/** The whole auto-bind policy, in one place and free of effects.
+ *
+ *  `held` is a session on another computer the pane was pointed at before
+ *  any list named it (TD-5015): the hub answers list_sessions from a cache
+ *  that trails that computer's events, so a session made there a moment ago,
+ *  or every remote row after the hub restarts, is missing for a while. Once a
+ *  list has named it, its absence means it is gone, as for an own session. */
 export function chooseBoundSession(
   summaries: readonly SessionSummary[],
   currentId: string | null,
   windowBind: string | null = null,
+  held: string | null = null,
 ): SessionBinding {
   if (windowBind !== null) {
     const bound = summaries.find((s) => s.session_id === windowBind);
@@ -86,6 +94,9 @@ export function chooseBoundSession(
     // phantom turn nor standing down a real one).
     return { action: "keep", turnState: current.state === "running" ? null : current.state };
   }
+  if (current === undefined && currentId !== null && currentId === held && isBridged(currentId)) {
+    return { action: "keep", turnState: null };
+  }
   // Auto-bind liveness (TD-1711): a terminal session can never run another
   // turn (the daemon refuses its user_message with session_not_running).
   // Binding one would strand the composer on a corpse — e.g. the post-restart
@@ -93,7 +104,10 @@ export function chooseBoundSession(
   // live, stay unbound: the empty state points at the rail's New Session.
   // Archived sessions never win auto-bind (TD-1715): the user filed them away,
   // so adopting one would undo that on the next refresh.
-  const live = summaries.filter((s) => !isTerminal(s.state) && !s.archived);
+  // TD-5015: auto-bind picks only this computer's own sessions. Another
+  // computer's session is followed on purpose (a click, or the window bind
+  // above), never adopted because it happened to be the newest.
+  const live = summaries.filter((s) => !isTerminal(s.state) && !s.archived && !isBridged(s.session_id));
   if (live.length === 0) return { action: "unbind" };
   const newest = live.reduce((a, b) => (a.updated_at >= b.updated_at ? a : b));
   return { action: "bind", sessionId: newest.session_id, turnState: newest.state };
@@ -124,6 +138,7 @@ export function applyBind(
   ctx.queue.clear();
   ctx.wait.end();
   state.lastTurnDuration = null;
+  state.lastTurnError = null;
   // The activity lane scopes to the same session (TD-1009). Bind it before
   // the attach, so the replay the attach fetches lands in a list already
   // pointing at the session it describes.

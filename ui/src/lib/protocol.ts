@@ -18,6 +18,26 @@ export interface Hello extends ClientMessage {
   type: "hello";
   token: string;
   version: number;
+  /** Opt-ins (TD-5015, max 8). `"machines"` makes this connection a viewer:
+   *  its session_list also carries other computers' rows and it gets
+   *  `machine_list`. An older daemon ignores the field. */
+  features?: string[];
+}
+
+/** First frame on a remote connection instead of hello (TD-5014): redeem a
+ *  pairing code for this device's own key. The daemon answers `pair_ok` or a
+ *  typed handshake error, then closes. */
+export interface Pair extends ClientMessage {
+  type: "pair";
+  code: string;
+  device_name: string;
+  version: number;
+  /** This phone's current device key when it is re-pairing, so the daemon
+   *  drops the entry it replaces. Never a legacy remote-token. */
+  replaces?: string | null;
+  /** TD-5015: a hub pairing another computer sends "machine". Phones omit
+   *  it (the daemon's default is "phone"). */
+  kind?: "phone" | "machine";
 }
 
 export interface OpenWorkspace extends ClientMessage {
@@ -153,6 +173,63 @@ export interface SetJudgments extends ClientMessage {
 export interface SetRemoteAttach extends ClientMessage {
   type: "set_remote_attach";
   enabled: boolean;
+}
+
+/** New phone token (TD-5005). Drops remote clients; the token never crosses the wire. */
+export interface RotateRemoteToken extends ClientMessage {
+  type: "rotate_remote_token";
+}
+
+/** Show a pairing code for a new phone (TD-5014). Loopback only; replies pairing_code. */
+export interface StartPairing extends ClientMessage {
+  type: "start_pairing";
+}
+
+/** Drop the active pairing code (TD-5014). Loopback only; replies setup_state. */
+export interface CancelPairing extends ClientMessage {
+  type: "cancel_pairing";
+}
+
+/** Forget one paired device and close only its connections (TD-5014). From
+ *  loopback, any device; from a remote peer, only the device it signed in as. */
+export interface RemoveRemoteDevice extends ClientMessage {
+  type: "remove_remote_device";
+  device_id: string;
+}
+
+/** Pair another computer (TD-5015). Loopback only; runs as a task, answered
+ *  by a pushed `machine_list` or an `error` (pair_failed, pair_locked,
+ *  machine_unreachable, not_tailscale, machine_limit, machine_busy,
+ *  keychain_locked). The code is never echoed back. */
+export interface AddMachineByLink extends ClientMessage {
+  type: "add_machine";
+  link: string;
+}
+
+export interface AddMachineByCode extends ClientMessage {
+  type: "add_machine";
+  host: string;
+  port: number;
+  code: string;
+}
+
+export type AddMachine = AddMachineByLink | AddMachineByCode;
+
+/** Forget a paired computer (TD-5015). Loopback only; replies machine_list. */
+export interface RemoveMachine extends ClientMessage {
+  type: "remove_machine";
+  machine: string;
+}
+
+/** The paired computers (TD-5015). Loopback and viewers; replies machine_list. */
+export interface ListMachines extends ClientMessage {
+  type: "list_machines";
+}
+
+/** Dial a computer now, resetting its backoff (TD-5015). Loopback only. */
+export interface ReconnectMachine extends ClientMessage {
+  type: "reconnect_machine";
+  machine: string;
 }
 
 /** Pin or unpin a workspace on the Projects list (TD-2806). */
@@ -358,6 +435,18 @@ export interface Shutdown extends ClientMessage {
   type: "shutdown";
 }
 
+/** Let open turns finish ahead of a restart (TD-5023). Loopback only; sent by
+ *  `tst drain`, not the window. New local turns get `daemon_draining` while
+ *  the daemon waits up to `timeout_s` for open ones, then for `hold_s` more.
+ *  0/0 releases the hold. Answered with `drain_result`. */
+export interface Drain extends ClientMessage {
+  type: "drain";
+  /** 0..600, default 30. */
+  timeout_s?: number;
+  /** 0..600, default 120. */
+  hold_s?: number;
+}
+
 export interface ListSessions extends ClientMessage {
   type: "list_sessions";
 }
@@ -520,6 +609,25 @@ export interface Transcribe extends ClientMessage {
   mime?: string;
 }
 
+/** Save SMTP settings (TD-3820). Acked with setup_state. password is keychain-only. */
+export interface SetEmailNotify extends ClientMessage {
+  type: "set_email_notify";
+  enabled?: boolean;
+  host?: string;
+  port?: number;
+  security?: "starttls" | "tls";
+  username?: string;
+  from_address?: string;
+  /** Written to the keychain. Null or "" leaves the stored password alone. */
+  password?: string | null;
+}
+
+/** Send one short test (TD-3820). Acked with email_test_result. */
+export interface TestEmail extends ClientMessage {
+  type: "test_email";
+  to?: string;
+}
+
 export interface SetGrokMode extends ClientMessage {
   type: "set_grok_mode";
   session_id: string;
@@ -628,7 +736,9 @@ export interface SaveJob extends ClientMessage {
   cadence?: string | null;
   /** On an update, omitted keeps the stored value and `""` clears it. */
   next_run?: string | null;
-  deliver_to?: "window" | "slack" | "ntfy" | null;
+  deliver_to?: "window" | "slack" | "ntfy" | "email" | null;
+  /** One address when deliver_to is email (TD-3820). On an edit, omitted keeps it and "" clears it. */
+  email_to?: string | null;
   paused?: boolean;
   /** IANA zone the cadence is evaluated in, e.g. `America/Chicago`.
    *  Omitted on an edit keeps the job's zone. Absent or null on create is legacy UTC. */
@@ -651,6 +761,11 @@ export interface SaveJob extends ClientMessage {
    *  edit, omitted keeps the stored delay and `""` means the 10-minute
    *  default when `retries` is at least 1. Ignored when retries is 0. */
   retry_delay?: string | number | null;
+  /** How long this job's turn may run (TD-3819). A phrase ("20 minutes")
+   *  or seconds, stored as seconds, from 1 to 60 minutes. On an edit,
+   *  omitted keeps the stored limit and `""` clears it so the job uses
+   *  `scheduler.max_run_seconds`. Omitted on create means that too. */
+  max_run?: string | number | null;
   /** Another job's id, started once after this one ends ok (TD-3817).
    *  On an edit, omitted keeps the stored id and `""` clears it. Omitted
    *  on create means no follow-on. A cycle is refused at save. */
@@ -704,10 +819,14 @@ export interface SaveJobTemplate extends ClientMessage {
   instruction?: string;
   cadence?: string | null;
   next_run?: string | null;
-  deliver_to?: "window" | "slack" | "ntfy" | null;
+  deliver_to?: "window" | "slack" | "ntfy" | "email" | null;
+  /** One address when deliver_to is email (TD-3820). Omitted on a non-email template. */
+  email_to?: string | null;
   grace?: string | number | null;
   retries?: number | null;
   retry_delay?: string | number | null;
+  /** Same phrases as a job. Omitted means the configured limit (TD-3819). */
+  max_run?: string | number | null;
   preset?: string | null;
   engine?: "" | "native" | "grok" | null;
   workspace?: string | null;
@@ -727,6 +846,7 @@ export interface GetSessionJobSource extends ClientMessage {
 
 export type ClientMessageUnion =
   | Hello
+  | Pair
   | OpenWorkspace
   | UserMessage
   | ForkFrom
@@ -772,6 +892,7 @@ export type ClientMessageUnion =
   | MemoryReject
   | EndSession
   | Shutdown
+  | Drain
   | ListSessions
   | NewSession
   | ArchiveSession
@@ -807,6 +928,14 @@ export type ClientMessageUnion =
   | ResetCuPermissions
   | SetCuKill
   | SetRemoteAttach
+  | RotateRemoteToken
+  | StartPairing
+  | CancelPairing
+  | RemoveRemoteDevice
+  | AddMachine
+  | RemoveMachine
+  | ListMachines
+  | ReconnectMachine
   | ListJobs
   | SaveJob
   | DeleteJob
@@ -817,7 +946,9 @@ export type ClientMessageUnion =
   | SaveJobTemplate
   | DeleteJobTemplate
   | GetSessionJobSource
-  | Transcribe;
+  | Transcribe
+  | SetEmailNotify
+  | TestEmail;
 
 // ── Daemon → Client ───────────────────────────────────────────────────
 
@@ -825,6 +956,24 @@ export type ClientMessageUnion =
 export interface HelloAck {
   type: "hello_ack";
   version: number;
+  /** TD-5015: this daemon's identity (`mid_<16hex>`, not a secret) and its
+   *  computer's name, sent only after auth. Absent from an older daemon. */
+  machine_id?: string | null;
+  desktop_name?: string | null;
+}
+
+/** Out-of-band reply to `pair` (TD-5014), like `hello_ack`: not a sequenced
+ *  event, never in `DaemonEventUnion`. `token` is this device's own key; it
+ *  goes straight to the attach store and is never shown or logged. */
+export interface PairOk {
+  type: "pair_ok";
+  version: number;
+  device_id: string;
+  device_name: string;
+  token: string;
+  desktop_name: string;
+  /** TD-5015: the paired daemon's identity. Absent from an older daemon. */
+  machine_id?: string | null;
 }
 
 /** Application-level liveness frame (TD-1716): no session, no seq.
@@ -1225,6 +1374,10 @@ export interface SessionSummary {
   /** A turn is in flight (TD-1720). Distinct from `state: "running"`,
    *  which is loop liveness (TD-1714). Additive. */
   busy?: boolean;
+  /** TD-5015: the paired computer this row lives on (`mch_<12hex>`), or
+   *  null/absent for the answering daemon's own. Its id is then bridged:
+   *  `<raw>:<machine>`. */
+  machine?: string | null;
 }
 
 export interface SessionList extends DaemonEvent {
@@ -1274,6 +1427,8 @@ export interface SetupState extends DaemonEvent {
   // remote_bind is the bound Tailscale address, never a token.
   remote_attach_enabled?: boolean;
   remote_bind?: string | null;
+  // TD-5005: listener port while remote attach is bound.
+  remote_port?: number | null;
   // TD-1717: named keys. Additive; an older daemon does not send them.
   credentials?: CredentialSummary[];
   tier_credentials?: Record<string, string | null>;
@@ -1306,6 +1461,89 @@ export interface SetupState extends DaemonEvent {
   // TD-4701: hold-to-talk. Additive, default off. The URL never arrives.
   speech_enabled?: boolean;
   speech_ready?: boolean;
+  // TD-5014: paired phones. Additive, default empty. Never a token or hash.
+  remote_devices?: RemoteDeviceSummary[];
+  /** SMTP settings (TD-3820). Additive. Never includes the password. */
+  email?: EmailNotifyState;
+}
+
+/** SMTP form on setup_state. password_stored is presence only. */
+export interface EmailNotifyState {
+  enabled?: boolean;
+  host?: string;
+  port?: number;
+  security?: "starttls" | "tls";
+  username?: string;
+  from_address?: string;
+  password_stored?: boolean;
+}
+
+/** One paired device (TD-5014). */
+export interface RemoteDeviceSummary {
+  id: string;
+  name: string;
+  paired_at: string;
+  last_seen: string | null;
+  connected: boolean;
+  /** TD-5015: a phone or another computer's hub. Missing = phone. */
+  kind?: "phone" | "machine";
+}
+
+/** A paired computer's link, as the hub reports it (TD-5015). */
+export type MachineStatus = "connected" | "connecting" | "unreachable" | "refused" | "locked" | "outdated";
+
+/** One computer this daemon paired (TD-5015). Never a key or a code. Phones
+ *  get `host`/`port` null. */
+export interface MachineSummary {
+  id: string;
+  name: string;
+  host: string | null;
+  port: number | null;
+  status: MachineStatus;
+  last_seen: string | null;
+  paired_at: string;
+  /** The link reaches this daemon itself (machine_id equality): a self-pair. */
+  same_computer: boolean;
+  detail: string | null;
+}
+
+/** Reply to the machine verbs, also pushed to viewers on change (TD-5015). */
+export interface MachineList extends DaemonEvent {
+  type: "machine_list";
+  machines: MachineSummary[];
+}
+
+/** Reply to drain (TD-5023). Connection-scoped, seq=1. Session ids only.
+ *  `hold_until` is ISO 8601 UTC, or null when no hold is up. Not in
+ *  DaemonEventUnion: only the connection that sent drain gets one, and the
+ *  window never sends drain. */
+export interface DrainResult extends DaemonEvent {
+  type: "drain_result";
+  drained: boolean;
+  running: string[];
+  awaiting_approval: string[];
+  hold_until: string | null;
+}
+
+/** Reply to start_pairing (TD-5014). Connection-scoped, seq=1. The code lives
+ *  in the daemon's memory and the pairing dialog only; `qr_svg` is made by the
+ *  daemon and shown as an image, never as markup. */
+export interface PairingCode extends DaemonEvent {
+  type: "pairing_code";
+  code: string;
+  display_code: string;
+  host: string;
+  port: number;
+  desktop_name: string;
+  link: string;
+  qr_svg: string;
+  expires_at: string;
+}
+
+/** A phone redeemed the code (TD-5014). Sent to every loopback window, seq=1. */
+export interface PairingCompleted extends DaemonEvent {
+  type: "pairing_completed";
+  device: RemoteDeviceSummary;
 }
 
 export interface McpServerSummary {
@@ -1432,6 +1670,9 @@ export interface Error extends DaemonEvent {
   session_id?: string | null;
   code: string;
   message: string;
+  /** TD-5015: set when another computer sent this error with no session id;
+   *  `message` then starts "On <name>: ". Local-only stores ignore these. */
+  machine?: string | null;
 }
 
 /** A browser screenshot written to the session dir (TD-1710). Path, not bytes. */
@@ -1546,7 +1787,9 @@ export interface JobEntry {
   instruction: string;
   cadence: string | null;
   next_run: string | null;
-  deliver_to: "window" | "slack" | "ntfy";
+  deliver_to: "window" | "slack" | "ntfy" | "email";
+  /** One address when deliver_to is email (TD-3820). */
+  email_to?: string | null;
   paused: boolean;
   /** IANA zone the cadence is evaluated in. Absent or null is legacy UTC. */
   timezone?: string | null;
@@ -1563,6 +1806,8 @@ export interface JobEntry {
   /** Tries already used for the slot in progress. Above 0, a retry is waiting
    *  and the window does not notify until the slot finishes. */
   attempt?: number | null;
+  /** Seconds this job's turn may run. Absent or null uses `scheduler.max_run_seconds` (TD-3819). */
+  max_run?: number | null;
   /** Another job's id, started once after this one ends ok (TD-3817). Null means none. */
   then?: string | null;
   /** Local .ics that can block a regular slot (TD-3818). Null means none. */
@@ -1577,6 +1822,9 @@ export interface JobEntry {
   last_status: "ok" | "failed" | "missed" | "waiting" | "skipped" | null;
   last_summary: string | null;
   last_session_id: string | null;
+  /** Mail outcome of the last fire. Null unless that fire was email (TD-3820). */
+  last_delivery?: "ok" | "failed" | null;
+  last_delivery_error?: string | null;
   /** True while a turn for this job is in flight (TD-3809). Not stored. */
   running: boolean;
 }
@@ -1606,6 +1854,9 @@ export interface JobRunEntry {
   attempts?: number | null;
   /** Names the parent of a chained fire (TD-3817). Null on a slot and on Run now. */
   note?: string | null;
+  /** Mail outcome for this fire (TD-3820). Null unless the channel is email. */
+  delivery?: "ok" | "failed" | null;
+  delivery_error?: string | null;
 }
 
 /** Response to list_job_runs (TD-3811). Connection-scoped. Newest first. */
@@ -1688,7 +1939,8 @@ export interface JobDraftReply extends DaemonEvent {
   instruction?: string | null;
   cadence?: string | null;
   next_run?: string | null;
-  deliver_to?: "window" | "slack" | "ntfy" | null;
+  deliver_to?: "window" | "slack" | "ntfy" | "email" | null;
+  email_to?: string | null;
   paused?: boolean;
 }
 
@@ -1700,10 +1952,13 @@ export interface JobTemplateEntry {
   instruction: string;
   cadence: string | null;
   next_run: string | null;
-  deliver_to: "window" | "slack" | "ntfy";
+  deliver_to: "window" | "slack" | "ntfy" | "email";
+  email_to?: string | null;
   grace: number | null;
   retries: number;
   retry_delay: number | null;
+  /** Seconds, or null to use `scheduler.max_run_seconds` (TD-3819). */
+  max_run?: number | null;
   preset: string | null;
   engine: "native" | "grok" | null;
   workspace: string | null;
@@ -1732,6 +1987,14 @@ export interface Transcript extends DaemonEvent {
   text?: string;
   detail?: string;
   error?: string | null;
+}
+
+/** Reply to test_email (TD-3820). Connection-scoped. message never includes the password. */
+export interface EmailTestResult extends DaemonEvent {
+  type: "email_test_result";
+  ok?: boolean;
+  error_class?: string;
+  message?: string;
 }
 
 export type DaemonEventUnion =
@@ -1768,6 +2031,9 @@ export type DaemonEventUnion =
   | SessionList
   | PolicyRules
   | SetupState
+  | PairingCode
+  | PairingCompleted
+  | MachineList
   | ApiKeyValidated
   | DiagnosticsReport
   | UsageReport
@@ -1794,4 +2060,5 @@ export type DaemonEventUnion =
   | GrokPreview
   | GrokSessionList
   | GrokExtensions
-  | Transcript;
+  | Transcript
+  | EmailTestResult;

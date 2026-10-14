@@ -4611,8 +4611,9 @@ already takes (`session._redact_event` does not scrub assistant prose).
 The chat store ends the first-token wait on reasoning.
 
 **Notes:** the field name is from a live capture, not from documentation. Ollama emits
-`reasoning`; some OpenAI-compatible providers emit `reasoning_content`. Accept both and do not
-invent a third. This is not local-only plumbing — remote reasoning models reach the same
+`reasoning`; some OpenAI-compatible providers emit `reasoning_content`. Accept both. A third
+spelling, OpenRouter's `reasoning_details` array, is TD-1903 — do not flatten it into
+`content`. This is not local-only plumbing — remote reasoning models reach the same
 parser through OpenRouter.
 
 Do not conflate this with TD-1716. That was a twenty-minute "Whittling…" caused by WKWebView
@@ -4650,6 +4651,48 @@ clears the map (`onUnbind`) because ids restart at m1.
 measured throughput a 27B thinker will out-produce its own answer several times over, so
 rendering reasoning inline and unfolded would bury the reply — which is the failure mode this
 story exists to avoid, not a smaller version of the one TD-1901 fixes.
+
+---
+
+### TD-1903 — OpenRouter reasoning_details
+**Size:** 5 · **Depends on:** TD-1901
+
+**Bugfix.** TD-1901 accepted string `reasoning` / `reasoning_content` and
+said not to invent a third spelling. OpenRouter invented one:
+`delta.reasoning_details` (array). Desk dropped it, so a thinking API
+model produced no `assistant_reasoning`, then `empty_completion`. After
+tools, the next request must echo that array unmodified or the provider
+cannot continue the thought. Measured 2026-08-22 against
+`stealth/ox-alpha` on OpenRouter.
+
+**Acceptance criteria:**
+- [x] Stream chunks with `delta.reasoning_details` flatten `text` /
+      `summary` into `Delta.reasoning` so the UI and first-token watchdog
+      see thinking
+- [x] Encrypted-only details still count as a first token
+- [x] Accumulated `reasoning_details` are stored on the assistant
+      `ChatMessage` and serialized unmodified on the next request
+- [x] Persist/revive round-trips the array
+- [x] Provider `error.code` `"429"` (numeric status string) maps to
+      `rate_limited` — already true on the stack, which reads a numeric
+      code as a restated status; no TD-1903 code needed
+- [x] Scripted tests cover details-only chunks, split-index merge, and
+      echo-back on a tool-loop assistant message
+
+**Completed (2026-08-22, merged 2026-10-14):** `_parse_stream_chunk`
+accepts the OpenRouter array; the loop accumulates it and
+`_message_to_dict` echoes it, after TD-5142's one-system-message wire
+fix-up, which passes assistant messages through untouched.
+
+**Superseded at merge:** the branch also changed `desktop_screenshot` to
+return persist metadata instead of `png_base64`. TD-1729 had already
+solved that problem the other way: dispatch peels the PNG into a vision
+part. The old change would have left nothing to peel, so it was
+dropped. The saved path it wanted is now added to the tool text
+before the peel, next to width, height and mime.
+
+**Notes:** the plaintext scratchpad still must not enter
+`collected_content`. The array is not speech; it is provider state.
 
 ---
 
@@ -6426,6 +6469,101 @@ that once. The parser is internal. Class B entry in DECISIONS.md.
 
 Suite: 4073 passed / 8 skipped, ruff + `mypy --strict` clean over 181
 files, vitest 1452, svelte-check 721 files 0 errors 0 warnings.
+
+---
+
+### TD-3819 — Scheduled runs get a realistic, configurable time limit
+**Size:** 2 · **Depends on:** TD-3815
+
+**Acceptance criteria:**
+- [x] `scheduler.max_run_seconds` (default 900) replaces the 120 second
+      waiter for a scheduled turn. It is documented in
+      `docs/configuration.md` and shipped in `config.yaml`. A job may
+      set `max_run` as a duration phrase or seconds, from 1 to 60
+      minutes, and that limit wins. On an edit, omitted keeps it and
+      `""` clears it so the job uses the config. A template may carry it
+- [x] When the limit expires, the turn is cancelled and the receipt
+      says `stopped after N minutes (max run time)`. That reason is not
+      transient, so TD-3814 does not retry it
+- [x] `tst run` takes `--timeout` in seconds. The default base is
+      `scheduler.max_run_seconds`. The provider retry allowance is still
+      added when the config can be read
+- [x] The job form has a Max run time select: Default, 5, 10, 15, 30,
+      and 60 min
+
+Done (2026-09-29): a scheduled turn runs until its own limit, or until
+`scheduler.max_run_seconds` (15 minutes) when the job does not set one.
+Hitting the limit cancels the session and records a max-run stop, which
+is not retried. `tst run --timeout` replaces the base for one command
+and still leaves room for provider retries. The pane's select sends the
+same duration phrases grace already uses. Class B entry in DECISIONS.md.
+
+Suite: 4129 passed / 8 skipped, ruff + `mypy --strict` clean over 182
+files, vitest 1456, svelte-check 724 files 0 errors 0 warnings.
+
+---
+
+### TD-3820 — Email as a scheduled-job delivery channel
+**Size:** 3 · **Depends on:** TD-3801, TD-3802, TD-4707, TD-3807
+
+**Acceptance criteria:**
+- [x] `notify.email` sends over STARTTLS or implicit TLS with the stdlib.
+      The password lives only in the keychain account `tst-smtp-password`.
+      A send is refused when TLS is not established. Logs record the
+      recipient domain, never the password and never the message body
+- [x] A job may set `deliver_to` to `email` with one validated `email_to`.
+      The protocol, job edit, templates, and the Scheduled pane all carry it.
+      Deliver to → Email reveals the address field
+- [x] The message body is the assistant text after the last tool call, or
+      the full turn when there is no tool call. The subject is the first
+      60 characters of the instruction, an em dash, and the local date.
+      The message is plain text plus a minimal HTML rendering
+- [x] Settings → Email saves host, port, security, username, and from.
+      The password field writes the keychain. Send test email reports the
+      SMTP outcome. A failure shows the error class and message, with no
+      secret
+- [x] A failed send marks that run's delivery as failed on the job and in
+      history. The run's own ok or failed status stays what the turn did
+
+Done (2026-09-29): a scheduled job can mail its report. The body is the
+final assistant message, the password stays in the keychain, and a mail
+failure is a delivery failure rather than a change to the run's status.
+Settings can save the SMTP form and send a test. Class B entry in
+DECISIONS.md.
+
+Suite: 4157 passed / 8 skipped, ruff + `mypy --strict` clean over 186
+files, vitest 1460, svelte-check 727 files 0 errors 0 warnings.
+
+---
+
+### TD-3821 — Scheduled-job report emails look like a designed newsletter
+**Size:** 2 · **Depends on:** TD-3820
+
+**Acceptance criteria:**
+- [x] The report Markdown renders to email-safe HTML: headings,
+      paragraphs, bold and italic, links, bullet and numbered lists,
+      tables, inline code, code blocks, and blockquotes. Styles are
+      inline. The column is centred at max-width 680px, with a system
+      font, a header band (job title and local date), and a footer
+      `Sent by TST Desk · <job title> · ran <local time> on <preset>`
+- [x] Model output is escaped. Links are http or https only. Images,
+      scripts, style blocks, and event attributes in the report do not
+      become live HTML
+- [x] The message stays multipart/alternative. The plain part is the
+      same Markdown
+- [x] Settings → Send test email sends a short sample report through
+      the same renderer
+
+Done (2026-09-29): a scheduled report arrives as a one-column
+newsletter. The plain part is still the Markdown. The HTML escapes the
+model text, keeps http and https links, and drops images. The header
+is the same 60-character instruction label as the subject, and the
+footer names that label, the local time, and the preset. Send test
+email uses a short sample of the same layout. Class B entry in
+DECISIONS.md.
+
+Suite: 4178 passed / 8 skipped, ruff + `mypy --strict` clean over 189
+files, vitest 1460, svelte-check 727 files 0 errors 0 warnings.
 
 ---
 
@@ -8917,6 +9055,41 @@ DECISIONS.md.
 
 Suite: 3539 passed / 8 skipped, ruff + `mypy --strict` clean over 155
 files, vitest 1404, svelte-check 707 files 0 errors 0 warnings.
+
+---
+
+# Epic E50 — Android remote shell
+
+Filed 2026-10-03. Adam overrode the E49 line that a native phone app is out
+of scope. The first ship is a sideload APK, not Play Console. Prime
+directives still hold: no account, no relay, no `0.0.0.0`, no telemetry.
+
+---
+
+### TD-5001 — Android WebView shell
+**Size:** 8 · **Depends on:** TD-3701, TD-3602
+
+The phone is another viewer of the daemon. It bundles the existing static
+UI. It does not speak a new protocol.
+
+**Acceptance criteria:**
+- [x] The release APK contains the android-mode UI (`connect-src 'self' ws:`
+      and the Tailscale refusal string). The activity serves that UI from
+      `127.0.0.1` and the page policy refuses every other origin. Not
+      installed on a device in this session
+- [x] Attach accepts Tailscale CGNAT, Tailscale ULA, and `*.ts.net`, and
+      refuses unspecified, loopback, LAN, and public hosts. Desktop attach
+      and desktop CSP stay as they were
+- [x] No account, no hosted relay, no Play Services, no Safe Browsing, no
+      backup of app data. The APK is debug-signed for sideload
+- [x] `remote-connect` tests, CSP tests, shell unit tests, and
+      `test_android_shell` pass
+
+Done (2026-10-03): `android/` is a WebView shell. `vite build --mode android`
+writes `ui/build-android` (it does not replace the desktop `ui/build`).
+aapt's default ignore pattern drops `_app`; the shell replaces that pattern.
+The sideload APK is `android/app/build/outputs/apk/release/app-release.apk`
+(debug keystore, not a Play upload). Class B entry in DECISIONS.md.
 
 ---
 

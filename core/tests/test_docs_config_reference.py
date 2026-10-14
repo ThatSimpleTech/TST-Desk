@@ -55,6 +55,7 @@ from tstd.config import (
     ConfigError,
     CredentialConfig,
     DiscordNotifyConfig,
+    EmailNotifyConfig,
     EmbeddingsConfig,
     EngineConfig,
     GroundingConfig,
@@ -231,6 +232,7 @@ _SLACK_NOTIFY_FIELDS = frozenset(SlackNotifyConfig.model_fields)
 _NTFY_NOTIFY_FIELDS = frozenset(NtfyNotifyConfig.model_fields)
 _DISCORD_NOTIFY_FIELDS = frozenset(DiscordNotifyConfig.model_fields)
 _TELEGRAM_NOTIFY_FIELDS = frozenset(TelegramNotifyConfig.model_fields)
+_EMAIL_NOTIFY_FIELDS = frozenset(EmailNotifyConfig.model_fields)
 _SPEECH_FIELDS = frozenset(SpeechConfig.model_fields)
 _PRESET_FIELDS = frozenset(Preset.model_fields)
 _CREDENTIAL_FIELDS = frozenset(CredentialConfig.model_fields)
@@ -324,6 +326,12 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
                     _TELEGRAM_NOTIFY_FIELDS,
                     f"{where} notify.telegram",
                 )
+            if "email" in data["notify"]:
+                _check_keys(
+                    data["notify"]["email"],
+                    _EMAIL_NOTIFY_FIELDS,
+                    f"{where} notify.email",
+                )
         if "speech" in data:
             _check_keys(data["speech"], _SPEECH_FIELDS, f"{where} speech")
         if "autonomy" in data:
@@ -373,6 +381,7 @@ def test_every_config_key_is_documented() -> None:
         | _NTFY_NOTIFY_FIELDS
         | _DISCORD_NOTIFY_FIELDS
         | _TELEGRAM_NOTIFY_FIELDS
+        | _EMAIL_NOTIFY_FIELDS
         | _SPEECH_FIELDS
         | _PRESET_FIELDS
         | _CREDENTIAL_FIELDS

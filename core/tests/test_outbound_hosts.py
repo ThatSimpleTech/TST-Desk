@@ -115,6 +115,10 @@ _INTERPOLATED = "tstdinterpolated"
 
 _URL = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]*://[^\s'\"`<>()\[\],;]+")
 
+# The phone app's pairing link (TD-5014). It is drawn into a QR for the
+# phone to open; nothing in the daemon dials it, so it names no destination.
+_APP_LINK_SCHEMES = frozenset({"tstdesk"})
+
 
 def _string_literals(tree: ast.Module) -> list[tuple[int, str]]:
     """Every string literal in *tree*, f-strings with their holes filled.
@@ -151,6 +155,8 @@ def _literal_urls(path: Path) -> list[tuple[int, str, str]]:
                 host = urlsplit(url).hostname
             except ValueError:  # pragma: no cover - malformed literal
                 host = None
+            if urlsplit(url).scheme in _APP_LINK_SCHEMES:
+                continue
             if not host or _INTERPOLATED in host:
                 # No host, or a host that came from a variable: not a
                 # destination the source decided.
@@ -267,6 +273,10 @@ _OUTBOUND_CAPABLE = {
     ),
     "e2e_m10.py": "the M10 exit harness, a protocol client of our own loopback daemon",
     "cli.py": "tst run; dials only 127.0.0.1 from the daemon port file",
+    "cli_pairing.py": "tst pair / tst devices; dials only 127.0.0.1 from the daemon port file",
+    "cli_drain.py": "tst drain; dials only 127.0.0.1 from the daemon port file (TD-5023)",
+    "bridge_link.py": "dials only a paired computer's Tailscale address (TD-5015)",
+    "machine_pairing.py": "dials only a paired computer's Tailscale address (TD-5015)",
     "tools/web_search.py": "web_search; destinations are search.base_url + fallbacks from config",
     "autonomy/typesafe.py": (
         "the optional TypeSafe judgments connector (judgments.backend); destination is "
@@ -294,6 +304,7 @@ _OUTBOUND_CAPABLE = {
     "notify/telegram.py": (
         "telegram sendMessage; destination host is notify.telegram.host from config"
     ),
+    "notify/email.py": ("SMTP report delivery; destination host is notify.email.host from config"),
     "speech.py": ("hold-to-talk transcriptions; destination is speech.base_url from config"),
     "mcp/http.py": (
         "user-listed MCP HTTP client; destination is mcp.servers.<id>.url "

@@ -14,6 +14,7 @@ import {
 	shouldNotify,
 } from "./os-notify";
 import type { DaemonEventUnion, JobEntry } from "./protocol";
+import { nameOfMachine } from "./machines.svelte.js";
 
 export interface OsNotifyBridge {
 	isPermissionGranted(): Promise<boolean>;
@@ -178,7 +179,7 @@ export async function handleOsEvent(event: DaemonEventUnion): Promise<void> {
 /** Every notice this event is worth. A `job_list` may carry more than one. */
 function noticesFor(event: DaemonEventUnion): OsNotice[] {
 	if (event.type === "job_list") return trackScheduledRuns(event.jobs);
-	const one = noticeFor(event);
+	const one = noticeFor(event, nameOfMachine);
 	return one === null ? [] : [one];
 }
 

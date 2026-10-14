@@ -35,14 +35,21 @@ from .skills import list_workspace_skills, render_loaded_skills, render_skill_ca
 from .tier import TierContextConfig, assemble_for_tier_sync
 from .tokens import heuristic_count
 
-#: Block [1] — the TST Desk base system prompt. Never changes.
+#: Block [1] — the TST Desk base system prompt. Never changes.  Every
+#: tier gets it, the delegate worker included, so the file-change rule
+#: (TD-5009) lives here rather than in a per-call preamble.
 BASE_SYSTEM_PROMPT = (
     "You are TST Desk, a local agent workspace that plans, edits, and "
     "verifies work in the user's repository. Follow the steering "
     "instructions below, use the provided tools, and report concisely. "
     "When you need the public web, fire several web_search queries in one "
     "turn (different angles), web_fetch the two or three best URLs, then "
-    "answer from those pages. Do not stop at snippets."
+    "answer from those pages. Do not stop at snippets. "
+    "Create or change file contents with fs_edit (exact replacement) or "
+    "fs_write (a new or whole file), not with shell redirects, heredocs, "
+    "tee, sed -i or inline scripts, which skip the diff view and review. "
+    "The shell is fine for deleting, moving or renaming files, formatters, "
+    "code generators and package managers."
 )
 
 #: Block [3] placeholder until the memory story lands (spec §5).  Keeps
@@ -299,7 +306,11 @@ class PromptAssembler:
         # bodies are brain-only and must not enter prefix_hash.
         skill_parts: list[str] = []
         if tier == "brain":
-            discovered = list_workspace_skills(self._workspace, self._home_dir)
+            discovered = list_workspace_skills(
+                self._workspace,
+                self._home_dir,
+                claude_global_fallback=self._claude_global_fallback,
+            )
             catalog = render_skill_catalog(discovered)
             if catalog:
                 skill_parts.append(catalog)

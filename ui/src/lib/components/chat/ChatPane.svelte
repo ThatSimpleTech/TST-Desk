@@ -12,8 +12,10 @@
 	import {
 		cancelTurn,
 		chat,
+		continueTurn,
 		editQueuedMessage,
 		initChat,
+		keepDraft,
 		removeQueuedMessage,
 		retryLastUserMessage,
 		sendQueuedNow,
@@ -22,7 +24,9 @@
 	} from "../../chat-store.svelte.js";
 	import { loadCommands, startCommands } from "../../commands.svelte.js";
 	import { ws } from "../../connection-status.svelte.js";
-	import { session, workspaceName } from "../../session-status.svelte.js";
+	import { localWorkspacePath, session, workspaceName } from "../../session-status.svelte.js";
+	import { machineNameFor, sessionMachineUp } from "../../machines.svelte.js";
+	import { unreachableNotice } from "../../machines";
 	import { settings } from "../../settings.svelte.js";
 	import { grok } from "../../grok.svelte.js";
 	import { canSend, formatTurnDuration, showCancel } from "../../chat-store";
@@ -46,9 +50,15 @@
 	});
 
 	$effect(() => {
-		const path = session.workspacePath;
+		// Slash commands are read from this computer's disk (TD-5015).
+		const path = localWorkspacePath();
 		if (path !== null) loadCommands(path);
 	});
+
+	// Another computer's session waits for that computer (TD-5015). Rows and
+	// the transcript stay readable; only sending is held.
+	const machineUp = $derived(sessionMachineUp(chat.sessionId));
+	const machineName = $derived(machineNameFor(chat.sessionId));
 
 	$effect(() => {
 		bindWakeup(session.sessionId);
@@ -58,9 +68,13 @@
 	// hour rolls over mid-session.
 	const greeting = greetingForHour(new Date().getHours());
 
-	// The draft lives here so chips insert text without touching the
-	// composer's internals — insert, never auto-send.
-	let draft = $state("");
+	// The draft lives in the chat store so chips insert text without touching
+	// the composer's internals — insert, never auto-send — and so it can be
+	// kept per session through a restart (TD-5019).
+	$effect(() => {
+		keepDraft();
+	});
+	const sendable = $derived(canSend(chat.sessionId, ws.state, machineUp));
 
 	// Working-line clock (TD-1713): ticks only while a first-token wait is in
 	// flight, so the verb rotation and elapsed readout cost nothing at rest.
@@ -112,7 +126,7 @@
 				{:else}
 					<div class="chips" role="group" aria-label="Suggestions">
 						{#each SUGGESTIONS as suggestion (suggestion)}
-							<button class="chip" type="button" onclick={() => (draft = suggestion)}>
+							<button class="chip" type="button" onclick={() => (chat.draft = suggestion)}>
 								{suggestion}
 							</button>
 						{/each}
@@ -139,6 +153,13 @@
 				{#if waitElapsedMs >= 2000}
 					<span class="elapsed">for {formatTurnDuration(waitElapsedMs / 1000)}</span>
 				{/if}
+			{:else if chat.lastTurnError === "interrupted_by_restart"}
+				<!-- TD-5019: the daemon sealed a turn a restart cut off. Continue
+				     is an ordinary message the user sends; nothing resumes alone. -->
+				<span class="cut">Cut off by a restart</span>
+				<button class="chip continue" type="button" disabled={!sendable} onclick={continueTurn}>
+					Continue
+				</button>
 			{:else if chat.lastTurnDuration !== null}
 				<span class="duration">Worked for {formatTurnDuration(chat.lastTurnDuration)}</span>
 			{/if}
@@ -152,10 +173,13 @@
 			onedit={editQueuedMessage}
 			onremove={removeQueuedMessage}
 		/>
+		{#if !machineUp && machineName !== null}
+			<p class="machine-notice" role="status">{unreachableNotice(machineName)}</p>
+		{/if}
 		<Composer
-			disabled={!canSend(chat.sessionId, ws.state)}
+			disabled={!sendable}
 			running={showCancel(chat.turnState) || chat.awaitingFirstToken}
-			bind:value={draft}
+			bind:value={chat.draft}
 			limits={session.attachmentLimits}
 			allowImages={session.vision}
 			onsubmit={(text, attachments) => {
@@ -241,9 +265,25 @@
 			border-color var(--transition-fast);
 	}
 
-	.chip:hover {
+	.chip:hover:not(:disabled) {
 		color: var(--color-ink);
 		border-color: var(--color-ink-muted);
+	}
+
+	/* Continue sits in the fixed-height turn-status slot, so it is a chip
+	   with less vertical padding. */
+	.continue {
+		margin-left: var(--space-3);
+		padding: var(--space-1) var(--space-3);
+	}
+
+	.continue:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.cut {
+		color: var(--color-ink-secondary);
 	}
 
 	/* Reserved height: shimmer and duration swap inside the slot, so neither
@@ -257,6 +297,13 @@
 	}
 
 	.duration {
+		color: var(--color-ink-muted);
+	}
+
+	.machine-notice {
+		margin: 0;
+		padding: var(--space-2) var(--space-4);
+		font-size: var(--text-sm);
 		color: var(--color-ink-muted);
 	}
 

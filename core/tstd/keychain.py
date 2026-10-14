@@ -17,6 +17,7 @@ The service name is always ``com.thatsimpletech.tstdesk``.
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
 from abc import ABC, abstractmethod
 
@@ -497,6 +498,92 @@ async def delete_telegram_bot_url() -> None:
     """Delete the Telegram bot sendMessage URL from the OS keychain."""
     backend = _get_backend()
     await backend.delete_secret(TELEGRAM_BOT_ACCOUNT)
+
+
+# ── Paired computers (TD-5015) ─────────────────────────────────────────
+# One key per computer this hub paired, under ``tst-machine.<mch>``. The
+# ``.`` keeps it out of the credential namespace (``tst-<id>``, whose ids
+# allow neither ``.`` nor ``_``). computers.yaml is the index.
+
+MACHINE_KEY_ACCOUNT_PREFIX = "tst-machine."
+_MCH_RE = re.compile(r"^mch_[0-9a-f]{12}$")
+
+
+def machine_key_account(mch: str) -> str:
+    """``tst-machine.<mch>``. Refuses anything that is not a machine handle."""
+    if not _MCH_RE.match(mch):
+        raise KeychainError("not a paired computer's handle")
+    return f"{MACHINE_KEY_ACCOUNT_PREFIX}{mch}"
+
+
+def _machine_account(mch: str) -> str:
+    return machine_key_account(mch)
+
+
+async def store_machine_key(mch: str, key: str) -> None:
+    """Store the key another computer minted for this hub.
+
+    Raises:
+        KeychainError: If the value is not a printable one-line value, or
+            storage fails (KeychainLockedError when the keychain is locked).
+            The message never includes the key.
+    """
+    _reject_api_key_value(key)
+    backend = _get_backend()
+    await backend.set_secret(_machine_account(mch), key)
+
+
+async def get_machine_key(mch: str) -> str:
+    """The key for one paired computer.
+
+    Raises:
+        KeychainError: If it is missing, empty, or cannot be read.
+    """
+    backend = _get_backend()
+    account = _machine_account(mch)
+    return _require_api_key_value(await backend.get_secret(account), account)
+
+
+async def delete_machine_key(mch: str) -> None:
+    """Delete one paired computer's key.
+
+    Raises:
+        KeychainError: If deletion fails.
+    """
+    backend = _get_backend()
+    await backend.delete_secret(_machine_account(mch))
+
+
+# ── SMTP password (TD-3820) ────────────────────────────────────────────
+
+SMTP_PASSWORD_ACCOUNT = "tst-smtp-password"
+
+
+async def get_smtp_password() -> str:
+    """Retrieve the SMTP password from the OS keychain.
+
+    Stored under account ``tst-smtp-password``. Callers must not write it
+    to config, logs, or the audit database.
+    """
+    backend = _get_backend()
+    return await backend.get_secret(SMTP_PASSWORD_ACCOUNT)
+
+
+async def store_smtp_password(password: str) -> None:
+    """Store the SMTP password. Uses the TD-4838 ``set_secret`` path."""
+    _reject_api_key_value(password)
+    backend = _get_backend()
+    await backend.set_secret(SMTP_PASSWORD_ACCOUNT, password)
+
+
+async def smtp_password_is_stored() -> bool:
+    """Whether the SMTP password exists, without reading it.
+
+    A full read prompts when the item's ACL trusts only an older binary
+    (TD-4838). Settings only needs presence.
+    """
+    backend = _get_backend()
+    return await backend.has_secret(SMTP_PASSWORD_ACCOUNT)
 
 
 def has_keychain_backend() -> bool:

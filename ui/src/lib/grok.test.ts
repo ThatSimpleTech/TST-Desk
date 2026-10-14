@@ -175,6 +175,11 @@ describe("matchingGrokCommands", () => {
 	it("returns the advertised list on a bare slash", () => {
 		expect(matchingGrokCommands("/").map((c) => c.name)).toEqual(["compact", "commit", "plan"]);
 	});
+
+	it("offers none for another computer's session (TD-5015)", () => {
+		expect(matchingGrokCommands("/", "s1")).toHaveLength(3);
+		expect(matchingGrokCommands("/", "r1:mch_0123456789ab")).toEqual([]);
+	});
 });
 
 describe("client verbs", () => {
@@ -199,6 +204,14 @@ describe("client verbs", () => {
 		expect(mocks.sent).toEqual([
 			{ type: "approve_grok_plan", session_id: "s1", comment: "go" },
 		]);
+	});
+
+	it("sends no Grok command or plan approval for another computer's session (TD-5015)", () => {
+		const remote = "r1:mch_0123456789ab";
+		expect(runGrokCommand(remote, "compact")).toBe(false);
+		expect(approveGrokPlan(remote, "go")).toBe(false);
+		expect(mocks.sent).toEqual([]);
+		expect(runGrokCommand("s1", "compact")).toBe(true);
 	});
 
 	it("sends open_in_terminal", () => {

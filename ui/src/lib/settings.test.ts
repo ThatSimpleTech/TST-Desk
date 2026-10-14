@@ -301,6 +301,20 @@ describe("policy section", () => {
 		expect(mocks.sent).toEqual([]);
 	});
 
+	it("shows no local rules under another computer's session, even a late reply (TD-5015)", () => {
+		startSettings();
+		loadRules("s-1");
+		emit({ type: "policy_rules", seq: 2, rules: [{ tool: "fs_read", args: "**", effect: "auto" }] });
+		mocks.sent = [];
+
+		loadRules("r1:mch_0123456789ab");
+		expect(settings.rules).toEqual([]);
+		emit({ type: "policy_rules", seq: 3, rules: [{ tool: "fs_read", args: "**", effect: "auto" }] });
+		expect(settings.rules).toEqual([]);
+		revokeRule("fs_read", "**");
+		expect(mocks.sent).toEqual([]);
+	});
+
 	it("reads skip-all from setup_state", () => {
 		startSettings();
 		emit(setupState({ skip_all_approvals: true }));

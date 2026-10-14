@@ -120,6 +120,13 @@ const TURN_ERROR_COPY: Record<string, NoticeSpec> = {
 		body: "This turn does not fit the model's context window in config.yaml. Switch the tier to a larger-context model, or start a fresh session.",
 	},
 	server_error: { severity: "toast", title: "Provider error", body: "The provider returned an internal error (500). Resend in a moment." },
+	// TD-5142. The model server could not turn this conversation into a
+	// prompt; the same messages fail the same way, so resending is no fix.
+	template_error: {
+		severity: "banner",
+		title: "Model can't read this conversation",
+		body: "The model server's chat template refused this conversation, so resending won't help. Start a fresh session, or switch the tier to another model in config.yaml.",
+	},
 	bad_gateway: { severity: "toast", title: "Provider unreachable", body: "Bad gateway from the provider (502). Resend in a moment." },
 	service_unavailable: {
 		severity: "toast",
@@ -174,6 +181,14 @@ const TURN_ERROR_COPY: Record<string, NoticeSpec> = {
 		severity: "toast",
 		title: "Response interrupted",
 		body: "The provider's stream dropped mid-turn. Resend to retry the turn.",
+	},
+	// TD-5018: TST Desk stopped mid-turn and the daemon closed the turn when
+	// it next started. A toast: Continue sits under the conversation
+	// (TD-5019), and nothing else is blocked.
+	interrupted_by_restart: {
+		severity: "toast",
+		title: "Turn cut off by a restart",
+		body: "TST Desk restarted before this reply finished. Click Continue to pick it up; the conversation is preserved.",
 	},
 };
 
@@ -248,6 +263,13 @@ export function sessionStateCopy(state: string, reason: string | null): NoticeSp
 
 // ── Daemon error events ──────────────────────────────────────────────────
 
+/** Copy for an error another computer sent with no session (TD-5015). The
+ *  hub already prefixed "On <name>: ", so the message is shown as is; a
+ *  toast, because nothing on this computer is broken. */
+export function machineErrorCopy(message: string): NoticeSpec {
+	return { severity: "toast", title: "Another computer reported a problem", body: message };
+}
+
 /** Copy for a daemon `error` event: code + daemon-authored message (already human). */
 export function daemonErrorCopy(code: string, message: string): NoticeSpec {
 	if (code === "keychain_locked") {
@@ -268,6 +290,16 @@ export function daemonErrorCopy(code: string, message: string): NoticeSpec {
 			severity: "toast",
 			title: "That session has ended",
 			body: message,
+		};
+	}
+	if (code === "daemon_draining") {
+		// TD-5023: a deploy asked the daemon to finish its turns before a
+		// restart, and it holds new ones until then. The text is back in the
+		// composer (TD-5019), so a toast: nothing is lost, only delayed.
+		return {
+			severity: "toast",
+			title: "Message not sent",
+			body: "TST Desk is restarting — send it again in a few seconds.",
 		};
 	}
 	if (code === "session_busy") {

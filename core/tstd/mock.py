@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import dataclass
-from typing import Literal
+from dataclasses import dataclass, field
+from typing import Any, Literal
 
 from .provider import (
     ChatCompletionRequest,
@@ -62,9 +62,15 @@ class Script:
             it — the shape Ollama actually sends for a reasoning model
             (TD-1901).  Empty by default, so every existing script is a
             non-reasoning provider and stays byte-identical.
+        reasoning_details: OpenRouter array echoed on the next assistant
+            message after tools (TD-1903). Empty by default.
         tool_batch: Parallel tool calls for the ``tool_call`` kind, as
             ``(name, arguments JSON)`` pairs. Empty keeps the single
             ``tool_name`` / ``tool_arguments`` call, id ``call_mock_1``.
+        finish_reason: Replaces the scripted finish reason on the last
+            chunk and on the non-streamed response. ``"length"`` with
+            truncated ``tool_arguments`` is a reply cut off at
+            ``max_tokens`` (TD-5008). ``None`` keeps the default.
     """
 
     kind: Literal[
@@ -72,6 +78,7 @@ class Script:
     ]
     content: str = ""
     reasoning: str = ""
+    reasoning_details: list[dict[str, Any]] = field(default_factory=list)
     tool_name: str = ""
     tool_arguments: str = ""
     status_code: int = 0
@@ -83,6 +90,7 @@ class Script:
     completion_tokens: int = DEFAULT_COMPLETION_TOKENS
     cached_tokens: int | None = DEFAULT_CACHED_TOKENS
     tool_batch: tuple[tuple[str, str], ...] = ()
+    finish_reason: str | None = None
 
     @property
     def usage(self) -> Usage:
@@ -255,7 +263,7 @@ class MockProvider:
             id=f"mock-{model}",
             model=model,
             message=message,
-            finish_reason=finish_reason,
+            finish_reason=script.finish_reason or finish_reason,
             usage=script.usage,
         )
 
@@ -320,6 +328,18 @@ class MockProvider:
             return
 
         if script.kind == "tool_call":
+            if script.reasoning_details:
+                # OpenRouter streams its thinking ahead of the calls; the
+                # loop must keep it for the echo on the next request (TD-1903).
+                await _maybe_delay()
+                yield StreamChunk(
+                    id=chunk_id,
+                    delta=Delta(
+                        content="",
+                        reasoning_details=list(script.reasoning_details),
+                    ),
+                    finish_reason=None,
+                )
             if script.tool_batch:
                 # One chunk per call, id + name + arguments together, so a
                 # parallel batch round-trips without a second delta.
@@ -379,7 +399,7 @@ class MockProvider:
             yield StreamChunk(
                 id=chunk_id,
                 delta=Delta(),
-                finish_reason="tool_calls",
+                finish_reason=script.finish_reason or "tool_calls",
                 usage=script.usage,
             )
             return
@@ -389,6 +409,14 @@ class MockProvider:
         # since the falsy check the loop performs treats both alike but
         # only the empty string is what the real provider sends.
         reasoning_words = script.reasoning.split(" ") if script.reasoning else []
+        details = list(script.reasoning_details) if script.reasoning_details else None
+        if details and not reasoning_words:
+            await _maybe_delay()
+            yield StreamChunk(
+                id=chunk_id,
+                delta=Delta(content="", reasoning_details=details),
+                finish_reason=None,
+            )
         for i, word in enumerate(reasoning_words):
             await _maybe_delay()
             yield StreamChunk(
@@ -396,7 +424,11 @@ class MockProvider:
                 # Separators ride on the following chunk, as they do for
                 # content below, so concatenating the deltas reproduces the
                 # script exactly rather than running the words together.
-                delta=Delta(content="", reasoning=word if i == 0 else f" {word}"),
+                delta=Delta(
+                    content="",
+                    reasoning=word if i == 0 else f" {word}",
+                    reasoning_details=details if i == 0 else None,
+                ),
                 finish_reason=None,
             )
 
@@ -421,7 +453,7 @@ class MockProvider:
         yield StreamChunk(
             id=chunk_id,
             delta=Delta(),
-            finish_reason="stop",
+            finish_reason=script.finish_reason or "stop",
             usage=script.usage,
         )
 

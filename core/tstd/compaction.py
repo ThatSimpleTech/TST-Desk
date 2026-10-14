@@ -16,14 +16,20 @@ compaction will not drop them.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from .config import TierConfig
+from .context.calibration import scale_tokens
 from .context.tokens import TokenCounter
-from .provider import ChatMessage, content_as_text
+from .provider import ChatMessage, ToolDefinition, content_as_text, tool_definition_payload
 
 # Trigger compaction at this fraction of the usable window.
 THRESHOLD_FRACTION = 0.8
+# Chat templates wrap every message in role markers (``<|im_start|>role``
+# … ``<|im_end|>``) that carry no content of ours (TD-5007).
+MESSAGE_OVERHEAD_TOKENS = 4
 # Whole user turns kept verbatim after compaction; older ones summarize.
 KEEP_USER_TURNS = 2
 # Summary shape: each dropped message contributes at most this many
@@ -48,20 +54,43 @@ def budget_threshold(tier: TierConfig) -> int:
     return int((tier.context_window - tier.max_output_tokens) * THRESHOLD_FRACTION)
 
 
-def estimate_tokens(messages: list[ChatMessage], counter: TokenCounter) -> tuple[int, str]:
-    """Sum per-message token estimates; returns (total, counter method)."""
+def estimate_tokens(
+    messages: list[ChatMessage],
+    counter: TokenCounter,
+    tools: Sequence[ToolDefinition] | None = None,
+) -> tuple[int, str]:
+    """Estimate the prompt a request with *messages* and *tools* sends.
+
+    Counts message text and tool-call arguments, each tool definition as
+    the request body serializes it, and ``MESSAGE_OVERHEAD_TOKENS`` per
+    message (TD-5007). Tool definitions are a fixed few thousand tokens
+    on every call; leaving them out let a 32k tier overflow while the
+    estimate said it fit. Echoed ``reasoning_details`` (TD-1903) go out
+    on every later call too, so they count as the body serializes them.
+    Returns (total, counter method).
+    """
     total = 0
     methods: set[str] = set()
+
+    def add(text: str) -> None:
+        nonlocal total
+        if text:
+            count = counter.count(text)
+            total += count.count
+            methods.add(count.method)
+
     for message in messages:
         text = content_as_text(message.content)
         if message.tool_calls:
             text += "".join(
                 tc.function.arguments for tc in message.tool_calls if tc.function is not None
             )
-        if text:
-            count = counter.count(text)
-            total += count.count
-            methods.add(count.method)
+        if message.reasoning_details:
+            text += json.dumps(message.reasoning_details)
+        add(text)
+    for tool in tools or ():
+        add(json.dumps(tool_definition_payload(tool)))
+    total += scale_tokens(counter, MESSAGE_OVERHEAD_TOKENS * len(messages))
     return total, "+".join(sorted(methods))
 
 
@@ -113,14 +142,19 @@ def _render_summary(dropped: list[ChatMessage]) -> str:
 
 
 def maybe_compact(
-    messages: list[ChatMessage], tier: TierConfig, counter: TokenCounter
+    messages: list[ChatMessage],
+    tier: TierConfig,
+    counter: TokenCounter,
+    tools: Sequence[ToolDefinition] | None = None,
 ) -> tuple[list[ChatMessage], CompactionStats | None]:
     """Compact older turns when the estimated prompt exceeds the tier's
-    budget. Returns the (possibly unchanged) message list and stats when
-    compaction happened (None otherwise)."""
+    budget. *tools* are the definitions the next request sends; they
+    count against the budget but are never compacted. Returns the
+    (possibly unchanged) message list and stats when compaction happened
+    (None otherwise)."""
     if not messages:
         return messages, None
-    tokens_before, method = estimate_tokens(messages, counter)
+    tokens_before, method = estimate_tokens(messages, counter, tools)
     if tokens_before <= budget_threshold(tier):
         return messages, None
     cut = find_compaction_point(messages)
@@ -130,7 +164,7 @@ def maybe_compact(
         return messages, None
     summary = ChatMessage(role="system", content=_render_summary(messages[1:cut]))
     compacted = [messages[0], summary, *messages[cut:]]
-    tokens_after, _ = estimate_tokens(compacted, counter)
+    tokens_after, _ = estimate_tokens(compacted, counter, tools)
     return compacted, CompactionStats(
         dropped_messages=cut - 1,
         kept_messages=len(compacted),

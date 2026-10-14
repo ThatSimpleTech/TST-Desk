@@ -7946,6 +7946,43 @@ asked for.
 
 ---
 
+## 2026-08-22 — TD-1903: echo OpenRouter `reasoning_details` (Class B)
+
+**Decision:** `ChatMessage` and `Delta` carry an opaque
+`reasoning_details` list. The stream parser flattens `text` / `summary`
+into `Delta.reasoning` for the existing UI and watchdog. The loop
+accumulates the raw array and puts it on the assistant message of the
+next request. Persist writes it through the same `_message_to_dict`
+path. The plaintext scratchpad still never enters `collected_content`.
+
+**Rationale:** TD-1901 said accept `reasoning` or `reasoning_content`
+and do not invent a third spelling. OpenRouter standardized a third:
+`reasoning_details`. Live `stealth/ox-alpha` streamed that array and
+nothing Desk parsed, so a 200 became `empty_completion`. Tool loops
+require the array echoed unmodified. This is the OpenRouter agent
+dialect, not a local-only quirk.
+
+**Alternative rejected:** Sending `reasoning: {enabled: true}` and
+hoping a string field appears. The array is what the next request
+must carry. Also rejected: stuffing the flattened string into
+`content` — that is the TD-1901 defect.
+
+**Merged 2026-10-14 onto the TD-5016 stack.** Two other parts of the
+original branch were dropped as superseded. The numeric `error.code`
+429 mapping: the stack already treats a numeric provider code as a
+restated status and maps it from `_STATUS_CODE_MAP` (and reads an error
+envelope's embedded status), so `_canonical_error_code` would have been
+a second copy. The "screenshot returns path, not base64" reversal:
+TD-1729 sends the pixels as a vision part, which is the fix that entry
+wanted. Taking the old change would have left no `png_base64` for
+dispatch to peel, and the model would have lost the picture. The one
+part still missing was the saved path: TD-1729's tool text kept only
+size and mime. `desktop_screenshot` now adds the session-relative
+`path` from `persist_screen_frame` before dispatch peels the PNG, as
+`browser_screenshot` already did.
+
+---
+
 ## 2026-08-24 — TD-2001: X11 backend, AT-SPI is not the primary path (Class B)
 
 **Decision:** `mcp/tst-cu-mcp` on Linux is a Windows-shaped raw X11
@@ -11814,6 +11851,175 @@ on a leader the OS refused to kill. `Popen.poll` as the only death
 check on Linux, which races the watcher's `waitpid`. Treating
 `ChildProcessError` as an unreaped exit.
 
+## TD-3819 — Scheduled runs get a configurable time limit
+
+**Decision:** `scheduler.max_run_seconds` (default 900, greater than 0
+and at most 3600) is the base wait for a scheduled turn and for
+`tst run`. A job may set `max_run`, stored as seconds from 60 to 3600,
+as a duration phrase or an int. None means the config. On an edit,
+omitted keeps the stored limit and `""` clears it, the same as grace.
+Templates may store it. Built-ins leave it unset. The budget rides on
+the task-local `ScheduledPin` so `TurnFn` stays `(workspace, instruction)`.
+
+When the budget expires, the runner cancels the session through the
+registry and records `stopped after N minutes (max run time)` with
+error code `max_run`. The receipt rounds the budget up to whole
+minutes, minimum 1. The retry table marks that code and that phrase
+non-transient, ahead of the "timed out" rule. A provider `timeout`
+stays transient. The old `timed out waiting for turn_complete` receipt
+is no longer what the runner writes.
+
+`tst run --timeout` replaces the base for one command. The provider
+retry allowance is still added when the config can be read. An
+unreadable config falls back to 900 with no retry add-on. The flag
+must be finite and greater than 0. There is no protocol version bump:
+`max_run` is an additive field on `SaveJob`, `JobEntry`,
+`SaveJobTemplate`, and `JobTemplateEntry`. Run now uses the same limit
+because it is the same turn. It still does not retry.
+
+**Rationale:** A research job makes many tool calls and needs several
+minutes. Stopping the waiter at 120 seconds left the turn running and
+recorded a timeout, which the retry table then tried again. Retrying a
+job that is simply too long burns the slot the same way. Cancelling
+the session frees it. One config key covers scheduled runs and
+`tst run`, and a per-job override covers the long ones without raising
+the default for everything else.
+
+**Rejected:** Leaving the turn running after the waiter gives up.
+Treating the stop as a transient timeout. A separate CLI config key.
+Widening `TurnFn`. A protocol version bump. A config minimum of 60
+seconds, which would make a short test budget impossible; the per-job
+bound stays 1-60 minutes, and a config under a minute still says
+"1 minute" on the receipt.
+
+## TD-3820 — Email as a scheduled-job delivery channel
+
+**Decision:** `notify.email` is a seventh notify child (`enabled`, `host`,
+`port`, `security` of `starttls` or `tls`, `username`, `from_address`,
+`timeout_seconds` default 30). The password is the keychain account
+`tst-smtp-password`, written through `backend.set_secret`. `smtp-password`
+is a reserved credential id so a named key cannot collide with that
+account. A `password` key in yaml is dropped and a static warning is
+logged; the value is not in the warning. An empty password on save
+leaves the stored item alone.
+
+`send` raises `EmailNotifyError` instead of swallowing, so the scheduler
+can stamp delivery. Slack, ntfy, Discord, and Telegram stay swallow-on-failure.
+TLS is required before AUTH. Production uses `ssl.create_default_context`.
+`ssl_context` on `send` is a test seam, not a config key. The log records
+the recipient domain and the error class. It does not record the password,
+the message body, or the SMTP text.
+
+Jobs have no name. The subject is the first 60 characters of the
+instruction after collapsing whitespace, an em dash, and the local
+calendar date. The date is the job's zone when it is set and known,
+otherwise the machine zone. An empty instruction is "Scheduled job".
+The body is the assistant text after the last tool call. An empty
+suffix, or a turn with no tool call, uses the full assistant text. The
+receipt stays the capped summary. The message is multipart: plain text
+plus a small HTML rendering of headings, lists, and links, with no new
+dependency.
+
+`deliver` stays `(channel, summary)`. A context variable bound by the
+daemon routes email. When it is unset, email falls through to `deliver`
+so existing fakes keep working. Delivery status (`ok` or `failed`, plus
+an error) is separate from the run's `last_status`. `record_run` clears
+it. The stamp rewrites the history line matched by `started_at`, then
+updates the job row. A failed send does not stop a follow-on chain.
+`setup_state.email` carries the form and `password_stored`. It never
+carries the password. There is no protocol version bump.
+
+**Rationale:** A daily research job needs the report in a mailbox, and
+the report is the last answer, not the "let me search" narration or the
+2,000-character receipt. The password cannot live beside the host in
+yaml. Raising from email, and only email, is what lets a failed send
+show up as delivery failed while the run itself stays ok or failed on
+its own terms.
+
+**Rejected:** A new dependency for Markdown. Putting the password in
+config or on `setup_state`. Logging the SMTP dialogue. Widening
+`deliver` or `TurnFn`. Treating a mail failure as a failed run. Using
+the template name as the subject. Bumping the protocol version.
+
+## TD-3821 — Scheduled-job report emails look like a designed newsletter
+
+**Decision:** The HTML part is an internal Markdown subset
+(`email_markdown` for blocks, `email_inline` for emphasis, code, and
+links). `markdown` and `mistune` are both BSD and would have been
+allowed. A renderer we control is how raw HTML stays text.
+
+The message stays multipart/alternative. The plain part is the report
+Markdown. The HTML part is one centred column, max-width 680px, with
+inline styles only. Gmail drops a `<style>` block. Colours are the
+`PALETTE` dict in `email_markdown.py` and nowhere else. The link blue
+is a mid value so it stays readable on the white card and after Gmail's
+dark theme inverts that card. The header is the job title and the local
+date. The footer is `Sent by TST Desk · <title> · ran <local time> on
+<preset>`.
+
+Jobs still have no display name. The title is the same 60-character
+instruction label as the subject. The footer preset is the job's pin,
+or the active preset when the job has none. If both are blank the
+renderer says `current`.
+
+Model text is escaped. Links are http or https only, so `javascript:`,
+`data:`, and `mailto:` render as the label with no anchor. Images,
+including Markdown images and a raw `<img>`, are not emitted. Nothing
+in the report becomes a style block, a class, or an event attribute.
+
+Send test email sends a short sample report through that renderer. The
+subject and the header are `TST Desk test`. The footer names the active
+preset. The sample's one link is `http://localhost/sample`, because a
+remote host literal in the source is refused. `send` takes optional `title`, `when`, `timezone_name`, and
+`preset`. Omitted, the title is "Scheduled job", the time is now, and
+the preset is the active one. No protocol change. An SMTP error is
+redacted against both the plain body and the HTML document.
+
+**Rationale:** A daily digest has to be readable in a mail client, and
+the text is model output. Escaping it in our own parser is the whole
+point of not taking a library that might pass a tag through. The title
+matches the subject because there is still no job name.
+
+**Rejected:** Adding `markdown` or `mistune`. Allowing `mailto:` links.
+Rendering https images from cited sources. A `<style>` block with a
+dark-mode query. Using the template name as the title. Bumping the
+protocol version.
+
+## TD-5001 — Android shell is a loopback WebView (Class B)
+
+2026-10-03. Adam overrode the E49 exclusion of a native phone app and
+chose a sideload APK rather than Play Console.
+
+**Decision:** The phone app bundles the existing static UI in a WebView.
+`vite build --mode android` is a separate CSP and attach policy from the
+desktop bundle. Desktop `connect-src` stays `ws://127.0.0.1:*` plus Tauri
+IPC. The android bundle's `connect-src` is `'self' ws:` because the
+daemon address is chosen at runtime. The attach parser, not the CSP,
+limits that socket to Tailscale CGNAT `100.64.0.0/10`, ULA
+`fd7a:115c:a1e0::/48`, or a `*.ts.net` name.
+
+**Decision:** The WebView loads `http://127.0.0.1:<port>/`, served by a
+socket bound only to that address inside the phone. That origin is a
+secure context, and so is `https://appassets.androidplatform.net`. Either
+one refuses the daemon's cleartext `ws://` unless mixed content is
+allowed. The shell sets `MIXED_CONTENT_ALWAYS_ALLOW`. The android CSP
+(`script-src 'self'`, `connect-src 'self' ws:`) is what confines the
+page. The WebView refuses navigation to any other origin. Cleartext is
+permitted in the network security config because a domain rule cannot
+name the CGNAT range. Safe Browsing is off. `allowBackup` is off. There
+is no Play Services dependency. The release APK is signed with the debug
+keystore so it can be installed without Play Console. That keystore is
+not an upload key.
+
+**Rationale:** TD-3701 already made the UI a protocol client outside
+Tauri. A second native client would reimplement the transcript, the
+composer, and approvals. The loopback page is what makes the existing
+client able to open `ws://` at all.
+
+**Rejected:** Widening the desktop CSP. Embedding Tailscale. A hosted
+relay. Loading `file://` or `https://appassets.androidplatform.net`
+(mixed-content block on `ws://`). Play Console packaging in this story.
+
 ## TD-5002 — Interactive progress guard (Class B)
 
 2026-10-03. Three live interactive sessions had been calling tools for
@@ -11871,3 +12077,1025 @@ is terminal, and the pane unbinds. Reusing `cancel` without the state
 change. Other callers, including shutdown and an explicit session
 cancel, still need it to end the loop. Showing a failure toast for a
 stop the user asked for.
+
+## TD-5004 — Nested steering has a budget, and home has no nested walk (Class B)
+
+2026-10-08. A phone session opened on the home folder (`~`) walked every
+repo and worktree under it and loaded 73 `AGENTS.md`/`CLAUDE.md` files,
+about 310 KB, into the system prompt. Every turn overflowed the model
+(792,560 tokens against a 65,536 window). Nested steering is not scoped
+by what the session touches (§4.1), so the cost was paid before the
+first word.
+
+**Decision:** Three guards, all in steering assembly. (1) When the
+workspace is the home folder itself, the resolver skips the nested walk;
+global, root and rules still load, and Doctor carries
+`HOME_NESTED_SKIPPED`. (2) A nested file whose text matches one already
+loaded is inactive with `NESTED_DUPLICATE_WARNING`. (3) Nested files
+share `NESTED_TOKEN_BUDGET` (8,000 heuristic tokens), kept in discovery
+order, so the shallowest stay. Files past it are inactive with
+`NESTED_BUDGET_WARNING`, and Doctor names them. The decision runs before
+import processing, so a file left out never raises an import approval.
+Root, rules and global files are never capped; the line-limit rule that
+a long file still loads in full is unchanged.
+
+**Rationale:** The overflow was silent until the provider refused, and
+the UI could only say "start a fresh session". The guards keep a
+reasonable repo exactly as before (TST Desk itself: one file) and turn
+the pathological tree into a named, fixable notice. A constant rather
+than a config key: nobody has asked to tune it, and the fix for hitting
+it is opening the right folder.
+
+**Rejected:** Refusing to open a session on home. A plain chat there is
+legitimate. Capping by file count. One 300-line file and thirty 3-line
+files are not the same cost. Dropping deepest-first. The shallowest
+files are the closest to the folder the user opened. Sizing the budget
+from the active tier's context window. Steering is assembled once for
+several tiers, and a fixed number is predictable in the guide.
+
+## TD-5005 — The phone keeps its connection (Class B; reverses part of TD-3602 and TD-3701)
+
+2026-10-08. Adam, in chat, after hearing the trade-off: "Yes fix it". The
+phone asked for the address and the token on every launch, and both
+changed on every daemon start, so a saved value would have died at the
+next restart anyway.
+
+**Decision:** Four parts. (1) The listener port is remembered as
+`last_port` in `remote-attach.yaml` while remote attach is bound and is
+reused on the next start; `remote.port` pins one instead. A busy port
+falls back to a random one rather than failing the start. (2)
+`remote-token` survives shutdown and is reused if it is a well-formed
+64-hex token; a damaged file is replaced. It changes only on the new
+`rotate_remote_token` verb (Settings "New token"), which also drops every
+remote client, and turning remote attach off still deletes it. The token
+never crosses the wire; `setup_state` gains `remote_port` only. (3) The
+Android shell injects `TstDeskNative`, which seals the attach JSON with a
+non-exportable Android Keystore AES-256-GCM key into private
+SharedPreferences (`allowBackup` is already off). The UI uses it when
+present and `sessionStorage` otherwise, so a browser tab keeps TD-3701.
+(4) A handshake `auth_failed` (no session id, before `connected`) stops
+the retry loop, clears the saved token and shows the form with the
+address filled in. Phone Settings has "Forget this computer".
+
+**Rationale:** A token that rotates on restart protected against a stale
+token lingering after its daemon died. With a 0600 file on the daemon
+side, an explicit rotate, and revoke-on-off, the remaining exposure is
+the phone itself, which Adam accepted: an unlocked phone on the tailnet
+can drive this daemon without pasting anything. The Keystore keeps the
+token out of plain storage and out of backups. Platform APIs only, so no
+new dependency.
+
+**Rejected:** `androidx.security` EncryptedSharedPreferences (a new
+dependency, and deprecated upstream). WebView `localStorage` (plain text
+on disk). A deep link or QR pairing flow (a bigger surface than a paste
+done once). Persisting the token in `config.yaml` (§2: no secret in a
+config file). Rotating on a timer (it would silently break the saved
+phone, which is the bug being fixed).
+
+## TD-5006 — The workspace map gets a share of the brain window (Class B)
+
+2026-10-08, same day as TD-5004. With nested steering capped, the next
+home-folder session still sent a 1,515,768-character system prompt. The
+map was the cause: the non-git walk listed 20,020 files, 19,879 under
+`.cache`, and the caps were 20,000 entries and 5 MB, sizes no model
+window takes.
+
+**Decision:** `manifest_config_for_window` sets the map's byte cap to 15%
+of the brain tier's `context_window` (4 chars per token), floor 2,000
+bytes, ceiling the old 5 MB. The loop and the instruction inspector both
+build their `PromptAssembler` with it, from the session's own config
+snapshot. The byte cut now ends on a whole line before the marker. The
+non-git walk skips hidden directories; hidden files stay. Git repos are
+unchanged except for the cap.
+
+**Rationale:** The map is the most expendable block in the brain prompt:
+the agent can list and read files with tools. Tying it to the window
+makes the same code right for a 32k local model and a 1M hosted one.
+Hidden directories in a non-repo folder are tool state, not the user's
+work. Real home folder after the change: 20,380 characters (~5,100
+tokens, 15% of the 32,768 ezer-forge window). TST Desk itself: ~7,700
+tokens in total.
+
+**Rejected:** No map on the home folder. A map of home's visible top
+level is still useful, and the budget already bounds it. A fixed byte
+cap. Wrong for every window but one. Respecting `.gitignore`-style
+files outside git. A new parser for a case the hidden-directory rule
+already covers.
+
+**Revised by TD-5013 (2026-10-09):** the 4 chars per token is now the
+brain endpoint's learned `4 / ratio` once the calibration store has
+one, taken when the loop builds its assembler.
+
+## TD-5007 — Token estimates count tools and learn the provider's ratio (Class B)
+
+2026-10-09. On EZER's ezer-forge tier the 4 chars/token estimate ran
+1.55-1.6x under `usage.prompt_tokens`, and it never counted the tool
+definitions at all (about 2,900 tokens for a 20-tool registry, sent
+on every call). Compaction and in-turn elision aimed at a budget the
+real prompt had already passed, and the 32,768-token slot overflowed.
+
+**Decision:** `estimate_tokens` takes the request's tools and counts
+each definition as `to_dict` serializes it, plus 4 tokens of template
+overhead per message. A new `CalibratedTokenCounter` scales the base
+counter by a ratio learned per `(base_url, slug)`: `prompt_tokens /
+raw estimate`, where the raw estimate is the base counter's count of
+exactly the messages and tools about to be sent. The first report
+replaces the seed; later ones fold in with an EMA (alpha 0.3). Each
+sample is clamped to 0.5-3.0. A raw estimate under 256 tokens, a
+missing or zero `prompt_tokens`, and any request carrying a non-text
+part (a screenshot is billed in tokens the estimate cannot see) teach
+nothing. Only the main turn call observes, through an `on_usage`
+callback on `_stream_and_parse`; the progress check does not. The
+store is process-wide, injectable through
+`agent_loop(calibration_store=)` and clearable, and not persisted. The
+tool-result cap and the elision excess convert tokens back to
+characters at `4 / ratio`. The ratio is on the `turn start` log line
+as `token_ratio`. In the test suite an autouse fixture swaps in a
+store that never learns, because MockProvider reports a canned 1,200
+prompt tokens whatever it was sent; calibration tests inject a real
+store.
+
+**Rationale:** A ratio measured against the endpoint's own tokenizer
+fixes code, JSON and non-English text alike, with no tokenizer
+download per model. Observing the raw estimate rather than the
+calibrated one keeps the ratio from compounding call after call. One
+store per daemon is right because sessions talk to the same endpoints.
+A delegate child does not estimate at all: it inherits only the
+parent's tool-result cap. Not persisting keeps a stale ratio from
+surviving a model or template change behind the same slug: after a
+restart the first call runs at ratio 1.0 plus tool accounting, which
+already removes the largest error, and the context-overflow retry
+(TD-4839) still backstops it.
+
+**Rejected:** A fixed per-model multiplier in config. It is a number
+the user cannot measure and it drifts with the template. A real
+tokenizer per slug. Heavy, and wrong for any gateway that rewrites
+the prompt. Calibrating from the progress check. It resends the
+turn's prompt plus one question, so it measures nothing new and would
+move the EMA twice for one turn. Persisting ratios to disk. See above.
+
+**Revised by TD-5013 (2026-10-09):** the store is now persisted, to
+`token-calibration.json` in the daemon's data dir, so a restart no
+longer starts at 1.0. Entries not updated for 30 days are dropped at
+load, which answers the stale-ratio concern above.
+
+**Known gap:** The workspace manifest budget (15% of the brain window,
+TD-5006) still converts at a flat 4 characters per token. It is fixed
+once when the loop starts, before any ratio is learned. At EZER's 1.6
+the manifest is about 24% of a 32k window in real tokens. The
+calibrated estimate counts it correctly, so nothing overflows, but it
+is part of the prompt elision cannot shrink.
+
+**Closed by TD-5013 (2026-10-09):** the manifest budget converts at
+the brain endpoint's learned ratio, which survives a restart.
+
+## TD-5008 — Tiers send max_tokens and carry an extra_body (Class B)
+
+2026-10-09. `max_output_tokens` was a compaction reservation only: the
+turn, the progress check and the delegate worker sent no `max_tokens`,
+so a reasoning model behind EZER's LiteLLM ran to the server's own
+default, thinking included. There was also no way to pass a server's
+own request fields, such as llama.cpp's `chat_template_kwargs`, which
+is how EZER's model is told to think less.
+
+**Decision:** `_stream_and_parse` (the turn and the progress check)
+and the delegate worker send `max_tokens = max_output_tokens` from
+their tier. `TierConfig` gains `extra_body: dict | None`, which fills
+in fields those requests left unset, and the same for
+`_worker_completion`. That one callable serves the classifier, DoD
+polls and worker-backed judgment calls, and all of them keep its
+`max_tokens=8` and `temperature=0.0`: a field the caller set always
+wins. `extra_body` may not set `model`, `messages`, `tools`,
+`tool_choice`, `stream`, `stream_options`, `max_tokens` or
+`max_completion_tokens`; a load error names every clash and says what
+to use instead. Its values must survive `json.dumps(allow_nan=False)`,
+so an unquoted YAML date is a load error that names the field rather
+than a failure on every request. The settings writers edit single
+lines, so a slug, credential or active-preset save leaves the block as
+written; the tier is not mirrored in the protocol, so nothing else
+needed to carry it. Memory distillation, the supervisor and the
+validator review already sent `max_tokens` and do not take
+`extra_body` yet.
+
+**Rationale:** The cap the budget reserves for the answer should be
+the cap the server applies, or the reservation is fiction in one
+direction or the other. A free-form map is the honest shape for
+server-specific knobs: the names belong to the server's docs, not to
+ours, and any typed field we invented would lag them. Filling in
+rather than overriding keeps each call site's explicit choices: the
+classifier's verdict has to be deterministic whatever temperature the
+worker tier's turns run at. Reserved keys are refused rather than
+ignored because the loop sets them on some requests and not others,
+so the same line would apply sometimes and be dropped silently the
+rest of the time.
+
+**A reply cut at the cap.** With `max_tokens` sent, a long reply stops
+with `finish_reason: "length"`. `_stream_and_parse` now returns the
+last finish reason. Cut text is kept, and a warning names the tier,
+model and cap. A tool call whose arguments do not parse as a JSON
+object is not dispatched (nothing runs, so nothing bypasses the
+classifier), and is not replayed as sent: invalid JSON in history can
+break a chat template. It goes back in the assistant message with `{}`
+as its arguments, answered by a tool message that names the cap and
+says to split large writes (fs_write a skeleton, then fs_edit). The
+turn goes on, so the model can retry smaller. Complete calls in the
+same batch still run. The delegate worker does the same from the
+non-streamed response's `finish_reason`. The helpers are in
+`output_cap.py`.
+
+**Rejected:** Typed fields per known server (`reasoning_effort`,
+`top_k`). Every server spells them differently. Merging `extra_body`
+last, as first built. A `temperature` on the worker tier then replaced
+the classifier's 0.0, and its verdicts are cached per tool and
+arguments. Letting `extra_body` override `max_tokens`. Two places to
+set one number, and the compaction budget would no longer match the
+cap. Raising the classifier's 8 tokens in this story. Its cost and
+latency budget is a separate decision. Ending the turn on a cut tool
+call. The model can fix it by sending less, and that is cheaper than a
+new user message. Telling the model through a user message. A user
+message is a turn boundary for compaction and elision. A secret filter
+on `extra_body`. The docs and the shipped comment say never to put a
+key there, and the prime directive already forbids secrets in config.
+
+**Known gap:** On a worker that reasons before it answers, 8 tokens
+end inside the thinking. The reply content is empty, the parse fails,
+the judgment fails closed to Class B (an approval prompt), and that
+result is cached for the same tool and arguments. A DoD poll reads the
+same empty reply as no verdict, so a prose item never goes green.
+`extra_body` with low reasoning effort narrows this but does not
+remove it; a server-side switch that turns thinking off, or a larger
+classifier cap, does. TD-5012 closes this: `verdict_extra_body` turns
+the thinking off on the verdict calls only.
+
+## TD-5010 — In-turn elision aims below the budget (Class B)
+
+2026-10-09. In-turn elision (TD-4839) shrank the turn's tool results
+until the prompt fit the compaction budget, so it landed a few tokens
+under it. The next tool round added a small result, the prompt was
+over again, and the largest earlier result was rewritten. Every
+rewrite changes the prompt prefix, so llama.cpp on EZER threw away its
+prefix cache and re-read the prompt from the rewritten result on, once
+per tool round of a long tool turn.
+
+**Decision:** `fit_inflight_turn` still triggers only when the prompt
+is over the budget, but then elides to `ELIDE_TARGET_FRACTION` (0.7)
+of it. The results always keep at least the gap's share (30% of the
+budget) above the floor: the target is `max(0.7 budget, floor + 0.3
+budget)`, capped at the budget, where the floor is the prompt's
+estimate with every in-flight result cut to 1,000 characters. At a
+floor of 40% or less the target is 70%; at 70% or more it is the
+budget, as before. Everything else stays: largest result first,
+absorbing the whole excess, the 1,000-character keep floor, the stuck
+set, the pass limit, and the overflow retry's half budget (which gets
+the same rule). The excess converts to whole base tokens before it
+becomes characters, and a result this call already cut is cut again
+before another is touched, so a calibrated ratio's rounding never
+opens a second result. The loop and the docs say so.
+
+**Rationale:** A gap between trigger and target is the ordinary fix
+for a threshold that flaps. 30% of a 32,768-token tier's budget is
+about 6,900 tokens, room for several capped results before the
+history is touched again; between those rewrites the prefix is stable
+and the server's cache holds. Eliding more of one big result costs
+less than re-reading 20,000 tokens of prompt on every call, and the
+note in the elided result already tells the model how to re-read it.
+The gap is only worth having when the results can give it up. On a
+32k window the system prompt, the tool definitions and the turn
+compaction keeps verbatim can fill 80% of the budget alone. Aiming at
+70% there cut every result, the one the model just asked for
+included, to the floor, still missed, and sent the model re-reading.
+
+**Rejected:** Never re-eliding a result once elided. A turn that keeps
+reading would then overflow the window. Eliding only the newest
+results. The newest is usually what the model asked for last and is
+about to use. A config knob for the fraction. No user can pick it
+better than a constant, and a test pins 0.7. A hard switch to the
+budget once 70% is out of reach. Just below the switch it still cuts
+every result to the floor; the ramp has no such edge.
+
+## TD-5009 — File changes go through fs_edit and fs_write (Class B)
+
+2026-10-09. Agents changed files with `sed -i`, redirects and heredocs.
+Those writes never reach the diff view: the Files and Work panes read
+only `tool_result.diff`, and the dispatcher builds a diff, a checkpoint
+commit and progress-guard credit only for a tool with `path_fields`.
+Shell has none, so a shell edit is invisible to review.
+
+**Decision:** (1) `BASE_SYSTEM_PROMPT` ends with two static sentences:
+create or change file contents with `fs_edit` or `fs_write`, not shell
+redirects, heredocs, `tee`, `sed -i` or inline scripts; the shell is
+fine for deleting, moving or renaming, formatters, code generators and
+package managers. A rule against every shell write could not be
+followed (`rm`, `git mv`, `ruff format`, `npm install` all write). It
+lives in block [1], so every tier gets it, the delegate worker
+included, and the cache prefix stays byte-stable. The `fs_edit`,
+`fs_write` and `shell` descriptions say when to use each. (2) After a
+shell command runs, `writes_workspace_files` reads its text and, on a
+likely workspace write, `run_shell` adds a one-line note right under
+`exit code: N`. The note says the command "looks like" it changed
+files, points the next change to `fs_edit` / `fs_write`, and says the
+write need not be redone: the check reads text, so the write may have
+failed, and a literal model must not resend a whole file through
+`fs_write` (double the content tokens in a 65k slot). Covered: `>`,
+`>>`, `&>` (not fd dups, not `/dev`, `nul` / `$null`, `$TMPDIR` or
+`${TMPDIR:-...}`, a name assigned from `mktemp`, a `.log` capture,
+`.git/`, or paths outside the workspace such as `/tmp` or `~`),
+`sed -i` / `--in-place`, `perl -i`, `gawk -i inplace`, `tee FILE`,
+`dd of=`, `python -c` / `node -e` and code an interpreter reads from a
+heredoc (`python3 - <<EOF`, `cat <<EOF | python3`) that opens a file
+for writing, those programs under `sudo`, `env`, `timeout`, `nice`,
+`xargs` (their option values such as `env -u NAME` are skipped) or
+`find -exec`, and all of it inside `bash -c` / `sh -c` or a heredoc fed
+to a shell (three levels deep at most). `[[ a > b ]]`, `(( ))`, quoted
+`>`, input redirects (`<`, `<<`, `<<<`, `<&`, `<>`: their word is read,
+never written, and is not an argument of `tee` or `sed`) and heredoc
+bodies do not count. The cwd follows `cd` and `pushd` into a heredoc's
+opening line, stays inside a `( ... )` subshell, and becomes unknown
+after `popd` or `cd X || ...` (relative paths then count). In an
+autonomous session the container mount (`/workspace`) is a workspace
+root. Heredocs are found by the tokenizer, so `'<<EOF'` in quotes opens
+nothing. Inline code is read at most 2,000 characters per call and
+100,000 per piece of code; code that needs more counts as a write, so
+pathological input costs milliseconds, not minutes, on the event loop.
+Real audit data: 4 of 833 shell calls flagged, all four
+`cat > file <<EOF` workspace writes.
+
+**Rationale:** The prompt rule prevents the habit; the note corrects it
+in the same turn, where the model is already reading the result. Pure
+text work on the command string, after the run, so the nudge adds no
+process and cannot change what runs. Under the exit code, a result cut
+to the window's cap still keeps it. A false nudge costs one line; a
+missed one costs a change nobody reviewed, so an expansion the parser
+cannot follow (`"$OUT"`) counts as inside.
+
+**Rejected:** Refusing or asking on a detected write (a heuristic must
+not change whether a command runs; policy already asks on every shell
+call, TD-4805). Diffing the workspace before and after every shell call
+(a git process per call, and wrong on a dirty tree). A per-call reminder
+in the delegate preamble (block [1] already reaches the worker; a second
+copy is drift). `shlex` (it cannot see operators or keep quote state for
+`>`). Covering `cp`, `mv`, `patch`, `git apply` and `curl -o` (tool
+moves, not hand edits; left for a later story). Flagging `.log` captures
+(`fs_write` cannot produce a test log, so the note would be wrong
+advice). Skipping the note on a non-zero exit (`pytest > out.txt`
+fails and still writes). Running the check in a thread (bounding the
+scan fixes the cost; a thread would hide it).
+
+## TD-5011 — Claude Code skills load (Class B; revises part of TD-4502)
+
+2026-10-09. TD-4502 allowed only `description` and `whenToUse` and
+skipped a skill with any other key. Every Claude Code skill has `name`
+and none has `whenToUse`, so none loaded: 0 of the 14 skills in
+`~/.claude/skills` reached the catalog for TST Desk or the home folder,
+and 0 of 251 `SKILL.md` files under `~/.claude` parsed.
+
+**Decision:** `description` is the one required key. `whenToUse` is
+optional and falls back to `description`; a non-string value still
+skips. `name` is accepted: a non-string skips, and when it differs from
+the directory the directory name is kept and a warning logs both.
+`license`, `version`, `metadata`, `compatibility`, `argument-hint` and
+`allowed-tools` are ignored. `disable-model-invocation: false` and
+`user-invocable: true` (the defaults) are ignored; any other value
+skips. `model`, `tools`, `disallowed-tools`, `hooks`, `context`, `agent`
+and unknown keys still skip, with the key logged. The catalog line
+drops "(when to use: ...)" when it would repeat the description. Of the
+14 skills in `~/.claude/skills`, all 14 parse and 13 can load:
+`my-writing-style` is 4,089 tokens, over the 4,000-token body cap, so
+`load_skill` and `/name` refuse it. 246 of 251 files under `~/.claude`
+parse.
+
+**Decision:** `~/.claude/skills/` is read only when
+`steering.claude_global_fallback` is true, the key TD-4845 put on
+`~/.claude/CLAUDE.md` (default false). A workspace's own
+`.claude/skills/` stays on, as workspace and nested `CLAUDE.md` do; when
+the workspace is the home folder, `~/.claude/skills/` is that
+workspace's tree and loads without the key. Same reason as TD-4845:
+Claude Code's global files are Claude Code's, and their cost lands on
+every brain prompt. Measured on EZER for the TST-Desk workspace: the
+13-entry catalog is 3,550 characters, 888 heuristic tokens (about
+1,200 real at the 1.36x text ratio), most of it YouTube skills a coding
+session never uses, on a 65k forge slot that already overflows.
+`load_skill` and `/name` read the same key from the session's config.
+
+**Decision:** A skill over the body cap is left out of the catalog, and
+its path is logged once per process: `load_skill` would refuse it every
+time, and each try costs the model a turn. `/name` still answers with
+the over-budget refusal. The cap stays 4,000. Every other skip or
+name-mismatch warning is also logged once per file, not on every
+prompt.
+
+**Decision:** A loaded skill's block names its directory, in tilde form
+for a user-global skill (`~/.claude/skills/yt-edit`, TD-1104: no
+absolute home) and workspace-relative otherwise, with "relative paths in
+this skill are relative to it". Six of the 13 bodies run a sibling
+script by bare name (`python3 chapters.py`), and the shell starts in
+the workspace. The fs tools still refuse paths outside the workspace;
+the shell reaches the skill's files. Without the line those skills load
+partial, which TD-4502 forbids.
+
+**Rationale:** TD-4502 refused extra keys "so a partial skill cannot
+load". Labels change nothing about what a skill does, so ignoring them
+loads the whole skill. `allowed-tools` pre-approves tools; ignoring a
+grant is the strict direction, since the skill's calls go through this
+workspace's policy as usual. The directory is what `/name`,
+`load_skill` and the tree merge key on, so a `name` that disagrees
+cannot win without two names for one skill. Keys that limit who may
+invoke a skill, restrict its tools, switch its model or attach hooks
+would be silently dropped promises, which is exactly a partial skill.
+
+**Rejected:** Ignoring every unknown key (a restriction would be
+dropped without notice). Honoring `disable-model-invocation` by hiding
+the skill from the catalog while keeping `/name` (a new invocation
+mode; 2 of 251 files use it). Using `name` over the directory (two
+names for one skill, and `/name` would stop matching the folder).
+Mapping `allowed-tools` onto policy rules (a skill would widen
+permissions just by being loaded). A separate key for skills (one key
+already says "Claude Code's global files"). Truncating catalog
+descriptions to fit a budget (the gate removes the cost where it
+hurt). Raising the body cap for one skill. Skipping skills whose folder
+holds other files (the directory line makes them whole).
+
+## TD-5012 — Verdict calls can turn the worker's thinking off (Class B)
+
+2026-10-09. The worker's one-word verdict calls (the tool-call
+classifier, DoD polls and worker-backed judgment calls) all go through
+`_worker_completion` with `max_tokens=8` and `temperature=0`. On EZER
+the worker is ezer-forge: Qwen Flash-Next on llama.cpp behind LiteLLM.
+With `chat_template_kwargs.reasoning_effort: low` in `extra_body`, the 8
+tokens ended inside the thinking: content `''` and `finish_reason:
+length`. The classifier failed closed to Class B and prose DoD items
+never went green (TD-5008's known gap). Sending
+`chat_template_kwargs.enable_thinking: false` returned `A` in 2 tokens,
+also through LiteLLM.
+
+**Decision:** `TierConfig` gains `verdict_extra_body: dict | None`. The
+`extra_body` validators now cover both fields, so the same reserved
+request keys are refused and values must be plain JSON; the load error
+names the field that broke the rule. `TierConfig.verdict_extras()` is
+the one helper every verdict path uses. With no `verdict_extra_body` it
+returns `extra_body` itself, so the request is byte-for-byte what
+TD-5008 sent. Otherwise `merge_extra_body` builds a new dict: nested
+maps merge, `verdict_extra_body` wins a leaf, and neither input changes.
+The result still only fills in, so `max_tokens=8` and `temperature=0.0`
+stand. `_worker_completion` is the only live verdict path: the
+classifier connector, the judgment backend, the actuation verifier's
+fallback and the DoD poller all take it. Unchanged: the turn, the
+progress check, the delegate worker, memory distillation (it sends no
+extras), the validator review, the supervisor check, the daemon's
+`max_tokens=1` key probe, the grounding client, the e2e harnesses and
+the judgment eval recordings. On the brain or validator tier the key
+loads and is never sent.
+
+**Decision:** A verdict that comes back with empty content and
+`finish_reason: "length"` logs one warning per `(base_url, model)` per
+process. It names the worker tier and `verdict_extra_body` and says the
+model probably spent the cap thinking. Verdicts run on every ambiguous
+tool call and every DoD poll, so a warning per call would flood the log.
+The `base_url` is the host the call went to (`resolve_base_url`), so a
+bound credential's host wins over the tier URL (TD-1718). When
+`verdict_extra_body` is already set, the warning says the server seems
+to ignore the switch and to check its spelling, not to set the key.
+
+**Rationale:** Thinking off is right for a one-letter answer and wrong
+for the turn and a delegate, which want their low-effort thinking. So
+the switch is scoped to the verdict calls, not the tier. Merging rather
+than replacing keeps one place for what the server needs on every call,
+such as a `top_k`, and lets the verdict map say only what differs. One
+helper means a new verdict path cannot skip the merge. Without the
+warning the failure looks like a judgment (an approval prompt, a red
+DoD item), not a config gap.
+
+**Rejected:** Turning thinking off in the worker's `extra_body`. It
+reaches delegates and worker turns too. Raising the 8-token cap. The
+thinking has no fixed length, so no cap is sure to be enough, and a
+larger one adds latency to every ambiguous tool call; it stays a
+separate decision. A typed `thinking: false` field. Every server spells
+the switch differently (TD-5008). A shallow merge. A verdict
+`chat_template_kwargs` would replace the whole map and drop
+`reasoning_effort`. Refusing the key on the brain and validator tiers.
+A tier block is often copied between tiers, and the key is inert where
+nothing reads it. A warning on every empty verdict. See above.
+
+**Known gap:** The warning only sees an empty reply. A server that puts
+its thinking in `content` (a `<think>` block) returns text at the cap,
+the parse still fails closed, and nothing is logged. The 2-token answer
+was measured by hand against ezer-forge; the tests run on MockProvider.
+
+## TD-5013 — Learned token ratios survive a restart and size the workspace map (Class B)
+
+2026-10-09. TD-5007 kept the learned ratios in memory, so after every
+daemon restart the first call was estimated at ratio 1.0. On EZER the
+real ratio is about 1.17, so that call ran about 15% under. The
+workspace map (TD-5006) was sized once at loop start at a flat 4
+characters per token, before any ratio was known; TD-5007 left that as
+a known gap.
+
+**Decision:** `CalibrationStore.enable_persistence(path)` loads a file
+and from then on rewrites it whenever an observation moves a ratio, or
+finds that ratio's saved `updated_at` a day old (`STAMP_REFRESH`).
+The daemon calls it once in `run()`, before sessions are restored,
+with `token-calibration.json` in its data dir. A store built without
+it, which is every store the tests build, never touches disk. The file
+is `{"version": 1, "ratios": [{"base_url", "model", "ratio",
+"updated_at"}]}`, `updated_at` in ISO-8601 UTC. A loaded ratio is a
+measurement: the next report moves it by the EMA instead of replacing
+it. A ratio already in memory wins over the file's. A load leaves out,
+with one log line and no exception, an unreadable or non-JSON file, a
+version other than 1, a malformed entry, a ratio outside 0.5-3.0 and
+an entry not updated for 30 days. An integer ratio too large for a
+float is malformed. Anything else the loader did not foresee is caught
+in `enable_persistence` and logged as an unusable file, so a bad file
+cannot stop the daemon starting. A missing file is silent. A key
+written twice keeps its newest entry. The save is a same-folder temp
+file plus `os.replace`, with no fsync, and catches everything: a
+failure is logged once per store and the ratio stays in memory. Two
+daemons on one data dir: the last writer wins.
+
+**Decision:** `manifest_config_for_window` takes `chars_per_token`
+(default 4). `brain_manifest_config(config, store)` in `loop.py`
+passes the brain endpoint's `4 / ratio`, keyed by
+`calibration_key(tier)`, which the turn's token counter now uses too,
+so the two cannot key one endpoint two ways. The loop and the
+instruction inspector both call it, with the session's own preset
+snapshot when it has one (TD-1721) and the daemon's config otherwise,
+which is what the turn start and the inspector already used. The loop
+takes it once, when it builds its assembler. A brain tier whose slug is still unresolved (a
+local server with no `slug`, discovered on the first turn, TD-1805)
+has no key, so that loop's map is flat.
+
+**Decision:** In the test suite, an in-process daemon enables
+persistence on the per-test store from TD-5007's autouse fixture. That
+store never learns, so it never saves, and HOME already points at a
+throwaway folder. The fixture's teardown now also fails any test that
+left the daemon-wide store pointed into the real user data dir. That
+path is worked out when conftest is imported, without calling
+`user_data_dir()`: on Linux it renames a leftover
+`com.thatsimpletech.tstdesk` folder, so both Linux names are guarded
+instead.
+
+**Rationale:** TD-5007 did not persist because a stale ratio could
+outlive a model or template change behind the same slug. The EMA
+already handles a change while the endpoint is in use: at alpha 0.3,
+three reports move the ratio two thirds of the way. The 30-day cutoff
+covers an endpoint nobody used for a month. A ratio that has settled,
+or sits at a clamp bound, stops moving, so the daily stamp refresh is
+what keeps an endpoint in daily use from looking unused. Against that, every
+restart cost a mis-estimated first call. The file is a cache, so the
+worst a bad one can do is what a missing one does. No fsync, because a
+torn file loads as corrupt and is relearned, and a turn should not
+wait on the disk. Sizing the map once per loop keeps the prompt prefix
+stable: a map that resized as the EMA moved would change the prefix on
+every call and throw away a local server's prompt cache (TD-5010).
+
+**Rejected:** Saving on a timer or at shutdown. A crash would lose
+what the file is there to keep, and the write is a few hundred bytes.
+Saving on every observation. It is one write per model call to keep a
+stamp exact to the second, when the cutoff only needs it to the day.
+A config key for the file name or the age. Nobody can pick them better
+than a constant. Resizing the map on every turn. See the prefix cache
+above. Seeding ratios from config. Same reason as TD-5007's rejected
+per-model multiplier.
+
+**Known gap:** The instruction inspector sizes the map at the ratio
+the store holds now; the loop sized it when it started. Once the EMA
+has moved, a truncated map in the inspector can end a few lines away
+from the one the model got. A session whose brain slug is discovered
+on its first turn keeps a flat map until the next session starts. A
+session whose preset is switched while idle (TD-1721) keeps the map
+sized for the brain it started on. The window half of that predates
+TD-5013.
+
+## TD-5014 — Pair a phone with a code; each device keeps its own key (Class B; reverses part of TD-5005)
+
+2026-10-14. Adam, in chat: "How can I systematically get the information
+to set up the mobile app? Asking you is not a good way... it needs to
+connect automatically. Once it's set up, it should be remembered... it
+could have a dedicated port to that phone... But it needs to be
+remembered because this is not working." The phone last reached EZER on
+2026-10-08 at 21:10Z, with no refusal logged since, so the phone itself
+had lost its saved computer. Setting it up again meant reading the
+`remote-token` file, which is what he asked not to have to do.
+
+**Decision:** Pairing replaces the paste. Settings → Phones and devices →
+"Pair a phone" (or `tst pair` in a terminal) shows a QR code, an 8-character
+code and the address. The phone scans it in the app, opens the
+`tstdesk://pair` link, or takes the code typed. Its first frame on the
+Tailscale listener is `pair` instead of `hello`. A good code mints that
+device its own 256-bit key, returned once in `pair_ok`; the phone saves it
+in the Keystore vault and reconnects with `hello`. The code is Crockford
+base32 (40 bits), lives only in daemon memory, expires after 10 minutes, is
+single use, and five wrong tries burn it. Keys are stored as sha256 only,
+in `remote-devices.yaml` (0600, atomic), with name, paired and last-seen
+times. Settings lists each device, live connected or not, and Remove drops
+just that device's key and sockets. The phone's "Forget this computer"
+removes its own entry, and re-pairing sends the old key so it replaces its
+own entry instead of piling up duplicates. The new verbs are loopback
+only, except that self-removal. Devices outlive remote attach being
+turned off; the legacy `remote-token` keeps working and still rotates
+alone. The listener port is reused across restarts even when remote attach
+starts off.
+
+Remembering, on the phone: the vault drops its blob only when the blob
+cannot authenticate, never on a busy Keystore; the Keystore key is
+regenerated only when it does not exist; a save that fails discards the
+key and tries once more, and a save that still fails is shown. The shell's
+local page port is remembered, so WebView storage survives launches. A
+refused key keeps the address and asks to scan again; a network failure
+never clears anything, and after a minute offers "Pair again" without
+forgetting the old computer until a new pairing succeeds.
+
+**Rationale:** The QR carries everything the phone needs, so nobody reads
+a file or asks Claude. Per-device keys give Adam's "dedicated" connection
+without per-device listeners: a port is not a secret, one listener is
+one Tailscale bind, and a key can be revoked alone. The `pair` frame is
+the one new pre-auth input; it is bounded by the code's lifetime, the
+five-try burn and the tailnet. A pairing link from another app or page is
+never redeemed on its own: it fills the form and asks, and says which
+saved computer it would replace, because any app can fire a link and a
+silent redeem could point the phone at another tailnet machine. Only the
+in-app scanner and the typed form redeem directly.
+
+**Dependencies:** `segno` (BSD-3, pure Python) draws the QR in the daemon,
+for the Settings dialog (as an `<img>` data URL, never raw HTML) and the
+terminal. `com.journeyapps:zxing-android-embedded:4.3.0` with
+`com.google.zxing:core:3.4.1` (Apache-2.0) scans on the phone, offline,
+hosted in a plain-Activity `ScanActivity` so no AndroidX is added. Camera
+permission is asked at scan time.
+
+**Rejected:** A listener port per device (no security from the port, more
+binds, more to remember). Google's code scanner (it downloads a Play
+services module: a network call the user did not make). Rendering the QR
+in the UI with an npm package (the CLI needs one too; one library in one
+place). Auto-redeeming pairing links (above). Storing keys in plain text
+next to the hashes (prime directive 2). mDNS discovery (Tailscale carries
+no multicast).
+
+
+## TD-5015 — One session list across computers: the daemon is a one-hop hub (Class B)
+
+2026-10-14. Adam wants the sessions on every computer he works from in one
+list, in the window he already has open, and on the phone. Each computer
+runs its own daemon; TD-5014 already pairs a device with a code and gives it
+its own key.
+
+**Decision:**
+
+1. Multi-computer lives in the local daemon as a one-hop **hub**, with one
+   **lane** (a 1:1 upstream socket) per viewer connection per computer. The
+   window keeps its one loopback socket. The CSP, the Rust shell (except
+   `safe_session_id` refusing `:`) and the Kotlin code are untouched.
+2. The daemon process dials, but only from `bridge_link.py` and
+   `machine_pairing.py`, and only paired Tailscale hosts (`100.64.0.0/10`,
+   `fd7a:115c:a1e0::/48`, `*.ts.net`), checked at pair time and before every
+   dial. Both modules are new `_OUTBOUND_CAPABLE` entries; `daemon.py` still
+   never dials. Reconnecting to a paired computer counts as user-initiated,
+   like the phone reconnecting.
+3. Devices gain `kind` (`phone` or `machine`) in `pair` and in
+   `remote-devices.yaml`. A machine peer gets a deny-by-default verb list
+   (`MACHINE_PEER_VERBS`), own rows only, and no broadcasts.
+4. Viewers opt in with `hello.features: ["machines"]`; only loopback and
+   phone-kind connections can be viewers. Without it a list is own-only.
+5. The bridged id grammar `<raw>:mch_<12hex>` is protocol. `seq` passes
+   through unchanged.
+6. `computers.yaml` (0600, written whole, never a key) is the index; each
+   key is in the OS keychain under account `tst-machine.<mch>`; each daemon
+   mints `machine-id` (`mid_` + 16 hex) once and sends it in `hello_ack` and
+   `pair_ok`.
+7. A remote peer's `setup_state` drops `remote_devices`, `remote_bind` and
+   `remote_port`; `focus_window` is loopback only; the `job_list` push is
+   viewers only.
+8. The phone keeps one hub and sees that hub's computers.
+9. Workspace-keyed panes and local-disk features are hidden for remote
+   sessions; self-pairing is allowed (every row twice, `same_computer`).
+10. Remote rows are cached and refreshed (30 s, plus 1 s after a row event),
+    and pushed as merged lists only when they change.
+11. Four machine verbs (`add_machine`, `remove_machine`, `list_machines`,
+    `reconnect_machine`) plus `machine_list`. Pairing errors reuse the TD-5014
+    codes; an id-less error from another computer is prefixed with its name.
+
+**Prime directive 3, read for a hub (PD3).** "No outbound call the user did
+not initiate" is read as: pairing is the user's initiation, and keeping the
+paired link up while a viewer is open is the same consent a phone gives by
+staying paired. So links run only while a viewer is handshaken and stop 60 s
+after the last one leaves; nothing dials an unpaired host, a non-Tailscale
+host, or anything at all with no viewer.
+
+**Approvals are never queued.** `approve`, `deny` and `always_allow` never
+wait for a lane: they go on the open lane, else on the open control link,
+else get `machine_unreachable` at once. A queued approval could land minutes
+later, after the person stopped looking, so it is refused instead. Sending
+on the control link (beyond the spec's "the open lane") lets an approval
+from an OS notice reach a session nobody has attached, without waiting for
+a lane to connect.
+
+**The approvals check.** Every verb in `MACHINE_PEER_VERBS` was checked for a
+way to turn approvals off: presets carry only tier configs, `set_plan` only
+locks the brain tier, `set_tier` picks a model, and `always_allow` needs a
+pending approval and writes the narrowest rule (never class C). None was
+dropped. Left out on purpose: `set_skip_all_approvals`, `set_grok_mode`,
+`run_grok_command` and `approve_grok_plan` (the Grok yolo bypass),
+`start_autonomy`, the policy-rule verbs (`list_policy_rules`,
+`revoke_policy_rule`), every key, credential, MCP, engine and voice verb,
+remote attach and pairing, the machine verbs, `open_workspace`,
+`move_session`, `open_in_terminal`, `shutdown`, jobs, usage, diagnostics,
+`get_setup_state` and `set_cu_*`. `FORWARDED_VERBS` is the list minus the
+self `remove_remote_device`; a test walks `_KNOWN_CLIENT_TYPES`, so a new
+verb starts refused until it is classified.
+
+**The remote-peer scrub (A.11).** The phone UI reads `remote_bind` and
+`remote_port` only for the "Phones reach this computer at …" hint in
+Settings. On the phone that hint now falls back to the generic copy; the
+fields are dropped anyway, because a phone or another computer has no use
+for this computer's listener address and the list of its other devices.
+
+**Deferred:** a phone with several hubs (one Keystore alias per saved
+computer). Until then a phone sees its one hub's computers.
+
+**Choices beyond the spec:**
+
+- Approvals use the control link when no lane is open (above).
+- The `job_list` push goes to viewers only, so a plain loopback client
+  (the CLI, an old window without `features`) no longer gets it; direct
+  replies to the job verbs are unchanged.
+- Timings: refresh 30 s, linger 60 s, lane idle 5 min, a verb waits 10 s
+  for its lane with at most 64 queued, row refresh debounced 1 s; the link
+  backs off 1 s doubling to 30 s with jitter, 45 s of silence reconnects,
+  60 s without a handshake is `unreachable`, a locked keychain retries
+  every 5 minutes.
+- A malformed `add_machine` gets a fixed `bad_request` message instead of
+  the validation text, which would quote a code back.
+- At most 16 paired computers (`machine_limit`).
+- Review fixes: a parked computer (refused, locked, outdated) answers
+  verbs at once with `machine_unreachable` carrying its reason, and its
+  lanes wait dormant (recording attach/detach) until Try now or the
+  5-minute retry brings it back; a viewer joining never wakes it. Re-pairing
+  relinks open lanes in place instead of dropping them. A malformed frame
+  with a session id is passed on with a warning (never dropped); a skewed
+  `session_list` loses only its bad rows. A dial URL must name exactly the
+  checked host, and a `.ts.net` name must be plain DNS labels.
+
+**Rationale:** The daemon already owns sessions, approvals and the one
+socket every client speaks; a hub keeps the window, the shell's CSP and the
+phone unchanged, and one lane per viewer keeps attach, replay and seq
+meaning exactly what they mean on one connection. One hop (a machine peer
+is never a viewer, bridged-grammar rows are dropped upstream) means A↔B
+pairs and self-pairing cannot loop.
+
+**Rejected:** The window opening a socket per computer (a CSP change, the
+shell and phone would each need it, and every client would re-implement
+merging). A shared upstream socket for all viewers (attach and seq are
+per-connection, so viewers would see each other's replays). Forwarding
+through more than one hop (loops, and a peer's peers were never paired by
+this user). Keeping links up with no viewer (an outbound call nobody is
+looking at).
+
+## TD-5142 — A compacted session goes out with one system message (Class B)
+
+Found 2026-10-14 from Adam's phone: "I encountered an error: The provider
+rejected the request." on every message, about four minutes each. Cause:
+compaction stores its summary as a second system message
+(core/tstd/compaction.py, `maybe_compact`). The
+Qwen3.8 template on ezer-forge raises "System message must be at the
+beginning." for that, llama.cpp answers 500, LiteLLM relays it, and the
+daemon retried it eight times. Every later request in the session failed
+the same way. Both stuck sessions in the log (4919aeb7 on 10-14 and
+539f941d on 10-03) failed on the request right after their only real
+compaction. The repeated COMPACTION rows before that were in-turn
+tool-result trims (TD-5010), which add no system message.
+
+**Fixed at the wire, not in storage.** `wire_messages`
+(core/tstd/provider.py) runs inside `ChatCompletionRequest.to_dict`,
+which only the two request paths call; `session_persist` reuses the
+per-message serializer, so stored sessions keep their shape. System
+messages before the first other message merge into one, a blank line
+apart. A later one (what a `/compact` "from here" summary would be,
+TD-5109) goes ahead of the next user message's own text, so it keeps its place in the story; with
+no user message before the next assistant or tool message it joins the
+first system message instead, because a user message there could split a
+tool call from its results. A conversation without a stray system
+message is sent exactly as before, so the body and the server's prompt
+cache don't change.
+
+**Why not store the summary as a user message.** Strict-alternation
+templates (Mistral, older Gemma) raise on two user messages in a row, which a
+stored user summary followed by the next user turn produces. Fixing it
+at the wire also repairs sessions already stuck, with no migration:
+the stored histories of both sessions render on the live ezer-forge
+server's `/apply-template` with the fix and fail without it.
+
+**A template refusal is not retried.** llama.cpp's "Jinja Exception:
+<reason>", its "While executing ... in source: ... Error: <reason>"
+wrapper for any other render failure, and jinja2's exception names
+become `template_error`, not retryable, with copy that names the
+template's reason and says resending won't help. The scheduler treats it
+as permanent and the window shows a banner. A plain 500 is still
+retried. Only the text before LiteLLM's "Error doing the fallback:" counts:
+LiteLLM appends a failed fallback's error to the original one and keeps
+the original status, so a template refusal from a fallback model must
+not turn the primary's 503 or 429 into a permanent failure (found by the
+review).
+
+**Rejected:** merging only for local tiers. Cloud APIs accept one system
+message too, and one code path is easier to trust.
+
+## TD-5018, TD-5019 — A turn cut by a restart is sealed, and Continue picks it up (Class B)
+
+2026-10-14. Every app restart on EZER that day stopped tstd through the
+parent-pid watchdog (TD-2903). A turn that was running stayed open in the
+log forever: no TurnComplete, a typing row that never ended, and an
+assistant message whose tool_calls had no answer, which the provider
+rejects on the next send.
+
+**Decision (daemon).** When a revived session's log has a UserTurn with no
+later TurnComplete (`turn_seal.open_turn`), `Daemon._revive_session`
+repairs and seals it before the session is used:
+- Each assistant tool_call without an answer gets the tool reply "Not
+  finished: TST Desk restarted during this call. It may have partly run;
+  check before running it again."
+- The log gets one `TurnComplete(failed=true, zeros,
+  error_code="interrupted_by_restart")` on the router's active tier.
+- Both are persisted, so a second revive adds nothing. Shutdown now
+  cancels sessions with reason "daemon shutdown", not "cancelled by user".
+
+**Decision (window).** That error code shows "Cut off by a restart" with a
+Continue chip under the conversation. Continue sends one ordinary
+"Continue" message through the normal send path (it works after
+attachment turns, where Retry refuses). The queue head is not flushed
+after such a seal. `lastTurnError` is cleared on a local send, on bind,
+and when a user_turn starts a turn the pane hasn't seen (a Continue from
+another device), so the chip shows only while the sealed turn is last.
+
+**Drafts survive a restart (TD-5019).** Each session's composer text and
+its text-only queued rows are saved as `{text, queued}` under
+`tst.draft.v1.<sessionId>` in localStorage, debounced 300 ms. On restore
+both come back as composer text, queued rows first; nothing is sent.
+Attachment bytes and rows are never stored, and every storage access is
+in try/catch. Windows share localStorage, so a window writes only changes
+its own composer made: a switch, dispose or echo flushes a pending save,
+never an untouched copy. A message the daemon accepted is the daemon's to
+keep; a send-now dropped by a hard kill (not a drain) is not brought back,
+since saving in-flight sends would duplicate text when the daemon still
+holds it.
+
+**Rationale:** the stubs make the next send valid and tell the model a
+call may have partly run. Sealing in the log keeps busy and
+turn_in_flight honest after a restart with no client action. Continue is
+a click, so nothing auto-continues (AGENTS §2.3). Drafts live only in the
+webview, so the webview keeps them.
+
+**Rejected:** dropping the dangling assistant message (hides that a tool
+may have run); re-running the cut call (not idempotent, and an automatic
+send); sealing lazily on the next message (the list shows a live turn
+until then); flushing or auto-sending queued rows after the restart;
+drafts in the daemon (a protocol change for text it never sees).
+
+## TD-5020 — Closing the last window by any route stays in the tray (Class B; extends TD-2902, TD-4703)
+
+2026-10-14. Close-to-hide (TD-2902) only covered a last window that went
+through the close rule. A `session-*` window closes without it, and with
+more than one window open main is destroyed (TD-4703). So closing main,
+then a session window, destroyed the last window; Tauri raised
+`RunEvent::ExitRequested { code: None }` (tauri-runtime-wry 2.11.4) and
+the host answered every ExitRequested with `request_quit`, which stopped
+tstd even with Keep running on. On macOS the hidden quick-entry overlay
+also counted as a window.
+
+**Decision:** `coworker::exit_requested_action(code, quitting,
+coworker_on, tray_ok)` decides.
+- `None`, not quitting, Keep running on, tray present: `StayInTray`
+  (`prevent_exit`, host and tstd stay up, the one-time close hint shows).
+- While quitting: `Exit`.
+- Keep running off, no tray, or a `Some(code)` exit that did not come
+  through Quit: `Shutdown`, today's `request_quit`.
+
+`show_any_window` (tray Show, macOS Reopen, a second launch) raises main,
+then another desk window, then a session window, and opens a new desk
+window when none is left; while quitting it opens nothing. Quick-entry is
+left out of the count and of Show.
+
+**Rationale:** Keep running means closing windows never stops sessions,
+in any order. The fix sits in the host's one exit hook, so TD-2902,
+TD-4703 and `--parent-pid` (TD-2903) are untouched: Quit still stops
+tstd, a host kill still trips the watchdog. Without a tray a windowless
+app has no way back, so that case still quits.
+
+**Rejected:** hiding the last session window instead of destroying it
+(Show would bring back a viewer bound to one session); hiding main when
+others are open (reverses TD-4703 for main); a hidden keep-alive webview;
+treating every `Some(code)` as Exit (would skip tstd's graceful shutdown).
+
+**Known gap:** with no window open there is no webview, so the tray's
+running count and desktop approval notices pause until a window opens;
+tstd and the phone are unaffected. `approval_notice.rs` still has its own
+window picker (follow-up).
+
+## TD-5021 — Every shutdown ends within 5 s and says why; tstd stderr is kept (Class A)
+
+2026-10-14. Every shutdown path (signal, websocket `shutdown`, host gone,
+drain) goes through `_request_shutdown(reason)`, which arms a 5 s
+budget; `_shutdown` logs "shutting down" with the reason and waits at
+most 1.5 s for running turns. A close step that hangs exits 1 instead of
+hanging. The host writes tstd's stderr to `logs/tstd.stderr.log` (0600,
+appended, one `.1` at 5 MB) and, in release builds, its own lifecycle to
+`logs/host.log` (5 MB, one dated archive). Logging never stops a launch:
+a host log that cannot be opened is reported on stderr and skipped, and a
+failed rollover keeps appending.
+
+The host now reads its supervision socket the whole time it supervises.
+It used to hold that socket without reading it, so pings went unanswered
+and tstd's keepalive closed it about 40 s after launch. Any later Quit
+sent its `shutdown` frame to a dead socket and ended in a SIGKILL after
+the 5 s grace, with a stale port.json left behind. Now each read sends
+the queued pong. If tstd closes the socket while it is still running,
+Quit and system quit fall back to SIGTERM, which runs the same graceful
+shutdown (TD-4842).
+
+## TD-5022 — One tstd per data folder, through an OS lock (Class B)
+
+2026-10-14. `tstd main()` takes an exclusive lock on
+`<data_dir>/tstd.lock` (flock on POSIX, msvcrt on Windows; 0600, never
+deleted, non-inheritable) before anything else. A second daemon polls for
+up to 10 s, logging "waiting for previous daemon" once, then exits 1 with
+"another tstd owns this data dir" and touches neither port.json nor any
+session file.
+
+**Rationale:** two daemons on one folder both write session logs and
+port.json. The kernel drops the lock when the process dies, even on
+SIGKILL, so there is no stale-pid cleanup. The 10 s wait covers a normal
+restart, where the new daemon starts while the old one is inside its 5 s
+budget.
+
+**Rejected:** a pid file (racy, pid reuse, stale after a crash);
+port.json as the lock (written late, meant for discovery); failing at
+once (every quick restart would fail).
+
+## TD-5023 — A loopback-only drain for deploys (Class B; Adam approved 2026-10-14)
+
+2026-10-14. New client message `drain {timeout_s 0..600 = 30, hold_s
+0..600 = 120}` and event `drain_result {drained, running[],
+awaiting_approval[], hold_until}`, sent only to the asking connection.
+Additive, so PROTOCOL_VERSION stays 1.
+- The daemon waits up to timeout_s for running turns. From the drain
+  until hold_s runs out, and for all of shutdown, every verb that starts
+  a turn on this computer gets `daemon_draining` ("TST Desk is about to
+  restart. Your message was not sent; send it again in a few seconds."):
+  user_message, fork_from, run_grok_command, approve_grok_plan,
+  start_autonomy and run_job. Nothing is queued and due jobs wait.
+  approve, deny, stop_turn and resume still pass, since they only let an
+  open turn finish. 0/0 releases the hold.
+- The latest request wins: a release, a later drain or a shutdown ends
+  an earlier drain's wait, and the superseded drain leaves the hold as it
+  finds it. So a release is never undone and a drain never holds shutdown
+  past the 1.5 s settle (found by the review).
+- Sessions parked on an approval are listed, not waited on.
+- peer_policy refuses drain from a phone or paired computer
+  (`loopback_only`). The check runs after `hub.intercept`, so bridged
+  sessions still go to their own computer.
+- `tst drain [--timeout N] [--hold N] [--release] [--json]` only talks to
+  a running daemon, prints session ids only, and exits 0 drained, 2 still
+  open, 1 no daemon.
+- A shutdown during a hold logs reason `drain` with a `trigger` naming
+  the path that asked (signal, websocket or host_gone).
+- The window puts a refused text back in the composer, ahead of anything
+  typed since, and removes its echo row.
+
+**Rationale:** a deploy should restart a quiet daemon. Turns the drain
+lets finish are never cut, and the hold keeps a new message from starting
+one in the gap. Refusing with clear copy, rather than queueing, keeps
+"nothing auto-continues". Only someone on the computer may pause it.
+
+**Rejected:** queueing held messages and sending them after the restart
+(an automatic send); draining inside `shutdown` (the deployer can't see
+what is open); a hold that never expires (a failed deploy would leave the
+daemon refusing work); waiting on approval-parked turns (hours).
+
+## TD-5024 — A second launch shows the running app (Class B; new dependency, Adam approved 2026-10-14)
+
+2026-10-14. A relaunch was a full second host attached to the running
+tstd, whose `--parent-pid` still named the first host, so the first
+host's exit stopped the daemon under the second window.
+
+**Decision:** add `tauri-plugin-single-instance = "2"` (resolved 2.4.5;
+`Apache-2.0 OR MIT`; the only new package in Cargo.lock). It is
+registered first; a second process hands over and exits inside the
+plugin's setup, before any window or the daemon supervisor starts. The
+callback calls `show_any_window` (TD-5020); the second launch's argv and
+cwd are ignored and never logged. The handover is local IPC only (D-Bus
+session bus on Linux, a socket under /tmp on macOS, a named mutex on
+Windows).
+
+**Rationale:** one host per user keeps the daemon's life tied to exactly
+the process `--parent-pid` names, without moving lifetime logic out of
+Python.
+
+**Consequence for deploys:** every build shares one instance name (the
+bundle identifier), so a new AppImage launched while the old host runs
+only raises the old window and exits. A deploy must Quit TST Desk before
+launching the new build (docs/linux.md, "Restarting for a deploy"). The
+plugin's semver feature is deliberately not used, since it would bring
+back two hosts across versions. A `tauri dev` host and the installed app
+also count as one instance.
+
+**Rejected:** re-pointing tstd's watchdog at the newest host (Design A's
+lease, reverses TD-2903); our own lock file plus IPC (more code, same
+result).

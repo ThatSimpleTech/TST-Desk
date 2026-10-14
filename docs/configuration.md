@@ -95,8 +95,8 @@ item is treated as missing.
 | `base_url` | string | none | OpenAI-compatible endpoint this key talks to. When set, a bound tier uses it instead of the preset `base_url`. The shipped `openrouter` entry points at OpenRouter. Settings → API keys Host writes this; empty removes it. |
 
 Ids must be a lowercase slug `[a-z][a-z0-9-]{0,31}`. `slack-webhook`,
-`ntfy-topic`, `discord-webhook`, and `telegram-bot` are reserved for
-other keychain accounts.
+`ntfy-topic`, `discord-webhook`, `telegram-bot`, and `smtp-password` are
+reserved for other keychain accounts.
 
 <!-- verify: model -->
 ```yaml
@@ -256,6 +256,7 @@ the keychain URL's host must match it or the send is dropped.
 | `ntfy` | mapping | see below | ntfy topic POST. |
 | `discord` | mapping | see below | Discord incoming webhook. |
 | `telegram` | mapping | see below | Telegram Bot API `sendMessage`. |
+| `email` | mapping | see below | SMTP report for a scheduled job (TD-3820). |
 
 #### `notify.slack`
 
@@ -284,6 +285,36 @@ Same keys as Slack. Store the webhook URL in the keychain as
 Same keys as Slack. Store `https://<host>/bot<token>/sendMessage?chat_id=<id>`
 in the keychain as `tst-telegram-bot`. `chat_id` is a query parameter on
 that secret URL, not a yaml field. Set `host` to that URL's hostname.
+
+#### `notify.email`
+
+SMTP for a job whose `deliver_to` is `email` (TD-3820). STARTTLS (port
+587) or implicit TLS (port 465). A server that will not negotiate TLS
+is refused before AUTH. The password is the keychain account
+`tst-smtp-password`, never a yaml key. A `password` key in this file is
+dropped. The log records the recipient domain only, never the password
+and never the message body. `host` is the only host this channel may
+reach.
+
+The message is multipart (TD-3821). The plain part is the report
+Markdown. The HTML part is that same Markdown in one centred column
+(max-width 680px, inline styles only): a header with the job title and
+the local date, the report, and a footer
+`Sent by TST Desk · <title> · ran <local time> on <preset>`. The job has
+no display name, so the title is the same 60-character instruction
+label as the subject. A job with no preset names the active preset.
+HTML in the report is escaped, links are http or https only, and images
+are left out. Send test email uses a short sample of that layout.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `enabled` | bool | `false` | When false, a job set to email does not send. |
+| `host` | string | *empty* | SMTP hostname. Empty refuses the send. |
+| `port` | int 1–65535 | `587` | SMTP port. 587 with `starttls`, 465 with `tls`. |
+| `security` | `starttls` or `tls` | `starttls` | `starttls` upgrades on port 587. `tls` is implicit TLS. |
+| `username` | string | *empty* | SMTP AUTH username. Empty refuses the send. |
+| `from_address` | string | *empty* | One mailbox address in the From header. |
+| `timeout_seconds` | float > 0 | `30` | How long the SMTP conversation may run. |
 
 ### `speech`
 
@@ -352,6 +383,12 @@ It is not read, and nothing it imports is read, unless
 `claude_global_fallback` is true. Workspace-root and nested `CLAUDE.md`
 files are project files and are not gated by this key.
 
+The same key gates `~/.claude/skills/` (TD-5011). Claude Code's user-global
+skills are a catalog line each in every brain prompt (14 skills on the
+owner's box came to about 900 estimated tokens), so they are opt-in. A
+workspace's own `.claude/skills/` is not gated, and when the workspace is
+the home folder, `~/.claude/skills/` is that workspace's own tree.
+
 When the key is false, `~/.claude/CLAUDE.md` exists, and
 `~/.tstdesk/AGENTS.md` does not, Doctor's steering row says the file was
 not loaded and names this key. Turning the key on restores the previous
@@ -360,7 +397,7 @@ workspace.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `claude_global_fallback` | bool | `false` | When true, `~/.claude/CLAUDE.md` is the user-global file if `~/.tstdesk/AGENTS.md` is absent. When false, that file is never read. |
+| `claude_global_fallback` | bool | `false` | When true, `~/.claude/CLAUDE.md` is the user-global file if `~/.tstdesk/AGENTS.md` is absent, and `~/.claude/skills/` joins the skill fallback. When false, neither is read. |
 
 ### `session`
 
@@ -393,6 +430,16 @@ minute. `max_retries: 8` is roughly three minutes of patience.
 | `initial_delay` | float > 0 | `1.0` | Base delay before the first retry, in seconds. Each subsequent wait doubles. |
 | `max_delay` | float > 0 | `60.0` | Ceiling on any single wait, in seconds. Bounds the worst case when `max_retries` is high. |
 
+### `scheduler`
+
+How long one scheduled turn may run before the daemon cancels it (TD-3819). The same number is the base wait for `tst run`. A job can set its own limit, from 1 to 60 minutes, on the Scheduled form. When the limit expires the turn is cancelled and the receipt says `stopped after N minutes (max run time)`. That reason is not retried.
+
+`tst run --timeout SECONDS` replaces this base for one command. The provider retry allowance is still added when the config can be read, the same as before.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `max_run_seconds` | number > 0, at most 3600 | `900` | Seconds one turn may run when the job does not set its own limit. 900 is 15 minutes. The receipt rounds the budget up to whole minutes. |
+
 ### `remote`
 
 Opt-in bind on a Tailscale address (TD-3601). Empty is off: the daemon
@@ -406,16 +453,95 @@ reads local interface addresses, not `tailscale status`.
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `bind` | string | *empty* | Interface name or Tailscale IP. Empty / omitted is loopback only. |
+| `port` | int | `0` | Listener port while remote attach is on (TD-5005). `0` reuses the port the listener last used, else picks a random one. A pinned port that is busy at start falls back to a random one. Must be `0` or 1024–65535. |
 
-**Attach from another device (TD-3701).** Open the same TST Desk UI in a
-browser (the desktop window is Tauri; a phone is not). Connect with
-`ws://<bind>:<port>` plus the rotating token in `{user_data_dir}/remote-token`
+**Pair a phone (TD-5014).** This is the usual way. On the computer, choose
+pair in Settings or run `tst pair`. It shows the computer's name, its
+Tailscale address and port, an 8-character code such as `ABCD-2345`, and a
+QR code. On the phone, scan the QR, open the `tstdesk://pair` link, or type
+the address and code. The code works once, lasts 10 minutes, and stops
+working after 5 wrong tries; it is kept only in the daemon's memory and
+never logged. If remote attach is off, pairing turns it on first.
+
+Pairing gives that phone its own key. The phone saves it and connects on its
+own from then on. The computer keeps only a sha256 of each key, never the key,
+in `{user_data_dir}/remote-devices.yaml` (readable by you only). Up to 32
+devices can be paired. `tst devices` lists them and `tst devices remove <id>`
+(or Settings) forgets one and closes only its connections. Turning remote
+attach off stops the listener but keeps the list, so paired phones connect
+again when it is turned back on, on the same port. Only the computer itself
+can pair or remove devices, with one exception: a phone's "Forget this
+computer" removes that phone's own entry. Pairing the same phone again
+replaces its old entry instead of adding a second one. Settings shows each
+device's paired date, last seen, and whether it is connected right now. If
+the file is damaged it is renamed to `remote-devices.yaml.corrupt-<time>` and
+the list starts empty. If it only cannot be read (permissions, a disk error),
+it is left alone: phones are told to keep retrying, not that their key is gone,
+and pairing waits until it can be read again.
+
+A pairing link opened from another app or a web page never pairs on its own:
+the phone shows "Pair with … at …?" and which saved computer it would
+replace. Only the in-app scanner and the typed code pair directly.
+
+**Pair another computer (TD-5015).** One computer can show another's
+sessions in its own list, beside its own. On the computer whose sessions you
+want to see, choose pair in Settings or run `tst pair`, as for a phone. On the
+computer you sit at, open Settings → Computers → "Add a computer" and paste the
+`tstdesk://pair` link (the Pair dialog has "Copy link", since a desk can't
+scan), or type the address and code. In a terminal:
+
+```text
+tst machines                                   # list paired computers and their status
+tst machines add 'tstdesk://pair?h=…&p=…&c=…'  # pair with a link
+tst machines add 100.64.1.5:39079 ABCD-2345    # or host:port and the code it shows
+tst machines remove mch_0123456789ab           # forget one
+```
+
+Only Tailscale addresses (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) and
+`*.ts.net` names are accepted, checked when you pair and again before every
+connection. The other computer must have remote attach on (pairing turns it
+on there). This computer connects only while a TST Desk window or a paired
+phone is open, and stops 60 seconds after the last one closes. A computer that
+can't be reached keeps its last-known sessions in the list, greyed, and is
+tried again on its own (or with "Try now"). Its sessions open again when it is
+back. Up to 16 computers can be paired. Self-pairing is allowed and shows
+every session twice, the copy marked "this computer".
+
+Pairing gives this computer its own key for the other one, exactly like a
+phone's, and the other computer lists it under Phones and devices. The key is
+kept in the OS keychain (service `com.thatsimpletech.tstdesk`, account
+`tst-machine.<mch>`), never in a file. `{user_data_dir}/computers.yaml`
+(readable by you only, replaced whole on every write) holds only the index:
+for each computer its `mch_` id, its `machine_id`, name, host, port, the
+device id it was given there, and the paired and last-seen times. Do not edit
+it by hand. Remove asks the other computer to forget this one first, then
+deletes the key and the entry; when the other computer is offline, it still
+lists this computer until it is removed there. A damaged file is renamed to
+`computers.yaml.corrupt-<time>` and the list starts empty; one that cannot be
+read is left alone.
+
+What another computer may do here is limited: it can list, open, drive and
+answer the approvals of this computer's sessions, but cannot change approval
+settings, keys, pairing, jobs, policy rules or anything machine-wide, and it
+never sees other computers this one paired (one hop).
+
+**Attach with the token (the older way, TD-3701).** Open the same TST Desk UI
+in a browser (the desktop window is Tauri; a phone is not). Connect with
+`ws://<bind>:<port>` plus the token in `{user_data_dir}/remote-token`
 — not the token in `port.json`. Example:
 `ws://100.64.1.2:9xxx` and the file
 `~/Library/Application Support/com.thatsimpletech.tstdesk/remote-token` on
 macOS. A URL of the form `?ws=ws://…&token=…` (or the same pair in the hash)
-fills the form. No account, no relay. TD-3603 will copy address + token from
-Settings; this branch still types them.
+fills the form. No account, no relay. Settings shows the address and port and
+never the token; copy the token from `remote-token`. The address and token stay
+the same across restarts (TD-5005). Settings → **New token** replaces the token
+and disconnects every remote client that used it; paired phones keep their own
+keys. Turning remote attach off deletes it.
+
+**Android shell (TD-5001).** `android/` builds a sideload APK that loads this
+same UI. The phone build accepts only a Tailscale address or a `*.ts.net`
+name. Install and the token path are in `android/README.md`. The APK is not
+a Play upload.
 
 ### `autonomy`
 
@@ -529,6 +655,8 @@ provider_retry:
   max_retries: 3
   initial_delay: 1.0
   max_delay: 60.0
+scheduler:
+  max_run_seconds: 900
 computer_use:
   command: ""
   browser: mock
@@ -556,6 +684,14 @@ notify:
     enabled: false
     host: ""
     timeout_seconds: 5
+  email:
+    enabled: false
+    host: ""
+    port: 587
+    security: starttls
+    username: ""
+    from_address: ""
+    timeout_seconds: 30
 autonomy:
   runtime: podman
   image: docker.io/library/alpine:3.21
@@ -625,35 +761,87 @@ three tier definitions. You can pin a tier for a session from the title bar.
 | `output_price` | float ≥ 0 | *required* | Dollars per **million** completion tokens. |
 | `cache_read_price` | float ≥ 0 | *required* | Dollars per **million** prompt tokens served from cache. |
 | `context_window` | int > 0 | *required* | The compaction budget — see below. |
-| `max_output_tokens` | int > 0 | *required* | The answer reservation subtracted from `context_window` — see below. |
+| `max_output_tokens` | int > 0 | *required* | Sent as `max_tokens` on the tier's requests, and the answer reservation subtracted from `context_window` — see below. |
 | `vision` | bool | `false` | When `true`, PNG/JPEG/GIF/WebP attachments are accepted on user turns routed to this tier (TD-4705). Capability is config — never inferred from the slug in code. |
+| `extra_body` | map | none | Extra JSON fields added to every chat request the tier makes: the turn, the progress check, a delegated worker, and (on the worker tier) the tool-call classifier, DoD polls and judgment calls that run on the worker. They fill in only fields the request did not set itself. For provider-specific settings such as a llama.cpp server's `chat_template_kwargs` — see §3.6. It cannot set `model`, `messages`, `tools`, `tool_choice`, `stream`, `stream_options`, `max_tokens` or `max_completion_tokens`, and its values must be plain JSON; a load error names the problem. Sent as written: never put a key or token here. |
+| `verdict_extra_body` | map | none | Merged over `extra_body` on the worker tier's one-word verdict calls only: the tool-call classifier, DoD polls and judgment calls that run on the worker. Nested maps merge and this map wins a clash. The turn, a delegated worker and memory distillation never send it. Same rules as `extra_body`; it does nothing on the brain and validator tiers. Use it to turn a reasoning model's thinking off for an 8-token answer — see §3.6. |
 
 **Prices are per million tokens, and they are yours to keep accurate.** They drive the live
 cost meter, the audit trail, and the spend cap. Nothing verifies them against your provider, so
 a wrong number here buys you a wrong cap, not an error. A preset priced at zero (the `local`
 and `vllm` presets) honestly reports a cost of zero.
 
-**`context_window` and `max_output_tokens` are a compaction budget, not request parameters.**
-Neither is sent to the model. Together they set the point at which the conversation is
-compacted: at 80% of `context_window - max_output_tokens`, the oldest messages are replaced by
-an extractive summary, keeping the system message and the two most recent user turns. No model
-call is spent doing it. So:
+**`context_window` is a compaction budget; `max_output_tokens` is also the output cap.**
+`context_window` is never sent. `max_output_tokens` is sent as `max_tokens` on the turn, the
+progress check and a delegated worker's requests (TD-5008); the validator review, the supervisor
+check and memory distillation already sent it. Together they set the point at which the
+conversation is compacted: at 80% of `context_window - max_output_tokens`, the oldest messages
+are replaced by an extractive summary, keeping the system message and the two most recent user
+turns. No model call is spent doing it. The session stores the summary as a second system
+message, but a request carries only one: the summary joins the first system message, and any
+later system message goes ahead of the next user message. Strict local chat templates (Qwen
+3.5 and later, Mistral) refuse a system message anywhere but first; others, such as Llama 3 and
+Gemma 4, render it (TD-5142). If a server reports that its template raised an error on a
+conversation (llama.cpp, or a server that names jinja2's exceptions), the turn fails once with
+`template_error` and names the template's reason. It is not retried, because the same messages
+fail the same way. So:
 
 - `context_window` must be no larger than what the *server* actually serves. A local server
   usually caps context well below the model's architectural ceiling; setting the ceiling here
   means compaction never fires and the server silently truncates instead — and what it drops
   first is your steering block.
-- `max_output_tokens` does **not** cap generation. It only reserves room for the answer inside
-  the budget. Your provider's own default output limit is what actually applies.
+- `max_output_tokens` caps generation, and the provider counts a reasoning model's thinking
+  inside that cap. Size it for the thinking plus the answer, or turn the thinking down with
+  `extra_body` (§3.6). A reply cut off at the cap ends with `finish_reason: length`: cut text
+  is kept and the cap is logged, and a cut tool call is not run. The model gets the call back
+  with empty arguments and a note to send smaller pieces. Raising the cap also shrinks the
+  compaction budget, so on a small window it is a trade. The tool-call classifier, DoD polls
+  and judgment calls that run on the worker tier keep their own 8-token cap; on a reasoning
+  model, turn their thinking off with `verdict_extra_body` (§3.6).
+
+**How the prompt is measured (TD-5007).** The estimate counts the message text, the tool-call
+arguments, every tool definition the request sends (as the request serializes it — a few
+thousand tokens on every call), and 4 tokens of chat-template overhead per message. It starts at
+4 characters per token. Once an endpoint reports `usage.prompt_tokens` for a main turn call, the
+ratio between that figure and the estimate is learned per `base_url` and slug (the first report
+sets it, later ones move it by 30%, clamped to 0.5–3.0) and every later estimate for that
+endpoint is scaled by it. A request of under 256 estimated tokens, one carrying an image, or a
+response with no usage figure teaches nothing. The `turn start` log line carries the ratio in
+use as `token_ratio`.
+
+Learned ratios survive a restart (TD-5013). The daemon keeps them in `token-calibration.json`
+in its data directory (the platform directory in §1, or `--data-dir`), loads the file at start
+and rewrites it whenever a ratio moves, and at least once a day for an endpoint in use, so a
+ratio that has settled is not dropped as stale. A loaded ratio keeps moving by 30% per report,
+as if the daemon had never stopped. An entry not updated for 30 days, a ratio outside 0.5–3.0,
+a malformed entry, or a file that cannot be read is ignored, with one log line, and that
+endpoint starts at 4 characters per token again. The file is a cache, not a setting: delete it
+while TST Desk is stopped to make every endpoint relearn (a running daemon rewrites it from
+memory on the next report), and do not edit it. A save that fails (a read-only folder, a full
+disk) is logged once and the ratio stays in memory; the turn is never affected.
+
+The workspace map's share of the brain window (15%, see the steering guide) converts to
+characters at the brain endpoint's learned ratio too: at a ratio of 1.17 that is about 3.4
+characters per token instead of 4. It is taken once, for the brain of the session's own preset,
+when its loop starts, so the map does not resize mid-session. A brain tier whose model is
+discovered on the first turn (no `slug` on a local server) sizes that session's map at 4
+characters per token.
 
 A single tool result is capped at the smaller of 50,000 characters and a quarter of
-(`context_window` − `max_output_tokens` − tokens already in the prompt), counted at 4 characters
-per token, and never below 4,000 characters. On a 32,768-token tier one result cannot fill the
-window by itself. At 128,000 tokens or larger the cap stays 50,000. If the in-flight turn's tool
-results still exceed the compaction budget, their middles are replaced with a note to re-read
-with offset and limit before the next model call. A provider that still reports a context
-overflow is retried once at a tighter budget. If it overflows again, the turn fails with a short
-message that names the configured window. The raw provider error stays in the log.
+(`context_window` − `max_output_tokens` − tokens already in the prompt), converted to characters
+at the learned ratio (4 characters per token before the endpoint has reported usage), and never
+below 4,000 characters. On a 32,768-token tier one result cannot fill the window by itself. At
+128,000 tokens or larger the cap stays 50,000 unless the learned ratio is above about 2. If the
+in-flight turn's tool results still exceed the compaction budget, their middles are replaced
+with a note to re-read with offset and limit before the next model call, largest first, until
+the prompt is down to 70% of the budget (TD-5010). The gap lets the turn's next few results
+fit without rewriting the ones already sent, which would throw away a local server's prompt
+cache. The turn's results always keep at least 30% of the budget, though. When everything
+else in the prompt (the system prompt, the tools, the history compaction keeps, and the turn's
+results at 1,000 characters each) already fills more than 40% of it, the target rises, up to
+the budget itself, rather than cutting every result down to 1,000 characters. A provider that still reports a context overflow is retried once at half the budget,
+elided the same way. If it overflows again, the turn fails with a short message that names the
+configured window. The raw provider error stays in the log.
 
 ---
 
@@ -847,6 +1035,95 @@ To ground computer-use clicks on the same loopback server, set
 sidecar). Empty keeps the intended (x, y). A vision model that is
 down or unnamed falls back the same way — it does not fail the click.
 
+### 3.6 Provider-specific request fields (`extra_body`)
+
+Some servers take settings the OpenAI shape has no field for. `extra_body` on a tier is added
+to the JSON body of every chat request that tier makes (TD-5008). On EZER, a llama.cpp
+reasoning model behind LiteLLM, this keeps the thinking short so the answer fits inside
+`max_output_tokens`:
+
+<!-- verify: tier -->
+```yaml
+base_url: http://127.0.0.1:8000/v1
+input_price: 0.0
+output_price: 0.0
+cache_read_price: 0.0
+context_window: 32768
+max_output_tokens: 4096
+extra_body:
+  chat_template_kwargs:
+    reasoning_effort: low
+```
+
+It reaches the turn, the progress check and a delegated worker. On the worker tier it also
+reaches the tool-call classifier, DoD polls and judgment calls that run on the worker, which
+keep their own `max_tokens` of 8 and `temperature` of 0. The validator review, the
+supervisor check and memory distillation do not send it yet. The values go to the server as
+written, so check the server's own documentation for the field names, and never put a key or a
+token here. The settings screen keeps the block when it writes a slug, a credential or the
+active preset.
+
+`extra_body` only fills in fields a request left unset: where TST Desk sets a field itself, its
+value wins. A `temperature` here applies to the turn, which sets none, but not to the
+classifier, which asks for 0. The fields TST Desk owns on every request are a load error, so
+a setting never applies to some requests and silently not to others:
+
+<!-- verify: tier-invalid -->
+```yaml
+base_url: http://127.0.0.1:8000/v1
+input_price: 0.0
+output_price: 0.0
+cache_read_price: 0.0
+context_window: 32768
+max_output_tokens: 4096
+extra_body:
+  max_tokens: 16384
+```
+
+```
+Invalid model configuration in .../config.yaml: presets.<preset>.<tier>.extra_body: Value error,
+extra_body cannot set max_tokens: TST Desk sends it itself. Use slug for the model and
+max_output_tokens for the output cap
+```
+
+The reserved fields are `model`, `messages`, `tools`, `tool_choice`, `stream`,
+`stream_options`, `max_tokens` and `max_completion_tokens` (the newer OpenAI name for the
+output cap). Values must be plain JSON: strings, numbers, booleans, null, lists and maps. YAML
+reads an unquoted `2026-10-09` as a date, so quote dates and times, or the config fails to
+load with `extra_body must be plain JSON`.
+
+**Verdict calls (`verdict_extra_body`).** The tool-call classifier, DoD polls and judgment calls
+that run on the worker ask for a one-word answer in 8 tokens (TD-5012). On a reasoning model
+the 8 tokens end inside the thinking, so the reply is empty: the classifier falls back to
+Class B and a prose DoD item never goes green. `verdict_extra_body` is merged over `extra_body`
+on those calls only, so the thinking can be off there and stay on for the turn and a delegated
+worker. On EZER, a llama.cpp Qwen model behind LiteLLM:
+
+<!-- verify: tier -->
+```yaml
+base_url: http://127.0.0.1:8000/v1
+input_price: 0.0
+output_price: 0.0
+cache_read_price: 0.0
+context_window: 32768
+max_output_tokens: 4096
+extra_body:
+  chat_template_kwargs:
+    reasoning_effort: low
+verdict_extra_body:
+  chat_template_kwargs:
+    enable_thinking: false
+```
+
+A verdict call then sends `chat_template_kwargs: {reasoning_effort: low, enable_thinking:
+false}`; everything else sends `{reasoning_effort: low}`. Nested maps merge key by key, and
+`verdict_extra_body` wins where both set the same key. With `reasoning_effort: low` alone,
+EZER's verdicts came back empty with `finish_reason: length`; with `enable_thinking: false`
+the classifier answered in 2 tokens. Check your own server's documentation for its switch.
+The same reserved keys and the plain-JSON rule apply. When a verdict comes back empty at its
+cap, the daemon logs one warning per endpoint and model that names `verdict_extra_body`. If
+`verdict_extra_body` is already set, the warning says to check how the switch is spelled.
+
 ---
 
 ## 4. `.tst/config.yaml` — the workspace wall
@@ -904,6 +1181,22 @@ promotes every ask to auto, including shell and Class C (TD-806) — that is ski
 everything; turning it on accepts that unparsed write forms and Class C steering
 redirects will run. "Always allow this in this workspace" still writes a rule for the
 exact command, not a blanket `shell: **`. A `never` rule still refuses.
+
+**File contents change through `fs_edit` and `fs_write`, not the shell.** Only those two
+tools name the files they touch, so only their changes get a diff in the Files and Work panes,
+a checkpoint commit, and credit with the progress guard (§4.2). A file the shell writes
+(`sed -i`, a `>` redirect, a heredoc, `tee`, `dd of=`, or a `python -c` / `node -e` write, also
+inside `bash -c`) gets none of the three. The base prompt every tier gets says so, and so do
+the three tools' descriptions (TD-5009). Deleting, moving or renaming files, formatters, code
+generators and package managers stay in the shell. When a shell command's text looks like it
+writes a workspace file, its result carries a one-line note, just under the exit code, that
+points the next change to `fs_edit` and `fs_write` and says the write it saw need not be
+redone. The note is read from the command text after the command has run, so it can appear on
+a command that failed. It never blocks, delays or changes the command, and it is not a rule you
+can set. Writes to `/dev`, `nul` or `$null`, `$TMPDIR` (also `${TMPDIR:-/tmp}`), a name set from
+`mktemp`, a captured `.log`, git's own `.git/` files, or any path outside the workspace
+(`/tmp/...`, `~/...`, `../...`) get no note. Input redirects (`< file`, `<<<`) are reads. In an
+autonomous session the container's `/workspace` counts as the workspace.
 
 ### 4.2 `caps` — when the agent stops and asks
 

@@ -13,8 +13,10 @@ from pathlib import Path
 # Add core to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tstd.peer_policy import FORWARDED_VERBS
 from tstd.protocol import (
     PROTOCOL_VERSION,
+    AddMachine,
     AddPin,
     AlwaysAllow,
     ApiKeyValidated,
@@ -34,6 +36,7 @@ from tstd.protocol import (
     AutonomySummary,
     BoundaryUpdate,
     Cancel,
+    CancelPairing,
     CharterDocument,
     CheckCuPermissions,
     CheckpointNotice,
@@ -64,6 +67,9 @@ from tstd.protocol import (
     Detach,
     DiagnosticCheck,
     DiagnosticsReport,
+    Drain,
+    DrainResult,
+    EmailTestResult,
     EndSession,
     Error,
     ExportUsage,
@@ -103,11 +109,14 @@ from tstd.protocol import (
     ListJobRuns,
     ListJobs,
     ListJobTemplates,
+    ListMachines,
     ListMemory,
     ListPins,
     ListPolicyRules,
     ListSessions,
     LogTrimmed,
+    MachineList,
+    MachineSummary,
     McpServerSummary,
     MemoryAccept,
     MemoryEdit,
@@ -121,12 +130,19 @@ from tstd.protocol import (
     OpenArtifact,
     OpenInTerminal,
     OpenWorkspace,
+    Pair,
+    PairingCode,
+    PairingCompleted,
     ParseJob,
     Ping,
     PolicyRules,
     PolicyRuleSummary,
     Ready,
+    ReconnectMachine,
+    RemoteDeviceSummary,
+    RemoveMachine,
     RemovePin,
+    RemoveRemoteDevice,
     RenameSession,
     Resume,
     RevokePolicyRule,
@@ -150,6 +166,7 @@ from tstd.protocol import (
     SetCuIndicators,
     SetCuKill,
     SetCuPolicy,
+    SetEmailNotify,
     SetEngine,
     SetGrokMode,
     SetJudgments,
@@ -170,7 +187,9 @@ from tstd.protocol import (
     Shutdown,
     SkillStackEntry,
     StartAutonomy,
+    StartPairing,
     SteeringReloaded,
+    TestEmail,
     TierState,
     TierSwitched,
     ToolCall,
@@ -185,11 +204,13 @@ from tstd.protocol import (
     UserTurn,
     ValidateApiKey,
     VerifyResult,
+    build_hello_ack,
+    build_pair_ok,
 )
 
 FIXTURES = {
     # Client messages
-    "hello": Hello(token="test-token-abc", version=1),
+    "hello": Hello(token="test-token-abc", version=1, features=["machines"]),
     "open_workspace": OpenWorkspace(path="/home/user/project"),
     "user_message": UserMessage(session_id="sess-1", content="hello world"),
     "fork_from": ForkFrom(session_id="sess-1", user_index=0, content="hello again"),
@@ -217,6 +238,16 @@ FIXTURES = {
     "set_coworker": SetCoworker(enabled=True),
     "set_voice": SetVoice(enabled=True),
     "transcribe": Transcribe(audio_b64="AAAA", mime="audio/webm"),
+    "set_email_notify": SetEmailNotify(
+        enabled=True,
+        host="smtp.example.com",
+        port=587,
+        security="starttls",
+        username="desk",
+        from_address="desk@example.com",
+        password=None,
+    ),
+    "test_email": TestEmail(to="owner@example.com"),
     "set_cu_indicators": SetCuIndicators(glow=True, agent_cursor=True, show_on_real_display=False),
     "set_cu_policy": SetCuPolicy(
         enabled=True,
@@ -305,6 +336,9 @@ FIXTURES = {
     "memory_reject": MemoryReject(session_id="sess-1", proposal_id="mp-1"),
     "end_session": EndSession(session_id="sess-1"),
     "shutdown": Shutdown(),
+    # Before a deploy restart (TD-5023); 0/0 releases the hold.
+    "drain": Drain(timeout_s=120, hold_s=120),
+    "drain_release": Drain(timeout_s=0, hold_s=0),
     "list_sessions": ListSessions(),
     # Session lifecycle (TD-1715): archive/restore, delete, move to project.
     "archive_session": ArchiveSession(session_id="sess-1"),
@@ -350,6 +384,19 @@ FIXTURES = {
     "check_cu_permissions": CheckCuPermissions(),
     "set_cu_kill": SetCuKill(killed=True),
     "set_remote_attach": SetRemoteAttach(enabled=True),
+    # Phone pairing (TD-5014). `pair` is a first frame like `hello`.
+    "pair": Pair(code="ABCD2345", device_name="Pixel", version=1),
+    # A hub pairing with another computer (TD-5015).
+    "pair_machine": Pair(code="ABCD2345", device_name="desk", version=1, kind="machine"),
+    "start_pairing": StartPairing(),
+    "cancel_pairing": CancelPairing(),
+    "remove_remote_device": RemoveRemoteDevice(device_id="dev_0123456789ab"),
+    # Other computers (TD-5015). Loopback only; the code is a placeholder.
+    "add_machine": AddMachine(link="tstdesk://pair?h=100.64.1.5&p=39079&c=ABCD2345&n=ezer"),
+    "add_machine_address": AddMachine(host="100.64.1.5", port=39079, code="ABCD-2345"),
+    "remove_machine": RemoveMachine(machine="mch_0123456789ab"),
+    "list_machines": ListMachines(),
+    "reconnect_machine": ReconnectMachine(machine="mch_0123456789ab"),
     # Daemon events
     "ready": Ready(version="0.1.0", protocol_version=PROTOCOL_VERSION),
     "session_state": SessionState(session_id="sess-1", state="running", engine="native", seq=2),
@@ -756,6 +803,54 @@ FIXTURES = {
         speech_enabled=False,
         speech_ready=False,
     ),
+    # Phone pairing (TD-5014): connection-scoped, seq=1. Made-up code and host.
+    "pairing_code": PairingCode(
+        code="ABCD2345",
+        display_code="ABCD-2345",
+        host="100.64.1.5",
+        port=48123,
+        desktop_name="desk",
+        link="tstdesk://pair?h=100.64.1.5&p=48123&c=ABCD2345&n=desk",
+        qr_svg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 29 29"></svg>',
+        expires_at="2026-10-14T10:50:00Z",
+    ),
+    "pairing_completed": PairingCompleted(
+        device=RemoteDeviceSummary(
+            id="dev_0123456789ab", name="Pixel", paired_at="2026-10-14T10:41:00Z"
+        )
+    ),
+    # One connected computer and one self-pair that is unreachable (TD-5015).
+    "machine_list": MachineList(
+        machines=[
+            MachineSummary(
+                id="mch_0123456789ab",
+                name="EZER",
+                host="100.64.1.5",
+                port=39079,
+                status="connected",
+                last_seen="2026-10-14T10:42:00Z",
+                paired_at="2026-10-14T10:41:00Z",
+            ),
+            MachineSummary(
+                id="mch_ba9876543210",
+                name="desk",
+                host="100.64.1.9",
+                port=39079,
+                status="unreachable",
+                paired_at="2026-10-14T10:41:00Z",
+                same_computer=True,
+                detail="Can't reach desk. Trying again in 30 s.",
+            ),
+        ]
+    ),
+    # A drain that timed out with one turn still working and one parked on
+    # an approval; the hold runs on (TD-5023).
+    "drain_result": DrainResult(
+        drained=False,
+        running=["s1"],
+        awaiting_approval=["s2"],
+        hold_until="2026-10-14T10:47:00+00:00",
+    ),
     "api_key_validated": ApiKeyValidated(ok=True, detail="Key accepted by provider."),
     # Diagnostics (TD-1104): connection-scoped like setup_state. Mixed rows so
     # consumers see every status — the fail row carries the concrete fix.
@@ -924,6 +1019,8 @@ FIXTURES = {
         # TD-3814: a count and a phrase, not nulls.
         retries=2,
         retry_delay="10 minutes",
+        # TD-3819: a phrase, not null — the job stores the seconds.
+        max_run="20 minutes",
         # TD-3817: a real follow-on id, not null.
         then="job-2",
         # TD-3818: a real local calendar, not nulls.
@@ -943,6 +1040,7 @@ FIXTURES = {
         grace="2 hours",
         retries=1,
         retry_delay="10 minutes",
+        max_run="20 minutes",
         preset="vllm",
         engine="native",
         workspace="/home/user/project",
@@ -964,6 +1062,7 @@ FIXTURES = {
                 retries=2,
                 retry_delay=600,
                 attempt=0,
+                max_run=1200,
                 then="job-2",
                 skip_calendar="/home/user/holidays.ics",
                 skip_match="holiday|PTO|OOO",
@@ -1038,6 +1137,7 @@ FIXTURES = {
                 grace=7200,
                 retries=1,
                 retry_delay=600,
+                max_run=None,
                 preset=None,
                 engine=None,
                 workspace=None,
@@ -1053,6 +1153,7 @@ FIXTURES = {
                 grace=None,
                 retries=0,
                 retry_delay=None,
+                max_run=1200,
                 preset="vllm",
                 engine="native",
                 workspace="/home/user/project",
@@ -1103,6 +1204,9 @@ FIXTURES = {
         sessions=[GrokSessionEntry(id="abc", title="Fix login", cwd="/tmp/proj", updated_at="1")]
     ),
     "transcript": Transcript(ok=True, text="hello from the mic", detail=""),
+    "email_test_result": EmailTestResult(
+        ok=False, error_class="SMTPException", message="auth failed"
+    ),
     "grok_extensions": GrokExtensions(
         items=[GrokExtension(kind="skill", name="review", detail="user")]
     ),
@@ -1120,8 +1224,18 @@ def main() -> None:
     fixtures = {}
     for name, msg in FIXTURES.items():
         fixtures[name] = json.loads(msg.model_dump_json())
-    # hello_ack is built as a plain dict, not a Pydantic model.
-    fixtures["hello_ack"] = {"type": "hello_ack", "version": PROTOCOL_VERSION}
+    # hello_ack is built as a plain dict, not a Pydantic model. machine_id
+    # and desktop_name say which computer answered (TD-5015).
+    fixtures["hello_ack"] = json.loads(
+        build_hello_ack(machine_id="mid_0123456789abcdef", desktop_name="desk")
+    )
+    # pair_ok too (TD-5014). The key is a placeholder, never a real one.
+    fixtures["pair_ok"] = json.loads(
+        build_pair_ok("dev_0123456789ab", "Pixel", "0" * 64, "desk", "mid_0123456789abcdef")
+    )
+    # Not a message: the verbs a hub forwards for bridged ids (TD-5015). A
+    # UI test pins its own list against this one.
+    fixtures["forwarded_verbs"] = sorted(FORWARDED_VERBS)
     output_path.write_text(json.dumps(fixtures, indent=2))
     print(f"Wrote {len(fixtures)} fixtures to {output_path}")
 

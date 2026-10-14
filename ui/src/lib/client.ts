@@ -14,7 +14,7 @@
 // vitest's node environment with a fake transport, and in the webview with
 // the browser's WebSocket. No Tauri APIs are imported here.
 
-import type { ClientMessageUnion, DaemonEventUnion } from "./protocol";
+import type { ClientMessageUnion, DaemonEventUnion, HelloAck } from "./protocol";
 import { daemonWsUrl } from "./remote-connect";
 
 /**
@@ -57,6 +57,9 @@ const KNOWN_EVENT_TYPES = new Set([
   "session_list",
   "policy_rules", // TD-803: was missing; settings events arrived as unknown
   "setup_state", // TD-1101 first-run wizard
+  "pairing_code", // TD-5014
+  "pairing_completed", // TD-5014
+  "machine_list", // TD-5015
   "api_key_validated", // TD-1101
   "diagnostics_report", // TD-1104 doctor
   "usage_report", // TD-1706: was missing; the usage panel never loaded
@@ -84,6 +87,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "grok_session_list",
   "grok_extensions",
   "transcript", // TD-4701
+  "email_test_result", // TD-3820
 ]);
 
 /**
@@ -140,7 +144,14 @@ export interface ClientOptions {
   maxBackoffMs?: number;
   /** Protocol version sent in `hello`. Must match core PROTOCOL_VERSION. */
   protocolVersion?: number;
+  /** `hello.features` opt-ins. Default `HELLO_FEATURES`. */
+  features?: readonly string[];
 }
+
+/** What this UI opts into on hello (TD-5015): `"machines"` makes the
+ *  connection a viewer, so the daemon merges its paired computers' rows into
+ *  session_list and sends machine_list. An older daemon ignores it. */
+export const HELLO_FEATURES: readonly string[] = ["machines"];
 
 /** Sink for all events including connection-state transitions. */
 export interface ClientSink {
@@ -150,6 +161,9 @@ export interface ClientSink {
   onStateChange?: (state: ConnectionState) => void;
   /** Invoked when an unknown event type is dropped. */
   onUnknownEvent?: (type: string) => void;
+  /** Invoked with each `hello_ack`, before the state turns "connected", so
+   *  the daemon's identity (TD-5015) is known to whoever reacts to that. */
+  onHandshake?: (ack: HelloAck) => void;
 }
 
 export class ProtocolClient {
@@ -173,6 +187,9 @@ export class ProtocolClient {
   // Epoch ms of the last frame this socket delivered — any frame, event or
   // ping. Read only by `resume()` (TD-1716); 0 until the socket opens.
   private lastFrameAt = 0;
+  // Bumped by every open() and by stop(): an open() whose daemon-info await
+  // was overtaken by either must not create a socket (TD-5015).
+  private openGeneration = 0;
 
   constructor(opts: ClientOptions, sink: ClientSink = {}) {
     this.opts = opts;
@@ -369,6 +386,7 @@ export class ProtocolClient {
   /** Permanently stop: close the socket, cancel retries, mark stopped. */
   stop(): void {
     this.stopped = true;
+    this.openGeneration += 1;
     if (this.retryTimer !== null) {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
@@ -382,6 +400,7 @@ export class ProtocolClient {
 
   private async open(): Promise<void> {
     if (this.stopped) return;
+    const generation = ++this.openGeneration;
     this.setState(this.reconnectAttempt === 0 ? "connecting" : "reconnecting");
 
     let info: DaemonInfo | null;
@@ -390,6 +409,10 @@ export class ProtocolClient {
     } catch {
       info = null;
     }
+    // A stop(), or a newer open(), that landed during the await owns the
+    // connection now; opening here would leave a second live socket that
+    // flips the state back to "connected" after stop (TD-5015).
+    if (this.stopped || generation !== this.openGeneration) return;
     if (!info) {
       this.scheduleRetry();
       return;
@@ -397,16 +420,28 @@ export class ProtocolClient {
 
     const url = this.opts.buildUrl?.(info.port) ?? daemonWsUrl(info.host ?? "127.0.0.1", info.port);
     const socket = this.opts.socketFactory(url);
+    const previous = this.socket;
     this.socket = socket;
+    // Disowned first, so its onclose below returns without a retry.
+    previous?.close();
+    const features = [...(this.opts.features ?? HELLO_FEATURES)];
 
     socket.onopen = () => {
+      if (this.socket !== socket) return;
       this.lastFrameAt = Date.now();
       // hello carries the auth token; the daemon replies hello_ack then ready.
-      socket.send(JSON.stringify({ type: "hello", token: info!.token, version: this.opts.protocolVersion ?? 1 }));
+      socket.send(
+        JSON.stringify({ type: "hello", token: info!.token, version: this.opts.protocolVersion ?? 1, features }),
+      );
       this.handshake = "awaiting_ack";
     };
 
-    socket.onmessage = (ev) => this.handleMessage(String(ev.data));
+    // A socket this client no longer owns may still deliver frames; none of
+    // them may reach a store or move a seq cursor.
+    socket.onmessage = (ev) => {
+      if (this.socket !== socket) return;
+      this.handleMessage(String(ev.data));
+    };
 
     socket.onclose = () => {
       // A socket we already replaced (forceReconnect) closing later must not
@@ -461,6 +496,7 @@ export class ProtocolClient {
       const reconnecting = this.hasConnectedOnce;
       this.hasConnectedOnce = true;
       this.reconnectAttempt = 0;
+      this.sink.onHandshake?.(msg as HelloAck);
       // Mark connected before re-attaching: `send` guards on the connected
       // state, and the re-attach below must pass that guard (see send()).
       this.setState("connected");

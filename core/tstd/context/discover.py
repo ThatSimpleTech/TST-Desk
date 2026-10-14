@@ -84,6 +84,16 @@ CLAUDE_GLOBAL_NOT_LOADED = (
 )
 
 
+# A session opened on the home folder is not a project: every repo below it
+# would contribute its own contract, and on a developer machine that is
+# dozens of files and worktree copies (TD-5004).  Root, rules and global
+# still load; the nested walk does not run at all.
+HOME_NESTED_SKIPPED = (
+    "workspace is your home folder; AGENTS.md and CLAUDE.md files in its "
+    "subfolders were not loaded. Open a project folder to use them"
+)
+
+
 def append_steering_notice(detail: str, notices: tuple[str, ...]) -> str:
     """Attach discovery notes to one doctor detail, once."""
     if not notices:
@@ -193,9 +203,20 @@ class SteeringFileResolver:
 
         # 4. Nested — subtree-specific steering files, shallowest first
         #    so deeper (more specific) files come later and override.
-        sources.extend(self._nested_sources(workspace))
+        #    Never below the home folder itself (TD-5004).
+        if not self.is_home_workspace(workspace):
+            sources.extend(self._nested_sources(workspace))
 
         return sources
+
+    def is_home_workspace(self, workspace_path: str | Path) -> bool:
+        """True when *workspace_path* is the home folder itself (TD-5004)."""
+        workspace = Path(workspace_path).expanduser().resolve()
+        return workspace == self._home.resolve()
+
+    def home_workspace_notice(self, workspace_path: str | Path) -> str | None:
+        """The Doctor note when the nested walk was skipped for home."""
+        return HOME_NESTED_SKIPPED if self.is_home_workspace(workspace_path) else None
 
     def claude_global_notice(self) -> str | None:
         """The Doctor note when Claude Code's global file is left unread.

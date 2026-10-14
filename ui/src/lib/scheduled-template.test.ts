@@ -171,6 +171,7 @@ function row(sessionId: string): SessionRow {
 		title: "Inbox chat",
 		preset: "budget",
 		busy: false,
+		machine: null,
 	};
 }
 

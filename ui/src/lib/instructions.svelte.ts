@@ -44,7 +44,7 @@ function reduce(event: DaemonEventUnion): void {
 		if (event.created) void openInEditor(event.created);
 		return;
 	}
-	if (event.type === "error" && event.code === "invalid_rule_name") {
+	if (event.type === "error" && !event.machine && event.code === "invalid_rule_name") {
 		instructions.error = event.message;
 	}
 }

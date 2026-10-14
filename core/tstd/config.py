@@ -12,6 +12,8 @@ messages that name the offending key.
 
 from __future__ import annotations
 
+import copy
+import json
 import re
 import shutil
 from functools import lru_cache
@@ -22,9 +24,17 @@ from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
-from .logging import user_data_dir
+from .logging import get_logger, user_data_dir
 
 TierName = Literal["brain", "worker", "validator"]
 TIER_NAMES: tuple[TierName, ...] = ("brain", "worker", "validator")
@@ -37,11 +47,27 @@ DEFAULT_PRESET = "tst-default"
 # Implicit keychain account for an unbound remote tier (TD-1717).
 DEFAULT_CREDENTIAL_ID = "openrouter"
 RESERVED_CREDENTIAL_IDS = frozenset(
-    {"slack-webhook", "ntfy-topic", "discord-webhook", "telegram-bot"}
+    {"slack-webhook", "ntfy-topic", "discord-webhook", "telegram-bot", "smtp-password"}
 )
 CREDENTIAL_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 # A second OpenRouter key slugifies to openrouter-2 (TD-1718). Same host.
 _OPENROUTER_FAMILY_RE = re.compile(r"^openrouter(?:-\d+)?$")
+
+# Request fields a tier's ``extra_body`` may not set (TD-5008): the loop
+# owns them. ``max_completion_tokens`` is the newer OpenAI name for the
+# output cap, so it would fight ``max_tokens``.
+EXTRA_BODY_RESERVED_KEYS = frozenset(
+    {
+        "model",
+        "messages",
+        "tools",
+        "tool_choice",
+        "stream",
+        "stream_options",
+        "max_tokens",
+        "max_completion_tokens",
+    }
+)
 
 _DEFAULT_CONFIG_RESOURCE = "config.yaml"
 
@@ -195,6 +221,17 @@ class TierConfig(BaseModel):
     # Named key from the credentials catalog (TD-1717). None / omitted /
     # blank means unbound: loopback sends no key, remote uses openrouter.
     credential: str | None = None
+    # Provider-specific JSON fields added to every chat request this
+    # tier makes (TD-5008), e.g. a llama.cpp server's
+    # ``chat_template_kwargs``. They fill in only fields the request left
+    # unset. Sent as-is: never put a secret here.
+    extra_body: dict[str, Any] | None = None
+    # Merged over ``extra_body`` on the worker's one-word verdict calls
+    # only (TD-5012): the classifier, DoD polls and worker-backed
+    # judgment calls. An 8-token answer ends inside a reasoning model's
+    # thinking, so this is where ``enable_thinking: false`` goes without
+    # turning it off for the turn or a delegated worker.
+    verdict_extra_body: dict[str, Any] | None = None
 
     @field_validator("credential")
     @classmethod
@@ -203,6 +240,52 @@ class TierConfig(BaseModel):
             return None
         cleaned = value.strip()
         return cleaned or None
+
+    @field_validator("extra_body", "verdict_extra_body")
+    @classmethod
+    def _extra_body_leaves_request_keys_alone(
+        cls, value: dict[str, Any] | None, info: ValidationInfo
+    ) -> dict[str, Any] | None:
+        """Refuse keys the request owns (TD-5008, TD-5012).
+
+        ``extra_body`` only fills in fields a request left unset, so one
+        of these would be dropped on some requests and sent on others:
+        the model, the transcript, the tools, streaming, or the output
+        cap that comes from ``max_output_tokens``. ``verdict_extra_body``
+        reaches the request the same way, so the same keys are refused.
+        """
+        if value is None:
+            return None
+        clashes = sorted(key for key in value if key in EXTRA_BODY_RESERVED_KEYS)
+        if clashes:
+            raise ValueError(
+                f"{info.field_name} cannot set {', '.join(clashes)}: TST Desk sends "
+                f"{'it' if len(clashes) == 1 else 'them'} itself. Use slug for the "
+                "model and max_output_tokens for the output cap"
+            )
+        return value
+
+    @field_validator("extra_body", "verdict_extra_body")
+    @classmethod
+    def _extra_body_is_plain_json(
+        cls, value: dict[str, Any] | None, info: ValidationInfo
+    ) -> dict[str, Any] | None:
+        """Refuse values the request body cannot carry.
+
+        YAML reads an unquoted ``2026-10-09`` as a date. Left in, it
+        loads fine and then fails every request the tier makes, far
+        from the line that caused it.
+        """
+        if value is None:
+            return None
+        try:
+            json.dumps(value, allow_nan=False)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                f"{info.field_name} must be plain JSON ({error}). Quote dates, times and "
+                "other values YAML would read as something else"
+            ) from error
+        return value
 
     @model_validator(mode="after")
     def _slug_required_off_box(self) -> TierConfig:
@@ -233,6 +316,37 @@ class TierConfig(BaseModel):
                 fix="Resolve the tier's slug before using it (tstd.discovery).",
             )
         return self.slug
+
+    def verdict_extras(self) -> dict[str, Any] | None:
+        """The extras a one-word verdict call sends (TD-5012).
+
+        Every worker verdict path takes its extras from here: the
+        classifier, DoD polls and worker-backed judgment calls. With no
+        ``verdict_extra_body`` this is ``extra_body`` itself, so the
+        request is what TD-5008 sent. Otherwise the two are deep-merged:
+        nested maps merge, ``verdict_extra_body`` wins a leaf, and
+        neither input is changed.
+        """
+        if self.verdict_extra_body is None:
+            return self.extra_body
+        return merge_extra_body(self.extra_body or {}, self.verdict_extra_body)
+
+
+def merge_extra_body(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Deep-merge *override* onto *base* into a new dict (TD-5012).
+
+    A key that is a map on both sides merges recursively; anything else
+    in *override* replaces what *base* had. The result shares nothing
+    mutable with either input.
+    """
+    merged = copy.deepcopy(base)
+    for key, value in override.items():
+        existing = merged.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            merged[key] = merge_extra_body(existing, value)
+        else:
+            merged[key] = copy.deepcopy(value)
+    return merged
 
 
 class Preset(BaseModel):
@@ -333,17 +447,22 @@ class ProjectContextConfig(BaseModel):
 class SteeringConfig(BaseModel):
     """Which extra steering files discovery may read (TD-4845).
 
-    ``claude_global_fallback`` gates only ``~/.claude/CLAUDE.md``.
-    Workspace and nested ``CLAUDE.md`` files are project files and stay
-    on the TD-502 fallback. Default false: TST Desk's global file is
-    ``~/.tstdesk/AGENTS.md``, and Claude Code's rules are not spent in
-    the prompt or followed into an outside import.
+    ``claude_global_fallback`` gates ``~/.claude/CLAUDE.md`` and, since
+    TD-5011, ``~/.claude/skills/``.  Workspace and nested ``CLAUDE.md``
+    files and a workspace's own ``.claude/skills/`` are project files and
+    stay on. Default false: TST Desk's global file is
+    ``~/.tstdesk/AGENTS.md``, and Claude Code's rules and skill catalog
+    are not spent in the prompt or followed into an outside import.
     """
 
     claude_global_fallback: bool = False
 
 
 DEFAULT_LOG_MAX_EVENTS = 10000
+
+# 15 minutes. A research turn makes many tool calls; 120 seconds recorded
+# it as a timeout, and the retry table then tried the same job again.
+DEFAULT_MAX_RUN_SECONDS = 900
 
 
 class ProviderRetryConfig(BaseModel):
@@ -365,6 +484,19 @@ class ProviderRetryConfig(BaseModel):
     max_retries: int = Field(default=3, ge=0, le=20)
     initial_delay: float = Field(default=1.0, gt=0)
     max_delay: float = Field(default=60.0, gt=0)
+
+
+class SchedulerConfig(BaseModel):
+    """How long one turn may run before it is stopped (TD-3819).
+
+    Scheduled runs and ``tst run`` both start from this. A job may name
+    its own limit, from 1 to 60 minutes. ``tst run --timeout`` replaces
+    this base for one command and still adds the provider retry allowance.
+    Above an hour is refused: an unattended slot that needs longer is the
+    wrong shape, and the receipt is in minutes of this budget.
+    """
+
+    max_run_seconds: float = Field(default=DEFAULT_MAX_RUN_SECONDS, gt=0, le=60 * 60)
 
 
 class SessionConfig(BaseModel):
@@ -466,6 +598,43 @@ class TelegramNotifyConfig(BaseModel):
     timeout_seconds: float = Field(default=5.0, gt=0)
 
 
+_config_log = get_logger("tstd.config")
+
+
+class EmailNotifyConfig(BaseModel):
+    """SMTP report delivery (TD-3820). Off by default.
+
+    ``host`` is the only host ``tstd.notify.email.send`` may reach. The
+    password is a keychain secret (account ``tst-smtp-password``), never
+    this file. A ``password`` key in yaml is dropped and never stored.
+    """
+
+    enabled: bool = False
+    host: str = ""
+    port: int = Field(default=587, ge=1, le=65535)
+    security: Literal["starttls", "tls"] = "starttls"
+    username: str = ""
+    from_address: str = ""
+    timeout_seconds: float = Field(default=30.0, gt=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_password(cls, data: object) -> object:
+        if isinstance(data, dict) and "password" in data:
+            # The value must not appear in the warning or in a later
+            # validation error that echoes the input.
+            _config_log.warning(
+                "notify.email.password ignored; the SMTP password lives in the keychain"
+            )
+            return {key: value for key, value in data.items() if key != "password"}
+        return data
+
+    @field_validator("host", "username", "from_address")
+    @classmethod
+    def _strip_text(cls, value: str) -> str:
+        return value.strip()
+
+
 class NotifyConfig(BaseModel):
     """Outbound notification channels. Slack is the default; no gateway."""
 
@@ -473,6 +642,7 @@ class NotifyConfig(BaseModel):
     ntfy: NtfyNotifyConfig = Field(default_factory=NtfyNotifyConfig)
     discord: DiscordNotifyConfig = Field(default_factory=DiscordNotifyConfig)
     telegram: TelegramNotifyConfig = Field(default_factory=TelegramNotifyConfig)
+    email: EmailNotifyConfig = Field(default_factory=EmailNotifyConfig)
 
 
 class SpeechConfig(BaseModel):
@@ -604,14 +774,26 @@ class ComputerUseConfig(BaseModel):
 
 
 class RemoteConfig(BaseModel):
-    """Opt-in Tailscale bind (TD-3601). Empty is off — loopback only."""
+    """Opt-in Tailscale bind (TD-3601). Empty is off — loopback only.
+
+    ``port`` pins the listener port (TD-5005). 0 means the port the
+    listener last used while remote attach was on, else a random one.
+    """
 
     bind: str = ""
+    port: int = 0
 
     @field_validator("bind")
     @classmethod
     def _strip_bind(cls, value: str) -> str:
         return value.strip()
+
+    @field_validator("port")
+    @classmethod
+    def _port_range(cls, value: int) -> int:
+        if value != 0 and not 1024 <= value <= 65535:
+            raise ValueError("remote.port must be 0 or between 1024 and 65535")
+        return value
 
 
 class VoiceConfig(BaseModel):
@@ -777,6 +959,7 @@ class ModelConfig(BaseModel):
     steering: SteeringConfig = Field(default_factory=SteeringConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
     provider_retry: ProviderRetryConfig = Field(default_factory=ProviderRetryConfig)
+    scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
     judgments: JudgmentsConfig = Field(default_factory=JudgmentsConfig)
     remote: RemoteConfig = Field(default_factory=RemoteConfig)
@@ -956,6 +1139,7 @@ def load_config(path: Path | None = None) -> ModelConfig:
         "project_context",
         "steering",
         "session",
+        "scheduler",
         "computer_use",
         "remote",
         "notify",

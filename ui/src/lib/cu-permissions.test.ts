@@ -205,6 +205,23 @@ describe("cu_permissions event", () => {
 		expect(cuPermissions.open).toBe(true);
 		expect(cuPermissions.platform).toBe("windows");
 	});
+
+	it("ignores another computer's tool results (TD-5015)", () => {
+		startCuPermissions();
+		for (const error_code of ["permission_denied", "uipi", "secure_desktop"]) {
+			emit({
+				type: "tool_result",
+				seq: 2,
+				session_id: "sess-1:mch_0123456789ab",
+				tool_call_id: "c1",
+				status: "error",
+				output: "denied there",
+				truncated: false,
+				error_code,
+			});
+		}
+		expect(cuPermissions.open).toBe(false);
+	});
 });
 
 describe("settings reopen and retry", () => {

@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import threading
+import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -214,6 +218,39 @@ class TestChatMessageCodec:
         msg = ChatMessage(role="user", content="hi")
         assert chat_message_from_dict(chat_message_to_dict(msg)).content == "hi"
 
+    @pytest.mark.parametrize(
+        "part",
+        [
+            "just a string",
+            {"text": "no type"},
+            {"type": "text"},
+            {"type": "text", "text": 3},
+            {"type": "image_url"},
+            {"type": "image_url", "image_url": "data:image/png;base64,AA=="},
+            {"type": "image_url", "image_url": {"detail": "low"}},
+            {"type": "image_url", "image_url": {"url": None}},
+        ],
+    )
+    def test_a_bad_content_part_is_a_load_error(self, part: object) -> None:
+        with pytest.raises(ValueError, match="content"):
+            chat_message_from_dict({"role": "user", "content": [part]})
+
+    def test_image_url_keeps_its_other_keys(self) -> None:
+        image = {"url": "data:image/png;base64,AA==", "detail": "low"}
+        part = {"type": "image_url", "image_url": image}
+        msg = chat_message_from_dict({"role": "user", "content": [part]})
+        assert msg.content == [part]
+
+    def test_reasoning_details_round_trip(self) -> None:
+        details = [{"type": "reasoning.text", "text": "plan", "index": 0}]
+        msg = ChatMessage(role="assistant", content=None, reasoning_details=details)
+        back = chat_message_from_dict(chat_message_to_dict(msg))
+        assert back.reasoning_details == details
+
+    def test_reasoning_details_must_be_objects(self) -> None:
+        with pytest.raises(ValueError, match="reasoning_details"):
+            chat_message_from_dict({"role": "assistant", "reasoning_details": ["nope"]})
+
 
 class TestSessionLogWindow:
     def test_zero_or_missing_cap_is_the_default(self, tmp_path: Path) -> None:
@@ -288,3 +325,160 @@ class TestParseUserTurn:
         parsed = parse_daemon_event(raw)
         assert isinstance(parsed, UserTurn)
         assert parsed.content == "hello"
+
+
+def _slow_replace(monkeypatch: pytest.MonkeyPatch, delay: float = 0.02) -> None:
+    """Hold every rename open long enough for a second writer to overlap it."""
+    real_replace = os.replace
+
+    def slow(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+        time.sleep(delay)
+        real_replace(src, dst)
+
+    monkeypatch.setattr("tstd.session_persist.os.replace", slow)
+
+
+def _run_together(*jobs: Any) -> None:
+    """Start every job at the same instant on its own thread and wait for all."""
+    barrier = threading.Barrier(len(jobs))
+    errors: list[BaseException] = []
+
+    def run(job: Any) -> None:
+        barrier.wait()
+        try:
+            job()
+        except BaseException as e:  # surfaced on the test thread below
+            errors.append(e)
+
+    threads = [threading.Thread(target=run, args=(job,)) for job in jobs]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+    # A writer stuck on the lock is a failure, not a quiet pass.
+    assert not [thread for thread in threads if thread.is_alive()]
+    assert not errors
+
+
+def test_concurrent_snapshots_do_not_collide(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """TD-5016: two snapshot writers for one session both land whole.
+
+    A shared temp name let the second rename find the file already moved.
+    """
+    persist = _persist(tmp_path)
+    persist.prepare("s1")
+    first = [ChatMessage(role="user", content="from the loop")]
+    second = [
+        ChatMessage(role="user", content="from the loop"),
+        ChatMessage(role="assistant", content="from a fork"),
+    ]
+    _slow_replace(monkeypatch)
+
+    def save(messages: list[ChatMessage]) -> None:
+        for _ in range(5):
+            persist.save_conversation("s1", messages)
+
+    with caplog.at_level(logging.WARNING, logger="tstd.session_persist"):
+        _run_together(lambda: save(first), lambda: save(second))
+
+    failures = [r for r in caplog.records if r.getMessage() == "failed to write session snapshot"]
+    assert not failures
+    convo_path = persist.dir_for("s1") / "conversation.json"
+    raw = json.loads(convo_path.read_text(encoding="utf-8"))
+    assert raw in [[chat_message_to_dict(m) for m in snapshot] for snapshot in (first, second)]
+    assert list(persist.dir_for("s1").glob(".conversation.json.*.tmp")) == []
+
+
+def test_concurrent_event_rewrites_do_not_collide(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Rotation uses its own temp name too, so two rewrites cannot drop one."""
+    persist = _persist(tmp_path)
+    persist.prepare("s1")
+    events_path = persist.dir_for("s1") / "events.jsonl"
+    kept = [AssistantDelta(session_id="s1", delta=f"e{seq}", seq=seq) for seq in (1, 2)]
+    _slow_replace(monkeypatch)
+
+    def rewrite() -> None:
+        for _ in range(5):
+            SessionPersist._rewrite_events(events_path, list(kept))
+
+    with caplog.at_level(logging.WARNING, logger="tstd.session_persist"):
+        _run_together(rewrite, rewrite)
+
+    failures = [r for r in caplog.records if r.getMessage() == "failed to rotate session events"]
+    assert not failures
+    loaded = persist.load("s1")
+    assert loaded is not None
+    assert [e.seq for e in loaded.events] == [1, 2]
+    assert list(persist.dir_for("s1").glob(".events.jsonl.*.tmp")) == []
+
+
+def test_multimodal_row_round_trips(tmp_path: Path) -> None:
+    """TD-5017: a turn with a picture loads again instead of tombstoning.
+
+    The save path writes list content as-is (attachments and screenshots);
+    the loader used to accept only strings.
+    """
+    persist = _persist(tmp_path)
+    persist.prepare("s1")
+    picture = "data:image/png;base64,iVBORw0KGgo="
+    messages = [
+        ChatMessage(
+            role="user",
+            content=[
+                {"type": "text", "text": "What is in this picture?"},
+                {"type": "image_url", "image_url": {"url": picture}},
+            ],
+        ),
+        ChatMessage(
+            role="assistant",
+            content=None,
+            tool_calls=[
+                ToolCall(id="c1", function=FunctionCall(name="desktop_screenshot", arguments="{}"))
+            ],
+        ),
+        ChatMessage(
+            role="tool",
+            content=[
+                {"type": "text", "text": "screenshot taken"},
+                {"type": "image_url", "image_url": {"url": picture}},
+            ],
+            tool_call_id="c1",
+        ),
+        ChatMessage(role="assistant", content="A single pixel."),
+    ]
+    persist.save_conversation("s1", messages)
+
+    loaded = persist.load("s1")
+    assert loaded is not None
+    assert loaded.conversation == messages
+
+
+def test_unknown_part_type_is_still_malformed(tmp_path: Path) -> None:
+    """Only text and image_url parts load; anything else is still refused."""
+    persist = _persist(tmp_path)
+    persist.prepare("s1")
+    (persist.dir_for("s1") / "conversation.json").write_text(
+        json.dumps(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "listen"},
+                        {"type": "audio", "audio": {"data": "AA=="}},
+                    ],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    loaded = persist.load("s1")
+    assert loaded is not None
+    assert loaded.conversation is None

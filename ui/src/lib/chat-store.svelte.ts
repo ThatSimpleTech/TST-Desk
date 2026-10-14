@@ -8,6 +8,7 @@
 import {
   attachToSession,
   detachFromSession,
+  onConnectionState,
   onDaemonEvent,
   onResume,
   sendToDaemon,
@@ -42,6 +43,7 @@ const store = createChatStore(
 
 let unsubscribe: (() => void) | null = null;
 let unsubscribeResume: (() => void) | null = null;
+let unsubscribeState: (() => void) | null = null;
 
 /** Start following the daemon: subscribe to the event stream and ask for the
  *  session list so a session binds. Idempotent. */
@@ -51,6 +53,9 @@ export function initChat(): void {
   // TD-1716: the first-token watchdog is a timer, and a suspended webview's
   // timers do not fire — so the wait is re-judged from the clock on resume.
   unsubscribeResume = onResume(() => store.resume());
+  unsubscribeState = onConnectionState((state) => {
+    if (state === "connected") store.reconnected();
+  });
   store.refreshSessions();
 }
 
@@ -60,6 +65,8 @@ export function teardownChat(): void {
   unsubscribe = null;
   unsubscribeResume?.();
   unsubscribeResume = null;
+  unsubscribeState?.();
+  unsubscribeState = null;
   store.dispose();
 }
 
@@ -68,6 +75,11 @@ export const sendUserMessage: (
   attachments?: readonly NewAttachment[],
 ) => boolean = store.sendUserMessage;
 export const retryLastUserMessage: () => boolean = store.retryLastUserMessage;
+/** Continue a turn a restart cut off (TD-5019). */
+export const continueTurn: () => boolean = store.continueTurn;
+/** Save the draft and queue once typing settles (TD-5019). Call it from an
+ *  effect: it reads both, so the effect re-runs on every edit. */
+export const keepDraft: () => void = store.keepDraft;
 export const forkFrom: (userIndex: number, content: string) => boolean = store.forkFrom;
 export const setBranch: (userIndex: number, siblingIndex: number) => boolean = store.setBranch;
 export const cancelTurn: () => boolean = store.cancelTurn;

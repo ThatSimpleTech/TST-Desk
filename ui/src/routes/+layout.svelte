@@ -4,14 +4,21 @@
 	import '../app.css';
 	import favicon from '$lib/assets/favicon.svg';
 	import { connect, disconnect } from '$lib/connection-status.svelte.js';
+	import { startMachines } from '$lib/machines.svelte.js';
 
 	let { children } = $props();
 
 	const isQuickEntry = $derived(page.url.pathname === '/quick-entry');
 
 	onMount(() => {
+		// The paired-computer list (TD-5015) follows the connection for the
+		// window's whole life: the rail, the composer and Settings all read it.
+		const offMachines = isQuickEntry ? () => {} : startMachines();
 		connect();
-		return disconnect;
+		return () => {
+			offMachines();
+			disconnect();
+		};
 	});
 </script>
 

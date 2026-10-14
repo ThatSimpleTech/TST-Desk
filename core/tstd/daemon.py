@@ -15,8 +15,9 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -80,6 +81,7 @@ from .console_shutdown import (
     remove_windows_console_shutdown,
 )
 from .context.assembler import ContextAssembler
+from .context.calibration import enable_calibration_persistence, process_calibration_store
 from .context.commands import list_workspace_commands_async
 from .context.discover import SteeringFileResolver, append_steering_notice
 from .context.instructions import (
@@ -100,6 +102,7 @@ from .cu_indicators import (
     set_current_prefs,
 )
 from .cu_policy import CuPolicy, load_cu_policy, save_cu_policy
+from .data_dir_lock import acquire_data_dir_lock
 from .desktop import DesktopDriver, desktop_driver_from_config
 from .desktop.grounding_client import GroundingClient
 from .desktop.host_probe import host_permissions
@@ -121,6 +124,7 @@ from .grok_home import (
     open_in_terminal,
 )
 from .grok_loop import grok_loop
+from .hub import NOT_HANDLED, Hub
 from .keychain import (
     KeychainError,
     KeychainLockedError,
@@ -136,7 +140,8 @@ from .local_worker import (
     titlebar_slugs,
 )
 from .logging import get_logger, log_directory, setup_logging, user_data_dir
-from .loop import ProviderLike, agent_loop
+from .loop import ProviderLike, agent_loop, brain_manifest_config
+from .machine_pairing import DialPolicy
 from .mcp.loader import McpSupervisor
 from .memory_commit import MemoryCommitter
 from .memory_pref import load_global_memory, save_global_memory
@@ -183,6 +188,7 @@ from .protocol import (
     Attach,
     AutonomyStart,
     Cancel,
+    CancelPairing,
     CharterDocument,
     CheckCuPermissions,
     ClientMessageT,
@@ -210,6 +216,9 @@ from .protocol import (
     Detach,
     DiagnosticCheck,
     DiagnosticsReport,
+    Drain,
+    DrainResult,
+    EmailNotifyState,
     EndSession,
     ExportUsage,
     FocusWindow,
@@ -258,14 +267,18 @@ from .protocol import (
     OpenArtifact,
     OpenInTerminal,
     OpenWorkspace,
+    PairingCompleted,
     ParseJob,
     PolicyRules,
     PolicyRuleSummary,
+    RemoteDeviceSummary,
     RemovePin,
+    RemoveRemoteDevice,
     RenameSession,
     ResetCuPermissions,
     Resume,
     RevokePolicyRule,
+    RotateRemoteToken,
     RunDiagnostics,
     RunGrokCommand,
     RunJob,
@@ -284,6 +297,7 @@ from .protocol import (
     SetCuIndicators,
     SetCuKill,
     SetCuPolicy,
+    SetEmailNotify,
     SetEngine,
     SetGrokMode,
     SetJudgments,
@@ -303,10 +317,13 @@ from .protocol import (
     SetWorkspacePin,
     Shutdown,
     StartAutonomy,
+    StartPairing,
     StopTurn,
+    TestEmail,
     TierState,
     Transcribe,
     Transcript,
+    TurnComplete,
     UsageExported,
     UsageReport,
     UsageRollup,
@@ -343,7 +360,17 @@ from .provider_refresh import RefreshingProvider, _close_client
 from .remote_attach import (
     bind_spec_when_enabled,
     load_remote_attach,
+    load_remote_port,
     save_remote_attach,
+    save_remote_port,
+)
+from .remote_auth import is_loopback_host
+from .remote_devices import (
+    MAX_DEVICES,
+    PAIRING_FILE_UNAVAILABLE_MESSAGE,
+    PairingCodes,
+    RemoteDeviceRegistry,
+    pairing_code_event,
 )
 from .router import TIER_NAMES, TierRouter
 from .scheduler.calendar_path import CalendarPathError, require_calendar_file
@@ -407,6 +434,7 @@ from .shutdown_phases import (
 from .speech import transcribe as transcribe_speech
 from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
+from .turn_seal import INTERRUPTED_BY_RESTART, open_turn, repair_cut_conversation
 from .voice import (
     MAX_AUDIO_BYTES,
     VoiceError,
@@ -463,6 +491,70 @@ class DaemonState:
     @property
     def uptime(self) -> float:
         return time.time() - self.started_at
+
+
+# How often a drain looks at the open turns, and how long shutdown lets
+# them finish before it cancels them (TD-5023).
+DRAIN_POLL_SECONDS = 0.2
+SHUTDOWN_SETTLE_SECONDS = 1.5
+DRAINING_MESSAGE = (
+    "TST Desk is about to restart. Your message was not sent; send it again in a few seconds."
+)
+# Every message that starts a new turn on this computer. A drain hold
+# refuses them all, since the restart would cut the turn. Approve, deny,
+# stop and resume only let an open turn finish, so they still pass.
+_TURN_STARTS = (UserMessage, ForkFrom, RunGrokCommand, ApproveGrokPlan, StartAutonomy, RunJob)
+
+
+class DrainHold:
+    """When new local turns are refused (TD-5023).
+
+    A ``drain`` holds for a while and the hold ends by itself, so a drain
+    nobody follows with a restart never leaves the daemon refusing
+    messages. Shutdown closes it for good. The check runs on the
+    monotonic clock; ``until`` is the wall-clock time the reply names.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._ends: float | None = None
+        self._until: datetime | None = None
+        self._closed = False
+        self._generation = 0
+
+    @property
+    def active(self) -> bool:
+        return self._closed or (self._ends is not None and self._clock() < self._ends)
+
+    @property
+    def until(self) -> str | None:
+        """ISO time the hold ends, or None when there is no timed hold."""
+        if self._closed or self._until is None or not self.active:
+            return None
+        return self._until.isoformat()
+
+    @property
+    def generation(self) -> int:
+        """Bumped by every :meth:`hold_for`, so a drain sees it was replaced."""
+        return self._generation
+
+    def hold_for(self, seconds: float) -> int:
+        """Refuse new turns for *seconds* from now; 0 releases the hold.
+
+        Returns the new :attr:`generation`.
+        """
+        self._generation += 1
+        if seconds <= 0:
+            self._ends = None
+            self._until = None
+        else:
+            self._ends = self._clock() + seconds
+            self._until = datetime.now(UTC) + timedelta(seconds=seconds)
+        return self._generation
+
+    def close(self) -> None:
+        """Shutdown: refuse new turns until the process ends."""
+        self._closed = True
 
 
 def _parent_alive(pid: int) -> bool:
@@ -692,6 +784,7 @@ def _job_entry(job: Job, *, running: bool = False) -> JobEntry:
         retries=job.retries,
         retry_delay=job.retry_delay,
         attempt=job.attempt,
+        max_run=job.max_run,
         then=job.then,
         skip_calendar=job.skip_calendar,
         skip_match=job.skip_match,
@@ -699,6 +792,9 @@ def _job_entry(job: Job, *, running: bool = False) -> JobEntry:
         last_status=job.last_status,
         last_summary=job.last_summary,
         last_session_id=job.last_session_id,
+        email_to=job.email_to,
+        last_delivery=job.last_delivery,
+        last_delivery_error=job.last_delivery_error,
         running=running,
     )
 
@@ -718,6 +814,8 @@ def _job_runs_event(job_id: str, runs: list[JobRun]) -> str:
                 attempt=run.attempt,
                 attempts=run.attempts,
                 note=run.note,
+                delivery=run.delivery,
+                delivery_error=run.delivery_error,
             )
             for run in runs
         ],
@@ -739,9 +837,11 @@ def _job_templates_event(views: list[TemplateView]) -> str:
                 grace=view.grace,
                 retries=view.retries,
                 retry_delay=view.retry_delay,
+                max_run=view.max_run,
                 preset=view.preset,
                 engine=view.engine,
                 workspace=view.workspace,
+                email_to=view.email_to,
             )
             for view in views
         ]
@@ -765,11 +865,20 @@ class Daemon:
         scheduler_tick: float = 15.0,
         interfaces: InterfaceEnumerator | None = None,
         shutdown_budget: ShutdownBudget | None = None,
+        dial_policy: DialPolicy | None = None,
     ) -> None:
         self.data_dir = data_dir or user_data_dir()
         self.state = DaemonState()
         self._shutdown_event = asyncio.Event()
         self._shutdown_budget = shutdown_budget if shutdown_budget is not None else ShutdownBudget()
+        # Why this process is stopping, for the "shutting down" line, and
+        # the path that asked when the reason is a drain. The first request
+        # wins (TD-5021).
+        self._shutdown_reason: str | None = None
+        self._shutdown_trigger: str | None = None
+        # Refuses new local turns during a drain and for all of shutdown
+        # (TD-5023).
+        self._drain = DrainHold()
         self._tasks: list[asyncio.Task[Any]] = []
         self.session_registry = SessionRegistry()
         self._session_store = SessionStore(self.data_dir)
@@ -825,12 +934,32 @@ class Daemon:
                 bind = ""
         else:
             self.config.remote.bind = ""
+        # TD-5005: a pinned or remembered port keeps a saved phone working.
+        # Loopback takes it even while remote attach is off, so turning it
+        # on later puts Tailscale on the port the phones dial.
+        remote_port = self.config.remote.port or load_remote_port(self.data_dir)
+        # TD-5014: paired devices outlive remote attach being off; the
+        # pairing code is memory only.
+        self.remote_devices = RemoteDeviceRegistry(self.data_dir)
+        self.remote_devices.load()
+        self.pairing = PairingCodes()
         self.ws_server = WebSocketServer(
             self.data_dir,
             message_handler=self._handle_message,
             on_disconnect=self._on_connection_closed,
             bind=bind,
             interfaces=interfaces,
+            port=remote_port,
+            devices=self.remote_devices,
+            pairing=self.pairing,
+            on_paired=self._on_device_paired,
+            on_device_presence=self._on_device_presence,
+            on_handshake=self._on_handshake,
+        )
+        # TD-5015: paired computers. Only the bridge's links dial, only to
+        # paired Tailscale hosts (dial_policy is the tests' seam).
+        self.hub = Hub(
+            self.data_dir, self.ws_server, self._handle_list_sessions, policy=dial_policy
         )
         self._cu_server: Any = None
         # TD-4835: keychain presence cache — see _credential_is_stored.
@@ -991,6 +1120,8 @@ class Daemon:
             pinned_workspaces=list(self.workspace_pins),
             remote_attach_enabled=self.remote_attach_enabled,
             remote_bind=self.ws_server.extra_host,
+            remote_port=self.ws_server.port if self.ws_server.extra_host else None,
+            remote_devices=self.remote_devices.summaries(self.ws_server.connected_device_ids()),
             credentials=credentials,
             tier_credentials={name: tiers[name].credential for name in tiers},
             tier_loopback={name: is_loopback_url(tiers[name].base_url) for name in tiers},
@@ -1025,6 +1156,26 @@ class Daemon:
             ],
             speech_enabled=self.config.speech.enabled,
             speech_ready=self.config.speech.enabled and bool(self.config.speech.base_url),
+            email=await self._email_notify_state(),
+        )
+
+    async def _email_notify_state(self) -> EmailNotifyState:
+        """SMTP form values plus a presence probe. The password stays put."""
+        from .keychain import KeychainError, smtp_password_is_stored
+
+        email = self.config.notify.email
+        try:
+            stored = await smtp_password_is_stored()
+        except (KeychainError, FileNotFoundError):
+            stored = False
+        return EmailNotifyState(
+            enabled=email.enabled,
+            host=email.host,
+            port=email.port,
+            security=email.security,
+            username=email.username,
+            from_address=email.from_address,
+            password_stored=stored,
         )
 
     async def _credential_is_stored(self, credential_id: str) -> bool:
@@ -1565,6 +1716,11 @@ class Daemon:
         try:
             self.data_dir.mkdir(parents=True, exist_ok=True)
 
+            # Learned token ratios outlive a restart (TD-5013). Before
+            # revive, so a restored loop's first call is already scaled and
+            # its workspace map sized from the brain's ratio. Never raises.
+            enable_calibration_persistence(self.data_dir)
+
             # Audit writer before revive so restored loops can record calls.
             self._audit_writer = AuditWriter(AuditStore(audit_db_path(self.data_dir)))
             self._audit_writer.start()
@@ -1603,6 +1759,7 @@ class Daemon:
             self._audit_writer = AuditWriter(AuditStore(audit_db_path(self.data_dir)))
             self._audit_writer.start()
         await self.ws_server.start()
+        self._remember_remote_port()
         if sys.platform == "darwin":
             from .cu_host import start_cu_socket
 
@@ -1627,9 +1784,21 @@ class Daemon:
         host also kills this process a few seconds after asking it to
         stop, which is shorter than a close handshake against a client
         that never answers.
+
+        New local turns are refused from the first line, and a turn that
+        is still working gets ``SHUTDOWN_SETTLE_SECONDS`` to finish
+        before the loops are cancelled (TD-5023). The log line names why
+        this process is stopping (TD-5021).
         """
+        self._drain.close()
         release_port_file(self.data_dir)
-        log.info("shutting down")
+        # An unnamed reason is an embedder setting the event itself, or
+        # serve failing before anything asked.
+        fields = {"reason": self._shutdown_reason or "other"}
+        if self._shutdown_reason == "drain" and self._shutdown_trigger is not None:
+            fields["trigger"] = self._shutdown_trigger
+        log.info("shutting down", extra={"extra_fields": fields})
+        await self._wait_for_open_turns(SHUTDOWN_SETTLE_SECONDS)
         phases = ShutdownPhases()
         flight = ProviderFlight()
 
@@ -1656,6 +1825,7 @@ class Daemon:
         # Stop the WebSocket server. The port file was released above,
         # before this await; stop releases it again only if it still
         # names this process.
+        await phases.run("bridge", self.hub.stop())
         await phases.run("ws_stop", self.ws_server.stop())
 
         # Stop session loops
@@ -1663,7 +1833,9 @@ class Daemon:
         for session in sessions:
             runner = self.session_registry.get_runner(session.id)
             if runner is not None:
-                await phases.run(f"cancel {session.id[:8]}", runner.cancel())
+                await phases.run(
+                    f"cancel {session.id[:8]}", runner.cancel(reason="daemon shutdown")
+                )
 
         # Cancel streaming tasks
         for task in list(self._streaming_tasks.values()):
@@ -1711,9 +1883,104 @@ class Daemon:
         a callback that logs first never sets the event if that lock is
         stuck, and the process stays up until something else kills it.
         """
+        self._request_shutdown("signal")
+        log.info("signal received")
+
+    def _request_shutdown(self, reason: str) -> None:
+        """Ask for shutdown and start the 5 s budget (TD-5021).
+
+        Every trigger comes through here (the signal, the host going away,
+        the websocket ``shutdown``), so none of them can hang for good.
+        Logs nothing, for the reason ``_on_signal`` gives: the caller logs
+        after. A request while a drain hold is up is the restart the drain
+        was for, so its reason is ``drain``; *reason* is kept as the
+        trigger, so the log still says which path it was.
+        """
+        if self._shutdown_reason is None:
+            self._shutdown_reason = "drain" if self._drain.active else reason
+            self._shutdown_trigger = reason
         self._shutdown_event.set()
         self._shutdown_budget.arm(self.data_dir)
-        log.info("signal received")
+
+    async def _open_local_turns(self) -> tuple[list[str], list[str]]:
+        """``(running, awaiting_approval)``: ids of this computer's open turns.
+
+        The registry holds only local sessions; a bridged row lives in the
+        hub. A paused turn is waiting on the person too, but not on an
+        approval, so it is listed as running.
+        """
+        running: list[str] = []
+        waiting: list[str] = []
+        for sess in await self.session_registry.list_sessions():
+            if not sess.turn_in_flight:
+                continue
+            (waiting if sess.state == "awaiting_approval" else running).append(sess.id)
+        return running, waiting
+
+    async def _wait_for_open_turns(
+        self, seconds: float, *, stop: Callable[[], bool] | None = None
+    ) -> None:
+        """Poll until no local turn is still working, *seconds* pass, or *stop*.
+
+        Only a ``running`` turn can finish by itself. One parked on an
+        approval or paused for the person is not waited on.
+        """
+        deadline = time.monotonic() + seconds
+        while stop is None or not stop():
+            sessions = await self.session_registry.list_sessions()
+            if not any(s.turn_in_flight and s.state == "running" for s in sessions):
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            await asyncio.sleep(min(DRAIN_POLL_SECONDS, remaining))
+
+    async def _drain_turns(self, msg: Drain) -> str:
+        """Hold new local turns, let open ones finish, save, answer (TD-5023).
+
+        The hold covers the wait and then ``hold_s`` more: long enough to
+        swap the build and restart the host, and it ends by itself. 0/0
+        releases it and changes nothing else.
+
+        Shutdown, a release or a later drain ends the wait early, and this
+        drain then leaves the hold as it finds it. The server's close waits
+        for this handler, so a drain still polling would hold shutdown
+        until the budget killed the process; and a release must not come
+        back when the turn it gave up on finishes.
+        """
+        release = msg.timeout_s == 0 and msg.hold_s == 0
+        if release:
+            self._drain.hold_for(0)
+        else:
+            mine = self._drain.hold_for(msg.timeout_s + msg.hold_s)
+
+            def superseded() -> bool:
+                return self._shutdown_event.is_set() or self._drain.generation != mine
+
+            await self._wait_for_open_turns(msg.timeout_s, stop=superseded)
+            if not superseded():
+                self._drain.hold_for(msg.hold_s)
+            for sess in await self.session_registry.list_sessions():
+                if sess.state not in TERMINAL_STATES:
+                    await sess.conversation_changed()
+        running, waiting = await self._open_local_turns()
+        log.info(
+            "drain released" if release else "drained",
+            extra={
+                "extra_fields": {
+                    "timeout_s": msg.timeout_s,
+                    "hold_s": msg.hold_s,
+                    "running": len(running),
+                    "awaiting_approval": len(waiting),
+                }
+            },
+        )
+        return DrainResult(
+            drained=not running and not waiting,
+            running=running,
+            awaiting_approval=waiting,
+            hold_until=self._drain.until,
+        ).model_dump_json()
 
     async def _restore_sessions(self) -> None:
         """Rehydrate the registry. Revive only when a conversation snapshot exists.
@@ -1763,39 +2030,75 @@ class Daemon:
         already set. A later tick must not run it again: that would fail
         a park this process just opened.
         """
+        from .scheduler.email_delivery import bind_email_sender, reset_email_sender
+
+        token = bind_email_sender(self._send_job_email)
         try:
-            if await revive_parked(self.data_dir, self._scheduler_deliver):
-                await self._push_job_list()
-        except Exception:
-            log.exception("scheduler park revive failed")
-        while not self._shutdown_event.is_set():
             try:
-                await self.run_due_jobs()
+                if await revive_parked(self.data_dir, self._scheduler_deliver):
+                    await self._push_job_list()
             except Exception:
-                log.exception("scheduler tick failed")
-            try:
-                await asyncio.wait_for(
-                    self._shutdown_event.wait(),
-                    timeout=self._scheduler_tick,
-                )
-            except TimeoutError:
-                continue
+                log.exception("scheduler park revive failed")
+            while not self._shutdown_event.is_set():
+                try:
+                    await self.run_due_jobs()
+                except Exception:
+                    log.exception("scheduler tick failed")
+                try:
+                    await asyncio.wait_for(
+                        self._shutdown_event.wait(),
+                        timeout=self._scheduler_tick,
+                    )
+                except TimeoutError:
+                    continue
+        finally:
+            reset_email_sender(token)
 
     async def _channel_notify(self, channel: DeliverTo, summary: str) -> None:
         """Default scheduler delivery: Slack/ntfy ``send``, never a skip log."""
         await channel_notify(self.config, channel, summary)
 
-    async def run_due_jobs(self, now: datetime | None = None) -> list[str]:
-        """Wake due jobs against this daemon. Tests call this directly."""
-        when = now if now is not None else datetime.now(UTC)
-        ran = await run_due_jobs(
-            self.data_dir,
-            when,
-            run_turn=self._scheduled_run_turn,
-            deliver=self._scheduler_deliver,
-            in_flight=self._in_flight,
-            on_parked=self._arm_park_watch,
+    async def _send_job_email(self, job: Job, body: str, when: datetime) -> None:
+        """SMTP for one scheduled report. Bound for the tick and for Run now."""
+        from .notify.email import report_chrome, send
+
+        chrome = report_chrome(
+            job.instruction, when, job.timezone, job.preset, self.config.active_preset
         )
+        await send(
+            self.config,
+            body,
+            to=job.email_to or "",
+            subject=chrome.subject,
+            title=chrome.title,
+            when=chrome.when,
+            timezone_name=chrome.timezone_name,
+            preset=chrome.preset,
+        )
+
+    async def run_due_jobs(self, now: datetime | None = None) -> list[str]:
+        """Wake due jobs against this daemon. Tests call this directly.
+
+        Nothing fires during a drain hold (TD-5023). A due job stays due,
+        so the first tick after the hold runs it.
+        """
+        from .scheduler.email_delivery import bind_email_sender, reset_email_sender
+
+        if self._drain.active:
+            return []
+        when = now if now is not None else datetime.now(UTC)
+        token = bind_email_sender(self._send_job_email)
+        try:
+            ran = await run_due_jobs(
+                self.data_dir,
+                when,
+                run_turn=self._scheduled_run_turn,
+                deliver=self._scheduler_deliver,
+                in_flight=self._in_flight,
+                on_parked=self._arm_park_watch,
+            )
+        finally:
+            reset_email_sender(token)
         if ran:
             # Both halves of the row moved: next_run advanced and the run
             # receipt landed. Nothing asked for this, so push it — otherwise
@@ -1844,10 +2147,10 @@ class Daemon:
             await self._push_job_list()
 
     async def _push_job_list(self) -> None:
-        """Broadcast the job list to every handshaken client. Never raises."""
+        """Broadcast the job list to every viewer (TD-5015). Never raises."""
         try:
             payload = await self._job_list_event()
-            await self.ws_server.broadcast(payload)
+            await self.ws_server.broadcast(payload, audience="viewers")
         except Exception:
             log.exception("failed to push scheduled job list")
 
@@ -1890,8 +2193,8 @@ class Daemon:
         """
         while not self._shutdown_event.is_set():
             if not _parent_alive(parent_pid):
+                self._request_shutdown("host_gone")
                 log.warning("parent process gone, shutting down to avoid orphan")
-                self._shutdown_event.set()
                 return
             await asyncio.sleep(self._parent_poll_interval)
 
@@ -1941,7 +2244,7 @@ class Daemon:
             for sess in await self.session_registry.list_sessions():
                 if sess.id != closed_session_id and sess.cu_session_active:
                     return
-            await self.ws_server.broadcast(FocusWindow().model_dump_json())
+            await self.ws_server.broadcast(FocusWindow().model_dump_json(), audience="loopback")
         except Exception:
             log.exception("failed to broadcast focus_window after cu_session close")
 
@@ -1963,7 +2266,9 @@ class Daemon:
         reply = await self._dispatch_message(raw, _connection)
         if reply is None:
             return None
-        return scrub_wire_json(reply)
+        # TD-5015: a viewer's session_list carries every computer's rows;
+        # a remote peer's setup_state drops this computer's devices.
+        return scrub_wire_json(self.hub.finish(reply, _connection))
 
     async def _dispatch_message(self, raw: str, _connection: Any) -> str | None:
         """Handle a post-handshake message from a client.
@@ -1975,6 +2280,22 @@ class Daemon:
             msg: ClientMessageT = parse_client_message(raw)
         except HandshakeError as e:
             return build_error(e.code, e.message)
+
+        # TD-5015: peer policy, machine verbs, bridged ids. Never awaits
+        # the network.
+        handled = await self.hub.intercept(msg, _connection)
+        if handled is not NOT_HANDLED:
+            return cast("str | None", handled)
+
+        # TD-5023: after the hub, so a bridged id was already forwarded to
+        # the computer that runs it. Approve, deny and stop still pass, so
+        # open turns can finish.
+        if isinstance(msg, _TURN_STARTS) and self._drain.active:
+            sid = getattr(msg, "session_id", None)
+            return build_error("daemon_draining", DRAINING_MESSAGE, session_id=sid)
+
+        if isinstance(msg, Drain):
+            return await self._drain_turns(msg)
 
         if isinstance(msg, OpenWorkspace):
             # Validate before creating anything (TD-1103): a nonexistent or
@@ -2388,6 +2709,10 @@ class Daemon:
 
         if isinstance(msg, SetRemoteAttach):
             return await self._handle_set_remote_attach(msg)
+        if isinstance(msg, RotateRemoteToken):
+            return await self._handle_rotate_remote_token()
+        if isinstance(msg, StartPairing | CancelPairing | RemoveRemoteDevice):
+            return await self._handle_pairing_verb(msg, _connection)
 
         if isinstance(msg, SetCuIndicators):
             self.cu_indicators = CuIndicatorPrefs(
@@ -2410,6 +2735,12 @@ class Daemon:
             )
             save_cu_policy(self.cu_policy)
             return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, SetEmailNotify):
+            return await self._handle_set_email_notify(msg)
+
+        if isinstance(msg, TestEmail):
+            return await self._handle_test_email(msg)
 
         if isinstance(msg, SetJudgments):
             # TD-708 (dev): persist the judgments block; running sessions
@@ -2903,8 +3234,8 @@ class Daemon:
             return await self._memory_files_reply(found.workspace_path)
 
         if isinstance(msg, Shutdown):
+            self._request_shutdown("websocket")
             log.info("shutdown requested via websocket")
-            self._shutdown_event.set()
             return None
 
         if isinstance(msg, SetCuKill):
@@ -2922,7 +3253,15 @@ class Daemon:
     async def _revive_session(
         self, session_id: str, workspace_path: str, loaded: LoadedSession
     ) -> None:
-        """Start a loop on a persisted conversation. Does not invent messages."""
+        """Start a loop on a persisted conversation.
+
+        Invents one thing only: the seal on a turn a restart cut in half
+        (TD-5018). Its open tool calls get a reply that says they may have
+        partly run, and the turn ends with a failed ``turn_complete``, so
+        the window stops showing it as running and the next request is
+        one a provider accepts. Once sealed the log has its
+        ``turn_complete``, so a second restore finds nothing to seal.
+        """
         sess = await self.session_registry.restore(session_id, workspace_path, "idle")
         record = self._session_store.get(session_id)
         if record is not None and record.engine == "grok":
@@ -2934,9 +3273,13 @@ class Daemon:
         self._bind_session_preset(sess, record.preset if record is not None else "")
         if loaded.events:
             sess.event_log.replace(loaded.events)
+        cut = open_turn(loaded.events)
         if loaded.conversation is not None:
-            sess.conversation[:] = loaded.conversation
+            conversation = loaded.conversation
+            sess.conversation[:] = repair_cut_conversation(conversation) if cut else conversation
         await self._attach_session_runtime(sess)
+        if cut:
+            await self._seal_cut_turn(sess)
         try:
             source = boundary_source(workspace_path)
         except ConfigError as e:
@@ -2952,6 +3295,28 @@ class Daemon:
                 }
             },
         )
+
+    async def _seal_cut_turn(self, sess: Session) -> None:
+        """End a turn the last daemon died in the middle of (TD-5018).
+
+        Runs after the persist hooks are attached, so the seal and the
+        repaired conversation both reach disk.
+        """
+        tier = sess.router.active_tier if sess.router is not None else "brain"
+        await sess.event_log.add(
+            TurnComplete(
+                session_id=sess.id,
+                tokens=0,
+                cost=0,
+                tier=tier,
+                duration=0,
+                failed=True,
+                error_code=INTERRUPTED_BY_RESTART,
+                seq=1,
+            )
+        )
+        await sess.conversation_changed()
+        log.info("sealed cut turn", extra={"extra_fields": {"session_id": sess.id}})
 
     async def _run_distill(
         self,
@@ -3272,6 +3637,7 @@ class Daemon:
             self.config.remote.bind = spec
             try:
                 await self.ws_server.apply_bind(spec)
+                self._remember_remote_port()
             except (ValueError, OSError):
                 # Flag stays on; the address appears once a Tailscale iface exists.
                 log.warning(
@@ -3288,6 +3654,111 @@ class Daemon:
         self.remote_attach_enabled = msg.enabled
         save_remote_attach(self.data_dir, msg.enabled, self.remote_attach_last_bind)
         return (await self._setup_state_event()).model_dump_json()
+
+    async def _handle_rotate_remote_token(self) -> str:
+        """New phone token from Settings (TD-5005); answers with setup_state."""
+        await self.ws_server.rotate_remote_token()
+        return (await self._setup_state_event()).model_dump_json()
+
+    async def _handle_pairing_verb(
+        self, msg: StartPairing | CancelPairing | RemoveRemoteDevice, connection: Any
+    ) -> str | None:
+        """The TD-5014 verbs. The computer itself, except a phone forgetting itself."""
+        if self.ws_server.peer_is_remote(connection):
+            own = self.ws_server.device_of(connection)
+            if isinstance(msg, RemoveRemoteDevice) and own is not None and msg.device_id == own:
+                await self._remove_remote_device(own, connection)
+                return None
+            return build_error(
+                "loopback_only", "Only the computer itself can pair or remove devices."
+            )
+        if isinstance(msg, StartPairing):
+            return await self._handle_start_pairing()
+        if isinstance(msg, RemoveRemoteDevice):
+            await self._remove_remote_device(msg.device_id, connection)
+            return None
+        self.pairing.cancel()
+        return (await self._setup_state_event()).model_dump_json()
+
+    async def _remove_remote_device(self, device_id: str, connection: Any) -> None:
+        """Forget a device: reply on *connection*, then close the device's sockets.
+
+        The reply goes first so a phone forgetting itself still hears it,
+        and so it comes before the presence broadcast those closes send.
+        A failed write still closes them: the person asked for it to go.
+        """
+        try:
+            self.remote_devices.remove(device_id)
+        except OSError as e:
+            reply = build_error(
+                "remove_failed", f"Couldn't update the paired devices file: {e.strerror or e}"
+            )
+        else:
+            reply = (await self._setup_state_event()).model_dump_json()
+        # Through the reply chokepoint: a remote peer removing itself must
+        # not get this computer's device list and address (TD-5015).
+        with contextlib.suppress(websockets.exceptions.ConnectionClosed):
+            await connection.send(scrub_wire_json(self.hub.finish(reply, connection)))
+        await self.ws_server.close_device(device_id)
+
+    async def _handle_start_pairing(self) -> str:
+        """Mint a code; turn remote attach on first, as the toggle would.
+
+        If turning it on still binds no Tailscale address, it goes back
+        off: a refused pairing leaves the switch as the person had it.
+        """
+        if not self.remote_devices.available:
+            self.remote_devices.load()
+        if not self.remote_devices.available:
+            return build_error("pairing_unavailable", PAIRING_FILE_UNAVAILABLE_MESSAGE)
+        if self.remote_devices.is_full:
+            return build_error(
+                "pairing_limit",
+                f"This computer already has {MAX_DEVICES} paired devices. "
+                "Remove one before pairing another.",
+            )
+        turned_on = False
+        if self.ws_server.extra_host is None:
+            turned_on = not self.remote_attach_enabled
+            await self._handle_set_remote_attach(SetRemoteAttach(enabled=True))
+        host = self.ws_server.extra_host
+        if host is None or is_loopback_host(host):
+            if turned_on:
+                await self._handle_set_remote_attach(SetRemoteAttach(enabled=False))
+            return build_error(
+                "pairing_unavailable",
+                "Tailscale isn't running on this computer, so a phone can't reach it.",
+            )
+        code, expires_at = self.pairing.start()
+        log.info("pairing started", extra={"extra_fields": {"host": host}})
+        return pairing_code_event(code, expires_at, host, self.ws_server.port).model_dump_json()
+
+    async def _on_device_paired(self, device: RemoteDeviceSummary) -> None:
+        """Tell the computer's own windows (not other phones) a phone paired."""
+        payload = scrub_wire_json(PairingCompleted(device=device).model_dump_json())
+        await self.ws_server.broadcast(payload, loopback_only=True)
+
+    async def _on_device_presence(self, _device_id: str) -> None:
+        """A paired phone connected or dropped: refresh the computer's list.
+
+        Loopback windows only, so Settings shows connected and last seen
+        live; a phone has no business with the list.
+        """
+        state = await self._setup_state_event()
+        await self.ws_server.broadcast(scrub_wire_json(state.model_dump_json()), loopback_only=True)
+
+    def _remember_remote_port(self) -> None:
+        """Save the bound port so the next start reuses it (TD-5005).
+
+        A random port replaces a remembered one only when this start tried
+        the remembered one and found it busy. One it never tried is still
+        the port every paired phone dials.
+        """
+        if self.ws_server.extra_host is None:
+            return
+        if not self.ws_server.preferred_port and load_remote_port(self.data_dir):
+            return
+        save_remote_port(self.data_dir, self.ws_server.port)
 
     async def _handle_attach(self, msg: Attach, session: Session, connection: Any) -> str | None:
         """Handle an attach: replay events from from_seq, then stream live."""
@@ -3397,6 +3868,9 @@ class Daemon:
         assembled = await PromptAssembler(
             found.workspace_path,
             claude_global_fallback=self.config.steering.claude_global_fallback,
+            manifest_config=brain_manifest_config(
+                _session_model_config(found, self.config), process_calibration_store()
+            ),
         ).assemble(
             tier,
             matched_paths=set(found.touched_paths),
@@ -3404,7 +3878,10 @@ class Daemon:
             loaded_skills=list(found.loaded_skills),
         )
         tracker = found.cost_tracker
-        skills = await list_workspace_skills_async(found.workspace_path)
+        skills = await list_workspace_skills_async(
+            found.workspace_path,
+            claude_global_fallback=self.config.steering.claude_global_fallback,
+        )
         return build_instruction_stack(
             found.id,
             assembled.steering,
@@ -3593,6 +4070,7 @@ class Daemon:
             cadence=draft.cadence,
             next_run=draft.next_run,
             deliver_to=draft.deliver_to,
+            email_to=draft.email_to,
             paused=draft.paused,
         ).model_dump_json()
 
@@ -3663,9 +4141,11 @@ class Daemon:
                 grace=msg.grace,
                 retries=msg.retries,
                 retry_delay=msg.retry_delay,
+                max_run=msg.max_run,
                 preset=msg.preset,
                 engine=msg.engine,
                 workspace=msg.workspace,
+                email_to=msg.email_to,
             ),
             self.config.presets,
             self._known_workspaces(),
@@ -3711,6 +4191,9 @@ class Daemon:
         return await self._job_list_event()
 
     async def _finish_manual_run(self, job: Job) -> None:
+        from .scheduler.email_delivery import bind_email_sender, reset_email_sender
+
+        token = bind_email_sender(self._send_job_email)
         try:
             await run_manual_job(
                 self.data_dir,
@@ -3727,8 +4210,24 @@ class Daemon:
                 extra={"extra_fields": {"job_id": job.id}},
             )
         finally:
+            reset_email_sender(token)
             self._in_flight.release(job.id)
             await self._push_job_list()
+
+    async def _handle_set_email_notify(self, msg: SetEmailNotify) -> str:
+        from .notify.email import EmailNotifyError
+        from .notify.email_settings import apply_email_notify
+
+        try:
+            await apply_email_notify(self.config, msg, self.config_path)
+        except EmailNotifyError as exc:
+            return build_error("bad_request", f"{exc.error_class}: {exc.message}")
+        return (await self._setup_state_event()).model_dump_json()
+
+    async def _handle_test_email(self, msg: TestEmail) -> str:
+        from .notify.email_settings import send_test_email
+
+        return (await send_test_email(self.config, msg.to)).model_dump_json()
 
     async def _job_list_event(self) -> str:
         jobs = await asyncio.to_thread(list_jobs, self.data_dir)
@@ -3756,9 +4255,11 @@ class Daemon:
                 grace=msg.grace,
                 retries=msg.retries,
                 retry_delay=msg.retry_delay,
+                max_run=msg.max_run,
                 then=msg.then,
                 skip_calendar=msg.skip_calendar,
                 skip_match=msg.skip_match,
+                email_to=msg.email_to,
             )
             # Pause omits ``then``. Checking a link it did not send would
             # refuse to pause a row whose file was hand-edited into a loop.
@@ -3780,9 +4281,11 @@ class Daemon:
                 grace=msg.grace,
                 retries=msg.retries,
                 retry_delay=msg.retry_delay,
+                max_run=msg.max_run,
                 then=msg.then,
                 skip_calendar=msg.skip_calendar,
                 skip_match=msg.skip_match,
+                email_to=msg.email_to,
             )
         )
         # Create only: an existing job whose folder moved must stay editable
@@ -4035,8 +4538,12 @@ class Daemon:
         if task is not None and not task.done():
             task.cancel()
 
+    async def _on_handshake(self, connection: Any) -> None:
+        await self.hub.on_handshake(connection)
+
     async def _on_connection_closed(self, connection: Any) -> None:
         """Clean up all subscriptions for a disconnected client."""
+        await self.hub.on_closed(connection)
         # Clean up any attach subscriptions for this connection
         for session_id in list(self._attached_clients.keys()):
             conn_key = (id(connection), session_id)
@@ -4099,12 +4606,25 @@ def main() -> None:
     data_dir = Path(args.data_dir) if args.data_dir else user_data_dir()
     setup_logging(level=args.log_level, log_dir=log_directory(data_dir))
 
+    # TD-5022: one daemon per data dir, held until this process ends. A
+    # previous daemon still inside its shutdown budget gets to finish.
+    lock = acquire_data_dir_lock(data_dir)
+    if lock is None:
+        log.error(
+            "another tstd owns this data dir",
+            extra={"extra_fields": {"data_dir": str(data_dir)}},
+        )
+        raise SystemExit(1)
+
     async def _run() -> None:
         daemon = Daemon(data_dir=data_dir, parent_pid=args.parent_pid)
         await daemon.run()
 
-    with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(_run())
+    try:
+        with contextlib.suppress(KeyboardInterrupt):
+            asyncio.run(_run())
+    finally:
+        lock.release()
 
 
 if __name__ == "__main__":

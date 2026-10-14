@@ -13,7 +13,8 @@
 	import EmptyState from './EmptyState.svelte';
 	import { entries } from '../timeline-store.svelte.js';
 	import { baseName, dirName, foldFileWrites } from '../files';
-	import { openInEditor } from '../open-file';
+	import { openSessionPath } from '../open-file';
+	import { session } from '../session-status.svelte.js';
 	import DiffPreview from './DiffPreview.svelte';
 	import Icon from './Icon.svelte';
 
@@ -26,8 +27,9 @@
 
 	// Paths come from the daemon's own diff headers — canonical, absolute,
 	// never free text — so handing one to the OS opener is safe (TD-1201).
+	// Not for another computer's session: its paths are there (TD-5015).
 	function open(path: string): void {
-		void openInEditor(path);
+		void openSessionPath(session.sessionId, path);
 	}
 </script>
 

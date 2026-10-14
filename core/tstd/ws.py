@@ -10,6 +10,17 @@ the rotating token in ``{user_data_dir}/remote-token``. The port-file
 token is not enough there. Loopback hellos keep using ``hello.token``
 against the port-file token — one field, two expected values.
 
+A paired device (TD-5014) presents its own key there instead. A remote
+peer pairs by sending ``pair`` as its first frame: the one-time code is
+spent, the device is minted a key in ``pair_ok``, and the socket closes.
+A ``pair`` carrying ``replaces`` (the phone's old key) also retires the
+device that key belongs to. Codes and keys are never logged.
+
+While the paired devices file cannot be read, a remote hello that is not
+the legacy token gets ``devices_unavailable`` (keep the key, retry), and
+each one retries the read. A device connecting or dropping calls
+``on_device_presence`` so the computer's windows can refresh the list.
+
 Post-handshake messages are routed to a message handler provided by the
 daemon. The handler receives parsed messages and returns responses to
 send back to the client.
@@ -23,32 +34,53 @@ import json
 import secrets
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import websockets.exceptions
 from websockets.asyncio.server import Server, ServerConnection, serve
 
+from .identity import load_or_mint_machine_id
 from .logging import get_logger
+from .peer_policy import LOOPBACK_PLAIN, PeerView, classify
 from .port_file import PORT_FILE_NAME as _PORT_FILE
 from .port_file import release_port_file, write_port_file
 from .protocol import (
     HandshakeError,
+    RemoteDeviceSummary,
     build_error,
     build_hello_ack,
+    build_pair_ok,
     build_ping,
+    handshake_type,
     parse_hello,
+    parse_pair,
     validate_hello,
     validate_token,
+    validate_version,
 )
 from .remote_auth import (
+    REMOTE_TOKEN_FILE,
     connection_is_remote,
     is_loopback_host,
+    read_remote_token_file,
     remove_remote_token_file,
     write_remote_token_file,
+)
+from .remote_devices import (
+    DEVICES_UNAVAILABLE_MESSAGE,
+    PAIR_FAILED_MESSAGE,
+    PAIR_LOCKED_MESSAGE,
+    DeviceLimitError,
+    PairingCodes,
+    RemoteDeviceRegistry,
+    desktop_name,
 )
 from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 
 log = get_logger("tstd.ws")
+
+# Who a broadcast reaches (TD-5015). Machine peers never get one.
+Audience = Literal["all", "viewers", "loopback"]
 
 # Token length in bytes (64 hex chars)
 _TOKEN_BYTES = 32
@@ -69,7 +101,20 @@ def generate_token() -> str:
     return secrets.token_hex(_TOKEN_BYTES)
 
 
-async def _close_client(conn: ServerConnection) -> None:
+def _is_token(value: str) -> bool:
+    """True for a token this module could have minted (64 hex chars)."""
+    if len(value) != 2 * _TOKEN_BYTES:
+        return False
+    try:
+        int(value, 16)
+    except ValueError:
+        return False
+    return True
+
+
+async def _close_client(
+    conn: ServerConnection, code: int = 1001, reason: str = "Server shutting down"
+) -> None:
     """Close one client without waiting out a peer that never acks."""
     conn.close_timeout = _SHUTDOWN_CLOSE_SECONDS
     with contextlib.suppress(
@@ -77,7 +122,7 @@ async def _close_client(conn: ServerConnection) -> None:
         websockets.exceptions.ConcurrencyError,
         OSError,
     ):
-        await conn.close(1001, "Server shutting down")
+        await conn.close(code, reason)
 
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
@@ -136,8 +181,18 @@ class WebSocketServer:
         bind: str = "",
         interfaces: InterfaceEnumerator | None = None,
         is_remote_connection: Callable[[ServerConnection], bool] | None = None,
+        port: int = 0,
+        devices: RemoteDeviceRegistry | None = None,
+        pairing: PairingCodes | None = None,
+        on_paired: Callable[[RemoteDeviceSummary], Awaitable[None]] | None = None,
+        on_device_presence: Callable[[str], Awaitable[None]] | None = None,
+        on_handshake: Callable[[ServerConnection], Awaitable[None]] | None = None,
+        machine_id: str | None = None,
     ) -> None:
         self.data_dir = data_dir
+        # 0 is a random port. A fixed one keeps a saved phone working
+        # across restarts (TD-5005); if it is taken, start() falls back.
+        self._preferred_port = port
         self._server: Server | None = None
         self._extra_server: Server | None = None
         self._token: str = ""
@@ -158,10 +213,32 @@ class WebSocketServer:
         self._interfaces = interfaces
         self._extra_host: str | None = None
         self._is_remote_connection = is_remote_connection
+        # TD-5014: the daemon passes the registry it loaded; a bare server
+        # (tests) reads the same file itself.
+        if devices is None:
+            devices = RemoteDeviceRegistry(data_dir)
+            devices.load()
+        self._devices = devices
+        self._pairing = pairing if pairing is not None else PairingCodes()
+        self._on_paired = on_paired
+        self._on_device_presence = on_device_presence
+        # Handshaken connections that presented a device key, by device id.
+        self._device_of: dict[ServerConnection, str] = {}
+        # Set by stop(): the closes it causes are not presence worth telling.
+        self._stopping = False
+        # TD-5015: what each handshaken connection is (viewer, machine peer).
+        self._peers: dict[ServerConnection, PeerView] = {}
+        self._on_handshake = on_handshake
+        self._machine_id = machine_id
 
     @property
     def port(self) -> int:
         return self._port
+
+    @property
+    def preferred_port(self) -> int:
+        """The port start() tried first; 0 when it went straight to a random one."""
+        return self._preferred_port
 
     @property
     def token(self) -> str:
@@ -174,6 +251,44 @@ class WebSocketServer:
     @property
     def extra_host(self) -> str | None:
         return self._extra_host
+
+    @property
+    def devices(self) -> RemoteDeviceRegistry:
+        return self._devices
+
+    @property
+    def pairing(self) -> PairingCodes:
+        return self._pairing
+
+    @property
+    def machine_id(self) -> str | None:
+        """This computer's identity (``mid_``), minted at start()."""
+        return self._machine_id
+
+    def peer_view(self, websocket: ServerConnection) -> PeerView:
+        """What this connection is. One not handshaken here: plain loopback."""
+        return self._peers.get(websocket, LOOPBACK_PLAIN)
+
+    def viewer_connections(self) -> list[ServerConnection]:
+        return [conn for conn, peer in self._peers.items() if peer.viewer]
+
+    def connected_device_ids(self) -> set[str]:
+        """Paired devices with at least one live, handshaken connection."""
+        return set(self._device_of.values())
+
+    def device_of(self, websocket: ServerConnection) -> str | None:
+        """The paired device this connection authenticated as, if any."""
+        return self._device_of.get(websocket)
+
+    async def close_device(self, device_id: str) -> int:
+        """Close every connection of one device (TD-5014). Returns how many."""
+        conns = [conn for conn, dev in self._device_of.items() if dev == device_id]
+        # Untracked now, so the next setup_state already reads disconnected.
+        for conn in conns:
+            self._device_of.pop(conn, None)
+        if conns:
+            await asyncio.gather(*(_close_client(c, 1008, "device removed") for c in conns))
+        return len(conns)
 
     def peer_is_remote(self, websocket: ServerConnection) -> bool:
         """True when this connection must present the remote-token."""
@@ -197,18 +312,16 @@ class WebSocketServer:
 
     async def start(self) -> None:
         """Start the WebSocket server on loopback, and Tailscale if configured."""
+        self._stopping = False
         self._token = generate_token()
+        if self._machine_id is None:
+            self._machine_id = load_or_mint_machine_id(self.data_dir)
         extra = resolve_remote_bind(self._bind, self._interfaces)
         validate_interface("127.0.0.1")
         if extra is not None:
             validate_interface(extra, extra_allowed=extra)
 
-        loopback = await serve(
-            self._on_connect,
-            "127.0.0.1",
-            0,  # ephemeral port
-            process_request=self._auth_middleware,
-        )
+        loopback = await self._serve_loopback()
         self._server = loopback
         self._port = loopback.sockets[0].getsockname()[1]
 
@@ -255,7 +368,7 @@ class WebSocketServer:
         self._bind = spec.strip()
         if extra == self._extra_host:
             return
-        await self._stop_extra()
+        await self._stop_extra(revoke=extra is None)
         if extra is None:
             return
         if self._server is None or self._port == 0:
@@ -275,15 +388,20 @@ class WebSocketServer:
             extra={"extra_fields": {"port": self._port, "extra_host": self._extra_host}},
         )
 
-    async def _stop_extra(self) -> None:
-        """Drop the extra listener and its remote token. Loopback stays."""
+    async def _stop_extra(self, *, revoke: bool) -> None:
+        """Drop the extra listener. Loopback stays.
+
+        *revoke* also deletes the remote-token file: remote attach turned
+        off. A shutdown or a host change keeps it (TD-5005).
+        """
         extra = self._extra_server
         self._extra_server = None
         self._extra_host = None
         if extra is not None:
             extra.close()
             await extra.wait_closed()
-        remove_remote_token_file(self.data_dir)
+        if revoke:
+            remove_remote_token_file(self.data_dir)
         self._remote_token = ""
 
     async def _ping_loop(self) -> None:
@@ -304,19 +422,31 @@ class WebSocketServer:
                 with contextlib.suppress(websockets.exceptions.ConnectionClosed):
                     await conn.send(frame)
 
-    async def broadcast(self, payload: str) -> int:
+    async def broadcast(
+        self, payload: str, *, loopback_only: bool = False, audience: Audience = "all"
+    ) -> int:
         """Send one frame to every handshaken client. Returns how many got it.
 
         Unlike a session event, which goes to the connections attached to
         that session, this reaches every client that finished the handshake
         — the right shape for state that belongs to the user data dir
         rather than to a session, such as the scheduled-job list.
+        *loopback_only* skips remote peers (TD-5014's ``pairing_completed``);
+        it is ``audience="loopback"``. ``"viewers"`` reaches viewers only.
+        Machine peers never get a broadcast (TD-5015).
 
         A client that closed between the snapshot and the send is skipped,
         not an error: it will re-read the state when it reconnects.
         """
         sent = 0
+        if loopback_only:
+            audience = "loopback"
         for conn in list(self._handshaken):
+            peer = self.peer_view(conn)
+            if peer.machine or (audience == "viewers" and not peer.viewer):
+                continue
+            if audience == "loopback" and self.peer_is_remote(conn):
+                continue
             try:
                 await conn.send(payload)
             except (websockets.exceptions.ConnectionClosed, OSError, RuntimeError):
@@ -334,6 +464,7 @@ class WebSocketServer:
         The remote token goes with the extra listener.
         """
         log.info("ws server stopping")
+        self._stopping = True
         release_port_file(self.data_dir)
         # Same turn as server.close(), before any await: the library's
         # close task reads this when it runs, and the default is 10s.
@@ -364,25 +495,76 @@ class WebSocketServer:
             await asyncio.gather(*(_close_client(conn) for conn in connections))
         self._connections.clear()
         self._handshaken.clear()
+        self._device_of.clear()
+        self._peers.clear()
 
-        await self._stop_extra()
+        await self._stop_extra(revoke=False)
         if self._server is not None:
             await self._server.wait_closed()
         self._server = None
 
         log.info("ws server stopped")
 
-    def _issue_remote_token(self) -> None:
-        """Mint a new remote token and replace the on-disk file.
+    async def _serve_loopback(self) -> Server:
+        """Bind loopback on the preferred port, or a random one if it is busy."""
+        if self._preferred_port:
+            try:
+                return await serve(
+                    self._on_connect,
+                    "127.0.0.1",
+                    self._preferred_port,
+                    process_request=self._auth_middleware,
+                )
+            except OSError:
+                log.warning(
+                    "preferred port busy; using a random port",
+                    extra={"extra_fields": {"port": self._preferred_port}},
+                )
+        return await serve(
+            self._on_connect,
+            "127.0.0.1",
+            0,  # ephemeral port
+            process_request=self._auth_middleware,
+        )
 
-        Called on every start that has a remote listener (or a test
-        classifier). The previous file is invalid after this write.
+    def _issue_remote_token(self) -> None:
+        """Load the saved remote token, or mint one if there is none.
+
+        The token survives restarts so a saved phone keeps working
+        (TD-5005). It changes only on :meth:`rotate_remote_token` or when
+        remote attach is turned off, which deletes the file.
         """
+        saved = read_remote_token_file(self.data_dir)
+        if saved is not None and _is_token(saved) and saved != self._token:
+            self._remote_token = saved
+            (self.data_dir / REMOTE_TOKEN_FILE).chmod(0o600)
+            return
+        self._mint_remote_token()
+
+    def _mint_remote_token(self) -> None:
         token = generate_token()
         while token == self._token:
             token = generate_token()
         self._remote_token = token
         write_remote_token_file(self.data_dir, token)
+
+    async def rotate_remote_token(self) -> bool:
+        """Replace the remote token and drop its remote clients (TD-5005).
+
+        Returns False when no remote listener is up, so there is no token
+        to replace. A phone still holding the old token must be given
+        the new one. Paired devices keep their own keys and stay (TD-5014).
+        """
+        if self._extra_host is None or not self._remote_token:
+            return False
+        self._mint_remote_token()
+        remote = [
+            c for c in self._connections if self.peer_is_remote(c) and c not in self._device_of
+        ]
+        if remote:
+            await asyncio.gather(*(_close_client(conn) for conn in remote))
+        log.info("remote token rotated", extra={"extra_fields": {"dropped": len(remote)}})
+        return True
 
     async def _on_connect(self, websocket: ServerConnection) -> None:
         """Handle a new client connection, requiring a token handshake."""
@@ -392,20 +574,32 @@ class WebSocketServer:
             extra={"extra_fields": {"remote": str(websocket.remote_address)}},
         )
 
-        # Handshake: the first message must be a valid `hello`.
+        # Handshake: the first message must be a valid `hello`, or a
+        # `pair` from a remote peer redeeming a code (TD-5014).
+        device_id: str | None = None
         try:
             raw = await asyncio.wait_for(websocket.recv(), timeout=self._handshake_timeout)
             if not isinstance(raw, str):
                 raise HandshakeError("bad_request", "Handshake must be text")
+            if handshake_type(raw) == "pair":
+                await self._redeem_pairing(websocket, raw)
+                self._connections.discard(websocket)
+                return
             hello = parse_hello(raw)
             validate_hello(hello)
-            expected = self._remote_token if self.peer_is_remote(websocket) else self._token
-            validate_token(hello.token, expected)
-            await websocket.send(build_hello_ack())
+            device_id = self._authenticate(websocket, hello.token)
+            await websocket.send(
+                build_hello_ack(machine_id=self._machine_id, desktop_name=desktop_name())
+            )
             self._handshaken.add(websocket)
+            kind = self._devices.kind_of(device_id) if device_id is not None else None
+            self._peers[websocket] = classify(self.peer_is_remote(websocket), kind, hello.features)
+            if device_id is not None:
+                self._device_of[websocket] = device_id
+                self._devices.touch_last_seen(device_id)
             log.info(
                 "handshake ok",
-                extra={"extra_fields": {"version": hello.version}},
+                extra={"extra_fields": {"version": hello.version, "device_id": device_id}},
             )
         except HandshakeError as e:
             await self._send_and_close(websocket, e.code, e.message)
@@ -423,7 +617,14 @@ class WebSocketServer:
 
         # Post-handshake: route messages to the daemon's message handler.
         try:
+            if device_id is not None:
+                await self._announce_presence(device_id)
+            if self._on_handshake is not None:
+                await self._on_handshake(websocket)
             async for raw in websocket:
+                current = self._device_of.get(websocket)
+                if current is not None:
+                    self._devices.touch_last_seen(current)
                 if self._message_handler is not None and isinstance(raw, str):
                     response = await self._message_handler(raw, websocket)
                     if response is not None:
@@ -433,9 +634,100 @@ class WebSocketServer:
         finally:
             self._connections.discard(websocket)
             self._handshaken.discard(websocket)
+            self._device_of.pop(websocket, None)
+            self._peers.pop(websocket, None)
             if self._on_disconnect is not None:
                 await self._on_disconnect(websocket)
+            # The id from the handshake, not the map: close_device() untracks
+            # a removed device first, and its going is still news.
+            if device_id is not None:
+                self._devices.touch_last_seen(device_id)
+                await self._announce_presence(device_id)
             log.info("client disconnected")
+
+    async def _announce_presence(self, device_id: str) -> None:
+        if self._on_device_presence is not None and not self._stopping:
+            await self._on_device_presence(device_id)
+
+    def _authenticate(self, websocket: ServerConnection, token: str) -> str | None:
+        """Check a hello's token. Returns the device id when it is a device key.
+
+        Loopback: the port-file token only. Remote: a paired device's key
+        (TD-5014) or the legacy ``remote-token`` (TD-3602).
+
+        An unreadable devices file is read again first. Still unreadable,
+        anything but the legacy token is ``devices_unavailable``, not
+        ``auth_failed``: the phone's key may be fine, so it keeps it.
+        """
+        if not self.peer_is_remote(websocket):
+            validate_token(token, self._token)
+            return None
+        if not self._devices.available:
+            self._devices.load()
+        device_id = self._devices.verify(token)
+        if device_id is not None:
+            return device_id
+        try:
+            validate_token(token, self._remote_token)
+        except HandshakeError:
+            if self._devices.available:
+                raise
+            raise HandshakeError("devices_unavailable", DEVICES_UNAVAILABLE_MESSAGE) from None
+        return None
+
+    async def _redeem_pairing(self, websocket: ServerConnection, raw: str) -> None:
+        """First-frame ``pair`` (TD-5014): spend the code, mint this device a key.
+
+        Success sends ``pair_ok`` and closes 1000; the phone reconnects
+        with ``hello``. Failures raise the typed handshake error. Only
+        then is the device ``replaces`` names retired, so a phone that
+        never got its new key still has a working old one.
+        """
+        if not self.peer_is_remote(websocket):
+            raise HandshakeError(
+                "bad_request",
+                "This computer is already connected; pairing is for other devices.",
+            )
+        pair = parse_pair(raw)
+        validate_version(pair.version)
+        result = self._pairing.redeem(pair.code)
+        if result == "locked":
+            raise HandshakeError("pair_locked", PAIR_LOCKED_MESSAGE)
+        if result != "ok":
+            raise HandshakeError("pair_failed", PAIR_FAILED_MESSAGE)
+        # The legacy token verifies to no device, so it retires nothing.
+        replaced = self._devices.verify(pair.replaces) if pair.replaces else None
+        try:
+            device, token = self._devices.add(
+                pair.device_name, avoid=(self._token, self._remote_token), kind=pair.kind
+            )
+        except (DeviceLimitError, OSError) as e:
+            raise HandshakeError("pair_failed", PAIR_FAILED_MESSAGE) from e
+        try:
+            await websocket.send(
+                build_pair_ok(device.id, device.name, token, desktop_name(), self._machine_id)
+            )
+        except websockets.exceptions.ConnectionClosed:
+            # The phone never got its key; nobody could ever use this entry.
+            self._forget(device.id, "could not remove an undelivered remote device")
+            raise
+        await websocket.close(1000)
+        log.info(
+            "pairing redeemed",
+            extra={"extra_fields": {"device_id": device.id, "replaced": replaced}},
+        )
+        if replaced is not None:
+            self._forget(replaced, "could not remove the replaced remote device")
+            await self.close_device(replaced)
+        if self._on_paired is not None:
+            await self._on_paired(device)
+
+    def _forget(self, device_id: str, failure: str) -> None:
+        """Remove a device the pairing itself made stale; a failed write is logged."""
+        try:
+            self._devices.remove(device_id)
+        except OSError:
+            log.warning(failure, extra={"extra_fields": {"device_id": device_id}})
 
     async def _send_and_close(self, websocket: ServerConnection, code: str, message: str) -> None:
         """Send a typed error and close the connection."""

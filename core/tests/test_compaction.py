@@ -14,6 +14,7 @@ from typing import Any
 from tests.test_loop import mock_factory, wait_for_turn
 from tstd.compaction import (
     KEEP_USER_TURNS,
+    MESSAGE_OVERHEAD_TOKENS,
     THRESHOLD_FRACTION,
     budget_threshold,
     estimate_tokens,
@@ -95,9 +96,20 @@ def test_estimate_counts_content_and_tool_arguments() -> None:
         ChatMessage(role="tool", content=pad("out", 60), tool_call_id="tc1"),
     ]
     estimated, method = estimate_tokens(messages, COUNTER)
-    # ceil(chars/4): 10 + 20 + 10 + 15 = 55
-    assert estimated == 55
+    # ceil(chars/4): 10 + 20 + 10 + 15 = 55, plus the per-message
+    # template overhead on each of the four messages (TD-5007).
+    assert estimated == 55 + 4 * MESSAGE_OVERHEAD_TOKENS
     assert method == HeuristicTokenCounter().count("x").method
+
+
+def test_estimate_counts_echoed_reasoning_details() -> None:
+    """The array goes out on every later request (TD-1903), so it counts."""
+    details = [{"type": "reasoning.text", "text": pad("think", 400), "index": 0}]
+    bare = ChatMessage(role="assistant", content="ok")
+    echoed = ChatMessage(role="assistant", content="ok", reasoning_details=details)
+    without, _ = estimate_tokens([bare], COUNTER)
+    with_details, _ = estimate_tokens([echoed], COUNTER)
+    assert with_details - without >= 100
 
 
 # ── Compaction point ───────────────────────────────────────────────────

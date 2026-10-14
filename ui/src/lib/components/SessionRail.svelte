@@ -20,7 +20,13 @@
 	import RailAccount from './RailAccount.svelte';
 	import EmptyState from './EmptyState.svelte';
 	import RailSessionRow from './RailSessionRow.svelte';
+	import RailMachineSection from './RailMachineSection.svelte';
 	import { chat } from '../chat-store.svelte.js';
+	import { hub } from '../hub.svelte.js';
+	import { THIS_COMPUTER, railSections as computerSections, stripRows } from '../machines';
+	import { machines } from '../machines.svelte.js';
+	import { isTauri } from '../open-file';
+	import { remoteAttach } from '../remote-attach.svelte.js';
 	import {
 		archivedToggle,
 		attentionCount,
@@ -136,6 +142,15 @@
 	// Rows fall under Today / Yesterday / This week / Earlier (starred first):
 	// a list of sessions is read by when, and the grouping is pure (rail.ts).
 	let groups = $derived(groupRowsByRecency(rows));
+	// TD-5015: once another computer is paired the list splits into one
+	// block per computer, this one first (a phone names it after its hub).
+	// With none, `paired` is false and the markup below is the old list.
+	let paired = $derived(machines.list.length > 0);
+	let localTitle = $derived(
+		isTauri() ? THIS_COMPUTER : (hub.desktopName ?? remoteAttach.desktopName ?? THIS_COMPUTER)
+	);
+	let computers = $derived(paired ? computerSections(rows, machines.list, localTitle) : []);
+	let strip = $derived(paired ? stripRows(rows, machines.list) : rows);
 	// The history section badges what it actually lists, so the count can
 	// never disagree with the rows under it — and its heading names the shelf
 	// you are on, which is the only thing distinguishing the two.
@@ -201,7 +216,7 @@
 			<span class="mini-attention" role="status" title={attentionHint(attention)}>{attention}</span>
 		{/if}
 		<div class="mini-list">
-			{#each rows as row (row.sessionId)}
+			{#each strip as row (row.sessionId)}
 				<button
 					class="mini"
 					class:mini-active={row.sessionId === chat.sessionId}
@@ -286,20 +301,31 @@
 		</div>
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="list" onkeydown={onListKeydown}>
-			{#each groups as group (group.id)}
-				<div class="group" role="group" aria-label={group.label}>
-					<span class="group-label">{group.label}</span>
-					{#each group.rows as row (row.sessionId)}
-						<RailSessionRow
-							{row}
-							active={row.sessionId === chat.sessionId}
-							onselect={() => selectRow(row.sessionId)}
-						/>
-					{/each}
-				</div>
+			{#if paired}
+				{#each computers as section (section.id)}
+					<RailMachineSection
+						{section}
+						activeId={chat.sessionId}
+						{emptyCopy}
+						onselect={(id) => selectRow(id)}
+					/>
+				{/each}
 			{:else}
-				<EmptyState compact body={emptyCopy} />
-			{/each}
+				{#each groups as group (group.id)}
+					<div class="group" role="group" aria-label={group.label}>
+						<span class="group-label">{group.label}</span>
+						{#each group.rows as row (row.sessionId)}
+							<RailSessionRow
+								{row}
+								active={row.sessionId === chat.sessionId}
+								onselect={() => selectRow(row.sessionId)}
+							/>
+						{/each}
+					</div>
+				{:else}
+					<EmptyState compact body={emptyCopy} />
+				{/each}
+			{/if}
 		</div>
 		<RailAccount />
 	{/if}

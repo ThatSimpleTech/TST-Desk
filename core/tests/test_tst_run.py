@@ -56,6 +56,19 @@ class TestParser:
         assert ns.workspace == tmp_path
         assert ns.message == "hello"
         assert ns.data_dir == tmp_path
+        assert ns.timeout is None
+
+    def test_timeout_is_seconds(self, tmp_path: Path) -> None:
+        ns = cli.parse_args(
+            ["run", "--workspace", str(tmp_path), "--message", "hi", "--timeout", "45"]
+        )
+        assert ns.timeout == 45
+
+    def test_timeout_must_be_positive(self, tmp_path: Path) -> None:
+        with pytest.raises(SystemExit):
+            cli.parse_args(
+                ["run", "--workspace", str(tmp_path), "--message", "hi", "--timeout", "0"]
+            )
 
     def test_run_data_dir_defaults_unset(self, tmp_path: Path) -> None:
         ns = cli.parse_args(["run", "--workspace", str(tmp_path), "--message", "hi"])
@@ -233,10 +246,16 @@ class TestRunAgainstMockDaemon:
 
 
 def test_main_dispatches_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    seen: list[tuple[Path, str, Path]] = []
+    seen: list[tuple[Path, str, Path, float | None]] = []
 
-    async def fake_run(workspace: Path, message: str, data_dir: Path) -> int:
-        seen.append((workspace, message, data_dir))
+    async def fake_run(
+        workspace: Path,
+        message: str,
+        data_dir: Path,
+        *,
+        budget: float | None = None,
+    ) -> int:
+        seen.append((workspace, message, data_dir, budget))
         return 0
 
     monkeypatch.setattr(cli, "run_turn", fake_run)
@@ -254,4 +273,20 @@ def test_main_dispatches_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
         ]
     )
     assert code == 0
-    assert seen == [(tmp_path.resolve(), "from argv", data.resolve())]
+    assert seen == [(tmp_path.resolve(), "from argv", data.resolve(), None)]
+
+    code = cli.main(
+        [
+            "run",
+            "--workspace",
+            str(tmp_path),
+            "--message",
+            "bounded",
+            "--data-dir",
+            str(data),
+            "--timeout",
+            "45",
+        ]
+    )
+    assert code == 0
+    assert seen[-1] == (tmp_path.resolve(), "bounded", data.resolve(), 45.0)

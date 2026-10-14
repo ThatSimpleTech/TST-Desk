@@ -7,6 +7,7 @@ pub mod daemon;
 mod quick_entry;
 mod read_text;
 mod session_window;
+mod single_instance;
 mod tray;
 mod updater;
 
@@ -15,15 +16,18 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use daemon::close_hint::{
     take_first_close_hint, CLOSE_HINT_BODY, CLOSE_HINT_EVENT, CLOSE_HINT_TITLE,
 };
+use daemon::coworker::{
+    exit_requested_action, show_target, viewer_window_count, window_close_action_with_count,
+    CloseAction, ExitAction, LifecycleEvent, ShowTarget, MAIN_WINDOW_LABEL,
+};
 #[cfg(not(target_os = "macos"))]
 use daemon::coworker::{indicator_badge_count, indicator_window_title};
-use daemon::coworker::{window_close_action_with_count, CloseAction, LifecycleEvent};
 use daemon::embeddings::EmbeddingsHandle;
 use daemon::DaemonHandle;
 use read_text::read_text_file;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -79,7 +83,7 @@ const WINDOW_VISIBILITY_EVENT: &str = "window-visibility";
 #[tauri::command]
 fn set_coworker_indicator(app: tauri::AppHandle, label: Option<String>) {
     let window = app
-        .get_webview_window("main")
+        .get_webview_window(MAIN_WINDOW_LABEL)
         .or_else(|| app.webview_windows().into_values().next());
     let Some(window) = window else {
         return;
@@ -99,31 +103,42 @@ fn emit_window_visibility(app: &tauri::AppHandle, visible: bool) {
     let _ = app.emit(WINDOW_VISIBILITY_EVENT, visible);
 }
 
-pub(crate) fn show_main_window(app: &tauri::AppHandle) {
-    let window = app
-        .get_webview_window("main")
-        .or_else(|| app.webview_windows().into_values().next());
-    if let Some(window) = window {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-        // The window is up — the badge must not keep claiming work.
-        // The UI also clears; this covers a napping webview.
-        #[cfg(target_os = "macos")]
-        {
-            let _ = window.set_badge_label(None);
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            let _ = window.set_badge_count(None);
-            let _ = window.set_title(&indicator_window_title(None));
-        }
-        emit_window_visibility(app, true);
+fn raise_window(app: &tauri::AppHandle, window: &WebviewWindow) {
+    let _ = window.unminimize();
+    let _ = window.show();
+    let _ = window.set_focus();
+    // The window is up — the badge must not keep claiming work.
+    // The UI also clears; this covers a napping webview.
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window.set_badge_label(None);
     }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window.set_badge_count(None);
+        let _ = window.set_title(&indicator_window_title(None));
+    }
+    emit_window_visibility(app, true);
 }
 
-fn show_any_window(app: &tauri::AppHandle) {
-    show_main_window(app);
+/// Tray Show, macOS Reopen and a second launch (TD-5024). With every
+/// window closed under Keep running (TD-5020) there is nothing to
+/// raise, so this opens a desk window instead of doing nothing.
+pub(crate) fn show_any_window(app: &tauri::AppHandle) {
+    let windows = app.webview_windows();
+    match show_target(windows.keys().map(String::as_str), is_quitting()) {
+        ShowTarget::Existing(label) => {
+            if let Some(window) = windows.get(&label) {
+                raise_window(app, window);
+            }
+        }
+        ShowTarget::OpenNew => {
+            if let Err(e) = open_desk_window(app) {
+                log::warn!("could not open a desk window: {e}");
+            }
+        }
+        ShowTarget::Nothing => {}
+    }
 }
 
 #[tauri::command]
@@ -199,6 +214,7 @@ pub(crate) fn request_quit(app: &tauri::AppHandle) {
     if !begin_quit() {
         return;
     }
+    log::info!("quit requested; stopping tstd");
     let handle = app.state::<DaemonHandle>().inner().clone();
     let embeddings = app.state::<EmbeddingsHandle>().inner().clone();
     handle.request_shutdown();
@@ -295,6 +311,9 @@ fn build_app_menu(app: &tauri::App) -> tauri::Result<Menu<tauri::Wry>> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // TD-5024: first, so a second launch hands over and exits before
+        // any other plugin, window or daemon supervisor starts in it.
+        .plugin(single_instance::plugin())
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_denylist(&[quick_entry::WINDOW_LABEL])
@@ -307,13 +326,19 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
+            // A setup error panics the app. A log folder that cannot be
+            // opened must not keep TST Desk from starting (TD-5021).
+            if let Err(e) = app
+                .handle()
+                .plugin(daemon::log_files::host_log_plugin(&daemon::data_dir()))
+            {
+                eprintln!("host log not started: {e}");
             }
+            log::info!(
+                "host started (pid {}, version {})",
+                std::process::id(),
+                app.package_info().version
+            );
             app.set_menu(build_app_menu(app)?)?;
             if let Err(e) = build_tray(app) {
                 log::warn!("tray icon not created: {e}");
@@ -366,7 +391,8 @@ pub fn run() {
                     return;
                 }
                 let coworker_on = daemon::load_coworker(&daemon::data_dir());
-                let count = window.app_handle().webview_windows().len();
+                let windows = window.app_handle().webview_windows();
+                let count = viewer_window_count(windows.keys().map(String::as_str));
                 match window_close_action_with_count(
                     LifecycleEvent::CloseRequested,
                     coworker_on,
@@ -392,12 +418,23 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(move |app_handle, event| {
             match event {
-                // Menu Quit / Cmd+Q. Dock, AppleScript, and logout do not
-                // raise this on macOS; they arrive as Exit. Close is hide.
-                tauri::RunEvent::ExitRequested { api, .. } => {
-                    if !is_quitting() {
-                        api.prevent_exit();
-                        request_quit(app_handle);
+                // The last window was destroyed (code None), or our own
+                // app.exit. Dock, AppleScript, and logout do not raise
+                // this on macOS; they arrive as Exit.
+                tauri::RunEvent::ExitRequested { code, api, .. } => {
+                    let coworker_on = daemon::load_coworker(&daemon::data_dir());
+                    let tray_ok = app_handle.tray_by_id(tray::TRAY_ID).is_some();
+                    match exit_requested_action(code, is_quitting(), coworker_on, tray_ok) {
+                        ExitAction::Exit => {}
+                        ExitAction::StayInTray => {
+                            api.prevent_exit();
+                            log::info!("last window closed; staying in the tray");
+                            maybe_notice_close_is_not_quit(app_handle);
+                        }
+                        ExitAction::Shutdown => {
+                            api.prevent_exit();
+                            request_quit(app_handle);
+                        }
                     }
                 }
                 tauri::RunEvent::Exit => {

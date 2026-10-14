@@ -52,12 +52,28 @@ from .autonomy.verify import (
 from .autonomy.wakeup import deliver_wakeup
 from .autonomy.worker import JudgmentAudit
 from .compaction import budget_threshold, estimate_tokens, maybe_compact
-from .config import ConfigError, JudgmentsConfig, ModelConfig, ModelDiscoveryError, TierConfig
+from .config import (
+    ConfigError,
+    JudgmentsConfig,
+    ModelConfig,
+    ModelDiscoveryError,
+    TierConfig,
+    resolve_base_url,
+)
 from .context import PromptAssembler
+from .context.calibration import (
+    CalibratedTokenCounter,
+    CalibrationStore,
+    calibration_key,
+    effective_chars_per_token,
+    process_calibration_store,
+    tier_chars_per_token,
+)
 from .context.embeddings import EmbeddingsClient, load_memory_for_turn
+from .context.manifest import ManifestConfig, manifest_config_for_window
 from .context.skills import apply_slash_skill, list_workspace_skills
 from .context.stack import build_instruction_stack
-from .context.tokens import TokenCounter, make_token_counter
+from .context.tokens import make_token_counter
 from .context_fit import fit_inflight_turn, tool_result_char_cap, transcript_failure_text
 from .cost import CallRecord, CostTracker
 from .cu_verify import ActuationVerifier
@@ -72,6 +88,13 @@ from .local_worker import (
 )
 from .logging import get_logger, redact_secrets
 from .memory_commit import MemoryCommitter
+from .output_cap import (
+    LENGTH_FINISH,
+    arguments_complete,
+    cut_call_reply,
+    log_output_cap,
+    stub_call,
+)
 from .policy import load_approved_imports, save_approved_imports
 from .progress_guard import (
     PROGRESS_CHECK_INSTRUCTION,
@@ -105,6 +128,8 @@ from .provider import (
     StreamChunk,
     Usage,
     content_as_text,
+    flatten_reasoning_details,
+    merge_reasoning_details,
 )
 from .provider import (
     ToolCall as ProviderToolCall,
@@ -168,6 +193,54 @@ def _to_literal(cls: DecisionClass | None) -> Literal["A", "B", "C"] | None:
 
 _GUARD_REASON_LIMIT = 400
 
+# The worker's one-word verdict calls (classifier, DoD polls, judgment
+# calls) cap their own reply; the tier's max_output_tokens is for turns.
+_VERDICT_MAX_TOKENS = 8
+
+#: (base_url, model) already warned about an empty verdict at the cap
+#: (TD-5012). Verdicts run on every ambiguous tool call and every DoD
+#: poll, so one warning per endpoint per process is enough.
+_VERDICT_CAP_WARNED: set[tuple[str, str]] = set()
+
+
+def _warn_verdict_cap_once(tier_cfg: TierConfig, base_url: str, model: str) -> None:
+    """Say once why a verdict came back empty at its cap (TD-5012).
+
+    Empty content with ``finish_reason: "length"`` on an 8-token call
+    means the model spent the cap before it answered, almost always
+    thinking. The parse then fails closed (Class B, or no DoD verdict),
+    which looks like a judgment rather than a config gap.
+
+    *base_url* is the host the call went to (``resolve_base_url``), so a
+    bound credential's host wins over the tier URL (TD-1718). With
+    ``verdict_extra_body`` already set the advice changes: the server
+    seems to ignore the switch, so its spelling is the suspect.
+    """
+    key = (base_url, model)
+    if key in _VERDICT_CAP_WARNED:
+        return
+    _VERDICT_CAP_WARNED.add(key)
+    if tier_cfg.verdict_extra_body is None:
+        advice = "Set verdict_extra_body on the worker tier to turn thinking off for verdict calls"
+    else:
+        advice = (
+            "verdict_extra_body is set on the worker tier but the server seems to ignore "
+            "it; check its switch is spelled the way the server expects"
+        )
+    log.warning(
+        "worker verdict call hit its token cap with no answer; the model probably "
+        "spent the cap thinking. " + advice,
+        extra={
+            "extra_fields": {
+                "tier": "worker",
+                "base_url": base_url,
+                "model": model,
+                "max_tokens": _VERDICT_MAX_TOKENS,
+                "verdict_extra_body_set": tier_cfg.verdict_extra_body is not None,
+            }
+        },
+    )
+
 
 async def _show_progress_note(session: Session, messages: list[ChatMessage], text: str) -> None:
     """Put one short assistant line on the transcript and in the chat."""
@@ -220,7 +293,16 @@ async def _progress_check_gate(
         *messages,
         ChatMessage(role="user", content=PROGRESS_CHECK_INSTRUCTION),
     ]
-    content, tool_calls, failed, error_msg, _code, _raw = await _stream_and_parse(
+    (
+        content,
+        tool_calls,
+        failed,
+        error_msg,
+        _code,
+        _raw,
+        _finish,
+        _details,
+    ) = await _stream_and_parse(
         provider,
         model_slug,
         check_messages,
@@ -357,6 +439,9 @@ def _stream_turn(
     model: str,
     messages: list[ChatMessage],
     tools: list[ProviderToolDefinition] | None = None,
+    *,
+    max_tokens: int | None = None,
+    extra_body: dict[str, Any] | None = None,
 ) -> AsyncIterator[StreamChunk | ProviderError]:
     """Open a stream from the provider.
 
@@ -365,13 +450,16 @@ def _stream_turn(
     Returns an ``AsyncIterator`` ready for ``async for``.
 
     If *tools* is provided, it is passed as the ``tools`` parameter to
-    the chat completion request.
+    the chat completion request. *max_tokens* and *extra_body* come
+    from the tier (TD-5008).
     """
     request = ChatCompletionRequest(
         model=model,
         messages=list(messages),
         tools=tools,
         stream=True,
+        max_tokens=max_tokens,
+        extra_body=extra_body,
     )
     return provider.chat_completion_stream(request)
 
@@ -480,25 +568,49 @@ async def _stream_and_parse(
     tool_definitions: list[ProviderToolDefinition] | None,
     tracker: CostTracker,
     tier: TierName,
-    tier_cfg: Any,
+    tier_cfg: TierConfig,
     *,
     emit_events: bool = True,
-) -> tuple[str, dict[int, dict[str, str | int]], bool, str, str | None, str]:
+    on_usage: Callable[[Usage], None] | None = None,
+) -> tuple[
+    str,
+    dict[int, dict[str, str | int]],
+    bool,
+    str,
+    str | None,
+    str,
+    str | None,
+    list[dict[str, Any]] | None,
+]:
     """Call the provider, stream deltas, and accumulate tool calls.
+
+    The request caps generation at the tier's ``max_output_tokens`` and
+    carries its ``extra_body`` (TD-5008), so the turn and the progress
+    check both send them.
+
+    *on_usage* receives the call's reported usage once the stream closes
+    (TD-5007: the main turn call feeds token calibration from it).
 
     Returns:
         A tuple of ``(collected_content, tool_calls, failed, error_msg,
-        error_code, raw_detail)``. ``error_code`` is the provider's typed
-        code (e.g. ``auth_failed``) so clients can key tailored copy off
-        it (TD-1008). ``raw_detail`` is the upstream body for the log;
-        it is empty unless the chunk is a ``ProviderError``.
+        error_code, raw_detail, finish_reason, reasoning_details)``.
+        ``error_code`` is the provider's typed code (e.g. ``auth_failed``)
+        so clients can key tailored copy off it (TD-1008). ``raw_detail`` is
+        the upstream body for the log; it is empty unless the chunk is a
+        ``ProviderError``. ``finish_reason`` is the last one the stream
+        reported, or ``None``; ``"length"`` means the reply stopped at
+        ``max_output_tokens`` (TD-5008). ``reasoning_details`` is the
+        OpenRouter array to echo on the next assistant message (TD-1903),
+        or ``None`` when the stream carried none.
     """
     collected_content = ""
     tool_calls: dict[int, dict[str, str | int]] = {}
+    collected_details: list[dict[str, Any]] = []
     failed = False
     error_msg = ""
     error_code: str | None = None
     raw_detail = ""
+    finish_reason: str | None = None
 
     # TD-1804: usage is collected from any chunk that carries it and
     # recorded once, after the stream closes.  Providers disagree about
@@ -512,7 +624,15 @@ async def _stream_and_parse(
     # the complete cumulative figure rather than a partial first one.
     usage: Usage | None = None
 
-    async for chunk in _stream_turn(provider, model_slug, messages, tool_definitions):
+    stream = _stream_turn(
+        provider,
+        model_slug,
+        messages,
+        tool_definitions,
+        max_tokens=tier_cfg.max_output_tokens,
+        extra_body=tier_cfg.extra_body,
+    )
+    async for chunk in stream:
         if session.cancel_requested or session.stop_turn_requested:
             failed = True
             error_msg = "cancelled" if session.cancel_requested else "stopped"
@@ -523,17 +643,25 @@ async def _stream_and_parse(
             raw_detail = chunk.detail
             break
 
-        # Stream reasoning delta (TD-1901).  Emitted, never accumulated:
-        # `collected_content` becomes the assistant message replayed to the
-        # provider on the next round trip, and feeding a model its own
+        # Stream reasoning delta (TD-1901).  The plaintext is emitted,
+        # never folded into `collected_content`: that string is replayed to
+        # the provider as assistant speech, and feeding a model its own
         # scratchpad back as something it said is both wrong and paid for.
         # A reasoning model spends minutes here, so this is also the only
         # sign of life the window gets before the answer starts.
-        if chunk.delta.reasoning and emit_events:
+        # `reasoning_details` is different: OpenRouter requires the raw
+        # array back on the next assistant message, so it is kept apart
+        # (TD-1903).
+        if chunk.delta.reasoning_details:
+            merge_reasoning_details(collected_details, chunk.delta.reasoning_details)
+        thinking = chunk.delta.reasoning
+        if thinking is None and chunk.delta.reasoning_details:
+            thinking = flatten_reasoning_details(chunk.delta.reasoning_details)
+        if thinking and emit_events:
             await session.event_log.add(
                 AssistantReasoning(
                     session_id=session.id,
-                    delta=chunk.delta.reasoning,
+                    delta=thinking,
                     seq=1,
                 )
             )
@@ -556,6 +684,8 @@ async def _stream_and_parse(
 
         if chunk.usage is not None:
             usage = chunk.usage
+        if chunk.finish_reason:
+            finish_reason = chunk.finish_reason
 
     # Tokens the provider reported are recorded even when the call ended
     # badly — they were spent either way, and a cancelled or failed call
@@ -566,8 +696,82 @@ async def _stream_and_parse(
         # TD-1006: the cost meter updates as costs accrue — one
         # cost_update per recorded call, not one per turn.
         await session.event_log.add(tracker.emit_cost_update(session.id))
+        if on_usage is not None:
+            on_usage(usage)
 
-    return collected_content, tool_calls, failed, error_msg, error_code, raw_detail
+    return (
+        collected_content,
+        tool_calls,
+        failed,
+        error_msg,
+        error_code,
+        raw_detail,
+        finish_reason,
+        collected_details or None,
+    )
+
+
+def _carries_non_text(messages: list[ChatMessage]) -> bool:
+    """True when any message has a part the estimate cannot size.
+
+    That is an image part, or echoed ``reasoning_details`` (TD-1903):
+    the estimate counts the array's JSON, but the provider bills the
+    thinking it stands for, and an encrypted blob's length says nothing
+    about that.
+    """
+    return any(
+        bool(message.reasoning_details)
+        or (
+            isinstance(message.content, list)
+            and any(part.get("type") != "text" for part in message.content)
+        )
+        for message in messages
+    )
+
+
+def _calibration_observer(
+    counter: CalibratedTokenCounter,
+    messages: list[ChatMessage],
+    tools: list[ProviderToolDefinition] | None,
+) -> Callable[[Usage], None] | None:
+    """Usage callback that teaches *counter* this call's real size.
+
+    The raw estimate is taken now, from the base counter, over exactly
+    what is about to be sent. A calibrated estimate here would compound
+    the ratio call after call. A screenshot is billed in tokens the text
+    estimate never counts, so an image-bearing call teaches nothing.
+    """
+    if _carries_non_text(messages):
+        return None
+    raw_estimate, _ = estimate_tokens(messages, counter.base, tools)
+
+    def _observe(usage: Usage) -> None:
+        counter.observe(raw_estimate, usage.prompt_tokens)
+
+    return _observe
+
+
+def brain_manifest_config(config: ModelConfig, store: CalibrationStore) -> ManifestConfig:
+    """The workspace map's limits for *config*'s brain tier (TD-5006, TD-5013).
+
+    The map's share of the window becomes bytes at the brain endpoint's
+    learned characters per token, keyed exactly as the turn's token
+    counter keys it (``calibration_key``). *config* is the snapshot the
+    session calls (its preset's, TD-1721, else the daemon's). The loop
+    and the instruction inspector both size the map here. The figure is
+    taken when the assembler is built and kept for the loop: a map that
+    resized as the ratio moved would change the prompt prefix on every
+    call.
+
+    A brain tier on a loopback server with no slug in the config is
+    resolved by discovery on the first turn (TD-1805), after a loop has
+    built its assembler. Until then there is no key, so that loop's map
+    is sized at the flat 4 characters per token.
+    """
+    brain = effective_tier(config, "brain", cu_heavy=False)
+    return manifest_config_for_window(
+        brain.context_window, chars_per_token=tier_chars_per_token(store, brain)
+    )
 
 
 async def _build_assistant_tool_call(
@@ -765,6 +969,7 @@ async def agent_loop(
     tool_dispatcher: ToolDispatcher | None = None,
     prompt_assembler: PromptAssembler | None = None,
     audit_sink: ModelCallSink | None = None,
+    calibration_store: CalibrationStore | None = None,
 ) -> None:
     """Agent loop — runs inside ``SessionRunner``.
 
@@ -796,11 +1001,25 @@ async def agent_loop(
         audit_sink: Optional :class:`ModelCallSink` (TD-902).  When
             provided, every recorded model call is forwarded for audit
             persistence.  The sink only enqueues — it never blocks.
+        calibration_store: Where learned token ratios live (TD-5007).
+            ``None`` is the daemon-wide store, shared with every other
+            session talking to the same endpoint.
     """
     # ── Conversation state ──────────────────────────────────────────
+    # Learned token ratios (TD-5007). Taken before the assembler, which
+    # sizes the workspace map from the brain endpoint's ratio (TD-5013).
+    calibration = (
+        calibration_store if calibration_store is not None else (process_calibration_store())
+    )
+    # The map is sized for the brain this session's calls go to: its own
+    # preset snapshot when it has one (TD-1721), as at turn start and in
+    # the instruction inspector, not the daemon's active preset.
     assembler = prompt_assembler or PromptAssembler(
         session.workspace_path,
         claude_global_fallback=config.steering.claude_global_fallback,
+        manifest_config=brain_manifest_config(
+            session.config if session.config is not None else config, calibration
+        ),
     )
     embeddings_client = EmbeddingsClient.from_config(config)
 
@@ -858,11 +1077,18 @@ async def agent_loop(
         # not the CU remapped client — they are not a pixel loop (TD-3903).
         worker_cfg = config.tier("worker")
         worker_client = await client_for(worker_cfg)
+        # The 8-token cap is the classifier's own (a one-letter verdict),
+        # not the tier's; DoD polls and judgment calls share it. extra_body
+        # still applies (TD-5008), with verdict_extra_body merged over it
+        # (TD-5012): an 8-token answer ends inside a reasoning model's
+        # thinking, so this is where that thinking is turned off. Both
+        # only fill in, so temperature stays 0.
         request = ChatCompletionRequest(
             model=worker_cfg.require_slug(),
             messages=[ChatMessage(role="user", content=prompt)],
-            max_tokens=8,
+            max_tokens=_VERDICT_MAX_TOKENS,
             temperature=0.0,
+            extra_body=worker_cfg.verdict_extras(),
         )
         resp = await worker_client.chat_completion(request)
         if isinstance(resp, ProviderError):
@@ -875,7 +1101,10 @@ async def agent_loop(
         # The judgment seam reads this after the await.  DoD polls share
         # the callable and ignore the note.
         note_judgment_completion_cost(cost)
-        return content_as_text(resp.message.content)
+        text = content_as_text(resp.message.content)
+        if not text.strip() and resp.finish_reason == "length":
+            _warn_verdict_cap_once(worker_cfg, resolve_base_url(config, worker_cfg), request.model)
+        return text
 
     async def _judgment_backend_for(cfg: JudgmentsConfig) -> JudgmentBackend:
         return await judgment_backend_for(cfg, _worker_completion)
@@ -1007,8 +1236,10 @@ async def agent_loop(
     # newly matched by a touched file is announced in the timeline.
     _last_active_rules: set[str] | None = None
 
-    # One token counter per model slug (TD-405); encoders load once.
-    _token_counters: dict[str, TokenCounter] = {}
+    # One token counter per endpoint and model (TD-405); encoders load
+    # once. Each is scaled by what that endpoint reports (TD-5007), from
+    # the ``calibration`` store taken above.
+    _token_counters: dict[tuple[str, str], CalibratedTokenCounter] = {}
 
     # Cap enforcement (TD-707): the session start clock and per-call
     # iteration counter the caps are measured against.
@@ -1046,7 +1277,11 @@ async def agent_loop(
         # A stop that landed as the previous turn sealed must not abort
         # this one. A stop after this line belongs to this turn.
         session.acknowledge_stop_turn()
-        apply_slash_skill(session, queued.display)
+        apply_slash_skill(
+            session,
+            queued.display,
+            claude_global_fallback=config.steering.claude_global_fallback,
+        )
 
         # TD-1721: a preset switch while idle is applied on this turn.
         if session.config is not None:
@@ -1325,7 +1560,10 @@ async def agent_loop(
                         last_cached_tokens=tracker.last_cached_prompt_tokens,
                         cache_observed=tracker.cache_observed,
                         memory=session.last_memory,
-                        skills=list_workspace_skills(session.workspace_path),
+                        skills=list_workspace_skills(
+                            session.workspace_path,
+                            claude_global_fallback=config.steering.claude_global_fallback,
+                        ),
                         loaded_skill_names=session.loaded_skills,
                     )
                 )
@@ -1350,11 +1588,14 @@ async def agent_loop(
             #     steering block and manifest were just re-read from
             #     disk at 2b, so instructions survive compaction.
             model_slug = tier_cfg.require_slug()
-            counter = _token_counters.get(model_slug)
+            counter_key = calibration_key(tier_cfg)
+            counter = _token_counters.get(counter_key)
             if counter is None:
-                counter = make_token_counter(model_slug)
-                _token_counters[model_slug] = counter
-            compacted, compaction = maybe_compact(messages, tier_cfg, counter)
+                counter = CalibratedTokenCounter(
+                    make_token_counter(model_slug), calibration, counter_key
+                )
+                _token_counters[counter_key] = counter
+            compacted, compaction = maybe_compact(messages, tier_cfg, counter, tool_definitions)
             if compaction is not None:
                 messages[:] = compacted
                 await session.event_log.add(
@@ -1382,11 +1623,15 @@ async def agent_loop(
                 )
 
             # In-flight tool results sit past the compaction cut (TD-4839).
-            # Elide their middles until the prompt fits the same budget,
-            # or half of it after a provider context overflow. Messages
-            # stay, so a tool_calls group is never split.
+            # Once the prompt is over the same budget, or half of it
+            # after a provider context overflow, elide their middles to
+            # 70% of that budget (TD-5010), so the next results fit
+            # without rewriting these. Messages stay, so a tool_calls
+            # group is never split.
             elide_budget = max(1, budget_threshold(tier_cfg) // 2) if overflow_retried else None
-            fitted, fit = fit_inflight_turn(messages, tier_cfg, counter, budget=elide_budget)
+            fitted, fit = fit_inflight_turn(
+                messages, tier_cfg, counter, budget=elide_budget, tools=tool_definitions
+            )
             if fit is not None:
                 messages[:] = fitted
                 await session.event_log.add(
@@ -1436,6 +1681,8 @@ async def agent_loop(
                         "turn": router.turn_count,
                         "cache_prefix_hash": assembled.prefix_hash,
                         "cache_prefix_tokens": assembled.prefix_tokens,
+                        # None until this endpoint has reported usage.
+                        "token_ratio": counter.ratio,
                     }
                 },
             )
@@ -1541,7 +1788,8 @@ async def agent_loop(
             ):
                 break
 
-            # 2d. Call provider (streaming)
+            # 2d. Call provider (streaming). Only this call teaches the
+            #     token ratio (TD-5007); the progress check does not.
             (
                 collected_content,
                 tool_calls,
@@ -1549,6 +1797,8 @@ async def agent_loop(
                 error_msg,
                 error_code,
                 raw_detail,
+                finish_reason,
+                reasoning_details,
             ) = await _stream_and_parse(
                 provider,
                 model_slug,
@@ -1558,6 +1808,7 @@ async def agent_loop(
                 tracker,
                 tier,
                 tier_cfg,
+                on_usage=_calibration_observer(counter, messages, tool_definitions),
             )
 
             # 2e. Handle failure
@@ -1667,6 +1918,7 @@ async def agent_loop(
                             "session_id": session.id,
                             "tier": tier,
                             "turn": router.turn_count,
+                            "finish_reason": finish_reason,
                         }
                     },
                 )
@@ -1677,17 +1929,44 @@ async def agent_loop(
             # 2e. Record success
             router.record_success()
 
+            # A reply stopped at max_output_tokens (TD-5008): cut text is
+            # kept; a cut tool call is never run or replayed as sent.
+            cut_calls: dict[int, dict[str, str | int]] = {}
+            if finish_reason == LENGTH_FINISH:
+                cut_calls = {
+                    index: call
+                    for index, call in tool_calls.items()
+                    if not arguments_complete(str(call["arguments"]))
+                }
+                tool_calls = {i: c for i, c in tool_calls.items() if i not in cut_calls}
+                log_output_cap(
+                    session_id=session.id,
+                    tier=tier,
+                    model=model_slug,
+                    max_output_tokens=tier_cfg.max_output_tokens,
+                    cut_calls=len(cut_calls),
+                )
+
             # 2f. Append assistant response to conversation
-            if tool_calls:
+            if tool_calls or cut_calls:
                 provider_tool_calls = await _build_assistant_tool_call(
                     session, tool_calls, tool_dispatcher
                 )
+                provider_tool_calls += [
+                    stub_call(str(call["id"]), str(call["name"])) for call in cut_calls.values()
+                ]
                 messages.append(
                     ChatMessage(
                         role="assistant",
                         content=None,
                         tool_calls=provider_tool_calls,
+                        reasoning_details=reasoning_details,
                     )
+                )
+                # Answered now, so the model sees why and retries smaller.
+                messages.extend(
+                    cut_call_reply(str(call["id"]), tier_cfg.max_output_tokens)
+                    for call in cut_calls.values()
                 )
                 await session.conversation_changed()
 
@@ -1698,11 +1977,12 @@ async def agent_loop(
                     # size, so the cap scales with the tokens still free
                     # in this prompt (TD-4839). Set on the dispatcher: the
                     # delegate child copies the attribute when it is built.
-                    prefix_tokens, _ = estimate_tokens(messages, counter)
+                    prefix_tokens, _ = estimate_tokens(messages, counter, tool_definitions)
                     tool_dispatcher.max_result_chars = tool_result_char_cap(
                         tier_cfg.context_window,
                         tier_cfg.max_output_tokens,
                         prefix_tokens,
+                        effective_chars_per_token(counter),
                     )
                     # Yield control so the event loop can process cancellation
                     # between the ToolCall event emission and the dispatch.
@@ -1733,7 +2013,13 @@ async def agent_loop(
                     continue
                 # Without a dispatcher, fall through to emit turn_complete
             else:
-                messages.append(ChatMessage(role="assistant", content=collected_content or ""))
+                messages.append(
+                    ChatMessage(
+                        role="assistant",
+                        content=collected_content or "",
+                        reasoning_details=reasoning_details,
+                    )
+                )
                 await session.conversation_changed()
 
             # 2h. No tool calls (or no dispatcher) — turn is complete

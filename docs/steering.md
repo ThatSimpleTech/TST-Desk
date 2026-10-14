@@ -27,7 +27,9 @@ enough.
 Skills are not steering. A `SKILL.md` under `.tst/skills/<name>/` (or the
 user-global tree) is a catalog entry the brain can load on demand. It
 never joins the steering block or the cache prefix, and the agent cannot
-write any file named `SKILL.md`.
+write any file named `SKILL.md`. A Claude Code skill loads with its body
+unchanged and a line naming its directory; §9 lists the trees read and the
+frontmatter keys.
 
 If your repo already has a `CLAUDE.md`, you are already done — see §9.
 
@@ -135,6 +137,28 @@ comment is the very next line.
   the tree loads on every turn, whether or not the agent goes near that subtree. Ten nested
   files means ten files in every prompt. If you want a rule that only costs you when it is
   relevant, that is `.tst/rules/` with `appliesTo` — see §4.
+- **Nested files share an 8,000-token budget.** Past it, the rest are left out, shallowest
+  kept first, and Doctor names them. Each one left out says this in the inspector:
+  "nested steering budget of 8,000 tokens used up; not loaded".
+  A tree of worktrees or vendored repos is the usual way to hit it. Open the project folder
+  itself instead of its parent.
+- **Identical nested files load once.** A nested file whose text matches one already loaded
+  says "same text as a steering file already loaded; not loaded again". Worktree copies of the
+  same `AGENTS.md` cost one file, not one per copy.
+- **The home folder gets no nested walk.** Open a session on `~` itself and only the global,
+  root and rules levels load. Every repo under home has its own contract, and loading them all
+  at once is how a session outgrows the model before the first message. Doctor says:
+  "workspace is your home folder; AGENTS.md and CLAUDE.md files in its subfolders were not loaded. Open a project folder to use them".
+
+### The workspace map is budgeted too
+
+The brain tier also gets a file map of the workspace, after steering. It takes at most 15% of
+the brain tier's `context_window` and is cut on a whole line past that, with a marker saying
+where. The share is converted to characters at the brain endpoint's learned token ratio once it
+has one, 4 characters per token before (TD-5013). A git repo maps what `git ls-files` lists. A
+folder that is not a repo is walked instead, and that walk skips hidden directories (`.cache`,
+`.local`, `.npm` and the like), which on a home folder are nearly every file. The agent can
+still list or read anything the map leaves out; the map only saves it a first look.
 
 ### When an edit takes effect
 
@@ -869,6 +893,7 @@ first run.
 | `CLAUDE.md` at the repo root | Read as the workspace steering file. Nothing to rename |
 | `CLAUDE.md` in subdirectories | Read as nested steering for that subtree |
 | `~/.claude/CLAUDE.md` | Not read unless `steering.claude_global_fallback` is true. Prefer `~/.tstdesk/AGENTS.md` |
+| `~/.claude/skills/` | Same key. A workspace's own `.claude/skills/` is read without it |
 | `@path` imports in any of them | Resolved the same way, max depth 4 |
 | Both `AGENTS.md` and `CLAUDE.md` | `AGENTS.md` wins; inside the workspace the other is shown as shadowed |
 
@@ -890,6 +915,26 @@ What does **not** carry over, and what to do about it:
   Type `/` in the composer to list them. The agent cannot write those trees.
   If both of our trees are empty, `.claude/commands/` (and `~/.claude/commands/`)
   is the fallback. See TD-4501.
+- **Skills** live in `.tst/skills/<name>/SKILL.md` (and `~/.tstdesk/skills/`). If both of
+  our trees are empty, the workspace's `.claude/skills/` is the fallback. `~/.claude/skills/`
+  joins it only when `steering.claude_global_fallback` is true, the same key that gates
+  `~/.claude/CLAUDE.md` (TD-4845): its catalog lines go into every brain prompt. When the
+  workspace is your home folder, `~/.claude/skills/` is that workspace's own tree and loads
+  without the key. A loaded skill's block names its directory (`~/.claude/skills/yt-edit`, or
+  a workspace-relative path), so a body that runs `python3 chapters.py` or reads
+  `references/guide.md` can find the file; the shell still starts in the workspace (TD-5011).
+  A skill body over 4,000 tokens is refused by `load_skill` and `/name`, not truncated, and is
+  left out of the catalog so the model does not spend a turn on it. `description` is the one
+  required key.
+  `whenToUse` is optional and falls back to `description`. `name` is accepted, but the
+  directory name is the skill's name: when they differ, the directory wins and the mismatch
+  is logged. `license`, `version`, `metadata`, `compatibility`, `argument-hint` and
+  `allowed-tools` are ignored. Without the `allowed-tools` grant, the skill's tool calls go
+  through this workspace's policy like any other call. `disable-model-invocation` and
+  `user-invocable` are ignored at their defaults. Any other value, and `model`, `tools`, `disallowed-tools`, `hooks`,
+  `context`, `agent` or an unknown key, skips the skill, because the catalog cannot honor
+  it and a partial skill does not load (TD-4502). A skip is logged with the key, once per
+  file while the daemon runs.
 - **Frontmatter conventions from other tools** are stripped, not interpreted. If your
   `CLAUDE.md` opens with a YAML block — `description`, `globs`, `alwaysApply`, or anything else
   — it is removed before the file is assembled, so it never reaches the model and you have

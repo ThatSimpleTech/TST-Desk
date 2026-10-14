@@ -6,7 +6,7 @@
 // does and drive the reducer with protocol-shaped events.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import type { ClientMessageUnion, DaemonEventUnion, SessionSummary } from "./protocol";
+import type { ClientMessageUnion, DaemonEventUnion, MachineSummary, SessionSummary } from "./protocol";
 
 // Captures the handlers the store registers, the messages it sends, and the
 // re-targeting calls it makes into the single-session stores.
@@ -106,6 +106,7 @@ import {
   selectRow,
   newSession,
   newSessionInWorkspace,
+  newSessionFrom,
   setPickForNewSession,
   activateRailFunction,
   stateTone,
@@ -134,6 +135,8 @@ import {
   toggleRowMenu,
 } from "./session-actions.svelte.js";
 import { railFunctions } from "./rail";
+import { machines, resetMachines } from "./machines.svelte.js";
+import { NEW_SESSION_REPLY_MS } from "./pending-new-session";
 import { projects, resetProjects, showArtifacts, showProjects, showScheduled } from "./projects.svelte.js";
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
@@ -221,6 +224,7 @@ beforeEach(() => {
   mocks.statusState.workspacePath = null;
   mocks.sendResult = true;
   mocks.wsState.state = "connected";
+  resetMachines();
   resetSessions();
   startSessions();
   mocks.sent.length = 0; // drop the start-time refresh from assertions
@@ -592,6 +596,7 @@ describe("presentation helpers", () => {
       title: null,
       preset: "",
       busy: false,
+      machine: null,
     };
     expect(rowTitle(row)).toBe("abc12345");
     expect(rowSubtitle(row, now)).toBe("api-server · 1h");
@@ -632,6 +637,7 @@ describe("presentation helpers", () => {
       title: null,
       preset: "budget",
       busy: false,
+      machine: null,
     };
     expect(rowSubtitle(row, now)).toBe("api-server · budget · 1h");
   });
@@ -647,6 +653,7 @@ describe("presentation helpers", () => {
       title: "Fix the rail titles",
       preset: "",
       busy: false,
+      machine: null,
     };
     expect(rowTitle(row)).toBe("Fix the rail titles");
   });
@@ -1008,5 +1015,151 @@ describe("a moved session keeps its binding", () => {
     mocks.chatState.sessionId = null;
     emit(sessionList([["s-live", "2026-08-14T09:00:00Z", "idle", "/ws/beta"]]));
     expect(mocks.retargets).toEqual([]);
+  });
+});
+
+describe("sessions on another computer (TD-5015)", () => {
+  const MCH = "mch_0123456789ab";
+  const REMOTE = `r1:${MCH}`;
+
+  it("tags each row with its computer, from the summary or the id", () => {
+    const event = sessionList([
+      ["own", "2026-08-14T09:00:00Z"],
+      [REMOTE, "2026-08-14T10:00:00Z"],
+    ]);
+    emit(event);
+    expect(sessions.rows.map((r) => [r.sessionId, r.machine])).toEqual([
+      [REMOTE, MCH],
+      ["own", null],
+    ]);
+  });
+
+  it("keeps a row's open menu, confirm and move picker across a refresh while the row is listed", () => {
+    emit(sessionList([["s-live", "2026-08-14T09:00:00Z"], [REMOTE, "2026-08-14T10:00:00Z"]]));
+    toggleRowMenu("s-live");
+    // Remote rows refresh the list often; that must not close the menu.
+    emit(sessionList([["s-live", "2026-08-14T09:00:00Z"], [REMOTE, "2026-08-14T10:05:00Z"]]));
+    expect(sessions.menuFor).toBe("s-live");
+    requestDelete(REMOTE);
+    emit(sessionList([["s-live", "2026-08-14T09:00:00Z"], [REMOTE, "2026-08-14T10:06:00Z"]]));
+    expect(sessions.confirmDeleteFor).toBe(REMOTE);
+    // …and clears them once the row is gone.
+    emit(sessionList([["s-live", "2026-08-14T09:00:00Z"]]));
+    expect(sessions.confirmDeleteFor).toBeNull();
+    requestMove("s-live");
+    emit(sessionList([["s-live", "2026-08-14T09:00:00Z"]]));
+    expect(sessions.moveFor).toBe("s-live");
+    emit(sessionList([]));
+    expect(sessions.moveFor).toBeNull();
+  });
+
+  it("starts a session on another computer from one of its rows", () => {
+    emit(sessionList([["own", "2026-08-14T09:00:00Z"], [REMOTE, "2026-08-14T10:00:00Z", "idle", "/remote/proj"]]));
+    expect(newSessionFrom("unknown-anchor")).toBe(false);
+    expect(newSessionFrom(REMOTE)).toBe(true);
+    expect(mocks.sent).toEqual([{ type: "new_session", session_id: REMOTE }]);
+    expect(newSessionFrom(REMOTE)).toBe(false); // one in flight
+    // A local session appearing meanwhile is not the new one.
+    emit(sessionState("local-fresh", "running"));
+    expect(mocks.chatSelects).toEqual([]);
+    emit(sessionState(`fresh:${MCH}`, "idle"));
+    expect(mocks.chatSelects).toEqual([[`fresh:${MCH}`, "idle"]]);
+    expect(mocks.focuses.at(-1)).toEqual({ id: `fresh:${MCH}`, state: "idle", workspacePath: "/remote/proj" });
+  });
+
+  it("does not take another computer's session for a local new session", () => {
+    emit(sessionList([["own", "2026-08-14T09:00:00Z"]]));
+    mocks.chatState.sessionId = "own";
+    newSession();
+    emit(sessionState(`other:${MCH}`, "running"));
+    expect(mocks.chatSelects).toEqual([]);
+    emit(sessionState("fresh-own", "running"));
+    expect(mocks.chatSelects).toEqual([["fresh-own", "running"]]);
+  });
+
+  it("anchors an unbound New on this computer's own newest row", () => {
+    emit(sessionList([["own", "2026-08-14T09:00:00Z"], [REMOTE, "2026-08-14T10:00:00Z"]]));
+    mocks.chatState.sessionId = null;
+    expect(newSession()).toBe(true);
+    expect(mocks.sent).toEqual([{ type: "new_session", session_id: "own" }]);
+  });
+
+  function machineStatus(status: MachineSummary["status"]): void {
+    machines.list = [
+      {
+        id: MCH,
+        name: "ezer",
+        host: null,
+        port: null,
+        status,
+        last_seen: null,
+        paired_at: "2026-10-14T12:00:00Z",
+        same_computer: false,
+        detail: null,
+      },
+    ];
+  }
+
+  it("lets New work again after the hub refuses a new session on another computer", () => {
+    emit(sessionList([["own", "2026-08-14T09:00:00Z"], [REMOTE, "2026-08-14T10:00:00Z"]]));
+    expect(newSessionFrom(REMOTE)).toBe(true);
+    emit({
+      type: "error",
+      seq: 6,
+      session_id: REMOTE,
+      machine: MCH,
+      code: "machine_unreachable",
+      message: "ezer isn't reachable.",
+    });
+    mocks.chatState.sessionId = "own";
+    expect(newSession()).toBe(true);
+    expect(mocks.sent.at(-1)).toEqual({ type: "new_session", session_id: "own" });
+  });
+
+  it("lets New work again after a remote error with no session, or this daemon's unknown anchor", () => {
+    emit(sessionList([["own", "2026-08-14T09:00:00Z"], [REMOTE, "2026-08-14T10:00:00Z"]]));
+    expect(newSessionFrom(REMOTE)).toBe(true);
+    emit({ type: "error", seq: 6, machine: MCH, code: "session_not_found", message: "On ezer: not found" });
+    mocks.chatState.sessionId = "own";
+    expect(newSession()).toBe(true);
+    emit({ type: "error", seq: 7, code: "session_not_found", message: "Session 'own' not found" });
+    expect(newSession()).toBe(true);
+  });
+
+  it("frees New when the socket drops or no reply comes in time", () => {
+    vi.useFakeTimers();
+    try {
+      emit(sessionList([["own", "2026-08-14T09:00:00Z"], [REMOTE, "2026-08-14T10:00:00Z"]]));
+      mocks.chatState.sessionId = "own";
+      expect(newSession()).toBe(true);
+      expect(newSession()).toBe(false);
+      transitions("reconnecting");
+      expect(newSession()).toBe(true);
+      vi.advanceTimersByTime(NEW_SESSION_REPLY_MS - 1);
+      expect(newSession()).toBe(false);
+      vi.advanceTimersByTime(1);
+      expect(newSession()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("sends no new session to a computer that isn't connected", () => {
+    emit(sessionList([["own", "2026-08-14T09:00:00Z"], [REMOTE, "2026-08-14T10:00:00Z"]]));
+    machineStatus("unreachable");
+    expect(newSessionFrom(REMOTE)).toBe(false);
+    mocks.chatState.sessionId = REMOTE;
+    expect(newSession()).toBe(false);
+    expect(mocks.sent).toEqual([]);
+    machineStatus("connected");
+    expect(newSessionFrom(REMOTE)).toBe(true);
+  });
+
+  it("offers no move for another computer's row", () => {
+    emit(sessionList([[REMOTE, "2026-08-14T10:00:00Z", "idle", "/remote/proj"]]));
+    mocks.workspacesState.entries = [{ path: "/ws/beta", lastSeen: "2026-08-13T10:00:00Z" }];
+    expect(moveTargets(REMOTE)).toEqual([]);
+    requestMove(REMOTE);
+    expect(sessions.moveFor).toBeNull();
   });
 });

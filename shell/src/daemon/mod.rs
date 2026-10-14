@@ -33,6 +33,7 @@ mod daemon_pid;
 pub mod embeddings;
 #[cfg(all(test, unix))]
 pub(crate) mod fake_sidecar;
+pub(crate) mod log_files;
 mod shutdown;
 mod system_exit;
 
@@ -318,7 +319,7 @@ async fn run_supervision(h: DaemonHandle) {
 
         emit(&h, "starting", None, 0);
 
-        let (mut watch, ws, port_file, pid) = match acquire_daemon(&h.data_dir).await {
+        let (mut watch, mut ws, port_file, pid) = match acquire_daemon(&h.data_dir).await {
             Ok(acquired) => acquired,
             Err(e) => {
                 log::error!("{e}");
@@ -329,6 +330,7 @@ async fn run_supervision(h: DaemonHandle) {
             }
         };
         h.child_pid.store(pid as i32, Ordering::Relaxed);
+        log::info!("connected to tstd (pid {pid}, port {})", port_file.port);
         // Dup of the live socket. System quit writes the shutdown frame
         // on it from the main thread; this task keeps `ws`.
         h.exit_socket
@@ -344,9 +346,9 @@ async fn run_supervision(h: DaemonHandle) {
             port: port_file.port,
         });
         emit(&h, "connected", Some(port_file.port), 0);
-        // Taken only on the shutdown arm. The crash arm drops it, which
-        // is the same as `ws` falling out of scope at the end of the loop.
-        let mut socket = Some(ws);
+        // Cleared when the daemon closes the socket while still running.
+        // Quit then asks with SIGTERM instead of a frame nobody reads.
+        let mut socket_open = true;
 
         // Supervise: the listener exits, or a shutdown request from the host.
         let shutdown_req = h.shutdown_notify.clone();
@@ -387,11 +389,18 @@ async fn run_supervision(h: DaemonHandle) {
                 }
                 h.set_status(DaemonStatus::Stopping);
                 emit(&h, "stopping", None, 0);
-                let held = socket.take().expect("supervision socket");
-                graceful_shutdown(&h, held, &mut watch, pid).await;
+                graceful_shutdown(&h, socket_open.then_some(ws), &mut watch, pid).await;
                 finish_stopped(&h);
                 return;
             }
+            never = async {
+                shutdown::read_until_closed(&mut ws).await;
+                socket_open = false;
+                // The dup is dead too: system quit falls back to SIGTERM.
+                h.exit_socket.store(None);
+                log::info!("tstd closed the supervision socket (pid {pid})");
+                std::future::pending::<std::convert::Infallible>().await
+            } => match never {},
         }
 
         // The child exited. If the host is quitting we are done already;
@@ -427,6 +436,7 @@ async fn bump_restart(h: &DaemonHandle, restart: &mut u32) -> bool {
         emit(h, "stopped", None, *restart);
         return false;
     }
+    log::warn!("restarting tstd ({} of {MAX_RESTARTS})", *restart);
     h.set_status(DaemonStatus::Crashed { restart: *restart });
     emit(h, "crashed", None, *restart);
     // 500 ms · attempt → 500 ms, 1 s, 1.5 s before the first three restarts.
@@ -548,6 +558,7 @@ async fn acquire_daemon(data_dir: &Path) -> Result<(ChildWatch, ClientWs, PortFi
         let _ = child.wait().await;
         return Err("daemon exited before handing over its pid".into());
     };
+    log::info!("spawned tstd (pid {pid})");
     let port_file = match wait_for_port_file(data_dir, pid, PORT_FILE_TIMEOUT).await {
         Ok(pf) => pf,
         Err(e) => {
@@ -595,7 +606,7 @@ async fn wait_pid_gone(pid: u32) {
 
 /// Spawn the daemon child. `--parent-pid` is always the host pid
 /// (TD-2903): close keeps this process alive; force-quit is the orphan
-/// backstop.
+/// backstop. stderr goes to `logs/tstd.stderr.log` (TD-5021).
 pub fn spawn_daemon(data_dir: &Path) -> Result<tokio::process::Child, String> {
     spawn_daemon_with(data_dir, &resolve_command()?)
 }
@@ -616,7 +627,7 @@ pub fn spawn_daemon_with(
         .arg("--log-level")
         .arg("INFO")
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(log_files::tstd_stderr(data_dir));
     #[cfg(target_os = "macos")]
     {
         cmd.env(
@@ -699,7 +710,7 @@ pub async fn connect_handshake(port: u16, token: &str) -> Result<ClientWs, Strin
 /// Send `shutdown`, wait until the leader is reaped, SIGKILL only at the grace.
 async fn graceful_shutdown(
     h: &DaemonHandle,
-    ws: ClientWs,
+    ws: Option<ClientWs>,
     watch: &mut ChildWatch,
     spawned_pid: u32,
 ) {
