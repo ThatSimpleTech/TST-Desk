@@ -414,8 +414,26 @@ reads local interface addresses, not `tailscale status`.
 | `bind` | string | *empty* | Interface name or Tailscale IP. Empty / omitted is loopback only. |
 | `port` | int | `0` | Listener port while remote attach is on (TD-5005). `0` reuses the port the listener last used, else picks a random one. A pinned port that is busy at start falls back to a random one. Must be `0` or 1024–65535. |
 
-**Attach from another device (TD-3701).** Open the same TST Desk UI in a
-browser (the desktop window is Tauri; a phone is not). Connect with
+**Pair a phone (TD-5014).** This is the usual way. On the computer, choose
+pair in Settings or run `tst pair`. It shows the computer's name, its
+Tailscale address and port, an 8-character code such as `ABCD-2345`, and a
+QR code. On the phone, scan the QR, open the `tstdesk://pair` link, or type
+the address and code. The code works once, lasts 10 minutes, and stops
+working after 5 wrong tries; it is kept only in the daemon's memory and
+never logged. If remote attach is off, pairing turns it on first.
+
+Pairing gives that phone its own key. The phone saves it and connects on its
+own from then on. The computer keeps only a sha256 of each key, never the key,
+in `{user_data_dir}/remote-devices.yaml` (readable by you only). Up to 32
+devices can be paired. `tst devices` lists them and `tst devices remove <id>`
+(or Settings) forgets one and closes only its connections. Turning remote
+attach off stops the listener but keeps the list, so paired phones connect
+again when it is turned back on. Only the computer itself can pair or remove
+devices; a connected phone cannot. If the file is damaged it is renamed to
+`remote-devices.yaml.corrupt-<time>` and the list starts empty.
+
+**Attach with the token (the older way, TD-3701).** Open the same TST Desk UI
+in a browser (the desktop window is Tauri; a phone is not). Connect with
 `ws://<bind>:<port>` plus the token in `{user_data_dir}/remote-token`
 — not the token in `port.json`. Example:
 `ws://100.64.1.2:9xxx` and the file
@@ -424,7 +442,8 @@ macOS. A URL of the form `?ws=ws://…&token=…` (or the same pair in the hash)
 fills the form. No account, no relay. Settings shows the address and port and
 never the token; copy the token from `remote-token`. The address and token stay
 the same across restarts (TD-5005). Settings → **New token** replaces the token
-and disconnects every remote client. Turning remote attach off deletes it.
+and disconnects every remote client that used it; paired phones keep their own
+keys. Turning remote attach off deletes it.
 
 **Android shell (TD-5001).** `android/` builds a sideload APK that loads this
 same UI. The phone build accepts only a Tailscale address or a `*.ts.net`

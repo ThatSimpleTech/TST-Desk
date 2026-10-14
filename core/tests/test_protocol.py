@@ -1069,6 +1069,8 @@ def _placeholder(annotation: Any) -> Any:
         return "x"
     if annotation in (int, float):
         return 1
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return _sample(annotation)  # e.g. pairing_completed.device (TD-5014)
     raise AssertionError(f"no placeholder for {annotation!r} — extend _placeholder")
 
 

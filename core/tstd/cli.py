@@ -9,6 +9,7 @@ leaves it running; it is not the host, so it does not pass
 ``run`` opens a workspace and prints one turn. ``attach`` follows a
 session the daemon already owns: replay + live text, detach on SIGINT.
 A TTY can answer ``approval_request``; a non-TTY does not hang on stdin.
+``pair`` and ``devices`` (TD-5014) live in ``cli_pairing``.
 """
 
 from __future__ import annotations
@@ -54,7 +55,10 @@ def _add_data_dir(parser: argparse.ArgumentParser) -> None:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse ``tst`` argv. ``run`` and ``attach`` are registered."""
+    """Parse ``tst`` argv: ``run``, ``attach``, ``pair`` and ``devices``."""
+    # Function-local: cli_pairing imports this module's helpers.
+    from .cli_pairing import add_pairing_commands
+
     parser = argparse.ArgumentParser(
         prog="tst",
         description="TST Desk CLI — same daemon as the window, different door.",
@@ -89,6 +93,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="replay from this event seq (default: 1)",
     )
     _add_data_dir(attach_p)
+    add_pairing_commands(sub, _add_data_dir)
     return parser.parse_args(argv)
 
 
@@ -432,6 +437,10 @@ def main(argv: list[str] | None = None) -> int:
             return asyncio.run(run_turn(workspace, args.message, data_dir))
         if args.command == "attach":
             return asyncio.run(attach_session(args.session_id, data_dir, args.from_seq))
+        if args.command in ("pair", "devices"):
+            from .cli_pairing import run_pairing_command
+
+            return run_pairing_command(args, data_dir)
         print(f"unknown command: {args.command}", file=sys.stderr)
         return 2
     except CliError as e:

@@ -141,7 +141,18 @@ same client messages they are on the desktop. Settings shows the address and
 port (TD-5005); the token is the contents of `remote-token`. Both stay the same
 across restarts: the port is remembered beside the remote-attach switch and the
 token file is kept at shutdown. Settings "New token" replaces it and drops every
-remote client; turning remote attach off deletes it.
+remote client that used it; turning remote attach off deletes it.
+
+**Pairing (TD-5014).** The token file is now the older way. The usual way is to pair: the
+computer shows a code and a QR (Settings, or `tst pair`), and the phone scans the QR, opens
+the link, or types the address and code. The code is 8 characters, lasts 10 minutes, works
+once, and stops working after 5 wrong tries; it lives only in the daemon's memory. Redeeming
+it gives that phone its own key, on the same port as everything else. The daemon keeps only a
+sha256 of each key, in `{user_data_dir}/remote-devices.yaml`, so each device can be listed and
+removed on its own (`tst devices`). Removing one closes only its connections. Turning remote
+attach off stops the listener but keeps the paired devices, so they connect again when it is
+turned back on. Pairing and removing are refused from a remote connection: only the computer
+itself can add or remove a device.
 
 **Android shell (TD-5001).** A sideload APK is that same UI in a WebView, not a second protocol and not a Play Store service. The page is served to the WebView from `127.0.0.1` inside the phone — an https page would refuse the daemon's cleartext `ws://` as mixed content — and the WebView refuses every other origin. The android UI build's attach parser accepts only a Tailscale address (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`, or `*.ts.net`). Desktop CSP stays `ws://127.0.0.1`. The APK is debug-signed for sideload. There is still no account and no relay. The shell keeps the attach target (address + token) sealed with an Android Keystore AES-GCM key and hands it to the page through a `TstDeskNative` bridge, so the phone reconnects on launch (TD-5005). A refused saved token is cleared and the form comes back with the address filled in. Settings on the phone has "Forget this computer". A plain browser tab still keeps the token in `sessionStorage` only.
 
@@ -263,6 +274,12 @@ discriminated unions (`ClientMessageT`, `DaemonEventT`) so parsing is total and 
 `hello_ack` is a bare JSON object built by `build_hello_ack`, not a `DaemonEvent` — it precedes
 the event stream rather than joining it.
 
+A phone that is not paired yet sends `pair` instead of `hello` as its first frame (TD-5014).
+The daemon checks the one-time code, mints that device a key, answers with a bare `pair_ok`
+(built by `build_pair_ok`, out of band like `hello_ack`) and closes with 1000. The phone then
+reconnects and sends `hello` with that key in `hello.token`. On a remote connection the daemon
+accepts the key of any paired device or the older `remote-token`.
+
 `ready` is declared in `DaemonEventT` and carries the daemon and protocol versions, but **no code
 in `core/tstd` constructs it**, so it is not on the wire in v0.1. It is documented below because
 it is part of the parseable surface every client must handle; do not write a client that waits
@@ -300,6 +317,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | Message | Session | Purpose |
 |---|---|---|
 | `hello` | — | Opening handshake: auth token plus protocol version. |
+| `pair` | — | First frame from a phone redeeming a pairing code, instead of `hello`: code, device name, protocol version. Remote peers only (loopback gets `bad_request`). Success is a bare `pair_ok` with the device's own key, then close 1000; failure is `pair_failed` or `pair_locked`, then close 1008 (TD-5014). |
 | `open_workspace` | — | Open a workspace directory as a new session. |
 | `user_message` | yes | Queue a user turn for the session's loop. |
 | `fork_from` | yes | Replace a past user turn and fork a sibling from there. Refused mid-turn. |
@@ -380,7 +398,10 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_judgments` | — | Judgment-seam toggles: actuation verification, semantic no-progress breaker, candidate selection, confidence threshold, state cap, and the connector (`worker` or `typesafe`). Machine-wide; persists the `judgments:` block of the user config. All default off; every judgment fails closed. Takes effect on the next session. Acked with `setup_state` (TD-708 dev). |
 | `set_cu_kill` | — | Engage or clear the process-wide computer-use kill-switch. Capture still runs. Acked with `cu_kill_state` (TD-3404). |
 | `set_remote_attach` | — | Turn Tailscale remote attach on or off. Machine-wide; persists `{user_data_dir}/remote-attach.yaml`. On binds last-known / `tailscale0`; off drops the extra listener and deletes `remote-token`. Acked with `setup_state` (TD-3603). |
-| `rotate_remote_token` | — | Replace `remote-token` and drop every remote client. Machine-wide; a no-op while remote attach is off. The token never crosses the wire. Acked with `setup_state` (TD-5005). |
+| `rotate_remote_token` | — | Replace `remote-token` and drop the remote clients that used it. Paired devices keep their own keys. Machine-wide; a no-op while remote attach is off. The token never crosses the wire. Acked with `setup_state` (TD-5005). |
+| `start_pairing` | — | Show a one-time pairing code for a new phone. Turns remote attach on first when it is off. Loopback only. Acked with `pairing_code`, or the error `pairing_unavailable` when no Tailscale address can be bound (TD-5014). |
+| `cancel_pairing` | — | Drop the active pairing code. Loopback only. Acked with `setup_state` (TD-5014). |
+| `remove_remote_device` | — | Forget one paired device and close only its connections. Loopback only; an unknown id changes nothing. Acked with `setup_state` (TD-5014). |
 | `list_jobs` | — | List persisted scheduled jobs. Acked with `job_list`. Does not run them (TD-3805). |
 | `save_job` | — | Create or replace a scheduled job from draft fields. Optional `preset` (a catalog name) and `engine` (`native` or `grok`) pin that job's model; omitted uses the window's current choice. On an edit, omitted keeps the stored pin and `""` clears it (TD-3812). Optional `grace` is a duration phrase or a number of seconds (how late a slot may be and still run); the job stores seconds. On an edit, omitted keeps the stored grace and `""` clears it; omitted on create means a late slot still runs once (TD-3813). Optional `retries` (0–3) is extra tries after a transient scheduled failure, and `retry_delay` is a duration phrase or seconds (default 10 minutes when retries is at least 1). On an edit, omitted retries keeps the stored count, 0 clears it, omitted delay keeps the stored seconds, and `""` means the default; both are ignored by Run now (TD-3814). An existing `id` edits that job and keeps its run receipt; on that edit an omitted cadence or next run keeps the stored value and an empty string clears it (TD-3810). Pause is this verb with `paused` set. Optional `then` is another job's id, started once after this job ends ok; on an edit, omitted keeps it and `""` clears it, and a cycle is refused. The child's own schedule is not moved (TD-3817). Does not run the job. Acked with `job_list` (TD-3805). |
 | `delete_job` | — | Remove a scheduled job by id and its run history, and clear `then` on any job that pointed at this id. Acked with `job_list`. Unknown id is a typed error (TD-3805, TD-3811, TD-3817). |
@@ -433,7 +454,9 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `memory_proposal` | session | Distill produced file diffs the user must accept, edit, or reject (TD-2401). |
 | `session_list` | connection | The current session list. Each row carries the catalog `preset` (TD-1721). `busy` is a turn in flight; `state: running` is loop liveness (TD-1714, TD-1720). |
 | `policy_rules` | connection | The workspace's saved policy rules. |
-| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_engine` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_voice` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach` / `rotate_remote_token` / `set_mcp_server` / `delete_mcp_server` / `set_judgments`. `remote_bind` is the bound Tailscale address, never a token. Carries `engine`, `grok_available`, `grok_binary`, `voice_enabled`, and `voice_has_endpoint`. `mcp_servers` is the listed MCP servers (id, transport, command, url, enabled) — never a secret. `speech_enabled` / `speech_ready` are hold-to-talk flags (TD-4701); the speech URL never appears. `judgments_*` echoes the judgment-seam toggles (TD-708 dev). |
+| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_engine` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_voice` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach` / `rotate_remote_token` / `cancel_pairing` / `remove_remote_device` / `set_mcp_server` / `delete_mcp_server` / `set_judgments`. `remote_bind` is the bound Tailscale address, never a token. `remote_devices` lists paired devices (id, name, paired_at, last_seen, connected), never a key or its hash (TD-5014). Carries `engine`, `grok_available`, `grok_binary`, `voice_enabled`, and `voice_has_endpoint`. `mcp_servers` is the listed MCP servers (id, transport, command, url, enabled) — never a secret. `speech_enabled` / `speech_ready` are hold-to-talk flags (TD-4701); the speech URL never appears. `judgments_*` echoes the judgment-seam toggles (TD-708 dev). |
+| `pairing_code` | connection | Reply to `start_pairing`: the code (and `ABCD-2345` display form), host, port, desktop name, the `tstdesk://pair` link, a QR of it as standalone SVG, and when it expires (TD-5014). |
+| `pairing_completed` | connection | A phone redeemed the code. Carries that device's summary (never its key). Sent to the computer's own loopback windows only (TD-5014). |
 | `api_key_validated` | connection | The result of a key probe. Never carries the key. |
 | `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. |
 | `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |

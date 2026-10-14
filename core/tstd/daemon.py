@@ -184,6 +184,7 @@ from .protocol import (
     Attach,
     AutonomyStart,
     Cancel,
+    CancelPairing,
     CharterDocument,
     CheckCuPermissions,
     ClientMessageT,
@@ -259,10 +260,13 @@ from .protocol import (
     OpenArtifact,
     OpenInTerminal,
     OpenWorkspace,
+    PairingCompleted,
     ParseJob,
     PolicyRules,
     PolicyRuleSummary,
+    RemoteDeviceSummary,
     RemovePin,
+    RemoveRemoteDevice,
     RenameSession,
     ResetCuPermissions,
     Resume,
@@ -305,6 +309,7 @@ from .protocol import (
     SetWorkspacePin,
     Shutdown,
     StartAutonomy,
+    StartPairing,
     StopTurn,
     TierState,
     Transcribe,
@@ -348,6 +353,13 @@ from .remote_attach import (
     load_remote_port,
     save_remote_attach,
     save_remote_port,
+)
+from .remote_auth import is_loopback_host
+from .remote_devices import (
+    MAX_DEVICES,
+    PairingCodes,
+    RemoteDeviceRegistry,
+    pairing_code_event,
 )
 from .router import TIER_NAMES, TierRouter
 from .scheduler.calendar_path import CalendarPathError, require_calendar_file
@@ -833,6 +845,11 @@ class Daemon:
         remote_port = 0
         if self.remote_attach_enabled:
             remote_port = self.config.remote.port or load_remote_port(self.data_dir)
+        # TD-5014: paired devices outlive remote attach being off; the
+        # pairing code is memory only.
+        self.remote_devices = RemoteDeviceRegistry(self.data_dir)
+        self.remote_devices.load()
+        self.pairing = PairingCodes()
         self.ws_server = WebSocketServer(
             self.data_dir,
             message_handler=self._handle_message,
@@ -840,6 +857,9 @@ class Daemon:
             bind=bind,
             interfaces=interfaces,
             port=remote_port,
+            devices=self.remote_devices,
+            pairing=self.pairing,
+            on_paired=self._on_device_paired,
         )
         self._cu_server: Any = None
         # TD-4835: keychain presence cache — see _credential_is_stored.
@@ -1001,6 +1021,7 @@ class Daemon:
             remote_attach_enabled=self.remote_attach_enabled,
             remote_bind=self.ws_server.extra_host,
             remote_port=self.ws_server.port if self.ws_server.extra_host else None,
+            remote_devices=self.remote_devices.summaries(self.ws_server.connected_device_ids()),
             credentials=credentials,
             tier_credentials={name: tiers[name].credential for name in tiers},
             tier_loopback={name: is_loopback_url(tiers[name].base_url) for name in tiers},
@@ -2406,6 +2427,8 @@ class Daemon:
             return await self._handle_set_remote_attach(msg)
         if isinstance(msg, RotateRemoteToken):
             return await self._handle_rotate_remote_token()
+        if isinstance(msg, StartPairing | CancelPairing | RemoveRemoteDevice):
+            return await self._handle_pairing_verb(msg, _connection)
 
         if isinstance(msg, SetCuIndicators):
             self.cu_indicators = CuIndicatorPrefs(
@@ -3312,6 +3335,47 @@ class Daemon:
         """New phone token from Settings (TD-5005); answers with setup_state."""
         await self.ws_server.rotate_remote_token()
         return (await self._setup_state_event()).model_dump_json()
+
+    async def _handle_pairing_verb(
+        self, msg: StartPairing | CancelPairing | RemoveRemoteDevice, connection: Any
+    ) -> str:
+        """The TD-5014 verbs. The computer itself only: a phone cannot pair more."""
+        if self.ws_server.peer_is_remote(connection):
+            return build_error(
+                "loopback_only", "Only the computer itself can pair or remove devices."
+            )
+        if isinstance(msg, StartPairing):
+            return await self._handle_start_pairing()
+        if isinstance(msg, CancelPairing):
+            self.pairing.cancel()
+        elif self.remote_devices.remove(msg.device_id):
+            await self.ws_server.close_device(msg.device_id)
+        return (await self._setup_state_event()).model_dump_json()
+
+    async def _handle_start_pairing(self) -> str:
+        """Mint a code; turn remote attach on first, as the toggle would."""
+        if self.remote_devices.is_full:
+            return build_error(
+                "pairing_limit",
+                f"This computer already has {MAX_DEVICES} paired devices. "
+                "Remove one before pairing another.",
+            )
+        if self.ws_server.extra_host is None:
+            await self._handle_set_remote_attach(SetRemoteAttach(enabled=True))
+        host = self.ws_server.extra_host
+        if host is None or is_loopback_host(host):
+            return build_error(
+                "pairing_unavailable",
+                "Tailscale isn't running on this computer, so a phone can't reach it.",
+            )
+        code, expires_at = self.pairing.start()
+        log.info("pairing started", extra={"extra_fields": {"host": host}})
+        return pairing_code_event(code, expires_at, host, self.ws_server.port).model_dump_json()
+
+    async def _on_device_paired(self, device: RemoteDeviceSummary) -> None:
+        """Tell the computer's own windows (not other phones) a phone paired."""
+        payload = scrub_wire_json(PairingCompleted(device=device).model_dump_json())
+        await self.ws_server.broadcast(payload, loopback_only=True)
 
     def _remember_remote_port(self) -> None:
         """Save the bound port so the next start reuses it (TD-5005)."""
