@@ -6,7 +6,8 @@
 //! session on another computer the file is downloaded first
 //! (`received_files.rs`) and these commands act on the copy in Downloads.
 //! Every command takes ids, never a path, so the webview cannot point the
-//! opener at anything else.
+//! opener at anything else, and Open refuses (`not_openable`) any kind
+//! outside the allowlist, so a UI slip cannot run a program either.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -33,6 +34,24 @@ impl FileStatus {
     pub(crate) fn new(state: &'static str, have: u64) -> Self {
         Self { state, have }
     }
+}
+
+/// The only kinds Open hands to the OS on the desktop. Anything else, an
+/// agent-made script or program above all, gets Show in folder and Save a
+/// copy; an allowlist, because a list of program types is never complete
+/// (.js, .vbs, .hta, .lnk, .url, .py ... all run on a double-click).
+const OPENABLE_EXTS: [&str; 27] = [
+    ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".mp4", ".webm", ".mov", ".mkv",
+    ".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac", ".txt", ".md", ".csv", ".log", ".json",
+    ".zip", ".tar", ".gz", ".tgz", ".7z",
+];
+
+/// The extension the OS acts on is taken after trailing spaces and dots
+/// are gone, because Windows drops them when it opens the file.
+pub(crate) fn is_openable(name: &str) -> bool {
+    let name = name.trim_end_matches([' ', '.']);
+    name.rfind('.')
+        .is_some_and(|at| OPENABLE_EXTS.contains(&name[at..].to_ascii_lowercase().as_str()))
 }
 
 /// `uuid4().hex`: 32 lowercase hex characters (§1.3).
@@ -121,6 +140,22 @@ pub(crate) fn target_with(
         .ok_or_else(|| "not_found".to_string())
 }
 
+/// What Open may hand the OS opener: the card's file, when it is a kind
+/// the desktop opens.
+pub(crate) fn open_target_with(
+    data_dir: &Path,
+    received: Option<&Path>,
+    session_id: &str,
+    artifact_id: &str,
+) -> Result<PathBuf, String> {
+    let path = target_with(data_dir, received, session_id, artifact_id)?;
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if !is_openable(name) {
+        return Err("not_openable".into());
+    }
+    Ok(path)
+}
+
 fn target(app: &AppHandle, session_id: &str, artifact_id: &str) -> Result<PathBuf, String> {
     let received = received_files::received_root(app).ok();
     target_with(
@@ -165,7 +200,13 @@ pub fn sent_file_open(
     session_id: String,
     artifact_id: String,
 ) -> Result<(), String> {
-    let path = target(&app, &session_id, &artifact_id)?;
+    let received = received_files::received_root(&app).ok();
+    let path = open_target_with(
+        &daemon::data_dir(),
+        received.as_deref(),
+        &session_id,
+        &artifact_id,
+    )?;
     app.opener()
         .open_path(path.to_string_lossy(), None::<&str>)
         .map_err(|e| format!("no_app: {e}"))
@@ -352,6 +393,45 @@ mod tests {
         assert_eq!(
             status_with(&data, None, bridged, AID),
             Ok(FileStatus::new("none", 0))
+        );
+    }
+
+    #[test]
+    fn open_refuses_every_kind_outside_the_allowlist() {
+        let tmp = TempDir::new("openable");
+        let plain = "pdf png jpg jpeg gif webp bmp mp4 webm mov mkv mp3 wav m4a ogg flac aac \
+                     txt md csv log json zip tar gz tgz 7z";
+        let mut allowed: Vec<String> = plain.split_whitespace().map(|e| format!("a.{e}")).collect();
+        // Lowercased, and taken after Windows drops trailing spaces and dots.
+        for name in ["Report.PDF", "report.pdf. . ", "logs.tar.gz", ".pdf"] {
+            allowed.push(name.into());
+        }
+        let programs = "setup.exe fix.js run.vbs setup.hta x.scr go.lnk site.url tool.py \
+                        app-release.apk run.sh x.desktop page.html img.svg x.pdf.exe pdf \
+                        a\u{202E}fdp.exe";
+        let mut refused: Vec<String> = programs.split_whitespace().map(String::from).collect();
+        for name in ["x.exe. .", "x.p df", "x.pdf\u{2007}"] {
+            refused.push(name.into());
+        }
+        for (n, name) in allowed.iter().chain(refused.iter()).enumerate() {
+            let aid = format!("{n:032x}");
+            let dir = artifact_dir(&tmp.0, "sess-1", &aid);
+            fs::write(dir.join(name), b"x").unwrap();
+            let got = open_target_with(&tmp.0, None, "sess-1", &aid);
+            if allowed.contains(name) {
+                assert!(got.is_ok(), "{name:?} should open: {got:?}");
+            } else {
+                assert_eq!(got, Err("not_openable".into()), "{name:?}");
+            }
+        }
+        // Lookup errors still come first.
+        assert_eq!(
+            open_target_with(&tmp.0, None, "sess-1", "nope"),
+            Err("bad_id".into())
+        );
+        assert_eq!(
+            open_target_with(&tmp.0, None, "sess-9", AID),
+            Err("not_found".into())
         );
     }
 
