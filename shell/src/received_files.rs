@@ -251,6 +251,11 @@ struct Wanted<'a> {
 /// Bytes this user may still write on the volume holding `dir`, or None
 /// when the OS will not say (the writes then report `no_space` themselves).
 /// statfs on macOS: its statvfs counts blocks in 32 bits.
+/// On APFS, f_bavail leaves out purgeable space (local snapshots, iCloud
+/// files macOS can evict), which Finder counts as available. A nearly full
+/// Mac can therefore get `no_space` here when macOS would have made room.
+/// Kept on purpose: it errs on the safe side, only when real free space is
+/// under the rest of the file plus SPACE_MARGIN, and the user can retry.
 #[cfg(target_os = "macos")]
 fn free_space(dir: &Path) -> Option<u64> {
     use std::os::unix::ffi::OsStrExt;
