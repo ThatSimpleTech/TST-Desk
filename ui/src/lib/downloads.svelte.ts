@@ -17,9 +17,10 @@
 // state after a restart (§6.3).
 
 import { onConnectionState, onDaemonEvent, onResume, sendToDaemon } from "./connection-status.svelte.js";
+import { machineOf } from "./bridged-id";
 import { claimInline } from "./inline-errors";
-import { machineNameFor } from "./machines.svelte.js";
-import type { ArtifactChunk, ClientMessageUnion, DaemonEventUnion } from "./protocol";
+import { machineById, machineNameFor } from "./machines.svelte.js";
+import type { ArtifactChunk, ClientMessageUnion, DaemonEventUnion, MachineStatus, MachineSummary } from "./protocol";
 import { createFileHost, metaFor, type FileHost, type FileSink, type SinkStatus } from "./file-sink";
 import {
   apkWarnings,
@@ -110,6 +111,10 @@ interface Job {
   lastAppendAt: number;
   /** Bumped on pause, cancel and restart, so a stale await lands nowhere. */
   generation: number;
+  /** The computer (`mch_` handle) a hub pause waits for, or null. */
+  waitFor: string | null;
+  /** Asks made on our own while the list already called that computer up. */
+  machineRetries: number;
 }
 
 interface Deps {
@@ -118,6 +123,8 @@ interface Deps {
   send: (msg: ClientMessageUnion) => boolean;
   /** The `<machine>` in the copy. */
   machine: (sessionId: string) => string;
+  /** A paired computer's status as the machines store lists it, or null. */
+  machineStatus: (machineId: string) => MachineStatus | null;
 }
 
 let deps: Deps | null = null;
@@ -137,6 +144,7 @@ function getDeps(): Deps {
       host: createFileHost(platform),
       send: sendToDaemon,
       machine: (sessionId) => machineNameFor(sessionId) ?? THIS_COMPUTER,
+      machineStatus: (machineId) => machineById(machineId)?.status ?? null,
     };
   }
   return deps;
@@ -263,6 +271,8 @@ function newJob(ref: SentFileRef, sink: FileSink, then: Then): Job {
     appending: false,
     lastAppendAt: 0,
     generation: 0,
+    waitFor: null,
+    machineRetries: 0,
   };
 }
 
@@ -416,6 +426,7 @@ async function drain(job: Job): Promise<void> {
       if (!isCurrent(job, generation)) return;
       noteRate(job, next - offset);
       job.resyncs = next > offset ? 0 : job.resyncs;
+      job.machineRetries = 0;
       job.have = next;
       entry(job.ref).have = next;
       fill(job);
@@ -568,6 +579,7 @@ function handleCode(job: Job, code: string): void {
     case "phase":
       if (outcome.phase === "paused") {
         pauseJob(job, "code", outcome.copy);
+        waitForMachine(job);
         return;
       }
       stopWith(job, outcome.phase === "done" ? "failed" : outcome.phase, outcome.copy);
@@ -650,6 +662,7 @@ export async function resumeDownload(ref: SentFileRef): Promise<void> {
   }
   const e = entry(ref);
   if (e.phase !== "paused") return;
+  job.waitFor = null;
   if (active !== null && active !== key) {
     if (!queue.includes(key)) queue.push(key);
     e.phase = "queued";
@@ -750,13 +763,48 @@ function handleResume(): void {
   resumeWaiting();
 }
 
+/** A hub pause (machine_unreachable, machine_not_found) waits for that
+ *  computer: the hub pushes machine_list when a link's status changes, and
+ *  the download carries on once it lists the computer connected. When the
+ *  list already says so (the lane is still dialing, or the push came first),
+ *  ask again after a stall's wait, MAX_STRIKES times at most. */
+function waitForMachine(job: Job): void {
+  const machine = machineOf(job.ref.sessionId);
+  job.waitFor = machine;
+  if (machine === null || getDeps().machineStatus(machine) !== "connected") return;
+  if (job.machineRetries >= MAX_STRIKES) return;
+  job.machineRetries += 1;
+  const generation = job.generation;
+  setTimeout(() => {
+    if (isCurrent(job, generation) && job.waitFor === machine) void resumeDownload(job.ref);
+  }, STALL_MS);
+}
+
+function onMachines(list: readonly MachineSummary[]): void {
+  for (const job of [...jobs.values()]) {
+    const machine = job.waitFor;
+    if (machine === null || downloads[job.key]?.phase !== "paused") continue;
+    if (list.some((m) => m.id === machine && m.status === "connected")) void resumeDownload(job.ref);
+  }
+}
+
 function handleEvent(event: DaemonEventUnion): void {
   if (event.type === "artifact_chunk") {
     onChunk(event);
     return;
   }
+  if (event.type === "machine_list") {
+    onMachines(event.machines);
+    return;
+  }
   if (event.type === "error") claimDownloadError(event);
 }
+
+/** The hub's refusals of a chunk request for a bridged session. The design
+ *  (§5.2) named machine_not_found, which the hub only sends for a computer
+ *  that is no longer paired; machine_unreachable is its answer for one that
+ *  is asleep, offline or parked. */
+const HUB_CODES = new Set(["not_on_remote", "not_allowed", "machine_not_found", "machine_unreachable"]);
 
 /** Errors that answer a chunk request rather than anything else (§5.2):
  *  claimed here, before the notice sink, and shown on the card instead. */
@@ -766,9 +814,7 @@ export function claimDownloadError(event: DaemonEventUnion): boolean {
   if (job === undefined) return false;
   const phase = downloads[job.key]?.phase;
   if (phase !== "downloading" && phase !== "paused") return false;
-  const viaHub =
-    (event.code === "not_on_remote" || event.code === "not_allowed" || event.code === "machine_not_found") &&
-    event.session_id === job.ref.sessionId;
+  const viaHub = HUB_CODES.has(event.code) && event.session_id === job.ref.sessionId;
   const oldPeer = event.code === "unknown_message" && event.message.includes("read_artifact_chunk");
   if (!viaHub && !oldPeer) return false;
   claimInline(event);

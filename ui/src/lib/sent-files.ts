@@ -529,7 +529,12 @@ export function messageFor(code: string, ctx: CopyContext): CodeOutcome {
     case "not_allowed":
       return { kind: "phase", phase: "unavailable", copy: `Update TST Desk on ${machine} to download this.` };
     case "machine_not_found":
-      return { kind: "phase", phase: "paused", copy: `${machine === THIS_COMPUTER ? "This computer" : machine} is not reachable.` };
+      return { kind: "phase", phase: "paused", copy: `${capitalized(machine)} is not reachable.` };
+    case "machine_unreachable":
+      // The hub's answer while that computer sleeps, is offline or is parked
+      // (refused, locked, outdated). The card waits for it, as the
+      // composer's and the approval card's copy do.
+      return { kind: "phase", phase: "paused", copy: `${capitalized(machine)} isn't reachable. The download carries on when it is.` };
     case "no_app": {
       if (ctx.platform === "android") {
         const ext = extensionOf(ctx.name);
@@ -566,3 +571,8 @@ export function goneText(machine: string): string {
 
 /** The copy for a machine label: another computer by name, or this one. */
 export const THIS_COMPUTER = "this computer";
+
+/** A machine label at the start of a sentence. Names are shown as named. */
+function capitalized(machine: string): string {
+  return machine === THIS_COMPUTER ? "This computer" : machine;
+}

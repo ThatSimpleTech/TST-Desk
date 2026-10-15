@@ -3,7 +3,7 @@
 // the codes that land on the card, the queue and keep-awake.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ArtifactChunk, ClientMessageUnion, DaemonEventUnion } from "./protocol";
+import type { ArtifactChunk, ClientMessageUnion, DaemonEventUnion, MachineStatus } from "./protocol";
 
 const bus = vi.hoisted(() => ({
   events: new Set<(event: DaemonEventUnion) => void>(),
@@ -28,7 +28,7 @@ vi.mock("./connection-status.svelte.js", async (importOriginal) => {
   };
 });
 
-vi.mock("./machines.svelte.js", () => ({ machineNameFor: () => "studio-mac" }));
+vi.mock("./machines.svelte.js", () => ({ machineNameFor: () => "studio-mac", machineById: () => null }));
 
 import {
   CHUNK,
@@ -91,6 +91,8 @@ class FakeSink implements FileSink {
 let sinks: Map<string, FakeSink>;
 let sent: ClientMessageUnion[];
 let online: boolean;
+/** What the machines store lists, by handle. */
+let listed: Record<string, MachineStatus>;
 let host: FileHost & {
   keepAwake: ReturnType<typeof vi.fn<(on: boolean) => void>>;
   open: ReturnType<typeof vi.fn<(ref: SentFileRef) => Promise<void>>>;
@@ -179,6 +181,7 @@ beforeEach(() => {
   sinks = new Map();
   sent = [];
   online = true;
+  listed = {};
   host = {
     platform: "android",
     sink: (ref: SentFileRef) => sinkOf(ref),
@@ -199,6 +202,7 @@ beforeEach(() => {
       return true;
     },
     machine: () => "studio-mac",
+    machineStatus: (id) => listed[id] ?? null,
   });
 });
 
@@ -428,6 +432,107 @@ describe("the queue", () => {
       "2",
       "3",
     ]);
+  });
+});
+
+const MCH = "mch_1a2b3c4d5e6f";
+const BRIDGED = `sess-1:${MCH}`;
+
+function unreachable(sessionId = BRIDGED): DaemonEventUnion {
+  return {
+    type: "error",
+    seq: 0,
+    session_id: sessionId,
+    code: "machine_unreachable",
+    message: "studio-mac isn't reachable right now. Try again when it is.",
+    machine: MCH,
+  };
+}
+
+function machineList(entries: Record<string, MachineStatus>): DaemonEventUnion {
+  return {
+    type: "machine_list",
+    seq: 0,
+    machines: Object.entries(entries).map(([id, status]) => ({
+      id,
+      name: "studio-mac",
+      host: null,
+      port: null,
+      status,
+      last_seen: null,
+      paired_at: "2026-10-01T00:00:00Z",
+      same_computer: false,
+      detail: null,
+    })),
+  };
+}
+
+describe("the other computer goes away (machine_unreachable)", () => {
+  const COPY = "studio-mac isn't reachable. The download carries on when it is.";
+
+  it("is claimed for its download, pauses with the copy, and carries on when the computer is back", async () => {
+    const ref = file(1, 6 * CHUNK, { sessionId: BRIDGED });
+    startDownload(ref);
+    await flush();
+    await reply(ref, 0);
+    const event = unreachable();
+    emit(event);
+    expect(claimedInline(event)).toBe(true);
+    expect(state(ref)).toMatchObject({ phase: "paused", have: CHUNK, note: COPY, code: "machine_unreachable" });
+
+    sent = [];
+    emit(machineList({ mch_ffffffffffff: "connected", [MCH]: "unreachable" }));
+    await flush();
+    expect(state(ref).phase).toBe("paused");
+    expect(requests()).toEqual([]);
+
+    emit(machineList({ [MCH]: "connected" }));
+    await flush();
+    expect(state(ref)).toMatchObject({ phase: "downloading", note: null });
+    expect(requests()).toEqual([CHUNK, 2 * CHUNK, 3 * CHUNK]);
+  });
+
+  it("is not claimed for another session's download", async () => {
+    const ref = file(1, 6 * CHUNK, { sessionId: BRIDGED });
+    startDownload(ref);
+    await flush();
+    const other = unreachable(`sess-9:${MCH}`);
+    emit(other);
+    expect(claimedInline(other)).toBe(false);
+    expect(state(ref).phase).toBe("downloading");
+  });
+
+  it("asks again on its own while the list already says connected, three times at most", async () => {
+    listed[MCH] = "connected";
+    const ref = file(1, 6 * CHUNK, { sessionId: BRIDGED });
+    startDownload(ref);
+    await flush();
+    for (let round = 0; round < MAX_STRIKES; round++) {
+      emit(unreachable());
+      expect(state(ref).phase).toBe("paused");
+      sent = [];
+      await vi.advanceTimersByTimeAsync(STALL_MS);
+      expect(state(ref).phase, `round ${round}`).toBe("downloading");
+      expect(requests()).toEqual([0, CHUNK, 2 * CHUNK]);
+    }
+    emit(unreachable());
+    sent = [];
+    await vi.advanceTimersByTimeAsync(STALL_MS * 3);
+    expect(state(ref)).toMatchObject({ phase: "paused", note: COPY });
+    expect(requests()).toEqual([]);
+  });
+
+  it("Cancel stops the wait for the computer", async () => {
+    const ref = file(1, 6 * CHUNK, { sessionId: BRIDGED });
+    startDownload(ref);
+    await flush();
+    emit(unreachable());
+    await runAction(ref, "cancel");
+    sent = [];
+    emit(machineList({ [MCH]: "connected" }));
+    await flush();
+    expect(state(ref).phase).toBe("idle");
+    expect(requests()).toEqual([]);
   });
 });
 
