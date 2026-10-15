@@ -167,6 +167,23 @@ def test_a_viewer_gets_only_forwarded_verbs_on_a_bridged_id() -> None:
     assert json.loads(refusal)["session_id"] == BRIDGED
 
 
+def test_read_artifact_chunk_forwarded() -> None:
+    """TD-5143: a sent file downloads from a bridged session through the hub."""
+    aid = "0" * 32
+    bridged = _msg("read_artifact_chunk", session_id=BRIDGED, artifact_id=aid, offset=0)
+    own = _msg("read_artifact_chunk", session_id="s1", artifact_id=aid, offset=0)
+    assert "read_artifact_chunk" in FORWARDED_VERBS
+    for viewer in (VIEWER, PHONE_VIEWER):
+        assert check(bridged, viewer, bridged=True) is None
+        # The phone pulling an APK from this computer's own session.
+        assert check(own, viewer, bridged=False) is None
+    # The hub's forwarded request reaches the other computer as a machine peer.
+    assert check(own, MACHINE, bridged=False) is None
+    assert check(own, PLAIN_REMOTE, bridged=False) is None
+    second_hop = check(bridged, MACHINE, bridged=True)
+    assert second_hop is not None and json.loads(second_hop)["code"] == "bridged_session"
+
+
 # ── on a real daemon ─────────────────────────────────────────────────
 
 

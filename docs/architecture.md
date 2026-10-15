@@ -338,7 +338,8 @@ exactly what it saw before.
 
 `MACHINE_PEER_VERBS` is the session verbs a hub needs (list, attach, detach, send, stop, the
 approval answers, verify, new and fork, branch, tier, plan, preset, rename, star, archive,
-delete, end, the instruction stack, the memory answers) plus the self `remove_remote_device`.
+delete, end, the instruction stack, the memory answers, `read_artifact_chunk` for a sent
+file's bytes) plus the self `remove_remote_device`.
 Each was checked for a way to turn approvals off; the approval switches themselves
 (`set_skip_all_approvals`, `set_grok_mode`, `approve_grok_plan`, `start_autonomy`) and every
 key, credential, pairing, policy-rule, job, computer-use and machine-wide verb are not in it.
@@ -477,6 +478,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `export_usage` | — | Write a usage export; the daemon chooses the path and reports it back, so the verb cannot write anywhere the client names (TD-1706). |
 | `list_artifacts` | yes | List artifacts persisted with the session (TD-3201). Acked with `artifact_list`. |
 | `open_artifact` | yes | Open one artifact by id. Acked with `artifact` (metadata and path, not bytes). Unknown id is a typed error. |
+| `read_artifact_chunk` | yes | Read up to 512 KiB of a file the agent sent (TD-5143), by artifact id and byte offset. Answered with `artifact_chunk`. Only `send_file` artifacts can be read. Forwarded for bridged ids. |
 | `design_hit_test` | yes | Ask the last computer-use surface (browser DOM or desktop AX) what is at a CSS-pixel point (TD-3403 / TD-3406). Observe only. Acked with `design_hit`. |
 | `check_cu_permissions` | — | Re-probe computer-use OS permissions / integrity without raising a TCC prompt (TD-3302, TD-3303, TD-2001). Acked with `cu_permissions`. |
 | `reset_cu_permissions` | — | Reset this app's macOS TCC grants (Screen Recording, Accessibility) with `tccutil reset`, forget the prompt stamps, and raise both prompts again (TD-4823). A window action only, never a tool; off macOS it is just a re-probe. Acked with `cu_permissions`. |
@@ -554,9 +556,10 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |
 | `usage_exported` | connection | Where `export_usage` wrote, and how many rows (TD-1706). |
 | `log_trimmed` | connection | Attach asked for a seq the on-disk window dropped. Replay continues from `earliest_seq` (TD-2901). |
-| `artifact_ready` | session | An artifact was recorded for this session (TD-3201). |
+| `artifact_ready` | session | An artifact was recorded for this session (TD-3201; `kind: "sent_file"` with name, size, sha256, caption and tool call id for a sent file, TD-5143). |
 | `artifact_list` | connection | The artifacts `list_artifacts` asked for. |
 | `artifact` | connection | Metadata and path for `open_artifact`. Bytes stay on disk. |
+| `artifact_chunk` | connection | Bytes for `read_artifact_chunk` as base64, with the file's size and sha256, or a per-request `error_code`. Never logged; exempt from the wire scrub. |
 | `ping` | — | Application-level liveness. Belongs to no session; advances nothing. |
 | `error` | session | A typed error, usually in response to a bad message. One from another computer without a session id carries `machine` and a message starting "On <name>: " (TD-5015). |
 | `screen_frame` | session | A computer-use screenshot (browser or desktop) was written to the session dir (TD-1710, TD-3401). Path, not bytes. |

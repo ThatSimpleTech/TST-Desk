@@ -6,6 +6,7 @@ Writes a JSON file with one sample per message type.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -15,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tstd.peer_policy import FORWARDED_VERBS
 from tstd.protocol import (
+    CHUNK_MAX,
     PROTOCOL_VERSION,
     AddMachine,
     AddPin,
@@ -25,6 +27,7 @@ from tstd.protocol import (
     ApproveGrokPlan,
     ArchiveSession,
     Artifact,
+    ArtifactChunk,
     ArtifactEntry,
     ArtifactList,
     ArtifactReady,
@@ -137,6 +140,7 @@ from tstd.protocol import (
     Ping,
     PolicyRules,
     PolicyRuleSummary,
+    ReadArtifactChunk,
     Ready,
     ReconnectMachine,
     RemoteDeviceSummary,
@@ -207,6 +211,12 @@ from tstd.protocol import (
     build_hello_ack,
     build_pair_ok,
 )
+
+# TD-5143: one sent file shared by the samples, so a UI test can pull the
+# whole file from ``artifact_chunk`` and verify it against ``artifact_ready``.
+# Its bytes are "hi" (``data_b64`` "aGk=").
+_SENT_ID = "0" * 32
+_SENT_SHA256 = hashlib.sha256(b"hi").hexdigest()
 
 FIXTURES = {
     # Client messages
@@ -380,6 +390,10 @@ FIXTURES = {
     # Artifacts (TD-3201): list/open on the wire; record is a daemon API.
     "list_artifacts": ListArtifacts(session_id="sess-1"),
     "open_artifact": OpenArtifact(session_id="sess-1", artifact_id="art-1"),
+    # TD-5143: bytes of a sent file, by id; never a path.
+    "read_artifact_chunk": ReadArtifactChunk(
+        session_id="sess-1", artifact_id=_SENT_ID, offset=0, length=CHUNK_MAX
+    ),
     "design_hit_test": DesignHitTest(session_id="sess-1", x=12.0, y=34.0),
     "check_cu_permissions": CheckCuPermissions(),
     "set_cu_kill": SetCuKill(killed=True),
@@ -935,14 +949,22 @@ FIXTURES = {
         earliest_seq=8,
     ),
     # TD-3201: session-scoped notice; list/open replies stay off the log.
+    # TD-5143: the notice is a sent file, the kind with every optional field.
     "artifact_ready": ArtifactReady(
         session_id="sess-1",
-        artifact_id="art-1",
-        title="Notes",
-        mime="text/markdown",
-        path="notes.md",
+        artifact_id=_SENT_ID,
+        title="app-release.apk",
+        mime="application/vnd.android.package-archive",
+        path=f"artifacts/{_SENT_ID}",
+        kind="sent_file",
+        name="app-release.apk",
+        size=2,
+        sha256=_SENT_SHA256,
+        caption="0.1.9 release build",
+        tool_call_id="call_abc",
         seq=22,
     ),
+    # One TD-3201 artifact and the TD-5143 sent file, so both shapes ride.
     "artifact_list": ArtifactList(
         session_id="sess-1",
         artifacts=[
@@ -951,7 +973,19 @@ FIXTURES = {
                 title="Notes",
                 mime="text/markdown",
                 path="notes.md",
-            )
+            ),
+            ArtifactEntry(
+                artifact_id=_SENT_ID,
+                title="app-release.apk",
+                mime="application/vnd.android.package-archive",
+                path=f"artifacts/{_SENT_ID}",
+                kind="sent_file",
+                name="app-release.apk",
+                size=2,
+                sha256=_SENT_SHA256,
+                caption="0.1.9 release build",
+                tool_call_id="call_abc",
+            ),
         ],
     ),
     "artifact": Artifact(
@@ -960,6 +994,16 @@ FIXTURES = {
         title="Notes",
         mime="text/markdown",
         path="notes.md",
+    ),
+    # TD-5143: the whole sent file in one chunk; connection-scoped, seq 1.
+    "artifact_chunk": ArtifactChunk(
+        session_id="sess-1",
+        artifact_id=_SENT_ID,
+        offset=0,
+        size=2,
+        sha256=_SENT_SHA256,
+        data_b64="aGk=",
+        eof=True,
     ),
     "screen_frame": ScreenFrame(
         session_id="sess-1",

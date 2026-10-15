@@ -5,7 +5,11 @@
 	// markdown, highlighted code (the chat stack, not Monaco), or HTML in
 	// a network-blocked sandbox. Copy is the source. Open in editor is
 	// only a workspace path. Not a file tree; no apply/reject.
+	//
+	// A file the agent sent (TD-5144) is a compact file card with its own
+	// buttons: it never asks for open_artifact or a text preview.
 	import EmptyState from './EmptyState.svelte';
+	import FileCard from './chat/FileCard.svelte';
 	import Markdown from './chat/Markdown.svelte';
 	import {
 		asFencedMarkdown,
@@ -19,6 +23,12 @@
 	import { artifacts, selectArtifact } from '../artifacts.svelte.js';
 	import { machineNameFor } from '../machines.svelte.js';
 	import { staysOnCopy } from '../machines';
+	import { sentFileFromEvent, type SentFileRef } from '../sent-files';
+	import type { ArtifactEntry } from '../protocol';
+
+	function sentFile(row: ArtifactEntry): SentFileRef | null {
+		return artifacts.sessionId === null ? null : sentFileFromEvent(row, artifacts.sessionId);
+	}
 
 	// Another computer's artifacts stay there (TD-5015).
 	let remoteName = $derived(machineNameFor(artifacts.sessionId));
@@ -57,16 +67,21 @@
 		{:else}
 			<ul class="list">
 				{#each artifacts.items as row (row.artifact_id)}
+					{@const file = sentFile(row)}
 					<li>
-						<button
-							class="card"
-							class:card-current={artifacts.selectedId === row.artifact_id}
-							type="button"
-							onclick={() => selectArtifact(row.artifact_id)}
-						>
-							<span class="card-name">{row.title}</span>
-							<span class="card-meta">{row.mime}</span>
-						</button>
+						{#if file !== null}
+							<FileCard {file} compact />
+						{:else}
+							<button
+								class="card"
+								class:card-current={artifacts.selectedId === row.artifact_id}
+								type="button"
+								onclick={() => selectArtifact(row.artifact_id)}
+							>
+								<span class="card-name">{row.title}</span>
+								<span class="card-meta">{row.mime}</span>
+							</button>
+						{/if}
 					</li>
 				{/each}
 			</ul>

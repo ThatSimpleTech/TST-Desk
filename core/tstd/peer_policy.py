@@ -66,6 +66,10 @@ MACHINE_PEER_VERBS: frozenset[str] = frozenset(
         "memory_accept",
         "memory_edit",
         "memory_reject",
+        # TD-5143: bytes of a file the agent sent, by id only. It reads
+        # nothing else and changes nothing, so a viewer of a bridged
+        # session can download what that session's agent sent.
+        "read_artifact_chunk",
         # Only for its own device id; the existing pairing gate checks that.
         "remove_remote_device",
     }

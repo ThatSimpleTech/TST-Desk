@@ -16,7 +16,8 @@ import {
   type ChatDeps,
 } from "./chat-store";
 import { showQueue } from "./chat-queue";
-import type { ClientMessageUnion, DaemonEventUnion, SessionState } from "./protocol";
+import type { ArtifactReady, ClientMessageUnion, DaemonEventUnion, SessionState } from "./protocol";
+import fixtures from "./protocol-fixtures.json";
 
 function fakeDeps(sendResult = true) {
   const sent: ClientMessageUnion[] = [];
@@ -1346,6 +1347,72 @@ describe("tool folds (TD-1902)", () => {
     store.applyEvent(toolCall("s1", "tc-1"));
     store.applyEvent(toolCall("s1", "tc-1"));
     expect(state.messages[0].parts).toHaveLength(1);
+  });
+});
+
+// ── Sent files (TD-5144) ────────────────────────────────────────────────
+
+const SENT_FILE = fixtures.artifact_ready as ArtifactReady;
+
+function sendFileStore() {
+  const { deps } = fakeDeps();
+  const state = createChatState();
+  const store = createChatStore(deps, state);
+  store.applyEvent(sessionList([{ id: SENT_FILE.session_id, updated: "2026-10-14T10:00:00Z", state: "idle" }]));
+  store.applyEvent(toolCall(SENT_FILE.session_id, "call_abc", "send_file"));
+  return { store, state, tool: () => state.messages[0].tools![0] };
+}
+
+describe("sent files (TD-5144)", () => {
+  it("attaches the fixture's sent_file to its send_file call", () => {
+    const { store, tool } = sendFileStore();
+    store.applyEvent(SENT_FILE);
+    expect(tool().files).toEqual([
+      {
+        artifactId: SENT_FILE.artifact_id,
+        sessionId: SENT_FILE.session_id,
+        name: "app-release.apk",
+        size: 2,
+        mime: "application/vnd.android.package-archive",
+        sha256: SENT_FILE.sha256,
+        caption: "0.1.9 release build",
+        toolCallId: "call_abc",
+      },
+    ]);
+  });
+
+  it("does not duplicate a replayed artifact_ready", () => {
+    const { store, tool } = sendFileStore();
+    store.applyEvent(SENT_FILE);
+    store.applyEvent({ ...SENT_FILE, seq: SENT_FILE.seq + 1 });
+    expect(tool().files).toHaveLength(1);
+  });
+
+  it("keeps a second file of the same call, in arrival order", () => {
+    const { store, tool } = sendFileStore();
+    store.applyEvent(SENT_FILE);
+    store.applyEvent({ ...SENT_FILE, artifact_id: "1".repeat(32), name: "notes.pdf" });
+    expect(tool().files?.map((f) => f.name)).toEqual(["app-release.apk", "notes.pdf"]);
+  });
+
+  it("ignores an artifact with no kind (a TD-3201 workspace artifact)", () => {
+    const { store, tool } = sendFileStore();
+    const { kind: _kind, ...plain } = SENT_FILE;
+    store.applyEvent(plain as ArtifactReady);
+    expect(tool().files).toBeUndefined();
+  });
+
+  it("ignores an unknown tool_call_id", () => {
+    const { store, state, tool } = sendFileStore();
+    store.applyEvent({ ...SENT_FILE, tool_call_id: "call_nope" });
+    expect(tool().files).toBeUndefined();
+    expect(state.messages).toHaveLength(1);
+  });
+
+  it("ignores another session's file", () => {
+    const { store, tool } = sendFileStore();
+    store.applyEvent({ ...SENT_FILE, session_id: "sess-2" });
+    expect(tool().files).toBeUndefined();
   });
 });
 

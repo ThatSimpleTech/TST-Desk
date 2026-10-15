@@ -8,16 +8,22 @@ from typing import Any, Literal, Union, get_args, get_origin
 
 import pytest
 from pydantic import BaseModel, ValidationError
+from pydantic.fields import FieldInfo
 
 from tstd.protocol import (
     _KNOWN_CLIENT_TYPES,
     _KNOWN_EVENT_TYPES,
+    CHUNK_MAX,
     PROTOCOL_VERSION,
     AddMachine,
     AlwaysAllow,
     ApprovalRequest,
     Approve,
     ArchiveSession,
+    Artifact,
+    ArtifactChunk,
+    ArtifactEntry,
+    ArtifactReady,
     AssistantDelta,
     AssistantReasoning,
     Attach,
@@ -55,6 +61,7 @@ from tstd.protocol import (
     Pair,
     PolicyRules,
     PolicyRuleSummary,
+    ReadArtifactChunk,
     Ready,
     ReconnectMachine,
     RemoveMachine,
@@ -587,6 +594,28 @@ class TestClientMessages:
         with pytest.raises(ValidationError):
             ExportUsage(format="parquet")  # type: ignore[arg-type]
 
+    def test_read_artifact_chunk_validation(self) -> None:
+        """TD-5143: an id and a range, nothing that could name a path."""
+        aid = "0123456789abcdef" * 2
+        back = _roundtrip(ReadArtifactChunk(session_id="sess-1", artifact_id=aid, offset=0))
+        assert isinstance(back, ReadArtifactChunk)
+        assert back.length == CHUNK_MAX == 524_288
+        assert "path" not in ReadArtifactChunk.model_fields
+        refused = [
+            {"session_id": "", "artifact_id": aid, "offset": 0},
+            {"session_id": "sess-1", "artifact_id": aid.upper(), "offset": 0},
+            {"session_id": "sess-1", "artifact_id": aid[:-1], "offset": 0},
+            {"session_id": "sess-1", "artifact_id": f"{aid}\n", "offset": 0},
+            {"session_id": "sess-1", "artifact_id": f"../{aid}", "offset": 0},
+            {"session_id": "sess-1", "artifact_id": aid, "offset": -1},
+            {"session_id": "sess-1", "artifact_id": aid, "offset": 0, "length": 0},
+            {"session_id": "sess-1", "artifact_id": aid, "offset": 0, "length": CHUNK_MAX + 1},
+        ]
+        for fields in refused:
+            with pytest.raises(HandshakeError) as exc:
+                parse_client_message(json.dumps({"type": "read_artifact_chunk", **fields}))
+            assert exc.value.code == "bad_request", fields
+
 
 # ── Daemon → Client ────────────────────────────────────────────────────
 
@@ -1002,6 +1031,48 @@ class TestDaemonEvents:
         assert back.seq == 24
         assert CuSession.model_fields["seq"].is_required()
 
+    def test_artifact_fields_optional(self) -> None:
+        """TD-5143: a TD-3201 frame without the sent-file fields still parses."""
+        plain = {"artifact_id": "art-1", "title": "Notes", "mime": "text/plain", "path": "n.md"}
+        ready = parse_daemon_event(
+            json.dumps({"type": "artifact_ready", "session_id": "s1", "seq": 3, **plain})
+        )
+        opened = parse_daemon_event(json.dumps({"type": "artifact", "session_id": "s1", **plain}))
+        for back in (ready, opened, ArtifactEntry.model_validate(plain)):
+            assert isinstance(back, ArtifactReady | Artifact | ArtifactEntry)
+            assert back.kind == "artifact"
+            assert (back.name, back.size, back.sha256) == (None, None, None)
+            assert (back.caption, back.tool_call_id) == (None, None)
+        sent = ArtifactReady(
+            session_id="s1",
+            seq=4,
+            artifact_id="0" * 32,
+            title="app-release.apk",
+            mime="application/vnd.android.package-archive",
+            path="artifacts/" + "0" * 32,
+            kind="sent_file",
+            name="app-release.apk",
+            size=46_241_280,
+            sha256="a" * 64,
+            caption=None,
+            tool_call_id="call_abc",
+        )
+        assert _roundtrip(sent) == sent
+        with pytest.raises(ValidationError):
+            ArtifactEntry.model_validate({**plain, "kind": "folder"})
+        with pytest.raises(ValidationError):
+            ArtifactEntry.model_validate({**plain, "size": -1})
+
+    def test_artifact_chunk_is_connection_scoped_and_empty_on_error(self) -> None:
+        refusal = ArtifactChunk(
+            session_id="s1", artifact_id="0" * 32, offset=0, error_code="artifact_not_found"
+        )
+        back = parse_daemon_event(refusal.model_dump_json())
+        assert isinstance(back, ArtifactChunk)
+        assert back.seq == 1
+        assert (back.size, back.sha256, back.data_b64, back.eof) == (0, "", "", False)
+        assert back.error_code == "artifact_not_found"
+
 
 # ── Discriminated union dispatch ───────────────────────────────────────
 
@@ -1082,11 +1153,24 @@ def _placeholder(annotation: Any) -> Any:
     raise AssertionError(f"no placeholder for {annotation!r} — extend _placeholder")
 
 
+# A string field with a ``pattern`` gets the value here, not "x".
+_PATTERN_SAMPLES = {r"^[0-9a-f]{32}$": "0" * 32}  # read_artifact_chunk (TD-5143)
+
+
+def _field_placeholder(field: FieldInfo) -> Any:
+    for meta in field.metadata:
+        pattern = getattr(meta, "pattern", None)
+        if pattern is not None:
+            assert pattern in _PATTERN_SAMPLES, f"no sample for pattern {pattern!r}"
+            return _PATTERN_SAMPLES[pattern]
+    return _placeholder(field.annotation)
+
+
 def _sample(model: type[BaseModel]) -> BaseModel:
     """A minimal valid instance of ``model``: its required fields only."""
     return model(
         **{
-            name: _placeholder(field.annotation)
+            name: _field_placeholder(field)
             for name, field in model.model_fields.items()
             if field.is_required()
         }

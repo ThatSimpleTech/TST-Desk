@@ -112,6 +112,17 @@ export const ICONS = {
 	file:
 		'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/>' +
 		'<path d="M14 2v6h6"/>',
+	/** Download a file the agent sent (chat file cards, TD-5144). */
+	download:
+		'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>' +
+		'<path d="m7 10 5 5 5-5"/>' +
+		'<path d="M12 15V3"/>',
+	/** An Android app the agent sent (chat file cards, TD-5144). */
+	package:
+		'<path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/>' +
+		'<path d="M12 22V12"/>' +
+		'<path d="m3.3 7 7.7 4.73a2 2 0 0 0 2 0L20.7 7"/>' +
+		'<path d="m7.5 4.27 9 5.15"/>',
 	/** Row action menu affordance (rail rows, TD-1715). */
 	ellipsis:
 		'<circle cx="5" cy="12" r="1"/>' +

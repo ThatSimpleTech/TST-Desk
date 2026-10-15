@@ -81,7 +81,7 @@ fn candidates(requested: &Path, workspace: Option<&str>, session_id: Option<&str
 /// A session dir name, or None. ':' is refused too (TD-5015): a bridged id
 /// (`<raw>:mch_…`) names a session on another computer, so it never has a
 /// local session dir, and on Windows ':' would name an alternate data stream.
-fn safe_session_id(id: &str) -> Option<&str> {
+pub(crate) fn safe_session_id(id: &str) -> Option<&str> {
     if id.is_empty()
         || id == "."
         || id == ".."
@@ -94,7 +94,7 @@ fn safe_session_id(id: &str) -> Option<&str> {
     Some(id)
 }
 
-fn is_within(root: &Path, candidate: &Path) -> bool {
+pub(crate) fn is_within(root: &Path, candidate: &Path) -> bool {
     candidate.strip_prefix(root).is_ok()
 }
 
