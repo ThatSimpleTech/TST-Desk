@@ -12,7 +12,7 @@ from typing import Any
 
 PROTOCOL_VERSION = "2024-11-05"
 CLIENT_NAME = "tstd"
-CLIENT_VERSION = "0.1.0"
+CLIENT_VERSION = "0.2.0"
 # Handshake / tools/list — doctor and session start must not hang a dead child.
 HANDSHAKE_TIMEOUT = 8.0
 # tools/call after the server is live.
