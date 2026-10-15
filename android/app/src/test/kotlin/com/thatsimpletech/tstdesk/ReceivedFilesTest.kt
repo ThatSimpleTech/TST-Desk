@@ -309,7 +309,7 @@ class ReceivedFilesTest {
             "é".repeat(100) to "é".repeat(60),
             "a".repeat(130) + ".verylongextension12" to "a".repeat(120),
             "name with spaces.zip" to "name with spaces.zip",
-            "a‮fdp.exe" to "afdp.exe",
+            "a\u202Efdp.exe" to "afdp.exe",
             "CON" + " ".repeat(150) + "y.log" to "_CON" + " ".repeat(112) + ".log",
         )
         for ((raw, want) in vectors) {

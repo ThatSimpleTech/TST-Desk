@@ -28,7 +28,7 @@ fun safeFileName(raw: String): String {
  * `invoiceexe.pdf` on the card and in every file manager.
  */
 private fun isBidiControl(c: Char): Boolean =
-    c == '‎' || c == '‏' || c in '‪'..'‮' || c in '⁦'..'⁩'
+    c == '\u200E' || c == '\u200F' || c in '\u202A'..'\u202E' || c in '\u2066'..'\u2069'
 
 /** `CON.txt` and friends cannot be created on Windows, so they get a leading `_`. */
 private fun devicePrefixed(name: String): String {

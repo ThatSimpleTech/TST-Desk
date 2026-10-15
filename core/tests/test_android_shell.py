@@ -157,3 +157,30 @@ def test_files_bridge_checks_key() -> None:
             continue
         first_statement = body.split("{", 1)[1].strip().splitlines()[0]
         assert first_statement == "if (!key.matches(k)) return BAD_KEY", name
+
+
+# U+200E, U+200F, U+202A-U+202E, U+2066-U+2069, built from code points so
+# this file holds none of them either.
+_BIDI_CONTROLS = frozenset(
+    chr(cp) for cp in (0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A))
+)
+_BINARY_SUFFIXES = frozenset({".png", ".webp", ".jpg", ".jpeg", ".gif", ".jar", ".so"})
+
+
+def test_android_sources_hold_no_raw_bidi_controls() -> None:
+    """TD-5145: a raw bidi control reorders how source reads (Trojan Source).
+
+    Code and tests name them as escapes ("\\u202E") instead.
+    """
+    src = ANDROID / "app" / "src"
+    found = []
+    for path in sorted(src.rglob("*")):
+        if not path.is_file() or path.suffix.lower() in _BINARY_SUFFIXES:
+            continue
+        text = path.read_bytes().decode("utf-8", errors="replace")
+        for number, line in enumerate(text.splitlines(), start=1):
+            hits = sorted({f"U+{ord(c):04X}" for c in line if c in _BIDI_CONTROLS})
+            if hits:
+                found.append(f"{path.relative_to(ROOT)}:{number} {' '.join(hits)}")
+    assert len(_BIDI_CONTROLS) == 11
+    assert found == []
