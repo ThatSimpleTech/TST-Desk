@@ -5,9 +5,9 @@
 	// (Esc cancels too, TD-1609). Enter submits, Shift+Enter newlines,
 	// auto-grows to eight rows before scrolling internally.
 	//
-	// Plan, the tier picker, and the session preset sit to the right of Send
-	// while the draft is one line, and drop to a footer under the text once
-	// that line would wrap beside them.
+	// The draft fills the card. Under it, a toolbar keeps Plan and the model
+	// dropdowns on the left and Send on the right — the same split Cursor
+	// uses, so the message is never squeezed beside the controls.
 	//
 	// Text files and PNG/JPEG/GIF/WebP images attach here three ways
 	// (TD-1709): the paperclip's picker, drag-and-drop onto the card, and
@@ -23,11 +23,7 @@
 		type AttachmentRefusal,
 	} from "../../attachments";
 	import { shouldSubmit } from "../../chat-store";
-	import {
-		COMPOSER_LINE_PADDING,
-		inlineDraftWidth,
-		modelControlsInFooter,
-	} from "../../composer-layout";
+	import { COMPOSER_LINE_PADDING } from "../../composer-layout";
 	import { commands, loadCommands } from "../../commands.svelte.js";
 	import { acceptPickDrafts } from "../../design";
 	import { clearPicks, design, removePick } from "../../design.svelte.js";
@@ -69,12 +65,6 @@
 	const MAX_ROWS = 8;
 
 	let textarea: HTMLTextAreaElement | null = $state(null);
-	let entryEl: HTMLElement | null = $state(null);
-	let actionsEl: HTMLElement | null = $state(null);
-	let modelEl: HTMLElement | null = $state(null);
-	let measure: HTMLElement | null = $state(null);
-	/** Model controls have left the send row so the draft can use its width. */
-	let footer = $state(false);
 	let picker: HTMLInputElement | null = $state(null);
 	let attachments: AttachmentDraft[] = $state([]);
 	let refusal: AttachmentRefusal | null = $state(null);
@@ -106,64 +96,16 @@
 		}
 	});
 
-	// Re-measure on every edit; cap growth at MAX_ROWS lines. The footer
-	// decision uses the width the draft would have with the controls still
-	// beside Send, so moving them does not change the answer.
+	// Re-measure on every edit; cap growth at MAX_ROWS lines.
 	$effect(() => {
 		void value;
 		const box = textarea;
-		const entry = entryEl;
-		const actions = actionsEl;
-		const model = modelEl;
-		const mirror = measure;
-		if (box === null || entry === null || actions === null || model === null || mirror === null) return;
-
-		let applying = false;
-		const apply = (): void => {
-			if (applying) return;
-			applying = true;
-			try {
-				const computed = parseFloat(getComputedStyle(box).lineHeight);
-				const lineHeight = Number.isFinite(computed) ? computed : 24;
-				const maxHeight = lineHeight * MAX_ROWS + COMPOSER_LINE_PADDING;
-				box.style.height = "auto";
-				box.style.height = `${Math.min(box.scrollHeight, maxHeight)}px`;
-
-				const rawGap = parseFloat(getComputedStyle(entry).columnGap);
-				const gap = Number.isFinite(rawGap) ? rawGap : 8;
-				// The slot stretches to the full row once it is a footer. The
-				// controls themselves stay content-sized, which is the width
-				// they take beside Send.
-				const controls = model.querySelector(".controls");
-				const inlineWidth = inlineDraftWidth(
-					entry.clientWidth,
-					actions.offsetWidth,
-					controls?.getBoundingClientRect().width ?? 0,
-					gap,
-				);
-				mirror.style.width = `${inlineWidth}px`;
-				const next =
-					controls !== null &&
-					modelControlsInFooter(
-						value,
-						mirror.scrollHeight,
-						lineHeight,
-						inlineWidth,
-						entry.clientWidth,
-					);
-				if (next !== footer) footer = next;
-			} finally {
-				applying = false;
-			}
-		};
-
-		apply();
-		if (typeof ResizeObserver === "undefined") return;
-		const observer = new ResizeObserver(apply);
-		observer.observe(entry);
-		observer.observe(actions);
-		observer.observe(model);
-		return () => observer.disconnect();
+		if (box === null) return;
+		const computed = parseFloat(getComputedStyle(box).lineHeight);
+		const lineHeight = Number.isFinite(computed) ? computed : 24;
+		const maxHeight = lineHeight * MAX_ROWS + COMPOSER_LINE_PADDING;
+		box.style.height = "auto";
+		box.style.height = `${Math.min(box.scrollHeight, maxHeight)}px`;
 	});
 
 	/** Vet each file against the caps and the text test, one at a time so the
@@ -361,15 +303,7 @@
 				onhover={(index) => (slashIndex = index)}
 			/>
 		{/if}
-		<div
-			class="entry"
-			class:footer
-			data-model-placement={footer ? "footer" : "inline"}
-			bind:this={entryEl}
-		>
-			<div class="measure-clip" aria-hidden="true">
-				<span class="measure" bind:this={measure}>{value || " "}</span>
-			</div>
+		<div class="entry" data-model-placement="footer">
 			<div class="draft">
 				<textarea
 					bind:this={textarea}
@@ -385,52 +319,54 @@
 					onfocus={handleFocus}
 				></textarea>
 			</div>
-			<div class="actions" bind:this={actionsEl}>
-				<DictationButton {disabled} ontranscript={appendDictation} />
-				<input
-					bind:this={picker}
-					type="file"
-					multiple
-					class="picker"
-					tabindex="-1"
-					aria-hidden="true"
-					onchange={handlePick}
-				/>
-				<button
-					type="button"
-					class="attach"
-					{disabled}
-					title="Attach text files"
-					onclick={() => picker?.click()}
-					aria-label="Attach text files"
-				>
-					<Icon name="paperclip" size={16} />
-				</button>
-				{#if running && !disabled}
+			<div class="bar">
+				<div class="model-slot">
+					<ModelControls />
+				</div>
+				<div class="actions">
+					<DictationButton {disabled} ontranscript={appendDictation} />
+					<input
+						bind:this={picker}
+						type="file"
+						multiple
+						class="picker"
+						tabindex="-1"
+						aria-hidden="true"
+						onchange={handlePick}
+					/>
 					<button
 						type="button"
-						class="send"
-						title="Stop this turn (Esc)"
-						onclick={() => oncancel?.()}
-						aria-label="Stop this turn"
-					>
-						<Icon name="stop" size={14} filled />
-					</button>
-				{:else}
-					<button
-						type="button"
-						class="send"
+						class="attach"
 						{disabled}
-						title="Send message"
-						onclick={submit}
-						aria-label="Send message"
+						title="Attach text files"
+						onclick={() => picker?.click()}
+						aria-label="Attach text files"
 					>
-						<Icon name="arrow-up" size={18} />
+						<Icon name="paperclip" size={16} />
 					</button>
-				{/if}
-			</div>
-			<div class="model-slot" bind:this={modelEl}>
-				<ModelControls />
+					{#if running && !disabled}
+						<button
+							type="button"
+							class="send"
+							title="Stop this turn (Esc)"
+							onclick={() => oncancel?.()}
+							aria-label="Stop this turn"
+						>
+							<Icon name="stop" size={14} filled />
+						</button>
+					{:else}
+						<button
+							type="button"
+							class="send"
+							{disabled}
+							title="Send message"
+							onclick={submit}
+							aria-label="Send message"
+						>
+							<Icon name="arrow-up" size={18} />
+						</button>
+					{/if}
+				</div>
 			</div>
 		</div>
 	</div>
@@ -482,7 +418,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-2);
-		padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+		padding: var(--space-3) var(--space-3) var(--space-2);
 		background: var(--color-lifted);
 		border: var(--border-width) solid var(--color-hairline);
 		border-radius: var(--radius-xl);
@@ -503,67 +439,42 @@
 	}
 
 	.entry {
-		position: relative;
-		z-index: 1;
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto auto;
-		grid-template-areas: "draft actions model";
-		align-items: end;
-		column-gap: var(--space-2);
-		row-gap: var(--space-2);
-	}
-
-	/* The controls leave the send row. The draft takes their column so the
-	   message is not squeezed, and they become a bar under the text. */
-	.entry.footer {
-		grid-template-columns: minmax(0, 1fr) auto;
-		grid-template-areas:
-			"draft actions"
-			"model model";
-	}
-
-	.measure-clip {
-		position: absolute;
-		width: 0;
-		height: 0;
-		overflow: hidden;
-	}
-
-	.measure {
-		display: block;
-		white-space: pre-wrap;
-		font-family: var(--font-sans);
-		font-size: var(--text-base);
-		line-height: var(--leading-normal);
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-1);
+		min-width: 0;
 	}
 
 	.draft {
-		grid-area: draft;
 		min-width: 0;
 	}
 
-	.actions {
-		grid-area: actions;
+	/* Text above, choices on the left, send on the right. */
+	.bar {
 		display: flex;
 		align-items: center;
+		justify-content: space-between;
 		gap: var(--space-2);
+		min-width: 0;
 	}
 
 	.model-slot {
-		grid-area: model;
 		display: flex;
-		justify-content: flex-end;
+		align-items: center;
 		min-width: 0;
-		max-width: 100%;
+		flex: 1;
 	}
 
 	.model-slot:empty {
 		display: none;
 	}
 
-	.entry.footer .model-slot {
-		padding-top: var(--space-2);
-		border-top: var(--border-width) solid var(--color-hairline);
+	.actions {
+		display: flex;
+		align-items: center;
+		gap: var(--space-1);
+		flex-shrink: 0;
+		margin-left: auto;
 	}
 
 	textarea {
