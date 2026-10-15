@@ -254,6 +254,10 @@ steering:
 # is an event count so from_seq stays honest; 0 is invalid, not unbounded.
 session:
   log_max_events: 10000
+  # send_file (TD-5143): the largest file the agent may send (512 MiB; at most
+  # 2 GiB), and the most this session may hold in sent files (4 GiB).
+  send_file_max_bytes: 536870912
+  send_file_session_max_bytes: 4294967296
 
 # How stubbornly to retry a retryable provider failure (429, 5xx, transport).
 # The defaults spend 4 attempts in roughly 8 seconds — fine for a blip, and

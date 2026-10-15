@@ -39,6 +39,8 @@ Install with `adb install -r` that file, or copy it to the phone and open it. Un
 
 ## Upgrading
 
+0.1.10 (TD-5145) adds the "install unknown apps" permission and a private file provider, so a file the agent sends can be downloaded, opened, saved to Downloads, or (an APK) installed. It installs over 0.1.9 with the same debug keystore. The first 0.1.10 goes on with `adb install -r`, since 0.1.9 cannot receive files.
+
 0.1.8 (TD-5016..5024, TD-3819..3821) changes no Kotlin: it bundles the UI that shows "Cut off by a restart" with a Continue button, keeps a draft per session, puts unsent text back in the composer when the computer is draining for an update, and adds the Email settings pane. It installs over 0.1.7 the same way.
 
 0.1.7 (TD-5015) changes no Kotlin: it bundles the UI that also lists sessions on the other computers your paired computer has added (Settings → Computers there), and it installs over 0.1.6 the same way.

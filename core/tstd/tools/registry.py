@@ -11,7 +11,7 @@ replace a builtin name.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -116,6 +116,33 @@ class Tool:
             raise ValueError(f"Tool '{self.name}': parameters must include a 'properties' key")
 
 
+def path_values(arguments: Mapping[str, Any], field: str) -> list[str] | None:
+    """Every path a path field carries (TD-5143).
+
+    Absent or None -> []; a str -> [s]; a list whose items are all str ->
+    that list. Anything else -> None, and the caller refuses the call
+    (fail closed): a value the wall cannot read must not skip it.
+    """
+    raw = arguments.get(field)
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [raw]
+    if isinstance(raw, list) and all(isinstance(v, str) for v in raw):
+        return list(raw)
+    return None
+
+
+def _declares_array(parameters: Mapping[str, Any], field: str) -> bool:
+    """Whether the schema lets *field* be a JSON array."""
+    properties = parameters.get("properties")
+    spec = properties.get(field) if isinstance(properties, Mapping) else None
+    if not isinstance(spec, Mapping):
+        return False
+    declared = spec.get("type")
+    return declared == "array" or (isinstance(declared, list) and "array" in declared)
+
+
 # ── Structured error for unknown tools ─────────────────────────────────
 
 
@@ -162,7 +189,20 @@ class ToolRegistry:
         self._tools: dict[str, Tool] = {}
 
     def register(self, tool: Tool) -> None:
-        """Register a tool.  Replaces any existing tool with the same name."""
+        """Register a tool.  Replaces any existing tool with the same name.
+
+        Raises:
+            ValueError: A mutating tool declares an array path field. Write
+                targets are checkpointed and diffed one path per field, so
+                only read tools may take a list of paths (TD-5143).
+        """
+        if tool.mutates:
+            for field_name in tool.path_fields:
+                if _declares_array(tool.parameters, field_name):
+                    raise ValueError(
+                        f"Tool '{tool.name}': write tools take one path per field; "
+                        f"'{field_name}' is an array"
+                    )
         self._tools[tool.name] = tool
 
     def get(self, name: str) -> Tool | None:
@@ -472,7 +512,7 @@ def _register_builtins(registry: ToolRegistry, *, search: SearchConfig | None = 
 def create_registry(
     *, candidate_selection: bool = False, search: SearchConfig | None = None
 ) -> ToolRegistry:
-    """Create a registry with builtins, skills, delegate, then plugins.
+    """Create a registry with builtins, skills, delegate, send_file, then plugins.
 
     ``candidate_selection`` (judgments.candidate_selection, TD-711) adds
     ``browser_pick`` to the tool surface.
@@ -482,6 +522,7 @@ def create_registry(
     from .delegate import register_delegate_tools
     from .desktop import register_desktop_tools
     from .plugins import load_plugins
+    from .send_file import register_send_file_tool
 
     registry = ToolRegistry()
     _register_builtins(registry, search=search)
@@ -489,5 +530,6 @@ def create_registry(
     register_browser_tools(registry, candidate_selection=candidate_selection)
     register_skill_tools(registry)
     register_delegate_tools(registry)
+    register_send_file_tool(registry)
     load_plugins(registry)
     return registry

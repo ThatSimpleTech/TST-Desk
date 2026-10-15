@@ -13099,3 +13099,63 @@ also count as one instance.
 **Rejected:** re-pointing tstd's watchdog at the newest host (Design A's
 lease, reverses TD-2903); our own lock file plus IPC (more code, same
 result).
+
+## TD-5143 — The agent sends files to the chat (Class B; reverses part of TD-3201 and TD-3202)
+
+2026-10-15. Adam asked the agent for an APK; it built one and could not hand it over.
+
+**Decision:** a built-in tool `send_file(files, caption?)` copies up to ten workspace files to
+`sessions/<id>/artifacts/<artifact_id>/<name>` (0600, folder 0700) and records each in the
+TD-3201 index as `kind: "sent_file"` with name, size, sha256, caption and tool call id. The
+existing `artifact_ready` event, with those optional fields, puts a file card under the tool
+call. A viewer on another device pulls the bytes with `read_artifact_chunk` → `artifact_chunk`
+on the socket it is already authenticated on: base64, ≤512 KiB a request, three in flight,
+resumed by offset, verified by sha256. Only `sent_file` records can be read, by id; no client
+path reaches the reader, and the reader needs only the index and the disk. `data_b64` is the one
+field exempt from the wire scrub, and only when it is pure base64. The desktop opens its own copy
+by id through shell commands; for another computer's session it saves the download to Downloads.
+The phone writes chunks to its cache, shares them through a read-only platform ContentProvider,
+opens APKs in Android's installer (`REQUEST_INSTALL_PACKAGES`; the installer asks for "install
+unknown apps" itself), and saves to Downloads through MediaStore. Its new JS object takes a
+per-page key delivered to the top frame only. Path fields may now hold a list of paths; dispatch
+and policy check every element. A static Class A rule covers in-workspace sends. New direct
+dependency: `sha2 = "0.10"` in the shell, already in Cargo.lock.
+
+**Rationale:** the paired socket is the only authenticated path to the phone and already carries
+every tool result. A copy, not a pointer, because a rebuild overwrites the output in place. Pull,
+not push, because the daemon handles one message per connection and awaits each send, so the
+client's window bounds memory on both ends and resume is one offset. 512 KiB keeps a frame under
+the 1 MiB websockets default on every hop. Base64 can contain `AKIA` plus 16 capitals or digits,
+and scrubbing it would corrupt that chunk on every retry. `artifacts/<id>` as the path keeps old
+UIs from offering a broken Open.
+
+**Rejected:** download tickets over HTTP on the remote listener (a new route and auth surface);
+a pointer to the workspace file; a new event type (`artifact_ready` already replays); files on
+`tool_result` (model-facing and audited); androidx FileProvider and PackageInstaller sessions
+(dependencies and failure modes for no user-visible gain); DownloadManager (needs an HTTP URL);
+`hello.features` negotiation (a `sent_file` card proves the producing daemon is new, and an old
+hub names the verb in `unknown_message`); reads outside the workspace (Class C); one path per call
+(the goal names several files per call).
+
+## TD-5145 — The phone's file bridge: error codes and locking (Class B; 0.1.10, versionCode 11)
+
+2026-10-15. The TD-5143 contract names the bridge's methods and codes but leaves some corners
+open. The Android build fills them as below. The release is 0.1.10 / versionCode 11, not the
+0.1.9 the design named: TD-5026 (the composer file picker) shipped 0.1.9 / versionCode 10 first,
+and this build includes it.
+
+**Decision:**
+- `fileBegin` has no `io` code, so a failed cache write reports `no_space`.
+- `fileAppend` reports a chunk past the declared size as `bad_data`, a call with no begun entry
+  as `io`, and an append to a file already verified as `bad_offset` with `have` = the size.
+- An async method given a bad id still returns `started`, then sends a failure event.
+- `status()` reads without the per-id lock, because hashing holds that lock for seconds.
+- A sha256 mismatch truncates `data.part`, so a retry never resumes from bad bytes.
+- The per-id locks are process-wide, so two pages never write one entry at once.
+
+**Rationale:** each choice keeps the page's state machine to the codes it already maps, and none
+can leave bad bytes for a resume to build on. A status poll that waited on hashing would freeze
+the card's progress for the length of the hash.
+
+**Rejected:** new codes for these corners (the card copy and the Python fixtures would both need
+them); taking the lock in `status()`.

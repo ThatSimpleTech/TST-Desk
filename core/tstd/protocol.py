@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import re
 import secrets
 from typing import Annotated, Any, Literal
 
@@ -3517,6 +3518,12 @@ def build_error(
     return json.dumps(payload)
 
 
+# Fields that carry file bytes as base64, by message type (TD-5143). The rest of
+# the frame is still scrubbed; a value that is not pure base64 is scrubbed as usual.
+_WIRE_SCRUB_EXEMPT: dict[str, str] = {"artifact_chunk": "data_b64"}
+_BASE64 = re.compile(r"[A-Za-z0-9+/]*={0,2}")
+
+
 def scrub_wire_json(payload: str) -> str:
     """Redact secret-shaped strings in a serialized daemon→client frame.
 
@@ -3526,8 +3533,23 @@ def scrub_wire_json(payload: str) -> str:
     where redaction normally happens at insertion, and their payloads can
     be user text — a session title is the first user message.  Idempotent:
     a frame already scrubbed at insertion passes through unchanged.
+
+    One targeted exemption (TD-5143): ``artifact_chunk.data_b64`` is file
+    bytes. Base64 can spell ``AKIA…`` by chance, and scrubbing it would
+    corrupt the chunk on every retry, so the file could never verify. The
+    field is held out only while it is pure base64.
     """
-    return json.dumps(redact_structure(json.loads(payload)), ensure_ascii=False)
+    obj = json.loads(payload)
+    held: tuple[str, str] | None = None
+    if isinstance(obj, dict):
+        field = _WIRE_SCRUB_EXEMPT.get(str(obj.get("type")))
+        value = obj.get(field) if field else None
+        if field and isinstance(value, str) and _BASE64.fullmatch(value):
+            held = (field, obj.pop(field))
+    out = redact_structure(obj)
+    if held is not None and isinstance(out, dict):
+        out[held[0]] = held[1]
+    return json.dumps(out, ensure_ascii=False)
 
 
 def validate_hello(hello: Hello) -> None:

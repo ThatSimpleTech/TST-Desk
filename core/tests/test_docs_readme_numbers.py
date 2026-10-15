@@ -237,6 +237,7 @@ _WORKS_IMPORTS: tuple[tuple[str, str], ...] = (
     ("ui-tars", "tstd.desktop.grounding_client"),
     ("charter.md", "tstd.autonomy.charter"),
     ("charter editor", "tstd.autonomy.charter_io"),
+    ("sends files to the chat", "tstd.tools.send_file"),
 )
 
 # Not-built leftovers that are stories, not milestone exits. If Status

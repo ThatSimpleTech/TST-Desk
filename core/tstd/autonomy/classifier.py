@@ -509,6 +509,25 @@ def _rule_desktop_actuation(req: DecisionRequest, _boundary: Boundary) -> bool:
     return req.actuates is True
 
 
+def _rule_send_file(req: DecisionRequest, boundary: Boundary) -> bool:
+    """``send_file`` copies workspace files into the session's own data dir (TD-5143).
+
+    The copy is daemon state, not a workspace write, as a ``desktop-capture``
+    screenshot is. Only the builtin matches: an MCP or plugin tool of that
+    name carries provenance and gets no grant. An outside path never gets
+    here: ``boundary-unsafe-path`` and ``path-outside-workspace`` come first.
+    """
+    return (
+        req.tool_name == "send_file"
+        and req.provenance is None
+        and not req.is_mutation
+        and bool(req.reads)
+        and not req.writes
+        and not req.hosts
+        and all(is_in_workspace(boundary, p) for p in req.reads)
+    )
+
+
 def _rule_in_workspace_edit(req: DecisionRequest, boundary: Boundary) -> bool:
     """An in-workspace write inside writable_paths is a reversible Class A edit."""
     if not req.is_mutation or not req.writes:
@@ -627,6 +646,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="desktop actuation requires approval",
         decision_class=DecisionClass.B,
         match=_rule_desktop_actuation,
+    ),
+    Rule(
+        id="send-file-in-workspace",
+        description="send_file of in-workspace files",
+        decision_class=DecisionClass.A,
+        match=_rule_send_file,
     ),
     # The ask floor is terminal by design (TD-4808): every specific grant
     # above — memory writes, in-workspace edits, desktop capture — keeps

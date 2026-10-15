@@ -9168,3 +9168,48 @@ The composer stop control sent `cancel`, and `cancel` marks the session
       cancelled
 - [x] `cancel` still ends the session
 - [x] A stopped turn does not raise a failure notice
+
+---
+
+# Epic E52 — Files to the user
+
+Filed 2026-10-15. The agent built an APK for Adam and had no way to hand it over in the chat.
+
+---
+
+### TD-5143 — The agent sends files to the chat
+**Size:** 5 · **Depends on:** TD-3201, TD-3202, TD-5014, TD-5015
+
+**Acceptance criteria:**
+- [ ] `send_file(files[1..10], caption?)` copies workspace files into the session's data dir as
+      `kind: "sent_file"` artifacts (name, size, sha256, caption, tool call id); all or nothing
+- [ ] List-valued path fields are guarded element by element in dispatch and in policy
+- [ ] Class A with no approval card; outside paths are a Class C boundary refusal
+- [ ] Bytes never reach a log, the event log or the audit DB
+- [ ] `artifact_ready` replays after a restart; deleting the session deletes the copies
+- [ ] `read_artifact_chunk` returns ≤512 KiB of a sent file by id and offset and nothing else;
+      it is forwarded for bridged ids; `data_b64` is the one field exempt from the wire scrub
+- [ ] `session.send_file_max_bytes` (512 MiB) and `send_file_session_max_bytes` (4 GiB) cap sends
+- [ ] Older UIs show the tool result text and keep working
+
+### TD-5144 — File cards on the desktop
+**Size:** 5 · **Depends on:** TD-5143
+
+**Acceptance criteria:**
+- [ ] A sent file shows as a card under its tool call and in the Artifacts pane: name, size, kind, caption
+- [ ] On the computer that has it: Open (not for programs), Show in folder, Save a copy…
+- [ ] For another computer's session: Download (pause, resume, sha256), saved to Downloads, then Open / Show in folder
+- [ ] `artifact_list` and `artifact` are no longer dropped after attach
+- [ ] An old hub, an unreachable computer or a deleted file shows one plain line, never a crash
+
+### TD-5145 — Download, open and install a sent file on the phone (0.1.10)
+**Size:** 5 · **Depends on:** TD-5143, TD-5144
+
+**Acceptance criteria:**
+- [ ] One tap downloads over the paired connection, shows progress and time left, pauses and resumes, verifies sha256
+- [ ] Open hands the file to another app through a private read-only provider; an APK opens Android's installer
+- [ ] Save to Downloads puts it in Download/TST Desk (Android 10+)
+- [ ] A signing-key or downgrade conflict is named before the installer opens
+- [ ] The file bridge refuses calls without the page key
+- [ ] versionCode 11 / 0.1.10, installs over 0.1.9 with the same keystore
+- [ ] Live: the agent on EZER sends an APK and the Pixel's installer opens
