@@ -17,6 +17,8 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import org.json.JSONObject
 import java.io.IOException
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Viewer for one TST Desk daemon. The page is the bundled UI. The socket is not. */
@@ -26,6 +28,8 @@ class MainActivity : Activity(), PairingHost {
     private var shellPort = -1
     private val pendingLink = PendingPairLink()
     private val scanning = AtomicBoolean(false)
+    private val filesKey = FilesKey()
+    private var fileWork: ExecutorService? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -60,6 +64,17 @@ class MainActivity : Activity(), PairingHost {
         view.addJavascriptInterface(
             AttachBridge(AttachVault(KeystoreSealer(), PrefsBlobStore(this)), this),
             "TstDeskNative",
+        )
+        // TD-5145: files the agent sent. Hashing and copying share one worker,
+        // which first clears out stale downloads.
+        val files = receivedFilesFor(this)
+        val work = Executors.newSingleThreadExecutor()
+        fileWork = work
+        work.execute { files.sweep(System.currentTimeMillis()) }
+        val actions = FileActions(this, files, work) { json -> callPage(FILE_CALLBACK, json) {} }
+        view.addJavascriptInterface(
+            FileBridge(filesKey, files, actions) { runOnUiThread { pushFilesKey() } },
+            "TstDeskFiles",
         )
         val port = started.port
         shellPort = port
@@ -106,6 +121,8 @@ class MainActivity : Activity(), PairingHost {
     override fun onDestroy() {
         webView?.destroy()
         webView = null
+        fileWork?.shutdown()
+        fileWork = null
         server?.stop()
         server = null
         super.onDestroy()
@@ -175,6 +192,14 @@ class MainActivity : Activity(), PairingHost {
         view.evaluateJavascript(pageCallScript(function, jsonArgument)) { result ->
             done(result == "true")
         }
+    }
+
+    /**
+     * A fresh TstDeskFiles key, sent by evaluateJavascript on the main frame,
+     * so an iframe that asks for one rotates the key but never learns it.
+     */
+    private fun pushFilesKey() {
+        callPage(FILES_KEY_CALLBACK, JSONObject.quote(filesKey.rotate())) {}
     }
 
     private fun readAsset(path: String): ByteArray? {

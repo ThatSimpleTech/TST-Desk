@@ -4,6 +4,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -176,5 +177,22 @@ class PairLinkTest {
     @Test(expected = IllegalArgumentException::class)
     fun anUnknownCallbackIsRefused() {
         pageCallScript("alert", "1")
+    }
+
+    @Test
+    fun pageCallScriptAcceptsFileAndKeyCallbacks() {
+        assertEquals("__tstDeskOnFile", FILE_CALLBACK)
+        assertEquals("__tstDeskOnFilesKey", FILES_KEY_CALLBACK)
+        val event = pageCallScript(FILE_CALLBACK, fileEventJson(EVENT_VERIFIED, "9f1c0e6b2a7d4c11b0e5a3f4d2c1b0a9"))
+        assertTrue(event.contains("window.__tstDeskOnFile;"))
+        assertTrue(event.contains("\"event\":\"verified\""))
+        assertTrue(pageCallScript(FILES_KEY_CALLBACK, JSONObject.quote("ab12")).contains("window.__tstDeskOnFilesKey;"))
+    }
+
+    @Test
+    fun stillRefusesUnknownNames() {
+        for (name in listOf("__tstDeskOnFiles", "__tstdeskonfile", "__tstDeskOnFile;alert(1)", "")) {
+            assertThrows(name, IllegalArgumentException::class.java) { pageCallScript(name, "{}") }
+        }
     }
 }
