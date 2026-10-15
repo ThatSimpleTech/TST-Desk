@@ -419,7 +419,13 @@ from .session import (
     SessionRegistry,
     SessionRunner,
 )
-from .session_lifecycle import archive_session, delete_session, move_session, rename_session
+from .session_lifecycle import (
+    archive_session,
+    delete_session,
+    move_session,
+    reload_session_boundary,
+    rename_session,
+)
 from .session_persist import LoadedSession, SessionPersist
 from .session_stars import load_session_stars, save_session_stars
 from .session_store import SessionStore
@@ -2483,13 +2489,13 @@ class Daemon:
                 )
             # Reload the workspace boundary so raised caps take effect;
             # the loop re-checks caps before its next model call and
-            # re-pauses if the new caps are still exceeded.
-            try:
-                found.boundary_config = load_workspace_boundary(found.workspace_path)
-            except ConfigError as e:
+            # re-pauses if the new caps are still exceeded. A charter
+            # run keeps its charter's wall and caps.
+            error = reload_session_boundary(found, found.workspace_path)
+            if error is not None:
                 log.warning(
                     "boundary config invalid on resume; keeping current caps",
-                    extra={"extra_fields": {"session_id": msg.session_id, "error": str(e)}},
+                    extra={"extra_fields": {"session_id": msg.session_id, "error": str(error)}},
                 )
             await found.resume()
             cfg = found.boundary_config
@@ -3375,16 +3381,14 @@ class Daemon:
         router = sess.router if sess.router is not None else TierRouter()
         sess.router = router
 
-        try:
-            sess.boundary_config = load_workspace_boundary(sess.workspace_path)
-        except ConfigError as e:
+        error = reload_session_boundary(sess, sess.workspace_path)
+        if error is not None:
             log.warning(
                 "workspace boundary config invalid; using defaults",
-                extra={"extra_fields": {"workspace_path": sess.workspace_path, "error": str(e)}},
+                extra={
+                    "extra_fields": {"workspace_path": sess.workspace_path, "error": str(error)}
+                },
             )
-        if sess.charter is not None:
-            sess.boundary_config.boundary = sess.charter.boundary
-            sess.boundary_config.caps = sess.charter.caps
 
         try:
             sess.policy = load_policy(sess.workspace_path)
