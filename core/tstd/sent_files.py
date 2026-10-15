@@ -371,6 +371,8 @@ class SentFiles:
         return _Source(fd, st, path, rel)
 
     def _check_room(self, session_id: str, sources: list[_Source]) -> None:
+        if not sources:
+            return
         total = sum(s.st.st_size for s in sources)
         used = self._store.sent_bytes_total(session_id)
         quota = self._config.send_file_session_max_bytes
@@ -382,8 +384,13 @@ class SentFiles:
                 "(session.send_file_session_max_bytes). Nothing was sent.",
             )
         bytes_dir = self._store.bytes_dir(session_id)
-        bytes_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-        free = shutil.disk_usage(bytes_dir).free
+        try:
+            bytes_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+            free = shutil.disk_usage(bytes_dir).free
+        except OSError:
+            # Any failure here is "no room to keep a copy". Its text names the
+            # data dir, which the model must never read.
+            raise SendError("disk_full", self._disk_full(sources[0])) from None
         needed = FREE_MARGIN
         for source in sources:
             needed += source.st.st_size

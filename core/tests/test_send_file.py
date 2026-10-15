@@ -11,6 +11,7 @@ DB.
 from __future__ import annotations
 
 import asyncio
+import errno
 import hashlib
 import json
 import logging
@@ -371,6 +372,32 @@ async def test_too_large_session_quota_disk_full_refused_and_nothing_written(
     )
     assert env.on_disk() == before and len(env.rows()) == 1
     assert len(env.ready()) == 1
+
+
+@pytest.mark.parametrize("how", ["enospc", "not_a_dir"])
+async def test_room_check_os_error_is_disk_full_and_names_no_data_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, how: str
+) -> None:
+    env = _env(tmp_path)
+    _write(env.ws / "a.txt", "a")
+    _write(env.ws / "b.txt", "bb")
+    if how == "enospc":
+
+        def full(path: Any) -> Any:
+            raise OSError(errno.ENOSPC, "No space left on device", str(path))
+
+        monkeypatch.setattr(sent_files.shutil, "disk_usage", full)
+    else:
+        # The first send in a session makes artifacts/; a file in its way fails mkdir.
+        _write(env.bytes_dir, "in the way")
+    result = await env.send(["a.txt", "b.txt"])
+    assert result.error_code == "disk_full"
+    assert result.output == (
+        "Not enough free disk space to keep a copy of a.txt (1 bytes). Nothing was sent."
+    )
+    assert str(env.persist.dir_for(env.session.id)) not in result.output
+    assert str(tmp_path) not in result.output
+    assert env.store.sent_bytes_total(env.session.id) == 0 and env.ready() == []
 
 
 @pytest.mark.parametrize("how", ["grows", "touched"])
