@@ -435,7 +435,7 @@ fn strip_trailing(name: &str) -> &str {
     name.trim_end_matches([' ', '.'])
 }
 
-fn is_device_name(name: &str) -> bool {
+pub(crate) fn is_device_name(name: &str) -> bool {
     let head = name.split('.').next().unwrap_or("").trim_end_matches(' ');
     let upper = head.to_ascii_uppercase();
     match upper.as_str() {

@@ -153,7 +153,53 @@ pub(crate) fn open_target_with(
     if !is_openable(name) {
         return Err("not_openable".into());
     }
-    Ok(path)
+    Ok(for_opener(path))
+}
+
+/// On Windows `fs::canonicalize` gives `\\?\C:\...`, and many apps that
+/// ShellExecuteExW hands that form to as `%1` (Photos, Office, older PDF
+/// readers) cannot open it, so the opener gets the plain form.
+fn for_opener(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    if let Some(plain) = path.to_str().and_then(without_verbatim) {
+        return PathBuf::from(plain);
+    }
+    path
+}
+
+/// The plain form of a verbatim path (`\\?\C:\...` or `\\?\UNC\...`), when it
+/// names the same file: every part a valid Win32 name (no `.`/`..`, no
+/// reserved character, no trailing space or dot, no device name) and the
+/// whole under MAX_PATH. The rule dunce uses, kept here as a string test.
+#[cfg(any(windows, test))]
+fn without_verbatim(path: &str) -> Option<String> {
+    // The parts after the drive or the `\\server\share` must all be names.
+    let (plain, names, min_names) = if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+        (format!(r"\\{rest}"), rest, 2)
+    } else {
+        let rest = path.strip_prefix(r"\\?\")?;
+        let drive = rest.as_bytes();
+        if drive.len() < 3 || !drive[0].is_ascii_alphabetic() || &drive[1..3] != b":\\" {
+            return None;
+        }
+        (rest.to_string(), &rest[3..], 1)
+    };
+    let parts: Vec<&str> = names.split('\\').collect();
+    let valid = |part: &str| {
+        !part.is_empty()
+            && part != "."
+            && part != ".."
+            && !part.ends_with([' ', '.'])
+            && !part.chars().any(|c| {
+                matches!(
+                    c,
+                    '\0'..='\x1F' | '<' | '>' | ':' | '"' | '/' | '|' | '?' | '*'
+                )
+            })
+            && !received_files::is_device_name(part)
+    };
+    let fits = plain.encode_utf16().count() < 260;
+    (parts.len() >= min_names && parts.iter().all(|p| valid(p)) && fits).then_some(plain)
 }
 
 fn target(app: &AppHandle, session_id: &str, artifact_id: &str) -> Result<PathBuf, String> {
@@ -433,6 +479,42 @@ mod tests {
             open_target_with(&tmp.0, None, "sess-9", AID),
             Err("not_found".into())
         );
+    }
+
+    #[test]
+    fn verbatim_paths_reach_the_opener_in_plain_form() {
+        let plain = |p: &str| without_verbatim(p);
+        assert_eq!(
+            plain(r"\\?\C:\Users\me\AppData\Roaming\tst-desk\sessions\s\artifacts\a\report.pdf"),
+            Some(r"C:\Users\me\AppData\Roaming\tst-desk\sessions\s\artifacts\a\report.pdf".into())
+        );
+        assert_eq!(
+            plain(r"\\?\UNC\server\share\tst-desk\résumé.pdf"),
+            Some(r"\\server\share\tst-desk\résumé.pdf".into())
+        );
+        let long = format!(r"\\?\C:\{}\x.pdf", "d".repeat(260));
+        // Kept verbatim: the plain form would name another file, or none.
+        for keep in [
+            r"C:\plain\report.pdf",
+            r"\\?\C:",
+            r"\\?\C:\",
+            r"\\?\C:\dir\CON.txt",
+            r"\\?\C:\dir\lpt1",
+            r"\\?\C:\dir\name.",
+            r"\\?\C:\dir\a b \x.pdf",
+            r"\\?\C:\dir\..\x.pdf",
+            r"\\?\C:\dir\.\x.pdf",
+            r"\\?\C:\dir\\x.pdf",
+            r"\\?\C:\dir\a?b.pdf",
+            r"\\?\C:\dir/x.pdf",
+            r"\\?\C:\dir\x.pdf\",
+            r"\\?\Volume{0f8c2a4e-1b3d-4c5e-8f90-123456789abc}\x.pdf",
+            r"\\?\GLOBALROOT\Device\HarddiskVolume1\x.pdf",
+            r"\\?\UNC\server",
+            long.as_str(),
+        ] {
+            assert_eq!(plain(keep), None, "{keep:?}");
+        }
     }
 
     #[test]
