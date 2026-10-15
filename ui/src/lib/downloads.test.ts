@@ -431,6 +431,81 @@ describe("the queue", () => {
   });
 });
 
+describe("a paused download and the slot", () => {
+  it("a hub pause hands the slot on, so the next download starts", async () => {
+    const a = file(1);
+    const b = file(2, CHUNK, { sessionId: "sess-2" });
+    startDownload(a);
+    await flush();
+    emit({ type: "error", seq: 0, session_id: "sess-1", code: "machine_not_found", message: "x" });
+    expect(state(a).phase).toBe("paused");
+    startDownload(b);
+    await flush();
+    expect(state(b).phase).toBe("downloading");
+    expect(requests(b)).toEqual([0]);
+  });
+
+  it("a stall pause with the socket up hands the slot to what is queued", async () => {
+    const a = file(1, CHUNK);
+    const b = file(2, CHUNK);
+    startDownload(a);
+    startDownload(b);
+    await flush();
+    expect(state(b).phase).toBe("queued");
+    await vi.advanceTimersByTimeAsync(STALL_MS * (MAX_STRIKES + 1));
+    expect(state(a)).toMatchObject({ phase: "paused", waiting: true });
+    expect(state(b).phase).toBe("downloading");
+    await serve(b);
+    expect(state(b).phase).toBe("done");
+  });
+
+  it("Pause hands the slot on, and Resume waits its turn", async () => {
+    const a = file(1, CHUNK);
+    const b = file(2, CHUNK);
+    startDownload(a);
+    startDownload(b);
+    await flush();
+    pauseDownload(a);
+    await flush();
+    expect(state(b).phase).toBe("downloading");
+    await resumeDownload(a);
+    expect(state(a).phase).toBe("queued");
+    await serve(b);
+    expect(state(a).phase).toBe("downloading");
+    await serve(a);
+    expect(state(a).phase).toBe("done");
+  });
+
+  it("a download resumed from the queue drops its old pause note", async () => {
+    const a = file(1, CHUNK);
+    const b = file(2, CHUNK, { sessionId: "sess-2" });
+    startDownload(a);
+    await flush();
+    emit({ type: "error", seq: 0, session_id: "sess-1", code: "machine_not_found", message: "x" });
+    expect(state(a).note).toBe("studio-mac is not reachable.");
+    startDownload(b);
+    await flush();
+    await resumeDownload(a);
+    await serve(b);
+    await serve(a);
+    expect(state(a)).toMatchObject({ phase: "done", note: null, code: null });
+  });
+
+  it("a dropped connection keeps the slot, so the reconnect carries on with it first", async () => {
+    const a = file(1, CHUNK);
+    const b = file(2, CHUNK);
+    startDownload(a);
+    startDownload(b);
+    await flush();
+    for (const handler of bus.states) handler("reconnecting");
+    await flush();
+    expect([state(a).phase, state(b).phase]).toEqual(["paused", "queued"]);
+    for (const handler of bus.states) handler("connected");
+    await flush();
+    expect([state(a).phase, state(b).phase]).toEqual(["downloading", "queued"]);
+  });
+});
+
 describe("keep-awake and what comes after", () => {
   it("holds the phone awake while bytes move and lets go after", async () => {
     const ref = file(1, CHUNK);

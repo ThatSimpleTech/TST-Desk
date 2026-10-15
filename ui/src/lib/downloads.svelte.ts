@@ -10,7 +10,8 @@
 // One download runs at a time; the rest queue, so two APKs never double the
 // socket load. A request with no reply for 20 s is asked again; three of
 // those and the card pauses. A dropped connection pauses too, and the
-// download picks up where the sink's part ends once the socket is back.
+// download picks up where the sink's part ends once the socket is back. Any
+// other pause hands the slot to the next in the queue.
 // Every card's state lives in `downloads`, keyed `${sessionId}|${artifactId}`,
 // and the first render probes the sink so a card comes back in its real
 // state after a restart (§6.3).
@@ -306,8 +307,12 @@ async function begin(job: Job): Promise<void> {
   e.phase = "downloading";
   e.rate = 0;
   e.waiting = false;
+  // A pause's note must not outlive it: a job resumed from the queue lands
+  // here, not in resumeDownload.
+  e.note = null;
+  e.code = null;
   syncAwake();
-  let begun: { have: number; state: "none" | "partial" | "verified" };
+  let begun:{ have: number; state: "none" | "partial" | "verified" };
   try {
     begun = await job.sink.begin(metaFor(job.ref));
   } catch (err) {
@@ -346,7 +351,7 @@ function request(job: Job, offset: number): boolean {
     length: CHUNK,
   });
   if (!sent) {
-    pauseJob(job, true);
+    pauseJob(job, "connection");
     return false;
   }
   return true;
@@ -513,17 +518,20 @@ async function complete(job: Job): Promise<void> {
   }
 }
 
-/** Give the slot to the next queued download. */
+/** Forget the job and give the slot to the next queued download. */
 function release(job: Job): void {
   if (jobs.get(job.key) === job) jobs.delete(job.key);
   job.generation += 1;
   const at = queue.indexOf(job.key);
   if (at !== -1) queue.splice(at, 1);
-  if (active === job.key) {
-    active = null;
-    startNext();
-  }
+  freeSlot(job);
   syncAwake();
+}
+
+function freeSlot(job: Job): void {
+  if (active !== job.key) return;
+  active = null;
+  startNext();
 }
 
 function startNext(): void {
@@ -559,7 +567,7 @@ function handleCode(job: Job, code: string): void {
       return;
     case "phase":
       if (outcome.phase === "paused") {
-        pauseJob(job, false, outcome.copy);
+        pauseJob(job, "code", outcome.copy);
         return;
       }
       stopWith(job, outcome.phase === "done" ? "failed" : outcome.phase, outcome.copy);
@@ -602,25 +610,32 @@ function copyContext(ref: SentFileRef) {
 
 // ── Pause, resume, cancel ──────────────────────────────────────────────
 
-/** Stop asking, keep the part. The job keeps its slot, so a reconnect
- *  carries on with it before anything queued. */
-function pauseJob(job: Job, waiting: boolean, note: string | null = null): void {
+/** Why a download paused. `connection` and `stall` wait for the
+ *  connection (auto-resume); `user` and `code` wait for Resume. */
+type PauseWhy = "connection" | "stall" | "user" | "code";
+
+/** Stop asking, keep the part. A pause for the dropped connection keeps the
+ *  slot, so the reconnect carries on with it before anything queued (nothing
+ *  else could download meanwhile). Every other pause hands the slot on, so a
+ *  paused download never holds the queue up. */
+function pauseJob(job: Job, why: PauseWhy, note: string | null = null): void {
   job.generation += 1;
   job.inflight.clear();
   job.reorder.clear();
   job.next = job.have;
   const e = entry(job.ref);
   e.phase = "paused";
-  e.waiting = waiting;
+  e.waiting = why === "connection" || why === "stall";
   e.note = note;
   e.rate = 0;
   e.partial = job.have > 0;
+  if (why !== "connection") freeSlot(job);
   syncAwake();
 }
 
 export function pauseDownload(ref: SentFileRef): void {
   const job = jobs.get(fileKey(ref));
-  if (job !== undefined && isRunning(job)) pauseJob(job, false);
+  if (job !== undefined && isRunning(job)) pauseJob(job, "user");
 }
 
 /** Carry on from the sink's own count. A part found after a reload has no
@@ -698,7 +713,7 @@ function tick(): void {
     for (const [offset, info] of [...job.inflight]) {
       if (now - info.at < STALL_MS) continue;
       if (info.strikes >= MAX_STRIKES) {
-        pauseJob(job, true);
+        pauseJob(job, "stall");
         break;
       }
       // Reads are idempotent over an immutable copy: just ask again.
@@ -727,7 +742,7 @@ function handleState(state: string): void {
     return;
   }
   for (const job of [...jobs.values()]) {
-    if (isRunning(job)) pauseJob(job, true);
+    if (isRunning(job)) pauseJob(job, "connection");
   }
 }
 
