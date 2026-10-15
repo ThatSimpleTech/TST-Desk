@@ -1,6 +1,6 @@
 [package]
 name = "tst-desk"
-version = "0.1.0"
+version = "0.2.0"
 description = "TST Desk — open-source BYO-model desktop agent workspace"
 authors = ["That Simple Tech"]
 license = "Apache-2.0"
