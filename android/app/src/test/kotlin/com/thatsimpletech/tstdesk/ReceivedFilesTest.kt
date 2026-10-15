@@ -218,36 +218,66 @@ class ReceivedFilesTest {
         assertNull("meta.json can only name data[.ext]", files.resolveVerified(ID_A))
     }
 
-    @Test
-    fun failedMetaWriteKeepsThePartForTheRetry() {
-        beginBody()
-        files.append(ID_A, 0, body)
-        val dir = File(root, ID_A)
-        // A folder where meta.json.tmp goes fails the meta write and nothing else.
-        val blocker = File(dir, "meta.json.tmp")
+    /** Finishes with meta.json.tmp blocked by a folder, which fails the meta write and nothing else. */
+    private fun finishWithTheMetaWriteFailing(readApk: (File) -> ApkInfo?) {
+        val blocker = File(root, "$ID_A/meta.json.tmp")
         assertTrue(blocker.mkdir())
-        assertEquals("io", files.finish(ID_A, noApk))
-        assertEquals("the checked bytes stay as data.part", body.size.toLong(), File(dir, "data.part").length())
-        assertFalse(File(dir, "data.apk").exists())
-        assertEquals(EntryStatus(STATE_PARTIAL, 4, 4, files.meta(ID_A)), files.status(ID_A))
-
+        assertEquals("io", files.finish(ID_A, readApk))
         assertTrue(blocker.delete())
-        free = FREE_MARGIN_BYTES
-        assertEquals("the retry needs no room for a second copy", Begin.Ready(4, STATE_PARTIAL), beginBody())
-        assertNull(files.finish(ID_A, noApk))
-        assertEquals(STATE_VERIFIED, files.status(ID_A).state)
     }
 
     @Test
-    fun failedRenameAfterTheMetaIsNotVerified() {
+    fun failedMetaWriteIsAdoptedWithoutASecondDownload() {
         beginBody()
         files.append(ID_A, 0, body)
         val dir = File(root, ID_A)
-        // A non-empty folder named data.apk makes the rename fail after the meta is saved.
+        val apk = ApkInfo("com.example.app", 3, "1.2", null)
+        val parsed = mutableListOf<String>()
+        finishWithTheMetaWriteFailing { parsed += it.name; apk }
+        assertEquals("the checked bytes keep their final name", body.size.toLong(), File(dir, "data.apk").length())
+        assertFalse(File(dir, "data.part").exists())
+        assertNull("no meta, not verified", files.meta(ID_A)?.file)
+        assertNull(files.resolveVerified(ID_A))
+        assertEquals("status counts the named bytes", EntryStatus(STATE_PARTIAL, 4, 4, files.meta(ID_A)), files.status(ID_A))
+
+        free = FREE_MARGIN_BYTES
+        assertEquals("the retry needs no room for a second copy", Begin.Ready(4, STATE_PARTIAL), beginBody())
+        assertFalse("and starts no second download", File(dir, "data.part").exists())
+        assertNull(files.finish(ID_A) { parsed += it.name; apk })
+        assertEquals("both parses read the final name", listOf("data.apk", "data.apk"), parsed)
+        val after = files.status(ID_A)
+        assertEquals(STATE_VERIFIED, after.state)
+        assertEquals("file and apk land in one write", apk, after.meta?.apk)
+        assertEquals(File(dir, "data.apk"), files.resolveVerified(ID_A))
+    }
+
+    @Test
+    fun namedBytesThatNoLongerMatchAreNotAdopted() {
+        beginBody()
+        files.append(ID_A, 0, body)
+        finishWithTheMetaWriteFailing(noApk)
+        val dir = File(root, ID_A)
+        File(dir, "data.apk").writeBytes(body.copyOf().also { it[3] = 9 })
+        assertEquals("hash_mismatch", files.finish(ID_A, neverParsed("parsed unchecked bytes")))
+        assertFalse(File(dir, "data.apk").exists())
+        assertEquals("the retry starts clean", EntryStatus(STATE_NONE, 0, 4, files.meta(ID_A)), files.status(ID_A))
+        assertEquals(Begin.Ready(0, STATE_NONE), beginBody())
+        assertTrue(files.append(ID_A, 0, body).ok)
+        assertNull(files.finish(ID_A, noApk))
+        assertEquals(File(dir, "data.apk"), files.resolveVerified(ID_A))
+    }
+
+    @Test
+    fun failedRenameKeepsThePartAndParsesNothing() {
+        beginBody()
+        files.append(ID_A, 0, body)
+        val dir = File(root, ID_A)
+        // A non-empty folder named data.apk makes the rename fail.
         val blocker = File(dir, "data.apk")
         assertTrue(File(blocker, "x").mkdirs())
-        assertEquals("io", files.finish(ID_A, noApk))
-        assertEquals(STATE_PARTIAL, files.status(ID_A).state)
+        assertEquals("io", files.finish(ID_A, neverParsed("parsed before the final name")))
+        assertEquals(EntryStatus(STATE_PARTIAL, 4, 4, files.meta(ID_A)), files.status(ID_A))
+        assertNull("the meta was not touched", files.meta(ID_A)?.file)
         assertNull(files.resolveVerified(ID_A))
         assertEquals(Begin.Ready(4, STATE_PARTIAL), beginBody())
 
@@ -261,15 +291,19 @@ class ReceivedFilesTest {
         beginBody()
         files.append(ID_A, 0, body)
         val apk = ApkInfo("com.example.app", 3, "1.2", listOf("a".repeat(64)))
-        var stateDuringParse: String? = null
+        var statusDuringParse: EntryStatus? = null
+        var parsedName: String? = null
         var parsedBytes: ByteArray? = null
         val code = files.finish(ID_A) { file ->
-            stateDuringParse = files.status(ID_A).state
+            statusDuringParse = files.status(ID_A)
+            parsedName = file.name
             parsedBytes = file.readBytes()
             apk
         }
         assertNull(code)
-        assertEquals("the page's poll cannot see verified yet", STATE_PARTIAL, stateDuringParse)
+        assertEquals("the page's poll cannot see verified yet", STATE_PARTIAL, statusDuringParse?.state)
+        assertEquals("nor a fresh start", 4L, statusDuringParse?.have)
+        assertEquals("getPackageArchiveInfo gets an .apk path", "data.apk", parsedName)
         assertArrayEquals("it parses the checked bytes", body, parsedBytes)
         val after = files.status(ID_A)
         assertEquals(STATE_VERIFIED, after.state)

@@ -105,7 +105,8 @@ class FileActions(
     }
 
     /**
-     * Called by finish once the hash matched, before the file counts as verified.
+     * Called by finish once the hash matched, on the bytes under their final name
+     * (`data.apk`), before the file counts as verified.
      * Null only drops the card's APK line: Android's installer checks the package itself.
      * It runs on [executor], where an uncaught exception would end the app.
      */
