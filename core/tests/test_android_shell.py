@@ -119,10 +119,10 @@ def test_page_callbacks_include_file_and_key_callbacks() -> None:
     assert names == {"SCAN_CALLBACK", "PAIR_LINK_CALLBACK", "FILE_CALLBACK", "FILES_KEY_CALLBACK"}
 
 
-def test_version_0_1_9_code_10() -> None:
+def test_version_0_1_10_code_11() -> None:
     gradle = (ANDROID / "app" / "build.gradle.kts").read_text(encoding="utf-8")
-    assert "versionCode = 10\n" in gradle
-    assert 'versionName = "0.1.9"' in gradle
+    assert "versionCode = 11\n" in gradle
+    assert 'versionName = "0.1.10"' in gradle
 
 
 def test_provider_opens_read_only() -> None:

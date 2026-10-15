@@ -5,11 +5,14 @@ import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.View
 import android.view.WindowInsets
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -30,6 +33,8 @@ class MainActivity : Activity(), PairingHost {
     private val scanning = AtomicBoolean(false)
     private val filesKey = FilesKey()
     private var fileWork: ExecutorService? = null
+    /** The page's file input waiting for a picker result (TD-5026). One at a time. */
+    private var pendingChooser: ValueCallback<Array<Uri>>? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -83,6 +88,19 @@ class MainActivity : Activity(), PairingHost {
                 return !isShellPage(request.url.toString(), port)
             }
         }
+        // TD-5026: a `<input type=file>` is inert on Android WebView unless the
+        // host opens a picker and returns the URIs through this callback. The
+        // composer's paperclip calls input.click(); without this the tap does
+        // nothing and no attachment is ever staged.
+        view.webChromeClient = object : WebChromeClient() {
+            override fun onShowFileChooser(
+                view: WebView,
+                callback: ValueCallback<Array<Uri>>,
+                params: FileChooserParams,
+            ): Boolean {
+                return openChooser(callback, params)
+            }
+        }
         val ink = getColor(R.color.ink)
         view.setBackgroundColor(ink)
         // WebView draws through its own padding, so the inset has to be a
@@ -117,6 +135,62 @@ class MainActivity : Activity(), PairingHost {
 
     /** Moves an untaken link to the next instance; the old page can no longer take it. */
     override fun onRetainNonConfigurationInstance(): Any? = pendingLink.take()
+
+    /**
+     * Open the system picker for a `<input type=file>` (TD-5026). `ACTION_GET_CONTENT`
+     * is used rather than `OpenDocument` because `OpenDocument` needs the Storage
+     * Access Framework on the DocumentsProvider, which some pickers do not provide;
+     * GET_CONTENT is the path WebView itself uses. The chosen URIs are returned via
+     * [pendingChooser]. Returns false so WebView knows we did not act.
+     */
+    private fun openChooser(
+        callback: ValueCallback<Array<Uri>>,
+        params: WebChromeClient.FileChooserParams,
+    ): Boolean {
+        // If a previous picker never reported back, close it before starting a new
+        // one so the page is not left with a dangling callback it will never resolve.
+        if (pendingChooser != null) {
+            pendingChooser?.onReceiveValue(null)
+            pendingChooser = null
+        }
+        val intent = params.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, chooserMimeTypes(params.acceptTypes))
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, chooserAllowsMultiple(params.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE))
+        }
+        return try {
+            pendingChooser = callback
+            startActivityForResult(Intent.createChooser(intent, null), CHOOSER_REQUEST)
+            true
+        } catch (_: ActivityNotFoundException) {
+            pendingChooser = null
+            false
+        }
+    }
+
+    /**
+     * Deliver picker URIs back to the page. The page's `onchange` reads these as
+     * content:// or file:// URIs and base64's them through the same attachment gate
+     * the desktop uses. Cancelled with null so the input can fire again.
+     */
+    private fun finishChooser(requestCode: Int, data: Intent?) {
+        val callback = pendingChooser ?: return
+        pendingChooser = null
+        if (data == null) {
+            callback.onReceiveValue(null)
+            return
+        }
+        val uris = mutableListOf<Uri>()
+        data.clipData?.let { clip ->
+            for (i in 0 until clip.itemCount) {
+                clip.getItemAt(i).uri?.let { uris.add(it) }
+            }
+        }
+        data.data?.let { if (uris.isEmpty()) uris.add(it) }
+        val usable = uris.filter { it.scheme?.lowercase() in setOf("content", "file") }
+        callback.onReceiveValue(usable.toTypedArray().ifEmpty { null })
+    }
 
     override fun onDestroy() {
         webView?.destroy()
@@ -159,6 +233,10 @@ class MainActivity : Activity(), PairingHost {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == CHOOSER_REQUEST) {
+            finishChooser(requestCode, data)
+            return
+        }
         if (requestCode != SCAN_REQUEST) return
         val text = if (resultCode == RESULT_OK) data?.getStringExtra(ScanActivity.EXTRA_TEXT) else null
         finishScan(scanResultJson(text, data?.getStringExtra(ScanActivity.EXTRA_REASON))) { delivered ->
@@ -212,6 +290,7 @@ class MainActivity : Activity(), PairingHost {
 
     private companion object {
         const val SCAN_REQUEST = 5014
+        const val CHOOSER_REQUEST = 5026
     }
 }
 
