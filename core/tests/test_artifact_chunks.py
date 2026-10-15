@@ -20,13 +20,22 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from tests.machine_helpers import FakeKeychain, Fleet, ask, window
+from tests.machine_helpers import FakeKeychain, Fleet, ask, eventually, window
 from tests.test_artifacts import _open, _shutdown
-from tests.test_two_daemons import VIEWER, _pair
+from tests.test_two_daemons import VIEWER, _pair, _Steps
 from tstd import peer_policy
 from tstd.artifacts import ArtifactRecord
 from tstd.daemon import Daemon
-from tstd.protocol import CHUNK_MAX, ArtifactChunk, ReadArtifactChunk, parse_daemon_event
+from tstd.mock import Script
+from tstd.protocol import (
+    CHUNK_MAX,
+    ApprovalRequest,
+    ArtifactChunk,
+    ArtifactReady,
+    ReadArtifactChunk,
+    ToolResult,
+    parse_daemon_event,
+)
 from tstd.sent_files import SentFiles
 
 POSIX = os.name == "posix"
@@ -318,3 +327,39 @@ async def test_bridged_viewer_forwarded_and_old_list_gets_not_on_remote(
         )
         old = await ask(hub, _read(remote, record.id), "artifact_chunk")
         assert (old["type"], old["code"], old["session_id"]) == ("error", "not_on_remote", remote)
+
+
+async def test_a_daemon_session_sends_with_no_card_and_serves_the_bytes(tmp_path: Path) -> None:
+    """The daemon wires ``SentFiles`` into every session it builds.
+
+    A scripted ``send_file`` runs in the default approval mode with no card,
+    and the bytes it sent come back over ``read_artifact_chunk``.
+    """
+    call = json.dumps({"files": ["app-release.apk"], "caption": "build"})
+    steps = [
+        Script(kind="tool_call", tool_name="send_file", tool_arguments=call),
+        Script(kind="stream", content="Sent."),
+    ]
+    daemon = Daemon(data_dir=tmp_path / "data", provider=_Steps(steps))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    data = MARKER + os.urandom(2_000)
+    (ws / "app-release.apk").write_bytes(data)
+    sid = await _open(daemon, ws)
+    try:
+        session = daemon.session_registry.get(sid)
+        assert session is not None
+        message = {"type": "user_message", "session_id": sid, "content": "send me the build"}
+        await daemon._handle_message(json.dumps(message), None)
+        log = session.event_log
+        await eventually(lambda: any(isinstance(e, ToolResult) for e in log.all_events), within=20)
+        events = log.all_events
+        [result] = [e for e in events if isinstance(e, ToolResult)]
+        assert result.status == "success", result.output
+        assert not [e for e in events if isinstance(e, ApprovalRequest)]
+        [ready] = [e for e in events if isinstance(e, ArtifactReady)]
+        assert (ready.kind, ready.name, ready.caption) == ("sent_file", "app-release.apk", "build")
+        reply = await _chunk(daemon, sid, ready.artifact_id, 0)
+        assert (base64.b64decode(reply["data_b64"]), reply["eof"]) == (data, True)
+    finally:
+        await _shutdown(daemon, sid)

@@ -410,7 +410,7 @@ from .scheduler.templates import (
     save_template,
 )
 from .scheduler.workspace import require_folder, resolve_workspace_name
-from .sent_files import read_chunk
+from .sent_files import SentFiles, read_chunk
 from .session import (
     TERMINAL_STATES,
     QueuedUserMessage,
@@ -3412,6 +3412,7 @@ class Daemon:
             desktop_driver=self.desktop_driver,
             browser_driver=self.browser_driver,
             grounding_client=GroundingClient.from_config(self.config.computer_use.grounding),
+            sent_files=SentFiles(self._artifacts, self.config.session),
         )
         from .tools.plugins import bind_plugin_handlers
 

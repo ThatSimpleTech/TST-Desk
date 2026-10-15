@@ -512,7 +512,7 @@ def _register_builtins(registry: ToolRegistry, *, search: SearchConfig | None = 
 def create_registry(
     *, candidate_selection: bool = False, search: SearchConfig | None = None
 ) -> ToolRegistry:
-    """Create a registry with builtins, skills, delegate, then plugins.
+    """Create a registry with builtins, skills, delegate, send_file, then plugins.
 
     ``candidate_selection`` (judgments.candidate_selection, TD-711) adds
     ``browser_pick`` to the tool surface.
@@ -522,6 +522,7 @@ def create_registry(
     from .delegate import register_delegate_tools
     from .desktop import register_desktop_tools
     from .plugins import load_plugins
+    from .send_file import register_send_file_tool
 
     registry = ToolRegistry()
     _register_builtins(registry, search=search)
@@ -529,5 +530,6 @@ def create_registry(
     register_browser_tools(registry, candidate_selection=candidate_selection)
     register_skill_tools(registry)
     register_delegate_tools(registry)
+    register_send_file_tool(registry)
     load_plugins(registry)
     return registry

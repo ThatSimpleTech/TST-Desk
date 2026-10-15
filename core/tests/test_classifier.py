@@ -622,3 +622,47 @@ class TestWritableGlobs:
             assert fired_as(decision, "in-workspace-edit")
         else:
             assert not fired_as(decision, "in-workspace-edit")
+
+
+# ── send_file (TD-5143) ───────────────────────────────────────────────
+
+
+class TestSendFile:
+    """An in-workspace send is Class A by its own rule, so no card in any mode."""
+
+    def test_in_workspace_is_a(self) -> None:
+        decision = classify(
+            boundary(),
+            req(tool_name="send_file", reads=(WS / "out/app.apk", WS / "notes.pdf")),
+        )
+        assert decision.decision_class is DecisionClass.A
+        assert fired_as(decision, "send-file-in-workspace")
+
+    @pytest.mark.parametrize(
+        "outside", [Path("/etc/passwd"), WS / ".." / "other" / "x.apk", Path("/work/projX/a")]
+    )
+    def test_any_outside_path_stays_c(self, outside: Path) -> None:
+        decision = classify(boundary(), req(tool_name="send_file", reads=(WS / "ok.txt", outside)))
+        assert decision.decision_class is DecisionClass.C
+        assert fired_as(decision, "path-outside-workspace")
+
+    def test_only_the_builtin_shape_matches(self) -> None:
+        reads = (WS / "a.txt",)
+        for request in (
+            req(tool_name="send_file", reads=reads, provenance="mcp:srv"),
+            req(tool_name="send_file", reads=reads, provenance="plugin:dist"),
+            req(tool_name="send_file", reads=()),
+            req(tool_name="send_file", reads=reads, hosts=frozenset({"example.com"})),
+            req(tool_name="other", reads=reads),
+        ):
+            assert not fired_as(classify(boundary(), request), "send-file-in-workspace")
+
+    def test_order_pinned(self) -> None:
+        from tstd.autonomy.classifier import RULE_TABLE
+
+        ids = [rule.id for rule in RULE_TABLE]
+        at = ids.index("send-file-in-workspace")
+        assert ids.index("boundary-unsafe-path") < at
+        assert ids.index("path-outside-workspace") < at
+        assert ids.index("mcp-undeclared-fields") < at
+        assert ids.index("desktop-actuation") < at < ids.index("side-effect-ask-floor")

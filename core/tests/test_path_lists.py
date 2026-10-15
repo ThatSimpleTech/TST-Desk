@@ -281,7 +281,14 @@ def test_format_summary_shows_plus_n_more(tmp_path: Path) -> None:
     assert summarize_arguments(READ_MANY, three, ws) == "a.txt"
 
 
-_STRING_PATH_TOOLS = sorted(t.name for t in create_registry().list_tools() if t.path_fields)
+# Tools whose path fields are strings: every builtin except send_file, whose
+# ``files`` is the one array field (covered above and in test_send_file.py).
+_STRING_PATH_TOOLS = sorted(
+    t.name
+    for t in create_registry().list_tools()
+    if t.path_fields
+    and all(t.parameters["properties"][f].get("type") != "array" for f in t.path_fields)
+)
 
 
 @pytest.mark.parametrize("name", _STRING_PATH_TOOLS)
