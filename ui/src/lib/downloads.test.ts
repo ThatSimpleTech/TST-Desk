@@ -536,6 +536,97 @@ describe("the other computer goes away (machine_unreachable)", () => {
   });
 });
 
+describe("the rest of the window after a refusal", () => {
+  function oldHub(): DaemonEventUnion {
+    return { type: "error", seq: 0, code: "unknown_message", message: "unknown message type: read_artifact_chunk" };
+  }
+
+  function hubRefusal(sessionId = "sess-1"): DaemonEventUnion {
+    return { type: "error", seq: 0, session_id: sessionId, code: "not_on_remote", message: "x" };
+  }
+
+  it("claims all three replies an old hub sends, not just the first", async () => {
+    const ref = file(1);
+    startDownload(ref);
+    await flush();
+    const replies = [oldHub(), oldHub(), oldHub()];
+    for (const event of replies) emit(event);
+    expect(replies.map((e) => claimedInline(e))).toEqual([true, true, true]);
+    expect(state(ref).phase).toBe("unavailable");
+  });
+
+  it("claims all three of the hub's refusals, and of its machine_unreachable", async () => {
+    const a = file(1);
+    startDownload(a);
+    await flush();
+    const refusals = [hubRefusal(), hubRefusal(), hubRefusal()];
+    for (const event of refusals) emit(event);
+    expect(refusals.map((e) => claimedInline(e))).toEqual([true, true, true]);
+
+    const b = file(2, 6 * CHUNK, { sessionId: BRIDGED });
+    startDownload(b);
+    await flush();
+    const gone = [unreachable(), unreachable(), unreachable()];
+    for (const event of gone) emit(event);
+    expect(gone.map((e) => claimedInline(e))).toEqual([true, true, true]);
+    expect(state(b).phase).toBe("paused");
+  });
+
+  it("a late refusal from the first download never lands on the next one", async () => {
+    const a = file(1);
+    const b = file(2);
+    startDownload(a);
+    startDownload(b);
+    await flush();
+    emit(oldHub());
+    await flush();
+    expect(state(b).phase).toBe("downloading");
+    emit(oldHub());
+    emit(oldHub());
+    await flush();
+    expect(state(b).phase).toBe("downloading");
+    const own = [oldHub(), oldHub(), oldHub()];
+    for (const event of own) emit(event);
+    expect(own.map((e) => claimedInline(e))).toEqual([true, true, true]);
+    expect(state(b).phase).toBe("unavailable");
+  });
+
+  it("claims the replies to what was out when the user paused, and nothing after", async () => {
+    const ref = file(1, 6 * CHUNK, { sessionId: BRIDGED });
+    startDownload(ref);
+    await flush();
+    pauseDownload(ref);
+    const late = [unreachable(), unreachable(), unreachable(), unreachable()];
+    for (const event of late) emit(event);
+    expect(late.map((e) => claimedInline(e))).toEqual([true, true, true, false]);
+    expect(state(ref)).toMatchObject({ phase: "paused", note: null });
+  });
+
+  it("owes nothing for a dropped socket, so a fresh refusal after the reconnect lands", async () => {
+    const ref = file(1);
+    startDownload(ref);
+    await flush();
+    for (const handler of bus.states) handler("reconnecting");
+    for (const handler of bus.states) handler("connected");
+    await flush();
+    const fresh = hubRefusal();
+    emit(fresh);
+    expect(claimedInline(fresh)).toBe(true);
+    expect(state(ref).phase).toBe("unavailable");
+  });
+
+  it("stops claiming once a stall's wait has passed", async () => {
+    const ref = file(1);
+    startDownload(ref);
+    await flush();
+    emit(hubRefusal());
+    await vi.advanceTimersByTimeAsync(STALL_MS + 1);
+    const later = hubRefusal();
+    emit(later);
+    expect(claimedInline(later)).toBe(false);
+  });
+});
+
 describe("a paused download and the slot", () => {
   it("a hub pause hands the slot on, so the next download starts", async () => {
     const a = file(1);

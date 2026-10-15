@@ -44,6 +44,9 @@ export const STALL_MS = 20000;
 export const MAX_STRIKES = 3;
 /** A sink that keeps answering bad_offset without moving is broken. */
 const MAX_RESYNCS = 3;
+/** How long the rest of a window's replies may trail a download that
+ *  stopped. The hub answers a verb it queued within its 10 s queue time. */
+const ECHO_MS = STALL_MS;
 
 /** One card's state. Plain data, so a card can render it as is. */
 export interface DownloadState {
@@ -115,6 +118,15 @@ interface Job {
   waitFor: string | null;
   /** Asks made on our own while the list already called that computer up. */
   machineRetries: number;
+  /** Requests sent that no reply has answered yet. */
+  unanswered: number;
+}
+
+/** Replies still owed to a download that stopped, paused or was cancelled
+ *  with requests out. An error among them is that download's, not news. */
+interface Echo {
+  left: number;
+  until: number;
 }
 
 interface Deps {
@@ -129,6 +141,8 @@ interface Deps {
 
 let deps: Deps | null = null;
 const jobs = new Map<string, Job>();
+/** By session id. */
+const echoes = new Map<string, Echo>();
 const queue: string[] = [];
 const probing = new Set<string>();
 let active: string | null = null;
@@ -166,6 +180,7 @@ export function resetDownloads(): void {
   stops = [];
   for (const job of jobs.values()) job.generation += 1;
   jobs.clear();
+  echoes.clear();
   queue.length = 0;
   probing.clear();
   active = null;
@@ -273,6 +288,7 @@ function newJob(ref: SentFileRef, sink: FileSink, then: Then): Job {
     generation: 0,
     waitFor: null,
     machineRetries: 0,
+    unanswered: 0,
   };
 }
 
@@ -364,6 +380,7 @@ function request(job: Job, offset: number): boolean {
     pauseJob(job, "connection");
     return false;
   }
+  job.unanswered += 1;
   return true;
 }
 
@@ -381,6 +398,7 @@ function fill(job: Job): void {
 function onChunk(event: ArtifactChunk): void {
   const key = fileKey({ sessionId: event.session_id, artifactId: event.artifact_id });
   const job = jobs.get(key);
+  answered(job, event.session_id);
   if (job === undefined || !isRunning(job)) return;
   // Only replies to what is out now; a late one from before a pause or a
   // restart is not ours any more.
@@ -592,6 +610,7 @@ function stopWith(job: Job, phase: FilePhase, copy: string): void {
   e.phase = phase;
   e.note = copy;
   e.waiting = false;
+  owe(job);
   release(job);
 }
 
@@ -635,6 +654,10 @@ function pauseJob(job: Job, why: PauseWhy, note: string | null = null): void {
   job.inflight.clear();
   job.reorder.clear();
   job.next = job.have;
+  // The replies to a refused or paused window are on their way. Those of a
+  // stalled one are long overdue, and a dropped socket's never come.
+  if (why === "user" || why === "code") owe(job);
+  else job.unanswered = 0;
   const e = entry(job.ref);
   e.phase = "paused";
   e.waiting = why === "connection" || why === "stall";
@@ -696,6 +719,7 @@ export function cancelDownload(ref: SentFileRef): void {
   const job = jobs.get(key);
   const e = entry(ref);
   if (job !== undefined) {
+    owe(job);
     release(job);
     void job.sink.discard().catch(() => {});
   } else {
@@ -754,6 +778,7 @@ function handleState(state: string): void {
     resumeWaiting();
     return;
   }
+  echoes.clear();
   for (const job of [...jobs.values()]) {
     if (isRunning(job)) pauseJob(job, "connection");
   }
@@ -810,15 +835,57 @@ const HUB_CODES = new Set(["not_on_remote", "not_allowed", "machine_not_found", 
  *  claimed here, before the notice sink, and shown on the card instead. */
 export function claimDownloadError(event: DaemonEventUnion): boolean {
   if (event.type !== "error") return false;
-  const job = active === null ? undefined : jobs.get(active);
-  if (job === undefined) return false;
-  const phase = downloads[job.key]?.phase;
-  if (phase !== "downloading" && phase !== "paused") return false;
-  const viaHub = HUB_CODES.has(event.code) && event.session_id === job.ref.sessionId;
+  const session = typeof event.session_id === "string" && event.session_id !== "" ? event.session_id : null;
+  const viaHub = session !== null && HUB_CODES.has(event.code);
   const oldPeer = event.code === "unknown_message" && event.message.includes("read_artifact_chunk");
   if (!viaHub && !oldPeer) return false;
+  // Replies come back in the order the requests went, so what a stopped
+  // download still owes is answered before the running one's (an old hub's
+  // unknown_message names no session: any owed reply is it).
+  if (takeEcho(viaHub ? session : null)) {
+    claimInline(event);
+    return true;
+  }
+  const job = active === null ? undefined : jobs.get(active);
+  if (job === undefined || !isRunning(job)) return false;
+  if (viaHub && job.ref.sessionId !== session) return false;
   claimInline(event);
+  if (job.unanswered > 0) job.unanswered -= 1;
   handleCode(job, event.code);
+  return true;
+}
+
+/** Move a stopping download's unanswered requests to its session's echo. */
+function owe(job: Job): void {
+  if (job.unanswered <= 0) return;
+  const sessionId = job.ref.sessionId;
+  const echo = echoes.get(sessionId) ?? { left: 0, until: 0 };
+  echo.left += job.unanswered;
+  echo.until = Date.now() + ECHO_MS;
+  echoes.set(sessionId, echo);
+  job.unanswered = 0;
+}
+
+/** A chunk reply: the running request's, or one a stopped download owed. */
+function answered(job: Job | undefined, sessionId: string): void {
+  if (job !== undefined && job.unanswered > 0) {
+    job.unanswered -= 1;
+    return;
+  }
+  const echo = echoes.get(sessionId);
+  if (echo !== undefined) echo.left -= 1;
+}
+
+/** Take one owed reply for this session (or, with null, for any), if one is
+ *  still due. */
+function takeEcho(session: string | null): boolean {
+  const now = Date.now();
+  for (const [sessionId, echo] of echoes) {
+    if (echo.left <= 0 || echo.until <= now) echoes.delete(sessionId);
+  }
+  const echo = session === null ? echoes.values().next().value : echoes.get(session);
+  if (echo === undefined) return false;
+  echo.left -= 1;
   return true;
 }
 
