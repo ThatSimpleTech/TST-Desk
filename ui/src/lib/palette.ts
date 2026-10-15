@@ -28,7 +28,8 @@ export type PaletteCommand =
 	| { kind: "resume-computer-use" }
 	| { kind: "toggle-design" }
 	| { kind: "quit-app" }
-	| { kind: "new-window" };
+	| { kind: "new-window" }
+	| { kind: "check-for-updates" };
 
 export interface PaletteEntry {
 	/** Stable key for the rendered list. */
@@ -164,6 +165,14 @@ export const ACTION_ENTRIES: readonly PaletteEntry[] = [
 		icon: "plus",
 		keywords: "second window tray multi",
 		command: { kind: "new-window" },
+	},
+	{
+		id: "action:check-for-updates",
+		title: "Check for updates",
+		subtitle: "Look for a newer TST Desk release",
+		icon: "download",
+		keywords: "update upgrade version github release restart",
+		command: { kind: "check-for-updates" },
 	},
 	{
 		id: "action:quit-app",

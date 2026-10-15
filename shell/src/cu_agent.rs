@@ -464,10 +464,7 @@ mod macos {
                 if request {
                     maybe_request_tcc();
                 }
-                (
-                    permissions_json(reset_error.as_deref()).into_bytes(),
-                    None,
-                )
+                (permissions_json(reset_error.as_deref()).into_bytes(), None)
             }
             Command::Capture { x, y, w, h } => match capture_png(x, y, w, h) {
                 Some(png) => {
@@ -591,7 +588,11 @@ mod macos {
 
     fn stale_now(stamps: &Option<Stamps>, name: &str, granted_now: bool) -> bool {
         let seen = stamps.as_ref().and_then(|s| s.read(name));
-        cu_identity::stale_grant(seen.as_deref(), &cu_identity::identity().cdhash, granted_now)
+        cu_identity::stale_grant(
+            seen.as_deref(),
+            &cu_identity::identity().cdhash,
+            granted_now,
+        )
     }
 
     fn screen_is_capable() -> bool {
@@ -611,7 +612,12 @@ mod macos {
         let stamps = stamps();
         if !screen_is_capable()
             && !stale_now(&stamps, cu_identity::GRANTED_SCREEN, false)
-            && first_prompt(&stamps, cu_identity::PROMPTED_SCREEN, cdhash, &SCREEN_PROMPTED)
+            && first_prompt(
+                &stamps,
+                cu_identity::PROMPTED_SCREEN,
+                cdhash,
+                &SCREEN_PROMPTED,
+            )
         {
             unsafe {
                 CGRequestScreenCaptureAccess();

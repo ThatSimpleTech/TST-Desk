@@ -650,6 +650,10 @@ FAKE_SECRETS = [
     "sk-ant-api03-FAKEFAKE0fakefakefakefakefakefakefake0abcd",  # tst-secret-ok
     "github_pat_11FAKEFAKE0abcdefghijklmnopqrstuvwxyz01",  # tst-secret-ok
     "ghp_FAKEFAKEFAKEFAKE00000000000000000abcd",  # tst-secret-ok
+    "ghu_FAKEFAKEFAKEFAKE0000000000000000abcd",  # tst-secret-ok
+    "ghr_FAKEFAKEFAKEFAKE0000000000000000abcd",  # tst-secret-ok
+    "gho_FAKEFAKEFAKEFAKE0000000000000000abcd",  # tst-secret-ok
+    "ghs_FAKEFAKEFAKEFAKE0000000000000000abcd",  # tst-secret-ok
     "AKIAIOSFODNN7EXAMPLE",  # tst-secret-ok
     "-----BEGIN RSA PRIVATE KEY-----",  # tst-secret-ok
 ]

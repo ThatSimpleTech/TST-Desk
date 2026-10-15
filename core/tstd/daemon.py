@@ -77,6 +77,9 @@ from .config_write import (
     save_tier_credential,
     save_tier_slug,
 )
+from .connectors.github_session import GithubCoordinator
+from .connectors.google_session import GoogleCoordinator
+from .connectors.microsoft_session import MicrosoftCoordinator
 from .console_shutdown import (
     install_windows_console_shutdown,
     remove_windows_console_shutdown,
@@ -229,6 +232,14 @@ from .protocol import (
     GetSessionJobSource,
     GetSetupState,
     GetUsage,
+    GithubConnect,
+    GithubConnectorState,
+    GithubDisconnect,
+    GithubStatus,
+    GoogleConnect,
+    GoogleConnectorState,
+    GoogleDisconnect,
+    GoogleStatus,
     GrokExtension,
     GrokExtensions,
     GrokMode,
@@ -263,6 +274,10 @@ from .protocol import (
     MemoryFileEntry,
     MemoryFiles,
     MemoryReject,
+    MicrosoftConnect,
+    MicrosoftConnectorState,
+    MicrosoftDisconnect,
+    MicrosoftStatus,
     MoveSession,
     NewSession,
     OpenArtifact,
@@ -987,6 +1002,9 @@ class Daemon:
         # User-listed MCP servers (TD-4401). Handshake is lazy; a dead
         # server is a doctor row, never a failed Daemon.run.
         self._mcp = McpSupervisor(self.config.mcp)
+        self._github: GithubCoordinator | None = None
+        self._microsoft: MicrosoftCoordinator | None = None
+        self._google: GoogleCoordinator | None = None
         self._notify_send = notify_send if notify_send is not None else self._channel_notify
         self._scheduler_tick = scheduler_tick
         # TD-3807: default the hook instead of leaving it None. The real
@@ -1169,7 +1187,57 @@ class Daemon:
             speech_enabled=self.config.speech.enabled,
             speech_ready=self.config.speech.enabled and bool(self.config.speech.base_url),
             email=await self._email_notify_state(),
+            github=await self._github_connector_state(),
+            microsoft=await self._microsoft_connector_state(),
+            google=await self._google_connector_state(),
         )
+
+    def _github_coordinator(self) -> GithubCoordinator:
+        if self._github is None:
+            self._github = GithubCoordinator(lambda: self.config, self._broadcast_github_status)
+        return self._github
+
+    async def _broadcast_github_status(self, event: GithubStatus) -> None:
+        await self.ws_server.broadcast(scrub_wire_json(event.model_dump_json()))
+
+    async def _github_connector_state(self) -> GithubConnectorState:
+        if self._github is not None:
+            return await self._github.snapshot()
+        from .connectors.github_session import state_from_config
+
+        return await state_from_config(self.config)
+
+    def _microsoft_coordinator(self) -> MicrosoftCoordinator:
+        if self._microsoft is None:
+            self._microsoft = MicrosoftCoordinator(
+                lambda: self.config, self._broadcast_microsoft_status
+            )
+        return self._microsoft
+
+    async def _broadcast_microsoft_status(self, event: MicrosoftStatus) -> None:
+        await self.ws_server.broadcast(scrub_wire_json(event.model_dump_json()))
+
+    async def _microsoft_connector_state(self) -> MicrosoftConnectorState:
+        if self._microsoft is not None:
+            return await self._microsoft.snapshot()
+        from .connectors.microsoft_session import state_from_config as microsoft_state
+
+        return await microsoft_state(self.config)
+
+    def _google_coordinator(self) -> GoogleCoordinator:
+        if self._google is None:
+            self._google = GoogleCoordinator(lambda: self.config, self._broadcast_google_status)
+        return self._google
+
+    async def _broadcast_google_status(self, event: GoogleStatus) -> None:
+        await self.ws_server.broadcast(scrub_wire_json(event.model_dump_json()))
+
+    async def _google_connector_state(self) -> GoogleConnectorState:
+        if self._google is not None:
+            return await self._google.snapshot()
+        from .connectors.google_session import state_from_config as google_state
+
+        return await google_state(self.config)
 
     async def _email_notify_state(self) -> EmailNotifyState:
         """SMTP form values plus a presence probe. The password stays put."""
@@ -1182,6 +1250,7 @@ class Daemon:
             stored = False
         return EmailNotifyState(
             enabled=email.enabled,
+            method=email.method,
             host=email.host,
             port=email.port,
             security=email.security,
@@ -1776,6 +1845,9 @@ class Daemon:
             from .cu_host import start_cu_socket
 
             self._cu_server = await start_cu_socket(self.data_dir)
+        # The expiry hook has to exist before a job can send. Otherwise a
+        # dead Google grant is only visible the next time Settings opens.
+        self._google_coordinator()
         self._tasks.append(asyncio.create_task(self._scheduler_loop()))
         await self._shutdown_event.wait()
 
@@ -1828,6 +1900,12 @@ class Daemon:
 
     async def _shutdown_subsystems(self, phases: ShutdownPhases) -> None:
         """Close sockets, sessions, and writers. Does not wait on the provider."""
+        if self._github is not None:
+            await phases.run("github", self._github.aclose())
+        if self._microsoft is not None:
+            await phases.run("microsoft", self._microsoft.aclose())
+        if self._google is not None:
+            await phases.run("google", self._google.aclose())
         if self._cu_server is not None:
             from .cu_host import stop_cu_socket
 
@@ -2753,6 +2831,24 @@ class Daemon:
 
         if isinstance(msg, TestEmail):
             return await self._handle_test_email(msg)
+
+        if isinstance(msg, GithubConnect):
+            return await self._github_coordinator().connect_json()
+
+        if isinstance(msg, GithubDisconnect):
+            return await self._github_coordinator().disconnect_json()
+
+        if isinstance(msg, MicrosoftConnect):
+            return await self._microsoft_coordinator().connect_json()
+
+        if isinstance(msg, MicrosoftDisconnect):
+            return await self._microsoft_coordinator().disconnect_json()
+
+        if isinstance(msg, GoogleConnect):
+            return await self._google_coordinator().connect_json()
+
+        if isinstance(msg, GoogleDisconnect):
+            return await self._google_coordinator().disconnect_json()
 
         if isinstance(msg, SetJudgments):
             # TD-708 (dev): persist the judgments block; running sessions

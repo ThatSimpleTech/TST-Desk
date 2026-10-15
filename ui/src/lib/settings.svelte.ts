@@ -13,7 +13,14 @@
 import { isBridged } from "./bridged-id";
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
 import { reducePairing } from "./pair-device.svelte.js";
-import type { DaemonEventUnion, PolicyRuleSummary, RemoteDeviceSummary } from "./protocol";
+import type {
+	DaemonEventUnion,
+	GithubPhase,
+	GooglePhase,
+	MicrosoftPhase,
+	PolicyRuleSummary,
+	RemoteDeviceSummary,
+} from "./protocol";
 
 export type SettingsSection =
 	| "appearance"
@@ -26,6 +33,7 @@ export type SettingsSection =
 	| "mcp"
 	| "key"
 	| "email"
+	| "github"
 	| "about";
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	"appearance",
@@ -38,6 +46,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	"mcp",
 	"key",
 	"email",
+	"github",
 	"about",
 ] as const;
 
@@ -129,8 +138,9 @@ export const settings = $state({
 	/** Hold-to-talk (TD-4701). From setup_state; the URL never arrives. */
 	speechEnabled: false,
 	speechReady: false,
-	/** SMTP (TD-3820). From setup_state. The password is never stored here. */
+	/** Email delivery (TD-3820, TD-4853, TD-4854). From setup_state. No password, no token. */
 	emailEnabled: false,
+	emailMethod: "smtp" as "smtp" | "microsoft" | "google",
 	emailHost: "",
 	emailPort: 587,
 	emailSecurity: "starttls" as "starttls" | "tls",
@@ -141,6 +151,27 @@ export const settings = $state({
 	emailTestOk: null as boolean | null,
 	emailTestErrorClass: "",
 	emailTestMessage: "",
+	/** GitHub connector (TD-4852). From setup_state and github_status. */
+	githubEnabled: false,
+	githubConnected: false,
+	githubPhase: "off" as GithubPhase,
+	githubUserCode: "",
+	githubVerificationUri: "",
+	githubLogin: null as string | null,
+	githubMessage: "",
+	/** Microsoft sign-in (TD-4853). From setup_state and microsoft_status. */
+	microsoftEnabled: false,
+	microsoftConnected: false,
+	microsoftPhase: "off" as MicrosoftPhase,
+	microsoftAccount: null as string | null,
+	microsoftMessage: "",
+	/** Google sign-in (TD-4854). From setup_state and google_status. */
+	googleEnabled: false,
+	googleConnected: false,
+	googlePhase: "off" as GooglePhase,
+	googleAccount: null as string | null,
+	googleMessage: "",
+	googleClientSecretStored: false,
 });
 
 let started = false;
@@ -207,6 +238,7 @@ export function resetSettings(): void {
 	settings.speechEnabled = false;
 	settings.speechReady = false;
 	settings.emailEnabled = false;
+	settings.emailMethod = "smtp";
 	settings.emailHost = "";
 	settings.emailPort = 587;
 	settings.emailSecurity = "starttls";
@@ -216,7 +248,112 @@ export function resetSettings(): void {
 	settings.emailTestOk = null;
 	settings.emailTestErrorClass = "";
 	settings.emailTestMessage = "";
+	settings.githubEnabled = false;
+	settings.githubConnected = false;
+	settings.githubPhase = "off";
+	settings.githubUserCode = "";
+	settings.githubVerificationUri = "";
+	settings.githubLogin = null;
+	settings.githubMessage = "";
+	settings.microsoftEnabled = false;
+	settings.microsoftConnected = false;
+	settings.microsoftPhase = "off";
+	settings.microsoftAccount = null;
+	settings.microsoftMessage = "";
+	settings.googleEnabled = false;
+	settings.googleConnected = false;
+	settings.googlePhase = "off";
+	settings.googleAccount = null;
+	settings.googleMessage = "";
+	settings.googleClientSecretStored = false;
 	started = false;
+}
+
+const GITHUB_PHASES: readonly GithubPhase[] = [
+	"off",
+	"idle",
+	"pending",
+	"connected",
+	"expired",
+	"denied",
+	"error",
+];
+
+function applyGithub(github: {
+	enabled?: boolean;
+	connected?: boolean;
+	phase?: string;
+	user_code?: string;
+	verification_uri?: string;
+	login?: string | null;
+	message?: string;
+} | undefined): void {
+	settings.githubEnabled = github?.enabled ?? false;
+	settings.githubConnected = github?.connected ?? false;
+	const phase = github?.phase;
+	settings.githubPhase = GITHUB_PHASES.includes(phase as GithubPhase)
+		? (phase as GithubPhase)
+		: "off";
+	settings.githubUserCode = github?.user_code ?? "";
+	settings.githubVerificationUri = github?.verification_uri ?? "";
+	settings.githubLogin = github?.login ?? null;
+	settings.githubMessage = github?.message ?? "";
+}
+
+const MICROSOFT_PHASES: readonly MicrosoftPhase[] = [
+	"off",
+	"idle",
+	"pending",
+	"connected",
+	"denied",
+	"error",
+	"expired",
+];
+
+function applyMicrosoft(microsoft: {
+	enabled?: boolean;
+	connected?: boolean;
+	phase?: string;
+	account?: string | null;
+	message?: string;
+} | undefined): void {
+	settings.microsoftEnabled = microsoft?.enabled ?? false;
+	settings.microsoftConnected = microsoft?.connected ?? false;
+	const phase = microsoft?.phase;
+	settings.microsoftPhase = MICROSOFT_PHASES.includes(phase as MicrosoftPhase)
+		? (phase as MicrosoftPhase)
+		: "off";
+	settings.microsoftAccount = microsoft?.account ?? null;
+	settings.microsoftMessage = microsoft?.message ?? "";
+}
+
+const GOOGLE_PHASES: readonly GooglePhase[] = [
+	"off",
+	"idle",
+	"pending",
+	"connected",
+	"denied",
+	"error",
+	"expired",
+];
+
+function applyGoogle(google: {
+	enabled?: boolean;
+	connected?: boolean;
+	phase?: string;
+	account?: string | null;
+	message?: string;
+	client_secret_stored?: boolean;
+} | undefined): void {
+	settings.googleEnabled = google?.enabled ?? false;
+	settings.googleConnected = google?.connected ?? false;
+	const phase = google?.phase;
+	settings.googlePhase = GOOGLE_PHASES.includes(phase as GooglePhase)
+		? (phase as GooglePhase)
+		: "off";
+	settings.googleAccount = google?.account ?? null;
+	settings.googleMessage = google?.message ?? "";
+	settings.googleClientSecretStored = google?.client_secret_stored ?? false;
 }
 
 function reduce(event: DaemonEventUnion): void {
@@ -275,12 +412,29 @@ function reduce(event: DaemonEventUnion): void {
 		settings.speechReady = event.speech_ready ?? false;
 		const email = event.email;
 		settings.emailEnabled = email?.enabled ?? false;
+		settings.emailMethod =
+			email?.method === "microsoft" || email?.method === "google" ? email.method : "smtp";
 		settings.emailHost = email?.host ?? "";
 		settings.emailPort = email?.port ?? 587;
 		settings.emailSecurity = email?.security === "tls" ? "tls" : "starttls";
 		settings.emailUsername = email?.username ?? "";
 		settings.emailFrom = email?.from_address ?? "";
 		settings.emailPasswordStored = email?.password_stored ?? false;
+		applyGithub(event.github);
+		applyMicrosoft(event.microsoft);
+		applyGoogle(event.google);
+		return;
+	}
+	if (event.type === "github_status") {
+		applyGithub(event);
+		return;
+	}
+	if (event.type === "microsoft_status") {
+		applyMicrosoft(event);
+		return;
+	}
+	if (event.type === "google_status") {
+		applyGoogle(event);
 		return;
 	}
 	if (event.type === "email_test_result") {
@@ -597,29 +751,66 @@ export function deleteMcpServer(id: string): void {
 
 // ── Email (TD-3820) ──────────────────────────────────────────────────
 
-/** Persist SMTP settings. An empty password leaves the keychain item alone. */
+/** Persist email settings. An empty password leaves the keychain item alone. */
 export function saveEmailNotify(input: {
 	enabled: boolean;
+	method: "smtp" | "microsoft" | "google";
 	host: string;
 	port: number;
 	security: "starttls" | "tls";
 	username: string;
 	from_address: string;
 	password: string | null;
+	googleClientSecret?: string | null;
 }): void {
+	// Omit an empty secret so a Microsoft or SMTP save stays the same object
+	// the form has always sent. A typed secret is sent only for Google.
+	const secret = input.googleClientSecret;
 	sendToDaemon({
 		type: "set_email_notify",
 		enabled: input.enabled,
+		method: input.method,
 		host: input.host,
 		port: input.port,
 		security: input.security,
 		username: input.username,
 		from_address: input.from_address,
 		password: input.password,
+		...(input.method === "google" && secret ? { google_client_secret: secret } : {}),
 	});
 }
 
 /** Send one short test using the saved config and the keychain password. */
 export function sendTestEmail(to: string): void {
 	sendToDaemon({ type: "test_email", to });
+}
+
+/** Start GitHub device flow. The daemon answers with github_status. */
+export function connectGithub(): void {
+	sendToDaemon({ type: "github_connect" });
+}
+
+/** Delete the GitHub keychain item. */
+export function disconnectGithub(): void {
+	sendToDaemon({ type: "github_disconnect" });
+}
+
+/** Start Microsoft sign-in. The daemon opens the browser and answers with microsoft_status. */
+export function connectMicrosoft(): void {
+	sendToDaemon({ type: "microsoft_connect" });
+}
+
+/** Delete the Microsoft keychain item. */
+export function disconnectMicrosoft(): void {
+	sendToDaemon({ type: "microsoft_disconnect" });
+}
+
+/** Start Google sign-in. The daemon opens the browser and answers with google_status. */
+export function connectGoogle(): void {
+	sendToDaemon({ type: "google_connect" });
+}
+
+/** Delete the Google token item. The desktop client secret stays in the keychain. */
+export function disconnectGoogle(): void {
+	sendToDaemon({ type: "google_disconnect" });
 }

@@ -185,7 +185,10 @@ pub fn reset_tcc_grants() -> Option<String> {
             }
             Ok(out) => {
                 let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-                log::warn!("tccutil reset {name} {BUNDLE_ID} failed ({}): {stderr}", out.status);
+                log::warn!(
+                    "tccutil reset {name} {BUNDLE_ID} failed ({}): {stderr}",
+                    out.status
+                );
                 errors.push(format!(
                     "tccutil reset {name} {BUNDLE_ID} failed ({}): {stderr}",
                     out.status
@@ -257,11 +260,7 @@ mod sec {
     #[link(name = "Security", kind = "framework")]
     extern "C" {
         fn SecCodeCopySelf(flags: u32, out: *mut CFTypeRef) -> i32;
-        fn SecCodeCopySigningInformation(
-            code: CFTypeRef,
-            flags: u32,
-            out: *mut CFTypeRef,
-        ) -> i32;
+        fn SecCodeCopySigningInformation(code: CFTypeRef, flags: u32, out: *mut CFTypeRef) -> i32;
         fn SecCodeCopyDesignatedRequirement(
             code: CFTypeRef,
             flags: u32,

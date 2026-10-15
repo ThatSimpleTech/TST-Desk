@@ -54,7 +54,7 @@ See `AGENTS.md` §10. It applies to every story without exception.
 | **M8 — Local remainder (v0.6)** | E39 | EZER/vLLM path. UI-TARS grounding. Floor already shipped as M1.5 |
 | **M9 — Autonomy (v0.7)** | E40–E43 | Charter, unattended runner, drift checks, circuit breakers, hard-required container, wake-up |
 | **M10 — Extensibility (v0.8)** | E44–E46 | MCP through the classifier. Slash + `SKILL.md`. One-level subagent. Plan lock |
-| **Later** | E47, E49 | Voice, tray, updater, vision; Wayland CU; signing; aarch64; CI recovery. Unversioned; do not pull forward |
+| **Later** | E47, E49, E53 | Voice, tray, updater, vision; Wayland CU; signing; aarch64; CI recovery; connectors. Unversioned; do not pull forward |
 
 **M1 before M2 is deliberate.** The core must be correct and testable headlessly before any
 pixel is drawn. Building the UI first hides correctness bugs behind a pretty surface.
@@ -7181,6 +7181,10 @@ window destroys it, closing the last still hides when coworker is on.
 points at `docs/signing.md` and the releases page. In-app install flips on when
 signing lands.
 
+**Addendum (2026-09-29):** TD-4837 turns in-app install on without waiting
+for notarization. Integrity is `SHA256SUMS.txt`. The historical note above
+is what shipped that day.
+
 ---
 
 ### TD-4705 — Image / vision attachments
@@ -7341,6 +7345,10 @@ updater UI.
 `docs/signing.md` records cost, secret homes (GitHub encrypted secrets +
 OS keychain for runtime keys), and future CI env wiring. README unsigned
 section unchanged; points at the doc. TD-4704 stays off until certs land.
+
+**Addendum (2026-09-29):** Signing is still refused. TD-4837 installs
+checksum-verified GitHub assets anyway; notarization remains the thing
+this story did not do.
 
 ---
 
@@ -7829,8 +7837,8 @@ files, vitest 1433, svelte-check 714 files 0 errors 0 warnings.
 | M8 Local remainder (v0.6) | E39 | 4 | 19 |
 | M9 Autonomy (v0.7) | E40–E43 | 14 | 68 |
 | M10 Extensibility (v0.8) | E44–E46 | 9 | 43 |
-| Later | E47, E49 | 23 | 83 |
-| **Total planned** | **48** | **339** | **1065** |
+| Later | E47, E49, E53 | 27 | 99 |
+| **Total planned** | **49** | **343** | **1081** |
 
 Points are relative sizing for sequencing and splitting decisions, not a schedule. Do not
 convert them to dates.
@@ -8949,6 +8957,36 @@ hit-test work, not this fix.
 purpose is catching wrong-app actuation; system overlays can't be frontmost, so the
 check had no signal to give.
 
+### TD-4837 — Auto-update from GitHub releases
+**Size:** 5 · **Depends on:** TD-4704, TD-1303
+**Status:** Complete 2026-09-29
+
+The maintainer asked for a Claude Desktop-style updater. TD-4704 had
+stopped at a manual check, and TD-4903 still refuses Apple and
+Authenticode signing. This story installs the published artifact after
+`SHA256SUMS.txt` matches. It does not notarize anything.
+
+**Acceptance criteria:**
+- [x] A packaged release build checks GitHub `tstdesk-v*` releases on
+      launch and every four hours, and from the app menu, the command
+      palette, and Settings → About
+- [x] When a newer release exists, the host downloads that platform's
+      asset and installs it only if `SHA256SUMS.txt` matches
+- [x] Restart replaces a macOS bundle or an AppImage, or runs the
+      Windows installer; a `.deb` opens in the system installer
+- [x] No telemetry: the only requests are the GitHub releases API and
+      the release asset URLs, with no client identifier
+- [x] Automatic install is on until the user turns it off in
+      Settings → About; the preference is `{data_dir}/update.yaml`
+- [x] Debug builds do not poll. An unpackaged build reports the release
+      and does not replace itself
+- [x] Apple notarization stays deferred (`docs/signing.md`)
+
+**Done (2026-09-29):** Host updater in `shell/src/updater/`. Banner under
+the shell header, About switch, app-menu item, palette command. Tests
+cover release selection, URL allowlisting, checksum parsing, bundle-path
+detection, and banner actions.
+
 ### TD-4835 — Deterministic resource lifecycle cleanup
 **Size:** 2 · **Depends on:** TD-4833
 **Status:** Complete 2026-09-29
@@ -9245,3 +9283,134 @@ Filed 2026-10-15. The agent built an APK for Adam and had no way to hand it over
 - [ ] The file bridge refuses calls without the page key
 - [ ] versionCode 11 / 0.1.10, installs over 0.1.9 with the same keystore
 - [ ] Live: the agent on EZER sends an APK and the Pixel's installer opens
+
+## Epic E53 — Connectors
+
+Owner-approved scope 2026-10-02. A connector is a local sign-in to a
+service the user already has. There is no TST Desk server and no secret
+in config. Unversioned with E47 and E49. Do not pull forward.
+
+---
+
+### TD-4852 — GitHub connector: device-flow sign-in and repo tools
+**Size:** 5 · **Depends on:** TD-4838
+
+Users connect GitHub without SSH keys or a hand-made token. Sign-in is
+GitHub's OAuth device flow for a GitHub App: no client secret and no
+redirect.
+
+**Acceptance criteria:**
+- [x] `connectors.github.client_id` is empty by default. When it or either
+      host is empty, Settings explains how to set a client id and the
+      connector is off. `api_host` and `web_host` come from config
+      (`test_outbound_hosts`). No id, URL, or slug is hard-coded in Python
+- [x] Connect posts the device-code endpoint, shows the user code and
+      verification URL (Connect GitHub, Copy code, Open browser), and polls
+      the token endpoint on the interval, including `slow_down`. Access and
+      refresh tokens are stored only in the OS keychain (TD-4838). They
+      refresh before expiry. Disconnect deletes them. Tokens are never logged
+- [x] Tools register through the tool registry and the decision classifier.
+      Class A: list repos the app can see, get file and tree, list and read
+      issues and pull requests, pull-request checks. Class B unless policy
+      allows: create a branch, commit through the contents API, open a pull
+      request, comment, create an issue. Class C: merge, delete a branch,
+      and anything that touches settings or secrets
+- [x] `git clone`, `fetch`, and `push` over HTTPS pass the token through a
+      per-command credential helper. The token is not written to `.git/config`
+      or a remote URL, and it is not placed on argv
+- [x] Tests cover the device-flow state machine against a fake GitHub server
+      (pending, slow_down, expired, success), a mocked keychain, refresh,
+      the classification table, the absence of the token in logs, protocol
+      parity, and the Settings section
+
+Done (2026-09-29): Settings starts device flow and shows the user code.
+The device code stays in the daemon. Access and refresh tokens live in
+the keychain account `tst-github-oauth` and refresh on their own.
+Disconnect deletes that item. Seventeen tools are classified A, B, or C,
+and git talks to the configured web host through a one-shot credential
+helper. The connector epic is E53, because E50–E52 are the Android shell, the progress guard, and sent files. Class B entry in DECISIONS.md.
+
+Suite: 4229 passed / 8 skipped, ruff + `mypy --strict` clean over 201
+files, vitest 1464, svelte-check 729 files 0 errors 0 warnings.
+
+---
+
+### TD-4853 — Sign in with Microsoft for email delivery
+**Size:** 3 · **Depends on:** TD-3820, TD-3821
+
+Outlook and Microsoft 365 users send a scheduled job's email by signing
+in. This path has no SMTP password.
+
+**Acceptance criteria:**
+- [x] `connectors.microsoft.client_id` and `connectors.microsoft.tenant`
+      (default `common`). An empty client id hides the Microsoft method
+      and shows how to register a public client. `login_host` and
+      `graph_host` come from config. No host is hard-coded in Python
+- [x] OAuth 2.0 authorization code with PKCE for a public client. The
+      redirect is `http://127.0.0.1:<ephemeral port>`, the listener binds
+      127.0.0.1 only, and it closes after one authorization request or a
+      timeout. Scopes are `offline_access Mail.Send User.Read`. Tokens
+      live in the keychain, refresh on their own, and Disconnect deletes
+      them
+- [x] A job's email goes through SMTP (TD-3820) or Microsoft Graph
+      `POST /me/sendMail` with the TD-3821 HTML and text body. Settings →
+      Email chooses the method. Send test email works for both
+- [x] Tests cover PKCE and state verification, a loopback listener that
+      binds 127.0.0.1 and handles one request, token refresh, Graph send
+      against a fake server, failure messages without secrets, protocol
+      parity, and the Settings section
+
+Done (2026-09-29): Settings → Email can send through Microsoft Graph
+after a loopback sign-in. The access and refresh tokens live in the
+keychain account `tst-microsoft-oauth` and refresh on their own.
+Disconnect deletes that item. The Graph request is the same plain-text
+and HTML report SMTP already sends. The Later row is 25 stories / 91
+points, and the planned total is 341 / 1073. Class B entry in
+DECISIONS.md.
+
+Suite: 4259 passed / 8 skipped, ruff + `mypy --strict` clean over 210
+files, vitest 1466, svelte-check 730 files 0 errors 0 warnings.
+
+---
+
+### TD-4854 — Sign in with Google for email delivery
+**Size:** 3 · **Depends on:** TD-4853
+
+Gmail users send a scheduled job's email by signing in. This path has
+no app password.
+
+**Acceptance criteria:**
+- [x] `connectors.google.client_id` empty by default hides the Google
+      method and shows how to create a Desktop app client. Hosts come
+      from config. No host is hard-coded in Python. The client secret is
+      keychain-only, entered in Settings, and dropped if someone puts it
+      in yaml
+- [x] OAuth authorization code with PKCE, reusing the TD-4853 loopback
+      listener. The redirect is `http://127.0.0.1:<ephemeral port>`, the
+      listener binds 127.0.0.1 only, and the scope is `gmail.send` plus
+      OpenID email. Tokens live in the keychain, refresh on their own,
+      and Disconnect deletes them and leaves the client secret. A refresh
+      that fails with `invalid_grant` marks the connection expired and
+      says to reconnect, including an unverified app or a client still
+      in testing
+- [x] A job's email goes through SMTP, Microsoft Graph, or Gmail
+      `users.messages.send` with the TD-3821 HTML and text body as
+      base64url. Settings → Email chooses the method. Send test email
+      works for all three
+- [x] Tests cover the TD-4853 analogue (PKCE and state, the shared
+      loopback, token refresh, a fake-server send, failure messages
+      without secrets, protocol parity, and the Settings section) plus
+      `invalid_grant` handling and the MIME base64url encoding
+
+Done (2026-09-29): Settings → Email can send through Gmail after a
+loopback sign-in. The desktop client secret lives in the keychain
+account `tst-google-client-secret`. The access and refresh tokens live
+in `tst-google-oauth` and refresh on their own. Disconnect deletes the
+tokens and leaves the secret. `invalid_grant` marks the connection
+expired and tells the user to reconnect. The Gmail request is the same
+plain-text and HTML report, base64url-encoded. The Later row is 26
+stories / 94 points, and the planned total is 342 / 1076. Class B entry
+in DECISIONS.md.
+
+Suite: 4290 passed / 8 skipped, ruff + `mypy --strict` clean over 217
+files, vitest 1469, svelte-check 731 files 0 errors 0 warnings.

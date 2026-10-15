@@ -25,6 +25,7 @@
 	import PolicyRuleList from './PolicyRuleList.svelte';
 	import SettingsKeys from './SettingsKeys.svelte';
 	import SettingsEmail from './SettingsEmail.svelte';
+	import SettingsGithub from './SettingsGithub.svelte';
 	import SettingsEngine from './SettingsEngine.svelte';
 	import SettingsMcp from './SettingsMcp.svelte';
 	import SettingsModels from './SettingsModels.svelte';
@@ -54,6 +55,7 @@
 		mcp: 'MCP servers',
 		key: 'API keys',
 		email: 'Email',
+		github: 'GitHub',
 		about: 'About',
 	};
 
@@ -250,6 +252,8 @@
 					<SettingsMcp />
 				{:else if settings.section === 'email'}
 					<SettingsEmail />
+				{:else if settings.section === 'github'}
+					<SettingsGithub />
 				{:else if settings.section === 'about'}
 					<SettingsAbout />
 				{:else}

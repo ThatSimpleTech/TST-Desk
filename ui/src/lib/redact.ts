@@ -14,6 +14,10 @@ const SECRET_PATTERNS: RegExp[] = [
 	/sk-[a-zA-Z0-9][a-zA-Z0-9_-]{15,}/g,
 	/github_pat_[a-zA-Z0-9_]{20,}/g,
 	/ghp_[a-zA-Z0-9]{20,}/g,
+	/ghu_[a-zA-Z0-9_]{20,}/g,
+	/ghr_[a-zA-Z0-9_]{20,}/g,
+	/gho_[a-zA-Z0-9_]{20,}/g,
+	/ghs_[a-zA-Z0-9_]{20,}/g,
 	/AKIA[0-9A-Z]{16}/g,
 	// Consumes the marker dashes too — assertion-shape note for tests.
 	/-----BEGIN\s+(RSA |EC |DSA |OPENSSH )?PRIVATE KEY/g,

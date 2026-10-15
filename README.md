@@ -198,7 +198,7 @@ built by large teams, and this table is only useful if it says so.
 | | TST Desk | Claude Desktop / Cowork / hosted workspaces |
 |---|---|---|
 | **Setup** | Get an API key, paste it, pick a folder | Sign in and go. Genuinely less work |
-| **Polish** | v0.1, in development, unsigned binaries | Years of QA, signed, notarized, auto-updating |
+| **Polish** | v0.1, in development, unsigned binaries that update from GitHub releases after a checksum check | Years of QA, signed, notarized, auto-updating |
 | **Support** | GitHub issues and whoever shows up | A company, a support channel, an SLA |
 | **Infrastructure** | Yours to run; local models need local hardware | Managed. Nothing to provision, nothing to keep warm |
 | **Model quality out of the box** | Whatever you pick and pay for | Frontier models in a harness tuned for them |
@@ -369,6 +369,21 @@ Each OS will warn on first launch; that is expected, not a defect.
   **More info → Run anyway**.
 - **Linux** — no signing warning. For the AppImage, `chmod +x` and run; the
   `.deb` installs with `sudo dpkg -i`.
+
+## Updates
+
+A packaged app checks [GitHub releases](https://github.com/ThatSimpleTech/TST-Desk/releases)
+for a newer `tstdesk-v*` tag when it opens, and every four hours after that.
+**TST Desk → Check for Updates…** (File menu on Windows and Linux) and
+**Check for updates** in the command palette do the same thing on demand.
+
+When a newer release exists, the app downloads the installer for this
+machine and installs it only if the file matches `SHA256SUMS.txt` on that
+release. macOS and AppImage builds replace themselves when you choose
+**Restart to update**. Windows runs the MSI. A `.deb` opens in the system
+installer. The check sends no account and no identifier. Turn it off under
+Settings → About. A build you are running from a source checkout reports
+the release and does not replace itself.
 
 ## License
 

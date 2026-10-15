@@ -13350,3 +13350,218 @@ every Windows user can actually run.
 Also rejected: requiring Git for Windows so `usr/bin/echo.exe` exists.
 Also rejected: rewriting every test to avoid `echo` and leaving the
 product broken for the same command.
+
+## TD-4852 — GitHub connector uses device flow and a keychain blob
+
+**Decision:** `connectors.github.client_id` defaults to empty, and so do
+`api_host` and `web_host` on the pydantic model. The shipped
+`config.yaml` is the only place the public hosts are written
+(`api.github.com`, `github.com`). The connector stays off until the
+client id and both hosts are set. Paths are constants; hosts are
+interpolated so the outbound-host scan still sees no literal URL.
+
+One keychain account, `tst-github-oauth`, holds a printable-ASCII JSON
+object of `access_token`, `refresh_token`, and `expires_at` through the
+TD-4838 `set_secret` path. The login is cached in the process after a
+successful connect. It is not stored in the blob and may be null on the
+next `setup_state` while the item is still present. Credential id
+`github-oauth` is reserved so it cannot be used as an API-key name.
+
+GitHub tool calls do not declare network hosts on the decision request.
+Under the default network deny, host metadata would make every call
+Class C. The destination is fixed from `connectors.github` and the model
+cannot choose a host. Read tools match an explicit `github-read` rule
+and are Class A. Writes declare `ask` with no path fields, so the ask
+floor makes them Class B (a workspace path would have been Class A).
+Merge, delete-branch, and settings declare `side_effect` never and are
+Class C. `github_update_settings` still refuses in the handler, so an
+approval cannot change settings or secrets. Merge and delete-branch
+call the API only after that Class C approval.
+
+`git clone`, `fetch`, and `push` use a per-command credential helper
+(`!python -m tstd.connectors.github_credential`) after an empty
+`credential.helper=` reset. The token is not an `http.extraHeader`, not
+in the remote URL, and not in argv. The helper emits a token only when
+the git credential host equals the configured web host and the protocol
+is https. `web_host`, `api_host`, `client_id`, and the timeout travel in
+`TST_GITHUB_*` (the client id is public) because the helper cannot see
+the daemon's `--data-dir` config. The token itself stays in the
+keychain.
+
+`github_status` is connection-scoped (`seq` 1, no `session_id`, not in
+the session log). Connect and disconnect are acked immediately, and a
+later scrubbed broadcast carries the poll result. `setup_state.github`
+is the snapshot a window sees when it opens. The device code never
+leaves the daemon. There is no protocol version bump.
+
+Device-flow and API calls set `follow_redirects=False`, so a token
+cannot ride a redirect off the configured host.
+
+**Rationale:** Device flow is the sign-in that needs no client secret,
+no redirect, and no server of ours. The keychain blob is one item
+because access and refresh rotate together and TD-4838 already refuses
+non-printable values. Leaving hosts off the decision request is what
+keeps a read Class A on a workspace whose network policy is deny. The
+credential helper is the git mechanism that never writes the token into
+`.git/config`.
+
+**Rejected:** A hand-pasted personal access token. Hard-coding
+`github.com` in Python. Declaring `host_fields` on the tools. Putting
+the token in the remote URL or in argv. Following HTTP redirects.
+Storing the device code or the tokens on `github_status`. Bumping the
+protocol version. A settings tool that proceeds after Class C approval.
+
+Replayed onto 0.2.0 after E50–E52 were already the Android shell, the
+progress guard, and sent files. The connector epic is E53.
+
+## TD-4853 — Microsoft mail uses auth code, PKCE, and a keychain blob
+
+**Decision:** `connectors.microsoft.client_id` defaults to empty, and so
+do `login_host` and `graph_host` on the pydantic model. `tenant`
+defaults to `common`. The shipped `config.yaml` is the only place the
+public login and Graph hosts are written. The connector stays off until
+the client id, both hosts, and the tenant are set. Paths are constants;
+hosts are interpolated.
+
+Sign-in is the authorization-code grant with PKCE S256 for a public
+client. There is no client secret. The redirect URI is
+`http://127.0.0.1:<ephemeral port>` with no path. The listener binds
+`127.0.0.1` and is closed after the authorization response or
+`sign_in_timeout_seconds` (default 300). That wait is separate from the
+HTTP `timeout_seconds` (default 20). A request that is not the redirect,
+such as a favicon, does not consume the one authorization response.
+After four such requests the listener fails closed. Scopes are
+`offline_access Mail.Send User.Read`.
+
+One keychain account, `tst-microsoft-oauth`, holds a printable-ASCII
+JSON object of `access_token`, `refresh_token`, and `expires_at`. The
+mailbox address is process memory after `/me`, not a field of the blob.
+Credential id `microsoft-oauth` is reserved. Refresh runs inside a
+60-second skew and once more if Graph returns 401. Disconnect deletes
+the item.
+
+`notify.email.method` is `smtp` (the default, so an old client stays on
+SMTP) or `microsoft`. Graph's JSON `sendMail` is one body part, so the
+daemon posts the TD-3821 multipart message as base64 to
+`/v1.0/me/sendMail`. From is `notify.email.from_address` when that is
+one address, otherwise the signed-in mailbox. A delivery failure stays
+the existing email delivery error. It does not fail the job run.
+
+`microsoft_status` is connection-scoped (`seq` 1, no `session_id`).
+Connect and disconnect are acked on the requesting socket and
+broadcast. The status carries a phase and, once signed in, the mailbox.
+It never carries a token or an authorization code. `setup_state.microsoft`
+is the snapshot a newly opened window sees. There is no protocol version
+bump. Token and Graph calls set `follow_redirects=False`.
+
+**Rationale:** Authorization code plus PKCE is the sign-in that lets a
+public desktop client send as the user without an SMTP password or a
+client secret. The loopback port is the redirect a desktop app can
+receive without a server of ours. MIME keeps both report parts, which a
+JSON `sendMail` body would drop. The keychain blob matches the GitHub
+connector and the TD-4838 secret rules.
+
+**Rejected:** Hard-coding the public hosts in Python. A client secret. A
+JSON `sendMail` body that keeps only the HTML part. Putting tokens or
+the mailbox in yaml or on `microsoft_status`. Logging `error_description`
+or a Graph response body. Following redirects. Bumping the protocol
+version. Treating a mail failure as a failed job run.
+
+## TD-4854 — Google mail uses the installed-app flow and a keychain secret
+
+**Decision:** `connectors.google.client_id` defaults to empty, and so do
+`auth_host`, `token_host`, `userinfo_host`, and `gmail_host` on the
+pydantic model. The shipped `config.yaml` is the only place the public
+hosts are written. The connector stays off until the client id and all
+four hosts are set. Paths (`/o/oauth2/v2/auth`, `/token`, `/v1/userinfo`,
+`/gmail/v1/users/me/messages/send`) are constants.
+
+Google does not treat a Desktop client's secret as confidential. It
+still lives in the keychain, as `tst-google-client-secret`, entered in
+Settings. A `client_secret` key in yaml is dropped and the value is not
+logged. Tokens live in a separate account, `tst-google-oauth`: a
+printable-ASCII JSON object of `access_token`, `refresh_token`, and
+`expires_at`. The mailbox is not in that blob. Disconnect deletes the
+tokens and leaves the client secret. Credential ids `google-oauth` and
+`google-client-secret` are reserved.
+
+Sign-in reuses TD-4853's loopback listener and PKCE. The redirect is
+`http://127.0.0.1:<ephemeral port>`. The scope is `openid`, `email`, and
+the `gmail.send` scope URL. That URL is an identifier, not a host the
+daemon dials; the scope host is interpolated so the source has no remote
+URL literal. The browser URL sets `access_type=offline` and
+`prompt=consent` so Google returns a refresh token, and it does not
+carry the client secret. The token request does. A code exchange that
+returns no refresh token is not saved. Userinfo supplies the account
+address; the id token's email is only a sign-in fallback and is not
+stored.
+
+`invalid_grant` sets a process-local expired flag and tells every live
+coordinator. The keychain item stays until Disconnect or a new sign-in.
+The sentence names an unverified app and a client still in testing, and
+says to reconnect. A later successful refresh clears the flag.
+`setup_state` reads the flag without reading the token blob. The daemon
+builds the coordinator before the scheduler so a job send can mark the
+connection expired.
+
+Gmail `users.messages.send` takes the TD-3821 multipart message as
+unpadded base64url in a JSON `raw` field. Success is HTTP 200 only. A
+401 refreshes once. From is `notify.email.from_address` when that is one
+address, otherwise the userinfo email. `notify.email.method` gains
+`google`; the default stays `smtp`. A delivery failure stays the
+existing email error and does not fail the job run.
+
+`google_status` is connection-scoped (`seq` 1, no `session_id`). It
+carries `client_secret_stored` as a presence probe. Connect and
+disconnect are acked and broadcast. There is no protocol version bump.
+Token, userinfo, and Gmail calls set `follow_redirects=False`.
+`error_description` and response bodies are not logged.
+
+**Rationale:** Installed-app auth code plus PKCE is the sign-in that
+lets Gmail send without an app password. The client secret is not
+confidential, and it is still a secret this app keeps out of yaml and
+logs. A separate keychain item is what lets Disconnect drop the grant
+without making the user type the secret again. `invalid_grant` is how
+Google ends a testing-mode or unverified-app grant, so the phase has to
+change even though the blob is still present. The raw MIME field keeps
+both report parts.
+
+**Rejected:** Hard-coding the dialed hosts in Python. Putting the client
+secret in `config.yaml`. Deleting the secret on Disconnect. Deleting the
+tokens on `invalid_grant`. Storing the id token or the mailbox in the
+blob. A Graph-style JSON body instead of the RFC 2822 message. Treating
+HTTP 202 as success. Following redirects. Logging `error_description`
+or a Gmail response body. Bumping the protocol version. A second
+loopback listener.
+
+---
+
+## 2026-09-29 — TD-4837: checksum-verified auto-update (Class B)
+
+**Decision:** A packaged release build checks `tstdesk-v*` GitHub releases
+on launch and every four hours, downloads the asset for this OS and CPU,
+and installs it only when `SHA256SUMS.txt` on that release matches.
+Automatic is the default (`{data_dir}/update.yaml`, explicit `automatic:
+false` turns it off). Debug and `target/` builds do not poll and do not
+replace themselves. The UI is a banner with Restart and Later, plus
+**Check for Updates…** in the app menu — Claude's two choices, without a
+modal over a running session. This supersedes the 2026-08-27 TD-4704
+refusal of in-app install and of a background check. The maintainer asked
+for that behavior on 2026-09-29.
+
+**Rationale:** The published release already tells people to verify
+`SHA256SUMS.txt`. Doing that check in the host is the same trust decision,
+applied to the next tag, and it does not require an Apple or Authenticode
+certificate. The request is the releases API plus the asset URLs those
+releases name. No install id, no analytics host. Notarization stays
+deferred (TD-4903): an unsigned replacement can still trip Gatekeeper, and
+a dev-signed app that takes a GitHub build will be asked for Screen
+Recording and Accessibility again. The ready-state copy says so.
+
+**Alternative rejected:** `tauri-plugin-updater` with a minisign key
+(nothing signs release artifacts today, and the private key must not live
+in the repo). Also rejected: leaving the manual "open the releases page"
+button as the only path after the maintainer asked for Claude's updater.
+Also rejected: re-signing the downloaded app with the local `tst-desk-dev`
+identity (the installed bytes would no longer be the release that was
+hashed).

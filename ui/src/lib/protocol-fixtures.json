@@ -100,16 +100,36 @@
   "set_email_notify": {
     "type": "set_email_notify",
     "enabled": true,
+    "method": "smtp",
     "host": "smtp.example.com",
     "port": 587,
     "security": "starttls",
     "username": "desk",
     "from_address": "desk@example.com",
-    "password": null
+    "password": null,
+    "google_client_secret": null
   },
   "test_email": {
     "type": "test_email",
     "to": "owner@example.com"
+  },
+  "github_connect": {
+    "type": "github_connect"
+  },
+  "github_disconnect": {
+    "type": "github_disconnect"
+  },
+  "microsoft_connect": {
+    "type": "microsoft_connect"
+  },
+  "microsoft_disconnect": {
+    "type": "microsoft_disconnect"
+  },
+  "google_connect": {
+    "type": "google_connect"
+  },
+  "google_disconnect": {
+    "type": "google_disconnect"
   },
   "set_cu_indicators": {
     "type": "set_cu_indicators",
@@ -1168,12 +1188,37 @@
     "speech_ready": false,
     "email": {
       "enabled": false,
+      "method": "smtp",
       "host": "",
       "port": 587,
       "security": "starttls",
       "username": "",
       "from_address": "",
       "password_stored": false
+    },
+    "github": {
+      "enabled": false,
+      "connected": false,
+      "phase": "off",
+      "user_code": "",
+      "verification_uri": "",
+      "login": null,
+      "message": ""
+    },
+    "microsoft": {
+      "enabled": false,
+      "connected": false,
+      "phase": "off",
+      "account": null,
+      "message": ""
+    },
+    "google": {
+      "enabled": false,
+      "connected": false,
+      "phase": "off",
+      "account": null,
+      "message": "",
+      "client_secret_stored": false
     }
   },
   "pairing_code": {
@@ -1812,6 +1857,36 @@
     "ok": false,
     "error_class": "SMTPException",
     "message": "auth failed"
+  },
+  "github_status": {
+    "type": "github_status",
+    "seq": 1,
+    "enabled": true,
+    "connected": false,
+    "phase": "pending",
+    "user_code": "ABCD-1234",
+    "verification_uri": "https://example.test/login/device",
+    "login": null,
+    "message": ""
+  },
+  "microsoft_status": {
+    "type": "microsoft_status",
+    "seq": 1,
+    "enabled": true,
+    "connected": true,
+    "phase": "connected",
+    "account": "owner@example.com",
+    "message": ""
+  },
+  "google_status": {
+    "type": "google_status",
+    "seq": 1,
+    "enabled": true,
+    "connected": true,
+    "phase": "connected",
+    "account": "owner@example.com",
+    "message": "",
+    "client_secret_stored": true
   },
   "grok_extensions": {
     "type": "grok_extensions",

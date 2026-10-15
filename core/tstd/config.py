@@ -47,7 +47,17 @@ DEFAULT_PRESET = "tst-default"
 # Implicit keychain account for an unbound remote tier (TD-1717).
 DEFAULT_CREDENTIAL_ID = "openrouter"
 RESERVED_CREDENTIAL_IDS = frozenset(
-    {"slack-webhook", "ntfy-topic", "discord-webhook", "telegram-bot", "smtp-password"}
+    {
+        "slack-webhook",
+        "ntfy-topic",
+        "discord-webhook",
+        "telegram-bot",
+        "smtp-password",
+        "github-oauth",
+        "microsoft-oauth",
+        "google-oauth",
+        "google-client-secret",
+    }
 )
 CREDENTIAL_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 # A second OpenRouter key slugifies to openrouter-2 (TD-1718). Same host.
@@ -616,6 +626,9 @@ class EmailNotifyConfig(BaseModel):
     """
 
     enabled: bool = False
+    # smtp keeps TD-3820. microsoft sends through Graph (TD-4853).
+    # google sends through Gmail after Settings signs in (TD-4854).
+    method: Literal["smtp", "microsoft", "google"] = "smtp"
     host: str = ""
     port: int = Field(default=587, ge=1, le=65535)
     security: Literal["starttls", "tls"] = "starttls"
@@ -639,6 +652,162 @@ class EmailNotifyConfig(BaseModel):
     @classmethod
     def _strip_text(cls, value: str) -> str:
         return value.strip()
+
+
+def _bare_host(value: str, label: str) -> str:
+    """Bare hostname from config. Empty stays empty so the connector stays off."""
+    cleaned = value.strip().lower()
+    if not cleaned:
+        return ""
+    if "://" in cleaned or "/" in cleaned or "@" in cleaned or any(ch.isspace() for ch in cleaned):
+        raise ValueError(f"{label} must be a bare hostname")
+    return cleaned
+
+
+def _github_host(value: str) -> str:
+    return _bare_host(value, "connectors.github host")
+
+
+# common / organizations / consumers, a tenant GUID, or a domain. No slash:
+# the value is one path segment on the login host.
+_MICROSOFT_TENANT = re.compile(
+    r"^(?:common|organizations|consumers|"
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)$"
+)
+
+
+class GithubConnectorConfig(BaseModel):
+    """GitHub App device flow. Off until a client id and both hosts are set.
+
+    Host defaults are empty here. The shipped ``config.yaml`` names the
+    public hosts. Tokens are not fields of this model (TD-4852).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    client_id: str = ""
+    api_host: str = ""
+    web_host: str = ""
+    timeout_seconds: float = Field(default=20.0, gt=0)
+
+    @field_validator("client_id")
+    @classmethod
+    def _strip_client_id(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("api_host", "web_host")
+    @classmethod
+    def _host(cls, value: str) -> str:
+        return _github_host(value)
+
+    def enabled(self) -> bool:
+        """False when the user has not named an App or a host."""
+        return bool(self.client_id and self.api_host and self.web_host)
+
+
+class MicrosoftConnectorConfig(BaseModel):
+    """Microsoft identity platform, public client, auth code + PKCE (TD-4853).
+
+    Off until a client id and both hosts are set. ``tenant`` defaults to
+    ``common``. Host defaults are empty here. The shipped ``config.yaml``
+    names the public hosts. Tokens are not fields of this model.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    client_id: str = ""
+    tenant: str = "common"
+    login_host: str = ""
+    graph_host: str = ""
+    timeout_seconds: float = Field(default=20.0, gt=0)
+    sign_in_timeout_seconds: float = Field(default=300.0, gt=0)
+
+    @field_validator("client_id")
+    @classmethod
+    def _strip_client_id(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("tenant")
+    @classmethod
+    def _tenant(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            return "common"
+        if not _MICROSOFT_TENANT.fullmatch(cleaned):
+            raise ValueError("connectors.microsoft.tenant is not a tenant id or alias")
+        return cleaned
+
+    @field_validator("login_host", "graph_host")
+    @classmethod
+    def _host(cls, value: str) -> str:
+        return _bare_host(value, "connectors.microsoft host")
+
+    def enabled(self) -> bool:
+        """False when the user has not named an app registration or a host."""
+        return bool(self.client_id and self.login_host and self.graph_host and self.tenant)
+
+
+class GoogleConnectorConfig(BaseModel):
+    """Google installed-app sign-in for Gmail send (TD-4854).
+
+    Off until a client id and every host are set. The desktop client
+    secret is not a field: Google does not treat it as confidential, and
+    it still lives in the keychain. A ``client_secret`` key in yaml is
+    dropped. Host defaults are empty here. The shipped ``config.yaml``
+    names the public hosts.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    client_id: str = ""
+    auth_host: str = ""
+    token_host: str = ""
+    userinfo_host: str = ""
+    gmail_host: str = ""
+    timeout_seconds: float = Field(default=20.0, gt=0)
+    sign_in_timeout_seconds: float = Field(default=300.0, gt=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_client_secret(cls, data: object) -> object:
+        if isinstance(data, dict) and "client_secret" in data:
+            _config_log.warning(
+                "connectors.google.client_secret ignored; the client secret lives in the keychain"
+            )
+            return {key: value for key, value in data.items() if key != "client_secret"}
+        return data
+
+    @field_validator("client_id")
+    @classmethod
+    def _strip_client_id(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("auth_host", "token_host", "userinfo_host", "gmail_host")
+    @classmethod
+    def _host(cls, value: str) -> str:
+        return _bare_host(value, "connectors.google host")
+
+    def enabled(self) -> bool:
+        """False when the user has not named a client id or a host."""
+        return bool(
+            self.client_id
+            and self.auth_host
+            and self.token_host
+            and self.userinfo_host
+            and self.gmail_host
+        )
+
+
+class ConnectorsConfig(BaseModel):
+    """Outbound account connectors. Each one is off until configured."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    github: GithubConnectorConfig = Field(default_factory=GithubConnectorConfig)
+    microsoft: MicrosoftConnectorConfig = Field(default_factory=MicrosoftConnectorConfig)
+    google: GoogleConnectorConfig = Field(default_factory=GoogleConnectorConfig)
 
 
 class NotifyConfig(BaseModel):
@@ -970,6 +1139,7 @@ class ModelConfig(BaseModel):
     judgments: JudgmentsConfig = Field(default_factory=JudgmentsConfig)
     remote: RemoteConfig = Field(default_factory=RemoteConfig)
     notify: NotifyConfig = Field(default_factory=NotifyConfig)
+    connectors: ConnectorsConfig = Field(default_factory=ConnectorsConfig)
     speech: SpeechConfig = Field(default_factory=SpeechConfig)
     autonomy: AutonomyConfig = Field(default_factory=AutonomyConfig)
     engine: EngineConfig = Field(default_factory=EngineConfig)

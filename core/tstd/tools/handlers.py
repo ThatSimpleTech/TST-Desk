@@ -223,3 +223,6 @@ def register_builtin_handlers(
     register_skill_handlers(dispatcher)
     register_delegate_handlers(dispatcher)
     dispatcher.register_handler("send_file", partial(send_file, service=sent_files))
+    from ..connectors.github_tools import register_github_handlers
+
+    register_github_handlers(dispatcher)

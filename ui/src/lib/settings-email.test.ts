@@ -123,6 +123,7 @@ describe("Settings email", () => {
 		expect(mocks.sent.at(-1)).toEqual({
 			type: "set_email_notify",
 			enabled: true,
+			method: "smtp",
 			host: "smtp.example.com",
 			port: 587,
 			security: "starttls",

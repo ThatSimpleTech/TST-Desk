@@ -310,6 +310,23 @@ _OUTBOUND_CAPABLE = {
         "user-listed MCP HTTP client; destination is mcp.servers.<id>.url "
         "from config; loopback-only, refused before send"
     ),
+    "connectors/github_http.py": (
+        "GitHub device flow and REST; destinations are connectors.github.web_host "
+        "and connectors.github.api_host from config"
+    ),
+    "connectors/microsoft_http.py": (
+        "Microsoft auth-code token exchange and Graph; destinations are "
+        "connectors.microsoft.login_host and connectors.microsoft.graph_host from config"
+    ),
+    "connectors/microsoft_loopback.py": (
+        "one-shot OAuth redirect listener; binds 127.0.0.1 only and closes "
+        "after one redirect or a timeout"
+    ),
+    "connectors/google_http.py": (
+        "Google auth-code token exchange, userinfo, and Gmail send; destinations "
+        "are connectors.google.auth_host, token_host, userinfo_host, and gmail_host "
+        "from config"
+    ),
 }
 
 

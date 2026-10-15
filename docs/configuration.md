@@ -313,8 +313,87 @@ are left out. Send test email uses a short sample of that layout.
 | `port` | int 1–65535 | `587` | SMTP port. 587 with `starttls`, 465 with `tls`. |
 | `security` | `starttls` or `tls` | `starttls` | `starttls` upgrades on port 587. `tls` is implicit TLS. |
 | `username` | string | *empty* | SMTP AUTH username. Empty refuses the send. |
-| `from_address` | string | *empty* | One mailbox address in the From header. |
+| `method` | `smtp`, `microsoft`, or `google` | `smtp` | `smtp` uses the fields below. `microsoft` sends the same report through Graph (TD-4853). `google` sends it through Gmail after Settings → Email signs in (TD-4854). |
+| `from_address` | string | *empty* | One mailbox address in the From header. Graph and Gmail use it when it is an address; otherwise the signed-in mailbox. |
 | `timeout_seconds` | float > 0 | `30` | How long the SMTP conversation may run. |
+
+### `connectors`
+
+Outbound accounts. Each connector is off until its keys are set. There
+is no hosted relay.
+
+#### `connectors.github`
+
+GitHub App device flow (TD-4852). No client secret and no callback URL.
+`client_id` is the App's public client id. Empty means the connector is
+off and Settings explains how to create the App. The access token and
+the refresh token live in the OS keychain as `tst-github-oauth`, never
+in this file and never in a log. Pydantic leaves the hosts empty; the
+shipped `config.yaml` sets the public hosts `api.github.com` and
+`github.com`. A missing host keeps the connector off, the same as a
+missing client id.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `connectors` | mapping | `{}` | Named account connectors. |
+| `github` | mapping | empty | The GitHub App connector. |
+| `client_id` | string | *empty* | Public GitHub App client id. Empty turns the connector off. |
+| `api_host` | string | *empty* | REST hostname. The shipped file sets `api.github.com`. |
+| `web_host` | string | *empty* | Device-flow hostname. The shipped file sets `github.com`. |
+| `timeout_seconds` | float > 0 | `20` | How long one GitHub HTTP call may run. |
+
+#### `connectors.microsoft`
+
+Microsoft sign-in for scheduled-job email (TD-4853). A public client:
+authorization code with PKCE, no client secret. The daemon listens on
+`127.0.0.1` and an ephemeral port, then closes after one redirect or
+`sign_in_timeout_seconds`. Register that loopback redirect on the app
+(mobile and desktop). Scopes are `offline_access`, `Mail.Send`, and
+`User.Read`. Empty `client_id` hides the Microsoft method in Settings
+and shows how to set one. Tokens live in the OS keychain as
+`tst-microsoft-oauth`, never in this file and never in a log. Pydantic
+leaves the hosts empty; the shipped `config.yaml` sets the public
+hosts. A missing host keeps the connector off, the same as a missing
+client id. `tenant` defaults to `common`.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `microsoft` | mapping | empty | The Microsoft mail connector. |
+| `client_id` | string | *empty* | Public client id of the app registration. Empty turns the connector off. |
+| `tenant` | string | `common` | Tenant path segment: `common`, `organizations`, `consumers`, a GUID, or a domain. |
+| `login_host` | string | *empty* | Authorization hostname. The shipped file sets the public login host. |
+| `graph_host` | string | *empty* | Graph hostname. The shipped file sets the public Graph host. |
+| `timeout_seconds` | float > 0 | `20` | How long one token or Graph call may run. |
+| `sign_in_timeout_seconds` | float > 0 | `300` | How long the loopback listener waits for the redirect. |
+
+#### `connectors.google`
+
+Google sign-in for scheduled-job email (TD-4854). An installed-app
+(Desktop) OAuth client: authorization code with PKCE. Google does not
+treat that client's secret as confidential. It still lives in the OS
+keychain as `tst-google-client-secret`, entered in Settings, never in
+this file. A `client_secret` key here is dropped. The daemon listens on
+`127.0.0.1` and an ephemeral port, then closes after one redirect or
+`sign_in_timeout_seconds`. The scope is
+`https://www.googleapis.com/auth/gmail.send`, plus OpenID email so
+Settings can name the account. Empty `client_id` hides the Google
+method and shows how to create the Desktop client. Tokens live in the
+keychain as `tst-google-oauth`. Pydantic leaves the hosts empty; the
+shipped `config.yaml` sets the public hosts. A missing host keeps the
+connector off, the same as a missing client id. A refresh that returns
+`invalid_grant` (an unverified app, or a client still in testing) marks
+the connection expired and tells the user to reconnect.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `google` | mapping | empty | The Google mail connector. |
+| `client_id` | string | *empty* | OAuth client id. Empty turns the connector off. |
+| `auth_host` | string | *empty* | Authorization hostname. The shipped file sets the public accounts host. |
+| `token_host` | string | *empty* | Token hostname. The shipped file sets the public token host. |
+| `userinfo_host` | string | *empty* | OpenID userinfo hostname. The shipped file sets the public userinfo host. |
+| `gmail_host` | string | *empty* | Gmail API hostname. The shipped file sets the public Gmail host. |
+| `timeout_seconds` | float > 0 | `20` | How long one token or Gmail call may run. |
+| `sign_in_timeout_seconds` | float > 0 | `300` | How long the loopback listener waits for the redirect. |
 
 ### `speech`
 

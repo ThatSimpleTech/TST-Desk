@@ -576,6 +576,137 @@ async def store_smtp_password(password: str) -> None:
     await backend.set_secret(SMTP_PASSWORD_ACCOUNT, password)
 
 
+GITHUB_OAUTH_ACCOUNT = "tst-github-oauth"
+
+
+async def get_github_oauth() -> str:
+    """Read the GitHub token blob. Callers must not log it."""
+    backend = _get_backend()
+    return await backend.get_secret(GITHUB_OAUTH_ACCOUNT)
+
+
+async def store_github_oauth(blob: str) -> None:
+    """Store the GitHub token blob. Uses the TD-4838 ``set_secret`` path."""
+    _reject_api_key_value(blob)
+    backend = _get_backend()
+    await backend.set_secret(GITHUB_OAUTH_ACCOUNT, blob)
+
+
+async def delete_github_oauth() -> None:
+    """Delete the GitHub sign-in. A missing item is success.
+
+    The macOS backend treats a missing item as already gone. A test double
+    may raise instead. If the item is still there, the error is fixed text
+    so a backend message cannot carry the blob.
+    """
+    backend = _get_backend()
+    try:
+        await backend.delete_secret(GITHUB_OAUTH_ACCOUNT)
+    except KeychainError:
+        if not await backend.has_secret(GITHUB_OAUTH_ACCOUNT):
+            return
+        raise KeychainError("Could not delete the GitHub sign-in.") from None
+
+
+async def github_oauth_is_stored() -> bool:
+    """Whether a GitHub sign-in exists, without reading the blob."""
+    backend = _get_backend()
+    return await backend.has_secret(GITHUB_OAUTH_ACCOUNT)
+
+
+MICROSOFT_OAUTH_ACCOUNT = "tst-microsoft-oauth"
+
+
+async def get_microsoft_oauth() -> str:
+    """Read the Microsoft token blob. Callers must not log it."""
+    backend = _get_backend()
+    return await backend.get_secret(MICROSOFT_OAUTH_ACCOUNT)
+
+
+async def store_microsoft_oauth(blob: str) -> None:
+    """Store the Microsoft token blob. Uses the TD-4838 ``set_secret`` path."""
+    _reject_api_key_value(blob)
+    backend = _get_backend()
+    await backend.set_secret(MICROSOFT_OAUTH_ACCOUNT, blob)
+
+
+async def delete_microsoft_oauth() -> None:
+    """Delete the Microsoft sign-in. A missing item is success.
+
+    A backend message is not re-raised: it can carry the blob.
+    """
+    backend = _get_backend()
+    try:
+        await backend.delete_secret(MICROSOFT_OAUTH_ACCOUNT)
+    except KeychainError:
+        if not await backend.has_secret(MICROSOFT_OAUTH_ACCOUNT):
+            return
+        raise KeychainError("Could not delete the Microsoft sign-in.") from None
+
+
+async def microsoft_oauth_is_stored() -> bool:
+    """Whether a Microsoft sign-in exists, without reading the blob."""
+    backend = _get_backend()
+    return await backend.has_secret(MICROSOFT_OAUTH_ACCOUNT)
+
+
+GOOGLE_OAUTH_ACCOUNT = "tst-google-oauth"
+GOOGLE_CLIENT_SECRET_ACCOUNT = "tst-google-client-secret"
+
+
+async def get_google_oauth() -> str:
+    """Read the Google token blob. Callers must not log it."""
+    backend = _get_backend()
+    return await backend.get_secret(GOOGLE_OAUTH_ACCOUNT)
+
+
+async def store_google_oauth(blob: str) -> None:
+    """Store the Google token blob. Uses the TD-4838 ``set_secret`` path."""
+    _reject_api_key_value(blob)
+    backend = _get_backend()
+    await backend.set_secret(GOOGLE_OAUTH_ACCOUNT, blob)
+
+
+async def delete_google_oauth() -> None:
+    """Delete the Google sign-in. A missing item is success.
+
+    A backend message is not re-raised: it can carry the blob. The
+    desktop client secret is a different account and is left in place.
+    """
+    backend = _get_backend()
+    try:
+        await backend.delete_secret(GOOGLE_OAUTH_ACCOUNT)
+    except KeychainError:
+        if not await backend.has_secret(GOOGLE_OAUTH_ACCOUNT):
+            return
+        raise KeychainError("Could not delete the Google sign-in.") from None
+
+
+async def google_oauth_is_stored() -> bool:
+    """Whether a Google sign-in exists, without reading the blob."""
+    backend = _get_backend()
+    return await backend.has_secret(GOOGLE_OAUTH_ACCOUNT)
+
+
+async def get_google_client_secret() -> str:
+    """Read the desktop client secret. Callers must not log it."""
+    backend = _get_backend()
+    return await backend.get_secret(GOOGLE_CLIENT_SECRET_ACCOUNT)
+
+
+async def store_google_client_secret(secret: str) -> None:
+    """Store the desktop client secret. Uses the TD-4838 ``set_secret`` path."""
+    _reject_api_key_value(secret)
+    backend = _get_backend()
+    await backend.set_secret(GOOGLE_CLIENT_SECRET_ACCOUNT, secret)
+
+
+async def google_client_secret_is_stored() -> bool:
+    """Whether the desktop client secret exists, without reading it."""
+    backend = _get_backend()
+    return await backend.has_secret(GOOGLE_CLIENT_SECRET_ACCOUNT)
+
+
 async def smtp_password_is_stored() -> bool:
     """Whether the SMTP password exists, without reading it.
 
