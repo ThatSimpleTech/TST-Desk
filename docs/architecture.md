@@ -561,7 +561,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `artifact` | connection | Metadata and path for `open_artifact`. Bytes stay on disk. |
 | `artifact_chunk` | connection | Bytes for `read_artifact_chunk` as base64, with the file's size and sha256, or a per-request `error_code`. Never logged; exempt from the wire scrub. |
 | `ping` | — | Application-level liveness. Belongs to no session; advances nothing. |
-| `error` | session | A typed error, usually in response to a bad message. One from another computer without a session id carries `machine` and a message starting "On <name>: " (TD-5015). |
+| `error` | session | A typed error, usually in response to a bad message. One from another computer without a session id carries `machine` and a message starting "On <name>: " (TD-5015). A hub refusing a forwarded message sets `in_reply_to` to that message's type, so a download claims only its own refusals (TD-5144). |
 | `screen_frame` | session | A computer-use screenshot (browser or desktop) was written to the session dir (TD-1710, TD-3401). Path, not bytes. |
 | `cu_kill_state` | connection | Process-wide computer-use kill-switch. Seq is fixed at 1 and it is not written to a session log (TD-3404). `killed=true` clears Screen-pane glow and cursor (TD-3402). |
 | `cu_session` | session | Computer-use episode open/close (TD-3407). `active=true` on the first `desktop_*` / `browser_*` tool of a turn; `false` on turn end, cancel, or kill-switch. The real-display ring and Screen-pane glow follow this tag. |

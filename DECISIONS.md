@@ -13198,6 +13198,87 @@ a pointer to the workspace file; a new event type (`artifact_ready` already repl
 hub names the verb in `unknown_message`); reads outside the workspace (Class C); one path per call
 (the goal names several files per call).
 
+**Amended after review (2026-10-15):**
+- The file-name rule (design §1.4) gains step 2b, which drops the bidi controls U+200E, U+200F,
+  U+202A to U+202E and U+2066 to U+2069. Step 8 cuts the name again after a late device prefix,
+  so a name always fits in 120 bytes. Python, Rust and Kotlin pin the same vectors. Only these
+  code points are dropped, not all of category Cf, so the three languages agree without a shared
+  Unicode table.
+- `send_file` checks each path again with the dispatcher's own path guard, the same wall the
+  classifier used.
+- A move to another project rebinds everything that held the old workspace:
+  - the path guard, and the classifier boundary (its cached judgments are cleared);
+  - the checkpointer, memory committer, ledger, policy and prompt assembler;
+  - the delegate runtime's assembler, and the import approvals.
+  The shell allowlist is read at each call. The next tool call works in the new workspace, and a
+  path in the old one is outside the boundary. Sessions on the external ACP engine are not
+  rebound yet (backlog follow-up).
+- Every reload of a session's boundary goes through one helper, `reload_session_boundary`. It
+  covers open, revive, move and Resume, and it puts a charter run's boundary and caps back over
+  the workspace config. A Resume can no longer widen an autonomy run's shell allowlist or raise
+  its caps. A test fails if any module assigns the workspace boundary to a session directly.
+- A cancel before the commit point leaves nothing behind. After it, the file is indexed and the
+  card is announced. The orphan sweep runs once when the store first loads a session, and only for
+  a session the registry knows by its exact id. A chunk read for any other id answers
+  `artifact_not_found` without touching the disk.
+- Any OSError while checking free space is `disk_full`; it never names the data dir.
+
+## TD-5144 — File cards on the desktop: Open is an allowlist, errors say what they answer (Class B)
+
+2026-10-15. Review of TD-5143..5145 found two problems. One click on Open could run a script the
+agent made. And a download had no way to tell its own hub refusals apart from refusals of other
+messages in the same session.
+
+**Decision:**
+- Desktop Open works only for .pdf .png .jpg .jpeg .gif .webp .bmp .mp4 .webm .mov .mkv .mp3 .wav
+  .m4a .ogg .flac .aac .txt .md .csv .log .json .zip .tar .gz .tgz .7z. The extension is
+  lowercased and read from the last dot, after trailing spaces and dots are stripped.
+  - The UI offers Open only for these (`openable` defaults to false). The shell refuses any other
+    name with `not_openable` before it calls the opener, and it checks the real name on disk.
+  - Show in folder and Save a copy work for every kind.
+  - The phone keeps Open for every kind, because Android's chooser and installer are the gate.
+  - On Windows the opener gets a plain path, not `\\?\`. dunce's rule (about 25 lines) is
+    written out rather than adding dunce.
+- An `Error` may carry `in_reply_to`, the client message type it answers. A hub sets it when it
+  refuses a forwarded message: `bad_request`, `machine_not_found`, `machine_unreachable`,
+  `not_allowed`, `loopback_only`, `not_on_remote`.
+  - A download claims an error only when `in_reply_to` is `read_artifact_chunk`. An older hub
+    leaves the field out; then the download claims an error only while that session has chunk
+    requests outstanding.
+  - Replies are counted per download, so a cancelled or paused window's late replies never count
+    against the next one.
+  - The field is additive. `PROTOCOL_VERSION` stays 1.
+- Received downloads:
+  - `received_file_begin` refuses with `no_space` when the cache volume has less room than the
+    rest of the file plus 256 MiB (design §7.2).
+  - Downloads falls back to `~/Downloads` when the OS names no Downloads folder, and the folder
+    is resolved at begin, not after the bytes arrive.
+  - Calls are serialized per artifact id, off the async runtime's worker threads.
+  - New direct dependencies, both already in Cargo.lock: `libc 0.2` (unix) and `windows-sys
+    0.59` with only Win32_Storage_FileSystem (windows; it turns on Win32_Foundation itself).
+  - On macOS the free space is statfs `f_bavail`, which leaves out purgeable APFS space. A Mac
+    that is full apart from purgeable data says `no_space` until the user frees room. The
+    purgeable-aware figure needs CoreFoundation and a Mac to test on. That is the follow-up if
+    Macs report a false `no_space`.
+- Sizes round an exact tie to even on both sides, as Python's format does.
+- A send cut off by a restart says "Not sent: the turn was cut off" instead of "Sending…" forever.
+
+**Rationale:**
+- A denylist always misses a kind Windows will run (.js, .vbs, .hta, .scr, .lnk, .url). An
+  allowlist fails closed.
+- The shell enforces the list as well as the UI, so a UI bug can't reach the opener.
+- `in_reply_to` is the only way to tell a refused chunk from a refused `user_message` in one
+  bridged session. The fallback keeps older hubs working.
+- The free-space margin stops a large download from running the disk to zero under the daemon's
+  event log and audit DB.
+
+**Rejected:**
+- A longer denylist.
+- Matching errors by session alone: that rule swallowed a sleeping computer's refusal of a
+  `user_message`.
+- A new error code per message type.
+- `dunce`, `fs2` or `sysinfo` as new crates.
+
 ## TD-5145 — The phone's file bridge: error codes and locking (Class B; 0.1.10, versionCode 11)
 
 2026-10-15. The TD-5143 contract names the bridge's methods and codes but leaves some corners
@@ -13220,3 +13301,14 @@ the card's progress for the length of the hash.
 
 **Rejected:** new codes for these corners (the card copy and the Python fixtures would both need
 them); taking the lock in `status()`.
+
+**Amended after review (2026-10-15):**
+- `finish` checks the hash, renames `data.part` to its final name (`data.apk` for an APK), reads
+  the APK info from that file, then writes one meta that holds the file and the APK info together.
+  Nothing reports verified before the APK check has run.
+- If that meta write fails, `status()` and `begin()` count the full-length final file as held,
+  with no new download. The next `finish` hashes the file in place and adopts it, or reports a
+  mismatch and starts a clean retry. `status()` still never hashes.
+- An APK parse that throws gives a card with no APK line instead of crashing the app.
+- The bidi controls are written as `\u` escapes in the sources. A pytest check fails if any raw
+  one appears under `android/app/src`, and CI now runs for changes under `android/**` too.

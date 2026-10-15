@@ -9214,15 +9214,25 @@ Filed 2026-10-15. The agent built an APK for Adam and had no way to hand it over
 - [ ] `session.send_file_max_bytes` (512 MiB) and `send_file_session_max_bytes` (4 GiB) cap sends
 - [ ] Older UIs show the tool result text and keep working
 
+**Follow-ups (not in this release):**
+- Sessions on the external ACP engine keep the old working directory after a move to another project.
+- TD-3201 artifact records saved with workspace-relative paths resolve against the new project after a move.
+
 ### TD-5144 — File cards on the desktop
 **Size:** 5 · **Depends on:** TD-5143
 
 **Acceptance criteria:**
 - [ ] A sent file shows as a card under its tool call and in the Artifacts pane: name, size, kind, caption
-- [ ] On the computer that has it: Open (not for programs), Show in folder, Save a copy…
+- [ ] On the computer that has it: Open (allowlisted kinds only, enforced in the shell too), Show in folder, Save a copy…
 - [ ] For another computer's session: Download (pause, resume, sha256), saved to Downloads, then Open / Show in folder
 - [ ] `artifact_list` and `artifact` are no longer dropped after attach
 - [ ] An old hub, an unreachable computer or a deleted file shows one plain line, never a crash
+- [ ] A download claims only errors that answer `read_artifact_chunk` (`Error.in_reply_to`), or, from an older hub, errors while its chunk requests are outstanding
+
+**Follow-ups (not in this release):**
+- Request ids on `read_artifact_chunk` and its replies. Without them, a reply more than about 80 s
+  late can land on a resumed window that asked for the same offset.
+- macOS free space counts purgeable APFS space as used, so the room check can refuse too early.
 
 ### TD-5145 — Download, open and install a sent file on the phone (0.1.10)
 **Size:** 5 · **Depends on:** TD-5143, TD-5144
