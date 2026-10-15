@@ -6,7 +6,9 @@ behavioral tests live in android/app/src/test.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
+from xml.etree import ElementTree
 
 ROOT = Path(__file__).resolve().parents[2]
 ANDROID = ROOT / "android"
@@ -71,3 +73,87 @@ def test_gradle_does_not_pull_play_services() -> None:
     # SvelteKit's client bundle is `_app`.
     assert "ignoreAssetsPattern" in gradle
     assert "<dir>_*" not in gradle
+
+
+# TD-5145: files the agent sent, downloaded, opened and installed on the phone.
+
+_FILE_BRIDGE_METHODS = {
+    "filesVersion",
+    "filesKeyRequest",
+    "fileBegin",
+    "fileAppend",
+    "fileFinish",
+    "fileStatus",
+    "fileOpen",
+    "fileSaveToDownloads",
+    "fileDiscard",
+    "fileKeepAwake",
+}
+_ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
+
+
+def test_manifest_install_permission_and_private_readonly_provider() -> None:
+    """The installer permission, one private provider, and nothing that widens storage."""
+    manifest_path = ANDROID / "app" / "src" / "main" / "AndroidManifest.xml"
+    tree = ElementTree.parse(manifest_path)
+    permissions = {p.get(f"{_ANDROID_NS}name") for p in tree.iter("uses-permission")}
+    assert "android.permission.REQUEST_INSTALL_PACKAGES" in permissions
+    assert not [p for p in permissions if p and p.endswith("_EXTERNAL_STORAGE")]
+    assert list(tree.iter("receiver")) == []
+    providers = list(tree.iter("provider"))
+    assert len(providers) == 1
+    provider = providers[0]
+    assert provider.get(f"{_ANDROID_NS}name") == ".ReceivedFilesProvider"
+    assert provider.get(f"{_ANDROID_NS}authorities") == "com.thatsimpletech.tstdesk.files"
+    assert provider.get(f"{_ANDROID_NS}exported") == "false"
+    assert provider.get(f"{_ANDROID_NS}grantUriPermissions") == "true"
+
+
+def test_page_callbacks_include_file_and_key_callbacks() -> None:
+    source = (PKG / "PairLink.kt").read_text(encoding="utf-8")
+    assert 'const val FILE_CALLBACK = "__tstDeskOnFile"' in source
+    assert 'const val FILES_KEY_CALLBACK = "__tstDeskOnFilesKey"' in source
+    callbacks = re.search(r"PAGE_CALLBACKS = setOf\(([^)]*)\)", source)
+    assert callbacks is not None
+    names = {name.strip() for name in callbacks.group(1).split(",")}
+    assert names == {"SCAN_CALLBACK", "PAIR_LINK_CALLBACK", "FILE_CALLBACK", "FILES_KEY_CALLBACK"}
+
+
+def test_version_0_1_9_code_10() -> None:
+    gradle = (ANDROID / "app" / "build.gradle.kts").read_text(encoding="utf-8")
+    assert "versionCode = 10\n" in gradle
+    assert 'versionName = "0.1.9"' in gradle
+
+
+def test_provider_opens_read_only() -> None:
+    """Other apps get a read grant per intent; the provider never hands out a writable fd."""
+    source = (PKG / "ReceivedFilesProvider.kt").read_text(encoding="utf-8")
+    open_file = source.split("override fun openFile(", 1)[1].split("override fun ", 1)[0]
+    assert 'if (mode != "r") throw SecurityException(' in open_file
+    assert "ParcelFileDescriptor.MODE_READ_ONLY" in open_file
+    assert "resolveVerified(id)" in open_file
+    assert "MODE_WRITE" not in source and "MODE_READ_WRITE" not in source
+    for verb in ("insert", "update", "delete"):
+        body = source.split(f"override fun {verb}(", 1)[1].split("override fun ", 1)[0]
+        assert "throw UnsupportedOperationException(" in body
+
+
+def test_files_bridge_checks_key() -> None:
+    """WebView injects TstDeskFiles into iframes too.
+
+    So every file method checks the top-frame key before anything else.
+    """
+    source = (PKG / "FileBridge.kt").read_text(encoding="utf-8")
+    chunks = source.split("@JavascriptInterface")[1:]
+    methods: dict[str, str] = {}
+    for chunk in chunks:
+        found = re.match(r"\s*fun (\w+)\(", chunk)
+        assert found is not None
+        methods[found.group(1)] = chunk
+    assert set(methods) == _FILE_BRIDGE_METHODS
+    for name, body in methods.items():
+        if name in {"filesVersion", "filesKeyRequest"}:
+            assert "key.matches" not in body
+            continue
+        first_statement = body.split("{", 1)[1].strip().splitlines()[0]
+        assert first_statement == "if (!key.matches(k)) return BAD_KEY", name

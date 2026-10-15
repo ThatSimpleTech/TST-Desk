@@ -156,7 +156,11 @@ private fun scanFailureJson(reason: String): String =
 
 const val SCAN_CALLBACK = "__tstDeskOnScan"
 const val PAIR_LINK_CALLBACK = "__tstDeskOnPairLink"
-private val PAGE_CALLBACKS = setOf(SCAN_CALLBACK, PAIR_LINK_CALLBACK)
+
+// TD-5145: received-file events, and the TstDeskFiles key for the top frame.
+const val FILE_CALLBACK = "__tstDeskOnFile"
+const val FILES_KEY_CALLBACK = "__tstDeskOnFilesKey"
+private val PAGE_CALLBACKS = setOf(SCAN_CALLBACK, PAIR_LINK_CALLBACK, FILE_CALLBACK, FILES_KEY_CALLBACK)
 
 /**
  * Script that calls one fixed page callback with a JSON literal and says
