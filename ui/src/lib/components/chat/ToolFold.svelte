@@ -9,10 +9,16 @@
 	} from '../../reasoning-disclosure.svelte.js';
 	import Disclosure from './Disclosure.svelte';
 
-	let { messageId, block }: { messageId: string; block: ToolBlock } = $props();
+	// `complete` is the row's: a call on a finished row never shimmers, even
+	// with no result, since a restart that cut it logs none (TD-5144).
+	let {
+		messageId,
+		block,
+		complete,
+	}: { messageId: string; block: ToolBlock; complete: boolean } = $props();
 
-	const live = $derived(isToolLive(block));
-	const expanded = $derived(isToolExpanded(messageId, block));
+	const live = $derived(isToolLive(block, complete));
+	const expanded = $derived(isToolExpanded(messageId, block, complete));
 	const label = $derived(toolLabel(block));
 
 	function argsText(): string {
@@ -24,7 +30,7 @@
 	}
 </script>
 
-<Disclosure {expanded} {live} {label} ontoggle={() => toggleTool(messageId, block)}>
+<Disclosure {expanded} {live} {label} ontoggle={() => toggleTool(messageId, block, complete)}>
 	{argsText()}{#if block.output}
 		{'\n\n'}{block.output}{/if}
 </Disclosure>
