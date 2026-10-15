@@ -1180,6 +1180,55 @@ def test_scrub_wire_json_redacts_nested_reply_text() -> None:
     assert json.loads(scrub_wire_json(benign)) == json.loads(benign)
 
 
+# TD-5143: an artifact_chunk's data_b64 is file bytes. Base64 can spell an
+# AWS key id by chance, so that one field is held out of the scrub while it
+# is pure base64. Everything else in the frame is still scrubbed.
+_AKIA_RUN = "AKIA" + "ABCDEFGHIJKLMNOP"
+
+
+def _chunk_frame(data_b64: object, **extra: object) -> str:
+    frame: dict[str, object] = {
+        "type": "artifact_chunk",
+        "seq": 1,
+        "session_id": "s1",
+        "artifact_id": "0" * 32,
+        "offset": 0,
+        "size": 3,
+        "sha256": "a" * 64,
+        "data_b64": data_b64,
+        "eof": False,
+        "error_code": None,
+    }
+    frame.update(extra)
+    return json.dumps(frame)
+
+
+def test_scrub_keeps_chunk_base64_with_akia_run_and_scrubs_the_rest() -> None:
+    data = "UEsDBBQ" + _AKIA_RUN + "aGk="
+    out = json.loads(scrub_wire_json(_chunk_frame(data, error_code=f"x {PLANTED}")))
+    assert out["data_b64"] == data
+    assert PLANTED not in json.dumps(out)
+    assert out["error_code"] == "x [REDACTED]"
+    # Any other type with the same field name gets no exemption.
+    other = json.dumps({"type": "artifact_ready", "seq": 1, "data_b64": data})
+    assert _AKIA_RUN not in scrub_wire_json(other)
+
+
+def test_scrub_exemption_needs_pure_base64() -> None:
+    for impure in (f"aGk= {_AKIA_RUN}", f"{_AKIA_RUN}-x", f"{_AKIA_RUN}\n"):
+        out = json.loads(scrub_wire_json(_chunk_frame(impure)))
+        assert _AKIA_RUN not in out["data_b64"], impure
+    # A non-string value is never held out either.
+    out = json.loads(scrub_wire_json(_chunk_frame([_AKIA_RUN])))
+    assert out["data_b64"] == ["[REDACTED]"]
+
+
+def test_scrub_keeps_ensure_ascii_false() -> None:
+    payload = json.dumps({"type": "session_title", "seq": 1, "title": "café 日本"})
+    assert "café 日本" in scrub_wire_json(payload)
+    assert "café" in scrub_wire_json(_chunk_frame("aGk=", error_code="café"))
+
+
 async def test_connection_scoped_reply_scrubs_memory_content(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

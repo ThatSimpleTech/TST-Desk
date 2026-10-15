@@ -9,12 +9,18 @@ at ``{data_dir}/sessions/{id}/artifacts/{artifact_id}``. A record may
 instead point at a workspace-relative path. Both doors go through the
 workspace wall (or the session persist dir); escape and symlink-out are
 refused.
+
+A ``sent_file`` row (TD-5143) is a copy ``send_file`` made: the folder
+``artifacts/<id>/`` holds exactly one file, ``<name>``. ``sent_files.py``
+writes it; ``open_sent_file`` is the only door the chunk reader uses.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
+import stat
 import threading
 import uuid
 from pathlib import Path
@@ -24,7 +30,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from .autonomy.classifier import Boundary, canonical_path
 from .logging import get_logger, redact_secrets
-from .protocol import ArtifactEntry
+from .protocol import ArtifactEntry, ArtifactReady
 from .session_persist import SessionPersist
 from .tools.boundary import PathGuard, RefusalError, windows_unsafe_reason
 
@@ -32,6 +38,7 @@ log = get_logger("tstd.artifacts")
 
 _META = "artifacts.json"
 _BYTES_DIR = "artifacts"
+_ARTIFACT_ID = re.compile(r"[0-9a-f]{32}")
 
 
 class ArtifactError(Exception):
@@ -52,21 +59,43 @@ class ArtifactRecord(BaseModel):
     path: str = Field(min_length=1)
     title: str = Field(min_length=1)
     location: Literal["workspace", "session"] = "workspace"
+    # TD-5143: set on ``sent_file`` rows only. Defaults keep old rows valid.
+    kind: Literal["artifact", "sent_file"] = "artifact"
+    name: str | None = None
+    size: int | None = Field(default=None, ge=0)
+    sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    caption: str | None = Field(default=None, max_length=500)
+    tool_call_id: str | None = None
+
+
+def _redacted(text: str | None) -> str | None:
+    return None if text is None else redact_secrets(text)
 
 
 def to_entry(record: ArtifactRecord) -> ArtifactEntry:
-    """Wire list/open fields. Title and path go through the redaction chokepoint."""
+    """Wire list/open fields. Title, path, name and caption are redacted."""
     return ArtifactEntry(
         artifact_id=record.id,
         title=redact_secrets(record.title),
         mime=record.mime,
         path=redact_secrets(record.path),
+        kind=record.kind,
+        name=_redacted(record.name),
+        size=record.size,
+        sha256=record.sha256,
+        caption=_redacted(record.caption),
+        tool_call_id=record.tool_call_id,
     )
+
+
+def artifact_ready_for(record: ArtifactRecord) -> ArtifactReady:
+    """The ``artifact_ready`` event for *record*, built from ``to_entry``."""
+    return ArtifactReady(session_id=record.session_id, seq=1, **to_entry(record).model_dump())
 
 
 def _safe_session_id(session_id: str) -> str:
     """Refuse a session id that would leave ``sessions/<id>/``."""
-    if not session_id or Path(session_id).name != session_id:
+    if not session_id or session_id == ".." or Path(session_id).name != session_id:
         raise ArtifactError("session_not_found", f"Session {session_id!r} not found")
     return session_id
 
@@ -128,6 +157,67 @@ class ArtifactStore:
             records.append(record)
             self._save(session_id, records)
         return record
+
+    def bytes_dir(self, session_id: str) -> Path:
+        """``sessions/<id>/artifacts``, where ``sent_file`` copies live (TD-5143)."""
+        return self._persist.dir_for(_safe_session_id(session_id)) / _BYTES_DIR
+
+    def append_records(self, session_id: str, records: list[ArtifactRecord]) -> None:
+        """Index several records with one locked load and save (TD-5143)."""
+        session_id = _safe_session_id(session_id)
+        with self._lock:
+            current = self._load(session_id)
+            current.extend(records)
+            self._save(session_id, current)
+
+    def sent_bytes_total(self, session_id: str) -> int:
+        """Bytes this session already holds in ``sent_file`` copies."""
+        session_id = _safe_session_id(session_id)
+        with self._lock:
+            records = self._load(session_id)
+        return sum(r.size or 0 for r in records if r.kind == "sent_file")
+
+    def open_sent_file(self, session_id: str, artifact_id: str) -> tuple[ArtifactRecord, Path]:
+        """The whole wall for chunk reads (TD-5143): the index row and the disk.
+
+        No workspace, no session runtime and no client path. An unsafe
+        session id answers ``artifact_not_found``, so the reply is no oracle.
+        """
+        from .sent_files import safe_file_name  # sent_files imports this module
+
+        try:
+            session_id = _safe_session_id(session_id)
+        except ArtifactError:
+            raise ArtifactError("artifact_not_found", "No such artifact") from None
+        if not _ARTIFACT_ID.fullmatch(artifact_id):
+            raise ArtifactError("artifact_not_found", "No such artifact")
+        with self._lock:
+            records = self._load(session_id)
+        record = next((r for r in records if r.id == artifact_id), None)
+        if record is None:
+            raise ArtifactError("artifact_not_found", "No such artifact")
+        name = record.name
+        if not (
+            record.kind == "sent_file"
+            and record.location == "session"
+            and record.path == f"{_BYTES_DIR}/{artifact_id}"
+            and name
+            and record.size is not None
+            and record.sha256
+            and safe_file_name(name) == name
+        ):
+            raise ArtifactError("not_a_sent_file", "Not a file the agent sent")
+        folder = canonical_path(self._persist.dir_for(session_id)) / _BYTES_DIR / artifact_id
+        target = folder / name
+        try:
+            st = os.lstat(target)
+        except FileNotFoundError:
+            raise ArtifactError("artifact_not_found", "No such artifact") from None
+        if not stat.S_ISREG(st.st_mode) or canonical_path(target).parent != folder:
+            raise ArtifactError("not_a_sent_file", "Not a file the agent sent")
+        if st.st_size != record.size:
+            raise ArtifactError("changed", "The copy changed on disk")
+        return record, target
 
     def list_records(self, session_id: str, workspace: Path) -> list[ArtifactRecord]:
         """Records still inside the wall. Escaped paths are omitted, not rewritten."""

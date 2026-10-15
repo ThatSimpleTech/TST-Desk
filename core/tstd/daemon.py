@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import contextlib
 import os
 import shutil
@@ -24,7 +25,7 @@ from typing import Any, Literal, cast
 import websockets.exceptions
 from pydantic import ValidationError
 
-from .artifacts import ArtifactError, ArtifactRecord, ArtifactStore, to_entry
+from .artifacts import ArtifactError, ArtifactRecord, ArtifactStore, artifact_ready_for, to_entry
 from .attachments import (
     AttachmentError,
     build_provider_user_content,
@@ -183,8 +184,8 @@ from .protocol import (
     ApproveGrokPlan,
     ArchiveSession,
     Artifact,
+    ArtifactChunk,
     ArtifactList,
-    ArtifactReady,
     Attach,
     AutonomyStart,
     Cancel,
@@ -271,6 +272,7 @@ from .protocol import (
     ParseJob,
     PolicyRules,
     PolicyRuleSummary,
+    ReadArtifactChunk,
     RemoteDeviceSummary,
     RemovePin,
     RemoveRemoteDevice,
@@ -408,6 +410,7 @@ from .scheduler.templates import (
     save_template,
 )
 from .scheduler.workspace import require_folder, resolve_workspace_name
+from .sent_files import read_chunk
 from .session import (
     TERMINAL_STATES,
     QueuedUserMessage,
@@ -2887,6 +2890,9 @@ class Daemon:
         if isinstance(msg, OpenArtifact):
             return await self._handle_open_artifact(msg)
 
+        if isinstance(msg, ReadArtifactChunk):
+            return await self._handle_read_artifact_chunk(msg)
+
         if isinstance(msg, DesignHitTest):
             return await self._handle_design_hit_test(msg)
 
@@ -3999,16 +4005,7 @@ class Daemon:
             path=path,
             content=content,
         )
-        await found.event_log.add(
-            ArtifactReady(
-                session_id=session_id,
-                artifact_id=record.id,
-                title=record.title,
-                mime=record.mime,
-                path=record.path,
-                seq=1,
-            )
-        )
+        await found.event_log.add(artifact_ready_for(record))
         return record
 
     async def _handle_list_artifacts(self, msg: ListArtifacts) -> str:
@@ -4046,13 +4043,56 @@ class Daemon:
             )
         except ArtifactError as exc:
             return build_error(exc.code, exc.message, session_id=msg.session_id)
-        entry = to_entry(record)
-        return Artifact(
+        entry = to_entry(record).model_dump()
+        return Artifact(session_id=msg.session_id, **entry).model_dump_json()
+
+    async def _handle_read_artifact_chunk(self, msg: ReadArtifactChunk) -> str:
+        """Bytes of a file the agent sent (TD-5143). Connection-scoped, never logged.
+
+        No session runtime and no registry: the index row and the disk
+        decide everything (``ArtifactStore.open_sent_file``). Success is
+        never logged; a refusal logs its code and the id only.
+        """
+
+        def fail(code: str) -> str:
+            return ArtifactChunk(
+                session_id=msg.session_id,
+                artifact_id=msg.artifact_id,
+                offset=msg.offset,
+                error_code=code,
+            ).model_dump_json()
+
+        try:
+            record, target = await asyncio.to_thread(
+                self._artifacts.open_sent_file, msg.session_id, msg.artifact_id
+            )
+            size = record.size or 0
+            if msg.offset > size:
+                return fail("bad_range")
+            want = min(msg.length, size - msg.offset)
+            data = (
+                await asyncio.to_thread(read_chunk, target, msg.offset, want, size) if want else b""
+            )
+        except ArtifactError as exc:
+            log.info(
+                "artifact chunk refused",
+                extra={"extra_fields": {"artifact_id": msg.artifact_id, "code": exc.code}},
+            )
+            return fail(exc.code)
+        except OSError:
+            log.warning(
+                "artifact chunk read failed",
+                extra={"extra_fields": {"artifact_id": msg.artifact_id}},
+            )
+            return fail("read_failed")
+        return ArtifactChunk(
             session_id=msg.session_id,
-            artifact_id=entry.artifact_id,
-            title=entry.title,
-            mime=entry.mime,
-            path=entry.path,
+            artifact_id=msg.artifact_id,
+            offset=msg.offset,
+            size=size,
+            sha256=record.sha256 or "",
+            data_b64=base64.b64encode(data).decode("ascii"),
+            eof=msg.offset + len(data) >= size,
         ).model_dump_json()
 
     async def _handle_parse_job(self, msg: ParseJob) -> str:

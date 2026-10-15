@@ -409,6 +409,8 @@ drop a different prefix than `from_seq`. Zero is a load error, not
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `log_max_events` | int ≥ 1 | `10000` | Maximum events kept in `events.jsonl`. Oldest drop first. Attach from a rotated seq gets `log_trimmed` and replays from the earliest kept seq. |
+| `send_file_max_bytes` | int 1..2147483648 | `536870912` | Largest file `send_file` copies into the chat (512 MiB). Bigger is refused with `file_too_large`; nothing is copied. |
+| `send_file_session_max_bytes` | int ≥ 1 | `4294967296` | Total of sent files one session may hold (4 GiB). Past it, `session_quota`. |
 
 ### `provider_retry`
 
@@ -651,6 +653,8 @@ steering:
   claude_global_fallback: false
 session:
   log_max_events: 10000
+  send_file_max_bytes: 536870912
+  send_file_session_max_bytes: 4294967296
 provider_retry:
   max_retries: 3
   initial_delay: 1.0

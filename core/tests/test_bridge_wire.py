@@ -317,3 +317,23 @@ def test_merge_keeps_own_rows_first_and_unreachable_rows() -> None:
     ]
     merged[0]["session_id"] = "changed"
     assert own[0]["session_id"] == "s0"
+
+
+def test_artifact_chunk_passes_with_bridged_id() -> None:
+    """TD-5143: the chunk verb goes up with the plain id; the bytes come back as sent."""
+    aid = "0" * 32
+    up = {"type": "read_artifact_chunk", "session_id": bridged_id("s1", MCH)}
+    up |= {"artifact_id": aid, "offset": 0, "length": 524288}
+    assert rewrite_to_remote(up) == (MCH, {**up, "session_id": "s1"})
+    # Base64 that spells an AWS key id by chance: the hub's re-scrub keeps it.
+    data = "QUtJQUFBQUFBQUFBQUFBQUFBQUFB" + "AKIAABCDEFGHIJKLMNOP" + "aGk="
+    down = {"type": "artifact_chunk", "seq": 1, "session_id": "s1", "artifact_id": aid}
+    down |= {"offset": 0, "size": 2, "sha256": "a" * 64, "data_b64": data, "eof": True}
+    down |= {"error_code": None}
+    out = rewrite_from_remote(down, MCH, "ezer")
+    assert out is not None
+    assert out["session_id"] == bridged_id("s1", MCH)
+    assert out["artifact_id"] == aid
+    relayed = json.loads(protocol.scrub_wire_json(json.dumps(out)))
+    assert relayed["data_b64"] == data
+    assert relayed["session_id"] == bridged_id("s1", MCH)

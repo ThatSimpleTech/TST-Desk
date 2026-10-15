@@ -505,9 +505,15 @@ class SessionConfig(BaseModel):
     Count of events, not bytes: attach is ``from_seq``, and a byte cap
     would drop a different prefix than the seq cursor. Zero and omitted
     must not mean unbounded — the default is ``DEFAULT_LOG_MAX_EVENTS``.
+
+    ``send_file_max_bytes`` and ``send_file_session_max_bytes`` cap the
+    copies ``send_file`` keeps (TD-5143): per file, and per session in all.
+    The 2 GiB per-file ceiling matches both receivers' caps.
     """
 
     log_max_events: int = Field(default=DEFAULT_LOG_MAX_EVENTS, ge=1)
+    send_file_max_bytes: int = Field(default=536_870_912, ge=1, le=2_147_483_648)
+    send_file_session_max_bytes: int = Field(default=4_294_967_296, ge=1)
 
 
 class EmbeddingsConfig(BaseModel):
