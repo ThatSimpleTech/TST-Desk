@@ -693,6 +693,16 @@ export interface OpenArtifact extends ClientMessage {
   artifact_id: string;
 }
 
+/** Read part of a file the agent sent (TD-5143), by id only. Answered with
+ *  artifact_chunk. artifact_id is 32 lowercase hex; length is 1..524288. */
+export interface ReadArtifactChunk extends ClientMessage {
+  type: "read_artifact_chunk";
+  session_id: string;
+  artifact_id: string;
+  offset: number;
+  length?: number;
+}
+
 /** Ask the session browser what is at a CSS-pixel point (TD-3403). */
 export interface DesignHitTest extends ClientMessage {
   type: "design_hit_test";
@@ -923,6 +933,7 @@ export type ClientMessageUnion =
   | ExportUsage
   | ListArtifacts
   | OpenArtifact
+  | ReadArtifactChunk
   | DesignHitTest
   | CheckCuPermissions
   | ResetCuPermissions
@@ -1630,15 +1641,25 @@ export interface LogTrimmed extends DaemonEvent {
   earliest_seq: number;
 }
 
-/** One artifact on artifact_list (TD-3201). Path, not bytes. */
+/** One artifact on artifact_list (TD-3201). Path, not bytes.
+ *  kind "sent_file" (TD-5143) is a copy the agent sent: it always carries
+ *  name, size, sha256 and tool_call_id, and its path is the folder
+ *  artifacts/<id>, never opened. A daemon before TD-5143 omits kind. */
 export interface ArtifactEntry {
   artifact_id: string;
   title: string;
   mime: string;
   path: string;
+  kind?: "artifact" | "sent_file";
+  name?: string | null;
+  size?: number | null;
+  sha256?: string | null;
+  caption?: string | null;
+  tool_call_id?: string | null;
 }
 
-/** An artifact was recorded for this session (TD-3201). */
+/** An artifact was recorded for this session (TD-3201). The optional
+ *  fields are the sent_file ones on ArtifactEntry (TD-5143). */
 export interface ArtifactReady extends DaemonEvent {
   type: "artifact_ready";
   session_id: string;
@@ -1646,6 +1667,12 @@ export interface ArtifactReady extends DaemonEvent {
   title: string;
   mime: string;
   path: string;
+  kind?: "artifact" | "sent_file";
+  name?: string | null;
+  size?: number | null;
+  sha256?: string | null;
+  caption?: string | null;
+  tool_call_id?: string | null;
 }
 
 /** Response to list_artifacts (TD-3201). Connection-scoped. */
@@ -1655,7 +1682,8 @@ export interface ArtifactList extends DaemonEvent {
   artifacts: ArtifactEntry[];
 }
 
-/** Response to open_artifact (TD-3201): metadata and path, not bytes. */
+/** Response to open_artifact (TD-3201): metadata and path, not bytes.
+ *  The optional fields are the sent_file ones on ArtifactEntry (TD-5143). */
 export interface Artifact extends DaemonEvent {
   type: "artifact";
   session_id: string;
@@ -1663,6 +1691,27 @@ export interface Artifact extends DaemonEvent {
   title: string;
   mime: string;
   path: string;
+  kind?: "artifact" | "sent_file";
+  name?: string | null;
+  size?: number | null;
+  sha256?: string | null;
+  caption?: string | null;
+  tool_call_id?: string | null;
+}
+
+/** Bytes for read_artifact_chunk (TD-5143). Connection-scoped: seq is fixed
+ *  at 1 and never logged. error_code set means empty data; offset == size
+ *  answers eof with no data. */
+export interface ArtifactChunk extends DaemonEvent {
+  type: "artifact_chunk";
+  session_id: string;
+  artifact_id: string;
+  offset: number;
+  size: number;
+  sha256: string;
+  data_b64: string;
+  eof: boolean;
+  error_code: string | null;
 }
 
 export interface Error extends DaemonEvent {
@@ -1673,6 +1722,9 @@ export interface Error extends DaemonEvent {
   /** TD-5015: set when another computer sent this error with no session id;
    *  `message` then starts "On <name>: ". Local-only stores ignore these. */
   machine?: string | null;
+  /** TD-5144: the client message type this error answers, when the sender
+   *  knows it (a hub refusing a forwarded verb). Absent from older daemons. */
+  in_reply_to?: string | null;
 }
 
 /** A browser screenshot written to the session dir (TD-1710). Path, not bytes. */
@@ -2042,6 +2094,7 @@ export type DaemonEventUnion =
   | ArtifactReady
   | ArtifactList
   | Artifact
+  | ArtifactChunk
   | Error
   | ScreenFrame
   | CuKillState

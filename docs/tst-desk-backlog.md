@@ -9093,6 +9093,38 @@ The sideload APK is `android/app/build/outputs/apk/release/app-release.apk`
 
 ---
 
+### TD-5026 — The phone's paperclip opens a file picker
+**Size:** 2 · **Depends on:** TD-5001, TD-1709
+
+The composer's `<input type=file>` is inert on Android WebView. A tap fires
+`input.click()` into nothing: the host must implement
+`WebChromeClient.onShowFileChooser` and hand the chosen URIs back through its
+callback, or `onchange` never fires and no attachment is ever staged. Desktop
+works because the desktop browsers (and Tauri) implement that callback; the
+WebView shell did not.
+
+**Acceptance criteria:**
+- [x] The shell `WebView` has a `WebChromeClient` that overrides
+      `onShowFileChooser` and launches the system document picker
+- [ ] Tapping the paperclip on a device opens the picker; a chosen text file
+      (or image, when the tier accepts images) is base64'd through the same
+      composer gate (`attachments.ts`) and staged as a draft
+- [x] `multiple` is honoured; the MIME list defaults to `*/*` so the picker
+      shows everything the daemon can take, not only images
+- [x] A cancel returns null so the input can fire again; a second tap while a
+      picker is open resolves the earlier callback rather than leaving it
+      dangling
+- [x] Returned URIs keep only `content://` and `file://` schemes; junk entries
+      are dropped
+- [x] `:app:testDebugUnitTest` green
+
+Done (2026-10-14): `MainActivity` gains a `WebChromeClient` + the pure
+chooser helpers in `FileChooser.kt`; the chosen URIs are delivered via
+`onActivityResult`. Device AC is open — no emulator/ADB on this machine, so
+on-device picker behaviour is unverified. Device test needed before close.
+
+---
+
 # Epic E51 — Interactive progress guard
 
 Filed 2026-10-03. Interactive turns with skip-all were running until
@@ -9136,3 +9168,80 @@ The composer stop control sent `cancel`, and `cancel` marks the session
       cancelled
 - [x] `cancel` still ends the session
 - [x] A stopped turn does not raise a failure notice
+
+### TD-5146 — The work check and memory distill stream, think less, and don't resend a timeout
+**Size:** 3 · **Depends on:** TD-4204, TD-2301, TD-5008
+
+A 25-33k token after-write review on ezer-forge ran with default thinking,
+timed out at 120 s, and was resent eight times. Each abandoned attempt
+kept generating behind LiteLLM. The session was busy for about 20
+minutes (2026-10-14).
+
+**Acceptance criteria:**
+- [x] The after-write review and memory distill go over the streaming
+      wire and are collected into one response
+- [x] Both send their tier's `extra_body`
+- [x] A timed-out attempt is returned, not resent; a 429 or 5xx still
+      retries
+- [x] A stream that ends without a finish reason is an error, never a
+      verdict
+- [x] Ending the session, or quitting during a distill, closes the
+      stream (Stop does not reach the review; follow-up)
+- [x] The turn's own retry policy is unchanged
+- [x] Tests fail on the old code (nine attempts, no `stream`) and pass
+      on the new
+
+---
+
+# Epic E52 — Files to the user
+
+Filed 2026-10-15. The agent built an APK for Adam and had no way to hand it over in the chat.
+
+---
+
+### TD-5143 — The agent sends files to the chat
+**Size:** 5 · **Depends on:** TD-3201, TD-3202, TD-5014, TD-5015
+
+**Acceptance criteria:**
+- [ ] `send_file(files[1..10], caption?)` copies workspace files into the session's data dir as
+      `kind: "sent_file"` artifacts (name, size, sha256, caption, tool call id); all or nothing
+- [ ] List-valued path fields are guarded element by element in dispatch and in policy
+- [ ] Class A with no approval card; outside paths are a Class C boundary refusal
+- [ ] Bytes never reach a log, the event log or the audit DB
+- [ ] `artifact_ready` replays after a restart; deleting the session deletes the copies
+- [ ] `read_artifact_chunk` returns ≤512 KiB of a sent file by id and offset and nothing else;
+      it is forwarded for bridged ids; `data_b64` is the one field exempt from the wire scrub
+- [ ] `session.send_file_max_bytes` (512 MiB) and `send_file_session_max_bytes` (4 GiB) cap sends
+- [ ] Older UIs show the tool result text and keep working
+
+**Follow-ups (not in this release):**
+- Sessions on the external ACP engine keep the old working directory after a move to another project.
+- TD-3201 artifact records saved with workspace-relative paths resolve against the new project after a move.
+
+### TD-5144 — File cards on the desktop
+**Size:** 5 · **Depends on:** TD-5143
+
+**Acceptance criteria:**
+- [ ] A sent file shows as a card under its tool call and in the Artifacts pane: name, size, kind, caption
+- [ ] On the computer that has it: Open (allowlisted kinds only, enforced in the shell too), Show in folder, Save a copy…
+- [ ] For another computer's session: Download (pause, resume, sha256), saved to Downloads, then Open / Show in folder
+- [ ] `artifact_list` and `artifact` are no longer dropped after attach
+- [ ] An old hub, an unreachable computer or a deleted file shows one plain line, never a crash
+- [ ] A download claims only errors that answer `read_artifact_chunk` (`Error.in_reply_to`), or, from an older hub, errors while its chunk requests are outstanding
+
+**Follow-ups (not in this release):**
+- Request ids on `read_artifact_chunk` and its replies. Without them, a reply more than about 80 s
+  late can land on a resumed window that asked for the same offset.
+- macOS free space counts purgeable APFS space as used, so the room check can refuse too early.
+
+### TD-5145 — Download, open and install a sent file on the phone (0.1.10)
+**Size:** 5 · **Depends on:** TD-5143, TD-5144
+
+**Acceptance criteria:**
+- [ ] One tap downloads over the paired connection, shows progress and time left, pauses and resumes, verifies sha256
+- [ ] Open hands the file to another app through a private read-only provider; an APK opens Android's installer
+- [ ] Save to Downloads puts it in Download/TST Desk (Android 10+)
+- [ ] A signing-key or downgrade conflict is named before the installer opens
+- [ ] The file bridge refuses calls without the page key
+- [ ] versionCode 11 / 0.1.10, installs over 0.1.9 with the same keystore
+- [ ] Live: the agent on EZER sends an APK and the Pixel's installer opens

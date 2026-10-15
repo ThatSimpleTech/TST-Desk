@@ -220,6 +220,30 @@ describe("helpers", () => {
     expect(formatBytes(2_500_000)).toBe("2.5 MB");
   });
 
+  it("rounds an exact tie to even, as the daemon's f'{x:.1f}' does", () => {
+    // Printed by core/tstd/attachments.py format_bytes. Only an exact x.25
+    // differs from toFixed (which rounds it up); x.75 goes up both ways, and
+    // a near tie like 2.45 or 1.35 rounds by its binary value both ways.
+    const daemon: [number, string][] = [
+      [999, "999 bytes"],
+      [1000, "1.0 KB"],
+      [1250, "1.2 KB"],
+      [2250, "2.2 KB"],
+      [999_250, "999.2 KB"],
+      [1750, "1.8 KB"],
+      [1350, "1.4 KB"],
+      [2450, "2.5 KB"],
+      [999_950, "1000.0 KB"],
+      [1_250_000, "1.2 MB"],
+      [46_250_000, "46.2 MB"],
+      [46_750_000, "46.8 MB"],
+      [46_200_000, "46.2 MB"],
+      [2_450_000, "2.5 MB"],
+      [536_870_912, "536.9 MB"],
+    ];
+    expect(daemon.map(([count]) => [count, formatBytes(count)])).toEqual(daemon);
+  });
+
   it("adds staged bytes", () => {
     expect(totalBytes([draft("a", 3), draft("b", 4)])).toBe(7);
     expect(totalBytes([])).toBe(0);

@@ -65,6 +65,7 @@ export const BRIDGED_VERBS: ReadonlySet<string> = new Set([
   "memory_accept",
   "memory_edit",
   "memory_reject",
+  "read_artifact_chunk", // TD-5143: download a sent file from another computer
 ]);
 
 /** True when `msg` names a bridged session with a verb the hub won't forward.

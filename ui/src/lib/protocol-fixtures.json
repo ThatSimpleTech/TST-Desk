@@ -474,6 +474,13 @@
     "session_id": "sess-1",
     "artifact_id": "art-1"
   },
+  "read_artifact_chunk": {
+    "type": "read_artifact_chunk",
+    "session_id": "sess-1",
+    "artifact_id": "00000000000000000000000000000000",
+    "offset": 0,
+    "length": 524288
+  },
   "design_hit_test": {
     "type": "design_hit_test",
     "session_id": "sess-1",
@@ -831,7 +838,8 @@
     "session_id": null,
     "code": "test",
     "message": "fail",
-    "machine": null
+    "machine": null,
+    "in_reply_to": null
   },
   "error_with_session": {
     "type": "error",
@@ -839,7 +847,8 @@
     "session_id": "sess-1",
     "code": "test",
     "message": "fail",
-    "machine": null
+    "machine": null,
+    "in_reply_to": null
   },
   "shell_output": {
     "type": "shell_output",
@@ -1348,10 +1357,16 @@
     "type": "artifact_ready",
     "seq": 22,
     "session_id": "sess-1",
-    "artifact_id": "art-1",
-    "title": "Notes",
-    "mime": "text/markdown",
-    "path": "notes.md"
+    "artifact_id": "00000000000000000000000000000000",
+    "title": "app-release.apk",
+    "mime": "application/vnd.android.package-archive",
+    "path": "artifacts/00000000000000000000000000000000",
+    "kind": "sent_file",
+    "name": "app-release.apk",
+    "size": 2,
+    "sha256": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+    "caption": "0.1.9 release build",
+    "tool_call_id": "call_abc"
   },
   "artifact_list": {
     "type": "artifact_list",
@@ -1362,7 +1377,25 @@
         "artifact_id": "art-1",
         "title": "Notes",
         "mime": "text/markdown",
-        "path": "notes.md"
+        "path": "notes.md",
+        "kind": "artifact",
+        "name": null,
+        "size": null,
+        "sha256": null,
+        "caption": null,
+        "tool_call_id": null
+      },
+      {
+        "artifact_id": "00000000000000000000000000000000",
+        "title": "app-release.apk",
+        "mime": "application/vnd.android.package-archive",
+        "path": "artifacts/00000000000000000000000000000000",
+        "kind": "sent_file",
+        "name": "app-release.apk",
+        "size": 2,
+        "sha256": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+        "caption": "0.1.9 release build",
+        "tool_call_id": "call_abc"
       }
     ]
   },
@@ -1373,7 +1406,25 @@
     "artifact_id": "art-1",
     "title": "Notes",
     "mime": "text/markdown",
-    "path": "notes.md"
+    "path": "notes.md",
+    "kind": "artifact",
+    "name": null,
+    "size": null,
+    "sha256": null,
+    "caption": null,
+    "tool_call_id": null
+  },
+  "artifact_chunk": {
+    "type": "artifact_chunk",
+    "seq": 1,
+    "session_id": "sess-1",
+    "artifact_id": "00000000000000000000000000000000",
+    "offset": 0,
+    "size": 2,
+    "sha256": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+    "data_b64": "aGk=",
+    "eof": true,
+    "error_code": null
   },
   "screen_frame": {
     "type": "screen_frame",
@@ -1806,6 +1857,7 @@
     "memory_edit",
     "memory_reject",
     "new_session",
+    "read_artifact_chunk",
     "rename_session",
     "resume",
     "run_verify",

@@ -117,32 +117,43 @@ describe("tool folds (TD-1902)", () => {
   const failed = { toolCallId: "tc-1", name: "fs_read", status: "error" as const };
 
   it("is open while the call has no result", () => {
-    expect(isToolLive(live)).toBe(true);
-    expect(isToolExpanded("m1", live)).toBe(true);
+    expect(isToolLive(live, false)).toBe(true);
+    expect(isToolExpanded("m1", live, false)).toBe(true);
   });
 
   it("closes on its own once the result arrives", () => {
-    expect(isToolLive(done)).toBe(false);
-    expect(isToolExpanded("m1", done)).toBe(false);
+    expect(isToolLive(done, false)).toBe(false);
+    expect(isToolExpanded("m1", done, false)).toBe(false);
   });
 
   it("keeps an explicit toggle after the result lands", () => {
-    toggleTool("m1", live);
-    expect(isToolExpanded("m1", live)).toBe(false);
-    expect(isToolExpanded("m1", done)).toBe(false);
+    toggleTool("m1", live, false);
+    expect(isToolExpanded("m1", live, false)).toBe(false);
+    expect(isToolExpanded("m1", done, false)).toBe(false);
   });
 
   it("is per block, not per message", () => {
-    toggleTool("m1", done);
-    expect(isToolExpanded("m1", done)).toBe(true);
-    expect(isToolExpanded("m1", { toolCallId: "tc-2", name: "fs_write", status: "success" })).toBe(
+    toggleTool("m1", done, false);
+    expect(isToolExpanded("m1", done, false)).toBe(true);
+    expect(isToolExpanded("m1", { toolCallId: "tc-2", name: "fs_write", status: "success" }, false)).toBe(
       false,
     );
   });
 
   it("survives the row being destroyed and rebuilt", () => {
-    toggleTool("m1", done);
-    expect(isToolExpanded("m1", done)).toBe(true);
+    toggleTool("m1", done, false);
+    expect(isToolExpanded("m1", done, false)).toBe(true);
+  });
+
+  it("is never live on a finished row, even with no result", () => {
+    // A restart that cuts the call seals the turn without a tool_result.
+    expect(isToolLive(live, true)).toBe(false);
+    expect(isToolExpanded("m1", live, true)).toBe(false);
+  });
+
+  it("opens a cut call on the first toggle", () => {
+    expect(toggleTool("m1", live, true)).toBe(true);
+    expect(isToolExpanded("m1", live, true)).toBe(true);
   });
 
   it("labels a failure distinctly", () => {

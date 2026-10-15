@@ -282,6 +282,9 @@ class Session:
         # activate only once a matching file is in play.
         self.touched_paths: set[str] = set()
         self._workspace_root: Path | None = None  # resolved lazily by record_touched
+        # Set by the loop (TD-1715): rebinds what it built from the old root
+        # (dispatcher, assembler, import approvals) after a live move.
+        self.on_workspace_moved: Callable[[], None] | None = None
         # Turns owed to the user (TD-1715): raised when a message is queued,
         # lowered when the loop reports that turn finished. `session_state`
         # cannot answer "is a turn in flight" — "running" means the loop is

@@ -4693,6 +4693,7 @@ dependencies = [
  "base64 0.22.1",
  "dirs",
  "futures-util",
+ "libc",
  "log",
  "mac-notification-sys",
  "notify-rust",
@@ -4700,6 +4701,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yml",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
@@ -4712,6 +4714,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "which",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 
 import pytest
 
-from tstd.provider import ChatCompletionRequest
+from tstd.provider import ChatCompletionRequest, ProviderError, StreamChunk, complete_streamed
 from tstd.shutdown_phases import (
     ProviderFlight,
     ShutdownPhases,
@@ -163,13 +164,21 @@ async def test_reap_cancels_a_provider_call_that_does_not_finish(
     flight = ProviderFlight()
     request = ChatCompletionRequest(model="test-worker", messages=[])
 
+    closed = asyncio.Event()
+
     class _Hang:
-        async def chat_completion(self, request: ChatCompletionRequest) -> None:
+        async def chat_completion_stream(
+            self, request: ChatCompletionRequest
+        ) -> AsyncIterator[StreamChunk | ProviderError]:
             del request
-            await asyncio.Event().wait()
+            try:
+                await asyncio.Event().wait()
+                yield ProviderError(code="unused", message="unused", retryable=False)
+            finally:
+                closed.set()
 
     async def distill() -> None:
-        await SignalingProvider(_Hang(), flight).chat_completion(request)  # type: ignore[arg-type]
+        await complete_streamed(SignalingProvider(_Hang(), flight), request)
 
     task = asyncio.create_task(distill())
     await asyncio.sleep(0)
@@ -181,3 +190,5 @@ async def test_reap_cancels_a_provider_call_that_does_not_finish(
         record.getMessage() == "distill skipped; provider call still in flight"
         for record in caplog.records
     )
+    # The stream itself was closed, which is what hangs up on the server.
+    assert closed.is_set()

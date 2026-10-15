@@ -179,6 +179,12 @@ directives in [`AGENTS.md`](AGENTS.md) §2 and enforced in code.
   chat, and local-first means your OS user account is the boundary. There is no knob that turns
   the file off or moves it on its own — start the daemon with a different `--data-dir` to
   relocate it with the rest of the data directory, or delete the session to delete its copy.
+- **Files the agent sends are kept with the session.** `send_file` keeps a copy of each file
+  under `<user data dir>/sessions/<session id>/artifacts/`, owner-only, until you delete the
+  session, so a card opens the bytes that were sent even after a rebuild overwrites the
+  original. The copy is your file verbatim; it is not redacted, and it never goes to a log or
+  the audit database. Limits: 512 MiB per file and 4 GiB per session
+  (`session.send_file_max_bytes`, `session.send_file_session_max_bytes`).
 - **The agent cannot rewrite its own rules.** `AGENTS.md`, `CLAUDE.md` and `.tst/rules/**` are
   refused by the filesystem tool itself ([`tools/boundary.py`](core/tstd/tools/boundary.py)),
   ahead of the workspace check and ahead of any approval — so no `writable_paths` grant can open
@@ -229,7 +235,9 @@ append-only audit log, agent memory that rides the brain prompt and accepts dist
 updates, sessions that revive from disk after a restart or a closed window (close vs quit
 below), headless runs via `tst run`, computer-use — a screenshot and clicks through the
 same classifier, behind a kill switch — on macOS, Windows, and Linux X11 via `tst-cu-mcp` (browser
-path on any OS), remote attach over Tailscale (never `0.0.0.0`) with Slack/ntfy notify
+path on any OS), the agent sends files to the chat (`send_file`) as cards you can open, save,
+or download to the paired phone, where an APK opens the installer, remote attach over
+Tailscale (never `0.0.0.0`) with Slack/ntfy notify
 and the scheduler rail, the `vllm` preset and UI-TARS grounding for local pixel loops,
 a validating `CHARTER.md` schema and the project-home charter editor, the
 autonomy engine (unattended runner, circuit breakers, hard-required container),

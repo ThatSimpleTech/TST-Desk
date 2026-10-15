@@ -10,11 +10,15 @@
 	// are keyboard-reachable with visible focus.
 	//
 	// A user row that carried attachments shows them as chips (TD-1709).
+	//
+	// A send_file call's cards sit right after its fold, outside it, so they
+	// stay when the fold collapses (TD-5144).
 	import type { ChatMessage } from "../../chat-store";
 	import { forkFrom, setBranch } from "../../chat-store.svelte.js";
 	import { hasReasoning } from "../../reasoning-disclosure.svelte.js";
 	import Icon from "../Icon.svelte";
 	import AttachmentChips from "./AttachmentChips.svelte";
+	import FileCards from "./FileCards.svelte";
 	import Markdown from "./Markdown.svelte";
 	import ReasoningBlock from "./ReasoningBlock.svelte";
 	import ToolFold from "./ToolFold.svelte";
@@ -113,7 +117,8 @@
 				     after it instead of above the whole answer. -->
 				{#each parts as part, i (i)}
 					{#if part.kind === "tool"}
-						<ToolFold messageId={message.id} block={part.tool} />
+						<ToolFold messageId={message.id} block={part.tool} complete={message.complete} />
+						{#if part.tool.name === "send_file"}<FileCards block={part.tool} live={!message.complete} />{/if}
 					{:else if part.text !== ""}
 						<Markdown text={part.text} live={!message.complete && i === lastTextIndex} />
 						<!-- The caret marks the answer being written. Over an
@@ -130,7 +135,8 @@
 			{:else}
 				{#if message.tools}
 					{#each message.tools as block (block.toolCallId)}
-						<ToolFold messageId={message.id} {block} />
+						<ToolFold messageId={message.id} {block} complete={message.complete} />
+						{#if block.name === "send_file"}<FileCards {block} live={!message.complete} />{/if}
 					{/each}
 				{/if}
 				<Markdown text={message.text} live={!message.complete} />

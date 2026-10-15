@@ -34,7 +34,7 @@ from ..protocol import DecisionLogged as DecisionLoggedEvent
 from .boundary import PathGuard, RefusalError
 from .desktop import peel_screenshot_png
 from .diff import render_diff, snapshot_text
-from .registry import Tool, ToolRegistry
+from .registry import Tool, ToolRegistry, path_values
 from .results import (
     DEFAULT_MAX_RESULT_CHARS,
     HandlerRefusal,
@@ -113,7 +113,9 @@ def build_decision_request(tool: Tool, arguments: dict[str, Any]) -> DecisionReq
     tool declared path/host metadata (TD-4402) do too — never inferred
     from JSON schema property names.
     """
-    paths = tuple(Path(arguments[f]) for f in tool.path_fields if isinstance(arguments.get(f), str))
+    # Every element of a list path field is a read or write (TD-5143). A
+    # malformed value contributes nothing here; the guard refuses the call.
+    paths = tuple(Path(v) for f in tool.path_fields for v in (path_values(arguments, f) or ()))
     hosts: set[str] = set()
     for f in tool.host_fields:
         raw = arguments.get(f)
@@ -141,6 +143,34 @@ def build_decision_request(tool: Tool, arguments: dict[str, Any]) -> DecisionReq
         provenance=tool.provenance,
         has_path_host_metadata=bool(tool.path_fields or tool.host_fields or tool.host_resolver),
     )
+
+
+def _check_path_field(
+    guard: PathGuard,
+    tool: Tool,
+    field: str,
+    arguments: dict[str, Any],
+    canonical_writes: dict[str, Path],
+) -> None:
+    """Run the wall over every path one field carries (TD-602, TD-5143).
+
+    Absent is fine. A value that is neither a path nor a list of paths is
+    refused, and so is a list on a mutating tool: write targets are
+    checkpointed and diffed one per field. One escaping element refuses
+    the whole call.
+    """
+    values = path_values(arguments, field)
+    if values is None:
+        raise RefusalError(
+            "malformed_path_field", Path(field), f"{field} must be a path or a list of paths"
+        )
+    if tool.mutates and isinstance(arguments.get(field), list):
+        raise RefusalError("list_write_path", Path(field), "write tools take one path per field")
+    for value in values:
+        if tool.mutates:
+            canonical_writes[field] = guard.check_write(value)
+        else:
+            guard.check_read(value)
 
 
 # ── Tool dispatcher ─────────────────────────────────────────────────────
@@ -306,8 +336,11 @@ class ToolDispatcher:
         if tool.path_fields and self.path_guard is not None:
             for field in tool.path_fields:
                 raw = arguments.get(field)
+                values = path_values(arguments, field)
                 if isinstance(raw, str):
                     arguments[field] = str(self.path_guard.canonicalize(raw))
+                elif isinstance(raw, list) and values is not None:
+                    arguments[field] = [str(self.path_guard.canonicalize(v)) for v in values]
         request = build_decision_request(tool, arguments)
         classification = await self.classifier.classify(request)
         decision_class = classification.decision_class
@@ -325,13 +358,7 @@ class ToolDispatcher:
                 )
             try:
                 for field in tool.path_fields:
-                    raw = arguments.get(field)
-                    if not isinstance(raw, str):
-                        continue  # absent/optional path field
-                    if tool.mutates:
-                        canonical_writes[field] = self.path_guard.check_write(raw)
-                    else:
-                        self.path_guard.check_read(raw)
+                    _check_path_field(self.path_guard, tool, field, arguments, canonical_writes)
             except RefusalError as e:
                 log.warning(
                     "boundary refusal",
@@ -501,9 +528,7 @@ class ToolDispatcher:
         if session is not None and tool.path_fields:
             record = getattr(session, "record_touched", None)
             if record is not None:
-                touched = [
-                    arguments[f] for f in tool.path_fields if isinstance(arguments.get(f), str)
-                ]
+                touched = [v for f in tool.path_fields for v in (path_values(arguments, f) or ())]
                 record(touched)
 
         # 3.2.2 Actuation verification (TD-709, dev).  A refuted actuation

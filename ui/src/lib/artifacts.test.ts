@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ArtifactEntry, ClientMessageUnion, DaemonEventUnion } from "./protocol";
+import fixtures from "./protocol-fixtures.json";
 import {
 	HTML_PREVIEW_CSP,
 	HTML_PREVIEW_SANDBOX,
@@ -8,6 +9,7 @@ import {
 	artifactsEmptyCopy,
 	copyArtifactSource,
 	htmlPreviewSrcdoc,
+	isSentFile,
 	isWorkspaceArtifact,
 	joinUnderRoot,
 	openArtifactInEditor,
@@ -311,5 +313,47 @@ describe("open preview", () => {
 		});
 		await flush();
 		expect(artifacts.preview).toBeNull();
+	});
+});
+
+describe("sent files (TD-5144)", () => {
+	const LIST = fixtures.artifact_list as Extract<DaemonEventUnion, { type: "artifact_list" }>;
+	const [plain, sent] = LIST.artifacts;
+
+	it("recognises a sent_file entry and nothing else", () => {
+		expect(isSentFile(sent)).toBe(true);
+		expect(isSentFile(plain)).toBe(false);
+		expect(isSentFile({})).toBe(false);
+	});
+
+	it("is never a workspace file, whatever its path says", () => {
+		expect(isWorkspaceArtifact(sent.path, sent.artifact_id, sent.kind)).toBe(false);
+		expect(isWorkspaceArtifact("out/app-release.apk", sent.artifact_id, "sent_file")).toBe(false);
+		expect(workspaceOpenPath("/ws", "out/app-release.apk", sent.artifact_id, "sent_file")).toBeNull();
+		expect(isWorkspaceArtifact(plain.path, plain.artifact_id, plain.kind)).toBe(true);
+	});
+
+	it("keeps the sent file's fields in the list and never sends open_artifact for it", () => {
+		bindArtifacts("sess-1", "/ws");
+		emit({ ...LIST, session_id: "sess-1" });
+		const row = artifacts.items.find((r) => r.artifact_id === sent.artifact_id);
+		expect(row).toMatchObject({ kind: "sent_file", name: "app-release.apk", size: 2, sha256: sent.sha256 });
+		mocks.sent.length = 0;
+		expect(selectArtifact(sent.artifact_id)).toBe(false);
+		expect(mocks.sent).toEqual([]);
+		expect(selectArtifact(plain.artifact_id)).toBe(true);
+		expect(mocks.sent).toEqual([{ type: "open_artifact", session_id: "sess-1", artifact_id: plain.artifact_id }]);
+	});
+
+	it("keeps a live artifact_ready's sent-file fields too", () => {
+		bindArtifacts("sess-1", "/ws");
+		emit(fixtures.artifact_ready as DaemonEventUnion);
+		expect(artifacts.items[0]).toMatchObject({
+			kind: "sent_file",
+			name: "app-release.apk",
+			caption: "0.1.9 release build",
+			tool_call_id: "call_abc",
+		});
+		expect(selectArtifact(artifacts.items[0].artifact_id)).toBe(false);
 	});
 });

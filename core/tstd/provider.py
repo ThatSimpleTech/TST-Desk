@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 import httpx
 from httpx_sse import aconnect_sse
@@ -263,6 +263,10 @@ class ChatCompletionRequest:
     top_p: float | None = None
     stop: list[str] | None = None
     extra_body: dict[str, Any] | None = None
+    # Not sent. False returns a timed-out attempt instead of resending it
+    # (TD-5146): an off-turn call that already waited a full read timeout
+    # holds the session busy for another one on every retry.
+    retry_on_timeout: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to the OpenAI-compatible JSON request body."""
@@ -528,9 +532,32 @@ def retry_delay(attempt: int, config: RetryConfig, retry_after: float | None = N
     return base * (1 + config.jitter_factor * random.random())
 
 
+def _should_retry(
+    error: ProviderError,
+    attempts: int,
+    config: RetryConfig,
+    retry_if: Callable[[ProviderError], bool] | None,
+) -> bool:
+    if not error.retryable or attempts >= config.max_retries:
+        return False
+    return retry_if is None or retry_if(error)
+
+
+def _retry_filter(request: ChatCompletionRequest) -> Callable[[ProviderError], bool] | None:
+    """The request's narrower retry test, or ``None`` for the full policy."""
+    if request.retry_on_timeout:
+        return None
+    return _not_a_timeout
+
+
+def _not_a_timeout(error: ProviderError) -> bool:
+    return error.code != "timeout"
+
+
 async def retry_call(
     call: Callable[[], Awaitable[ChatCompletionResponse | ProviderError]],
     config: RetryConfig,
+    retry_if: Callable[[ProviderError], bool] | None = None,
 ) -> ChatCompletionResponse | ProviderError:
     """Call *call* and retry retryable errors with exponential backoff + jitter.
 
@@ -544,6 +571,9 @@ async def retry_call(
         Async callable that returns a response or a typed error.
     config:
         Retry policy.
+    retry_if:
+        Optional narrower test. A retryable error it rejects is returned
+        as-is (TD-5146: a timed-out off-turn call is not resent).
 
     Returns
     -------
@@ -557,7 +587,7 @@ async def retry_call(
             return result
 
         # ProviderError
-        if not result.retryable or attempts >= config.max_retries:
+        if not _should_retry(result, attempts, config, retry_if):
             return result
 
         attempts += 1
@@ -580,6 +610,7 @@ async def retry_call(
 async def retry_stream(
     open_stream: Callable[[], AsyncIterator[StreamChunk | ProviderError]],
     config: RetryConfig,
+    retry_if: Callable[[ProviderError], bool] | None = None,
 ) -> AsyncIterator[StreamChunk | ProviderError]:
     """Open a stream, retrying retryable errors on the **first** item only.
 
@@ -593,6 +624,8 @@ async def retry_stream(
         Factory that returns an async iterator of stream chunks or errors.
     config:
         Retry policy.
+    retry_if:
+        Optional narrower test, as for :func:`retry_call`.
 
     Yields
     ------
@@ -606,7 +639,7 @@ async def retry_stream(
         except StopAsyncIteration:
             return
 
-        if isinstance(first, ProviderError) and first.retryable and attempts < config.max_retries:
+        if isinstance(first, ProviderError) and _should_retry(first, attempts, config, retry_if):
             attempts += 1
             delay = retry_delay(attempts, config, first.retry_after)
             log.warning(
@@ -628,6 +661,111 @@ async def retry_stream(
         async for item in stream:
             yield item
         return
+
+
+class StreamingClient(Protocol):
+    """The streaming half of the provider surface."""
+
+    def chat_completion_stream(
+        self, request: ChatCompletionRequest
+    ) -> AsyncIterator[StreamChunk | ProviderError]: ...
+
+
+async def complete_streamed(
+    provider: StreamingClient,
+    request: ChatCompletionRequest,
+) -> ChatCompletionResponse | ProviderError:
+    """One completion over the streaming wire, folded into a response (TD-5146).
+
+    For calls that want one answer rather than deltas: the work check and
+    memory distill. A non-streamed request whose client hangs up keeps
+    generating behind LiteLLM and holds a server slot; a streamed one is
+    cancelled upstream within about a second. Streaming also makes the
+    read timeout a gap between chunks instead of a cap on the whole answer.
+    """
+    stream = provider.chat_completion_stream(replace(request, stream=True))
+    try:
+        return await collect_stream(stream, model=request.model)
+    finally:
+        # Close it on an early return too; an abandoned generator is
+        # otherwise closed only when it is collected.
+        aclose = getattr(stream, "aclose", None)
+        if aclose is not None:
+            await aclose()
+
+
+async def collect_stream(
+    stream: AsyncIterator[StreamChunk | ProviderError],
+    *,
+    model: str,
+) -> ChatCompletionResponse | ProviderError:
+    """Fold a chunk stream into one response. The first error is returned.
+
+    Plain ``reasoning`` deltas are dropped, as the non-streaming parser
+    drops ``reasoning_content``: they are not the answer. A stream that
+    ends without a finish reason was cut off, so it is an error, not a
+    short answer: LiteLLM reports an upstream failure partway through as
+    an in-band ``error`` event and then ends the body, and the partial
+    text would otherwise read as a verdict.
+    """
+    response_id = ""
+    content: list[str] = []
+    details: list[dict[str, Any]] = []
+    calls: dict[int, dict[str, str]] = {}
+    finish_reason: str | None = None
+    usage: Usage | None = None
+    saw_chunk = False
+    async for item in stream:
+        if isinstance(item, ProviderError):
+            return item
+        saw_chunk = True
+        response_id = response_id or item.id
+        delta = item.delta
+        if delta.content:
+            content.append(delta.content)
+        if delta.reasoning_details:
+            merge_reasoning_details(details, delta.reasoning_details)
+        for part in delta.tool_calls or ():
+            entry = calls.setdefault(part.index, {"id": "", "name": "", "arguments": ""})
+            if part.id:
+                entry["id"] = part.id
+            if part.function_name:
+                entry["name"] = part.function_name
+            if part.function_arguments:
+                entry["arguments"] += part.function_arguments
+        if item.usage is not None:
+            usage = item.usage
+        if item.finish_reason:
+            finish_reason = item.finish_reason
+    if not saw_chunk:
+        return ProviderError(
+            code="empty_stream",
+            message="The provider closed the stream without sending anything.",
+            retryable=False,
+        )
+    if finish_reason is None:
+        return ProviderError(
+            code="stream_interrupted",
+            message="The stream ended before the answer finished; the partial "
+            "answer was discarded.",
+            retryable=False,
+        )
+    tool_calls = [
+        ToolCall(id=c["id"], function=FunctionCall(name=c["name"], arguments=c["arguments"]))
+        for _, c in sorted(calls.items())
+    ]
+    return ChatCompletionResponse(
+        id=response_id,
+        model=model,
+        message=ChatMessage(
+            role="assistant",
+            content="".join(content) if content else None,
+            tool_calls=tool_calls or None,
+            reasoning_details=details or None,
+        ),
+        finish_reason=finish_reason,
+        usage=usage,
+    )
 
 
 # ── Actionable error messages ─────────────────────────────────────────
@@ -931,7 +1069,7 @@ class ProviderClient:
             # Handle error responses
             return self._parse_error(response)
 
-        return await retry_call(_attempt, self.retry_config)
+        return await retry_call(_attempt, self.retry_config, _retry_filter(request))
 
     async def chat_completion_stream(
         self,
@@ -1102,7 +1240,7 @@ class ProviderClient:
                     retryable=True,
                 )
 
-        async for chunk in retry_stream(_stream_once, self.retry_config):
+        async for chunk in retry_stream(_stream_once, self.retry_config, _retry_filter(request)):
             yield chunk
 
     def _headers(self) -> dict[str, str]:

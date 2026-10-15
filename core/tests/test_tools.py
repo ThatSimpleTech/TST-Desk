@@ -217,7 +217,7 @@ class TestBuiltins:
     def test_created_with_builtin_tools(self) -> None:
         registry = create_registry()
         names = {t.name for t in registry.list_tools()}
-        assert {"fs_read", "fs_write", "shell", "web_search", "web_fetch"} <= names
+        assert {"fs_read", "fs_write", "shell", "web_search", "web_fetch", "send_file"} <= names
         desktop = {
             "desktop_screenshot",
             "desktop_move",
@@ -241,6 +241,11 @@ class TestBuiltins:
         assert registry.get("web_search").side_effect_class == "ask"
         assert registry.get("web_fetch").side_effect_class == "ask"
         assert registry.get("web_fetch").parallel_safe is True
+        send = registry.get("send_file")  # TD-5143: Class A by its own rule, no card
+        assert send is not None
+        assert send.side_effect_class == "auto"
+        assert send.mutates is False
+        assert send.path_fields == ("files",)
         shot = registry.get("desktop_screenshot")
         click = registry.get("desktop_click")
         assert shot is not None and click is not None

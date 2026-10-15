@@ -26,6 +26,7 @@ from tstd.attachments import (
     DecodedAttachment,
     build_provider_user_content,
     decode_attachments,
+    format_bytes,
     render_user_content,
 )
 from tstd.boundary_config import BoundaryConfig, load_workspace_boundary
@@ -47,6 +48,30 @@ def attach(name: str, data: bytes) -> dict[str, str]:
 
 
 # ── The pure module ─────────────────────────────────────────────────────
+
+
+# The same vectors pin ui/src/lib/attachments.ts formatBytes, so a refusal
+# and a sent-file card print one size the same way on both sides. The ties
+# (x.x5 exactly) round half to even, as Python's format spec does.
+FORMAT_BYTES_VECTORS = [
+    (0, "0 bytes"),
+    (999, "999 bytes"),
+    (1000, "1.0 KB"),
+    (1250, "1.2 KB"),
+    (1750, "1.8 KB"),
+    (2250, "2.2 KB"),
+    (999_250, "999.2 KB"),
+    (999_950, "1000.0 KB"),
+    (1_000_000, "1.0 MB"),
+    (1_250_000, "1.2 MB"),
+    (46_250_000, "46.2 MB"),
+    (46_750_000, "46.8 MB"),
+]
+
+
+@pytest.mark.parametrize(("count", "text"), FORMAT_BYTES_VECTORS)
+def test_format_bytes_vectors(count: int, text: str) -> None:
+    assert format_bytes(count) == text
 
 
 class TestDecodeAttachments:

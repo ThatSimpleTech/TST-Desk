@@ -6,6 +6,8 @@ pub mod cu_identity;
 pub mod daemon;
 mod quick_entry;
 mod read_text;
+mod received_files;
+mod sent_files;
 mod session_window;
 mod single_instance;
 mod tray;
@@ -360,6 +362,14 @@ pub fn run() {
             get_daemon_info,
             open_path,
             read_text_file,
+            sent_files::sent_file_status,
+            sent_files::sent_file_open,
+            sent_files::sent_file_reveal,
+            sent_files::sent_file_save_as,
+            received_files::received_file_begin,
+            received_files::received_file_append,
+            received_files::received_file_finish,
+            received_files::received_file_discard,
             quit_app,
             set_coworker_indicator,
             set_tray_tooltip,

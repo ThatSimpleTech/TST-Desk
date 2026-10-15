@@ -409,6 +409,8 @@ drop a different prefix than `from_seq`. Zero is a load error, not
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `log_max_events` | int ≥ 1 | `10000` | Maximum events kept in `events.jsonl`. Oldest drop first. Attach from a rotated seq gets `log_trimmed` and replays from the earliest kept seq. |
+| `send_file_max_bytes` | int 1..2147483648 | `536870912` | Largest file `send_file` copies into the chat (512 MiB). Bigger is refused with `file_too_large`; nothing is copied. |
+| `send_file_session_max_bytes` | int ≥ 1 | `4294967296` | Total of sent files one session may hold (4 GiB). Past it, `session_quota`. |
 
 ### `provider_retry`
 
@@ -423,6 +425,14 @@ answers `429` with "temporarily rate-limited upstream, please retry
 shortly" and no `Retry-After` — free and preview model slugs do this
 routinely, and the turn dies eight seconds into a wait that needed a
 minute. `max_retries: 8` is roughly three minutes of patience.
+
+Two calls outside the turn never resend a timed-out attempt: the
+after-write review (`autonomy.verify`) and memory distillation (TD-5146).
+Each attempt has already waited a full read timeout, the session stays
+busy while it waits, and a slow local model is not faster the second
+time. Other retryable failures (429, 5xx, a refused connection) are
+retried as above. Both calls stream, so the read timeout is the longest
+gap between chunks rather than a cap on the whole answer.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
@@ -567,7 +577,7 @@ turns never verify. There is no charter and no auto-revert.
 | `runtime` | string | `podman` | Argv0 probed on PATH, or an absolute path to an executable. Empty is a load error. |
 | `image` | string | `docker.io/library/alpine:3.21` | Image the container execs. Empty is a load error. Pre-pull it; the argv passes `--pull=never` so a start check cannot phone a registry. |
 | `check_every` | int ≥ 1 | `5` | Autonomy turns between validator drift checks (TD-4201, spec §12.6). A Class B decision this turn also checks, even if N is not reached. Interactive sessions ignore this. |
-| `verify` | `off` \| `after_write` \| `ask` | `after_write` | Interactive: after a filesystem write turn, call the validator once (`after_write`), ask first (`ask`), or never (`off`). Autonomy sessions ignore this. |
+| `verify` | `off` \| `after_write` \| `ask` | `after_write` | Interactive: after a filesystem write turn, call the validator once (`after_write`), ask first (`ask`), or never (`off`). Autonomy sessions ignore this. The call streams and sends the validator tier's `extra_body`, so ending the session or quitting also ends the server's work; a timed-out attempt is reported as a verify error, not resent (TD-5146). Stop does not reach the review: it starts after the turn has ended. |
 
 ### `mcp`
 
@@ -651,6 +661,8 @@ steering:
   claude_global_fallback: false
 session:
   log_max_events: 10000
+  send_file_max_bytes: 536870912
+  send_file_session_max_bytes: 4294967296
 provider_retry:
   max_retries: 3
   initial_delay: 1.0
@@ -763,7 +775,7 @@ three tier definitions. You can pin a tier for a session from the title bar.
 | `context_window` | int > 0 | *required* | The compaction budget — see below. |
 | `max_output_tokens` | int > 0 | *required* | Sent as `max_tokens` on the tier's requests, and the answer reservation subtracted from `context_window` — see below. |
 | `vision` | bool | `false` | When `true`, PNG/JPEG/GIF/WebP attachments are accepted on user turns routed to this tier (TD-4705). Capability is config — never inferred from the slug in code. |
-| `extra_body` | map | none | Extra JSON fields added to every chat request the tier makes: the turn, the progress check, a delegated worker, and (on the worker tier) the tool-call classifier, DoD polls and judgment calls that run on the worker. They fill in only fields the request did not set itself. For provider-specific settings such as a llama.cpp server's `chat_template_kwargs` — see §3.6. It cannot set `model`, `messages`, `tools`, `tool_choice`, `stream`, `stream_options`, `max_tokens` or `max_completion_tokens`, and its values must be plain JSON; a load error names the problem. Sent as written: never put a key or token here. |
+| `extra_body` | map | none | Extra JSON fields added to every chat request the tier makes: the turn, the progress check, a delegated worker, the after-write review (validator tier), memory distillation (worker tier), and (on the worker tier) the tool-call classifier, DoD polls and judgment calls that run on the worker. They fill in only fields the request did not set itself. For provider-specific settings such as a llama.cpp server's `chat_template_kwargs` — see §3.6. It cannot set `model`, `messages`, `tools`, `tool_choice`, `stream`, `stream_options`, `max_tokens` or `max_completion_tokens`, and its values must be plain JSON; a load error names the problem. Sent as written: never put a key or token here. |
 | `verdict_extra_body` | map | none | Merged over `extra_body` on the worker tier's one-word verdict calls only: the tool-call classifier, DoD polls and judgment calls that run on the worker. Nested maps merge and this map wins a clash. The turn, a delegated worker and memory distillation never send it. Same rules as `extra_body`; it does nothing on the brain and validator tiers. Use it to turn a reasoning model's thinking off for an 8-token answer — see §3.6. |
 
 **Prices are per million tokens, and they are yours to keep accurate.** They drive the live
@@ -1057,8 +1069,9 @@ extra_body:
 
 It reaches the turn, the progress check and a delegated worker. On the worker tier it also
 reaches the tool-call classifier, DoD polls and judgment calls that run on the worker, which
-keep their own `max_tokens` of 8 and `temperature` of 0. The validator review, the
-supervisor check and memory distillation do not send it yet. The values go to the server as
+keep their own `max_tokens` of 8 and `temperature` of 0. The after-write review (validator
+tier) and memory distillation (worker tier) send it too (TD-5146); the supervisor check does
+not yet. The values go to the server as
 written, so check the server's own documentation for the field names, and never put a key or a
 token here. The settings screen keeps the block when it writes a slug, a credential or the
 active preset.

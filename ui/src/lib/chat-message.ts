@@ -5,6 +5,7 @@
 // chat-store, which re-exports them.
 
 import type { AttachmentChip } from "./attachments";
+import type { SentFileRef } from "./sent-files";
 
 export interface ChatMessage {
   id: string;
@@ -69,4 +70,8 @@ export interface ToolBlock {
   status?: "success" | "error";
   output?: string;
   errorCode?: string | null;
+  /** Files a `send_file` call put in the chat (TD-5144), in arrival order.
+   *  Filled from the session's `artifact_ready` events, which replay on
+   *  attach, so the cards come back with the transcript. */
+  files?: SentFileRef[];
 }

@@ -11,6 +11,7 @@ import { refusedSend, returnToDraft, takeSent } from "./draft-store";
 import type { FirstTokenWait } from "./first-token-wait";
 import { machineOf } from "./bridged-id";
 import type { DaemonEventUnion, SessionState, SessionSummary } from "./protocol";
+import { sentFileFromEvent, type SentFileRef } from "./sent-files";
 import { chooseBoundSession, isTerminal } from "./session-binding";
 import { windowBindSessionId } from "./window-bind";
 
@@ -36,6 +37,9 @@ export interface ChatEventContext {
   sending: string[];
   /** Write the bound session's waiting draft save now (TD-5019). */
   flushDraft: () => void;
+  /** Sent files whose send_file call the pane has not seen yet, by
+   *  tool_call_id (TD-5144). The store empties it on every bind. */
+  earlyFiles: Map<string, SentFileRef[]>;
 }
 
 /** Re-decide the pane's session from a list and apply the choice. */
@@ -67,14 +71,19 @@ function currentAssistant(ctx: ChatEventContext): ChatMessage {
     parts: [],
   };
   ctx.state.messages.push(row);
-  return row;
+  // Under Svelte 5's $state each path to an object is its own proxy, and a
+  // write through one is seen neither through another nor through the raw
+  // object (TD-5144). So: return the row as the list holds it, and the
+  // helpers below write through the row and read back what it stored.
+  return ctx.state.messages[ctx.state.messages.length - 1];
 }
 
 /** Append a content delta to the row's text and to its ordered parts: the
  *  trailing text segment grows, or a new one opens after a tool. */
 function appendText(row: ChatMessage, delta: string): void {
   row.text += delta;
-  const parts = (row.parts ??= []);
+  row.parts ??= [];
+  const parts = row.parts;
   const last = parts[parts.length - 1];
   if (last !== undefined && last.kind === "text") {
     last.text += delta;
@@ -84,23 +93,56 @@ function appendText(row: ChatMessage, delta: string): void {
 }
 
 /** Append a tool call to the row's flat list and to its ordered parts. The
- *  same block object lands in both, so a later result update is visible
- *  wherever the row is read from. */
-function appendTool(row: ChatMessage, block: ToolBlock): void {
-  const tools = (row.tools ??= []);
-  tools.push(block);
-  const parts = (row.parts ??= []);
-  parts.push({ kind: "tool", tool: block });
+ *  part holds the block the list stored, so both are one object and a later
+ *  result or file is visible wherever the row is read from. */
+function appendTool(row: ChatMessage, block: ToolBlock): ToolBlock {
+  row.tools ??= [];
+  row.tools.push(block);
+  const stored = row.tools[row.tools.length - 1];
+  row.parts ??= [];
+  row.parts.push({ kind: "tool", tool: stored });
+  return stored;
 }
 
-function findTool(state: ChatState, toolCallId: string): ToolBlock | null {
+/** Every copy of a call's block on the newest row that has it: the flat
+ *  list's and the ordered part's. They are one object when appendTool made
+ *  them; a row a fork restored (chat-fork.ts) can hold two proxies of one
+ *  block, so a write goes to each. */
+function findToolCopies(state: ChatState, toolCallId: string): ToolBlock[] {
   for (let i = state.messages.length - 1; i >= 0; i--) {
-    const tools = state.messages[i].tools;
-    if (tools === undefined) continue;
-    const found = tools.find((t) => t.toolCallId === toolCallId);
-    if (found !== undefined) return found;
+    const { tools = [], parts = [] } = state.messages[i];
+    const copies = tools.filter((t) => t.toolCallId === toolCallId);
+    for (const p of parts) {
+      if (p.kind !== "tool" || p.tool.toolCallId !== toolCallId) continue;
+      if (!copies.includes(p.tool)) copies.push(p.tool);
+    }
+    if (copies.length > 0) return copies;
   }
-  return null;
+  return [];
+}
+
+/** Add a sent file to a block once: replay on attach is idempotent. */
+function addFile(block: ToolBlock, ref: SentFileRef): void {
+  const files = block.files ?? [];
+  if (files.some((f) => f.artifactId === ref.artifactId)) return;
+  block.files = [...files, ref];
+}
+
+/** Files held for a call the pane has not seen yet, at most this many
+ *  calls. A call trimmed from the log never comes, so the oldest go. */
+const EARLY_FILE_CALLS = 32;
+
+function holdEarlyFile(ctx: ChatEventContext, toolCallId: string, ref: SentFileRef): void {
+  const early = ctx.earlyFiles;
+  const held = early.get(toolCallId) ?? [];
+  if (!held.some((f) => f.artifactId === ref.artifactId)) held.push(ref);
+  early.delete(toolCallId);
+  early.set(toolCallId, held);
+  while (early.size > EARLY_FILE_CALLS) {
+    const oldest = early.keys().next().value;
+    if (oldest === undefined) break;
+    early.delete(oldest);
+  }
 }
 
 function sealInFlightAssistant(state: ChatState): void {
@@ -299,12 +341,20 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       wait.end();
       const row = currentAssistant(ctx);
       if (row.tools?.some((t) => t.toolCallId === event.tool_call_id)) return;
-      appendTool(row, {
+      const block = appendTool(row, {
         toolCallId: event.tool_call_id,
         name: event.name,
         arguments: event.arguments,
         decisionClass: event.decision_class,
       });
+      // Files that reached the pane before their call land now.
+      const early = ctx.earlyFiles.get(event.tool_call_id);
+      if (early !== undefined) {
+        ctx.earlyFiles.delete(event.tool_call_id);
+        for (const ref of early) {
+          if (ref.sessionId === state.sessionId) addFile(block, ref);
+        }
+      }
       return;
     }
     case "conversation_reset": {
@@ -315,11 +365,27 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
     }
     case "tool_result": {
       if (event.session_id !== state.sessionId) return;
-      const block = findTool(state, event.tool_call_id);
-      if (block === null) return;
-      block.status = event.status;
-      block.output = event.output;
-      block.errorCode = event.error_code ?? null;
+      for (const block of findToolCopies(state, event.tool_call_id)) {
+        block.status = event.status;
+        block.output = event.output;
+        block.errorCode = event.error_code ?? null;
+      }
+      return;
+    }
+    case "artifact_ready": {
+      // A file the agent sent lands on the send_file call that sent it
+      // (TD-5144). A TD-3201 artifact is the Artifacts pane's alone.
+      if (event.session_id !== state.sessionId) return;
+      const ref = sentFileFromEvent(event, state.sessionId);
+      if (ref === null || !event.tool_call_id) return;
+      const copies = findToolCopies(state, event.tool_call_id);
+      // No call yet: hold the file for it. If the call was trimmed from the
+      // log it never comes, and the Artifacts pane still lists the file.
+      if (copies.length === 0) {
+        holdEarlyFile(ctx, event.tool_call_id, ref);
+        return;
+      }
+      for (const block of copies) addFile(block, ref);
       return;
     }
     case "verify_result":

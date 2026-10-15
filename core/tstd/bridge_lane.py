@@ -34,6 +34,12 @@ from .protocol import scrub_wire_json
 ROW_EVENTS = frozenset({"session_state", "turn_complete", "approval_request", "user_turn"})
 
 
+def _verb(upstream: dict[str, Any]) -> str | None:
+    """The client verb an upstream frame carries, for ``in_reply_to`` (TD-5144)."""
+    kind = upstream.get("type")
+    return kind if isinstance(kind, str) else None
+
+
 class LaneHost(Protocol):
     """What a lane needs from the bridge that owns it."""
 
@@ -49,7 +55,14 @@ class LaneHost(Protocol):
         on_status: Callable[[], None] | None,
     ) -> UpstreamLink: ...
 
-    def unreachable(self, machine: MachineState, session_id: str) -> str: ...
+    def unreachable(
+        self,
+        machine: MachineState,
+        session_id: str,
+        detail: str | None = None,
+        *,
+        in_reply_to: str | None = None,
+    ) -> str: ...
 
     def spawn(self, coro: Coroutine[Any, Any, Any]) -> None: ...
 
@@ -114,7 +127,7 @@ class Lane:
     def enqueue(self, upstream: dict[str, Any], session_id: str) -> str | None:
         """Hold one verb until the lane is up. An error frame when full."""
         if len(self.pending) >= self._bridge.timings.queue_limit:
-            return self._bridge.unreachable(self.machine, session_id)
+            return self._bridge.unreachable(self.machine, session_id, in_reply_to=_verb(upstream))
         self.pending.append((self._bridge.clock(), upstream))
         self.touched = self._bridge.clock()
         if self._expiry is None:
@@ -135,9 +148,8 @@ class Lane:
     def _fail(self, upstream: dict[str, Any]) -> None:
         """Answer one verb that never went: ``machine_unreachable``, same session."""
         sid = bridged_id(str(upstream.get("session_id", "")), self.machine.mch)
-        self._bridge.spawn(
-            self._bridge.deliver(self.viewer, self._bridge.unreachable(self.machine, sid))
-        )
+        error = self._bridge.unreachable(self.machine, sid, in_reply_to=_verb(upstream))
+        self._bridge.spawn(self._bridge.deliver(self.viewer, error))
 
     async def _on_open(self) -> None:
         # Re-attach first, from one past the last frame the viewer got, so

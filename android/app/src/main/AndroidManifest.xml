@@ -9,6 +9,8 @@
     <uses-feature
         android:name="android.hardware.camera"
         android:required="false" />
+    <!-- TD-5145: open an APK the agent sent in Android's installer. Android still asks the user every time. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:allowBackup="false"
@@ -55,5 +57,12 @@
         <activity
             android:name="com.journeyapps.barcodescanner.CaptureActivity"
             tools:node="remove" />
+
+        <!-- TD-5145: files the agent sent, read-only, shared per intent with the app that opens them. -->
+        <provider
+            android:name=".ReceivedFilesProvider"
+            android:authorities="com.thatsimpletech.tstdesk.files"
+            android:exported="false"
+            android:grantUriPermissions="true" />
     </application>
 </manifest>

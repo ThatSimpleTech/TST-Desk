@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import contextlib
 import os
 import shutil
@@ -24,7 +25,7 @@ from typing import Any, Literal, cast
 import websockets.exceptions
 from pydantic import ValidationError
 
-from .artifacts import ArtifactError, ArtifactRecord, ArtifactStore, to_entry
+from .artifacts import ArtifactError, ArtifactRecord, ArtifactStore, artifact_ready_for, to_entry
 from .attachments import (
     AttachmentError,
     build_provider_user_content,
@@ -183,8 +184,8 @@ from .protocol import (
     ApproveGrokPlan,
     ArchiveSession,
     Artifact,
+    ArtifactChunk,
     ArtifactList,
-    ArtifactReady,
     Attach,
     AutonomyStart,
     Cancel,
@@ -271,6 +272,7 @@ from .protocol import (
     ParseJob,
     PolicyRules,
     PolicyRuleSummary,
+    ReadArtifactChunk,
     RemoteDeviceSummary,
     RemovePin,
     RemoveRemoteDevice,
@@ -408,6 +410,7 @@ from .scheduler.templates import (
     save_template,
 )
 from .scheduler.workspace import require_folder, resolve_workspace_name
+from .sent_files import SentFiles, read_chunk
 from .session import (
     TERMINAL_STATES,
     QueuedUserMessage,
@@ -416,7 +419,13 @@ from .session import (
     SessionRegistry,
     SessionRunner,
 )
-from .session_lifecycle import archive_session, delete_session, move_session, rename_session
+from .session_lifecycle import (
+    archive_session,
+    delete_session,
+    move_session,
+    reload_session_boundary,
+    rename_session,
+)
 from .session_persist import LoadedSession, SessionPersist
 from .session_stars import load_session_stars, save_session_stars
 from .session_store import SessionStore
@@ -896,7 +905,10 @@ class Daemon:
         # (Windows CI). One asyncio lock per session keeps jsonl in seq
         # order.
         self._event_persist_locks: dict[str, asyncio.Lock] = {}
-        self._artifacts = ArtifactStore(self._session_persist)
+        self._artifacts = ArtifactStore(
+            self._session_persist,
+            known_session=lambda sid: self.session_registry.get(sid) is not None,
+        )
         self._slug_snapshot = _snapshot_slugs(self.config)
         self._provider = provider
         self._clients: dict[tuple[str, str], ProviderLike] = {}
@@ -2477,13 +2489,13 @@ class Daemon:
                 )
             # Reload the workspace boundary so raised caps take effect;
             # the loop re-checks caps before its next model call and
-            # re-pauses if the new caps are still exceeded.
-            try:
-                found.boundary_config = load_workspace_boundary(found.workspace_path)
-            except ConfigError as e:
+            # re-pauses if the new caps are still exceeded. A charter
+            # run keeps its charter's wall and caps.
+            error = reload_session_boundary(found, found.workspace_path)
+            if error is not None:
                 log.warning(
                     "boundary config invalid on resume; keeping current caps",
-                    extra={"extra_fields": {"session_id": msg.session_id, "error": str(e)}},
+                    extra={"extra_fields": {"session_id": msg.session_id, "error": str(error)}},
                 )
             await found.resume()
             cfg = found.boundary_config
@@ -2886,6 +2898,9 @@ class Daemon:
 
         if isinstance(msg, OpenArtifact):
             return await self._handle_open_artifact(msg)
+
+        if isinstance(msg, ReadArtifactChunk):
+            return await self._handle_read_artifact_chunk(msg)
 
         if isinstance(msg, DesignHitTest):
             return await self._handle_design_hit_test(msg)
@@ -3366,16 +3381,14 @@ class Daemon:
         router = sess.router if sess.router is not None else TierRouter()
         sess.router = router
 
-        try:
-            sess.boundary_config = load_workspace_boundary(sess.workspace_path)
-        except ConfigError as e:
+        error = reload_session_boundary(sess, sess.workspace_path)
+        if error is not None:
             log.warning(
                 "workspace boundary config invalid; using defaults",
-                extra={"extra_fields": {"workspace_path": sess.workspace_path, "error": str(e)}},
+                extra={
+                    "extra_fields": {"workspace_path": sess.workspace_path, "error": str(error)}
+                },
             )
-        if sess.charter is not None:
-            sess.boundary_config.boundary = sess.charter.boundary
-            sess.boundary_config.caps = sess.charter.caps
 
         try:
             sess.policy = load_policy(sess.workspace_path)
@@ -3400,12 +3413,17 @@ class Daemon:
         tool_dispatcher.autonomy_fn = lambda: sess.autonomy
         tool_dispatcher.on_class_c = sess.mark_class_c
         sess.persist_dir = self._session_persist.dir_for(sess.id)
+        sent_files = SentFiles(self._artifacts, self.config.session)
+        # send_file re-checks with the guard that judged its paths (TD-5143).
+        sent_files.bind_guard(lambda: tool_dispatcher.path_guard)
         register_builtin_handlers(
             tool_dispatcher,
-            allowed_commands=sess.boundary_config.boundary.shell_allowlist(),
+            # Read per call: a live move (TD-1715) reloads boundary_config.
+            shell_allowlist=lambda: sess.boundary_config.boundary.shell_allowlist(),
             desktop_driver=self.desktop_driver,
             browser_driver=self.browser_driver,
             grounding_client=GroundingClient.from_config(self.config.computer_use.grounding),
+            sent_files=sent_files,
         )
         from .tools.plugins import bind_plugin_handlers
 
@@ -3999,16 +4017,7 @@ class Daemon:
             path=path,
             content=content,
         )
-        await found.event_log.add(
-            ArtifactReady(
-                session_id=session_id,
-                artifact_id=record.id,
-                title=record.title,
-                mime=record.mime,
-                path=record.path,
-                seq=1,
-            )
-        )
+        await found.event_log.add(artifact_ready_for(record))
         return record
 
     async def _handle_list_artifacts(self, msg: ListArtifacts) -> str:
@@ -4046,13 +4055,68 @@ class Daemon:
             )
         except ArtifactError as exc:
             return build_error(exc.code, exc.message, session_id=msg.session_id)
-        entry = to_entry(record)
-        return Artifact(
+        entry = to_entry(record).model_dump()
+        return Artifact(session_id=msg.session_id, **entry).model_dump_json()
+
+    async def _handle_read_artifact_chunk(self, msg: ReadArtifactChunk) -> str:
+        """Bytes of a file the agent sent (TD-5143). Connection-scoped, never logged.
+
+        The session id must be exactly one the registry holds, or the reply
+        is ``artifact_not_found`` before anything touches disk: a client
+        spelling of a live id (``ABC`` for ``abc`` on a case-insensitive
+        disk) must not reach that session's folder, where a first load
+        sweeps crash leftovers. Past that, no session runtime: the index
+        row and the disk decide everything (``ArtifactStore.open_sent_file``).
+        Success is never logged; a refusal logs its code and the id only.
+        """
+
+        def fail(code: str) -> str:
+            return ArtifactChunk(
+                session_id=msg.session_id,
+                artifact_id=msg.artifact_id,
+                offset=msg.offset,
+                error_code=code,
+            ).model_dump_json()
+
+        if self.session_registry.get(msg.session_id) is None:
+            log.info(
+                "artifact chunk refused",
+                extra={
+                    "extra_fields": {"artifact_id": msg.artifact_id, "code": "artifact_not_found"}
+                },
+            )
+            return fail("artifact_not_found")
+        try:
+            record, target = await asyncio.to_thread(
+                self._artifacts.open_sent_file, msg.session_id, msg.artifact_id
+            )
+            size = record.size or 0
+            if msg.offset > size:
+                return fail("bad_range")
+            want = min(msg.length, size - msg.offset)
+            data = (
+                await asyncio.to_thread(read_chunk, target, msg.offset, want, size) if want else b""
+            )
+        except ArtifactError as exc:
+            log.info(
+                "artifact chunk refused",
+                extra={"extra_fields": {"artifact_id": msg.artifact_id, "code": exc.code}},
+            )
+            return fail(exc.code)
+        except OSError:
+            log.warning(
+                "artifact chunk read failed",
+                extra={"extra_fields": {"artifact_id": msg.artifact_id}},
+            )
+            return fail("read_failed")
+        return ArtifactChunk(
             session_id=msg.session_id,
-            artifact_id=entry.artifact_id,
-            title=entry.title,
-            mime=entry.mime,
-            path=entry.path,
+            artifact_id=msg.artifact_id,
+            offset=msg.offset,
+            size=size,
+            sha256=record.sha256 or "",
+            data_b64=base64.b64encode(data).decode("ascii"),
+            eof=msg.offset + len(data) >= size,
         ).model_dump_json()
 
     async def _handle_parse_job(self, msg: ParseJob) -> str:

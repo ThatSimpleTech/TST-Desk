@@ -81,6 +81,12 @@ export function thoughtLabel(message: ReasoningState): string {
 // Same toggle map, different key. A tool-heavy turn would otherwise dump
 // every call into the transcript; the disclosure is the resting state,
 // open only while the call has no result yet.
+//
+// "No result yet" is not enough on its own. A restart that cuts a call off
+// seals the turn with turn_complete and never logs a tool_result for it,
+// live or on replay, so the status stays unset for good. The row says
+// which: a call on a finished (complete) row will never run again, so it
+// is never live, whatever tool it is (TD-5144).
 
 export interface ToolFoldState {
   toolCallId: string;
@@ -92,24 +98,29 @@ function toolKey(messageId: string, toolCallId: string): string {
   return `${messageId}:tool:${toolCallId}`;
 }
 
-export function isToolLive(block: ToolFoldState): boolean {
-  return block.status === undefined;
+/** True while the call runs: no result yet and its row's turn not over.
+ *  `rowComplete` is required so no caller can forget the row. */
+export function isToolLive(block: ToolFoldState, rowComplete: boolean): boolean {
+  return !rowComplete && block.status === undefined;
 }
 
-export function isToolExpanded(messageId: string, block: ToolFoldState): boolean {
+export function isToolExpanded(
+  messageId: string,
+  block: ToolFoldState,
+  rowComplete: boolean,
+): boolean {
   const explicit = toggles[toolKey(messageId, block.toolCallId)];
   if (explicit !== undefined) return explicit;
-  return isToolLive(block);
+  return isToolLive(block, rowComplete);
 }
 
-export function toggleTool(messageId: string, block: ToolFoldState): boolean {
-  const next = !isToolExpanded(messageId, block);
+export function toggleTool(messageId: string, block: ToolFoldState, rowComplete: boolean): boolean {
+  const next = !isToolExpanded(messageId, block, rowComplete);
   toggles[toolKey(messageId, block.toolCallId)] = next;
   return next;
 }
 
 export function toolLabel(block: ToolFoldState): string {
-  if (isToolLive(block)) return block.name;
   if (block.status === "error") return `${block.name} failed`;
   return block.name;
 }

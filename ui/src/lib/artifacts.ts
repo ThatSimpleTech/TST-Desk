@@ -23,8 +23,16 @@ export function artifactsEmptyCopy(hasSession: boolean): string {
 	return "Artifacts appear here as this session produces them.";
 }
 
-/** Session-data-dir bytes land at `artifacts/{artifact_id}` (TD-3201). */
-export function isWorkspaceArtifact(path: string, artifactId: string): boolean {
+/** A copy the agent sent to the chat (TD-5143). Its path is the folder
+ *  `artifacts/{id}`, never opened: the chat's file card handles it. */
+export function isSentFile(entry: { kind?: string | null }): boolean {
+	return entry.kind === "sent_file";
+}
+
+/** Session-data-dir bytes land at `artifacts/{artifact_id}` (TD-3201). A sent
+ *  file is never a workspace file, whatever its path says (TD-5144). */
+export function isWorkspaceArtifact(path: string, artifactId: string, kind?: string | null): boolean {
+	if (isSentFile({ kind })) return false;
 	return posixPath(path) !== `artifacts/${artifactId}`;
 }
 
@@ -33,9 +41,10 @@ export function workspaceOpenPath(
 	workspacePath: string | null,
 	artifactPath: string,
 	artifactId: string,
+	kind?: string | null,
 ): string | null {
 	if (workspacePath === null || workspacePath === "") return null;
-	if (!isWorkspaceArtifact(artifactPath, artifactId)) return null;
+	if (!isWorkspaceArtifact(artifactPath, artifactId, kind)) return null;
 	return joinUnderRoot(workspacePath, artifactPath);
 }
 

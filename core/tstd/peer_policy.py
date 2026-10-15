@@ -66,6 +66,10 @@ MACHINE_PEER_VERBS: frozenset[str] = frozenset(
         "memory_accept",
         "memory_edit",
         "memory_reject",
+        # TD-5143: bytes of a file the agent sent, by id only. It reads
+        # nothing else and changes nothing, so a viewer of a bridged
+        # session can download what that session's agent sent.
+        "read_artifact_chunk",
         # Only for its own device id; the existing pairing gate checks that.
         "remove_remote_device",
     }
@@ -134,29 +138,38 @@ def check(msg: ClientMessage, peer: PeerView, *, bridged: bool) -> str | None:
     """
     sid = message_session_id(msg)
     if msg.type in LOOPBACK_VERBS and (peer.remote or peer.machine):
-        return build_error("loopback_only", "Only the computer itself can do that.")
+        return build_error(
+            "loopback_only", "Only the computer itself can do that.", in_reply_to=msg.type
+        )
     if peer.machine:
         if msg.type not in MACHINE_PEER_VERBS:
             return build_error(
                 "not_allowed",
                 "Another computer can't do that here. Use this computer itself.",
                 session_id=sid,
+                in_reply_to=msg.type,
             )
         if bridged:
             return build_error(
                 "bridged_session",
                 "That session is on another computer. Open it from the computer it runs on.",
                 session_id=sid,
+                in_reply_to=msg.type,
             )
         return None
     if msg.type in MACHINE_VERBS:
         if peer.loopback or (peer.viewer and msg.type in VIEWER_MACHINE_VERBS):
             return None
-        return build_error("loopback_only", "Only the computer itself can add or remove computers.")
+        return build_error(
+            "loopback_only",
+            "Only the computer itself can add or remove computers.",
+            in_reply_to=msg.type,
+        )
     if bridged and peer.viewer and msg.type not in FORWARDED_VERBS:
         return build_error(
             "not_on_remote",
             "That doesn't work for a session on another computer yet.",
             session_id=sid,
+            in_reply_to=msg.type,
         )
     return None

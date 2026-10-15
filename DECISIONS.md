@@ -13099,3 +13099,216 @@ also count as one instance.
 **Rejected:** re-pointing tstd's watchdog at the newest host (Design A's
 lease, reverses TD-2903); our own lock file plus IPC (more code, same
 result).
+
+## TD-5146 — The work check and memory distill stream, think less, and don't resend a timeout (Class B)
+
+Found 2026-10-14 22:55-23:15 on EZER: session c14cc3e8 stopped
+answering for about 20 minutes, and Adam's two messages from the phone
+failed. An hour-long turn had written files, so the after-write review
+ran. It was one non-streamed validator call with a 25-33k token prompt,
+no `extra_body` (so the model's default thinking) and `max_tokens`
+8192. ezer-forge needs two to six minutes for that answer. The 120 s read
+timeout fired, the timeout was retryable, and it was resent eight times
+while the session stayed busy. LiteLLM does not pass a non-streamed
+client's hang-up on to llama.cpp, so each abandoned attempt kept
+generating and held one of forge's two slots, slowing every other
+session. Memory distill made the same kind of call.
+
+Probed live before the change: through LiteLLM, a streamed request
+whose client hangs up is cancelled on forge ("srv stop: cancel task")
+within about a second; a non-streamed one keeps running.
+
+**Decision.** `complete_streamed` (core/tstd/provider.py) sends one
+request over the streaming wire and folds the chunks into a
+`ChatCompletionResponse`. The validator review and memory distill use
+it, send their tier's `extra_body` (EZER's validator and worker tiers
+set `reasoning_effort: low`), and set `retry_on_timeout=False` on the
+request. That flag is never sent; `retry_call` and `retry_stream` take an
+optional narrower test, and the provider client passes "not a timeout"
+when the flag is off. A 429, 5xx or refused connection is still retried.
+Streaming makes the read timeout (120 s) a gap between chunks. The
+first chunk still waits for the whole prompt to be read: forge reads an
+uncached 30-50k prompt at 390-830 tokens a second, so up to about 45k
+tokens fits even at the slow rate, and the live 25.9k review got its
+first chunk at 38 s. A bigger review prompt can still time out once;
+it is then reported as a verify error. The review prompt is not capped
+(every diff and shell output of the turn); that is a follow-up.
+
+**A cut-off stream is an error.** `collect_stream` returns
+`stream_interrupted` when the stream ends without a finish reason.
+LiteLLM reports an upstream failure partway through a stream as an
+in-band `error` event and then ends the body; the stream parser skips
+that event, and `parse_verdict` reads any unrecognised text as a pass,
+so the partial text would have become a false "pass" (found by the
+review). The turn's own stream has the same gap and is a follow-up.
+
+**Shutdown.** Quit-distill's `SignalingProvider` now wraps the stream:
+the whole stream drains inside the one future the reaper watches, so a
+cancel closes the stream in the task that opened it, and the hang-up
+reaches the server. An in-process provider still finishes in one loop
+turn.
+
+**Stop does not reach the review.** It runs after `turn_complete`, so
+`stop_turn` finds no open turn, as before this change. Ending the
+session or quitting cancels it, and the stream's hang-up then reaches
+the server. Making Stop end the review is a follow-up.
+
+**Unchanged.** The turn's own stream keeps the full retry policy. The
+classifier, DoD polls and judgment calls stay non-streamed: they ask for
+8 tokens with thinking off (TD-5013) and finish in seconds.
+
+**Rejected:** raising the read timeout (an abandoned call would still
+hold a forge slot for minutes); turning verify off on EZER (it hides the
+review rather than fixing the call).
+
+## TD-5143 — The agent sends files to the chat (Class B; reverses part of TD-3201 and TD-3202)
+
+2026-10-15. Adam asked the agent for an APK; it built one and could not hand it over.
+
+**Decision:** a built-in tool `send_file(files, caption?)` copies up to ten workspace files to
+`sessions/<id>/artifacts/<artifact_id>/<name>` (0600, folder 0700) and records each in the
+TD-3201 index as `kind: "sent_file"` with name, size, sha256, caption and tool call id. The
+existing `artifact_ready` event, with those optional fields, puts a file card under the tool
+call. A viewer on another device pulls the bytes with `read_artifact_chunk` → `artifact_chunk`
+on the socket it is already authenticated on: base64, ≤512 KiB a request, three in flight,
+resumed by offset, verified by sha256. Only `sent_file` records can be read, by id; no client
+path reaches the reader, and the reader needs only the index and the disk. `data_b64` is the one
+field exempt from the wire scrub, and only when it is pure base64. The desktop opens its own copy
+by id through shell commands; for another computer's session it saves the download to Downloads.
+The phone writes chunks to its cache, shares them through a read-only platform ContentProvider,
+opens APKs in Android's installer (`REQUEST_INSTALL_PACKAGES`; the installer asks for "install
+unknown apps" itself), and saves to Downloads through MediaStore. Its new JS object takes a
+per-page key delivered to the top frame only. Path fields may now hold a list of paths; dispatch
+and policy check every element. A static Class A rule covers in-workspace sends. New direct
+dependency: `sha2 = "0.10"` in the shell, already in Cargo.lock.
+
+**Rationale:** the paired socket is the only authenticated path to the phone and already carries
+every tool result. A copy, not a pointer, because a rebuild overwrites the output in place. Pull,
+not push, because the daemon handles one message per connection and awaits each send, so the
+client's window bounds memory on both ends and resume is one offset. 512 KiB keeps a frame under
+the 1 MiB websockets default on every hop. Base64 can contain `AKIA` plus 16 capitals or digits,
+and scrubbing it would corrupt that chunk on every retry. `artifacts/<id>` as the path keeps old
+UIs from offering a broken Open.
+
+**Rejected:** download tickets over HTTP on the remote listener (a new route and auth surface);
+a pointer to the workspace file; a new event type (`artifact_ready` already replays); files on
+`tool_result` (model-facing and audited); androidx FileProvider and PackageInstaller sessions
+(dependencies and failure modes for no user-visible gain); DownloadManager (needs an HTTP URL);
+`hello.features` negotiation (a `sent_file` card proves the producing daemon is new, and an old
+hub names the verb in `unknown_message`); reads outside the workspace (Class C); one path per call
+(the goal names several files per call).
+
+**Amended after review (2026-10-15):**
+- The file-name rule (design §1.4) gains step 2b, which drops the bidi controls U+200E, U+200F,
+  U+202A to U+202E and U+2066 to U+2069. Step 8 cuts the name again after a late device prefix,
+  so a name always fits in 120 bytes. Python, Rust and Kotlin pin the same vectors. Only these
+  code points are dropped, not all of category Cf, so the three languages agree without a shared
+  Unicode table.
+- `send_file` checks each path again with the dispatcher's own path guard, the same wall the
+  classifier used.
+- A move to another project rebinds everything that held the old workspace:
+  - the path guard, and the classifier boundary (its cached judgments are cleared);
+  - the checkpointer, memory committer, ledger, policy and prompt assembler;
+  - the delegate runtime's assembler, and the import approvals.
+  The shell allowlist is read at each call. The next tool call works in the new workspace, and a
+  path in the old one is outside the boundary. Sessions on the external ACP engine are not
+  rebound yet (backlog follow-up).
+- Every reload of a session's boundary goes through one helper, `reload_session_boundary`. It
+  covers open, revive, move and Resume, and it puts a charter run's boundary and caps back over
+  the workspace config. A Resume can no longer widen an autonomy run's shell allowlist or raise
+  its caps. A test fails if any module assigns the workspace boundary to a session directly.
+- A cancel before the commit point leaves nothing behind. After it, the file is indexed and the
+  card is announced. The orphan sweep runs once when the store first loads a session, and only for
+  a session the registry knows by its exact id. A chunk read for any other id answers
+  `artifact_not_found` without touching the disk.
+- Any OSError while checking free space is `disk_full`; it never names the data dir.
+
+## TD-5144 — File cards on the desktop: Open is an allowlist, errors say what they answer (Class B)
+
+2026-10-15. Review of TD-5143..5145 found two problems. One click on Open could run a script the
+agent made. And a download had no way to tell its own hub refusals apart from refusals of other
+messages in the same session.
+
+**Decision:**
+- Desktop Open works only for .pdf .png .jpg .jpeg .gif .webp .bmp .mp4 .webm .mov .mkv .mp3 .wav
+  .m4a .ogg .flac .aac .txt .md .csv .log .json .zip .tar .gz .tgz .7z. The extension is
+  lowercased and read from the last dot, after trailing spaces and dots are stripped.
+  - The UI offers Open only for these (`openable` defaults to false). The shell refuses any other
+    name with `not_openable` before it calls the opener, and it checks the real name on disk.
+  - Show in folder and Save a copy work for every kind.
+  - The phone keeps Open for every kind, because Android's chooser and installer are the gate.
+  - On Windows the opener gets a plain path, not `\\?\`. dunce's rule (about 25 lines) is
+    written out rather than adding dunce.
+- An `Error` may carry `in_reply_to`, the client message type it answers. A hub sets it when it
+  refuses a forwarded message: `bad_request`, `machine_not_found`, `machine_unreachable`,
+  `not_allowed`, `loopback_only`, `not_on_remote`.
+  - A download claims an error only when `in_reply_to` is `read_artifact_chunk`. An older hub
+    leaves the field out; then the download claims an error only while that session has chunk
+    requests outstanding.
+  - Replies are counted per download, so a cancelled or paused window's late replies never count
+    against the next one.
+  - The field is additive. `PROTOCOL_VERSION` stays 1.
+- Received downloads:
+  - `received_file_begin` refuses with `no_space` when the cache volume has less room than the
+    rest of the file plus 256 MiB (design §7.2).
+  - Downloads falls back to `~/Downloads` when the OS names no Downloads folder, and the folder
+    is resolved at begin, not after the bytes arrive.
+  - Calls are serialized per artifact id, off the async runtime's worker threads.
+  - New direct dependencies, both already in Cargo.lock: `libc 0.2` (unix) and `windows-sys
+    0.59` with only Win32_Storage_FileSystem (windows; it turns on Win32_Foundation itself).
+  - On macOS the free space is statfs `f_bavail`, which leaves out purgeable APFS space. A Mac
+    that is full apart from purgeable data says `no_space` until the user frees room. The
+    purgeable-aware figure needs CoreFoundation and a Mac to test on. That is the follow-up if
+    Macs report a false `no_space`.
+- Sizes round an exact tie to even on both sides, as Python's format does.
+- A send cut off by a restart says "Not sent: the turn was cut off" instead of "Sending…" forever.
+
+**Rationale:**
+- A denylist always misses a kind Windows will run (.js, .vbs, .hta, .scr, .lnk, .url). An
+  allowlist fails closed.
+- The shell enforces the list as well as the UI, so a UI bug can't reach the opener.
+- `in_reply_to` is the only way to tell a refused chunk from a refused `user_message` in one
+  bridged session. The fallback keeps older hubs working.
+- The free-space margin stops a large download from running the disk to zero under the daemon's
+  event log and audit DB.
+
+**Rejected:**
+- A longer denylist.
+- Matching errors by session alone: that rule swallowed a sleeping computer's refusal of a
+  `user_message`.
+- A new error code per message type.
+- `dunce`, `fs2` or `sysinfo` as new crates.
+
+## TD-5145 — The phone's file bridge: error codes and locking (Class B; 0.1.10, versionCode 11)
+
+2026-10-15. The TD-5143 contract names the bridge's methods and codes but leaves some corners
+open. The Android build fills them as below. The release is 0.1.10 / versionCode 11, not the
+0.1.9 the design named: TD-5026 (the composer file picker) shipped 0.1.9 / versionCode 10 first,
+and this build includes it.
+
+**Decision:**
+- `fileBegin` has no `io` code, so a failed cache write reports `no_space`.
+- `fileAppend` reports a chunk past the declared size as `bad_data`, a call with no begun entry
+  as `io`, and an append to a file already verified as `bad_offset` with `have` = the size.
+- An async method given a bad id still returns `started`, then sends a failure event.
+- `status()` reads without the per-id lock, because hashing holds that lock for seconds.
+- A sha256 mismatch truncates `data.part`, so a retry never resumes from bad bytes.
+- The per-id locks are process-wide, so two pages never write one entry at once.
+
+**Rationale:** each choice keeps the page's state machine to the codes it already maps, and none
+can leave bad bytes for a resume to build on. A status poll that waited on hashing would freeze
+the card's progress for the length of the hash.
+
+**Rejected:** new codes for these corners (the card copy and the Python fixtures would both need
+them); taking the lock in `status()`.
+
+**Amended after review (2026-10-15):**
+- `finish` checks the hash, renames `data.part` to its final name (`data.apk` for an APK), reads
+  the APK info from that file, then writes one meta that holds the file and the APK info together.
+  Nothing reports verified before the APK check has run.
+- If that meta write fails, `status()` and `begin()` count the full-length final file as held,
+  with no new download. The next `finish` hashes the file in place and adopts it, or reports a
+  mismatch and starts a clean retry. `status()` still never hashes.
+- An APK parse that throws gives a card with no APK line instead of crashing the app.
+- The bidi controls are written as `\u` escapes in the sources. A pytest check fails if any raw
+  one appears under `android/app/src`, and CI now runs for changes under `android/**` too.

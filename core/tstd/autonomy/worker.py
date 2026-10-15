@@ -19,6 +19,7 @@ from typing import Any
 
 from ..logging import get_logger
 from .classifier import (
+    Boundary,
     Classification,
     DecisionClass,
     DecisionClassifier,
@@ -240,6 +241,16 @@ class AmbiguousClassifier:
     def cache_size(self) -> int:
         """Number of cached worker classifications."""
         return len(self._cache)
+
+    def rebind(self, boundary: Boundary) -> None:
+        """Judge against *boundary* from now on (TD-1715 live move).
+
+        The cached judgments were made inside the old wall and are keyed by
+        arguments alone, so ``rm -rf build`` judged there must not answer
+        for the new project: the cache goes with the old boundary.
+        """
+        self._static.boundary = boundary
+        self._cache.clear()
 
     def _cache_key(self, request: DecisionRequest) -> tuple[str, str]:
         return (request.tool_name, canonical_arguments(request.arguments))

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import re
 import secrets
 from typing import Annotated, Any, Literal
 
@@ -1093,6 +1094,27 @@ class OpenArtifact(ClientMessage):
     type: Literal["open_artifact"] = "open_artifact"
     session_id: str
     artifact_id: str = Field(min_length=1)
+
+
+# One ``artifact_chunk`` frame carries at most this many file bytes. As
+# base64 in JSON that is about 700 KB, under the 1 MiB frame limit every
+# websockets hop keeps by default (TD-5143).
+CHUNK_MAX = 524_288
+
+
+class ReadArtifactChunk(ClientMessage):
+    """Read part of a file the agent sent (TD-5143). Answered with ``artifact_chunk``.
+
+    Only ``kind == "sent_file"`` artifacts, by id. No path is accepted, so
+    this cannot become a "read anything" verb. ``length`` is capped at
+    ``CHUNK_MAX`` so one reply fits a websockets frame on every hop.
+    """
+
+    type: Literal["read_artifact_chunk"] = "read_artifact_chunk"
+    session_id: str = Field(min_length=1)
+    artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    offset: int = Field(ge=0)
+    length: int = Field(default=CHUNK_MAX, ge=1, le=CHUNK_MAX)
 
 
 class DesignHitTest(ClientMessage):
@@ -2456,12 +2478,24 @@ class LogTrimmed(DaemonEvent):
 
 
 class ArtifactEntry(BaseModel):
-    """One artifact on ``artifact_list`` (TD-3201). Path, not bytes."""
+    """One artifact on ``artifact_list`` (TD-3201). Path, not bytes.
+
+    ``kind == "sent_file"`` (TD-5143) is a copy the agent sent with
+    ``send_file``: it always carries ``name``, ``size``, ``sha256`` and
+    ``tool_call_id``, and its ``path`` is the folder ``artifacts/<id>``,
+    which clients never open. The bytes come from ``read_artifact_chunk``.
+    """
 
     artifact_id: str = Field(min_length=1)
     title: str
     mime: str
     path: str
+    kind: Literal["artifact", "sent_file"] = "artifact"
+    name: str | None = None
+    size: int | None = Field(default=None, ge=0)
+    sha256: str | None = None
+    caption: str | None = None
+    tool_call_id: str | None = None
 
 
 class ArtifactReady(DaemonEvent):
@@ -2469,6 +2503,7 @@ class ArtifactReady(DaemonEvent):
 
     Session-scoped: it rides the event log so attach can replay the
     notice.  ``list_artifacts`` is the source of truth after a trim.
+    The optional fields are the ``sent_file`` ones on ``ArtifactEntry``.
     """
 
     type: Literal["artifact_ready"] = "artifact_ready"
@@ -2477,6 +2512,12 @@ class ArtifactReady(DaemonEvent):
     title: str
     mime: str
     path: str
+    kind: Literal["artifact", "sent_file"] = "artifact"
+    name: str | None = None
+    size: int | None = Field(default=None, ge=0)
+    sha256: str | None = None
+    caption: str | None = None
+    tool_call_id: str | None = None
 
 
 class ArtifactList(DaemonEvent):
@@ -2492,6 +2533,7 @@ class Artifact(DaemonEvent):
     """Response to ``open_artifact`` (TD-3201): metadata and path.
 
     Connection-scoped.  Bytes stay on disk; the client opens the path.
+    The optional fields are the ``sent_file`` ones on ``ArtifactEntry``.
     """
 
     type: Literal["artifact"] = "artifact"
@@ -2501,6 +2543,31 @@ class Artifact(DaemonEvent):
     title: str
     mime: str
     path: str
+    kind: Literal["artifact", "sent_file"] = "artifact"
+    name: str | None = None
+    size: int | None = Field(default=None, ge=0)
+    sha256: str | None = None
+    caption: str | None = None
+    tool_call_id: str | None = None
+
+
+class ArtifactChunk(DaemonEvent):
+    """Bytes for ``read_artifact_chunk`` (TD-5143). Connection-scoped, never logged.
+
+    ``data_b64`` is exempt from the wire scrub; ``error_code`` set means
+    empty data. ``offset == size`` answers ``eof`` with no data.
+    """
+
+    type: Literal["artifact_chunk"] = "artifact_chunk"
+    seq: int = 1
+    session_id: str
+    artifact_id: str
+    offset: int = Field(ge=0)
+    size: int = Field(default=0, ge=0)
+    sha256: str = ""
+    data_b64: str = ""
+    eof: bool = False
+    error_code: str | None = None
 
 
 class Ping(BaseModel):
@@ -2531,6 +2598,10 @@ class Error(DaemonEvent):
     # TD-5015: the paired computer an error came from, or is about. A store
     # that consumes unscoped errors ignores one that carries this.
     machine: str | None = None
+    # TD-5144: the client message type this error answers, when the sender
+    # knows it (a hub refusing a forwarded verb). Lets a download claim only
+    # its own refusals. Absent from older daemons.
+    in_reply_to: str | None = None
 
 
 class ScreenFrame(DaemonEvent):
@@ -2969,6 +3040,7 @@ ClientMessageT = Annotated[
     | DeleteApiKey
     | ListArtifacts
     | OpenArtifact
+    | ReadArtifactChunk
     | DesignHitTest
     | CheckCuPermissions
     | ResetCuPermissions
@@ -3044,6 +3116,7 @@ DaemonEventT = Annotated[
     | ArtifactReady
     | ArtifactList
     | Artifact
+    | ArtifactChunk
     | Ping
     | Error
     | ScreenFrame
@@ -3151,6 +3224,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "export_usage",
         "list_artifacts",
         "open_artifact",
+        "read_artifact_chunk",
         "design_hit_test",
         "check_cu_permissions",
         "reset_cu_permissions",
@@ -3226,6 +3300,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "artifact_ready",
         "artifact_list",
         "artifact",
+        "artifact_chunk",
         "ping",
         "error",
         "screen_frame",
@@ -3429,6 +3504,7 @@ def build_error(
     message: str,
     session_id: str | None = None,
     machine: str | None = None,
+    in_reply_to: str | None = None,
 ) -> str:
     """Build a typed error message.
 
@@ -3437,14 +3513,23 @@ def build_error(
     socket — so it must scrub here rather than rely on ``event_log.add``.
     ``session_id`` (optional, TD-1711) lets the UI attribute the error to
     the session whose message was refused. ``machine`` (TD-5015) marks an
-    error that came from, or is about, a paired computer.
+    error that came from, or is about, a paired computer. ``in_reply_to``
+    (TD-5144) names the client message type the error answers.
     """
     payload: dict[str, str] = {"type": "error", "code": code, "message": redact_secrets(message)}
     if session_id is not None:
         payload["session_id"] = session_id
     if machine is not None:
         payload["machine"] = machine
+    if in_reply_to is not None:
+        payload["in_reply_to"] = in_reply_to
     return json.dumps(payload)
+
+
+# Fields that carry file bytes as base64, by message type (TD-5143). The rest of
+# the frame is still scrubbed; a value that is not pure base64 is scrubbed as usual.
+_WIRE_SCRUB_EXEMPT: dict[str, str] = {"artifact_chunk": "data_b64"}
+_BASE64 = re.compile(r"[A-Za-z0-9+/]*={0,2}")
 
 
 def scrub_wire_json(payload: str) -> str:
@@ -3456,8 +3541,23 @@ def scrub_wire_json(payload: str) -> str:
     where redaction normally happens at insertion, and their payloads can
     be user text — a session title is the first user message.  Idempotent:
     a frame already scrubbed at insertion passes through unchanged.
+
+    One targeted exemption (TD-5143): ``artifact_chunk.data_b64`` is file
+    bytes. Base64 can spell ``AKIA…`` by chance, and scrubbing it would
+    corrupt the chunk on every retry, so the file could never verify. The
+    field is held out only while it is pure base64.
     """
-    return json.dumps(redact_structure(json.loads(payload)), ensure_ascii=False)
+    obj = json.loads(payload)
+    held: tuple[str, str] | None = None
+    if isinstance(obj, dict):
+        field = _WIRE_SCRUB_EXEMPT.get(str(obj.get("type")))
+        value = obj.get(field) if field else None
+        if field and isinstance(value, str) and _BASE64.fullmatch(value):
+            held = (field, obj.pop(field))
+    out = redact_structure(obj)
+    if held is not None and isinstance(out, dict):
+        out[held[0]] = held[1]
+    return json.dumps(out, ensure_ascii=False)
 
 
 def validate_hello(hello: Hello) -> None:

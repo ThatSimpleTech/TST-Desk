@@ -9,7 +9,7 @@ hello.txt. This module reuses the protocol-client helpers and the
 :class:`HarnessResult` report, then drives ``end_session`` plus
 ``memory_accept`` / ``memory_reject``.
 
-Distill is a worker ``chat_completion`` with ``DISTILL_SYSTEM_PROMPT``,
+Distill is a streamed worker call with ``DISTILL_SYSTEM_PROMPT`` (TD-5146),
 not a PromptAssembler pass. Two Class A writes exhaust lead-turns so a
 real worker assemble is recorded. Embeddings use an empty ``base_url``
 so CI never needs a sidecar.
@@ -86,8 +86,8 @@ def _provider(workspace: Path) -> MockProvider:
     """Two Class A writes exhaust lead-turns so a worker assemble runs.
 
     The scratch path is under ``.tst/`` and gitignored, so reject can
-    still see a clean ``git status``. Distill is a later worker
-    ``chat_completion``, keyed on the same slug after the stream.
+    still see a clean ``git status``. Distill is a later streamed worker
+    call, keyed on the same slug after the turn's stream.
     """
     scratch_path = workspace / ".tst" / "harness-scratch.txt"
     scratch = json.dumps({"path": str(scratch_path), "content": "x\n"})
