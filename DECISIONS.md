@@ -13411,6 +13411,9 @@ the token in the remote URL or in argv. Following HTTP redirects.
 Storing the device code or the tokens on `github_status`. Bumping the
 protocol version. A settings tool that proceeds after Class C approval.
 
+Replayed onto 0.2.0 after E50–E52 were already the Android shell, the
+progress guard, and sent files. The connector epic is E53.
+
 ## TD-4853 — Microsoft mail uses auth code, PKCE, and a keychain blob
 
 **Decision:** `connectors.microsoft.client_id` defaults to empty, and so

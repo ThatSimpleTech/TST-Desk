@@ -130,11 +130,6 @@ export const ICONS = {
 		'<circle cx="19" cy="12" r="1"/>',
 	/** Quit the app (command palette, TD-2903). */
 	power: '<path d="M12 2v10"/><path d="M18.4 6.6a8 8 0 1 1-12.8 0"/>',
-	/** Check for a newer release (command palette, TD-4837). */
-	download:
-		'<path d="M12 3v12"/>' +
-		'<path d="m7 11 5 5 5-5"/>' +
-		'<path d="M5 21h14"/>',
 	/** Design mode / agent cursor (TD-3402, TD-3403). */
 	'mouse-pointer':
 		'<path d="m3 3 7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/>',
