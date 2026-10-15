@@ -489,6 +489,12 @@ export function codeOf(raw: unknown): string {
 /** `<machine>` in the copy: the bridged session's computer, or this one. */
 export interface CopyContext {
   machine: string;
+  /** The computer this page talks to (the hub): "this computer" on the
+   *  desktop, the paired desktop's name on the phone. Defaults to this one. */
+  hub?: string;
+  /** The error came from the other computer through the hub (its frame
+   *  carries `machine`), not from the hub itself. */
+  relayed?: boolean;
   platform: Platform;
   /** The file's name, for the no_app copy's extension. */
   name: string;
@@ -525,8 +531,16 @@ export function messageFor(code: string, ctx: CopyContext): CodeOutcome {
     case "bad_key":
       return { kind: "rekey", copy: "Restart TST Desk and try again." };
     case "not_on_remote":
+      // Only the hub sends this: its forward list predates the verb.
+      return { kind: "phase", phase: "unavailable", copy: hubUpdateCopy(ctx) };
     case "unknown_message":
+      return {
+        kind: "phase",
+        phase: "unavailable",
+        copy: ctx.relayed === true ? `Update TST Desk on ${machine} to download this.` : hubUpdateCopy(ctx),
+      };
     case "not_allowed":
+      // The other computer's peer policy refused the hub: that one is old.
       return { kind: "phase", phase: "unavailable", copy: `Update TST Desk on ${machine} to download this.` };
     case "machine_not_found":
       return { kind: "phase", phase: "paused", copy: `${capitalized(machine)} is not reachable.` };
@@ -561,6 +575,14 @@ export function messageFor(code: string, ctx: CopyContext): CodeOutcome {
     default:
       return { kind: "phase", phase: "failed", copy: `Download failed (${code}).` };
   }
+}
+
+/** The hub refused the verb, so the hub needs the update, not the computer
+ *  that sent the file, which proved it is new by sending it (§4.5). */
+function hubUpdateCopy(ctx: CopyContext): string {
+  const hub = ctx.hub ?? THIS_COMPUTER;
+  if (ctx.machine === THIS_COMPUTER || ctx.machine === hub) return `Update TST Desk on ${hub} to download this.`;
+  return `Update TST Desk on ${hub} to download files from ${ctx.machine}.`;
 }
 
 /** "This file is no longer on <machine>." without a code, for a probe

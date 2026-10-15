@@ -202,6 +202,7 @@ beforeEach(() => {
       return true;
     },
     machine: () => "studio-mac",
+    hubName: () => "office-pc",
     machineStatus: (id) => listed[id] ?? null,
   });
 });
@@ -392,6 +393,24 @@ describe("codes on the card", () => {
     };
     emit(event);
     expect(claimedInline(event)).toBe(true);
+    // The hub is the old one: the computer that sent the file is new (§4.5).
+    expect(state(ref)).toMatchObject({
+      phase: "unavailable",
+      note: "Update TST Desk on office-pc to download files from studio-mac.",
+    });
+  });
+
+  it("an unknown_message relayed from the other computer names that computer", async () => {
+    const ref = file(1, CHUNK);
+    startDownload(ref);
+    await flush();
+    emit({
+      type: "error",
+      seq: 0,
+      code: "unknown_message",
+      message: "On studio-mac: unknown message type: read_artifact_chunk",
+      machine: "mch_1a2b3c4d5e6f",
+    });
     expect(state(ref)).toMatchObject({ phase: "unavailable", note: "Update TST Desk on studio-mac to download this." });
   });
 
@@ -405,7 +424,10 @@ describe("codes on the card", () => {
     const event: DaemonEventUnion = { type: "error", seq: 0, session_id: "sess-1", code: "not_on_remote", message: "x" };
     emit(event);
     expect(claimedInline(event)).toBe(true);
-    expect(state(ref).phase).toBe("unavailable");
+    expect(state(ref)).toMatchObject({
+      phase: "unavailable",
+      note: "Update TST Desk on office-pc to download files from studio-mac.",
+    });
   });
 });
 

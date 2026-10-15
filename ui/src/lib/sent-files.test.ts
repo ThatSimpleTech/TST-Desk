@@ -408,9 +408,7 @@ describe("code to copy (§6.5)", () => {
     }
     expect(messageFor("bad_offset", remote)).toEqual({ kind: "resync" });
     expect(messageFor("bad_key", remote)).toEqual({ kind: "rekey", copy: "Restart TST Desk and try again." });
-    for (const code of ["not_on_remote", "unknown_message", "not_allowed"]) {
-      expect([phase(code), copy(code)]).toEqual(["unavailable", "Update TST Desk on studio-mac to download this."]);
-    }
+    expect([phase("not_allowed"), copy("not_allowed")]).toEqual(["unavailable", "Update TST Desk on studio-mac to download this."]);
     expect([phase("machine_not_found"), copy("machine_not_found")]).toEqual(["paused", "studio-mac is not reachable."]);
     expect(copy("machine_not_found", desk)).toBe("This computer is not reachable.");
     expect([phase("machine_unreachable"), copy("machine_unreachable")]).toEqual([
@@ -430,6 +428,24 @@ describe("code to copy (§6.5)", () => {
       "done",
       "Saving to Downloads needs Android 10 or later. Open it from here instead.",
     ]);
+  });
+
+  it("an old hub's refusal names the hub, not the computer that sent the file (§4.5)", () => {
+    const viaDesk: CopyContext = { ...remote, platform: "desktop", hub: "this computer" };
+    const viaPhone: CopyContext = { ...remote, hub: "office-pc" };
+    for (const code of ["not_on_remote", "unknown_message"]) {
+      expect([phase(code, viaDesk), copy(code, viaDesk)]).toEqual([
+        "unavailable",
+        "Update TST Desk on this computer to download files from studio-mac.",
+      ]);
+      expect(copy(code, viaPhone)).toBe("Update TST Desk on office-pc to download files from studio-mac.");
+    }
+    // Relayed from the other computer (the frame carries `machine`): that one is old.
+    expect(copy("unknown_message", { ...viaPhone, relayed: true })).toBe("Update TST Desk on studio-mac to download this.");
+    // The remote's own peer policy refused the hub: the remote needs it.
+    expect(copy("not_allowed", viaPhone)).toBe("Update TST Desk on studio-mac to download this.");
+    // This computer's own session: one computer to name.
+    expect(copy("unknown_message", { ...desk, hub: "this computer" })).toBe("Update TST Desk on this computer to download this.");
   });
 
   it("falls back to Download failed (code) for anything else", () => {

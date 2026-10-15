@@ -18,6 +18,7 @@
 
 import { onConnectionState, onDaemonEvent, onResume, sendToDaemon } from "./connection-status.svelte.js";
 import { machineOf } from "./bridged-id";
+import { hub } from "./hub.svelte.js";
 import { claimInline } from "./inline-errors";
 import { machineById, machineNameFor } from "./machines.svelte.js";
 import type { ArtifactChunk, ClientMessageUnion, DaemonEventUnion, MachineStatus, MachineSummary } from "./protocol";
@@ -31,6 +32,7 @@ import {
   messageFor,
   THIS_COMPUTER,
   type ApkStatus,
+  type CopyContext,
   type FileAction,
   type FilePhase,
   type Platform,
@@ -135,6 +137,8 @@ interface Deps {
   send: (msg: ClientMessageUnion) => boolean;
   /** The `<machine>` in the copy. */
   machine: (sessionId: string) => string;
+  /** The computer this page talks to, for a refusal the hub itself sends. */
+  hubName: () => string;
   /** A paired computer's status as the machines store lists it, or null. */
   machineStatus: (machineId: string) => MachineStatus | null;
 }
@@ -158,6 +162,7 @@ function getDeps(): Deps {
       host: createFileHost(platform),
       send: sendToDaemon,
       machine: (sessionId) => machineNameFor(sessionId) ?? THIS_COMPUTER,
+      hubName: () => (platform === "desktop" ? THIS_COMPUTER : (hub.desktopName ?? "the paired computer")),
       machineStatus: (machineId) => machineById(machineId)?.status ?? null,
     };
   }
@@ -573,9 +578,10 @@ function startNext(): void {
   }
 }
 
-/** Land a code on the card (§6.5). */
-function handleCode(job: Job, code: string): void {
-  const outcome = messageFor(code, copyContext(job.ref));
+/** Land a code on the card (§6.5). `relayed`: an error frame the other
+ *  computer sent through the hub, rather than the hub's own. */
+function handleCode(job: Job, code: string, relayed = false): void {
+  const outcome = messageFor(code, { ...copyContext(job.ref), relayed });
   const e = entry(job.ref);
   e.code = code;
   switch (outcome.kind) {
@@ -634,9 +640,9 @@ async function restartFromStatus(job: Job): Promise<void> {
   startAt(job, status.have);
 }
 
-function copyContext(ref: SentFileRef) {
+function copyContext(ref: SentFileRef): CopyContext {
   const d = getDeps();
-  return { machine: d.machine(ref.sessionId), platform: d.platform, name: ref.name, size: ref.size };
+  return { machine: d.machine(ref.sessionId), hub: d.hubName(), platform: d.platform, name: ref.name, size: ref.size };
 }
 
 // ── Pause, resume, cancel ──────────────────────────────────────────────
@@ -851,7 +857,7 @@ export function claimDownloadError(event: DaemonEventUnion): boolean {
   if (viaHub && job.ref.sessionId !== session) return false;
   claimInline(event);
   if (job.unanswered > 0) job.unanswered -= 1;
-  handleCode(job, event.code);
+  handleCode(job, event.code, typeof event.machine === "string" && event.machine !== "");
   return true;
 }
 
