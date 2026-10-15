@@ -604,6 +604,19 @@ describe("the other computer goes away (machine_unreachable)", () => {
     expect(requests()).toEqual([]);
   });
 
+  it("a stall in its session waits for the computer too, and carries on when the list calls it up", async () => {
+    const ref = file(1, CHUNK, { sessionId: BRIDGED });
+    startDownload(ref);
+    await flush();
+    await vi.advanceTimersByTimeAsync(STALL_MS * (MAX_STRIKES + 1));
+    expect(state(ref)).toMatchObject({ phase: "paused", waiting: true });
+    sent = [];
+    emit(machineList({ [MCH]: "connected" }));
+    await flush();
+    expect(state(ref).phase).toBe("downloading");
+    expect(requests()).toEqual([0]);
+  });
+
   it("Cancel stops the wait for the computer", async () => {
     const ref = file(1, 6 * CHUNK, { sessionId: BRIDGED });
     startDownload(ref);

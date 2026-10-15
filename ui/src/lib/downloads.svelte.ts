@@ -655,7 +655,8 @@ function copyContext(ref: SentFileRef): CopyContext {
 // ── Pause, resume, cancel ──────────────────────────────────────────────
 
 /** Why a download paused. `connection` and `stall` wait for the
- *  connection (auto-resume); `user` and `code` wait for Resume. */
+ *  connection (auto-resume), and a bridged `stall` for its computer too;
+ *  `user` and `code` wait for Resume. */
 type PauseWhy = "connection" | "stall" | "user" | "code";
 
 /** Stop asking, keep the part. A pause for the dropped connection keeps the
@@ -762,6 +763,9 @@ function tick(): void {
       if (now - info.at < STALL_MS) continue;
       if (info.strikes >= MAX_STRIKES) {
         pauseJob(job, "stall");
+        // The socket is up, so for another computer's session it is most
+        // likely that computer that went quiet.
+        waitForMachine(job);
         break;
       }
       // Reads are idempotent over an immutable copy: just ask again.
@@ -800,11 +804,12 @@ function handleResume(): void {
   resumeWaiting();
 }
 
-/** A hub pause (machine_unreachable, machine_not_found) waits for that
- *  computer: the hub pushes machine_list when a link's status changes, and
- *  the download carries on once it lists the computer connected. When the
- *  list already says so (the lane is still dialing, or the push came first),
- *  ask again after a stall's wait, MAX_STRIKES times at most. */
+/** A hub pause (machine_unreachable, machine_not_found), and a stall in a
+ *  bridged session, waits for that computer: the hub pushes machine_list
+ *  when a link's status changes, and the download carries on once it lists
+ *  the computer connected. When the list already says so (the lane is still
+ *  dialing, or the push came first), ask again after a stall's wait,
+ *  MAX_STRIKES times at most. */
 function waitForMachine(job: Job): void {
   const machine = machineOf(job.ref.sessionId);
   job.waitFor = machine;
