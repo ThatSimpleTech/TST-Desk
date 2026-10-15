@@ -578,6 +578,13 @@ export interface DeleteMcpServer extends ClientMessage {
 // rather than a general config write — a message carrying only a tier and a
 // slug cannot smuggle a secret into config.yaml. Acked with a fresh
 // setup_state, same pattern as set_preset.
+/** Set or clear this workspace's spend budget. Null clears. Acked with boundary_update. */
+export interface SetSpendCap extends ClientMessage {
+  type: "set_spend_cap";
+  session_id: string;
+  spend_usd: number | null;
+}
+
 export interface SetTierSlug extends ClientMessage {
   type: "set_tier_slug";
   preset: string;
@@ -922,6 +929,7 @@ export type ClientMessageUnion =
   | OpenInTerminal
   | ApproveGrokPlan
   | ListGrokExtensions
+  | SetSpendCap
   | SetTierSlug
   | SetCredential
   | DeleteCredential
@@ -1161,6 +1169,8 @@ export interface BoundaryUpdate extends DaemonEvent {
   wall_clock_hours: number;
   max_iterations: number;
   source: string;
+  /** True when this workspace set caps.spend_usd. Omitted means unset. */
+  spend_configured?: boolean;
   // TD-1709: the workspace's attachment caps, so the composer refuses early
   // against real numbers. Optional because an older daemon does not send it.
   attachments?: AttachmentLimits;

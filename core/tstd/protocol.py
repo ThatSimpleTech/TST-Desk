@@ -921,6 +921,27 @@ class ListGrokExtensions(ClientMessage):
     type: Literal["list_grok_extensions"] = "list_grok_extensions"
 
 
+class SetSpendCap(ClientMessage):
+    """Set or clear this workspace's session spend budget.
+
+    ``spend_usd`` omitted or null removes ``caps.spend_usd`` from
+    ``.tst/config.yaml``. The built-in $25 pause still applies and the
+    title bar does not show a budget. A number replaces that pause and
+    is what the title bar prints. Acked with ``boundary_update``.
+    """
+
+    type: Literal["set_spend_cap"] = "set_spend_cap"
+    session_id: str
+    spend_usd: float | None = None
+
+    @field_validator("spend_usd")
+    @classmethod
+    def _spend_non_negative(cls, value: float | None) -> float | None:
+        if value is not None and value < 0:
+            raise ValueError("spend_usd must be >= 0")
+        return value
+
+
 class SetTierSlug(ClientMessage):
     """Name the model one tier of one preset uses (TD-1703).
 
@@ -1673,6 +1694,10 @@ class BoundaryUpdate(DaemonEvent):
     max_iterations: int = Field(ge=1)
     # Config file path, "defaults", or "defaults — invalid config (…)".
     source: str
+    # True when this workspace's file sets caps.spend_usd, or a charter
+    # supplies the cap. False means the built-in pause, which the title
+    # bar does not present as the user's budget. Omitted by older daemons.
+    spend_configured: bool = False
     # Attachment caps (TD-1709), so the composer refuses oversize files
     # against this workspace's real numbers instead of a hardcoded guess.
     # Additive with a default: a client that ignores it behaves as it did.
@@ -3028,6 +3053,7 @@ ClientMessageT = Annotated[
     | OpenInTerminal
     | ApproveGrokPlan
     | ListGrokExtensions
+    | SetSpendCap
     | SetTierSlug
     | SetCredential
     | DeleteCredential
@@ -3213,6 +3239,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "open_in_terminal",
         "approve_grok_plan",
         "list_grok_extensions",
+        "set_spend_cap",
         "set_tier_slug",
         "set_credential",
         "delete_credential",

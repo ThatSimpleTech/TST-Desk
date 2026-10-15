@@ -42,6 +42,7 @@ from .autonomy.start import run_autonomy_start
 from .boundary_config import (
     boundary_source,
     load_workspace_boundary,
+    save_spend_cap,
     scaffold_workspace_config,
 )
 from .browser import BrowserDriver, BrowserError, browser_driver_from_config, normalize_hit
@@ -311,6 +312,7 @@ from .protocol import (
     SetSessionPreset,
     SetSessionStar,
     SetSkipAllApprovals,
+    SetSpendCap,
     SetTier,
     SetTierCredential,
     SetTierSlug,
@@ -334,9 +336,6 @@ from .protocol import (
     build_error,
     parse_client_message,
     scrub_wire_json,
-)
-from .protocol import (
-    BoundaryUpdate as BoundaryUpdateEvent,
 )
 from .protocol import (
     SessionState as SessionStateEvent,
@@ -421,6 +420,7 @@ from .session import (
 )
 from .session_lifecycle import (
     archive_session,
+    boundary_update_event,
     delete_session,
     move_session,
     reload_session_boundary,
@@ -2498,21 +2498,7 @@ class Daemon:
                     extra={"extra_fields": {"session_id": msg.session_id, "error": str(error)}},
                 )
             await found.resume()
-            cfg = found.boundary_config
-            await found.event_log.add(
-                BoundaryUpdateEvent(
-                    session_id=found.id,
-                    writable_paths=list(cfg.boundary.writable_paths),
-                    allowed_commands=list(cfg.boundary.allowed_commands),
-                    network=cfg.boundary.network,
-                    spend_usd=cfg.caps.spend_usd,
-                    wall_clock_hours=cfg.caps.wall_clock_hours,
-                    max_iterations=cfg.caps.max_iterations,
-                    source="resume",
-                    attachments=cfg.attachments,
-                    seq=1,
-                )
-            )
+            await found.event_log.add(boundary_update_event(found, "resume"))
             return None
 
         if isinstance(msg, SetPlan):
@@ -2520,6 +2506,25 @@ class Daemon:
 
         if isinstance(msg, SetSessionPreset):
             return await self._handle_set_session_preset(msg)
+
+        if isinstance(msg, SetSpendCap):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            try:
+                save_spend_cap(found.workspace_path, msg.spend_usd)
+            except ConfigError as e:
+                return build_error("bad_request", str(e), session_id=found.id)
+            error = reload_session_boundary(found, found.workspace_path)
+            if error is not None:
+                return build_error("bad_request", str(error), session_id=found.id)
+            await found.event_log.add(
+                boundary_update_event(found, boundary_source(found.workspace_path))
+            )
+            return None
 
         if isinstance(msg, SetTier):
             found = self.session_registry.get(msg.session_id)
@@ -3477,21 +3482,7 @@ class Daemon:
         Open and revive both call this so the title bar is not left
         showing a previous life's boundary after a restart.
         """
-        cfg = sess.boundary_config
-        await sess.event_log.add(
-            BoundaryUpdateEvent(
-                session_id=sess.id,
-                writable_paths=list(cfg.boundary.writable_paths),
-                allowed_commands=list(cfg.boundary.allowed_commands),
-                network=cfg.boundary.network,
-                spend_usd=cfg.caps.spend_usd,
-                wall_clock_hours=cfg.caps.wall_clock_hours,
-                max_iterations=cfg.caps.max_iterations,
-                source=source,
-                attachments=cfg.attachments,
-                seq=1,
-            )
-        )
+        await sess.event_log.add(boundary_update_event(sess, source))
         if sess.engine == "grok":
             # Native slugs are not what will answer. Name the Grok model
             # the CLI is configured to use so an empty chat can show it

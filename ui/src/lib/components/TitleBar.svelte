@@ -78,7 +78,7 @@
 		<CostMeter />
 
 		<!-- Spend against the boundary's cap (the "wall") -->
-		{#if session.boundary !== null}
+		{#if session.boundary !== null && session.spendConfigured}
 			<span class="cap cap--{capTone}" title={boundaryTip ?? undefined}>
 				<span class="cap-bar" aria-hidden="true">
 					<span class="cap-fill" style={`width: ${Math.round(capRatio * 100)}%`}></span>

@@ -27,6 +27,7 @@
 	import SettingsEmail from './SettingsEmail.svelte';
 	import SettingsEngine from './SettingsEngine.svelte';
 	import SettingsMcp from './SettingsMcp.svelte';
+	import SettingsBudget from './SettingsBudget.svelte';
 	import SettingsModels from './SettingsModels.svelte';
 	import SettingsAbout from './SettingsAbout.svelte';
 	import CuIndicatorToggles from './CuIndicatorToggles.svelte';
@@ -50,6 +51,7 @@
 		computer: 'Computer use',
 		engine: 'Engine',
 		model: 'Model',
+		budget: 'Budget',
 		policy: 'Policy',
 		mcp: 'MCP servers',
 		key: 'API keys',
@@ -244,6 +246,8 @@
 					<SettingsEngine />
 				{:else if settings.section === 'model'}
 					<SettingsModels />
+				{:else if settings.section === 'budget'}
+					<SettingsBudget />
 				{:else if settings.section === 'policy'}
 					<PolicyRuleList sessionId={session.sessionId} />
 				{:else if settings.section === 'mcp'}
