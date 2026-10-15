@@ -61,11 +61,12 @@ pub(crate) fn received_root(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| format!("io: {e}"))
 }
 
-/// One lock per artifact id. The commands run on a thread pool, and two
-/// windows on one session, or Cancel followed at once by Download, can call
-/// begin, append, finish and discard on the same id together: two appends
-/// would both pass the offset check, and a finish could lose its rename to
-/// another finish. Different ids never wait for each other.
+/// One lock per artifact id. The commands run on the blocking pool
+/// (`off_runtime`), and two windows on one session, or Cancel followed at
+/// once by Download, can call begin, append, finish and discard on the
+/// same id together: two appends would both pass the offset check, and a
+/// finish could lose its rename to another finish. Different ids never
+/// wait for each other.
 static BUSY: Mutex<BTreeMap<String, Arc<Mutex<()>>>> = Mutex::new(BTreeMap::new());
 
 fn id_lock(aid: &str) -> Arc<Mutex<()>> {
@@ -671,8 +672,20 @@ pub(crate) fn safe_name(raw: &str) -> String {
 
 // ── Commands (§1.6) ────────────────────────────────────────────────────
 
-#[tauri::command(async)]
-pub fn received_file_begin(
+/// Runs a command's disk work on the blocking pool. Every call takes its
+/// id's lock, and a finish holds that lock while it hashes up to 2 GiB.
+/// The async runtime has one worker per core: a call waiting there for the
+/// lock would stall the other commands and events queued on that worker.
+async fn off_runtime<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|e| format!("io: {e}"))?
+}
+
+#[tauri::command]
+pub async fn received_file_begin(
     app: AppHandle,
     artifact_id: String,
     session_id: String,
@@ -683,41 +696,42 @@ pub fn received_file_begin(
     let root = received_root(&app)?;
     // Known before any byte moves, not after the whole file has arrived.
     downloads_dir().ok_or_else(|| "io: no Downloads folder".to_string())?;
-    begin_in(
-        &root,
-        &artifact_id,
-        &session_id,
-        &name,
-        size,
-        &sha256,
-        SystemTime::now(),
-    )
+    off_runtime(move || {
+        begin_in(
+            &root,
+            &artifact_id,
+            &session_id,
+            &name,
+            size,
+            &sha256,
+            SystemTime::now(),
+        )
+    })
+    .await
 }
 
-#[tauri::command(async)]
-pub fn received_file_append(
+#[tauri::command]
+pub async fn received_file_append(
     app: AppHandle,
     artifact_id: String,
     offset: u64,
     data_b64: String,
 ) -> Result<u64, String> {
     let root = received_root(&app)?;
-    append_in(&root, &artifact_id, offset, &data_b64)
+    off_runtime(move || append_in(&root, &artifact_id, offset, &data_b64)).await
 }
 
 #[tauri::command]
 pub async fn received_file_finish(app: AppHandle, artifact_id: String) -> Result<String, String> {
     let root = received_root(&app)?;
     let downloads = downloads_dir().ok_or_else(|| "io: no Downloads folder".to_string())?;
-    tauri::async_runtime::spawn_blocking(move || finish_in(&root, &downloads, &artifact_id))
-        .await
-        .map_err(|e| format!("io: {e}"))?
+    off_runtime(move || finish_in(&root, &downloads, &artifact_id)).await
 }
 
-#[tauri::command(async)]
-pub fn received_file_discard(app: AppHandle, artifact_id: String) -> Result<(), String> {
+#[tauri::command]
+pub async fn received_file_discard(app: AppHandle, artifact_id: String) -> Result<(), String> {
     let root = received_root(&app)?;
-    discard_in(&root, &artifact_id)
+    off_runtime(move || discard_in(&root, &artifact_id)).await
 }
 
 #[cfg(test)]
@@ -1083,6 +1097,61 @@ mod tests {
             assert_eq!(status_in(&root, AID), FileStatus::new("received", size));
             assert_eq!(fs::read_dir(&downloads).unwrap().count(), 1);
             fs::remove_file(done).unwrap();
+        }
+    }
+
+    /// A call that waits for its id's lock waits on the blocking pool, so
+    /// the runtime that drives the commands keeps running other tasks.
+    #[test]
+    fn received_calls_waiting_on_a_busy_id_leave_the_runtime_free() {
+        // Its own id: the other tests share AID and run in parallel.
+        const BUSY_AID: &str = "fedcba9876543210fedcba9876543210";
+        type Call = Box<dyn FnOnce() -> Result<(), String> + Send>;
+        let tmp = TempDir::new("runtime");
+        let root = tmp.0.join("received");
+        let calls: Vec<(&str, Call)> = vec![
+            ("begin", {
+                let root = root.clone();
+                Box::new(move || {
+                    begin_in(&root, BUSY_AID, "s", "hi.txt", 2, HI_SHA, SystemTime::now()).map(drop)
+                })
+            }),
+            ("append", {
+                let root = root.clone();
+                Box::new(move || append_in(&root, BUSY_AID, 0, &b64(b"h")).map(drop))
+            }),
+            ("discard", {
+                let root = root.clone();
+                Box::new(move || discard_in(&root, BUSY_AID))
+            }),
+        ];
+
+        // A finish hashing a large part holds the id's lock this long.
+        let lock = id_lock(BUSY_AID);
+        let held = lock.lock().unwrap();
+        let mut runs = Vec::new();
+        for (what, call) in calls {
+            let (tx, rx) = std::sync::mpsc::channel();
+            // One worker thread: what a busy pool leaves the next task.
+            let runtime = std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_time()
+                    .build()
+                    .unwrap();
+                rt.block_on(async move {
+                    let call = tokio::spawn(off_runtime(call));
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    let _ = tx.send(call.is_finished());
+                    call.await.unwrap()
+                })
+            });
+            runs.push((what, rx.recv_timeout(Duration::from_secs(2)), runtime));
+        }
+        drop(held);
+        for (what, still_waiting, runtime) in runs {
+            runtime.join().unwrap().ok();
+            // Ok(true) would mean the call never reached the lock.
+            assert_eq!(still_waiting, Ok(false), "{what} stalled the runtime");
         }
     }
 
