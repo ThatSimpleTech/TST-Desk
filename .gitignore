@@ -22,6 +22,11 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 node_modules/
+ui/e2e/.runtime.json
+ui/e2e/.daemon.pid
+ui/test-results/
+ui/playwright-report/
+ui/blob-report/
 
 # --- Secrets ---
 .env

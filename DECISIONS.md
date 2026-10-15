@@ -13565,3 +13565,21 @@ button as the only path after the maintainer asked for Claude's updater.
 Also rejected: re-signing the downloaded app with the local `tst-desk-dev`
 identity (the installed bytes would no longer be the release that was
 hashed).
+
+## 2026-10-15 — UI walk uses Playwright against a mock daemon (Class B)
+
+**Decision:** `ui/e2e` drives the real Svelte window in Chromium. A
+headless `tstd.e2e_ui` daemon serves it: mock model, in-memory keychain,
+loopback only. The page installs a small `__TAURI_INTERNALS__` stand-in
+so desktop-only commands (directory picker, updater status) resolve
+without the Tauri host. `e2e/census.json` lists the controls each region
+showed. A new button fails the walk until that file is regenerated and
+the spec clicks it or names why it does not.
+
+**Rationale:** The protocol harnesses never open the window, so a broken
+button can ship green. Playwright is Apache-2.0. The walk stays off the
+login keychain and off the network.
+
+**Rejected:** Clicking the installed `.app` through the macOS
+accessibility tree. That needs a display, a signed bundle, and a human
+in front of the permission prompts, so it cannot be the check CI runs.
