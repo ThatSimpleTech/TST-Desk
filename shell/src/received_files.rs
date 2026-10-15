@@ -42,6 +42,11 @@ pub(crate) struct ReceivedMeta {
     pub size: u64,
     pub sha256: String,
     pub done_path: Option<String>,
+    /// The copy's modified time once it was in Downloads, so another file
+    /// later put at the same path is not taken for it. Absent in metas
+    /// written before it existed; those trust the size alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub done_mtime_ns: Option<u64>,
 }
 
 /// `<app_cache_dir>/received/`. Not created here.
@@ -138,12 +143,24 @@ fn part_len(root: &Path, aid: &str) -> Option<u64> {
         .map(|m| m.len())
 }
 
+fn mtime_ns(meta: &fs::Metadata) -> Option<u64> {
+    let since = meta
+        .modified()
+        .ok()?
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .ok()?;
+    u64::try_from(since.as_nanos()).ok()
+}
+
+/// The finished copy, if what is at its path is still that file: a regular
+/// file of the sent size, last modified when it was moved there.
 fn done_file(meta: &ReceivedMeta) -> Option<PathBuf> {
     let path = PathBuf::from(meta.done_path.as_ref()?);
-    fs::symlink_metadata(&path)
-        .ok()
-        .filter(|m| m.file_type().is_file())
-        .map(|_| path)
+    let found = fs::symlink_metadata(&path).ok()?;
+    let same = found.file_type().is_file()
+        && found.len() == meta.size
+        && (meta.done_mtime_ns.is_none() || mtime_ns(&found) == meta.done_mtime_ns);
+    same.then_some(path)
 }
 
 fn is_sha256(value: &str) -> bool {
@@ -201,6 +218,7 @@ pub(crate) fn begin_in(
         size,
         sha256: sha256.to_string(),
         done_path: None,
+        done_mtime_ns: None,
     };
     let part = part_path(root, aid);
     match read_meta(root, aid) {
@@ -314,6 +332,7 @@ pub(crate) fn finish_in(root: &Path, downloads: &Path, aid: &str) -> Result<Stri
     let target = move_unique(&part, downloads, &safe_name(&meta.name))?;
     let shown = target.to_string_lossy().into_owned();
     meta.done_path = Some(shown.clone());
+    meta.done_mtime_ns = fs::metadata(&target).ok().as_ref().and_then(mtime_ns);
     write_meta(root, aid, &meta)?;
     Ok(shown)
 }
@@ -734,6 +753,58 @@ mod tests {
             finish_in(&root, &downloads, "a".repeat(32).as_str()),
             Err("not_found".into())
         );
+    }
+
+    #[test]
+    fn received_copy_replaced_at_its_path_is_not_received() {
+        let tmp = TempDir::new("replaced");
+        let root = tmp.0.join("received");
+        let downloads = tmp.0.join("Downloads");
+        let receive = || {
+            begin(&root, "app-release.apk", 2, HI_SHA).unwrap();
+            append_in(&root, AID, 0, &b64(b"hi")).unwrap();
+            PathBuf::from(finish_in(&root, &downloads, AID).unwrap())
+        };
+        let done = receive();
+        assert_eq!(status_in(&root, AID), FileStatus::new("received", 2));
+
+        // Moved away, and another build lands at the freed name.
+        for other in [&b"new build"[..], b"ho"] {
+            fs::remove_file(&done).unwrap();
+            fs::write(&done, other).unwrap();
+            let file = File::options().write(true).open(&done).unwrap();
+            file.set_modified(SystemTime::now() - Duration::from_secs(3600))
+                .unwrap();
+            drop(file);
+            assert_eq!(
+                status_in(&root, AID),
+                FileStatus::new("none", 0),
+                "{other:?}"
+            );
+            assert_eq!(done_path_in(&root, AID), None);
+            // This card fetches its own bytes again, beside the other file.
+            assert_eq!(
+                begin(&root, "app-release.apk", 2, HI_SHA),
+                Ok(FileStatus::new("none", 0))
+            );
+            append_in(&root, AID, 0, &b64(b"hi")).unwrap();
+            let again = PathBuf::from(finish_in(&root, &downloads, AID).unwrap());
+            assert_ne!(again, done);
+            assert_eq!(fs::read(&again).unwrap(), b"hi");
+            assert_eq!(status_in(&root, AID), FileStatus::new("received", 2));
+            fs::remove_file(again).unwrap();
+        }
+
+        // A meta from before the stamp still trusts a file of the right size.
+        let mut meta = read_meta(&root, AID).unwrap();
+        fs::write(&done, b"hi").unwrap();
+        meta.done_path = Some(done.to_string_lossy().into_owned());
+        let mut old = serde_json::to_value(&meta).unwrap();
+        old.as_object_mut().unwrap().remove("doneMtimeNs");
+        fs::write(meta_path(&root, AID), old.to_string()).unwrap();
+        assert_eq!(status_in(&root, AID), FileStatus::new("received", 2));
+        fs::write(&done, b"three").unwrap();
+        assert_eq!(status_in(&root, AID), FileStatus::new("none", 0));
     }
 
     #[test]
