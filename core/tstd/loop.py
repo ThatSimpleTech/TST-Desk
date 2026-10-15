@@ -1251,6 +1251,12 @@ async def agent_loop(
             rebind_workspace(session, tool_dispatcher)
         if prompt_assembler is None:
             assembler = _assembler_for(session, config, calibration)
+        # A delegate child shares the (rebound) dispatcher and reads the
+        # session's root and boundary at spawn; the assembler is the only
+        # root-bound piece the runtime holds a copy of.
+        runtime = session.delegate_runtime
+        if runtime is not None:
+            runtime.assembler = assembler
         approved_imports.clear()
         approved_imports.update(_load_import_approvals(session.workspace_path))
 

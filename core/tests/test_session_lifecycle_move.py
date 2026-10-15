@@ -43,11 +43,21 @@ policy:
 
 
 class _Recording(_Steps):
-    """``_Steps`` that keeps the system prompt of every agent call."""
+    """``_Steps`` that keeps the system prompt of every agent call.
+
+    ``systems`` are the brain's (streamed); ``workers`` are a delegate
+    child's, the only non-streamed call that carries tools.
+    """
 
     def __init__(self, steps: list[Script]) -> None:
         super().__init__(steps)
         self.systems: list[str] = []
+        self.workers: list[str] = []
+
+    async def chat_completion(self, request: Any) -> Any:
+        if request.tools:
+            self.workers.append(str(request.messages[0].content))
+        return await super().chat_completion(request)
 
     def chat_completion_stream(self, request: Any) -> Any:
         if request.tools:
@@ -129,6 +139,45 @@ async def test_a_live_move_rebinds_the_whole_working_context(tmp_path: Path) -> 
         assert provider.systems, "no agent call recorded"
         assert "WS2-STEERING-9e4" in provider.systems[0]
         assert "WS1-STEERING-7c1" not in provider.systems[0]
+    finally:
+        await _shutdown(daemon, sid)
+
+
+async def test_a_delegate_child_after_a_move_is_steered_by_the_new_project(
+    tmp_path: Path,
+) -> None:
+    """The delegate runtime holds a prompt assembler too; a move must reach it."""
+    ws, ws2 = tmp_path / "ws", tmp_path / "ws2"
+    for root, rule in ((ws, "WS1-STEERING-7c1"), (ws2, "WS2-STEERING-9e4")):
+        root.mkdir()
+        (root / "AGENTS.md").write_text(f"Project rule {rule}.\n", encoding="utf-8")
+    steps = [
+        Script(kind="tool_call", tool_name="delegate", tool_arguments='{"task": "look around"}'),
+        Script(kind="stream", content="Done."),
+    ]
+    provider = _Recording(steps)
+    daemon = Daemon(data_dir=tmp_path / "data", provider=provider)
+    daemon.skip_all_approvals = True
+    sid = await _open(daemon, ws)
+    try:
+        session = daemon.session_registry.get(sid)
+        assert session is not None
+        move = {"type": "move_session", "session_id": sid, "workspace_path": str(ws2)}
+        await daemon._handle_message(json.dumps(move), None)
+        message = {"type": "user_message", "session_id": sid, "content": "go"}
+        await daemon._handle_message(json.dumps(message), None)
+        log = session.event_log
+
+        def results() -> list[ToolResult]:
+            return [e for e in log.all_events if isinstance(e, ToolResult)]
+
+        await eventually(lambda: len(results()) == 1, within=20)
+        assert results()[0].status == "success", results()[0].output
+        assert provider.workers, "the delegate child made no model call"
+        child_system = provider.workers[0]
+        assert "WS2-STEERING-9e4" in child_system
+        assert "WS1-STEERING-7c1" not in child_system
+        assert str(ws2) in child_system
     finally:
         await _shutdown(daemon, sid)
 
