@@ -114,7 +114,9 @@ def summarize_arguments(
     a guess over raw text:
 
     - a tool with ``path_fields`` → the first path, workspace-relative
-      POSIX when a workspace is known (``src/app.py``), else as given
+      POSIX when a workspace is known (``src/app.py``), else as given; for
+      a list of paths, its first element (TD-5143). :func:`summarize_each`
+      gives every element, and that is what rules are checked against
     - a tool with ``host_fields`` → the host
     - any tool with a string ``command`` argument → the command line
       (the shell tool's v0.1 convention, so ``npm test*`` rules read naturally)
@@ -122,6 +124,8 @@ def summarize_arguments(
     """
     for field in tool.path_fields:
         raw = arguments.get(field)
+        if isinstance(raw, list) and raw and all(isinstance(v, str) for v in raw):
+            raw = raw[0]
         if isinstance(raw, str):
             if workspace is not None:
                 try:
@@ -137,6 +141,23 @@ def summarize_arguments(
     if isinstance(command, str):
         return command
     return json.dumps(arguments, sort_keys=True, separators=(",", ":"))
+
+
+def summarize_each(
+    tool: Tool, arguments: dict[str, Any], workspace: Path | None = None
+) -> list[str]:
+    """One summary per path when the first present path field holds a list (TD-5143).
+
+    Policy checks its rules against every one, so a ``never`` rule on any
+    element refuses the call. Anything else is one summary, as before.
+    """
+    for field in tool.path_fields:
+        raw = arguments.get(field)
+        if isinstance(raw, list) and raw and all(isinstance(v, str) for v in raw):
+            return [summarize_arguments(tool, {**arguments, field: v}, workspace) for v in raw]
+        if isinstance(raw, str):
+            break
+    return [summarize_arguments(tool, arguments, workspace)]
 
 
 # ── Resolution ──────────────────────────────────────────────────────────
@@ -185,6 +206,39 @@ def resolve(
     ).effect
 
 
+def _decide(
+    config: PolicyConfig, tool: Tool, summary: str, decision_class: DecisionClass
+) -> PolicyDecision:
+    """The rule match or class default for one argument summary."""
+    matches = [
+        rule
+        for rule in config.rules
+        if fnmatch.fnmatchcase(tool.name, rule.tool) and fnmatch.fnmatchcase(summary, rule.args)
+    ]
+    if matches:
+        best = max(_specificity(rule) for rule in matches)
+        tied = [rule for rule in matches if _specificity(rule) == best]
+        # Most restrictive effect wins among exact ties; the first tied rule
+        # carrying it stands as provenance.
+        winner = max(tied, key=lambda r: _RESTRICTIVENESS[r.effect])
+        return PolicyDecision(
+            winner.effect,
+            f"policy rule `{winner.tool}: {winner.args}` → {winner.effect}",
+            winner,
+        )
+    effect = _class_default(decision_class, config)
+    reason = {
+        DecisionClass.A: "decision class A runs automatically",
+        DecisionClass.B: "decision class B requires approval",
+        DecisionClass.C: (
+            "decision class C requires approval"
+            if config.class_c_default == "ask"
+            else "decision class C is forbidden by policy"
+        ),
+    }[decision_class]
+    return PolicyDecision(effect, reason, None)
+
+
 def resolve_explained(
     config: PolicyConfig,
     tool: Tool,
@@ -203,35 +257,14 @@ def resolve_explained(
     through the fs tools; a Class C shell redirect will run. Turning
     it on is skip-everything: the user accepted that.
     """
-    summary = summarize_arguments(tool, arguments, workspace)
-    matches = [
-        rule
-        for rule in config.rules
-        if fnmatch.fnmatchcase(tool.name, rule.tool) and fnmatch.fnmatchcase(summary, rule.args)
-    ]
-    if matches:
-        best = max(_specificity(rule) for rule in matches)
-        tied = [rule for rule in matches if _specificity(rule) == best]
-        # Most restrictive effect wins among exact ties; the first tied rule
-        # carrying it stands as provenance.
-        winner = max(tied, key=lambda r: _RESTRICTIVENESS[r.effect])
-        decision = PolicyDecision(
-            winner.effect,
-            f"policy rule `{winner.tool}: {winner.args}` → {winner.effect}",
-            winner,
-        )
-    else:
-        effect = _class_default(decision_class, config)
-        reason = {
-            DecisionClass.A: "decision class A runs automatically",
-            DecisionClass.B: "decision class B requires approval",
-            DecisionClass.C: (
-                "decision class C requires approval"
-                if config.class_c_default == "ask"
-                else "decision class C is forbidden by policy"
-            ),
-        }[decision_class]
-        decision = PolicyDecision(effect, reason, None)
+    # Every path of a list is checked (TD-5143); the first decision with
+    # the highest restrictiveness stands, so one ``never`` refuses the call.
+    first, *rest = summarize_each(tool, arguments, workspace)
+    decision = _decide(config, tool, first, decision_class)
+    for summary in rest:
+        candidate = _decide(config, tool, summary, decision_class)
+        if _RESTRICTIVENESS[candidate.effect] > _RESTRICTIVENESS[decision.effect]:
+            decision = candidate
 
     if decision_class is DecisionClass.C and decision.effect == "auto" and not skip_all:
         # The wall stands unless skip-all is on (TD-806). A never rule
@@ -271,12 +304,15 @@ def format_summary(tool: Tool, arguments: dict[str, Any], workspace: Path | None
     """Human-readable one-liner for an approval card (TD-802).
 
     "Write src/app.py" / "Read src/app.py" / "Run `npm test`" /
-    "Reach api.example.com" / "Call tool({json})".
+    "Reach api.example.com" / "Call tool({json})". A list of paths names
+    the first and counts the rest: "Read app.apk (+1 more)" (TD-5143).
     """
     summary = summarize_arguments(tool, arguments, workspace)
     if tool.path_fields:
         verb = "Write" if tool.mutates else "Read"
-        return f"{verb} {summary}"
+        rest = len(summarize_each(tool, arguments, workspace)) - 1
+        more = f" (+{rest} more)" if rest > 0 else ""
+        return f"{verb} {summary}{more}"
     if isinstance(arguments.get("command"), str):
         return f"Run `{summary}`"
     if tool.host_fields:
