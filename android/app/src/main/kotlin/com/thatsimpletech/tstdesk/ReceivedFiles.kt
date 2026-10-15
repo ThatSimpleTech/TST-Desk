@@ -163,12 +163,21 @@ class ReceivedFiles(
 
     fun meta(id: String): FileMeta? = if (isFileId(id)) readMeta(id) else null
 
-    /** Caches the APK's own info next to it, so status never re-parses the archive. */
-    fun recordApk(id: String, apk: ApkInfo) {
-        if (!isFileId(id)) return
+    /**
+     * Caches the APK's own info next to it, so status never re-parses the
+     * archive. False when it could not be saved; it runs on the file worker,
+     * where a thrown write error would take the whole app down.
+     */
+    fun recordApk(id: String, apk: ApkInfo): Boolean {
+        if (!isFileId(id)) return false
         synchronized(lockFor(id)) {
-            val meta = readMeta(id) ?: return
-            writeMeta(meta.copy(apk = apk))
+            val meta = readMeta(id) ?: return false
+            return try {
+                writeMeta(meta.copy(apk = apk))
+                true
+            } catch (_: IOException) {
+                false
+            }
         }
     }
 

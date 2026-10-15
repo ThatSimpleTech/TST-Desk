@@ -213,6 +213,27 @@ class ReceivedFilesTest {
     }
 
     @Test
+    fun recordApkCachesInfoAndAFailedWriteKeepsTheFile() {
+        beginBody()
+        files.append(ID_A, 0, body)
+        assertNull(files.finish(ID_A))
+        val apk = ApkInfo("com.example.app", 3, "1.2", listOf("a".repeat(64)))
+        assertTrue(files.recordApk(ID_A, apk))
+        assertEquals(apk, files.status(ID_A).meta?.apk)
+
+        val dir = File(root, ID_A)
+        assertTrue(dir.setWritable(false))
+        try {
+            assertFalse("a write error is a result, not a crash", files.recordApk(ID_A, apk.copy(versionCode = 4)))
+            assertEquals("still verified", STATE_VERIFIED, files.status(ID_A).state)
+            assertEquals(apk, files.status(ID_A).meta?.apk)
+        } finally {
+            dir.setWritable(true)
+        }
+        assertFalse(files.recordApk(ID_B, apk))
+    }
+
+    @Test
     fun safeNameVectors() {
         val vectors = listOf(
             "app-release.apk" to "app-release.apk",

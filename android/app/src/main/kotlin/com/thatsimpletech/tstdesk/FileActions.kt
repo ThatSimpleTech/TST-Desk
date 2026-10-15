@@ -113,7 +113,10 @@ class FileActions(
         val pm = activity.packageManager
         @Suppress("DEPRECATION")
         val info = pm.getPackageArchiveInfo(file.path, signerFlags()) ?: return
-        apkInfoOf(info)?.let { files.recordApk(id, it) }
+        val apk = apkInfoOf(info) ?: return
+        // A false here only drops the card's APK line: the file is still verified,
+        // and Android's installer checks the package itself.
+        files.recordApk(id, apk)
     }
 
     /** Null when the package is not installed or, on API 30+, not visible to this app. */
