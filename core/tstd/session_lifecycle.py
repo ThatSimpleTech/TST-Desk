@@ -21,7 +21,12 @@ import asyncio
 from collections.abc import Callable
 from pathlib import Path
 
-from .boundary_config import BoundaryConfig, boundary_source, load_workspace_boundary
+from .boundary_config import (
+    BoundaryConfig,
+    boundary_source,
+    configured_spend,
+    load_workspace_boundary,
+)
 from .config import ConfigError
 from .logging import get_logger
 from .policy import PolicyConfig, load_policy
@@ -175,6 +180,25 @@ async def move_session(
     return None
 
 
+def boundary_update_event(session: Session, source: str) -> BoundaryUpdateEvent:
+    """The wall event for *session*, including whether a spend budget is set."""
+    cfg = session.boundary_config
+    configured = session.charter is not None or configured_spend(session.workspace_path) is not None
+    return BoundaryUpdateEvent(
+        session_id=session.id,
+        writable_paths=list(cfg.boundary.writable_paths),
+        allowed_commands=list(cfg.boundary.allowed_commands),
+        network=cfg.boundary.network,
+        spend_usd=cfg.caps.spend_usd,
+        wall_clock_hours=cfg.caps.wall_clock_hours,
+        max_iterations=cfg.caps.max_iterations,
+        source=source,
+        attachments=cfg.attachments,
+        spend_configured=configured,
+        seq=1,
+    )
+
+
 def reload_session_boundary(
     session: Session,
     workspace_path: str,
@@ -240,18 +264,4 @@ async def _reload_working_context(session: Session, workspace_path: str) -> None
     if session.on_workspace_moved is not None:
         session.on_workspace_moved()
 
-    cfg = session.boundary_config
-    await session.event_log.add(
-        BoundaryUpdateEvent(
-            session_id=session.id,
-            writable_paths=list(cfg.boundary.writable_paths),
-            allowed_commands=list(cfg.boundary.allowed_commands),
-            network=cfg.boundary.network,
-            spend_usd=cfg.caps.spend_usd,
-            wall_clock_hours=cfg.caps.wall_clock_hours,
-            max_iterations=cfg.caps.max_iterations,
-            source=source,
-            attachments=cfg.attachments,
-            seq=1,
-        )
-    )
+    await session.event_log.add(boundary_update_event(session, source))

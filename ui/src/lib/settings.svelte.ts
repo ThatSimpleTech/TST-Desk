@@ -29,6 +29,7 @@ export type SettingsSection =
 	| "computer"
 	| "engine"
 	| "model"
+	| "budget"
 	| "policy"
 	| "mcp"
 	| "key"
@@ -42,6 +43,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	"computer",
 	"engine",
 	"model",
+	"budget",
 	"policy",
 	"mcp",
 	"key",

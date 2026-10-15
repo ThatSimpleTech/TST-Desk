@@ -17,7 +17,9 @@ from tests.test_dispatch import make_config, start_loop, wait_for_turn
 from tstd.boundary_config import (
     BoundaryConfig,
     BoundarySection,
+    configured_spend,
     load_workspace_boundary,
+    save_spend_cap,
     scaffold_workspace_config,
 )
 from tstd.config import ConfigError
@@ -302,6 +304,7 @@ class TestDaemonBoundaryUpdate:
         # TD-1103: opening plants the commented template, so the source is
         # the scaffolded file — the values are still the defaults.
         assert updates[0].source == str(tmp_path / ".tst" / "config.yaml")
+        assert updates[0].spend_configured is False
         assert (tmp_path / ".tst" / "config.yaml").exists()
 
         runner = daemon.session_registry.get_runner(sid)
@@ -356,3 +359,27 @@ class TestDaemonOpenWorkspaceValidation:
         if runner is not None:
             await runner.cancel()
         await daemon._shutdown()
+
+
+class TestSpendCap:
+    def test_comment_only_file_is_unset(self, tmp_path: Path) -> None:
+        scaffold_workspace_config(tmp_path)
+        assert configured_spend(tmp_path) is None
+
+    def test_save_and_clear_round_trip(self, tmp_path: Path) -> None:
+        scaffold_workspace_config(tmp_path)
+        save_spend_cap(tmp_path, 4.5)
+        assert configured_spend(tmp_path) == 4.5
+        assert load_workspace_boundary(tmp_path).caps.spend_usd == 4.5
+        save_spend_cap(tmp_path, None)
+        assert configured_spend(tmp_path) is None
+        assert load_workspace_boundary(tmp_path).caps.spend_usd == 25.0
+
+    def test_save_keeps_other_sections(self, tmp_path: Path) -> None:
+        path = tmp_path / ".tst" / "config.yaml"
+        path.parent.mkdir()
+        path.write_text("policy:\n  unknown_class_c: ask\n", encoding="utf-8")
+        save_spend_cap(tmp_path, 2)
+        text = path.read_text(encoding="utf-8")
+        assert "policy:" in text
+        assert "spend_usd:" in text

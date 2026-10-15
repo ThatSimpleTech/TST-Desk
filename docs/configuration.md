@@ -1297,7 +1297,7 @@ autonomous session the container's `/workspace` counts as the workspace.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `spend_usd` | float ≥ 0 | `25.0` | Session spend, in dollars, that pauses the run. |
+| `spend_usd` | float ≥ 0 | `25.0` | Session spend, in dollars, that pauses the run. Settings → Budget writes this for the open workspace. Until it is set, the built-in $25 pause still applies and the title bar does not show a budget. |
 | `wall_clock_hours` | float ≥ 0 | `8.0` | Session runtime, in hours, that pauses the run. |
 | `max_iterations` | int ≥ 1 | `200` | Loop iterations that pause the run. |
 

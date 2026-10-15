@@ -13565,3 +13565,20 @@ button as the only path after the maintainer asked for Claude's updater.
 Also rejected: re-signing the downloaded app with the local `tst-desk-dev`
 identity (the installed bytes would no longer be the release that was
 hashed).
+
+---
+
+## 2026-10-15 — Spend budget is set in Settings, not implied by the title bar (Class B)
+
+**Decision:** `caps.spend_usd` stays the workspace spend pause, default
+$25 when the key is absent. `boundary_update.spend_configured` is true
+only when the workspace file sets that key (or a charter supplies the
+cap). The title bar prints "of $…" only then. Settings → Budget writes
+or clears the key for the open workspace via `set_spend_cap`.
+
+**Rationale:** The built-in pause was drawn as if the user had assigned
+a $25 budget, and Settings had no control for it.
+
+**Alternative rejected:** Dropping the built-in pause so an unset budget
+means unlimited spend. Also rejected: a user-global budget in
+`config.yaml`, which would not match the per-workspace wall.
