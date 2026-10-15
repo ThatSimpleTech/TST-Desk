@@ -812,6 +812,21 @@ describe("the rest of the window after a refusal", () => {
     emit(later);
     expect(claimedInline(later)).toBe(false);
   });
+
+  it("a finished download owes no echo, so a refusal for its session right after is not its", async () => {
+    const ref = file(1, CHUNK);
+    startDownload(ref);
+    await flush();
+    // The reply is lost and asked again; the one answer settles the file and
+    // leaves the other request over.
+    await vi.advanceTimersByTimeAsync(STALL_MS);
+    expect(requests(ref)).toEqual([0, 0]);
+    await reply(ref, 0);
+    expect(state(ref).phase).toBe("done");
+    const unrelated = hubRefusal();
+    emit(unrelated);
+    expect(claimedInline(unrelated)).toBe(false);
+  });
 });
 
 describe("a paused download and the slot", () => {

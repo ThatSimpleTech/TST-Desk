@@ -547,6 +547,9 @@ async function complete(job: Job): Promise<void> {
   e.waiting = false;
   e.apk = status?.apk ?? null;
   e.canInstall = status?.canInstall ?? false;
+  // Every byte is in, so a request still out was lost and asked again: no
+  // reply is owed, and an echo would claim the next refusal in the session.
+  forgetAsks(job);
   release(job);
   const then = job.then;
   if (then === "save") {
