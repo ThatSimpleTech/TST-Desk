@@ -11,6 +11,7 @@ import { refusedSend, returnToDraft, takeSent } from "./draft-store";
 import type { FirstTokenWait } from "./first-token-wait";
 import { machineOf } from "./bridged-id";
 import type { DaemonEventUnion, SessionState, SessionSummary } from "./protocol";
+import { sentFileFromEvent } from "./sent-files";
 import { chooseBoundSession, isTerminal } from "./session-binding";
 import { windowBindSessionId } from "./window-bind";
 
@@ -320,6 +321,21 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       block.status = event.status;
       block.output = event.output;
       block.errorCode = event.error_code ?? null;
+      return;
+    }
+    case "artifact_ready": {
+      // A file the agent sent lands on the send_file call that sent it
+      // (TD-5144). A TD-3201 artifact is the Artifacts pane's alone.
+      if (event.session_id !== state.sessionId) return;
+      const ref = sentFileFromEvent(event, state.sessionId);
+      if (ref === null || !event.tool_call_id) return;
+      const block = findTool(state, event.tool_call_id);
+      // The tool_call was trimmed from the log: the Artifacts pane still lists it.
+      if (block === null) return;
+      const files = block.files ?? [];
+      // Replay on attach is idempotent.
+      if (files.some((f) => f.artifactId === ref.artifactId)) return;
+      block.files = [...files, ref];
       return;
     }
     case "verify_result":

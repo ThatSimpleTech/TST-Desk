@@ -76,11 +76,13 @@
 	});
 
 	// Follow new content while pinned. Track both the count and the streaming
-	// tail's text so growth mid-stream follows too.
+	// tail's text so growth mid-stream follows too, and the tail's file
+	// cards, so a card that lands at the bottom stays in view (TD-5144).
 	$effect(() => {
 		const last = messages[messages.length - 1];
 		void messages.length;
 		void last?.text;
+		void last?.tools?.reduce((count, tool) => count + (tool.files?.length ?? 0), 0);
 		untrack(() => auto?.maybeFollow());
 	});
 

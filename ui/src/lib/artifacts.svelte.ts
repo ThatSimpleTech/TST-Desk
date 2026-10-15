@@ -6,7 +6,7 @@
 // the UI does not invent a file tree.
 
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
-import { artifactPreviewKind, isWorkspaceArtifact, type ArtifactPreviewKind } from "./artifacts";
+import { artifactPreviewKind, isSentFile, isWorkspaceArtifact, type ArtifactPreviewKind } from "./artifacts";
 import { isBridged } from "./bridged-id";
 import { isTauri } from "./open-file";
 import type { Artifact, ArtifactEntry, DaemonEventUnion } from "./protocol";
@@ -100,6 +100,8 @@ export function bindArtifacts(sessionId: string | null, workspacePath: string | 
 export function selectArtifact(artifactId: string): boolean {
 	const item = artifacts.items.find((row) => row.artifact_id === artifactId);
 	if (item === undefined || artifacts.sessionId === null || isBridged(artifacts.sessionId)) return false;
+	// A sent file is a card with its own buttons, never a preview (TD-5144).
+	if (isSentFile(item)) return false;
 	artifacts.selectedId = artifactId;
 	artifacts.preview = null;
 	artifacts.error = null;
@@ -129,17 +131,25 @@ function reduce(event: DaemonEventUnion): void {
 	}
 	if (event.type === "artifact_ready") {
 		if (event.session_id !== artifacts.sessionId) return;
+		// The sent-file fields ride along (TD-5144): the pane's card needs them.
 		upsert({
 			artifact_id: event.artifact_id,
 			title: event.title,
 			mime: event.mime,
 			path: event.path,
+			kind: event.kind,
+			name: event.name,
+			size: event.size,
+			sha256: event.sha256,
+			caption: event.caption,
+			tool_call_id: event.tool_call_id,
 		});
 		return;
 	}
 	if (event.type === "artifact") {
 		if (event.session_id !== artifacts.sessionId) return;
 		if (event.artifact_id !== artifacts.selectedId) return;
+		if (isSentFile(event)) return;
 		beginPreview(event);
 		return;
 	}
