@@ -363,3 +363,35 @@ async def test_a_daemon_session_sends_with_no_card_and_serves_the_bytes(tmp_path
         assert (base64.b64decode(reply["data_b64"]), reply["eof"]) == (data, True)
     finally:
         await _shutdown(daemon, sid)
+
+
+async def test_a_daemon_session_still_sends_after_a_live_move(tmp_path: Path) -> None:
+    """TD-1715 moves a live session; send_file judges paths as the dispatcher does."""
+    call = json.dumps({"files": ["app-release.apk"]})
+    steps = [
+        Script(kind="tool_call", tool_name="send_file", tool_arguments=call),
+        Script(kind="stream", content="Sent."),
+    ]
+    daemon = Daemon(data_dir=tmp_path / "data", provider=_Steps(steps))
+    ws, ws2 = tmp_path / "ws", tmp_path / "ws2"
+    for root in (ws, ws2):
+        root.mkdir()
+        (root / "app-release.apk").write_bytes(MARKER + root.name.encode())
+    sid = await _open(daemon, ws)
+    try:
+        session = daemon.session_registry.get(sid)
+        assert session is not None
+        move = {"type": "move_session", "session_id": sid, "workspace_path": str(ws2)}
+        await daemon._handle_message(json.dumps(move), None)
+        assert session.workspace_path == str(ws2)
+        message = {"type": "user_message", "session_id": sid, "content": "send me the build"}
+        await daemon._handle_message(json.dumps(message), None)
+        log = session.event_log
+        await eventually(lambda: any(isinstance(e, ToolResult) for e in log.all_events), within=20)
+        [result] = [e for e in log.all_events if isinstance(e, ToolResult)]
+        assert result.status == "success", result.output
+        [ready] = [e for e in log.all_events if isinstance(e, ArtifactReady)]
+        reply = await _chunk(daemon, sid, ready.artifact_id, 0)
+        assert base64.b64decode(reply["data_b64"]).startswith(MARKER)
+    finally:
+        await _shutdown(daemon, sid)

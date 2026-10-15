@@ -111,6 +111,7 @@ def _env(tmp_path: Path, config: SessionConfig | None = None) -> Env:
         workspace=ws,
     )
     dispatcher.policy = PolicyConfig()
+    service.bind_guard(lambda: dispatcher.path_guard)  # as the daemon does
     env = Env(ws, persist, store, service, session, dispatcher)
 
     async def _approve(*args: Any) -> ApprovalOutcome:
@@ -458,6 +459,33 @@ async def test_all_or_nothing_on_second_file_failure(
     assert failed.error_code == "copy_failed"
     assert failed.output.endswith("Nothing was sent.")
     assert env.ready() == [] and env.on_disk() == []
+
+
+async def test_send_follows_the_dispatcher_root_after_a_live_move(tmp_path: Path) -> None:
+    # TD-1715 moves a live session; the dispatcher keeps the guard it judged
+    # paths with, so send_file must re-check against that one, as fs_read does.
+    env = _env(tmp_path)
+    _write(env.ws / "app.apk", b"PK-old")
+    _write(env.ws / "notes.txt", "hi")
+    ws2 = tmp_path / "ws2"
+    _write(ws2 / "app.apk", b"PK-new")
+    env.session.reassign_workspace(str(ws2))
+    sent = await env.send(["app.apk"])
+    assert sent.status == "success", sent.output
+    read = await env.dispatcher.dispatch("c2", "fs_read", {"path": "notes.txt"}, env.session)
+    assert read.status == "success"
+    assert (await env.send([str(env.ws / "notes.txt")])).status == "success"
+    assert (await env.send([str(ws2 / "app.apk")])).error_code == "boundary_refusal"
+
+    # Once the dispatcher is bound to the new root, sends follow it there.
+    env.dispatcher.path_guard = PathGuard(Boundary(workspace_root=ws2))
+    assert (await env.send(["app.apk"])).status == "success"
+    copies = [
+        (env.bytes_dir / r.id / (r.name or "")).read_bytes()
+        for r in env.rows()
+        if r.name == "app.apk"
+    ]
+    assert copies == [b"PK-old", b"PK-new"]
 
 
 async def test_dedupes_repeated_paths(tmp_path: Path) -> None:

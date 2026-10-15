@@ -22,7 +22,7 @@ import stat
 import threading
 import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -306,6 +306,18 @@ class SentFiles:
     def __init__(self, store: ArtifactStore, config: SessionConfig) -> None:
         self._store = store
         self._config = config
+        self._guard: Callable[[], PathGuard | None] | None = None
+
+    def bind_guard(self, guard: Callable[[], PathGuard | None]) -> None:
+        """Re-check paths with the dispatcher's own guard, read at each call.
+
+        The dispatcher canonicalizes and judges ``files`` with its guard
+        before the handler runs, and a live move (TD-1715) does not rebind
+        it, so the session's new ``workspace_path`` would refuse paths the
+        dispatcher just passed. Unbound, or with no guard yet, the
+        ``workspace`` passed to ``copy_all`` is the wall.
+        """
+        self._guard = guard
 
     @staticmethod
     def _lock_for(session_id: str) -> threading.Lock:
@@ -334,8 +346,10 @@ class SentFiles:
 
     def _open_all(self, paths: Sequence[str], workspace: Path) -> list[_Source]:
         """Re-check, dedupe, open and stat every file before copying any."""
-        root = canonical_path(workspace)
-        guard = PathGuard(Boundary(workspace_root=workspace))
+        guard = self._guard() if self._guard is not None else None
+        if guard is None or guard.boundary.workspace_root is None:
+            guard = PathGuard(Boundary(workspace_root=workspace))
+        root = canonical_path(guard.boundary.workspace_root or workspace)
         sources: list[_Source] = []
         seen: set[Path] = set()
         try:

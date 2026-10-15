@@ -3406,13 +3406,16 @@ class Daemon:
         tool_dispatcher.autonomy_fn = lambda: sess.autonomy
         tool_dispatcher.on_class_c = sess.mark_class_c
         sess.persist_dir = self._session_persist.dir_for(sess.id)
+        sent_files = SentFiles(self._artifacts, self.config.session)
+        # send_file re-checks with the guard that judged its paths (TD-5143).
+        sent_files.bind_guard(lambda: tool_dispatcher.path_guard)
         register_builtin_handlers(
             tool_dispatcher,
             allowed_commands=sess.boundary_config.boundary.shell_allowlist(),
             desktop_driver=self.desktop_driver,
             browser_driver=self.browser_driver,
             grounding_client=GroundingClient.from_config(self.config.computer_use.grounding),
-            sent_files=SentFiles(self._artifacts, self.config.session),
+            sent_files=sent_files,
         )
         from .tools.plugins import bind_plugin_handlers
 
