@@ -416,12 +416,16 @@ describe("code to copy (§6.5)", () => {
     expect(messageFor("bad_offset", remote)).toEqual({ kind: "resync" });
     expect(messageFor("bad_key", remote)).toEqual({ kind: "rekey", copy: "Restart TST Desk and try again." });
     expect([phase("not_allowed"), copy("not_allowed")]).toEqual(["unavailable", "Update TST Desk on studio-mac to download this."]);
-    expect([phase("machine_not_found"), copy("machine_not_found")]).toEqual(["paused", "studio-mac is not reachable."]);
+    expect([phase("machine_not_found"), copy("machine_not_found")]).toEqual(["paused", "Studio-mac is not reachable."]);
     expect(copy("machine_not_found", desk)).toBe("This computer is not reachable.");
     expect([phase("machine_unreachable"), copy("machine_unreachable")]).toEqual([
       "paused",
-      "studio-mac isn't reachable. The download carries on when it is.",
+      "Studio-mac isn't reachable. The download carries on when it is.",
     ]);
+    // An unlisted computer's label starts the sentence with a capital too.
+    const unlisted: CopyContext = { ...remote, machine: "another computer" };
+    expect(copy("machine_unreachable", unlisted)).toBe("Another computer isn't reachable. The download carries on when it is.");
+    expect(copy("machine_not_found", { ...remote, machine: "EZER" })).toBe("EZER is not reachable.");
     expect([phase("no_app"), copy("no_app")]).toEqual(["done", "No app here opens .apk files. Save it to Downloads instead."]);
     expect(messageFor("no_app", desk)).toEqual({ kind: "phase", phase: "done", copy: "No app opens this file.", reveal: true });
     expect([phase("not_verified"), copy("not_verified")]).toEqual(["failed", "Download it again first."]);

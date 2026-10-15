@@ -347,7 +347,7 @@ async function begin(job: Job): Promise<void> {
   e.note = null;
   e.code = null;
   syncAwake();
-  let begun:{ have: number; state: "none" | "partial" | "verified" };
+  let begun: { have: number; state: "none" | "partial" | "verified" };
   try {
     begun = await job.sink.begin(metaFor(job.ref));
   } catch (err) {

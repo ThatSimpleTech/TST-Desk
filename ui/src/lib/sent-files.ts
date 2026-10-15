@@ -599,7 +599,8 @@ export function goneText(machine: string): string {
 /** The copy for a machine label: another computer by name, or this one. */
 export const THIS_COMPUTER = "this computer";
 
-/** A machine label at the start of a sentence. Names are shown as named. */
+/** A machine label at the start of a sentence: its first letter capital,
+ *  whether it is a computer's name or a label such as "another computer". */
 function capitalized(machine: string): string {
-  return machine === THIS_COMPUTER ? "This computer" : machine;
+  return machine.charAt(0).toUpperCase() + machine.slice(1);
 }
