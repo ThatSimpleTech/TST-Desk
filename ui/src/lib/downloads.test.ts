@@ -446,6 +446,23 @@ describe("codes on the card", () => {
   });
 });
 
+describe("an action on a finished card", () => {
+  async function finished(ref: SentFileRef): Promise<void> {
+    startDownload(ref);
+    await flush();
+    await serve(ref);
+    expect(state(ref).phase).toBe("done");
+  }
+
+  it("a bad key on Install shows the mapped copy, not the raw code", async () => {
+    const ref = file(1, CHUNK, { name: "app.apk" });
+    await finished(ref);
+    host.open.mockRejectedValueOnce(new SinkError("bad_key"));
+    await runAction(ref, "install");
+    expect(state(ref)).toMatchObject({ phase: "done", note: "Restart TST Desk and try again." });
+  });
+});
+
 describe("the queue", () => {
   it("runs one download at a time, first come first served", async () => {
     const a = file(1, CHUNK);

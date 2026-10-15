@@ -1000,6 +1000,11 @@ function actionFailed(ref: SentFileRef, code: string): void {
   const e = entry(ref);
   const outcome = messageFor(code, copyContext(ref));
   e.code = code;
+  if (outcome.kind === "rekey") {
+    // The sink already asked for a fresh key once; the file is still here.
+    e.note = outcome.copy;
+    return;
+  }
   if (outcome.kind !== "phase") {
     e.note = `Download failed (${code}).`;
     return;
