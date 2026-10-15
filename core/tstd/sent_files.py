@@ -225,6 +225,42 @@ class SendError(Exception):
         self.message = message
 
 
+class SendGate:
+    """Settles, once, whether a send's copies get indexed (TD-5143).
+
+    The handler calls ``cancel`` when its task is cancelled; the copy thread
+    calls ``commit`` just before indexing. Whichever comes first wins, so a
+    cancelled send is either undone (nothing indexed or announced) or, if
+    indexing already began, indexed and then announced by the handler.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._state = "open"
+
+    @property
+    def cancelled(self) -> bool:
+        return self._state == "cancelled"
+
+    def cancel(self) -> bool:
+        """True if the copies will be undone; False if indexing already began."""
+        with self._lock:
+            if self._state == "open":
+                self._state = "cancelled"
+            return self._state == "cancelled"
+
+    def commit(self) -> bool:
+        """True if the copies may be indexed; False if the send was cancelled."""
+        with self._lock:
+            if self._state == "open":
+                self._state = "committed"
+            return self._state == "committed"
+
+
+def _cancelled() -> SendError:
+    return SendError("cancelled", "The send was cancelled. Nothing was sent.")
+
+
 class _Source:
     """One file to send, opened and stat'ed before any copy starts."""
 
@@ -332,14 +368,18 @@ class SentFiles:
         workspace: Path,
         caption: str | None = None,
         tool_call_id: str = "",
+        gate: SendGate | None = None,
     ) -> list[ArtifactRecord]:
         """Copy every file in *paths*, or none. Raises ``SendError``."""
         caption = (caption or "").strip() or None
+        gate = gate or SendGate()
         with self._lock_for(session_id):
+            if gate.cancelled:
+                raise _cancelled()
             sources = self._open_all(paths, workspace)
             try:
                 self._check_room(session_id, sources)
-                return self._copy_sources(session_id, sources, caption, tool_call_id)
+                return self._copy_sources(session_id, sources, caption, tool_call_id, gate)
             finally:
                 for source in sources:
                     os.close(source.fd)
@@ -456,6 +496,7 @@ class SentFiles:
         sources: list[_Source],
         caption: str | None,
         tool_call_id: str,
+        gate: SendGate,
     ) -> list[ArtifactRecord]:
         bytes_dir = self._store.bytes_dir(session_id)
         _sweep_parts(bytes_dir)
@@ -466,8 +507,12 @@ class SentFiles:
             for source in sources:
                 current = source
                 records.append(
-                    self._copy_one(session_id, source, bytes_dir, created, caption, tool_call_id)
+                    self._copy_one(
+                        session_id, source, bytes_dir, created, caption, tool_call_id, gate
+                    )
                 )
+            if not gate.commit():
+                raise _cancelled()
             self._store.append_records(session_id, records)
         except SendError:
             self._undo(created)
@@ -503,6 +548,7 @@ class SentFiles:
         created: list[Path],
         caption: str | None,
         tool_call_id: str,
+        gate: SendGate,
     ) -> ArtifactRecord:
         aid = uuid.uuid4().hex
         part = bytes_dir / f".{aid}.part"
@@ -517,6 +563,8 @@ class SentFiles:
         copied = 0
         try:
             while block := os.read(source.fd, _BLOCK):
+                if gate.cancelled:
+                    raise _cancelled()
                 copied += len(block)
                 if copied > source.st.st_size:
                     raise changed

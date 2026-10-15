@@ -18,6 +18,7 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -486,6 +487,76 @@ async def test_send_follows_the_dispatcher_root_after_a_live_move(tmp_path: Path
         if r.name == "app.apk"
     ]
     assert copies == [b"PK-old", b"PK-new"]
+
+
+async def _worker_done(env: Env) -> None:
+    """The copy thread holds the session lock until it has indexed or undone."""
+    lock = SentFiles._lock_for(env.session.id)
+    assert await asyncio.to_thread(lock.acquire, True, 10)
+    lock.release()
+
+
+async def test_cancel_mid_copy_neither_indexes_nor_announces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(tmp_path)
+    _write(env.ws / "a.apk", b"a" * 10)
+    _write(env.ws / "b.apk", b"b" * 10)
+    copying, release = threading.Event(), threading.Event()
+    real = sent_files._write_all
+
+    def write(fd: int, block: bytes) -> None:
+        if block[:1] == b"b":  # a.apk is already in its folder
+            copying.set()
+            release.wait(10)
+        real(fd, block)
+
+    monkeypatch.setattr(sent_files, "_write_all", write)
+    files = [str(env.ws / "a.apk"), str(env.ws / "b.apk")]
+    task = asyncio.ensure_future(
+        send_file(session=env.session, tool_call_id="c1", files=files, service=env.service)
+    )
+    assert await asyncio.to_thread(copying.wait, 10)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    release.set()
+    await _worker_done(env)
+    assert env.rows() == [] and env.ready() == [] and env.on_disk() == []
+    assert env.store.sent_bytes_total(env.session.id) == 0
+
+
+async def test_cancel_while_indexing_still_announces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(tmp_path)
+    _write(env.ws / "a.apk", b"a" * 10)
+    indexing, release = threading.Event(), threading.Event()
+    real = env.store.append_records
+
+    def append(session_id: str, records: list[ArtifactRecord]) -> None:
+        indexing.set()
+        release.wait(10)
+        real(session_id, records)
+
+    monkeypatch.setattr(env.store, "append_records", append)
+    task = asyncio.ensure_future(
+        send_file(
+            session=env.session,
+            tool_call_id="c1",
+            files=[str(env.ws / "a.apk")],
+            service=env.service,
+        )
+    )
+    assert await asyncio.to_thread(indexing.wait, 10)
+    task.cancel()
+    await asyncio.sleep(0)
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await _worker_done(env)
+    [row] = env.rows()
+    assert [e.artifact_id for e in env.ready()] == [row.id]
 
 
 async def test_dedupes_repeated_paths(tmp_path: Path) -> None:
