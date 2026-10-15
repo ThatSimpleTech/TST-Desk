@@ -294,7 +294,7 @@ describe("Tauri sink (§1.6)", () => {
     await sink.discard();
 
     const host = createTauriHost();
-    await host.open(r);
+    await host.open({ ...r, name: "notes.pdf" });
     await host.reveal(r);
     await host.saveAs(r);
 
@@ -322,9 +322,20 @@ describe("Tauri sink (§1.6)", () => {
     tauri.invoke.mockRejectedValueOnce("bad_offset:1048576");
     await expect(createTauriSink(ref()).append(0, "aGk=")).rejects.toMatchObject({ code: "bad_offset", have: 1048576 });
     tauri.invoke.mockRejectedValueOnce("no_app: xdg-open exited 3");
-    await expect(createTauriHost().open(ref())).rejects.toMatchObject({ code: "no_app" });
+    await expect(createTauriHost().open(ref({ name: "notes.pdf" }))).rejects.toMatchObject({ code: "no_app" });
     tauri.invoke.mockRejectedValueOnce("hash_mismatch");
     await expect(createTauriSink(ref()).finish()).resolves.toEqual({ ok: false, code: "hash_mismatch" });
+  });
+
+  it("never asks the shell to open a name off the allowlist", async () => {
+    tauri.invoke.mockResolvedValue(null);
+    const host = createTauriHost();
+    for (const name of ["setup.js", "x.vbs", "x.lnk", "x.url", "x.exe ", "app-release.apk", "page.html"]) {
+      await expect(host.open(ref({ name })), name).rejects.toMatchObject({ code: "not_openable" });
+    }
+    expect(tauri.invoke).not.toHaveBeenCalled();
+    await host.open(ref({ name: "report.pdf. " }));
+    expect(tauri.invoke).toHaveBeenCalledWith("sent_file_open", { sessionId: "sess-1", artifactId: "a".repeat(32) });
   });
 
   it("writes one append at a time, in call order", async () => {

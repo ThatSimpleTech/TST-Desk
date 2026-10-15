@@ -17,7 +17,7 @@
 // A host adds the per-platform actions on a file a card offers (open, show
 // in folder, save a copy, save to Downloads, keep the phone awake).
 
-import { codeOf, type ApkStatus, type Platform, type SentFileRef } from "./sent-files";
+import { codeOf, desktopOpenable, type ApkStatus, type Platform, type SentFileRef } from "./sent-files";
 
 /** What a sink needs to know about the file before the first byte. */
 export interface FileMeta {
@@ -491,6 +491,9 @@ export function createTauriHost(invoke: Invoke = tauriInvoke): FileHost {
     platform: "desktop",
     sink: (ref) => createTauriSink(ref, invoke),
     async open(ref) {
+      // The card offers Open only for the allowlist; this keeps a UI slip
+      // from ever reaching the shell (which refuses the rest as well).
+      if (!desktopOpenable(ref.name)) throw new SinkError("not_openable");
       await shell<null>(invoke, "sent_file_open", ids(ref));
     },
     async reveal(ref) {

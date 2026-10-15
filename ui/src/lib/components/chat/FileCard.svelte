@@ -17,6 +17,7 @@
 		apkNotes,
 		apkWarnings,
 		cardLabel,
+		desktopOpenable,
 		fileActions,
 		fileKind,
 		nameParts,
@@ -31,7 +32,10 @@
 
 	const platform = downloadPlatform();
 	const view = $derived(stateFor(file));
+	// Both read the name as the shell saves it (trailing spaces and dots
+	// gone), so "x.exe " is a program and never gets Open.
 	const kind = $derived(fileKind(file.name, file.mime));
+	const openable = $derived(desktopOpenable(file.name));
 	const parts = $derived(nameParts(file.name));
 	const apk = $derived(
 		platform === "android" && (view.phase === "done" || view.phase === "saved") ? view.apk : null,
@@ -44,6 +48,7 @@
 			warning: warnings.length > 0,
 			partial: view.partial,
 			reveal: view.reveal,
+			openable,
 		}),
 	);
 	const status = $derived(statusLine(file, view, platform));

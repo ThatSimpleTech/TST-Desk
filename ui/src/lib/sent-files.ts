@@ -56,8 +56,8 @@ export function fileKey(ref: Pick<SentFileRef, "sessionId" | "artifactId">): str
 
 export type FileKind = "apk" | "image" | "pdf" | "archive" | "video" | "audio" | "text" | "program" | "other";
 
-/** Things that run when opened. The card never offers Open for them, only
- *  Show in folder, so one click can't start a program the agent sent. */
+/** Things that run when opened, for the kind's label and icon. What may be
+ *  opened on a computer is the allowlist below, not this list. */
 const PROGRAM_EXTS = new Set([
   ".exe", ".msi", ".bat", ".cmd", ".com", ".ps1", ".sh", ".command", ".app",
   ".appimage", ".desktop", ".jar", ".deb", ".rpm", ".pkg", ".dmg", ".run",
@@ -75,8 +75,29 @@ export function extensionOf(name: string): string {
   return name.slice(dot).toLowerCase();
 }
 
+/** The only names a computer opens with one click (amended §6.2): inert
+ *  documents, pictures, sound, video and archives. A denylist missed
+ *  `.js .vbs .hta .scr .lnk .url`, which Windows runs on Open. Everything else
+ *  gets Show in folder and Save a copy; the shell refuses the rest too, with
+ *  `not_openable`. The phone keeps Open for every kind. */
+export const DESKTOP_OPEN_EXTS: ReadonlySet<string> = new Set([
+  ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".mp4", ".webm", ".mov", ".mkv", ".mp3", ".wav",
+  ".m4a", ".ogg", ".flac", ".aac", ".txt", ".md", ".csv", ".log", ".json", ".zip", ".tar", ".gz", ".tgz", ".7z",
+]);
+
+/** The name without its trailing spaces and dots, as every computer saves
+ *  it (§1.4 step 4): "x.exe " lands on disk as x.exe. */
+export function savedNameTail(name: string): string {
+  return name.replace(/[ .]+$/, "");
+}
+
+/** Whether the desktop may offer Open for this name. */
+export function desktopOpenable(name: string): boolean {
+  return DESKTOP_OPEN_EXTS.has(extensionOf(savedNameTail(name)));
+}
+
 export function fileKind(name: string, mime: string): FileKind {
-  const ext = extensionOf(name);
+  const ext = extensionOf(savedNameTail(name));
   const m = mime.toLowerCase();
   if (ext === ".apk" || m === "application/vnd.android.package-archive") return "apk";
   if (PROGRAM_EXTS.has(ext)) return "program";
@@ -212,13 +233,15 @@ export interface ActionContext {
   partial?: boolean;
   /** Desktop no_app: Show in folder becomes the button (§6.5). */
   reveal?: boolean;
+  /** The name is on the desktop's Open allowlist (`desktopOpenable`).
+   *  Unset means no: a caller that forgets it never gets Open. */
+  openable?: boolean;
 }
 
 const NONE: ActionSet = { primary: null, menu: [] };
 
 /** The action matrix of §6.4, per platform × phase × kind. */
 export function fileActions(platform: Platform, kind: FileKind, phase: FilePhase, ctx: ActionContext = {}): ActionSet {
-  const program = kind === "program";
   switch (phase) {
     case "sending":
     case "checking":
@@ -234,7 +257,7 @@ export function fileActions(platform: Platform, kind: FileKind, phase: FilePhase
       return NONE;
     case "local":
       if (platform !== "desktop") return NONE;
-      if (program || ctx.reveal === true) return { primary: "reveal", menu: ["save-as"] };
+      if (!desktopOpens(kind, ctx)) return { primary: "reveal", menu: ["save-as"] };
       return { primary: "open", menu: ["reveal", "save-as"] };
     case "queued":
     case "downloading":
@@ -256,9 +279,14 @@ export function fileActions(platform: Platform, kind: FileKind, phase: FilePhase
   }
 }
 
+/** Open on the desktop: an allowlisted name that no_app has not ruled out. */
+function desktopOpens(kind: FileKind, ctx: ActionContext): boolean {
+  return ctx.openable === true && kind !== "program" && ctx.reveal !== true;
+}
+
 function doneActions(platform: Platform, kind: FileKind, ctx: ActionContext): ActionSet {
   if (platform === "desktop") {
-    return kind === "program" || ctx.reveal === true ? { primary: "reveal", menu: [] } : { primary: "open", menu: ["reveal"] };
+    return desktopOpens(kind, ctx) ? { primary: "open", menu: ["reveal"] } : { primary: "reveal", menu: [] };
   }
   if (platform === "android") {
     const primary: FileAction = kind === "apk" ? (ctx.warning === true ? "install-anyway" : "install") : "open";
@@ -512,6 +540,13 @@ export function messageFor(code: string, ctx: CopyContext): CodeOutcome {
     }
     case "not_verified":
       return { kind: "phase", phase: "failed", copy: "Download it again first." };
+    case "not_openable":
+      return {
+        kind: "phase",
+        phase: "done",
+        copy: "TST Desk doesn't open this kind of file. Show it in its folder instead.",
+        reveal: true,
+      };
     case "needs_android_10":
       return {
         kind: "phase",
