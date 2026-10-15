@@ -175,6 +175,8 @@ def test_read_artifact_chunk_forwarded() -> None:
     assert "read_artifact_chunk" in FORWARDED_VERBS
     for viewer in (VIEWER, PHONE_VIEWER):
         assert check(bridged, viewer, bridged=True) is None
+        # The phone pulling an APK from this computer's own session.
+        assert check(own, viewer, bridged=False) is None
     # The hub's forwarded request reaches the other computer as a machine peer.
     assert check(own, MACHINE, bridged=False) is None
     assert check(own, PLAIN_REMOTE, bridged=False) is None
