@@ -107,11 +107,11 @@ class FileActions(
     /**
      * Called by finish once the hash matched, before the file counts as verified.
      * Null only drops the card's APK line: Android's installer checks the package itself.
+     * It runs on [executor], where an uncaught exception would end the app.
      */
-    private fun readApkInfo(file: File): ApkInfo? {
+    private fun readApkInfo(file: File): ApkInfo? = apkInfoOrNull {
         @Suppress("DEPRECATION")
-        val info = activity.packageManager.getPackageArchiveInfo(file.path, signerFlags()) ?: return null
-        return apkInfoOf(info)
+        activity.packageManager.getPackageArchiveInfo(file.path, signerFlags())?.let(::apkInfoOf)
     }
 
     /** Null when the package is not installed or, on API 30+, not visible to this app. */

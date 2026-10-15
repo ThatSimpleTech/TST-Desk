@@ -23,6 +23,9 @@ private const val GIB = 1L shl 30
 
 private val noApk: (File) -> ApkInfo? = { null }
 
+/** A parser that must not run. AssertionError, since finish turns a RuntimeException into no APK line. */
+private fun neverParsed(why: String): (File) -> ApkInfo? = { throw AssertionError(why) }
+
 fun sha256Of(bytes: ByteArray): String = hex(MessageDigest.getInstance("SHA-256").digest(bytes))
 
 fun beginJson(
@@ -101,7 +104,7 @@ class ReceivedFilesTest {
         assertEquals("size_mismatch", files.finish(ID_A, noApk))
         files.begin(beginJson(size = body.size, sha = sha256Of("other".toByteArray())))
         files.append(ID_A, 0, body)
-        assertEquals("hash_mismatch", files.finish(ID_A) { error("parsed unchecked bytes") })
+        assertEquals("hash_mismatch", files.finish(ID_A, neverParsed("parsed unchecked bytes")))
         assertEquals("bad bytes are not resumed", 0, files.status(ID_A).have)
         assertNull(files.resolveVerified(ID_A))
         assertEquals("io", files.finish(ID_B, noApk))
@@ -271,7 +274,7 @@ class ReceivedFilesTest {
         val after = files.status(ID_A)
         assertEquals(STATE_VERIFIED, after.state)
         assertEquals(apk, after.meta?.apk)
-        assertNull("finishing twice does not parse again", files.finish(ID_A) { error("parsed twice") })
+        assertNull("finishing twice does not parse again", files.finish(ID_A, neverParsed("parsed twice")))
         assertEquals(apk, files.meta(ID_A)?.apk)
     }
 
@@ -279,7 +282,7 @@ class ReceivedFilesTest {
     fun onlyApksAreParsedAndAnUnreadableOneStillVerifies() {
         files.begin(beginJson(size = body.size, sha = sha256Of(body), name = "notes.pdf", mime = "application/pdf"))
         files.append(ID_A, 0, body)
-        assertNull(files.finish(ID_A) { error("not an APK") })
+        assertNull(files.finish(ID_A, neverParsed("not an APK")))
         assertNull(files.status(ID_A).meta?.apk)
 
         beginBody(id = ID_B)
@@ -287,6 +290,17 @@ class ReceivedFilesTest {
         assertNull("Android's installer reports a bad archive itself", files.finish(ID_B) { null })
         assertEquals(STATE_VERIFIED, files.status(ID_B).state)
         assertNull(files.status(ID_B).meta?.apk)
+    }
+
+    @Test
+    fun aParserThatThrowsStillVerifiesWithNoApkLine() {
+        beginBody()
+        files.append(ID_A, 0, body)
+        // A RuntimeException here used to escape finish and kill the app on the executor.
+        assertNull(files.finish(ID_A) { throw IllegalStateException("not a zip") })
+        assertEquals(STATE_VERIFIED, files.status(ID_A).state)
+        assertNull(files.meta(ID_A)?.apk)
+        assertEquals(File(root, "$ID_A/data.apk"), files.resolveVerified(ID_A))
     }
 
     @Test
