@@ -78,3 +78,15 @@ fun apkInfoFromMeta(raw: Any?): ApkInfo? {
     }
     return ApkInfo(pkg, code, name, signers)
 }
+
+/**
+ * Runs an APK parse for the card's line. A malformed archive can make
+ * Android's parser, or reading its signers, throw a RuntimeException; that
+ * gives null like any archive Android cannot read (the card shows no APK
+ * line and the installer reports the problem), never a dead executor.
+ */
+fun apkInfoOrNull(parse: () -> ApkInfo?): ApkInfo? = try {
+    parse()
+} catch (_: RuntimeException) {
+    null
+}

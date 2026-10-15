@@ -15,13 +15,20 @@ private val DEVICE_NAMES: Set<String> =
  */
 fun safeFileName(raw: String): String {
     var name = raw.split('/', '\\').last()
-    name = name.filterNot { it.code <= 0x1F || it.code == 0x7F }
+    name = name.filterNot { it.code <= 0x1F || it.code == 0x7F || isBidiControl(it) }
     name = name.map { if (it in FORBIDDEN) '_' else it }.joinToString("")
     name = devicePrefixed(name.trimEnd(' ', '.'))
     // Step 8: a "_" added here can push the name one byte over, so cut once more.
     name = truncated(devicePrefixed(truncated(name).trimEnd(' ', '.')))
     return name.ifEmpty { "file" }
 }
+
+/**
+ * Step 2b. An override like U+202E makes `invoice<RLO>fdp.exe` read as
+ * `invoiceexe.pdf` on the card and in every file manager.
+ */
+private fun isBidiControl(c: Char): Boolean =
+    c == '\u200E' || c == '\u200F' || c in '\u202A'..'\u202E' || c in '\u2066'..'\u2069'
 
 /** `CON.txt` and friends cannot be created on Windows, so they get a leading `_`. */
 private fun devicePrefixed(name: String): String {

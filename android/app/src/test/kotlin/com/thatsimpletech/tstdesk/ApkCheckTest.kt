@@ -4,6 +4,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -70,5 +71,22 @@ class ApkCheckTest {
         assertEquals(bare, apkInfoFromMeta(bare.toMetaJson()))
         assertNull(apkInfoFromMeta(JSONObject.NULL))
         assertNull(apkInfoFromMeta(JSONObject().put("package", "x")))
+    }
+
+    @Test
+    fun aParserThatThrowsGivesNoApkLine() {
+        assertEquals(archive, apkInfoOrNull { archive })
+        assertNull(apkInfoOrNull { null })
+        // What Android's package parser and zip reader throw on a malformed archive.
+        val thrown = listOf(
+            IllegalStateException("bad manifest"),
+            IllegalArgumentException("bad zip"),
+            ArrayIndexOutOfBoundsException(),
+            SecurityException("no access"),
+            NullPointerException(),
+        )
+        for (e in thrown) assertNull(e.toString(), apkInfoOrNull { throw e })
+        // Only RuntimeException: an Error is a real fault and still surfaces.
+        assertThrows(StackOverflowError::class.java) { apkInfoOrNull { throw StackOverflowError() } }
     }
 }

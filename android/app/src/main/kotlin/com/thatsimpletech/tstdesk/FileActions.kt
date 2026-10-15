@@ -51,8 +51,7 @@ class FileActions(
 ) : FileHost {
     override fun finish(id: String) {
         executor.execute {
-            val code = files.finish(id)
-            if (code == null) recordApkInfo(id)
+            val code = files.finish(id, ::readApkInfo)
             emit(if (code == null) fileEventJson(EVENT_VERIFIED, id) else fileEventJson(EVENT_FAILED, id, code))
         }
     }
@@ -105,18 +104,15 @@ class FileActions(
         activity.runOnUiThread { if (!activity.isDestroyed) callPage(json) }
     }
 
-    /** Parsed once, after the hash matched, so status never opens the archive again. */
-    private fun recordApkInfo(id: String) {
-        val meta = files.meta(id) ?: return
-        if (meta.mime != APK_MIME || meta.apk != null) return
-        val file = files.resolveVerified(id) ?: return
-        val pm = activity.packageManager
+    /**
+     * Called by finish once the hash matched, on the bytes under their final name
+     * (`data.apk`), before the file counts as verified.
+     * Null only drops the card's APK line: Android's installer checks the package itself.
+     * It runs on [executor], where an uncaught exception would end the app.
+     */
+    private fun readApkInfo(file: File): ApkInfo? = apkInfoOrNull {
         @Suppress("DEPRECATION")
-        val info = pm.getPackageArchiveInfo(file.path, signerFlags()) ?: return
-        val apk = apkInfoOf(info) ?: return
-        // A false here only drops the card's APK line: the file is still verified,
-        // and Android's installer checks the package itself.
-        files.recordApk(id, apk)
+        activity.packageManager.getPackageArchiveInfo(file.path, signerFlags())?.let(::apkInfoOf)
     }
 
     /** Null when the package is not installed or, on API 30+, not visible to this app. */

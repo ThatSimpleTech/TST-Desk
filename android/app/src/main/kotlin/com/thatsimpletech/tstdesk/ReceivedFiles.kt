@@ -112,25 +112,34 @@ class ReceivedFiles(
         }
     }
 
-    /** Checks the length and SHA-256, then names the file `data[.ext]`. Null means verified. */
-    fun finish(id: String): String? {
+    /**
+     * Checks the length and SHA-256, names the bytes `data[.ext]`, reads an APK's
+     * info from that file, then marks it verified with `file` and `apk` in one meta
+     * write. Null means verified. So status never shows a verified APK without its
+     * info (the page installs straight away when it has none), and a failed meta
+     * write leaves the named bytes for the next finish to check where they are.
+     */
+    fun finish(id: String, readApk: (File) -> ApkInfo?): String? {
         if (!isFileId(id)) return "io"
         synchronized(lockFor(id)) {
             val meta = readMeta(id) ?: return "io"
             if (verifiedFile(meta) != null) return null
-            val dir = dirOf(id)
-            val part = File(dir, PART)
-            if (!part.isFile) return "io"
-            if (part.length() != meta.size) return "size_mismatch"
+            val held = heldFile(meta) ?: return "io"
+            if (held.length() != meta.size) return "size_mismatch"
+            val name = dataFileName(meta.name)
+            val named = File(dirOf(id), name)
             return try {
-                if (sha256Hex(part) != meta.sha256) {
-                    // Truncated, so a retry starts clean instead of resuming bad bytes.
-                    FileOutputStream(part).close()
+                if (sha256Hex(held) != meta.sha256) {
+                    // An empty part, so a retry starts clean instead of resuming bad bytes.
+                    if (held == named && !named.delete()) throw IOException("could not drop the bytes")
+                    FileOutputStream(File(dirOf(id), PART)).close()
                     "hash_mismatch"
                 } else {
-                    val name = dataFileName(meta.name)
-                    if (!part.renameTo(File(dir, name))) throw IOException("rename failed")
-                    writeMeta(meta.copy(file = name))
+                    // Named before the parse, so Android reads an .apk path.
+                    if (held != named && !held.renameTo(named)) throw IOException("rename failed")
+                    // Whatever parser it is handed: a throw here would escape to the executor.
+                    val apk = if (meta.mime == APK_MIME) apkInfoOrNull { readApk(named) } else null
+                    writeMeta(meta.copy(file = name, apk = apk))
                     null
                 }
             } catch (_: IOException) {
@@ -147,8 +156,7 @@ class ReceivedFiles(
         val meta = if (isFileId(id)) readMeta(id) else null
         if (meta == null) return EntryStatus(STATE_NONE, 0, 0, null)
         if (verifiedFile(meta) != null) return EntryStatus(STATE_VERIFIED, meta.size, meta.size, meta)
-        val part = File(dirOf(id), PART)
-        val have = if (part.isFile) part.length() else 0
+        val have = heldFile(meta)?.length() ?: 0
         return EntryStatus(if (have > 0) STATE_PARTIAL else STATE_NONE, have, meta.size, meta)
     }
 
@@ -162,24 +170,6 @@ class ReceivedFiles(
     }
 
     fun meta(id: String): FileMeta? = if (isFileId(id)) readMeta(id) else null
-
-    /**
-     * Caches the APK's own info next to it, so status never re-parses the
-     * archive. False when it could not be saved; it runs on the file worker,
-     * where a thrown write error would take the whole app down.
-     */
-    fun recordApk(id: String, apk: ApkInfo): Boolean {
-        if (!isFileId(id)) return false
-        synchronized(lockFor(id)) {
-            val meta = readMeta(id) ?: return false
-            return try {
-                writeMeta(meta.copy(apk = apk))
-                true
-            } catch (_: IOException) {
-                false
-            }
-        }
-    }
 
     fun discard(id: String) {
         if (!isFileId(id)) return
@@ -212,12 +202,13 @@ class ReceivedFiles(
         if (old != null && old.size == meta.size && old.sha256 == meta.sha256) {
             File(dir, META).setLastModified(now())
             if (verifiedFile(old) != null) return Begin.Ready(old.size, STATE_VERIFIED)
-            val part = File(dir, PART)
-            if (part.isFile && part.length() <= old.size) {
-                val have = part.length()
+            // Bytes a finish named but could not mark verified count as held: no second copy.
+            val held = heldFile(old)
+            if (held != null && held.length() <= old.size) {
+                val have = held.length()
                 return Begin.Ready(have, if (have > 0) STATE_PARTIAL else STATE_NONE)
             }
-            FileOutputStream(part).close()
+            FileOutputStream(File(dir, PART)).close()
             return Begin.Ready(0, STATE_NONE)
         }
         dir.deleteRecursively()
@@ -269,6 +260,17 @@ class ReceivedFiles(
         val name = meta.file ?: return null
         val file = File(dirOf(meta.id), name)
         return if (file.isFile && file.length() == meta.size) file else null
+    }
+
+    /**
+     * The bytes not verified yet: `data.part`, or `data[.ext]` at full length when
+     * a finish named them and then could not write the meta. Only finish adopts those.
+     */
+    private fun heldFile(meta: FileMeta): File? {
+        val part = File(dirOf(meta.id), PART)
+        if (part.isFile) return part
+        val named = File(dirOf(meta.id), dataFileName(meta.name))
+        return if (named.isFile && named.length() == meta.size) named else null
     }
 
     private fun dirOf(id: String) = File(root, id)
