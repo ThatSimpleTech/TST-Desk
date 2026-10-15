@@ -13099,3 +13099,64 @@ also count as one instance.
 **Rejected:** re-pointing tstd's watchdog at the newest host (Design A's
 lease, reverses TD-2903); our own lock file plus IPC (more code, same
 result).
+
+## TD-5146 — The work check and memory distill stream, think less, and don't resend a timeout (Class B)
+
+Found 2026-10-14 22:55-23:15 on EZER: session c14cc3e8 stopped
+answering for about 20 minutes, and Adam's two messages from the phone
+failed. An hour-long turn had written files, so the after-write review
+ran. It was one non-streamed validator call with a 25-33k token prompt,
+no `extra_body` (so the model's default thinking) and `max_tokens`
+8192. ezer-forge needs two to six minutes for that answer. The 120 s read
+timeout fired, the timeout was retryable, and it was resent eight times
+while the session stayed busy. LiteLLM does not pass a non-streamed
+client's hang-up on to llama.cpp, so each abandoned attempt kept
+generating and held one of forge's two slots, slowing every other
+session. Memory distill made the same kind of call.
+
+Probed live before the change: through LiteLLM, a streamed request
+whose client hangs up is cancelled on forge ("srv stop: cancel task")
+within about a second; a non-streamed one keeps running.
+
+**Decision.** `complete_streamed` (core/tstd/provider.py) sends one
+request over the streaming wire and folds the chunks into a
+`ChatCompletionResponse`. The validator review and memory distill use
+it, send their tier's `extra_body` (EZER's validator and worker tiers
+set `reasoning_effort: low`), and set `retry_on_timeout=False` on the
+request. That flag is never sent; `retry_call` and `retry_stream` take an
+optional narrower test, and the provider client passes "not a timeout"
+when the flag is off. A 429, 5xx or refused connection is still retried.
+Streaming makes the read timeout (120 s) a gap between chunks. The
+first chunk still waits for the whole prompt to be read: forge reads an
+uncached 30-50k prompt at 390-830 tokens a second, so up to about 45k
+tokens fits even at the slow rate, and the live 25.9k review got its
+first chunk at 38 s. A bigger review prompt can still time out once;
+it is then reported as a verify error. The review prompt is not capped
+(every diff and shell output of the turn); that is a follow-up.
+
+**A cut-off stream is an error.** `collect_stream` returns
+`stream_interrupted` when the stream ends without a finish reason.
+LiteLLM reports an upstream failure partway through a stream as an
+in-band `error` event and then ends the body; the stream parser skips
+that event, and `parse_verdict` reads any unrecognised text as a pass,
+so the partial text would have become a false "pass" (found by the
+review). The turn's own stream has the same gap and is a follow-up.
+
+**Shutdown.** Quit-distill's `SignalingProvider` now wraps the stream:
+the whole stream drains inside the one future the reaper watches, so a
+cancel closes the stream in the task that opened it, and the hang-up
+reaches the server. An in-process provider still finishes in one loop
+turn.
+
+**Stop does not reach the review.** It runs after `turn_complete`, so
+`stop_turn` finds no open turn, as before this change. Ending the
+session or quitting cancels it, and the stream's hang-up then reaches
+the server. Making Stop end the review is a follow-up.
+
+**Unchanged.** The turn's own stream keeps the full retry policy. The
+classifier, DoD polls and judgment calls stay non-streamed: they ask for
+8 tokens with thinking off (TD-5013) and finish in seconds.
+
+**Rejected:** raising the read timeout (an abandoned call would still
+hold a forge slot for minutes); turning verify off on EZER (it hides the
+review rather than fixing the call).

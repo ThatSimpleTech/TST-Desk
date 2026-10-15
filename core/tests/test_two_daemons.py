@@ -52,10 +52,12 @@ def keychain(monkeypatch: pytest.MonkeyPatch) -> FakeKeychain:
 
 
 class _Steps(MockProvider):
-    """One script per agent (streaming) call whichever tier the router picks.
+    """One script per agent call whichever tier the router picks.
 
-    Side calls (the verify judge and the like) are not streamed; they get
-    plain text and leave the steps alone.
+    Side calls get plain text and leave the steps alone: the non-streamed
+    ones (the classifier and the like), and streamed calls that carry no
+    tools, which an agent call always does (the after-write review and
+    memory distill stream since TD-5146).
     """
 
     def __init__(self, steps: list[Script]) -> None:
@@ -68,6 +70,12 @@ class _Steps(MockProvider):
         # read (and cleared) by that very call.
         self._side_call = True
         return await super().chat_completion(request)
+
+    def chat_completion_stream(self, request: Any) -> Any:
+        # Read by the stream's first step, which its caller takes at once.
+        if not request.tools:
+            self._side_call = True
+        return super().chat_completion_stream(request)
 
     def _script_for(self, model: str) -> Script:
         side, self._side_call = self._side_call, False

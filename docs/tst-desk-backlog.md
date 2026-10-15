@@ -9136,3 +9136,25 @@ The composer stop control sent `cancel`, and `cancel` marks the session
       cancelled
 - [x] `cancel` still ends the session
 - [x] A stopped turn does not raise a failure notice
+
+### TD-5146 — The work check and memory distill stream, think less, and don't resend a timeout
+**Size:** 3 · **Depends on:** TD-4204, TD-2301, TD-5008
+
+A 25-33k token after-write review on ezer-forge ran with default thinking,
+timed out at 120 s, and was resent eight times. Each abandoned attempt
+kept generating behind LiteLLM. The session was busy for about 20
+minutes (2026-10-14).
+
+**Acceptance criteria:**
+- [x] The after-write review and memory distill go over the streaming
+      wire and are collected into one response
+- [x] Both send their tier's `extra_body`
+- [x] A timed-out attempt is returned, not resent; a 429 or 5xx still
+      retries
+- [x] A stream that ends without a finish reason is an error, never a
+      verdict
+- [x] Ending the session, or quitting during a distill, closes the
+      stream (Stop does not reach the review; follow-up)
+- [x] The turn's own retry policy is unchanged
+- [x] Tests fail on the old code (nine attempts, no `stream`) and pass
+      on the new

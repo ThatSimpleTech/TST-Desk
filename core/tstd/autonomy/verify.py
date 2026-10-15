@@ -6,7 +6,7 @@ This is not the autonomy supervisor (TD-4201). No charter, no auto-revert.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Literal, Protocol
 
 from ..config import ModelConfig, TierConfig
@@ -16,9 +16,10 @@ from ..logging import get_logger
 from ..protocol import VerifyResult
 from ..provider import (
     ChatCompletionRequest,
-    ChatCompletionResponse,
     ChatMessage,
     ProviderError,
+    StreamChunk,
+    complete_streamed,
     content_as_text,
 )
 
@@ -37,9 +38,9 @@ _ATTR_DENY = "verify_deny"
 
 
 class CompletionClient(Protocol):
-    async def chat_completion(
+    def chat_completion_stream(
         self, request: ChatCompletionRequest
-    ) -> ChatCompletionResponse | ProviderError: ...
+    ) -> AsyncIterator[StreamChunk | ProviderError]: ...
 
 
 ClientFor = Callable[[TierConfig], Awaitable[CompletionClient]]
@@ -243,7 +244,15 @@ async def _run_validator(
     client_for: ClientFor,
     assembler: PromptAssembler,
 ) -> None:
-    """One validator-tier completion. Never streams into the chat transcript."""
+    """One validator-tier completion. Never streams into the chat transcript.
+
+    The call streams on the wire and is collected (TD-5146): when the
+    task is cancelled (session cancel, quit) the hang-up ends the server's
+    work too, and the tier's ``extra_body`` (low thinking on a local model)
+    keeps a long diff review from running for minutes. A timed-out attempt
+    is reported, not resent. Stop does not reach this call: it runs after
+    ``turn_complete``.
+    """
     diff = turn_diff(session) or "(no diff)"
     test_output = turn_test_output(session) or "(no test output)"
     try:
@@ -298,9 +307,11 @@ async def _run_validator(
         tools=None,
         max_tokens=validator_cfg.max_output_tokens,
         temperature=0.0,
+        extra_body=validator_cfg.extra_body,
+        retry_on_timeout=False,
     )
     try:
-        response = await provider.chat_completion(request)
+        response = await complete_streamed(provider, request)
     except Exception as e:
         log.warning(
             "verify call raised",
