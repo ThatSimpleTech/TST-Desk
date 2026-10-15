@@ -62,6 +62,9 @@ export interface DownloadState {
   code: string | null;
   /** A pause that waits for the connection, not for Resume. */
   waiting: boolean;
+  /** The computer such a pause waits for too, by its label as typed; null
+   *  when only the connection is missing. */
+  waitingFor: string | null;
   /** The desktop holds the daemon's own copy (a session on this computer). */
   local: boolean;
   /** The phone holds part of the file. */
@@ -83,6 +86,7 @@ const CHECKING: DownloadState = Object.freeze({
   note: null,
   code: null,
   waiting: false,
+  waitingFor: null,
   local: false,
   partial: false,
   savedTo: null,
@@ -269,6 +273,7 @@ function applyStatus(e: DownloadState, status: SinkStatus, ref: SentFileRef): vo
       e.have = status.have;
       e.partial = true;
       e.waiting = false;
+      e.waitingFor = null;
       return;
     case "none":
       e.phase = "idle";
@@ -342,6 +347,7 @@ async function begin(job: Job): Promise<void> {
   e.phase = "downloading";
   e.rate = 0;
   e.waiting = false;
+  e.waitingFor = null;
   // A pause's note must not outlive it: a job resumed from the queue lands
   // here, not in resumeDownload.
   e.note = null;
@@ -545,6 +551,7 @@ async function complete(job: Job): Promise<void> {
   e.have = job.ref.size;
   e.partial = false;
   e.waiting = false;
+  e.waitingFor = null;
   e.apk = status?.apk ?? null;
   e.canInstall = status?.canInstall ?? false;
   // Every byte is in, so a request still out was lost and asked again: no
@@ -625,6 +632,7 @@ function stopWith(job: Job, phase: FilePhase, copy: string): void {
   e.phase = phase;
   e.note = copy;
   e.waiting = false;
+  e.waitingFor = null;
   // A part left behind: the phone offers to remove it (§6.4 gone).
   e.partial = job.have > 0;
   release(job);
@@ -677,6 +685,7 @@ function pauseJob(job: Job, why: PauseWhy, note: string | null = null): void {
   const e = entry(job.ref);
   e.phase = "paused";
   e.waiting = why === "connection" || why === "stall";
+  e.waitingFor = null;
   e.note = note;
   e.rate = 0;
   e.partial = job.have > 0;
@@ -712,6 +721,7 @@ export async function resumeDownload(ref: SentFileRef): Promise<void> {
   const generation = job.generation;
   e.phase = "downloading";
   e.waiting = false;
+  e.waitingFor = null;
   e.note = null;
   syncAwake();
   let status: SinkStatus;
@@ -745,6 +755,7 @@ export function cancelDownload(ref: SentFileRef): void {
   e.rate = 0;
   e.partial = false;
   e.waiting = false;
+  e.waitingFor = null;
   e.note = null;
   e.code = null;
 }
@@ -800,6 +811,10 @@ function handleState(state: string): void {
   asks.length = 0;
   for (const job of [...jobs.values()]) {
     if (isRunning(job)) pauseJob(job, "connection");
+    // A stall's wait for the other computer comes after the connection's:
+    // the reconnect resumes it either way.
+    const e = downloads[job.key];
+    if (e?.phase === "paused" && e.waiting) e.waitingFor = null;
   }
 }
 
@@ -816,7 +831,10 @@ function handleResume(): void {
 function waitForMachine(job: Job): void {
   const machine = machineOf(job.ref.sessionId);
   job.waitFor = machine;
-  if (machine === null || getDeps().machineStatus(machine) !== "connected") return;
+  if (machine === null) return;
+  const e = entry(job.ref);
+  if (e.waiting) e.waitingFor = getDeps().machine(job.ref.sessionId);
+  if (getDeps().machineStatus(machine) !== "connected") return;
   if (job.machineRetries >= MAX_STRIKES) return;
   job.machineRetries += 1;
   const generation = job.generation;

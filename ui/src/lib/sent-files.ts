@@ -337,11 +337,13 @@ export function etaText(remaining: number, rate: number): string | null {
   return `${Math.ceil(seconds / 60)} min left`;
 }
 
-/** The paused line. `waiting` when the connection is what it waits for;
- *  a part found after a reload just waits for Resume. */
-export function pausedText(have: number, waiting: boolean): string {
+/** The paused line. `waiting` when it carries on by itself: once the
+ *  connection is back, or once `machine` (another computer's label, as
+ *  typed) is. A part found after a reload just waits for Resume. */
+export function pausedText(have: number, waiting: boolean, machine: string | null = null): string {
   const at = `Paused at ${formatBytes(have)}`;
-  return waiting ? `${at} · waiting for the connection` : at;
+  if (!waiting) return at;
+  return `${at} · waiting for ${machine ?? "the connection"}`;
 }
 
 export const QUEUED_TEXT = "Queued";
@@ -366,6 +368,7 @@ export interface StatusView {
   rate: number;
   note: string | null;
   waiting: boolean;
+  waitingFor: string | null;
   savedTo: string | null;
 }
 
@@ -384,7 +387,7 @@ export function statusLine(ref: Pick<SentFileRef, "name" | "mime" | "size">, vie
     case "downloading":
       return progressText(view.have, ref.size, view.rate);
     case "paused":
-      return view.note ?? pausedText(view.have, view.waiting);
+      return view.note ?? pausedText(view.have, view.waiting, view.waitingFor);
     case "verifying":
       return VERIFYING_TEXT;
     case "done":

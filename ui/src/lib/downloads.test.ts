@@ -324,7 +324,7 @@ describe("stalls and the connection", () => {
     expect(requests()).toEqual([0, 0, 0, 0]);
     expect(state(ref).phase).toBe("downloading");
     await vi.advanceTimersByTimeAsync(STALL_MS);
-    expect(state(ref)).toMatchObject({ phase: "paused", waiting: true });
+    expect(state(ref)).toMatchObject({ phase: "paused", waiting: true, waitingFor: null });
     expect(requests()).toHaveLength(1 + MAX_STRIKES);
   });
 
@@ -605,16 +605,36 @@ describe("the other computer goes away (machine_unreachable)", () => {
   });
 
   it("a stall in its session waits for the computer too, and carries on when the list calls it up", async () => {
+    configureDownloads({ machine: () => "iMac" });
     const ref = file(1, CHUNK, { sessionId: BRIDGED });
     startDownload(ref);
     await flush();
     await vi.advanceTimersByTimeAsync(STALL_MS * (MAX_STRIKES + 1));
-    expect(state(ref)).toMatchObject({ phase: "paused", waiting: true });
+    // The card says which computer it waits for, by its name as typed.
+    expect(state(ref)).toMatchObject({ phase: "paused", waiting: true, waitingFor: "iMac" });
     sent = [];
     emit(machineList({ [MCH]: "connected" }));
     await flush();
-    expect(state(ref).phase).toBe("downloading");
+    expect(state(ref)).toMatchObject({ phase: "downloading", waitingFor: null });
     expect(requests()).toEqual([0]);
+  });
+
+  it("a stalled download whose socket then drops waits for the connection first", async () => {
+    const ref = file(1, CHUNK, { sessionId: BRIDGED });
+    startDownload(ref);
+    await flush();
+    await vi.advanceTimersByTimeAsync(STALL_MS * (MAX_STRIKES + 1));
+    expect(state(ref)).toMatchObject({ phase: "paused", waitingFor: "studio-mac" });
+    for (const handler of bus.states) handler("reconnecting");
+    expect(state(ref)).toMatchObject({ phase: "paused", waiting: true, waitingFor: null });
+  });
+
+  it("a dropped connection mid-download waits for the connection, not the computer", async () => {
+    const ref = file(1, 6 * CHUNK, { sessionId: BRIDGED });
+    startDownload(ref);
+    await flush();
+    for (const handler of bus.states) handler("reconnecting");
+    expect(state(ref)).toMatchObject({ phase: "paused", waiting: true, waitingFor: null });
   });
 
   it("Cancel stops the wait for the computer", async () => {

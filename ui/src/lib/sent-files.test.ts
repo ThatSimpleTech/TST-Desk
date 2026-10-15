@@ -314,10 +314,12 @@ describe("progress copy", () => {
   it("writes the paused, saved and status lines", () => {
     expect(pausedText(12.4 * MB, true)).toBe("Paused at 12.4 MB · waiting for the connection");
     expect(pausedText(12.4 * MB, false)).toBe("Paused at 12.4 MB");
+    // A pause that waits on another computer names it, as typed.
+    expect(pausedText(12.4 * MB, true, "iMac")).toBe("Paused at 12.4 MB · waiting for iMac");
     expect(savedText("Download/TST Desk/app-release.apk", "android")).toBe("Saved to Download/TST Desk");
     expect(savedText("/home/u/Downloads/a.pdf", "desktop")).toBe("Saved to /home/u/Downloads/a.pdf");
     const ref = { name: "app-release.apk", mime: "application/vnd.android.package-archive", size: 46.2 * MB };
-    const view = { have: 0, rate: 0, note: null, waiting: false, savedTo: null };
+    const view = { have: 0, rate: 0, note: null, waiting: false, waitingFor: null, savedTo: null };
     expect(statusLine(ref, { ...view, phase: "idle" }, "android")).toBe("Android app · 46.2 MB");
     expect(statusLine(ref, { ...view, phase: "queued" }, "android")).toBe("Queued");
     expect(statusLine(ref, { ...view, phase: "verifying" }, "android")).toBe("Checking the file…");
@@ -326,6 +328,11 @@ describe("progress copy", () => {
       "Update TST Desk on this phone to download files.",
     );
     expect(statusLine(ref, { ...view, phase: "failed", note: "x" }, "desktop")).toBe("x");
+    const stalled = { ...view, phase: "paused" as const, have: 12.4 * MB, waiting: true };
+    expect(statusLine(ref, stalled, "android")).toBe("Paused at 12.4 MB · waiting for the connection");
+    expect(statusLine(ref, { ...stalled, waitingFor: "studio-mac" }, "android")).toBe(
+      "Paused at 12.4 MB · waiting for studio-mac",
+    );
   });
 });
 
