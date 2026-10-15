@@ -619,6 +619,7 @@ _NAME_VECTORS = [
     ("é" * 100, "é" * 60),
     ("a" * 130 + ".verylongextension12", "a" * 120),
     ("name with spaces.zip", "name with spaces.zip"),
+    ("CON" + " " * 150 + "y.log", "_CON" + " " * 112 + ".log"),
 ]
 
 

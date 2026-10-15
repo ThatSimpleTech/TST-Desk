@@ -495,7 +495,8 @@ pub(crate) fn safe_name(raw: &str) -> String {
         .collect();
     let name = device_prefix(strip_trailing(&cleaned).to_string());
     let name = truncate(name);
-    let name = device_prefix(strip_trailing(&name).to_string());
+    // Step 8: a "_" added here can push the name one byte over, so cut once more.
+    let name = truncate(device_prefix(strip_trailing(&name).to_string()));
     if name.is_empty() {
         "file".into()
     } else {
@@ -797,6 +798,10 @@ mod tests {
                 "a".repeat(120),
             ),
             ("name with spaces.zip".into(), "name with spaces.zip".into()),
+            (
+                format!("CON{}y.log", " ".repeat(150)),
+                format!("_CON{}.log", " ".repeat(112)),
+            ),
         ];
         for (input, want) in &cases {
             let got = safe_name(input);

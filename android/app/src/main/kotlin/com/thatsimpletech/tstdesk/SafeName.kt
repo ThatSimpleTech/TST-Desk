@@ -18,7 +18,8 @@ fun safeFileName(raw: String): String {
     name = name.filterNot { it.code <= 0x1F || it.code == 0x7F }
     name = name.map { if (it in FORBIDDEN) '_' else it }.joinToString("")
     name = devicePrefixed(name.trimEnd(' ', '.'))
-    name = devicePrefixed(truncated(name).trimEnd(' ', '.'))
+    // Step 8: a "_" added here can push the name one byte over, so cut once more.
+    name = truncated(devicePrefixed(truncated(name).trimEnd(' ', '.')))
     return name.ifEmpty { "file" }
 }
 
