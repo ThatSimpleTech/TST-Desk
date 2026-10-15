@@ -824,6 +824,28 @@ def test_leftover_sweep_keeps_folders_the_index_names_or_cannot_be_read(tmp_path
     assert (env.bytes_dir / orphan).is_dir()
 
 
+def test_leftover_sweep_runs_only_for_known_sessions(tmp_path: Path) -> None:
+    """A store bound to the registry sweeps a session only under its exact id.
+
+    On a case-insensitive disk ``S1`` and ``s1`` are one folder: an unknown
+    spelling must neither sweep it nor use up the known id's one sweep.
+    """
+    env = _env(tmp_path)
+    orphan = env.bytes_dir / ("e" * 32)
+    _write(orphan / "old.bin", "a crash leftover")
+    sid = env.session.id
+    store = ArtifactStore(env.persist, known_session=lambda s: s == sid)
+    spelled = sid.upper() if sid.upper() != sid else f"{sid}-x"
+    real = env.persist.dir_for
+    folded = {spelled: sid}
+    env.persist.dir_for = lambda s: real(folded.get(s, s))  # type: ignore[method-assign]
+
+    assert store.sent_bytes_total(spelled) == 0
+    assert orphan.is_dir()
+    assert store.sent_bytes_total(sid) == 0
+    assert not orphan.exists()
+
+
 # ── Names and MIME (§1.4, §1.5) ────────────────────────────────────────
 
 _NAME_VECTORS = [

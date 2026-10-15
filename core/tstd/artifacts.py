@@ -23,6 +23,7 @@ import re
 import stat
 import threading
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
@@ -103,10 +104,24 @@ def _safe_session_id(session_id: str) -> str:
 class ArtifactStore:
     """Read and write one session's artifact index and optional bytes."""
 
-    def __init__(self, persist: SessionPersist) -> None:
+    def __init__(
+        self,
+        persist: SessionPersist,
+        *,
+        known_session: Callable[[str], bool] | None = None,
+    ) -> None:
+        """``known_session`` says whether an id is exactly a registered session.
+
+        The daemon binds it to its registry so the crash-leftover sweep runs
+        only for real sessions, under the id the registry holds: on a
+        case-insensitive disk ``ABC`` and ``abc`` are one folder, and a
+        stranger spelling must not count as that folder's first load.
+        Unbound (tests, tools), every id is taken as known.
+        """
         self._persist = persist
+        self._known_session = known_session
         self._lock = threading.Lock()
-        # Sessions whose crash leftovers this store already swept (TD-5143).
+        # Registry ids whose crash leftovers this store already swept (TD-5143).
         self._swept: set[str] = set()
 
     def record(
@@ -299,8 +314,11 @@ class ArtifactStore:
 
     def _load(self, session_id: str) -> list[ArtifactRecord]:
         path = self._persist.dir_for(session_id) / _META
-        first = session_id not in self._swept
-        self._swept.add(session_id)
+        first = session_id not in self._swept and (
+            self._known_session is None or self._known_session(session_id)
+        )
+        if first:
+            self._swept.add(session_id)
         if not path.is_file():
             if first:
                 self._sweep(session_id, [])

@@ -223,7 +223,12 @@ async def test_size_change_is_changed(one: tuple[Daemon, str, Path]) -> None:
     assert (await _chunk(daemon, sid, record.id, 0))["error_code"] == "artifact_not_found"
 
 
-async def test_works_without_a_loaded_session(tmp_path: Path) -> None:
+async def test_serves_a_restored_session_and_nothing_before_restore(tmp_path: Path) -> None:
+    """The registry names the sessions a chunk read may reach (follow-up l).
+
+    A running daemon restores every stored session before it serves, so a
+    restarted daemon still hands out the bytes; until then, nothing.
+    """
     data_dir = tmp_path / "data"
     first = Daemon(data_dir=data_dir)
     ws = tmp_path / "ws"
@@ -231,12 +236,17 @@ async def test_works_without_a_loaded_session(tmp_path: Path) -> None:
     sid = await _open(first, ws)
     record = _send(first, sid, ws, "app.apk", b"kept on disk")
     await _shutdown(first, sid)
-    fresh = Daemon(data_dir=data_dir)  # never started: no session is loaded
+    fresh = Daemon(data_dir=data_dir)
     assert fresh.session_registry.get(sid) is None
-    reply = await _chunk(fresh, sid, record.id, 0)
-    assert reply["error_code"] is None, reply
-    assert base64.b64decode(reply["data_b64"]) == b"kept on disk"
-    await fresh._shutdown()
+    refused = await _chunk(fresh, sid, record.id, 0)
+    assert refused["error_code"] == "artifact_not_found", refused
+    await fresh._restore_sessions()
+    try:
+        reply = await _chunk(fresh, sid, record.id, 0)
+        assert reply["error_code"] is None, reply
+        assert base64.b64decode(reply["data_b64"]) == b"kept on disk"
+    finally:
+        await _shutdown(fresh, sid)
 
 
 async def test_chunks_not_in_event_log_and_never_logged(
@@ -414,3 +424,49 @@ async def test_a_live_move_rebinds_every_path_tool_to_the_new_root(tmp_path: Pat
         assert len(ready) == 1
     finally:
         await _shutdown(daemon, sid)
+
+
+async def test_a_chunk_read_for_an_unknown_session_never_touches_disk(
+    one: tuple[Daemon, str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only an exactly known session id reaches the store (TD-5143, follow-up l)."""
+    daemon, sid, ws = one
+    record = _send(daemon, sid, ws, "app-release.apk", b"apk")
+    persist = daemon._artifacts._persist
+    real = persist.dir_for
+    touched: list[str] = []
+
+    def dir_for(session_id: str) -> Path:
+        touched.append(session_id)
+        return real(session_id)
+
+    monkeypatch.setattr(persist, "dir_for", dir_for)
+    for other in (sid.upper(), "0" * 8 + sid[8:], "never-opened"):
+        assert other != sid
+        reply = await _chunk(daemon, other, record.id, 0)
+        assert (reply["error_code"], reply["data_b64"]) == ("artifact_not_found", ""), other
+    assert touched == []
+    assert (await _chunk(daemon, sid, record.id, 0))["error_code"] is None
+
+
+async def test_a_differently_spelled_id_cannot_sweep_a_live_send(
+    one: tuple[Daemon, str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On a case-insensitive disk ``SID`` and ``sid`` are one folder.
+
+    A chunk read spelling the live id in capitals must not count as that
+    folder's first load and sweep the send the agent has in flight there.
+    """
+    daemon, sid, ws = one
+    record = _send(daemon, sid, ws, "app-release.apk", b"apk")
+    persist = daemon._artifacts._persist
+    real = persist.dir_for
+    monkeypatch.setattr(persist, "dir_for", lambda session_id: real(session_id.casefold()))
+    in_flight = daemon._artifacts.bytes_dir(sid) / ("f" * 32)
+    in_flight.mkdir()
+    (in_flight / "big.apk").write_bytes(b"half a copy")
+
+    reply = await _chunk(daemon, sid.upper(), record.id, 0)
+
+    assert reply["error_code"] == "artifact_not_found"
+    assert (in_flight / "big.apk").read_bytes() == b"half a copy"

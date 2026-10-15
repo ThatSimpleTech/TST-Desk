@@ -899,7 +899,10 @@ class Daemon:
         # (Windows CI). One asyncio lock per session keeps jsonl in seq
         # order.
         self._event_persist_locks: dict[str, asyncio.Lock] = {}
-        self._artifacts = ArtifactStore(self._session_persist)
+        self._artifacts = ArtifactStore(
+            self._session_persist,
+            known_session=lambda sid: self.session_registry.get(sid) is not None,
+        )
         self._slug_snapshot = _snapshot_slugs(self.config)
         self._provider = provider
         self._clients: dict[tuple[str, str], ProviderLike] = {}
@@ -4054,9 +4057,13 @@ class Daemon:
     async def _handle_read_artifact_chunk(self, msg: ReadArtifactChunk) -> str:
         """Bytes of a file the agent sent (TD-5143). Connection-scoped, never logged.
 
-        No session runtime and no registry: the index row and the disk
-        decide everything (``ArtifactStore.open_sent_file``). Success is
-        never logged; a refusal logs its code and the id only.
+        The session id must be exactly one the registry holds, or the reply
+        is ``artifact_not_found`` before anything touches disk: a client
+        spelling of a live id (``ABC`` for ``abc`` on a case-insensitive
+        disk) must not reach that session's folder, where a first load
+        sweeps crash leftovers. Past that, no session runtime: the index
+        row and the disk decide everything (``ArtifactStore.open_sent_file``).
+        Success is never logged; a refusal logs its code and the id only.
         """
 
         def fail(code: str) -> str:
@@ -4067,6 +4074,14 @@ class Daemon:
                 error_code=code,
             ).model_dump_json()
 
+        if self.session_registry.get(msg.session_id) is None:
+            log.info(
+                "artifact chunk refused",
+                extra={
+                    "extra_fields": {"artifact_id": msg.artifact_id, "code": "artifact_not_found"}
+                },
+            )
+            return fail("artifact_not_found")
         try:
             record, target = await asyncio.to_thread(
                 self._artifacts.open_sent_file, msg.session_id, msg.artifact_id
