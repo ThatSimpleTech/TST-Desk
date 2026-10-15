@@ -10,15 +10,18 @@
 // One download runs at a time; the rest queue, so two APKs never double the
 // socket load. A request with no reply for 20 s is asked again; three of
 // those and the card pauses. A dropped connection pauses too, and the
-// download picks up where the sink's part ends once the socket is back.
+// download picks up where the sink's part ends once the socket is back. Any
+// other pause hands the slot to the next in the queue.
 // Every card's state lives in `downloads`, keyed `${sessionId}|${artifactId}`,
 // and the first render probes the sink so a card comes back in its real
 // state after a restart (§6.3).
 
 import { onConnectionState, onDaemonEvent, onResume, sendToDaemon } from "./connection-status.svelte.js";
+import { machineOf } from "./bridged-id";
+import { hub } from "./hub.svelte.js";
 import { claimInline } from "./inline-errors";
-import { machineNameFor } from "./machines.svelte.js";
-import type { ArtifactChunk, ClientMessageUnion, DaemonEventUnion } from "./protocol";
+import { machineById, machineNameFor } from "./machines.svelte.js";
+import type { ArtifactChunk, ClientMessageUnion, DaemonEventUnion, MachineStatus, MachineSummary } from "./protocol";
 import { createFileHost, metaFor, type FileHost, type FileSink, type SinkStatus } from "./file-sink";
 import {
   apkWarnings,
@@ -29,6 +32,7 @@ import {
   messageFor,
   THIS_COMPUTER,
   type ApkStatus,
+  type CopyContext,
   type FileAction,
   type FilePhase,
   type Platform,
@@ -42,6 +46,9 @@ export const STALL_MS = 20000;
 export const MAX_STRIKES = 3;
 /** A sink that keeps answering bad_offset without moving is broken. */
 const MAX_RESYNCS = 3;
+/** How long the rest of a window's replies may trail a download that
+ *  stopped. The hub answers a verb it queued within its 10 s queue time. */
+const ECHO_MS = STALL_MS;
 
 /** One card's state. Plain data, so a card can render it as is. */
 export interface DownloadState {
@@ -55,6 +62,9 @@ export interface DownloadState {
   code: string | null;
   /** A pause that waits for the connection, not for Resume. */
   waiting: boolean;
+  /** The computer such a pause waits for too, by its label as typed; null
+   *  when only the connection is missing. */
+  waitingFor: string | null;
   /** The desktop holds the daemon's own copy (a session on this computer). */
   local: boolean;
   /** The phone holds part of the file. */
@@ -76,6 +86,7 @@ const CHECKING: DownloadState = Object.freeze({
   note: null,
   code: null,
   waiting: false,
+  waitingFor: null,
   local: false,
   partial: false,
   savedTo: null,
@@ -109,6 +120,24 @@ interface Job {
   lastAppendAt: number;
   /** Bumped on pause, cancel and restart, so a stale await lands nowhere. */
   generation: number;
+  /** The computer (`mch_` handle) a hub pause waits for, or null. */
+  waitFor: string | null;
+  /** Asks made on our own while the list already called that computer up. */
+  machineRetries: number;
+}
+
+/** A chunk request no reply has answered yet. Its window is the job's
+ *  generation when it went out: a reply to an older window (one that paused,
+ *  stopped or was cancelled, or a job asked for again) is that window's
+ *  echo, never news for the job now. */
+interface Ask {
+  job: Job;
+  generation: number;
+  session: string;
+  artifactId: string;
+  offset: number;
+  /** Set when its window stopped: how long its reply may still trail it. */
+  until: number | null;
 }
 
 interface Deps {
@@ -117,10 +146,16 @@ interface Deps {
   send: (msg: ClientMessageUnion) => boolean;
   /** The `<machine>` in the copy. */
   machine: (sessionId: string) => string;
+  /** The computer this page talks to, for a refusal the hub itself sends. */
+  hubName: () => string;
+  /** A paired computer's status as the machines store lists it, or null. */
+  machineStatus: (machineId: string) => MachineStatus | null;
 }
 
 let deps: Deps | null = null;
 const jobs = new Map<string, Job>();
+/** Every request still out, in the order they went. */
+const asks: Ask[] = [];
 const queue: string[] = [];
 const probing = new Set<string>();
 let active: string | null = null;
@@ -136,6 +171,8 @@ function getDeps(): Deps {
       host: createFileHost(platform),
       send: sendToDaemon,
       machine: (sessionId) => machineNameFor(sessionId) ?? THIS_COMPUTER,
+      hubName: () => (platform === "desktop" ? THIS_COMPUTER : (hub.desktopName ?? "the paired computer")),
+      machineStatus: (machineId) => machineById(machineId)?.status ?? null,
     };
   }
   return deps;
@@ -157,6 +194,7 @@ export function resetDownloads(): void {
   stops = [];
   for (const job of jobs.values()) job.generation += 1;
   jobs.clear();
+  asks.length = 0;
   queue.length = 0;
   probing.clear();
   active = null;
@@ -235,6 +273,7 @@ function applyStatus(e: DownloadState, status: SinkStatus, ref: SentFileRef): vo
       e.have = status.have;
       e.partial = true;
       e.waiting = false;
+      e.waitingFor = null;
       return;
     case "none":
       e.phase = "idle";
@@ -262,6 +301,8 @@ function newJob(ref: SentFileRef, sink: FileSink, then: Then): Job {
     appending: false,
     lastAppendAt: 0,
     generation: 0,
+    waitFor: null,
+    machineRetries: 0,
   };
 }
 
@@ -306,6 +347,11 @@ async function begin(job: Job): Promise<void> {
   e.phase = "downloading";
   e.rate = 0;
   e.waiting = false;
+  e.waitingFor = null;
+  // A pause's note must not outlive it: a job resumed from the queue lands
+  // here, not in resumeDownload.
+  e.note = null;
+  e.code = null;
   syncAwake();
   let begun: { have: number; state: "none" | "partial" | "verified" };
   try {
@@ -346,9 +392,11 @@ function request(job: Job, offset: number): boolean {
     length: CHUNK,
   });
   if (!sent) {
-    pauseJob(job, true);
+    pauseJob(job, "connection");
     return false;
   }
+  const { sessionId: session, artifactId } = job.ref;
+  asks.push({ job, generation: job.generation, session, artifactId, offset, until: null });
   return true;
 }
 
@@ -364,11 +412,13 @@ function fill(job: Job): void {
 }
 
 function onChunk(event: ArtifactChunk): void {
-  const key = fileKey({ sessionId: event.session_id, artifactId: event.artifact_id });
-  const job = jobs.get(key);
-  if (job === undefined || !isRunning(job)) return;
-  // Only replies to what is out now; a late one from before a pause or a
-  // restart is not ours any more.
+  const ask = takeAsk(
+    (a) => a.session === event.session_id && a.artifactId === event.artifact_id && a.offset === event.offset,
+  );
+  // Only replies to what is out now; a late one from before a pause, a
+  // restart or a cancel is not ours any more.
+  if (ask === null || !isLive(ask)) return;
+  const job = ask.job;
   if (!job.inflight.has(event.offset)) return;
   job.inflight.delete(event.offset);
   if (event.error_code !== null && event.error_code !== "") {
@@ -411,6 +461,7 @@ async function drain(job: Job): Promise<void> {
       if (!isCurrent(job, generation)) return;
       noteRate(job, next - offset);
       job.resyncs = next > offset ? 0 : job.resyncs;
+      job.machineRetries = 0;
       job.have = next;
       entry(job.ref).have = next;
       fill(job);
@@ -439,7 +490,7 @@ async function resync(job: Job, have: number | null): Promise<void> {
     }
     if (!isCurrent(job, generation)) return;
   }
-  job.generation += 1;
+  endWindow(job);
   startAt(job, at);
 }
 
@@ -456,6 +507,11 @@ function noteRate(job: Job, bytes: number): void {
 async function finish(job: Job): Promise<void> {
   const generation = job.generation;
   const e = entry(job.ref);
+  // Every byte is in, so a request still out was lost and asked again: no
+  // reply is owed. Left in place, it would claim the next refusal in the
+  // session while the file is checked, after a failed check, or on the
+  // restart after a hash mismatch.
+  forgetAsks(job);
   e.phase = "verifying";
   syncAwake();
   let result: Awaited<ReturnType<FileSink["finish"]>>;
@@ -478,7 +534,7 @@ async function finish(job: Job): Promise<void> {
       // begin() starts a fresh part either way.
     }
     if (!isCurrent(job, generation)) return;
-    job.generation += 1;
+    endWindow(job);
     e.have = 0;
     void begin(job);
     return;
@@ -500,6 +556,7 @@ async function complete(job: Job): Promise<void> {
   e.have = job.ref.size;
   e.partial = false;
   e.waiting = false;
+  e.waitingFor = null;
   e.apk = status?.apk ?? null;
   e.canInstall = status?.canInstall ?? false;
   release(job);
@@ -513,17 +570,20 @@ async function complete(job: Job): Promise<void> {
   }
 }
 
-/** Give the slot to the next queued download. */
+/** Forget the job and give the slot to the next queued download. */
 function release(job: Job): void {
   if (jobs.get(job.key) === job) jobs.delete(job.key);
-  job.generation += 1;
+  endWindow(job);
   const at = queue.indexOf(job.key);
   if (at !== -1) queue.splice(at, 1);
-  if (active === job.key) {
-    active = null;
-    startNext();
-  }
+  freeSlot(job);
   syncAwake();
+}
+
+function freeSlot(job: Job): void {
+  if (active !== job.key) return;
+  active = null;
+  startNext();
 }
 
 function startNext(): void {
@@ -536,9 +596,10 @@ function startNext(): void {
   }
 }
 
-/** Land a code on the card (§6.5). */
-function handleCode(job: Job, code: string): void {
-  const outcome = messageFor(code, copyContext(job.ref));
+/** Land a code on the card (§6.5). `relayed`: an error frame the other
+ *  computer sent through the hub, rather than the hub's own. */
+function handleCode(job: Job, code: string, relayed = false): void {
+  const outcome = messageFor(code, { ...copyContext(job.ref), relayed });
   const e = entry(job.ref);
   e.code = code;
   switch (outcome.kind) {
@@ -559,7 +620,8 @@ function handleCode(job: Job, code: string): void {
       return;
     case "phase":
       if (outcome.phase === "paused") {
-        pauseJob(job, false, outcome.copy);
+        pauseJob(job, "code", outcome.copy);
+        waitForMachine(job);
         return;
       }
       stopWith(job, outcome.phase === "done" ? "failed" : outcome.phase, outcome.copy);
@@ -572,11 +634,14 @@ function stopWith(job: Job, phase: FilePhase, copy: string): void {
   e.phase = phase;
   e.note = copy;
   e.waiting = false;
+  e.waitingFor = null;
+  // A part left behind: the phone offers to remove it (§6.4 gone).
+  e.partial = job.have > 0;
   release(job);
 }
 
 async function restartFromStatus(job: Job): Promise<void> {
-  job.generation += 1;
+  endWindow(job);
   const generation = job.generation;
   job.inflight.clear();
   job.reorder.clear();
@@ -595,32 +660,44 @@ async function restartFromStatus(job: Job): Promise<void> {
   startAt(job, status.have);
 }
 
-function copyContext(ref: SentFileRef) {
+function copyContext(ref: SentFileRef): CopyContext {
   const d = getDeps();
-  return { machine: d.machine(ref.sessionId), platform: d.platform, name: ref.name, size: ref.size };
+  return { machine: d.machine(ref.sessionId), hub: d.hubName(), platform: d.platform, name: ref.name, size: ref.size };
 }
 
 // ── Pause, resume, cancel ──────────────────────────────────────────────
 
-/** Stop asking, keep the part. The job keeps its slot, so a reconnect
- *  carries on with it before anything queued. */
-function pauseJob(job: Job, waiting: boolean, note: string | null = null): void {
-  job.generation += 1;
+/** Why a download paused. `connection` and `stall` wait for the
+ *  connection (auto-resume), and a bridged `stall` for its computer too;
+ *  `user` and `code` wait for Resume. */
+type PauseWhy = "connection" | "stall" | "user" | "code";
+
+/** Stop asking, keep the part. A pause for the dropped connection keeps the
+ *  slot, so the reconnect carries on with it before anything queued (nothing
+ *  else could download meanwhile). Every other pause hands the slot on, so a
+ *  paused download never holds the queue up. */
+function pauseJob(job: Job, why: PauseWhy, note: string | null = null): void {
+  endWindow(job);
   job.inflight.clear();
   job.reorder.clear();
   job.next = job.have;
+  // The replies to a refused or paused window are on their way. Those of a
+  // stalled one are long overdue, and a dropped socket's never come.
+  if (why === "stall" || why === "connection") forgetAsks(job);
   const e = entry(job.ref);
   e.phase = "paused";
-  e.waiting = waiting;
+  e.waiting = why === "connection" || why === "stall";
+  e.waitingFor = null;
   e.note = note;
   e.rate = 0;
   e.partial = job.have > 0;
+  if (why !== "connection") freeSlot(job);
   syncAwake();
 }
 
 export function pauseDownload(ref: SentFileRef): void {
   const job = jobs.get(fileKey(ref));
-  if (job !== undefined && isRunning(job)) pauseJob(job, false);
+  if (job !== undefined && isRunning(job)) pauseJob(job, "user");
 }
 
 /** Carry on from the sink's own count. A part found after a reload has no
@@ -635,16 +712,18 @@ export async function resumeDownload(ref: SentFileRef): Promise<void> {
   }
   const e = entry(ref);
   if (e.phase !== "paused") return;
+  job.waitFor = null;
   if (active !== null && active !== key) {
     if (!queue.includes(key)) queue.push(key);
     e.phase = "queued";
     return;
   }
   active = key;
-  job.generation += 1;
+  endWindow(job);
   const generation = job.generation;
   e.phase = "downloading";
   e.waiting = false;
+  e.waitingFor = null;
   e.note = null;
   syncAwake();
   let status: SinkStatus;
@@ -678,6 +757,7 @@ export function cancelDownload(ref: SentFileRef): void {
   e.rate = 0;
   e.partial = false;
   e.waiting = false;
+  e.waitingFor = null;
   e.note = null;
   e.code = null;
 }
@@ -698,7 +778,10 @@ function tick(): void {
     for (const [offset, info] of [...job.inflight]) {
       if (now - info.at < STALL_MS) continue;
       if (info.strikes >= MAX_STRIKES) {
-        pauseJob(job, true);
+        pauseJob(job, "stall");
+        // The socket is up, so for another computer's session it is most
+        // likely that computer that went quiet.
+        waitForMachine(job);
         break;
       }
       // Reads are idempotent over an immutable copy: just ask again.
@@ -726,8 +809,14 @@ function handleState(state: string): void {
     resumeWaiting();
     return;
   }
+  // A dropped socket's replies never come.
+  asks.length = 0;
   for (const job of [...jobs.values()]) {
-    if (isRunning(job)) pauseJob(job, true);
+    if (isRunning(job)) pauseJob(job, "connection");
+    // A stall's wait for the other computer comes after the connection's:
+    // the reconnect resumes it either way.
+    const e = downloads[job.key];
+    if (e?.phase === "paused" && e.waiting) e.waitingFor = null;
   }
 }
 
@@ -735,30 +824,114 @@ function handleResume(): void {
   resumeWaiting();
 }
 
+/** A hub pause (machine_unreachable, machine_not_found), and a stall in a
+ *  bridged session, waits for that computer: the hub pushes machine_list
+ *  when a link's status changes, and the download carries on once it lists
+ *  the computer connected. When the list already says so (the lane is still
+ *  dialing, or the push came first), ask again after a stall's wait,
+ *  MAX_STRIKES times at most. */
+function waitForMachine(job: Job): void {
+  const machine = machineOf(job.ref.sessionId);
+  job.waitFor = machine;
+  if (machine === null) return;
+  const e = entry(job.ref);
+  if (e.waiting) e.waitingFor = getDeps().machine(job.ref.sessionId);
+  if (getDeps().machineStatus(machine) !== "connected") return;
+  if (job.machineRetries >= MAX_STRIKES) return;
+  job.machineRetries += 1;
+  const generation = job.generation;
+  setTimeout(() => {
+    if (isCurrent(job, generation) && job.waitFor === machine) void resumeDownload(job.ref);
+  }, STALL_MS);
+}
+
+function onMachines(list: readonly MachineSummary[]): void {
+  for (const job of [...jobs.values()]) {
+    const machine = job.waitFor;
+    if (machine === null || downloads[job.key]?.phase !== "paused") continue;
+    if (list.some((m) => m.id === machine && m.status === "connected")) void resumeDownload(job.ref);
+  }
+}
+
 function handleEvent(event: DaemonEventUnion): void {
   if (event.type === "artifact_chunk") {
     onChunk(event);
     return;
   }
+  if (event.type === "machine_list") {
+    onMachines(event.machines);
+    return;
+  }
   if (event.type === "error") claimDownloadError(event);
 }
+
+/** The hub's refusals of a chunk request for a bridged session. The design
+ *  (§5.2) named machine_not_found, which the hub only sends for a computer
+ *  that is no longer paired; machine_unreachable is its answer for one that
+ *  is asleep, offline or parked. */
+const HUB_CODES = new Set(["not_on_remote", "not_allowed", "machine_not_found", "machine_unreachable"]);
 
 /** Errors that answer a chunk request rather than anything else (§5.2):
  *  claimed here, before the notice sink, and shown on the card instead. */
 export function claimDownloadError(event: DaemonEventUnion): boolean {
   if (event.type !== "error") return false;
-  const job = active === null ? undefined : jobs.get(active);
-  if (job === undefined) return false;
-  const phase = downloads[job.key]?.phase;
-  if (phase !== "downloading" && phase !== "paused") return false;
-  const viaHub =
-    (event.code === "not_on_remote" || event.code === "not_allowed" || event.code === "machine_not_found") &&
-    event.session_id === job.ref.sessionId;
-  const oldPeer = event.code === "unknown_message" && event.message.includes("read_artifact_chunk");
-  if (!viaHub && !oldPeer) return false;
+  const session = nonEmpty(event.session_id);
+  const inReplyTo = nonEmpty(event.in_reply_to);
+  // A sender that says which verb the error answers settles it: only a chunk
+  // request's is a download's, whatever its code. An older one doesn't say:
+  // then a hub refusal for a session with requests out, or an old peer's
+  // unknown verb, is one.
+  const named = inReplyTo === "read_artifact_chunk";
+  if (inReplyTo !== null && !named) return false;
+  if (!named && !isChunkRefusal(event.code, event.message, session)) return false;
+  // Replies come back in the order the requests went, so this answers the
+  // oldest request still out in its session (an old hub's unknown_message
+  // names no session: any request is it).
+  const ask = takeAsk((a) => session === null || a.session === session);
+  if (ask === null && !named) return false;
   claimInline(event);
-  handleCode(job, event.code);
+  if (ask !== null && isLive(ask)) handleCode(ask.job, event.code, nonEmpty(event.machine) !== null);
   return true;
+}
+
+/** The old rule, for an error that names no verb. */
+function isChunkRefusal(code: string, message: string, session: string | null): boolean {
+  if (session !== null && HUB_CODES.has(code)) return true;
+  return code === "unknown_message" && message.includes("read_artifact_chunk");
+}
+
+function nonEmpty(value: string | null | undefined): string | null {
+  return typeof value === "string" && value !== "" ? value : null;
+}
+
+/** True while the window that sent this request is the one running. */
+function isLive(ask: Ask): boolean {
+  return isCurrent(ask.job, ask.generation) && isRunning(ask.job);
+}
+
+/** Stop the job's window. What it asked may still be answered, until a
+ *  stall's wait has passed; those replies are its echo. */
+function endWindow(job: Job): void {
+  job.generation += 1;
+  const until = Date.now() + ECHO_MS;
+  for (const ask of asks) if (ask.job === job && ask.until === null) ask.until = until;
+}
+
+/** A stalled window's replies are long overdue: expect none. */
+function forgetAsks(job: Job): void {
+  for (let i = asks.length - 1; i >= 0; i--) if (asks[i].job === job) asks.splice(i, 1);
+}
+
+/** Take the oldest request still out that this reply could answer. */
+function takeAsk(match: (ask: Ask) => boolean): Ask | null {
+  const now = Date.now();
+  for (let i = asks.length - 1; i >= 0; i--) {
+    const until = asks[i].until;
+    if (until !== null && until <= now) asks.splice(i, 1);
+  }
+  const at = asks.findIndex(match);
+  if (at === -1) return null;
+  return asks.splice(at, 1)[0];
 }
 
 /** Keep the phone awake while bytes move or the file is being checked. */
@@ -864,13 +1037,21 @@ function actionFailed(ref: SentFileRef, code: string): void {
   const e = entry(ref);
   const outcome = messageFor(code, copyContext(ref));
   e.code = code;
+  if (outcome.kind === "rekey") {
+    // The sink already asked for a fresh key once; the file is still here.
+    e.note = outcome.copy;
+    return;
+  }
   if (outcome.kind !== "phase") {
     e.note = `Download failed (${code}).`;
     return;
   }
-  if (outcome.phase === "gone" || code === "not_verified") {
+  // Not there any more (gone), never checked (not_verified), or this
+  // computer's copy moved (not_found): the card follows, so Retry shows.
+  if (outcome.phase === "gone" || code === "not_verified" || code === "not_found") {
     e.phase = outcome.phase;
     e.note = outcome.copy;
+    e.reveal = false;
     return;
   }
   e.note = outcome.copy;

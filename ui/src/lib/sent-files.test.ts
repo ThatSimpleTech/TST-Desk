@@ -12,6 +12,8 @@ import {
   apkWarnings,
   cardLabel,
   codeOf,
+  DESKTOP_OPEN_EXTS,
+  desktopOpenable,
   detectPlatform,
   DOWNGRADE_WARNING,
   etaText,
@@ -103,6 +105,12 @@ describe("kinds and labels", () => {
     expect(fileKind("script.sh.txt", "text/plain")).toBe("text");
   });
 
+  it("reads the kind from the name as it is saved, trailing spaces and dots gone", () => {
+    expect(fileKind("x.exe ", "application/octet-stream")).toBe("program");
+    expect(fileKind("app-release.apk. . ", "application/octet-stream")).toBe("apk");
+    expect(fileKind("report.pdf.", "application/octet-stream")).toBe("pdf");
+  });
+
   it("takes the extension from the last dot, never from a leading one", () => {
     expect(extensionOf(".env")).toBe("");
     expect(extensionOf("a.TAR.GZ")).toBe(".gz");
@@ -138,6 +146,38 @@ describe("platform", () => {
   });
 });
 
+describe("desktop Open allowlist (amended §6.2)", () => {
+  const allowed = [
+    ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".mp4", ".webm", ".mov", ".mkv", ".mp3", ".wav",
+    ".m4a", ".ogg", ".flac", ".aac", ".txt", ".md", ".csv", ".log", ".json", ".zip", ".tar", ".gz", ".tgz", ".7z",
+  ];
+
+  it("is exactly the shared list", () => {
+    expect([...DESKTOP_OPEN_EXTS].sort()).toEqual([...allowed].sort());
+    for (const ext of allowed) {
+      expect(desktopOpenable(`file${ext}`), ext).toBe(true);
+      expect(desktopOpenable(`FILE${ext.toUpperCase()}`), ext).toBe(true);
+    }
+  });
+
+  it("refuses what Windows or macOS would run, and anything unlisted", () => {
+    for (const name of [
+      "setup.js", "setup.vbs", "x.hta", "x.scr", "x.lnk", "x.url", "x.reg", "x.wsf", "x.cpl", "x.msc", "x.chm",
+      "x.pif", "x.appref-ms", "x.py", "x.pyw", "x.terminal", "x.tool", "x.fileloc", "x.webloc", "x.exe", "x.apk",
+      "page.html", "pic.svg", "blob.bin", "noext", ".pdf", "x.",
+    ]) {
+      expect(desktopOpenable(name), name).toBe(false);
+    }
+  });
+
+  it("strips trailing spaces and dots first, as the saved name does", () => {
+    expect(desktopOpenable("x.exe ")).toBe(false);
+    expect(desktopOpenable("x.exe. . ")).toBe(false);
+    expect(desktopOpenable("report.pdf. . ")).toBe(true);
+    expect(desktopOpenable("x.pdf.exe")).toBe(false);
+  });
+});
+
 describe("action matrix (§6.4)", () => {
   const platforms: Platform[] = ["android", "android-old", "desktop", "browser"];
   const kinds: FileKind[] = ["apk", "image", "pdf", "archive", "video", "audio", "text", "program", "other"];
@@ -146,24 +186,37 @@ describe("action matrix (§6.4)", () => {
     "done", "saved", "failed", "unavailable", "gone", "android-old",
   ];
 
-  it("never offers Open for a program on a computer, and nothing at all on an old phone", () => {
+  it("offers Open on a computer only for an allowlisted name, and nothing at all on an old phone", () => {
     for (const platform of platforms) {
       for (const kind of kinds) {
         for (const phase of phases) {
           for (const local of [false, true]) {
-            const set = fileActions(platform, kind, phase, { local });
-            const all = [set.primary, ...set.menu];
-            // §6.4 and R17: the computer never opens an agent-made program.
-            // The phone's column has no such exception (Android can't run one).
-            if (kind === "program" && platform !== "android") {
-              expect(all, `${platform}/${phase}`).not.toContain("open");
+            for (const openable of [undefined, false, true]) {
+              const set = fileActions(platform, kind, phase, { local, openable });
+              const all = [set.primary, ...set.menu];
+              // R17: the computer only opens what the allowlist calls inert,
+              // whatever the kind says. The phone's column has no such rule.
+              if (platform !== "android" && openable !== true) {
+                expect(all, `${platform}/${kind}/${phase}`).not.toContain("open");
+              }
+              if (platform === "android-old") expect(set).toEqual({ primary: null, menu: [] });
+              for (const action of all) if (action !== null) expect(actionLabel(action)).not.toBe("");
             }
-            if (platform === "android-old") expect(set).toEqual({ primary: null, menu: [] });
-            for (const action of all) if (action !== null) expect(actionLabel(action)).not.toBe("");
           }
         }
       }
     }
+  });
+
+  it("a script the agent sent gets Show in folder and Save a copy on the desktop, Open on the phone", () => {
+    const js = fileKind("setup.js", "text/javascript");
+    const ctx = { openable: desktopOpenable("setup.js") };
+    expect(fileActions("desktop", js, "local", ctx)).toEqual({ primary: "reveal", menu: ["save-as"] });
+    expect(fileActions("desktop", js, "done", ctx)).toEqual({ primary: "reveal", menu: [] });
+    expect(fileActions("desktop", js, "saved", { ...ctx, local: true })).toEqual({ primary: "reveal", menu: ["save-as"] });
+    expect(fileActions("android", js, "done", ctx).primary).toBe("open");
+    const exe = { openable: desktopOpenable("x.exe ") };
+    expect(fileActions("desktop", fileKind("x.exe ", "application/octet-stream"), "local", exe).primary).toBe("reveal");
   });
 
   it("offers nothing while sending, checking, verifying, unavailable", () => {
@@ -182,8 +235,9 @@ describe("action matrix (§6.4)", () => {
   });
 
   it("local (desktop only): Open, Show in folder, Save a copy; a program only shows in folder", () => {
-    expect(fileActions("desktop", "pdf", "local")).toEqual({ primary: "open", menu: ["reveal", "save-as"] });
-    expect(fileActions("desktop", "program", "local")).toEqual({ primary: "reveal", menu: ["save-as"] });
+    expect(fileActions("desktop", "pdf", "local", { openable: true })).toEqual({ primary: "open", menu: ["reveal", "save-as"] });
+    expect(fileActions("desktop", "pdf", "local")).toEqual({ primary: "reveal", menu: ["save-as"] });
+    expect(fileActions("desktop", "program", "local", { openable: true })).toEqual({ primary: "reveal", menu: ["save-as"] });
     expect(fileActions("android", "pdf", "local")).toEqual({ primary: null, menu: [] });
     expect(fileActions("browser", "pdf", "local")).toEqual({ primary: null, menu: [] });
   });
@@ -202,8 +256,9 @@ describe("action matrix (§6.4)", () => {
   });
 
   it("done: Open or Install, the phone's menu, and only the line in a browser", () => {
-    expect(fileActions("desktop", "pdf", "done")).toEqual({ primary: "open", menu: ["reveal"] });
-    expect(fileActions("desktop", "program", "done")).toEqual({ primary: "reveal", menu: [] });
+    expect(fileActions("desktop", "pdf", "done", { openable: true })).toEqual({ primary: "open", menu: ["reveal"] });
+    expect(fileActions("desktop", "pdf", "done")).toEqual({ primary: "reveal", menu: [] });
+    expect(fileActions("desktop", "program", "done", { openable: true })).toEqual({ primary: "reveal", menu: [] });
     expect(fileActions("android", "apk", "done")).toEqual({ primary: "install", menu: ["save-downloads", "remove"] });
     expect(fileActions("android", "apk", "done", { warning: true }).primary).toBe("install-anyway");
     expect(fileActions("android", "pdf", "done")).toEqual({ primary: "open", menu: ["save-downloads", "remove"] });
@@ -211,8 +266,9 @@ describe("action matrix (§6.4)", () => {
   });
 
   it("saved keeps the desktop's buttons; the phone offers Open", () => {
-    expect(fileActions("desktop", "pdf", "saved", { local: true })).toEqual(fileActions("desktop", "pdf", "local"));
-    expect(fileActions("desktop", "pdf", "saved")).toEqual(fileActions("desktop", "pdf", "done"));
+    const open = { openable: true };
+    expect(fileActions("desktop", "pdf", "saved", { ...open, local: true })).toEqual(fileActions("desktop", "pdf", "local", open));
+    expect(fileActions("desktop", "pdf", "saved", open)).toEqual(fileActions("desktop", "pdf", "done", open));
     expect(fileActions("android", "apk", "saved")).toEqual({ primary: "open", menu: [] });
     expect(fileActions("browser", "pdf", "saved")).toEqual({ primary: null, menu: [] });
   });
@@ -226,8 +282,8 @@ describe("action matrix (§6.4)", () => {
   });
 
   it("desktop no_app makes Show in folder the button", () => {
-    expect(fileActions("desktop", "other", "local", { reveal: true }).primary).toBe("reveal");
-    expect(fileActions("desktop", "other", "done", { reveal: true }).primary).toBe("reveal");
+    expect(fileActions("desktop", "other", "local", { openable: true, reveal: true }).primary).toBe("reveal");
+    expect(fileActions("desktop", "other", "done", { openable: true, reveal: true }).primary).toBe("reveal");
   });
 
   it("labels the buttons as the design does", () => {
@@ -258,10 +314,12 @@ describe("progress copy", () => {
   it("writes the paused, saved and status lines", () => {
     expect(pausedText(12.4 * MB, true)).toBe("Paused at 12.4 MB · waiting for the connection");
     expect(pausedText(12.4 * MB, false)).toBe("Paused at 12.4 MB");
+    // A pause that waits on another computer names it, as typed.
+    expect(pausedText(12.4 * MB, true, "iMac")).toBe("Paused at 12.4 MB · waiting for iMac");
     expect(savedText("Download/TST Desk/app-release.apk", "android")).toBe("Saved to Download/TST Desk");
     expect(savedText("/home/u/Downloads/a.pdf", "desktop")).toBe("Saved to /home/u/Downloads/a.pdf");
     const ref = { name: "app-release.apk", mime: "application/vnd.android.package-archive", size: 46.2 * MB };
-    const view = { have: 0, rate: 0, note: null, waiting: false, savedTo: null };
+    const view = { have: 0, rate: 0, note: null, waiting: false, waitingFor: null, savedTo: null };
     expect(statusLine(ref, { ...view, phase: "idle" }, "android")).toBe("Android app · 46.2 MB");
     expect(statusLine(ref, { ...view, phase: "queued" }, "android")).toBe("Queued");
     expect(statusLine(ref, { ...view, phase: "verifying" }, "android")).toBe("Checking the file…");
@@ -270,6 +328,11 @@ describe("progress copy", () => {
       "Update TST Desk on this phone to download files.",
     );
     expect(statusLine(ref, { ...view, phase: "failed", note: "x" }, "desktop")).toBe("x");
+    const stalled = { ...view, phase: "paused" as const, have: 12.4 * MB, waiting: true };
+    expect(statusLine(ref, stalled, "android")).toBe("Paused at 12.4 MB · waiting for the connection");
+    expect(statusLine(ref, { ...stalled, waitingFor: "studio-mac" }, "android")).toBe(
+      "Paused at 12.4 MB · waiting for studio-mac",
+    );
   });
 });
 
@@ -338,6 +401,13 @@ describe("code to copy (§6.5)", () => {
   it("maps every daemon, shell and phone code to its line", () => {
     expect([phase("artifact_not_found"), copy("artifact_not_found")]).toEqual(["gone", "This file is no longer on studio-mac."]);
     expect(copy("not_found", desk)).toBe("This file is no longer on this computer.");
+    // The shell's not_found for a bridged file: only this computer's copy
+    // moved, the file is still on the other one (review finding 4).
+    const bridgedDesk: CopyContext = { ...desk, machine: "studio-mac" };
+    expect([phase("not_found", bridgedDesk), copy("not_found", bridgedDesk)]).toEqual([
+      "failed",
+      "The copy on this computer was moved or deleted. Download it again.",
+    ]);
     expect([phase("not_a_sent_file"), copy("not_a_sent_file")]).toEqual(["failed", "This file can't be downloaded."]);
     for (const code of ["changed", "size_mismatch"]) {
       expect([phase(code), copy(code)]).toEqual(["failed", "The file changed on studio-mac. Ask for it again."]);
@@ -352,18 +422,52 @@ describe("code to copy (§6.5)", () => {
     }
     expect(messageFor("bad_offset", remote)).toEqual({ kind: "resync" });
     expect(messageFor("bad_key", remote)).toEqual({ kind: "rekey", copy: "Restart TST Desk and try again." });
-    for (const code of ["not_on_remote", "unknown_message", "not_allowed"]) {
-      expect([phase(code), copy(code)]).toEqual(["unavailable", "Update TST Desk on studio-mac to download this."]);
-    }
+    expect([phase("not_allowed"), copy("not_allowed")]).toEqual(["unavailable", "Update TST Desk on studio-mac to download this."]);
+    // A computer's name reads exactly as typed, as the composer's notice and
+    // the approval card's do; only the app's own labels take a capital.
     expect([phase("machine_not_found"), copy("machine_not_found")]).toEqual(["paused", "studio-mac is not reachable."]);
     expect(copy("machine_not_found", desk)).toBe("This computer is not reachable.");
+    expect([phase("machine_unreachable"), copy("machine_unreachable")]).toEqual([
+      "paused",
+      "studio-mac isn't reachable. The download carries on when it is.",
+    ]);
+    const unlisted: CopyContext = { ...remote, machine: "another computer" };
+    expect(copy("machine_unreachable", unlisted)).toBe("Another computer isn't reachable. The download carries on when it is.");
+    expect(copy("machine_unreachable", { ...remote, machine: "iMac" })).toBe(
+      "iMac isn't reachable. The download carries on when it is.",
+    );
+    expect(copy("machine_not_found", { ...remote, machine: "EZER" })).toBe("EZER is not reachable.");
     expect([phase("no_app"), copy("no_app")]).toEqual(["done", "No app here opens .apk files. Save it to Downloads instead."]);
     expect(messageFor("no_app", desk)).toEqual({ kind: "phase", phase: "done", copy: "No app opens this file.", reveal: true });
     expect([phase("not_verified"), copy("not_verified")]).toEqual(["failed", "Download it again first."]);
+    expect(messageFor("not_openable", desk)).toEqual({
+      kind: "phase",
+      phase: "done",
+      copy: "TST Desk doesn't open this kind of file. Show it in its folder instead.",
+      reveal: true,
+    });
     expect([phase("needs_android_10"), copy("needs_android_10")]).toEqual([
       "done",
       "Saving to Downloads needs Android 10 or later. Open it from here instead.",
     ]);
+  });
+
+  it("an old hub's refusal names the hub, not the computer that sent the file (§4.5)", () => {
+    const viaDesk: CopyContext = { ...remote, platform: "desktop", hub: "this computer" };
+    const viaPhone: CopyContext = { ...remote, hub: "office-pc" };
+    for (const code of ["not_on_remote", "unknown_message"]) {
+      expect([phase(code, viaDesk), copy(code, viaDesk)]).toEqual([
+        "unavailable",
+        "Update TST Desk on this computer to download files from studio-mac.",
+      ]);
+      expect(copy(code, viaPhone)).toBe("Update TST Desk on office-pc to download files from studio-mac.");
+    }
+    // Relayed from the other computer (the frame carries `machine`): that one is old.
+    expect(copy("unknown_message", { ...viaPhone, relayed: true })).toBe("Update TST Desk on studio-mac to download this.");
+    // The remote's own peer policy refused the hub: the remote needs it.
+    expect(copy("not_allowed", viaPhone)).toBe("Update TST Desk on studio-mac to download this.");
+    // This computer's own session: one computer to name.
+    expect(copy("unknown_message", { ...desk, hub: "this computer" })).toBe("Update TST Desk on this computer to download this.");
   });
 
   it("falls back to Download failed (code) for anything else", () => {
