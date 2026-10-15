@@ -112,8 +112,12 @@ class ReceivedFiles(
         }
     }
 
-    /** Checks the length and SHA-256, then names the file `data[.ext]`. Null means verified. */
-    fun finish(id: String): String? {
+    /**
+     * Checks the length and SHA-256, then names the file `data[.ext]`. Null means verified.
+     * An APK's checked bytes go through [readApk] first, so status never shows a
+     * verified APK without its info (the page installs straight away when it has none).
+     */
+    fun finish(id: String, readApk: (File) -> ApkInfo?): String? {
         if (!isFileId(id)) return "io"
         synchronized(lockFor(id)) {
             val meta = readMeta(id) ?: return "io"
@@ -129,9 +133,10 @@ class ReceivedFiles(
                     "hash_mismatch"
                 } else {
                     val name = dataFileName(meta.name)
+                    val apk = if (meta.mime == APK_MIME) readApk(part) else null
                     // Meta first: it counts as verified only once data[.ext] exists too,
                     // so a failed write leaves data.part to finish again, never an orphan.
-                    writeMeta(meta.copy(file = name))
+                    writeMeta(meta.copy(file = name, apk = apk))
                     if (!part.renameTo(File(dir, name))) throw IOException("rename failed")
                     null
                 }
@@ -164,24 +169,6 @@ class ReceivedFiles(
     }
 
     fun meta(id: String): FileMeta? = if (isFileId(id)) readMeta(id) else null
-
-    /**
-     * Caches the APK's own info next to it, so status never re-parses the
-     * archive. False when it could not be saved; it runs on the file worker,
-     * where a thrown write error would take the whole app down.
-     */
-    fun recordApk(id: String, apk: ApkInfo): Boolean {
-        if (!isFileId(id)) return false
-        synchronized(lockFor(id)) {
-            val meta = readMeta(id) ?: return false
-            return try {
-                writeMeta(meta.copy(apk = apk))
-                true
-            } catch (_: IOException) {
-                false
-            }
-        }
-    }
 
     fun discard(id: String) {
         if (!isFileId(id)) return
