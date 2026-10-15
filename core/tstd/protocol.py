@@ -2598,6 +2598,10 @@ class Error(DaemonEvent):
     # TD-5015: the paired computer an error came from, or is about. A store
     # that consumes unscoped errors ignores one that carries this.
     machine: str | None = None
+    # TD-5144: the client message type this error answers, when the sender
+    # knows it (a hub refusing a forwarded verb). Lets a download claim only
+    # its own refusals. Absent from older daemons.
+    in_reply_to: str | None = None
 
 
 class ScreenFrame(DaemonEvent):
@@ -3500,6 +3504,7 @@ def build_error(
     message: str,
     session_id: str | None = None,
     machine: str | None = None,
+    in_reply_to: str | None = None,
 ) -> str:
     """Build a typed error message.
 
@@ -3508,13 +3513,16 @@ def build_error(
     socket — so it must scrub here rather than rely on ``event_log.add``.
     ``session_id`` (optional, TD-1711) lets the UI attribute the error to
     the session whose message was refused. ``machine`` (TD-5015) marks an
-    error that came from, or is about, a paired computer.
+    error that came from, or is about, a paired computer. ``in_reply_to``
+    (TD-5144) names the client message type the error answers.
     """
     payload: dict[str, str] = {"type": "error", "code": code, "message": redact_secrets(message)}
     if session_id is not None:
         payload["session_id"] = session_id
     if machine is not None:
         payload["machine"] = machine
+    if in_reply_to is not None:
+        payload["in_reply_to"] = in_reply_to
     return json.dumps(payload)
 
 
