@@ -394,6 +394,13 @@ describe("code to copy (§6.5)", () => {
   it("maps every daemon, shell and phone code to its line", () => {
     expect([phase("artifact_not_found"), copy("artifact_not_found")]).toEqual(["gone", "This file is no longer on studio-mac."]);
     expect(copy("not_found", desk)).toBe("This file is no longer on this computer.");
+    // The shell's not_found for a bridged file: only this computer's copy
+    // moved, the file is still on the other one (review finding 4).
+    const bridgedDesk: CopyContext = { ...desk, machine: "studio-mac" };
+    expect([phase("not_found", bridgedDesk), copy("not_found", bridgedDesk)]).toEqual([
+      "failed",
+      "The copy on this computer was moved or deleted. Download it again.",
+    ]);
     expect([phase("not_a_sent_file"), copy("not_a_sent_file")]).toEqual(["failed", "This file can't be downloaded."]);
     for (const code of ["changed", "size_mismatch"]) {
       expect([phase(code), copy(code)]).toEqual(["failed", "The file changed on studio-mac. Ask for it again."]);

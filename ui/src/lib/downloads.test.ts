@@ -454,6 +454,28 @@ describe("an action on a finished card", () => {
     expect(state(ref).phase).toBe("done");
   }
 
+  it("the copy here was moved: failed with Retry, and Retry downloads it again", async () => {
+    host.platform = "desktop";
+    configureDownloads({ platform: "desktop" });
+    const ref = file(1, CHUNK, { sessionId: BRIDGED });
+    await finished(ref);
+    host.open.mockRejectedValueOnce(new SinkError("not_found"));
+    await runAction(ref, "open");
+    expect(state(ref)).toMatchObject({
+      phase: "failed",
+      note: "The copy on this computer was moved or deleted. Download it again.",
+    });
+    expect(fileActions("desktop", fileKind(ref.name, ref.mime), "failed", {}).primary).toBe("retry");
+    sinkOf(ref).have = 0;
+    sinkOf(ref).finished = 0;
+    const before = requests(ref).length;
+    await runAction(ref, "retry");
+    await flush();
+    expect(requests(ref).length).toBeGreaterThan(before);
+    await serve(ref);
+    expect(state(ref)).toMatchObject({ phase: "done", note: null });
+  });
+
   it("a bad key on Install shows the mapped copy, not the raw code", async () => {
     const ref = file(1, CHUNK, { name: "app.apk" });
     await finished(ref);

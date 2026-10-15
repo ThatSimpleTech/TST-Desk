@@ -1009,9 +1009,12 @@ function actionFailed(ref: SentFileRef, code: string): void {
     e.note = `Download failed (${code}).`;
     return;
   }
-  if (outcome.phase === "gone" || code === "not_verified") {
+  // Not there any more (gone), never checked (not_verified), or this
+  // computer's copy moved (not_found): the card follows, so Retry shows.
+  if (outcome.phase === "gone" || code === "not_verified" || code === "not_found") {
     e.phase = outcome.phase;
     e.note = outcome.copy;
+    e.reveal = false;
     return;
   }
   e.note = outcome.copy;

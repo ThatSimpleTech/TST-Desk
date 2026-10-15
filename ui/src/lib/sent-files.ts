@@ -508,8 +508,13 @@ export function messageFor(code: string, ctx: CopyContext): CodeOutcome {
   const machine = ctx.machine;
   switch (code) {
     case "artifact_not_found":
-    case "not_found":
       return { kind: "phase", phase: "gone", copy: `This file is no longer on ${machine}.` };
+    case "not_found":
+      // The desktop shell's code: this computer has no copy (§1.6). For a
+      // bridged file only the downloaded copy moved; the other computer
+      // still has it, so it can be downloaded again.
+      if (machine === THIS_COMPUTER) return { kind: "phase", phase: "gone", copy: `This file is no longer on ${machine}.` };
+      return { kind: "phase", phase: "failed", copy: "The copy on this computer was moved or deleted. Download it again." };
     case "not_a_sent_file":
       return { kind: "phase", phase: "failed", copy: "This file can't be downloaded." };
     case "changed":
