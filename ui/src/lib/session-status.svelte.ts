@@ -246,13 +246,13 @@ export function setTier(tier: "brain" | "worker" | "validator"): void {
   client?.setTier(session.sessionId, tier);
 }
 
-/** Turn plan mode on or off. The title bar reflects the next tier_state. */
+/** Turn plan mode on or off. The composer reflects the next tier_state. */
 export function setPlan(on: boolean): void {
   if (session.sessionId === null) return;
   client?.setPlan(session.sessionId, on);
 }
 
-/** Retarget this session at a catalog preset. The title bar follows tier_state. */
+/** Retarget this session at a catalog preset. The composer follows tier_state. */
 export function setSessionPreset(name: string): void {
   if (session.sessionId === null) return;
   client?.setSessionPreset(session.sessionId, name);
