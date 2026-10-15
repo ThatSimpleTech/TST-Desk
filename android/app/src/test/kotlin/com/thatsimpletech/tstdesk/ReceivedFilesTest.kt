@@ -253,6 +253,7 @@ class ReceivedFilesTest {
             "é".repeat(100) to "é".repeat(60),
             "a".repeat(130) + ".verylongextension12" to "a".repeat(120),
             "name with spaces.zip" to "name with spaces.zip",
+            "a‮fdp.exe" to "afdp.exe",
             "CON" + " ".repeat(150) + "y.log" to "_CON" + " ".repeat(112) + ".log",
         )
         for ((raw, want) in vectors) {
@@ -261,6 +262,21 @@ class ReceivedFilesTest {
         }
         beginBody(name = "C:\\out\\CON.apk")
         assertEquals("begin stores the safe name", "_CON.apk", files.meta(ID_A)?.name)
+    }
+
+    @Test
+    fun safeNameDropsExactlyTheBidiControls() {
+        val dropped = listOf(0x200E, 0x200F) + (0x202A..0x202E) + (0x2066..0x2069)
+        for (cp in dropped) {
+            assertEquals("U+%04X".format(cp), "ab.txt", safeFileName("a${cp.toChar()}b.txt"))
+        }
+        // The neighbours stay, so the three implementations drop the same set.
+        for (cp in listOf(0x200D, 0x2029, 0x202F, 0x2065, 0x206A)) {
+            val raw = "a${cp.toChar()}b.txt"
+            assertEquals("U+%04X".format(cp), raw, safeFileName(raw))
+        }
+        beginBody(name = "invoice\u202Efdp.exe")
+        assertEquals("begin stores the safe name", "invoicefdp.exe", files.meta(ID_A)?.name)
     }
 
     @Test
