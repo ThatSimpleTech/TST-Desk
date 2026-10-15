@@ -120,15 +120,20 @@ interface Job {
   waitFor: string | null;
   /** Asks made on our own while the list already called that computer up. */
   machineRetries: number;
-  /** Requests sent that no reply has answered yet. */
-  unanswered: number;
 }
 
-/** Replies still owed to a download that stopped, paused or was cancelled
- *  with requests out. An error among them is that download's, not news. */
-interface Echo {
-  left: number;
-  until: number;
+/** A chunk request no reply has answered yet. Its window is the job's
+ *  generation when it went out: a reply to an older window (one that paused,
+ *  stopped or was cancelled, or a job asked for again) is that window's
+ *  echo, never news for the job now. */
+interface Ask {
+  job: Job;
+  generation: number;
+  session: string;
+  artifactId: string;
+  offset: number;
+  /** Set when its window stopped: how long its reply may still trail it. */
+  until: number | null;
 }
 
 interface Deps {
@@ -145,8 +150,8 @@ interface Deps {
 
 let deps: Deps | null = null;
 const jobs = new Map<string, Job>();
-/** By session id. */
-const echoes = new Map<string, Echo>();
+/** Every request still out, in the order they went. */
+const asks: Ask[] = [];
 const queue: string[] = [];
 const probing = new Set<string>();
 let active: string | null = null;
@@ -185,7 +190,7 @@ export function resetDownloads(): void {
   stops = [];
   for (const job of jobs.values()) job.generation += 1;
   jobs.clear();
-  echoes.clear();
+  asks.length = 0;
   queue.length = 0;
   probing.clear();
   active = null;
@@ -293,7 +298,6 @@ function newJob(ref: SentFileRef, sink: FileSink, then: Then): Job {
     generation: 0,
     waitFor: null,
     machineRetries: 0,
-    unanswered: 0,
   };
 }
 
@@ -385,7 +389,8 @@ function request(job: Job, offset: number): boolean {
     pauseJob(job, "connection");
     return false;
   }
-  job.unanswered += 1;
+  const { sessionId: session, artifactId } = job.ref;
+  asks.push({ job, generation: job.generation, session, artifactId, offset, until: null });
   return true;
 }
 
@@ -401,12 +406,13 @@ function fill(job: Job): void {
 }
 
 function onChunk(event: ArtifactChunk): void {
-  const key = fileKey({ sessionId: event.session_id, artifactId: event.artifact_id });
-  const job = jobs.get(key);
-  answered(job, event.session_id);
-  if (job === undefined || !isRunning(job)) return;
-  // Only replies to what is out now; a late one from before a pause or a
-  // restart is not ours any more.
+  const ask = takeAsk(
+    (a) => a.session === event.session_id && a.artifactId === event.artifact_id && a.offset === event.offset,
+  );
+  // Only replies to what is out now; a late one from before a pause, a
+  // restart or a cancel is not ours any more.
+  if (ask === null || !isLive(ask)) return;
+  const job = ask.job;
   if (!job.inflight.has(event.offset)) return;
   job.inflight.delete(event.offset);
   if (event.error_code !== null && event.error_code !== "") {
@@ -478,7 +484,7 @@ async function resync(job: Job, have: number | null): Promise<void> {
     }
     if (!isCurrent(job, generation)) return;
   }
-  job.generation += 1;
+  endWindow(job);
   startAt(job, at);
 }
 
@@ -517,7 +523,7 @@ async function finish(job: Job): Promise<void> {
       // begin() starts a fresh part either way.
     }
     if (!isCurrent(job, generation)) return;
-    job.generation += 1;
+    endWindow(job);
     e.have = 0;
     void begin(job);
     return;
@@ -555,7 +561,7 @@ async function complete(job: Job): Promise<void> {
 /** Forget the job and give the slot to the next queued download. */
 function release(job: Job): void {
   if (jobs.get(job.key) === job) jobs.delete(job.key);
-  job.generation += 1;
+  endWindow(job);
   const at = queue.indexOf(job.key);
   if (at !== -1) queue.splice(at, 1);
   freeSlot(job);
@@ -618,12 +624,11 @@ function stopWith(job: Job, phase: FilePhase, copy: string): void {
   e.waiting = false;
   // A part left behind: the phone offers to remove it (§6.4 gone).
   e.partial = job.have > 0;
-  owe(job);
   release(job);
 }
 
 async function restartFromStatus(job: Job): Promise<void> {
-  job.generation += 1;
+  endWindow(job);
   const generation = job.generation;
   job.inflight.clear();
   job.reorder.clear();
@@ -658,14 +663,13 @@ type PauseWhy = "connection" | "stall" | "user" | "code";
  *  else could download meanwhile). Every other pause hands the slot on, so a
  *  paused download never holds the queue up. */
 function pauseJob(job: Job, why: PauseWhy, note: string | null = null): void {
-  job.generation += 1;
+  endWindow(job);
   job.inflight.clear();
   job.reorder.clear();
   job.next = job.have;
   // The replies to a refused or paused window are on their way. Those of a
   // stalled one are long overdue, and a dropped socket's never come.
-  if (why === "user" || why === "code") owe(job);
-  else job.unanswered = 0;
+  if (why === "stall" || why === "connection") forgetAsks(job);
   const e = entry(job.ref);
   e.phase = "paused";
   e.waiting = why === "connection" || why === "stall";
@@ -700,7 +704,7 @@ export async function resumeDownload(ref: SentFileRef): Promise<void> {
     return;
   }
   active = key;
-  job.generation += 1;
+  endWindow(job);
   const generation = job.generation;
   e.phase = "downloading";
   e.waiting = false;
@@ -727,7 +731,6 @@ export function cancelDownload(ref: SentFileRef): void {
   const job = jobs.get(key);
   const e = entry(ref);
   if (job !== undefined) {
-    owe(job);
     release(job);
     void job.sink.discard().catch(() => {});
   } else {
@@ -786,7 +789,8 @@ function handleState(state: string): void {
     resumeWaiting();
     return;
   }
-  echoes.clear();
+  // A dropped socket's replies never come.
+  asks.length = 0;
   for (const job of [...jobs.values()]) {
     if (isRunning(job)) pauseJob(job, "connection");
   }
@@ -847,54 +851,44 @@ export function claimDownloadError(event: DaemonEventUnion): boolean {
   const viaHub = session !== null && HUB_CODES.has(event.code);
   const oldPeer = event.code === "unknown_message" && event.message.includes("read_artifact_chunk");
   if (!viaHub && !oldPeer) return false;
-  // Replies come back in the order the requests went, so what a stopped
-  // download still owes is answered before the running one's (an old hub's
-  // unknown_message names no session: any owed reply is it).
-  if (takeEcho(viaHub ? session : null)) {
-    claimInline(event);
-    return true;
-  }
-  const job = active === null ? undefined : jobs.get(active);
-  if (job === undefined || !isRunning(job)) return false;
-  if (viaHub && job.ref.sessionId !== session) return false;
+  // Replies come back in the order the requests went, so this answers the
+  // oldest request still out in its session (an old hub's unknown_message
+  // names no session: any request is it).
+  const ask = takeAsk((a) => !viaHub || a.session === session);
+  if (ask === null) return false;
   claimInline(event);
-  if (job.unanswered > 0) job.unanswered -= 1;
-  handleCode(job, event.code, typeof event.machine === "string" && event.machine !== "");
+  if (isLive(ask)) handleCode(ask.job, event.code, typeof event.machine === "string" && event.machine !== "");
   return true;
 }
 
-/** Move a stopping download's unanswered requests to its session's echo. */
-function owe(job: Job): void {
-  if (job.unanswered <= 0) return;
-  const sessionId = job.ref.sessionId;
-  const echo = echoes.get(sessionId) ?? { left: 0, until: 0 };
-  echo.left += job.unanswered;
-  echo.until = Date.now() + ECHO_MS;
-  echoes.set(sessionId, echo);
-  job.unanswered = 0;
+/** True while the window that sent this request is the one running. */
+function isLive(ask: Ask): boolean {
+  return isCurrent(ask.job, ask.generation) && isRunning(ask.job);
 }
 
-/** A chunk reply: the running request's, or one a stopped download owed. */
-function answered(job: Job | undefined, sessionId: string): void {
-  if (job !== undefined && job.unanswered > 0) {
-    job.unanswered -= 1;
-    return;
-  }
-  const echo = echoes.get(sessionId);
-  if (echo !== undefined) echo.left -= 1;
+/** Stop the job's window. What it asked may still be answered, until a
+ *  stall's wait has passed; those replies are its echo. */
+function endWindow(job: Job): void {
+  job.generation += 1;
+  const until = Date.now() + ECHO_MS;
+  for (const ask of asks) if (ask.job === job && ask.until === null) ask.until = until;
 }
 
-/** Take one owed reply for this session (or, with null, for any), if one is
- *  still due. */
-function takeEcho(session: string | null): boolean {
+/** A stalled window's replies are long overdue: expect none. */
+function forgetAsks(job: Job): void {
+  for (let i = asks.length - 1; i >= 0; i--) if (asks[i].job === job) asks.splice(i, 1);
+}
+
+/** Take the oldest request still out that this reply could answer. */
+function takeAsk(match: (ask: Ask) => boolean): Ask | null {
   const now = Date.now();
-  for (const [sessionId, echo] of echoes) {
-    if (echo.left <= 0 || echo.until <= now) echoes.delete(sessionId);
+  for (let i = asks.length - 1; i >= 0; i--) {
+    const until = asks[i].until;
+    if (until !== null && until <= now) asks.splice(i, 1);
   }
-  const echo = session === null ? echoes.values().next().value : echoes.get(session);
-  if (echo === undefined) return false;
-  echo.left -= 1;
-  return true;
+  const at = asks.findIndex(match);
+  if (at === -1) return null;
+  return asks.splice(at, 1)[0];
 }
 
 /** Keep the phone awake while bytes move or the file is being checked. */

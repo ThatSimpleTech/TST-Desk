@@ -691,6 +691,44 @@ describe("the rest of the window after a refusal", () => {
     expect(state(ref).phase).toBe("unavailable");
   });
 
+  it("Cancel then Download again: the cancelled window's late replies never touch the new job", async () => {
+    const ref = file(1);
+    startDownload(ref);
+    await flush();
+    await runAction(ref, "cancel");
+    startDownload(ref);
+    await flush();
+    expect(requests(ref)).toEqual([0, CHUNK, 2 * CHUNK, 0, CHUNK, 2 * CHUNK]);
+    // The cancelled window's answers trail in first.
+    await reply(ref, 0);
+    await reply(ref, CHUNK);
+    await reply(ref, 2 * CHUNK);
+    expect(sinkOf(ref).appended).toEqual([]);
+    // The new window's first answer is a refusal: it is the new job's.
+    const refusal = hubRefusal();
+    emit(refusal);
+    expect(claimedInline(refusal)).toBe(true);
+    expect(state(ref).phase).toBe("unavailable");
+  });
+
+  it("Pause then a quick Resume: the paused window's replies are not the new window's", async () => {
+    const ref = file(1, 6 * CHUNK, { sessionId: BRIDGED });
+    startDownload(ref);
+    await flush();
+    pauseDownload(ref);
+    await resumeDownload(ref);
+    await flush();
+    expect(requests(ref)).toEqual([0, CHUNK, 2 * CHUNK, 0, CHUNK, 2 * CHUNK]);
+    await reply(ref, 0);
+    await reply(ref, CHUNK);
+    await reply(ref, 2 * CHUNK);
+    expect(sinkOf(ref).appended).toEqual([]);
+    const gone = unreachable();
+    emit(gone);
+    expect(claimedInline(gone)).toBe(true);
+    expect(state(ref)).toMatchObject({ phase: "paused", code: "machine_unreachable" });
+  });
+
   it("stops claiming once a stall's wait has passed", async () => {
     const ref = file(1);
     startDownload(ref);
