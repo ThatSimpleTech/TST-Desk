@@ -847,18 +847,33 @@ const HUB_CODES = new Set(["not_on_remote", "not_allowed", "machine_not_found", 
  *  claimed here, before the notice sink, and shown on the card instead. */
 export function claimDownloadError(event: DaemonEventUnion): boolean {
   if (event.type !== "error") return false;
-  const session = typeof event.session_id === "string" && event.session_id !== "" ? event.session_id : null;
-  const viaHub = session !== null && HUB_CODES.has(event.code);
-  const oldPeer = event.code === "unknown_message" && event.message.includes("read_artifact_chunk");
-  if (!viaHub && !oldPeer) return false;
+  const session = nonEmpty(event.session_id);
+  const inReplyTo = nonEmpty(event.in_reply_to);
+  // A sender that says which verb the error answers settles it: only a chunk
+  // request's is a download's, whatever its code. An older one doesn't say:
+  // then a hub refusal for a session with requests out, or an old peer's
+  // unknown verb, is one.
+  const named = inReplyTo === "read_artifact_chunk";
+  if (inReplyTo !== null && !named) return false;
+  if (!named && !isChunkRefusal(event.code, event.message, session)) return false;
   // Replies come back in the order the requests went, so this answers the
   // oldest request still out in its session (an old hub's unknown_message
   // names no session: any request is it).
-  const ask = takeAsk((a) => !viaHub || a.session === session);
-  if (ask === null) return false;
+  const ask = takeAsk((a) => session === null || a.session === session);
+  if (ask === null && !named) return false;
   claimInline(event);
-  if (isLive(ask)) handleCode(ask.job, event.code, typeof event.machine === "string" && event.machine !== "");
+  if (ask !== null && isLive(ask)) handleCode(ask.job, event.code, nonEmpty(event.machine) !== null);
   return true;
+}
+
+/** The old rule, for an error that names no verb. */
+function isChunkRefusal(code: string, message: string, session: string | null): boolean {
+  if (session !== null && HUB_CODES.has(code)) return true;
+  return code === "unknown_message" && message.includes("read_artifact_chunk");
+}
+
+function nonEmpty(value: string | null | undefined): string | null {
+  return typeof value === "string" && value !== "" ? value : null;
 }
 
 /** True while the window that sent this request is the one running. */

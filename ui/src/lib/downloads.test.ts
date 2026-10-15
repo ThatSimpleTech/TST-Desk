@@ -3,7 +3,13 @@
 // the codes that land on the card, the queue and keep-awake.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ArtifactChunk, ClientMessageUnion, DaemonEventUnion, MachineStatus } from "./protocol";
+import type {
+  ArtifactChunk,
+  ClientMessageUnion,
+  DaemonEventUnion,
+  Error as DaemonError,
+  MachineStatus,
+} from "./protocol";
 
 const bus = vi.hoisted(() => ({
   events: new Set<(event: DaemonEventUnion) => void>(),
@@ -514,7 +520,7 @@ describe("the queue", () => {
 const MCH = "mch_1a2b3c4d5e6f";
 const BRIDGED = `sess-1:${MCH}`;
 
-function unreachable(sessionId = BRIDGED): DaemonEventUnion {
+function unreachable(sessionId = BRIDGED): DaemonError {
   return {
     type: "error",
     seq: 0,
@@ -617,7 +623,7 @@ describe("the rest of the window after a refusal", () => {
     return { type: "error", seq: 0, code: "unknown_message", message: "unknown message type: read_artifact_chunk" };
   }
 
-  function hubRefusal(sessionId = "sess-1"): DaemonEventUnion {
+  function hubRefusal(sessionId = "sess-1"): DaemonError {
     return { type: "error", seq: 0, session_id: sessionId, code: "not_on_remote", message: "x" };
   }
 
@@ -723,6 +729,60 @@ describe("the rest of the window after a refusal", () => {
     await reply(ref, CHUNK);
     await reply(ref, 2 * CHUNK);
     expect(sinkOf(ref).appended).toEqual([]);
+    const gone = unreachable();
+    emit(gone);
+    expect(claimedInline(gone)).toBe(true);
+    expect(state(ref)).toMatchObject({ phase: "paused", code: "machine_unreachable" });
+  });
+
+  it("an error that answers another verb is never claimed, even mid-download in its session", async () => {
+    const ref = file(1, 6 * CHUNK, { sessionId: BRIDGED });
+    startDownload(ref);
+    await flush();
+    const composer: DaemonEventUnion = { ...unreachable(), in_reply_to: "user_message" };
+    emit(composer);
+    expect(claimedInline(composer)).toBe(false);
+    expect(state(ref).phase).toBe("downloading");
+    // The download's own refusal still finds its request.
+    const own: DaemonEventUnion = { ...unreachable(), in_reply_to: "read_artifact_chunk" };
+    emit(own);
+    expect(claimedInline(own)).toBe(true);
+    expect(state(ref)).toMatchObject({ phase: "paused", code: "machine_unreachable" });
+  });
+
+  it("an error that names the chunk verb is claimed, even after the window's wait", async () => {
+    const ref = file(1);
+    startDownload(ref);
+    await flush();
+    emit({ ...hubRefusal(), in_reply_to: "read_artifact_chunk" });
+    expect(state(ref).phase).toBe("unavailable");
+    await vi.advanceTimersByTimeAsync(STALL_MS + 1);
+    const later: DaemonEventUnion = { ...hubRefusal(), in_reply_to: "read_artifact_chunk" };
+    emit(later);
+    expect(claimedInline(later)).toBe(true);
+  });
+
+  it("an error that answers a chunk request is counted off whatever its code", async () => {
+    const ref = file(1, 6 * CHUNK, { sessionId: BRIDGED });
+    startDownload(ref);
+    await flush();
+    const odd: DaemonEventUnion = {
+      type: "error",
+      seq: 0,
+      session_id: BRIDGED,
+      code: "rate_limited",
+      message: "x",
+      in_reply_to: "read_artifact_chunk",
+    };
+    emit(odd);
+    expect(claimedInline(odd)).toBe(true);
+    expect(state(ref)).toMatchObject({ phase: "failed", note: "Download failed (rate_limited)." });
+    // The rest of the first window's answers trail in after Retry; the new
+    // window's first answer is a refusal, and it lands.
+    await runAction(ref, "retry");
+    await flush();
+    await reply(ref, CHUNK);
+    await reply(ref, 2 * CHUNK);
     const gone = unreachable();
     emit(gone);
     expect(claimedInline(gone)).toBe(true);
