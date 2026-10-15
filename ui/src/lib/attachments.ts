@@ -51,11 +51,22 @@ export type AttachmentOutcome =
   | { ok: true; draft: NewAttachment }
   | { ok: false; refusal: AttachmentRefusal };
 
-/** Sizes for humans — the same shape the daemon's refusals use. */
+/** Sizes for humans: the daemon's format_bytes (core/tstd/attachments.py)
+ *  to the character, so a card and the tool result the model repeats agree. */
 export function formatBytes(count: number): string {
   if (count < 1000) return `${count} bytes`;
-  if (count < 1_000_000) return `${(count / 1000).toFixed(1)} KB`;
-  return `${(count / 1_000_000).toFixed(1)} MB`;
+  if (count < 1_000_000) return `${oneDecimal(count / 1000)} KB`;
+  return `${oneDecimal(count / 1_000_000)} MB`;
+}
+
+/** Python's f"{x:.1f}" for a positive x: the nearest tenth, an exact tie to
+ *  even. toFixed picks the nearest too but rounds an exact tie up. In binary
+ *  the only exact ties are x.25 and x.75 (4x is an odd integer); x.75 goes
+ *  up to an even tenth either way, so only x.25 needs turning down. */
+function oneDecimal(x: number): string {
+  const quarters = x * 4;
+  if (Number.isSafeInteger(quarters) && quarters % 4 === 1) return `${Math.floor(x)}.2`;
+  return x.toFixed(1);
 }
 
 /** Bytes already staged, which the per-message total is measured against. */
