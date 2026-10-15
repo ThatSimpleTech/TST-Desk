@@ -33,6 +33,9 @@ const SWEEP_AFTER: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const HASH_BUF: usize = 1024 * 1024;
 const MAX_NAME_BYTES: usize = 120;
 const MAX_EXT_CHARS: usize = 16;
+/// Room `begin` keeps free beyond the bytes still to come (§7.2), so a
+/// download never fills the disk the daemon's log and audit DB live on.
+const SPACE_MARGIN: u64 = 256 * 1024 * 1024;
 
 /// `<aid>.json` (§1.3).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -216,6 +219,101 @@ pub(crate) fn begin_in(
     sha256: &str,
     now: SystemTime,
 ) -> Result<FileStatus, String> {
+    let file = Wanted {
+        session_id,
+        name,
+        size,
+        sha256,
+    };
+    begin_with(root, aid, &file, now, free_space)
+}
+
+/// What `begin` was asked to fetch.
+struct Wanted<'a> {
+    session_id: &'a str,
+    name: &'a str,
+    size: u64,
+    sha256: &'a str,
+}
+
+/// Bytes this user may still write on the volume holding `dir`, or None
+/// when the OS will not say (the writes then report `no_space` themselves).
+/// statfs on macOS: its statvfs counts blocks in 32 bits.
+#[cfg(target_os = "macos")]
+fn free_space(dir: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+    // SAFETY: a plain C struct, filled in by the call below.
+    let mut stats: libc::statfs = unsafe { std::mem::zeroed() };
+    // SAFETY: a NUL-terminated path and a valid out pointer.
+    if unsafe { libc::statfs(path.as_ptr(), &mut stats) } != 0 {
+        return None;
+    }
+    Some(stats.f_bavail.saturating_mul(u64::from(stats.f_bsize)))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+#[allow(clippy::unnecessary_cast)] // the field widths differ by platform
+fn free_space(dir: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+    // SAFETY: a plain C struct, filled in by the call below.
+    let mut stats: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: a NUL-terminated path and a valid out pointer.
+    if unsafe { libc::statvfs(path.as_ptr(), &mut stats) } != 0 {
+        return None;
+    }
+    Some((stats.f_bavail as u64).saturating_mul(stats.f_frsize as u64))
+}
+
+#[cfg(windows)]
+fn free_space(dir: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut available = 0u64;
+    // SAFETY: a NUL-terminated wide path and a valid out pointer; the two
+    // totals are optional and left null.
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut available,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    (ok != 0).then_some(available)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn free_space(_dir: &Path) -> Option<u64> {
+    None
+}
+
+/// §7.2: `no_space` when the volume has less than the rest of the file
+/// plus the margin. Nothing left to write, or an unknown amount, lets the
+/// download go ahead.
+fn enough_room(available: Option<u64>, still_to_come: u64) -> bool {
+    match available {
+        Some(free) if still_to_come > 0 => free >= still_to_come.saturating_add(SPACE_MARGIN),
+        _ => true,
+    }
+}
+
+/// `begin_in`, with the free-space probe passed in for the tests.
+fn begin_with(
+    root: &Path,
+    aid: &str,
+    file: &Wanted,
+    now: SystemTime,
+    free: fn(&Path) -> Option<u64>,
+) -> Result<FileStatus, String> {
+    let Wanted {
+        session_id,
+        name,
+        size,
+        sha256,
+    } = *file;
     check_id(aid)?;
     if size > MAX_SIZE {
         return Err("too_large".into());
@@ -238,7 +336,7 @@ pub(crate) fn begin_in(
         done_mtime_ns: None,
     };
     let part = part_path(root, aid);
-    match read_meta(root, aid) {
+    let status = match read_meta(root, aid) {
         Some(meta) if meta.size == size && meta.sha256 == sha256 => {
             if done_file(&meta).is_some() {
                 return Ok(FileStatus::new("received", size));
@@ -255,12 +353,10 @@ pub(crate) fn begin_in(
             let have = part_len(root, aid).unwrap_or(0);
             if have > size {
                 File::create(&part).map_err(io_err)?;
-                return Ok(FileStatus::new("none", 0));
+                FileStatus::new("none", 0)
+            } else {
+                FileStatus::new(if have > 0 { "partial" } else { "none" }, have)
             }
-            Ok(FileStatus::new(
-                if have > 0 { "partial" } else { "none" },
-                have,
-            ))
         }
         _ => {
             private_options()
@@ -270,9 +366,15 @@ pub(crate) fn begin_in(
                 .open(&part)
                 .map_err(io_err)?;
             write_meta(root, aid, &wanted)?;
-            Ok(FileStatus::new("none", 0))
+            FileStatus::new("none", 0)
         }
+    };
+    // Asked after any old part is gone, before a byte is requested. A part
+    // already here is kept, so Retry resumes once there is room.
+    if !enough_room(free(root), size - status.have) {
+        return Err("no_space".into());
     }
+    Ok(status)
 }
 
 /// Add one chunk at the end of the part. Returns the new length.
@@ -683,6 +785,64 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[test]
+    fn received_begin_needs_room_for_the_rest_plus_a_margin() {
+        let tmp = TempDir::new("space");
+        let root = tmp.0.join("received");
+        let file = Wanted {
+            session_id: "sess-1:mch_1a2b3c",
+            name: "hi.txt",
+            size: 2,
+            sha256: HI_SHA,
+        };
+        let now = SystemTime::now();
+        let begin_on = |free: fn(&Path) -> Option<u64>| begin_with(&root, AID, &file, now, free);
+        // A fresh file needs its whole size plus 256 MiB.
+        assert_eq!(
+            begin_on(|_| Some(2 + SPACE_MARGIN - 1)),
+            Err("no_space".into())
+        );
+        assert_eq!(
+            begin_on(|_| Some(2 + SPACE_MARGIN)),
+            Ok(FileStatus::new("none", 0))
+        );
+        // A resume needs only what is still to come.
+        append_in(&root, AID, 0, &b64(b"h")).unwrap();
+        assert_eq!(
+            begin_on(|_| Some(1 + SPACE_MARGIN - 1)),
+            Err("no_space".into())
+        );
+        assert_eq!(part_len(&root, AID), Some(1), "the part is kept for Retry");
+        assert_eq!(
+            begin_on(|_| Some(1 + SPACE_MARGIN)),
+            Ok(FileStatus::new("partial", 1))
+        );
+        // No answer from the OS: the writes report no_space themselves.
+        assert_eq!(begin_on(|_| None), Ok(FileStatus::new("partial", 1)));
+        // Nothing left to fetch needs no room at all.
+        append_in(&root, AID, 1, &b64(b"i")).unwrap();
+        assert_eq!(begin_on(|_| Some(0)), Ok(FileStatus::new("partial", 2)));
+        finish_in(&root, &tmp.0.join("Downloads"), AID).unwrap();
+        assert_eq!(begin_on(|_| Some(0)), Ok(FileStatus::new("received", 2)));
+        // Another file under the id starts over and needs its whole size.
+        let other = Wanted {
+            sha256: &"1".repeat(64),
+            ..file
+        };
+        assert_eq!(
+            begin_with(&root, AID, &other, now, |_| Some(SPACE_MARGIN + 1)),
+            Err("no_space".into())
+        );
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn free_space_reads_the_volume() {
+        let tmp = TempDir::new("free");
+        assert!(free_space(&tmp.0).is_some_and(|n| n > 0));
+        assert_eq!(free_space(&tmp.0.join("missing")), None);
+    }
+
     #[test]
     fn received_dir_and_files_are_private() {
         use std::os::unix::fs::PermissionsExt;
