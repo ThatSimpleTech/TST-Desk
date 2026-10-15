@@ -129,8 +129,10 @@ class ReceivedFiles(
                     "hash_mismatch"
                 } else {
                     val name = dataFileName(meta.name)
-                    if (!part.renameTo(File(dir, name))) throw IOException("rename failed")
+                    // Meta first: it counts as verified only once data[.ext] exists too,
+                    // so a failed write leaves data.part to finish again, never an orphan.
                     writeMeta(meta.copy(file = name))
+                    if (!part.renameTo(File(dir, name))) throw IOException("rename failed")
                     null
                 }
             } catch (_: IOException) {

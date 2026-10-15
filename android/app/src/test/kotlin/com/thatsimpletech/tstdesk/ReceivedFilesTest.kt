@@ -213,6 +213,44 @@ class ReceivedFilesTest {
     }
 
     @Test
+    fun failedMetaWriteKeepsThePartForTheRetry() {
+        beginBody()
+        files.append(ID_A, 0, body)
+        val dir = File(root, ID_A)
+        // A folder where meta.json.tmp goes fails the meta write and nothing else.
+        val blocker = File(dir, "meta.json.tmp")
+        assertTrue(blocker.mkdir())
+        assertEquals("io", files.finish(ID_A))
+        assertEquals("the checked bytes stay as data.part", body.size.toLong(), File(dir, "data.part").length())
+        assertFalse(File(dir, "data.apk").exists())
+        assertEquals(EntryStatus(STATE_PARTIAL, 4, 4, files.meta(ID_A)), files.status(ID_A))
+
+        assertTrue(blocker.delete())
+        free = FREE_MARGIN_BYTES
+        assertEquals("the retry needs no room for a second copy", Begin.Ready(4, STATE_PARTIAL), beginBody())
+        assertNull(files.finish(ID_A))
+        assertEquals(STATE_VERIFIED, files.status(ID_A).state)
+    }
+
+    @Test
+    fun failedRenameAfterTheMetaIsNotVerified() {
+        beginBody()
+        files.append(ID_A, 0, body)
+        val dir = File(root, ID_A)
+        // A non-empty folder named data.apk makes the rename fail after the meta is saved.
+        val blocker = File(dir, "data.apk")
+        assertTrue(File(blocker, "x").mkdirs())
+        assertEquals("io", files.finish(ID_A))
+        assertEquals(STATE_PARTIAL, files.status(ID_A).state)
+        assertNull(files.resolveVerified(ID_A))
+        assertEquals(Begin.Ready(4, STATE_PARTIAL), beginBody())
+
+        assertTrue(blocker.deleteRecursively())
+        assertNull("finishing again re-checks the part", files.finish(ID_A))
+        assertEquals(File(dir, "data.apk"), files.resolveVerified(ID_A))
+    }
+
+    @Test
     fun recordApkCachesInfoAndAFailedWriteKeepsTheFile() {
         beginBody()
         files.append(ID_A, 0, body)
