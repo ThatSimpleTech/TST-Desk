@@ -246,28 +246,16 @@ export function setTier(tier: "brain" | "worker" | "validator"): void {
   client?.setTier(session.sessionId, tier);
 }
 
-/** Turn plan mode on or off. The title bar reflects the next tier_state. */
+/** Turn plan mode on or off. The composer reflects the next tier_state. */
 export function setPlan(on: boolean): void {
   if (session.sessionId === null) return;
   client?.setPlan(session.sessionId, on);
 }
 
-/** Retarget this session at a catalog preset. The title bar follows tier_state. */
+/** Retarget this session at a catalog preset. The composer follows tier_state. */
 export function setSessionPreset(name: string): void {
   if (session.sessionId === null) return;
   client?.setSessionPreset(session.sessionId, name);
-}
-
-/** Active slug and host for the title-bar pill (TD-1720). */
-export function liveModelLabel(
-  tier: string,
-  slugs: Record<string, string>,
-  hosts: Record<string, string>,
-): string {
-  const slug = slugs[tier] ?? "";
-  const host = hosts[tier] ?? "";
-  if (slug && host) return `${slug} · ${host}`;
-  return slug || host;
 }
 
 /** Display name for the workspace row: basename of the path. */

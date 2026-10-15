@@ -5,6 +5,10 @@
 	// (Esc cancels too, TD-1609). Enter submits, Shift+Enter newlines,
 	// auto-grows to eight rows before scrolling internally.
 	//
+	// The draft fills the card. Under it, a toolbar keeps Plan and the model
+	// dropdowns on the left and Send on the right — the same split Cursor
+	// uses, so the message is never squeezed beside the controls.
+	//
 	// Text files and PNG/JPEG/GIF/WebP images attach here three ways
 	// (TD-1709): the paperclip's picker, drag-and-drop onto the card, and
 	// paste. The refusal shown inline is a courtesy — the daemon refuses
@@ -19,6 +23,7 @@
 		type AttachmentRefusal,
 	} from "../../attachments";
 	import { shouldSubmit } from "../../chat-store";
+	import { COMPOSER_LINE_PADDING } from "../../composer-layout";
 	import { commands, loadCommands } from "../../commands.svelte.js";
 	import { acceptPickDrafts } from "../../design";
 	import { clearPicks, design, removePick } from "../../design.svelte.js";
@@ -31,6 +36,7 @@
 	import AttachmentChips from "./AttachmentChips.svelte";
 	import DesignChips from "./DesignChips.svelte";
 	import DictationButton from "./DictationButton.svelte";
+	import ModelControls from "./ModelControls.svelte";
 	import SlashPalette from "./SlashPalette.svelte";
 
 	let {
@@ -93,12 +99,13 @@
 	// Re-measure on every edit; cap growth at MAX_ROWS lines.
 	$effect(() => {
 		void value;
-		if (textarea === null) return;
-		const computed = parseFloat(getComputedStyle(textarea).lineHeight);
+		const box = textarea;
+		if (box === null) return;
+		const computed = parseFloat(getComputedStyle(box).lineHeight);
 		const lineHeight = Number.isFinite(computed) ? computed : 24;
-		const maxHeight = lineHeight * MAX_ROWS + 16;
-		textarea.style.height = "auto";
-		textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
+		const maxHeight = lineHeight * MAX_ROWS + COMPOSER_LINE_PADDING;
+		box.style.height = "auto";
+		box.style.height = `${Math.min(box.scrollHeight, maxHeight)}px`;
 	});
 
 	/** Vet each file against the caps and the text test, one at a time so the
@@ -296,62 +303,71 @@
 				onhover={(index) => (slashIndex = index)}
 			/>
 		{/if}
-		<div class="row">
-			<textarea
-				bind:this={textarea}
-				bind:value
-				rows="1"
-				{disabled}
-				placeholder={disabled ? "Waiting for a session…" : "Message the agent…"}
-				aria-label="Message composer"
-				aria-controls={paletteOpen ? "slash-list" : undefined}
-				aria-autocomplete="list"
-				onkeydown={handleKeydown}
-				onpaste={handlePaste}
-				onfocus={handleFocus}
-			></textarea>
-			<DictationButton {disabled} ontranscript={appendDictation} />
-			<input
-				bind:this={picker}
-				type="file"
-				multiple
-				class="picker"
-				tabindex="-1"
-				aria-hidden="true"
-				onchange={handlePick}
-			/>
-			<button
-				type="button"
-				class="attach"
-				{disabled}
-				title="Attach text files"
-				onclick={() => picker?.click()}
-				aria-label="Attach text files"
-			>
-				<Icon name="paperclip" size={16} />
-			</button>
-			{#if running && !disabled}
-				<button
-					type="button"
-					class="send"
-					title="Stop this turn (Esc)"
-					onclick={() => oncancel?.()}
-					aria-label="Stop this turn"
-				>
-					<Icon name="stop" size={14} filled />
-				</button>
-			{:else}
-				<button
-					type="button"
-					class="send"
+		<div class="entry" data-model-placement="footer">
+			<div class="draft">
+				<textarea
+					bind:this={textarea}
+					bind:value
+					rows="1"
 					{disabled}
-					title="Send message"
-					onclick={submit}
-					aria-label="Send message"
-				>
-					<Icon name="arrow-up" size={18} />
-				</button>
-			{/if}
+					placeholder={disabled ? "Waiting for a session…" : "Message the agent…"}
+					aria-label="Message composer"
+					aria-controls={paletteOpen ? "slash-list" : undefined}
+					aria-autocomplete="list"
+					onkeydown={handleKeydown}
+					onpaste={handlePaste}
+					onfocus={handleFocus}
+				></textarea>
+			</div>
+			<div class="bar">
+				<div class="model-slot">
+					<ModelControls />
+				</div>
+				<div class="actions">
+					<DictationButton {disabled} ontranscript={appendDictation} />
+					<input
+						bind:this={picker}
+						type="file"
+						multiple
+						class="picker"
+						tabindex="-1"
+						aria-hidden="true"
+						onchange={handlePick}
+					/>
+					<button
+						type="button"
+						class="attach"
+						{disabled}
+						title="Attach text files"
+						onclick={() => picker?.click()}
+						aria-label="Attach text files"
+					>
+						<Icon name="paperclip" size={16} />
+					</button>
+					{#if running && !disabled}
+						<button
+							type="button"
+							class="send"
+							title="Stop this turn (Esc)"
+							onclick={() => oncancel?.()}
+							aria-label="Stop this turn"
+						>
+							<Icon name="stop" size={14} filled />
+						</button>
+					{:else}
+						<button
+							type="button"
+							class="send"
+							{disabled}
+							title="Send message"
+							onclick={submit}
+							aria-label="Send message"
+						>
+							<Icon name="arrow-up" size={18} />
+						</button>
+					{/if}
+				</div>
+			</div>
 		</div>
 	</div>
 	{#if refusal !== null}
@@ -402,7 +418,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-2);
-		padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+		padding: var(--space-3) var(--space-3) var(--space-2);
 		background: var(--color-lifted);
 		border: var(--border-width) solid var(--color-hairline);
 		border-radius: var(--radius-xl);
@@ -422,14 +438,47 @@
 		background: var(--color-sunken);
 	}
 
-	.row {
+	.entry {
 		display: flex;
-		align-items: flex-end;
+		flex-direction: column;
+		gap: var(--space-1);
+		min-width: 0;
+	}
+
+	.draft {
+		min-width: 0;
+	}
+
+	/* Text above, choices on the left, send on the right. */
+	.bar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
 		gap: var(--space-2);
+		min-width: 0;
+	}
+
+	.model-slot {
+		display: flex;
+		align-items: center;
+		min-width: 0;
+		flex: 1;
+	}
+
+	.model-slot:empty {
+		display: none;
+	}
+
+	.actions {
+		display: flex;
+		align-items: center;
+		gap: var(--space-1);
+		flex-shrink: 0;
+		margin-left: auto;
 	}
 
 	textarea {
-		flex: 1;
+		width: 100%;
 		resize: none;
 		padding: var(--space-2) 0;
 		font-family: var(--font-sans);
