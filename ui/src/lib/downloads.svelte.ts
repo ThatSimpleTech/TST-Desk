@@ -616,6 +616,8 @@ function stopWith(job: Job, phase: FilePhase, copy: string): void {
   e.phase = phase;
   e.note = copy;
   e.waiting = false;
+  // A part left behind: the phone offers to remove it (§6.4 gone).
+  e.partial = job.have > 0;
   owe(job);
   release(job);
 }

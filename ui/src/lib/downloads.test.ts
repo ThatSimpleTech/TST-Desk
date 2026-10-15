@@ -47,7 +47,7 @@ import {
 } from "./downloads.svelte";
 import { SinkError, type FileHost, type FileSink, type FinishResult, type SinkStatus } from "./file-sink";
 import { claimedInline } from "./inline-errors";
-import { fileKey, type SentFileRef } from "./sent-files";
+import { fileActions, fileKey, fileKind, type SentFileRef } from "./sent-files";
 
 const SHA = "ab".repeat(32);
 
@@ -374,6 +374,21 @@ describe("codes on the card", () => {
     await flush();
     await reply(ref, 0, { error_code: "artifact_not_found", data_b64: "" });
     expect(state(ref)).toMatchObject({ phase: "gone", note: "This file is no longer on studio-mac." });
+  });
+
+  it("gone after part of the file is in: the phone offers to remove the part", async () => {
+    const ref = file(1, 6 * CHUNK);
+    startDownload(ref);
+    await flush();
+    await reply(ref, 0);
+    await reply(ref, CHUNK);
+    expect(sinkOf(ref).have).toBe(2 * CHUNK);
+    await reply(ref, 2 * CHUNK, { error_code: "artifact_not_found", data_b64: "" });
+    expect(state(ref)).toMatchObject({ phase: "gone", partial: true });
+    expect(fileActions("android", fileKind(ref.name, ref.mime), "gone", { partial: state(ref).partial })).toEqual({
+      primary: null,
+      menu: ["remove"],
+    });
   });
 
   it("an older daemon's unknown_message for the verb: unavailable, claimed inline", async () => {
