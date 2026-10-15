@@ -1414,6 +1414,51 @@ describe("sent files (TD-5144)", () => {
     store.applyEvent({ ...SENT_FILE, session_id: "sess-2" });
     expect(tool().files).toBeUndefined();
   });
+
+  it("holds a file that arrives before its call and puts it on the call", () => {
+    const { deps } = fakeDeps();
+    const state = createChatState();
+    const store = createChatStore(deps, state);
+    store.applyEvent(sessionList([{ id: SENT_FILE.session_id, updated: "2026-10-14T10:00:00Z", state: "idle" }]));
+    store.applyEvent(SENT_FILE);
+    expect(state.messages).toHaveLength(0);
+    store.applyEvent(toolCall(SENT_FILE.session_id, "call_abc", "send_file"));
+    const block = state.messages[0].tools![0];
+    expect(block.files?.map((f) => f.artifactId)).toEqual([SENT_FILE.artifact_id]);
+    // The part is the same block, so the bubble sees the file too.
+    const part = state.messages[0].parts![0];
+    expect(part.kind === "tool" && part.tool === block).toBe(true);
+  });
+
+  it("lets a held file go when the pane binds another session", () => {
+    const { deps } = fakeDeps();
+    const state = createChatState();
+    const store = createChatStore(deps, state);
+    store.applyEvent(sessionList([{ id: SENT_FILE.session_id, updated: "2026-10-14T10:00:00Z", state: "idle" }]));
+    store.applyEvent(SENT_FILE);
+    store.selectSession("sess-2", "idle");
+    store.selectSession(SENT_FILE.session_id, "idle");
+    store.applyEvent(toolCall(SENT_FILE.session_id, "call_abc", "send_file"));
+    expect(state.messages[0].tools![0].files).toBeUndefined();
+  });
+
+  it("writes the result and the file to both copies of a split block", () => {
+    // A row a fork restored can hold the list's block and the part's block
+    // as two objects; each must get the update.
+    const { store, state } = sendFileStore();
+    const row = state.messages[0];
+    const listed = row.tools![0];
+    row.parts = [{ kind: "tool", tool: { ...listed } }];
+    store.applyEvent(SENT_FILE);
+    store.applyEvent(toolResult(SENT_FILE.session_id, "call_abc"));
+    const part = row.parts[0];
+    if (part.kind !== "tool") throw new Error("not a tool part");
+    expect(part.tool).not.toBe(listed);
+    for (const block of [listed, part.tool]) {
+      expect(block.files).toHaveLength(1);
+      expect(block.status).toBe("success");
+    }
+  });
 });
 
 describe("fork (TD-1708)", () => {
