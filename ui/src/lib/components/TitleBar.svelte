@@ -1,13 +1,13 @@
 <script lang="ts">
-	// Title bar (TD-1006, TD-1720): workspace picker, grok identity, the live
-	// model pill, cost meter, session state, and the boundary ("wall").
-	// Plan, the tier picker, and the session preset live in the composer.
+	// Title bar (TD-1006): workspace picker, grok identity, cost meter,
+	// session state, and the boundary ("wall"). The model name lives in
+	// the composer dropdown.
 	// Presentational only — everything shown is reduced from daemon events
 	// via session-status; the UI never derives a host from a slug.
 	//
 	// The picker and the meter own their own markup and styles in
 	// WorkspacePicker/CostMeter; what stays here is the row itself.
-	import { liveModelLabel, session, type SessionIndicator } from '../session-status.svelte.js';
+	import { session, type SessionIndicator } from '../session-status.svelte.js';
 	import { settings } from '../settings.svelte.js';
 	import { grok } from '../grok.svelte.js';
 	import { formatUsd } from '../cost-format.js';
@@ -41,18 +41,6 @@
 		return 'muted';
 	}
 
-	const liveLabel = $derived(liveModelLabel(session.tier, session.modelSlugs, session.hosts));
-	const liveTip = $derived(
-		[
-			session.preset ? `preset: ${session.preset}` : null,
-			`tier: ${session.tier}`,
-			session.modelSlugs[session.tier] ? `model: ${session.modelSlugs[session.tier]}` : null,
-			session.hosts[session.tier] ? `host: ${session.hosts[session.tier]}` : null,
-		]
-			.filter((line): line is string => line !== null)
-			.join('\n') || undefined,
-	);
-
 	// Spend against the cap, drawn as a bar so the eye reads it without
 	// arithmetic. Hours and iterations stay in the tooltip: they are limits
 	// nobody watches turn by turn.
@@ -85,10 +73,6 @@
 			{#if grok.model && grok.sessionId === session.sessionId}
 				<span class="chip" title="Grok model">{grok.model}</span>
 			{/if}
-		{/if}
-
-		{#if liveLabel}
-			<span class="live-model" title={liveTip} aria-label="Live model">{liveLabel}</span>
 		{/if}
 
 		<CostMeter />
@@ -139,17 +123,6 @@
 		color: var(--color-on-accent);
 		background: var(--color-accent);
 		border-color: var(--color-accent);
-	}
-
-	.live-model {
-		min-width: 0;
-		max-width: 22rem;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		font-size: var(--text-xs);
-		font-family: var(--font-mono);
-		color: var(--color-ink-secondary);
 	}
 
 	.indicator {

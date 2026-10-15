@@ -258,18 +258,6 @@ export function setSessionPreset(name: string): void {
   client?.setSessionPreset(session.sessionId, name);
 }
 
-/** Active slug and host for the title-bar pill (TD-1720). */
-export function liveModelLabel(
-  tier: string,
-  slugs: Record<string, string>,
-  hosts: Record<string, string>,
-): string {
-  const slug = slugs[tier] ?? "";
-  const host = hosts[tier] ?? "";
-  if (slug && host) return `${slug} · ${host}`;
-  return slug || host;
-}
-
 /** Display name for the workspace row: basename of the path. */
 export function workspaceName(path: string): string {
   const parts = path.split(/[\\/]/).filter((p) => p.length > 0);
