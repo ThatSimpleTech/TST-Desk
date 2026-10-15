@@ -118,7 +118,7 @@
 				{#each parts as part, i (i)}
 					{#if part.kind === "tool"}
 						<ToolFold messageId={message.id} block={part.tool} />
-						{#if part.tool.name === "send_file"}<FileCards block={part.tool} />{/if}
+						{#if part.tool.name === "send_file"}<FileCards block={part.tool} live={!message.complete} />{/if}
 					{:else if part.text !== ""}
 						<Markdown text={part.text} live={!message.complete && i === lastTextIndex} />
 						<!-- The caret marks the answer being written. Over an
@@ -136,7 +136,7 @@
 				{#if message.tools}
 					{#each message.tools as block (block.toolCallId)}
 						<ToolFold messageId={message.id} {block} />
-						{#if block.name === "send_file"}<FileCards {block} />{/if}
+						{#if block.name === "send_file"}<FileCards {block} live={!message.complete} />{/if}
 					{/each}
 				{/if}
 				<Markdown text={message.text} live={!message.complete} />

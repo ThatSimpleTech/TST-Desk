@@ -175,6 +175,14 @@ describe("file cards in the chat", () => {
     expect(tauri.invoke).not.toHaveBeenCalledWith("sent_file_open", expect.anything());
   });
 
+  it("shows no skeleton once the turn is over, only that the file never came", () => {
+    app = mount(FileCards, { target: document.body, props: { block: block(), live: false } });
+    flushSync();
+    expect(document.querySelector(".skeleton")).toBeNull();
+    expect(document.querySelector('[role="status"]')).toBeNull();
+    expect(document.querySelector(".not-sent")?.textContent?.trim()).toBe("Not sent: the turn was cut off.");
+  });
+
   it("shows no card for a refused call", async () => {
     await render(block({ status: "error", files: [APK] }));
     expect(document.querySelector(".file-card")).toBeNull();
@@ -326,6 +334,18 @@ describe("a send_file card in the chat, from the store", () => {
     emit(result);
     mountBubble();
     await expectOneCard("app-release.apk");
+  });
+
+  it("drops the skeleton when a restart cut the call off (finding 28)", () => {
+    // The daemon seals a cut turn with turn_complete and never logs a
+    // tool_result for the call, live or on replay.
+    for (const event of [userTurn, call, { ...done, failed: true, error_code: "interrupted_by_restart" }]) {
+      emit(event as DaemonEventUnion);
+    }
+    mountBubble();
+    expect(document.querySelector(".skeleton")).toBeNull();
+    expect(document.body.textContent).not.toContain("Sending app-release.apk");
+    expect(document.querySelector(".not-sent")?.textContent?.trim()).toBe("Not sent: the turn was cut off.");
   });
 
   it("is not doubled by a reattach that replays the turn again", async () => {
