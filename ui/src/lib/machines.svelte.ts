@@ -12,6 +12,7 @@ import { machineOf } from "./bridged-id";
 import { claimInline } from "./inline-errors";
 import { ADD_MACHINE_ERRORS, addMachineError, checkAddMachine, machineLabel, type AddMachineInput } from "./machines";
 import type { DaemonEventUnion, MachineSummary } from "./protocol";
+import { ANOTHER_COMPUTER } from "./sent-files";
 
 /** An add that neither lands nor fails in this long is shown as failed. The
  *  daemon's dial gives up well before (10 s open timeout). */
@@ -205,5 +206,5 @@ export function nameOfMachine(id: string): string | null {
 export function machineNameFor(sessionId: string | null | undefined): string | null {
   const id = machineOf(sessionId);
   if (id === null) return null;
-  return nameOfMachine(id) ?? "another computer";
+  return nameOfMachine(id) ?? ANOTHER_COMPUTER;
 }

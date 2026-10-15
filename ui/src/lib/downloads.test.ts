@@ -550,7 +550,7 @@ function machineList(entries: Record<string, MachineStatus>): DaemonEventUnion {
 }
 
 describe("the other computer goes away (machine_unreachable)", () => {
-  const COPY = "Studio-mac isn't reachable. The download carries on when it is.";
+  const COPY = "studio-mac isn't reachable. The download carries on when it is.";
 
   it("is claimed for its download, pauses with the copy, and carries on when the computer is back", async () => {
     const ref = file(1, 6 * CHUNK, { sessionId: BRIDGED });
@@ -880,7 +880,7 @@ describe("a paused download and the slot", () => {
     startDownload(a);
     await flush();
     emit({ type: "error", seq: 0, session_id: "sess-1", code: "machine_not_found", message: "x" });
-    expect(state(a).note).toBe("Studio-mac is not reachable.");
+    expect(state(a).note).toBe("studio-mac is not reachable.");
     startDownload(b);
     await flush();
     await resumeDownload(a);

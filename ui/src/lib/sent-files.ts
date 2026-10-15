@@ -599,8 +599,13 @@ export function goneText(machine: string): string {
 /** The copy for a machine label: another computer by name, or this one. */
 export const THIS_COMPUTER = "this computer";
 
-/** A machine label at the start of a sentence: its first letter capital,
- *  whether it is a computer's name or a label such as "another computer". */
+/** The label for a bridged session's computer the list doesn't have. */
+export const ANOTHER_COMPUTER = "another computer";
+
+/** A machine label at the start of a sentence. The app's own labels take a
+ *  capital; a computer's name reads exactly as typed ("iMac", "studio-mac"),
+ *  as it does in the composer's notice and on the approval card. */
 function capitalized(machine: string): string {
+  if (machine !== THIS_COMPUTER && machine !== ANOTHER_COMPUTER) return machine;
   return machine.charAt(0).toUpperCase() + machine.slice(1);
 }
