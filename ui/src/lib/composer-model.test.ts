@@ -58,10 +58,14 @@ describe("composer model controls", () => {
 		expect(entry?.getAttribute("data-model-placement")).toBe("inline");
 
 		const send = document.querySelector('[aria-label="Send message"]');
-		const tier = document.querySelector('[aria-haspopup="menu"]');
+		const tier = document.querySelector<HTMLSelectElement>('[aria-label="Model tier"]');
 		expect(send).not.toBeNull();
-		expect(tier?.textContent).toContain("brain");
-		expect(tier?.textContent).toContain("kimi");
+		expect(tier?.value).toBe("brain");
+		expect([...tier!.options].map((option) => option.text)).toEqual([
+			"brain (kimi)",
+			"worker (flash)",
+			"validator (pro)",
+		]);
 		expect(send!.compareDocumentPosition(tier!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
 		expect(document.querySelector('[aria-label="Session preset"]')).not.toBeNull();
 		expect(document.body.textContent).toContain("Plan");
@@ -74,31 +78,24 @@ describe("composer model controls", () => {
 		expect(document.querySelector("[data-model-placement]")?.getAttribute("data-model-placement")).toBe(
 			"footer",
 		);
-		const tier = document.querySelector('[aria-haspopup="menu"]');
+		const tier = document.querySelector('[aria-label="Model tier"]');
 		expect(document.querySelector(".actions")?.contains(tier ?? null)).toBe(false);
 		expect(document.querySelector(".model-slot")?.contains(tier ?? null)).toBe(true);
 		const send = document.querySelector('[aria-label="Send message"]');
 		expect(send!.compareDocumentPosition(tier!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
 	});
 
-	it("opens brain, worker, and validator above the composer", async () => {
+	it("lists each tier with its model in parentheses", async () => {
+		session.modelSlugs = { brain: "moonshotai/kimi-k3", validator: "pro" };
 		mountComposer("");
 		await tick();
 
-		document.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')?.click();
-		await tick();
-
-		const items = [...document.querySelectorAll('[role="menuitemradio"]')].map((el) =>
-			el.textContent?.replace(/\s+/g, " ").trim(),
-		);
-		expect(items.some((text) => text?.startsWith("brain"))).toBe(true);
-		expect(items.some((text) => text?.startsWith("worker"))).toBe(true);
-		expect(items.some((text) => text?.startsWith("validator"))).toBe(true);
-
-		const worker = document.querySelector<HTMLButtonElement>('[role="menuitemradio"]:nth-child(2)');
-		worker?.click();
-		await tick();
-		expect(document.querySelector('[role="menu"]')).toBeNull();
+		const tier = document.querySelector<HTMLSelectElement>('[aria-label="Model tier"]');
+		expect([...tier!.options].map((option) => option.text)).toEqual([
+			"brain (moonshotai/kimi-k3)",
+			"worker",
+			"validator (pro)",
+		]);
 	});
 
 	it("keeps worker and validator unavailable while Plan is on", async () => {
@@ -106,12 +103,10 @@ describe("composer model controls", () => {
 		mountComposer("");
 		await tick();
 
-		document.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')?.click();
-		await tick();
-		const items = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')];
-		expect(items.find((el) => el.textContent?.includes("brain"))?.disabled).toBe(false);
-		expect(items.find((el) => el.textContent?.includes("worker"))?.disabled).toBe(true);
-		expect(items.find((el) => el.textContent?.includes("validator"))?.disabled).toBe(true);
+		const tier = document.querySelector<HTMLSelectElement>('[aria-label="Model tier"]');
+		expect(tier?.options[0]?.disabled).toBe(false);
+		expect(tier?.options[1]?.disabled).toBe(true);
+		expect(tier?.options[2]?.disabled).toBe(true);
 	});
 
 	it("leaves the tier picker out of the title bar and keeps the live model there", async () => {
@@ -121,7 +116,7 @@ describe("composer model controls", () => {
 		});
 		await tick();
 
-		expect(document.querySelector('[aria-label="Model tier"]')).toBeNull();
+		expect(document.querySelector("select")).toBeNull();
 		expect(document.querySelector('[aria-label="Model"]')).toBeNull();
 		expect(document.querySelector('[aria-label="Session preset"]')).toBeNull();
 		const labels = [...document.querySelectorAll("button")].map((el) => el.textContent?.trim());
