@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import difflib
 import json
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
@@ -22,9 +22,10 @@ from .logging import get_logger
 from .memory_store import memory_dir
 from .provider import (
     ChatCompletionRequest,
-    ChatCompletionResponse,
     ChatMessage,
     ProviderError,
+    StreamChunk,
+    complete_streamed,
     content_as_text,
 )
 
@@ -46,9 +47,9 @@ Never write AGENTS.md, CLAUDE.md, or a path outside .tst/memory/.
 
 
 class DistillProvider(Protocol):
-    async def chat_completion(
+    def chat_completion_stream(
         self, request: ChatCompletionRequest
-    ) -> ChatCompletionResponse | ProviderError: ...
+    ) -> AsyncIterator[StreamChunk | ProviderError]: ...
 
 
 @dataclass(frozen=True)
@@ -92,7 +93,9 @@ async def distill_session(
 
     Returns ``None`` when the worker fails, returns unusable text, or
     proposes nothing that differs from disk. Cost, when a *tracker* is
-    given, is a worker call off the current user turn.
+    given, is a worker call off the current user turn. The call streams
+    and is collected, with the worker's ``extra_body`` and no resend after
+    a timeout, as the work check does (TD-5146).
     """
     on_disk = await asyncio.to_thread(_read_memory_files, Path(workspace))
     worker_cfg = config.tier("worker")
@@ -105,8 +108,10 @@ async def distill_session(
         tools=None,
         max_tokens=worker_cfg.max_output_tokens,
         temperature=0.0,
+        extra_body=worker_cfg.extra_body,
+        retry_on_timeout=False,
     )
-    response = await provider.chat_completion(request)
+    response = await complete_streamed(provider, request)
     if isinstance(response, ProviderError):
         log.warning(
             "distill worker call failed",

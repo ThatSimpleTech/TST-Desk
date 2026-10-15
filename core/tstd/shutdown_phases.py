@@ -15,12 +15,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 from .logging import get_logger
 from .memory_distill import DistillProvider
-from .provider import ChatCompletionRequest, ChatCompletionResponse, ProviderError
+from .provider import ChatCompletionRequest, ProviderError, StreamChunk
 
 log = get_logger("tstd.shutdown")
 
@@ -83,7 +83,7 @@ class ShutdownPhases:
 
 
 class ProviderFlight:
-    """The quit-distill provider call, once ``chat_completion`` has started.
+    """The quit-distill provider call, once its stream has been opened.
 
     Empty while distill is reading memory files or writing the proposal.
     Those are local. The network read is the only part shutdown refuses
@@ -125,25 +125,47 @@ class SignalingProvider:
     """Publish the provider future before awaiting it.
 
     The reaper has to see the future while it is still running. Awaiting
-    ``chat_completion`` directly hides that future inside this task, and
+    the provider directly hides that future inside this task, and
     on 3.11 cancelling this task does not cancel a nested one. The
     future is created first so one loop turn can finish an in-process
     provider, and so a network read can be cancelled on its own.
+
+    Distill streams (TD-5146). The whole stream is drained inside that one
+    future, so cancelling it closes the stream in the task that opened it,
+    and the hang-up reaches the server.
     """
 
     def __init__(self, inner: DistillProvider, flight: ProviderFlight) -> None:
         self._inner = inner
         self._flight = flight
 
-    async def chat_completion(
+    async def chat_completion_stream(
         self, request: ChatCompletionRequest
-    ) -> ChatCompletionResponse | ProviderError:
-        fut = asyncio.ensure_future(self._inner.chat_completion(request))
+    ) -> AsyncIterator[StreamChunk | ProviderError]:
+        fut = asyncio.ensure_future(_drain(self._inner.chat_completion_stream(request)))
         self._flight.begin(fut)
         try:
-            return await fut
+            items = await fut
         finally:
             self._flight.end()
+        for item in items:
+            yield item
+
+
+async def _drain(
+    stream: AsyncIterator[StreamChunk | ProviderError],
+) -> list[StreamChunk | ProviderError]:
+    items: list[StreamChunk | ProviderError] = []
+    try:
+        async for item in stream:
+            items.append(item)
+            if isinstance(item, ProviderError):
+                break
+    finally:
+        aclose = getattr(stream, "aclose", None)
+        if aclose is not None:
+            await aclose()
+    return items
 
 
 async def reap_shutdown_distill(
@@ -183,7 +205,7 @@ async def _reap_signaled(task: asyncio.Task[None], flight: ProviderFlight) -> No
             await _wait_until_progress(task, flight)
             continue
         if not pending.done():
-            # One turn. ``MockProvider.chat_completion`` has no ``await``,
+            # One turn. Draining ``MockProvider``'s stream never suspends,
             # so the task scheduled by ``ensure_future`` finishes here.
             # An httpx read, or a hang parked on an ``Event``, does not.
             await asyncio.sleep(0)

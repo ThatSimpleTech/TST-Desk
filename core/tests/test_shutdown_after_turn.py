@@ -14,6 +14,7 @@ import signal
 import subprocess
 import sys
 import threading
+from collections.abc import AsyncIterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -25,9 +26,10 @@ from tstd.cli import daemon_argv
 from tstd.config import default_config_yaml
 from tstd.daemon import Daemon
 from tstd.logging import LOG_FILE_NAME, log_directory, setup_logging
+from tstd.memory_distill import DISTILL_SYSTEM_PROMPT
 from tstd.mock import MockProvider, Script
 from tstd.protocol import PROTOCOL_VERSION
-from tstd.provider import ChatCompletionRequest, ChatCompletionResponse, ProviderError
+from tstd.provider import ChatCompletionRequest, ProviderError, StreamChunk
 from tstd.ws import create_port_file_path, read_port_file
 
 _CORE = Path(__file__).resolve().parent.parent
@@ -63,18 +65,30 @@ def _read_log(data_dir: Path) -> str:
     return (log_directory(data_dir) / LOG_FILE_NAME).read_text(encoding="utf-8")
 
 
+def _is_distill(messages: list[object]) -> bool:
+    """True for quit-distill's request. It streams like a turn (TD-5146)."""
+    if not messages:
+        return False
+    first = messages[0]
+    content = first.get("content") if isinstance(first, dict) else getattr(first, "content", None)
+    return content == DISTILL_SYSTEM_PROMPT
+
+
 class _HangDistill(MockProvider):
-    """Stream a turn, then sit in the non-streaming call quit-distill makes."""
+    """Stream a turn, then sit in the stream quit-distill opens."""
 
     def __init__(self) -> None:
         super().__init__(default=Script(kind="stream", content="hi"))
 
-    async def chat_completion(
+    async def chat_completion_stream(
         self, request: ChatCompletionRequest
-    ) -> ChatCompletionResponse | ProviderError:
-        del request
-        await asyncio.Event().wait()
-        return ProviderError(code="cancelled", message="unused", retryable=False)
+    ) -> AsyncIterator[StreamChunk | ProviderError]:
+        if _is_distill(list(request.messages)):
+            await asyncio.Event().wait()
+            yield ProviderError(code="cancelled", message="unused", retryable=False)
+            return
+        async for item in super().chat_completion_stream(request):
+            yield item
 
 
 class _Stdout:
@@ -225,7 +239,7 @@ def test_stuck_provider_read_does_not_burn_the_shutdown_budget(tmp_path: Path) -
                 payload = json.loads(self._body() or b"{}")
             except json.JSONDecodeError:
                 payload = {}
-            if payload.get("stream"):
+            if payload.get("stream") and not _is_distill(payload.get("messages") or []):
                 data = (
                     b'data: {"id":"1","choices":[{"index":0,"delta":{"role":"assistant",'
                     b'"content":"hi"},"finish_reason":null}]}\n\n'
