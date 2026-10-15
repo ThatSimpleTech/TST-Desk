@@ -63,6 +63,8 @@ class FakeSink implements FileSink {
   appended: number[] = [];
   beginState: "none" | "partial" | "verified" = "none";
   finishes: FinishResult[] = [];
+  /** When set, finish() waits for it: the file is being checked. */
+  finishGate: Promise<void> | null = null;
   finished = 0;
   discards = 0;
   statusOverride: SinkStatus | null = null;
@@ -81,6 +83,7 @@ class FakeSink implements FileSink {
   }
   async finish(): Promise<FinishResult> {
     this.finished += 1;
+    if (this.finishGate !== null) await this.finishGate;
     return this.finishes.shift() ?? { ok: true };
   }
   async status(): Promise<SinkStatus> {
@@ -846,6 +849,24 @@ describe("the rest of the window after a refusal", () => {
     const unrelated = hubRefusal();
     emit(unrelated);
     expect(claimedInline(unrelated)).toBe(false);
+  });
+
+  it("while the finished file is checked, a leftover request claims no refusal", async () => {
+    const ref = file(1, CHUNK);
+    let open = (): void => {};
+    sinkOf(ref).finishGate = new Promise<void>((resolve) => (open = resolve));
+    startDownload(ref);
+    await flush();
+    await vi.advanceTimersByTimeAsync(STALL_MS);
+    expect(requests(ref)).toEqual([0, 0]);
+    await reply(ref, 0);
+    expect(state(ref).phase).toBe("verifying");
+    const unrelated = hubRefusal();
+    emit(unrelated);
+    expect(claimedInline(unrelated)).toBe(false);
+    open();
+    await flush();
+    expect(state(ref).phase).toBe("done");
   });
 });
 

@@ -507,6 +507,11 @@ function noteRate(job: Job, bytes: number): void {
 async function finish(job: Job): Promise<void> {
   const generation = job.generation;
   const e = entry(job.ref);
+  // Every byte is in, so a request still out was lost and asked again: no
+  // reply is owed. Left in place, it would claim the next refusal in the
+  // session while the file is checked, after a failed check, or on the
+  // restart after a hash mismatch.
+  forgetAsks(job);
   e.phase = "verifying";
   syncAwake();
   let result: Awaited<ReturnType<FileSink["finish"]>>;
@@ -554,9 +559,6 @@ async function complete(job: Job): Promise<void> {
   e.waitingFor = null;
   e.apk = status?.apk ?? null;
   e.canInstall = status?.canInstall ?? false;
-  // Every byte is in, so a request still out was lost and asked again: no
-  // reply is owed, and an echo would claim the next refusal in the session.
-  forgetAsks(job);
   release(job);
   const then = job.then;
   if (then === "save") {
