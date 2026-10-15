@@ -12,10 +12,11 @@
 //! so the tests run them against temp dirs; the Tauri commands only work
 //! out where those directories are.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
 
 use base64::Engine as _;
@@ -32,6 +33,9 @@ const SWEEP_AFTER: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const HASH_BUF: usize = 1024 * 1024;
 const MAX_NAME_BYTES: usize = 120;
 const MAX_EXT_CHARS: usize = 16;
+/// Room `begin` keeps free beyond the bytes still to come (§7.2), so a
+/// download never fills the disk the daemon's log and audit DB live on.
+const SPACE_MARGIN: u64 = 256 * 1024 * 1024;
 
 /// `<aid>.json` (§1.3).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -42,6 +46,11 @@ pub(crate) struct ReceivedMeta {
     pub size: u64,
     pub sha256: String,
     pub done_path: Option<String>,
+    /// The copy's modified time once it was in Downloads, so another file
+    /// later put at the same path is not taken for it. Absent in metas
+    /// written before it existed; those trust the size alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub done_mtime_ns: Option<u64>,
 }
 
 /// `<app_cache_dir>/received/`. Not created here.
@@ -50,6 +59,32 @@ pub(crate) fn received_root(app: &AppHandle) -> Result<PathBuf, String> {
         .app_cache_dir()
         .map(|dir| dir.join("received"))
         .map_err(|e| format!("io: {e}"))
+}
+
+/// One lock per artifact id. The commands run on the blocking pool
+/// (`off_runtime`), and two windows on one session, or Cancel followed at
+/// once by Download, can call begin, append, finish and discard on the
+/// same id together: two appends would both pass the offset check, and a
+/// finish could lose its rename to another finish. Different ids never
+/// wait for each other.
+static BUSY: Mutex<BTreeMap<String, Arc<Mutex<()>>>> = Mutex::new(BTreeMap::new());
+
+fn id_lock(aid: &str) -> Arc<Mutex<()>> {
+    let mut locks = BUSY.lock().unwrap_or_else(PoisonError::into_inner);
+    // Forget the locks nobody holds or waits for, so the map stays small.
+    locks.retain(|_, lock| Arc::strong_count(lock) > 1);
+    Arc::clone(locks.entry(aid.to_string()).or_default())
+}
+
+/// The user's Downloads folder: the platform's own, else `~/Downloads`.
+/// On Linux `dirs` reads it from `~/.config/user-dirs.dirs`, which minimal
+/// and tiling-WM setups often lack.
+pub(crate) fn downloads_dir() -> Option<PathBuf> {
+    downloads_from(dirs::download_dir(), dirs::home_dir())
+}
+
+fn downloads_from(download: Option<PathBuf>, home: Option<PathBuf>) -> Option<PathBuf> {
+    download.or_else(|| home.map(|home| home.join("Downloads")))
 }
 
 fn part_path(root: &Path, aid: &str) -> PathBuf {
@@ -138,12 +173,24 @@ fn part_len(root: &Path, aid: &str) -> Option<u64> {
         .map(|m| m.len())
 }
 
+fn mtime_ns(meta: &fs::Metadata) -> Option<u64> {
+    let since = meta
+        .modified()
+        .ok()?
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .ok()?;
+    u64::try_from(since.as_nanos()).ok()
+}
+
+/// The finished copy, if what is at its path is still that file: a regular
+/// file of the sent size, last modified when it was moved there.
 fn done_file(meta: &ReceivedMeta) -> Option<PathBuf> {
     let path = PathBuf::from(meta.done_path.as_ref()?);
-    fs::symlink_metadata(&path)
-        .ok()
-        .filter(|m| m.file_type().is_file())
-        .map(|_| path)
+    let found = fs::symlink_metadata(&path).ok()?;
+    let same = found.file_type().is_file()
+        && found.len() == meta.size
+        && (meta.done_mtime_ns.is_none() || mtime_ns(&found) == meta.done_mtime_ns);
+    same.then_some(path)
 }
 
 fn is_sha256(value: &str) -> bool {
@@ -184,6 +231,106 @@ pub(crate) fn begin_in(
     sha256: &str,
     now: SystemTime,
 ) -> Result<FileStatus, String> {
+    let file = Wanted {
+        session_id,
+        name,
+        size,
+        sha256,
+    };
+    begin_with(root, aid, &file, now, free_space)
+}
+
+/// What `begin` was asked to fetch.
+struct Wanted<'a> {
+    session_id: &'a str,
+    name: &'a str,
+    size: u64,
+    sha256: &'a str,
+}
+
+/// Bytes this user may still write on the volume holding `dir`, or None
+/// when the OS will not say (the writes then report `no_space` themselves).
+/// statfs on macOS: its statvfs counts blocks in 32 bits.
+/// On APFS, f_bavail leaves out purgeable space (local snapshots, iCloud
+/// files macOS can evict), which Finder counts as available. A nearly full
+/// Mac can therefore get `no_space` here when macOS would have made room.
+/// Kept on purpose: it errs on the safe side, only when real free space is
+/// under the rest of the file plus SPACE_MARGIN, and the user can retry.
+#[cfg(target_os = "macos")]
+fn free_space(dir: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+    // SAFETY: a plain C struct, filled in by the call below.
+    let mut stats: libc::statfs = unsafe { std::mem::zeroed() };
+    // SAFETY: a NUL-terminated path and a valid out pointer.
+    if unsafe { libc::statfs(path.as_ptr(), &mut stats) } != 0 {
+        return None;
+    }
+    Some(stats.f_bavail.saturating_mul(u64::from(stats.f_bsize)))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+#[allow(clippy::unnecessary_cast)] // the field widths differ by platform
+fn free_space(dir: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+    // SAFETY: a plain C struct, filled in by the call below.
+    let mut stats: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: a NUL-terminated path and a valid out pointer.
+    if unsafe { libc::statvfs(path.as_ptr(), &mut stats) } != 0 {
+        return None;
+    }
+    Some((stats.f_bavail as u64).saturating_mul(stats.f_frsize as u64))
+}
+
+#[cfg(windows)]
+fn free_space(dir: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut available = 0u64;
+    // SAFETY: a NUL-terminated wide path and a valid out pointer; the two
+    // totals are optional and left null.
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut available,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    (ok != 0).then_some(available)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn free_space(_dir: &Path) -> Option<u64> {
+    None
+}
+
+/// §7.2: `no_space` when the volume has less than the rest of the file
+/// plus the margin. Nothing left to write, or an unknown amount, lets the
+/// download go ahead.
+fn enough_room(available: Option<u64>, still_to_come: u64) -> bool {
+    match available {
+        Some(free) if still_to_come > 0 => free >= still_to_come.saturating_add(SPACE_MARGIN),
+        _ => true,
+    }
+}
+
+/// `begin_in`, with the free-space probe passed in for the tests.
+fn begin_with(
+    root: &Path,
+    aid: &str,
+    file: &Wanted,
+    now: SystemTime,
+    free: fn(&Path) -> Option<u64>,
+) -> Result<FileStatus, String> {
+    let Wanted {
+        session_id,
+        name,
+        size,
+        sha256,
+    } = *file;
     check_id(aid)?;
     if size > MAX_SIZE {
         return Err("too_large".into());
@@ -192,6 +339,8 @@ pub(crate) fn begin_in(
     if !is_sha256(sha256) {
         return Err("bad_id".into());
     }
+    let lock = id_lock(aid);
+    let _one_at_a_time = lock.lock().unwrap_or_else(PoisonError::into_inner);
     ensure_root(root)?;
     sweep(root, aid, now);
 
@@ -201,9 +350,10 @@ pub(crate) fn begin_in(
         size,
         sha256: sha256.to_string(),
         done_path: None,
+        done_mtime_ns: None,
     };
     let part = part_path(root, aid);
-    match read_meta(root, aid) {
+    let status = match read_meta(root, aid) {
         Some(meta) if meta.size == size && meta.sha256 == sha256 => {
             if done_file(&meta).is_some() {
                 return Ok(FileStatus::new("received", size));
@@ -220,12 +370,10 @@ pub(crate) fn begin_in(
             let have = part_len(root, aid).unwrap_or(0);
             if have > size {
                 File::create(&part).map_err(io_err)?;
-                return Ok(FileStatus::new("none", 0));
+                FileStatus::new("none", 0)
+            } else {
+                FileStatus::new(if have > 0 { "partial" } else { "none" }, have)
             }
-            Ok(FileStatus::new(
-                if have > 0 { "partial" } else { "none" },
-                have,
-            ))
         }
         _ => {
             private_options()
@@ -235,9 +383,15 @@ pub(crate) fn begin_in(
                 .open(&part)
                 .map_err(io_err)?;
             write_meta(root, aid, &wanted)?;
-            Ok(FileStatus::new("none", 0))
+            FileStatus::new("none", 0)
         }
+    };
+    // Asked after any old part is gone, before a byte is requested. A part
+    // already here is kept, so Retry resumes once there is room.
+    if !enough_room(free(root), size - status.have) {
+        return Err("no_space".into());
     }
+    Ok(status)
 }
 
 /// Add one chunk at the end of the part. Returns the new length.
@@ -248,6 +402,8 @@ pub(crate) fn append_in(
     data_b64: &str,
 ) -> Result<u64, String> {
     check_id(aid)?;
+    let lock = id_lock(aid);
+    let _one_at_a_time = lock.lock().unwrap_or_else(PoisonError::into_inner);
     let Some(meta) = read_meta(root, aid) else {
         return Err("io: no download in progress".into());
     };
@@ -293,6 +449,9 @@ fn hash_file(path: &Path) -> io::Result<String> {
 /// Check the whole part and move it to `downloads`. Returns the final path.
 pub(crate) fn finish_in(root: &Path, downloads: &Path, aid: &str) -> Result<String, String> {
     check_id(aid)?;
+    // Held through the hash too, so nothing can change the part under it.
+    let lock = id_lock(aid);
+    let _one_at_a_time = lock.lock().unwrap_or_else(PoisonError::into_inner);
     let Some(mut meta) = read_meta(root, aid) else {
         return Err("not_found".into());
     };
@@ -314,6 +473,7 @@ pub(crate) fn finish_in(root: &Path, downloads: &Path, aid: &str) -> Result<Stri
     let target = move_unique(&part, downloads, &safe_name(&meta.name))?;
     let shown = target.to_string_lossy().into_owned();
     meta.done_path = Some(shown.clone());
+    meta.done_mtime_ns = fs::metadata(&target).ok().as_ref().and_then(mtime_ns);
     write_meta(root, aid, &meta)?;
     Ok(shown)
 }
@@ -358,6 +518,8 @@ fn move_unique(from: &Path, dir: &Path, name: &str) -> Result<PathBuf, String> {
 /// Throw the part and the meta away. The user's copy in Downloads stays.
 pub(crate) fn discard_in(root: &Path, aid: &str) -> Result<(), String> {
     check_id(aid)?;
+    let lock = id_lock(aid);
+    let _one_at_a_time = lock.lock().unwrap_or_else(PoisonError::into_inner);
     for path in [
         part_path(root, aid),
         meta_path(root, aid),
@@ -435,7 +597,7 @@ fn strip_trailing(name: &str) -> &str {
     name.trim_end_matches([' ', '.'])
 }
 
-fn is_device_name(name: &str) -> bool {
+pub(crate) fn is_device_name(name: &str) -> bool {
     let head = name.split('.').next().unwrap_or("").trim_end_matches(' ');
     let upper = head.to_ascii_uppercase();
     match upper.as_str() {
@@ -482,12 +644,21 @@ fn truncate(name: String) -> String {
     }
 }
 
+/// Step 2: C0 controls and DEL, and the bidi controls that let a name such
+/// as `invoice\u{202E}fdp.exe` show as a PDF in a file manager.
+fn is_dropped(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x00..=0x1F | 0x7F | 0x200E | 0x200F | 0x202A..=0x202E | 0x2066..=0x2069
+    )
+}
+
 /// A file name safe on every desktop OS, from whatever the peer sent.
 pub(crate) fn safe_name(raw: &str) -> String {
     let base = raw.rsplit(['/', '\\']).next().unwrap_or("");
     let cleaned: String = base
         .chars()
-        .filter(|c| !matches!(*c as u32, 0x00..=0x1F | 0x7F))
+        .filter(|c| !is_dropped(*c))
         .map(|c| match c {
             ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
             other => other,
@@ -506,8 +677,20 @@ pub(crate) fn safe_name(raw: &str) -> String {
 
 // ── Commands (§1.6) ────────────────────────────────────────────────────
 
-#[tauri::command(async)]
-pub fn received_file_begin(
+/// Runs a command's disk work on the blocking pool. Every call takes its
+/// id's lock, and a finish holds that lock while it hashes up to 2 GiB.
+/// The async runtime has one worker per core: a call waiting there for the
+/// lock would stall the other commands and events queued on that worker.
+async fn off_runtime<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|e| format!("io: {e}"))?
+}
+
+#[tauri::command]
+pub async fn received_file_begin(
     app: AppHandle,
     artifact_id: String,
     session_id: String,
@@ -516,41 +699,44 @@ pub fn received_file_begin(
     sha256: String,
 ) -> Result<FileStatus, String> {
     let root = received_root(&app)?;
-    begin_in(
-        &root,
-        &artifact_id,
-        &session_id,
-        &name,
-        size,
-        &sha256,
-        SystemTime::now(),
-    )
+    // Known before any byte moves, not after the whole file has arrived.
+    downloads_dir().ok_or_else(|| "io: no Downloads folder".to_string())?;
+    off_runtime(move || {
+        begin_in(
+            &root,
+            &artifact_id,
+            &session_id,
+            &name,
+            size,
+            &sha256,
+            SystemTime::now(),
+        )
+    })
+    .await
 }
 
-#[tauri::command(async)]
-pub fn received_file_append(
+#[tauri::command]
+pub async fn received_file_append(
     app: AppHandle,
     artifact_id: String,
     offset: u64,
     data_b64: String,
 ) -> Result<u64, String> {
     let root = received_root(&app)?;
-    append_in(&root, &artifact_id, offset, &data_b64)
+    off_runtime(move || append_in(&root, &artifact_id, offset, &data_b64)).await
 }
 
 #[tauri::command]
 pub async fn received_file_finish(app: AppHandle, artifact_id: String) -> Result<String, String> {
     let root = received_root(&app)?;
-    let downloads = dirs::download_dir().ok_or_else(|| "io: no Downloads folder".to_string())?;
-    tauri::async_runtime::spawn_blocking(move || finish_in(&root, &downloads, &artifact_id))
-        .await
-        .map_err(|e| format!("io: {e}"))?
+    let downloads = downloads_dir().ok_or_else(|| "io: no Downloads folder".to_string())?;
+    off_runtime(move || finish_in(&root, &downloads, &artifact_id)).await
 }
 
-#[tauri::command(async)]
-pub fn received_file_discard(app: AppHandle, artifact_id: String) -> Result<(), String> {
+#[tauri::command]
+pub async fn received_file_discard(app: AppHandle, artifact_id: String) -> Result<(), String> {
     let root = received_root(&app)?;
-    discard_in(&root, &artifact_id)
+    off_runtime(move || discard_in(&root, &artifact_id)).await
 }
 
 #[cfg(test)]
@@ -631,6 +817,79 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[test]
+    fn received_begin_needs_room_for_the_rest_plus_a_margin() {
+        let tmp = TempDir::new("space");
+        let root = tmp.0.join("received");
+        let file = Wanted {
+            session_id: "sess-1:mch_1a2b3c",
+            name: "hi.txt",
+            size: 2,
+            sha256: HI_SHA,
+        };
+        let now = SystemTime::now();
+        let begin_on = |free: fn(&Path) -> Option<u64>| begin_with(&root, AID, &file, now, free);
+        // A fresh file needs its whole size plus 256 MiB.
+        assert_eq!(
+            begin_on(|_| Some(2 + SPACE_MARGIN - 1)),
+            Err("no_space".into())
+        );
+        assert_eq!(
+            begin_on(|_| Some(2 + SPACE_MARGIN)),
+            Ok(FileStatus::new("none", 0))
+        );
+        // A resume needs only what is still to come.
+        append_in(&root, AID, 0, &b64(b"h")).unwrap();
+        assert_eq!(
+            begin_on(|_| Some(1 + SPACE_MARGIN - 1)),
+            Err("no_space".into())
+        );
+        assert_eq!(part_len(&root, AID), Some(1), "the part is kept for Retry");
+        assert_eq!(
+            begin_on(|_| Some(1 + SPACE_MARGIN)),
+            Ok(FileStatus::new("partial", 1))
+        );
+        // No answer from the OS: the writes report no_space themselves.
+        assert_eq!(begin_on(|_| None), Ok(FileStatus::new("partial", 1)));
+        // Nothing left to fetch needs no room at all.
+        append_in(&root, AID, 1, &b64(b"i")).unwrap();
+        assert_eq!(begin_on(|_| Some(0)), Ok(FileStatus::new("partial", 2)));
+        finish_in(&root, &tmp.0.join("Downloads"), AID).unwrap();
+        assert_eq!(begin_on(|_| Some(0)), Ok(FileStatus::new("received", 2)));
+        // Another file under the id starts over and needs its whole size.
+        let other = Wanted {
+            sha256: &"1".repeat(64),
+            ..file
+        };
+        assert_eq!(
+            begin_with(&root, AID, &other, now, |_| Some(SPACE_MARGIN + 1)),
+            Err("no_space".into())
+        );
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn free_space_reads_the_volume() {
+        let tmp = TempDir::new("free");
+        assert!(free_space(&tmp.0).is_some_and(|n| n > 0));
+        assert_eq!(free_space(&tmp.0.join("missing")), None);
+    }
+
+    #[test]
+    fn downloads_falls_back_to_home_downloads() {
+        let (xdg, home) = (PathBuf::from("/x/dl"), PathBuf::from("/home/u"));
+        assert_eq!(
+            downloads_from(Some(xdg.clone()), Some(home.clone())),
+            Some(xdg)
+        );
+        // Linux without ~/.config/user-dirs.dirs: dirs reports no Downloads.
+        assert_eq!(
+            downloads_from(None, Some(home)),
+            Some(PathBuf::from("/home/u/Downloads"))
+        );
+        assert_eq!(downloads_from(None, None), None);
+    }
+
     #[test]
     fn received_dir_and_files_are_private() {
         use std::os::unix::fs::PermissionsExt;
@@ -728,6 +987,180 @@ mod tests {
     }
 
     #[test]
+    fn received_copy_replaced_at_its_path_is_not_received() {
+        let tmp = TempDir::new("replaced");
+        let root = tmp.0.join("received");
+        let downloads = tmp.0.join("Downloads");
+        let receive = || {
+            begin(&root, "app-release.apk", 2, HI_SHA).unwrap();
+            append_in(&root, AID, 0, &b64(b"hi")).unwrap();
+            PathBuf::from(finish_in(&root, &downloads, AID).unwrap())
+        };
+        let done = receive();
+        assert_eq!(status_in(&root, AID), FileStatus::new("received", 2));
+
+        // Moved away, and another build lands at the freed name.
+        for other in [&b"new build"[..], b"ho"] {
+            fs::remove_file(&done).unwrap();
+            fs::write(&done, other).unwrap();
+            let file = File::options().write(true).open(&done).unwrap();
+            file.set_modified(SystemTime::now() - Duration::from_secs(3600))
+                .unwrap();
+            drop(file);
+            assert_eq!(
+                status_in(&root, AID),
+                FileStatus::new("none", 0),
+                "{other:?}"
+            );
+            assert_eq!(done_path_in(&root, AID), None);
+            // This card fetches its own bytes again, beside the other file.
+            assert_eq!(
+                begin(&root, "app-release.apk", 2, HI_SHA),
+                Ok(FileStatus::new("none", 0))
+            );
+            append_in(&root, AID, 0, &b64(b"hi")).unwrap();
+            let again = PathBuf::from(finish_in(&root, &downloads, AID).unwrap());
+            assert_ne!(again, done);
+            assert_eq!(fs::read(&again).unwrap(), b"hi");
+            assert_eq!(status_in(&root, AID), FileStatus::new("received", 2));
+            fs::remove_file(again).unwrap();
+        }
+
+        // A meta from before the stamp still trusts a file of the right size.
+        let mut meta = read_meta(&root, AID).unwrap();
+        fs::write(&done, b"hi").unwrap();
+        meta.done_path = Some(done.to_string_lossy().into_owned());
+        let mut old = serde_json::to_value(&meta).unwrap();
+        old.as_object_mut().unwrap().remove("doneMtimeNs");
+        fs::write(meta_path(&root, AID), old.to_string()).unwrap();
+        assert_eq!(status_in(&root, AID), FileStatus::new("received", 2));
+        fs::write(&done, b"three").unwrap();
+        assert_eq!(status_in(&root, AID), FileStatus::new("none", 0));
+    }
+
+    /// Run `work` on `n` threads released together; their results in order.
+    fn together<T: Send>(n: usize, work: impl Fn(usize) -> T + Sync) -> Vec<T> {
+        let start = std::sync::Barrier::new(n);
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..n)
+                .map(|i| {
+                    let (start, work) = (&start, &work);
+                    scope.spawn(move || {
+                        start.wait();
+                        work(i)
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        })
+    }
+
+    fn sha_hex(bytes: &[u8]) -> String {
+        Sha256::digest(bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+
+    #[test]
+    fn received_calls_on_one_id_never_interleave() {
+        let tmp = TempDir::new("serial");
+        let root = tmp.0.join("received");
+        let downloads = tmp.0.join("Downloads");
+        let chunk = vec![7u8; 1024 * 1024];
+        let body = chunk.repeat(4);
+        let sha = sha_hex(&body);
+        let size = body.len() as u64;
+        for round in 0..5 {
+            // Two windows append the same chunk: one lands, once.
+            discard_in(&root, AID).unwrap();
+            begin(&root, "big.bin", size, &sha).unwrap();
+            let wrote = together(8, |_| append_in(&root, AID, 0, &b64(&chunk)));
+            let landed = wrote.iter().filter(|r| r.is_ok()).count();
+            assert_eq!(landed, 1, "round {round}: {wrote:?}");
+            assert_eq!(part_len(&root, AID), Some(chunk.len() as u64));
+            for offset in 1..4u64 {
+                append_in(&root, AID, offset * chunk.len() as u64, &b64(&chunk)).unwrap();
+            }
+
+            // Two finishes, with a begin between them: all see one file.
+            let results = together(4, |i| {
+                if i == 3 {
+                    begin(&root, "big.bin", size, &sha).map(|_| String::new())
+                } else {
+                    finish_in(&root, &downloads, AID)
+                }
+            });
+            let done = results[0].clone().unwrap();
+            assert_eq!(results[1], Ok(done.clone()), "round {round}");
+            assert_eq!(results[2], Ok(done.clone()), "round {round}");
+            assert!(results[3].is_ok(), "round {round}: {:?}", results[3]);
+            assert!(
+                !part_path(&root, AID).exists(),
+                "round {round}: orphan part"
+            );
+            assert_eq!(status_in(&root, AID), FileStatus::new("received", size));
+            assert_eq!(fs::read_dir(&downloads).unwrap().count(), 1);
+            fs::remove_file(done).unwrap();
+        }
+    }
+
+    /// A call that waits for its id's lock waits on the blocking pool, so
+    /// the runtime that drives the commands keeps running other tasks.
+    #[test]
+    fn received_calls_waiting_on_a_busy_id_leave_the_runtime_free() {
+        // Its own id: the other tests share AID and run in parallel.
+        const BUSY_AID: &str = "fedcba9876543210fedcba9876543210";
+        type Call = Box<dyn FnOnce() -> Result<(), String> + Send>;
+        let tmp = TempDir::new("runtime");
+        let root = tmp.0.join("received");
+        let calls: Vec<(&str, Call)> = vec![
+            ("begin", {
+                let root = root.clone();
+                Box::new(move || {
+                    begin_in(&root, BUSY_AID, "s", "hi.txt", 2, HI_SHA, SystemTime::now()).map(drop)
+                })
+            }),
+            ("append", {
+                let root = root.clone();
+                Box::new(move || append_in(&root, BUSY_AID, 0, &b64(b"h")).map(drop))
+            }),
+            ("discard", {
+                let root = root.clone();
+                Box::new(move || discard_in(&root, BUSY_AID))
+            }),
+        ];
+
+        // A finish hashing a large part holds the id's lock this long.
+        let lock = id_lock(BUSY_AID);
+        let held = lock.lock().unwrap();
+        let mut runs = Vec::new();
+        for (what, call) in calls {
+            let (tx, rx) = std::sync::mpsc::channel();
+            // One worker thread: what a busy pool leaves the next task.
+            let runtime = std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_time()
+                    .build()
+                    .unwrap();
+                rt.block_on(async move {
+                    let call = tokio::spawn(off_runtime(call));
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    let _ = tx.send(call.is_finished());
+                    call.await.unwrap()
+                })
+            });
+            runs.push((what, rx.recv_timeout(Duration::from_secs(2)), runtime));
+        }
+        drop(held);
+        for (what, still_waiting, runtime) in runs {
+            runtime.join().unwrap().ok();
+            // Ok(true) would mean the call never reached the lock.
+            assert_eq!(still_waiting, Ok(false), "{what} stalled the runtime");
+        }
+    }
+
+    #[test]
     fn received_finish_hash_mismatch_deletes_part() {
         let tmp = TempDir::new("mismatch");
         let root = tmp.0.join("received");
@@ -798,6 +1231,7 @@ mod tests {
                 "a".repeat(120),
             ),
             ("name with spaces.zip".into(), "name with spaces.zip".into()),
+            ("a\u{202E}fdp.exe".into(), "afdp.exe".into()),
             (
                 format!("CON{}y.log", " ".repeat(150)),
                 format!("_CON{}.log", " ".repeat(112)),
@@ -808,6 +1242,25 @@ mod tests {
             assert_eq!(&got, want, "{input:?}");
             assert_eq!(safe_name(&got), got, "not idempotent for {input:?}");
             assert!(got.len() <= MAX_NAME_BYTES);
+        }
+    }
+
+    #[test]
+    fn safe_name_drops_every_bidi_control() {
+        let bidi = [0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E]
+            .into_iter()
+            .chain(0x2066..=0x2069);
+        for code in bidi {
+            let mark = char::from_u32(code).unwrap();
+            assert_eq!(
+                safe_name(&format!("in{mark}voice.pdf")),
+                "invoice.pdf",
+                "{code:X}"
+            );
+        }
+        // Neighbours of the ranges are ordinary text and stay.
+        for kept in ['\u{200D}', '\u{2029}', '\u{202F}', '\u{2065}', '\u{206A}'] {
+            assert_eq!(safe_name(&format!("a{kept}b")), format!("a{kept}b"));
         }
     }
 

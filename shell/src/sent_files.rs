@@ -1,12 +1,14 @@
 //! A file the agent sent, as this computer sees it (TD-5144, design §7.1).
 //!
 //! For a session on this computer the daemon's own copy sits at
-//! `<data_dir>/sessions/<sid>/artifacts/<aid>/<name>`, alone in its folder;
-//! the card opens it there, shows it in its folder or saves a copy. For a
-//! session on another computer the file is downloaded first
-//! (`received_files.rs`) and these commands act on the copy in Downloads.
+//! `<data_dir>/sessions/<sid>/artifacts/<aid>/<name>`, the name the daemon
+//! recorded in `<sid>/artifacts.json`; the card opens it there, shows it in
+//! its folder or saves a copy. For a session on another computer the file
+//! is downloaded first (`received_files.rs`) and these commands act on the
+//! copy in Downloads.
 //! Every command takes ids, never a path, so the webview cannot point the
-//! opener at anything else.
+//! opener at anything else, and Open refuses (`not_openable`) any kind
+//! outside the allowlist, so a UI slip cannot run a program either.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -35,6 +37,24 @@ impl FileStatus {
     }
 }
 
+/// The only kinds Open hands to the OS on the desktop. Anything else, an
+/// agent-made script or program above all, gets Show in folder and Save a
+/// copy; an allowlist, because a list of program types is never complete
+/// (.js, .vbs, .hta, .lnk, .url, .py ... all run on a double-click).
+const OPENABLE_EXTS: [&str; 27] = [
+    ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".mp4", ".webm", ".mov", ".mkv",
+    ".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac", ".txt", ".md", ".csv", ".log", ".json",
+    ".zip", ".tar", ".gz", ".tgz", ".7z",
+];
+
+/// The extension the OS acts on is taken after trailing spaces and dots
+/// are gone, because Windows drops them when it opens the file.
+pub(crate) fn is_openable(name: &str) -> bool {
+    let name = name.trim_end_matches([' ', '.']);
+    name.rfind('.')
+        .is_some_and(|at| OPENABLE_EXTS.contains(&name[at..].to_ascii_lowercase().as_str()))
+}
+
 /// `uuid4().hex`: 32 lowercase hex characters (§1.3).
 fn is_artifact_id(id: &str) -> bool {
     id.len() == 32
@@ -52,9 +72,30 @@ pub(crate) fn check_id(id: &str) -> Result<(), String> {
     }
 }
 
-/// The daemon's copy: the one regular file in the artifact's folder, still
-/// inside that folder once every link is resolved. A bridged session id
-/// (with ':') never has a folder here, so it is never looked up.
+/// The name the daemon recorded for this sent file in its session index,
+/// checked as its own chunk reader checks it (`artifacts.py`,
+/// `open_sent_file`): a `sent_file` row kept in the session dir under
+/// `artifacts/<aid>`, whose name is already a safe name.
+fn recorded_name(session_dir: &Path, artifact_id: &str) -> Option<String> {
+    let raw = fs::read(session_dir.join("artifacts.json")).ok()?;
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&raw).ok()?;
+    let row = rows
+        .iter()
+        .find(|row| row.get("id").and_then(serde_json::Value::as_str) == Some(artifact_id))?;
+    let field = |key: &str| row.get(key).and_then(serde_json::Value::as_str);
+    let name = field("name")?;
+    let bytes_path = format!("artifacts/{artifact_id}");
+    let is_sent = field("kind") == Some("sent_file")
+        && field("location") == Some("session")
+        && field("path") == Some(bytes_path.as_str());
+    (is_sent && !name.is_empty() && safe_name(name) == name).then(|| name.to_string())
+}
+
+/// The daemon's copy: `<aid>/<recorded name>`, a regular file still inside
+/// the artifact's folder once every link is resolved. Found by name, so
+/// whatever else lands in the folder (Finder's `.DS_Store`, an editor's lock
+/// file) never hides it. A bridged session id (with ':') never has a folder
+/// here, so it is never looked up.
 pub(crate) fn locate_local_in(
     data_dir: &Path,
     session_id: &str,
@@ -64,19 +105,12 @@ pub(crate) fn locate_local_in(
         return None;
     }
     let sid = safe_session_id(session_id)?;
-    let dir = data_dir
-        .join("sessions")
-        .join(sid)
-        .join("artifacts")
-        .join(artifact_id);
+    let session_dir = data_dir.join("sessions").join(sid);
+    let dir = session_dir.join("artifacts").join(artifact_id);
     if !fs::symlink_metadata(&dir).ok()?.file_type().is_dir() {
         return None;
     }
-    let mut entries = fs::read_dir(&dir).ok()?;
-    let only = entries.next()?.ok()?.path();
-    if entries.next().is_some() {
-        return None;
-    }
+    let only = dir.join(recorded_name(&session_dir, artifact_id)?);
     if !fs::symlink_metadata(&only).ok()?.file_type().is_file() {
         return None;
     }
@@ -119,6 +153,68 @@ pub(crate) fn target_with(
     received
         .and_then(|root| received_files::done_path_in(root, artifact_id))
         .ok_or_else(|| "not_found".to_string())
+}
+
+/// What Open may hand the OS opener: the card's file, when it is a kind
+/// the desktop opens.
+pub(crate) fn open_target_with(
+    data_dir: &Path,
+    received: Option<&Path>,
+    session_id: &str,
+    artifact_id: &str,
+) -> Result<PathBuf, String> {
+    let path = target_with(data_dir, received, session_id, artifact_id)?;
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if !is_openable(name) {
+        return Err("not_openable".into());
+    }
+    Ok(for_opener(path))
+}
+
+/// On Windows `fs::canonicalize` gives `\\?\C:\...`, and many apps that
+/// ShellExecuteExW hands that form to as `%1` (Photos, Office, older PDF
+/// readers) cannot open it, so the opener gets the plain form.
+fn for_opener(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    if let Some(plain) = path.to_str().and_then(without_verbatim) {
+        return PathBuf::from(plain);
+    }
+    path
+}
+
+/// The plain form of a verbatim path (`\\?\C:\...` or `\\?\UNC\...`), when it
+/// names the same file: every part a valid Win32 name (no `.`/`..`, no
+/// reserved character, no trailing space or dot, no device name) and the
+/// whole under MAX_PATH. The rule dunce uses, kept here as a string test.
+#[cfg(any(windows, test))]
+fn without_verbatim(path: &str) -> Option<String> {
+    // The parts after the drive or the `\\server\share` must all be names.
+    let (plain, names, min_names) = if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+        (format!(r"\\{rest}"), rest, 2)
+    } else {
+        let rest = path.strip_prefix(r"\\?\")?;
+        let drive = rest.as_bytes();
+        if drive.len() < 3 || !drive[0].is_ascii_alphabetic() || &drive[1..3] != b":\\" {
+            return None;
+        }
+        (rest.to_string(), &rest[3..], 1)
+    };
+    let parts: Vec<&str> = names.split('\\').collect();
+    let valid = |part: &str| {
+        !part.is_empty()
+            && part != "."
+            && part != ".."
+            && !part.ends_with([' ', '.'])
+            && !part.chars().any(|c| {
+                matches!(
+                    c,
+                    '\0'..='\x1F' | '<' | '>' | ':' | '"' | '/' | '|' | '?' | '*'
+                )
+            })
+            && !received_files::is_device_name(part)
+    };
+    let fits = plain.encode_utf16().count() < 260;
+    (parts.len() >= min_names && parts.iter().all(|p| valid(p)) && fits).then_some(plain)
 }
 
 fn target(app: &AppHandle, session_id: &str, artifact_id: &str) -> Result<PathBuf, String> {
@@ -165,7 +261,13 @@ pub fn sent_file_open(
     session_id: String,
     artifact_id: String,
 ) -> Result<(), String> {
-    let path = target(&app, &session_id, &artifact_id)?;
+    let received = received_files::received_root(&app).ok();
+    let path = open_target_with(
+        &daemon::data_dir(),
+        received.as_deref(),
+        &session_id,
+        &artifact_id,
+    )?;
     app.opener()
         .open_path(path.to_string_lossy(), None::<&str>)
         .map_err(|e| format!("no_app: {e}"))
@@ -194,7 +296,7 @@ pub async fn sent_file_save_as(
     let source = target(&app, &session_id, &artifact_id)?;
     tauri::async_runtime::spawn_blocking(move || {
         let mut dialog = app.dialog().file().set_file_name(safe_name(&name));
-        if let Some(dir) = dirs::download_dir() {
+        if let Some(dir) = received_files::downloads_dir().filter(|dir| dir.is_dir()) {
             dialog = dialog.set_directory(dir);
         }
         let Some(chosen) = dialog.blocking_save_file() else {
@@ -239,16 +341,61 @@ mod tests {
         dir
     }
 
+    /// Add the daemon's index row for a sent file (`artifacts.py`).
+    fn record(data: &Path, sid: &str, aid: &str, name: &str) {
+        let index = data.join("sessions").join(sid).join("artifacts.json");
+        let mut rows: Vec<serde_json::Value> = fs::read(&index)
+            .map(|raw| serde_json::from_slice(&raw).unwrap())
+            .unwrap_or_default();
+        rows.push(serde_json::json!({
+            "id": aid, "session_id": sid, "mime": "application/octet-stream",
+            "path": format!("artifacts/{aid}"), "title": name, "location": "session",
+            "kind": "sent_file", "name": name, "size": 2, "sha256": HI_SHA,
+            "caption": null, "tool_call_id": "call_1",
+        }));
+        fs::write(index, serde_json::to_vec(&rows).unwrap()).unwrap();
+    }
+
+    /// What `send_file` leaves on disk: the copy in its folder, and its row.
+    fn sent(data: &Path, sid: &str, aid: &str, name: &str) -> PathBuf {
+        let dir = artifact_dir(data, sid, aid);
+        fs::write(dir.join(name), b"hi").unwrap();
+        record(data, sid, aid, name);
+        dir.join(name)
+    }
+
+    #[test]
+    fn locate_ignores_litter_beside_the_file() {
+        let tmp = TempDir::new("litter");
+        let file = sent(&tmp.0, "sess-1", AID, "report.docx");
+        let dir = file.parent().unwrap();
+        // Finder, Office, LibreOffice and Explorer write these beside a file.
+        for litter in [
+            ".DS_Store",
+            "._report.docx",
+            "~$report.docx",
+            ".~lock.report.docx#",
+            "Thumbs.db",
+            "desktop.ini",
+        ] {
+            fs::write(dir.join(litter), b"x").unwrap();
+        }
+        fs::create_dir(dir.join("nested")).unwrap();
+        let found = fs::canonicalize(&file).unwrap();
+        assert_eq!(locate_local_in(&tmp.0, "sess-1", AID), Some(found.clone()));
+        assert_eq!(target_with(&tmp.0, None, "sess-1", AID), Ok(found));
+        assert_eq!(
+            status_with(&tmp.0, None, "sess-1", AID),
+            Ok(FileStatus::new("local", 2))
+        );
+    }
+
     #[test]
     fn locate_finds_single_regular_file() {
         let tmp = TempDir::new("locate");
-        let dir = artifact_dir(&tmp.0, "sess-1", AID);
-        fs::write(dir.join("app-release.apk"), b"hi").unwrap();
+        let file = sent(&tmp.0, "sess-1", AID, "app-release.apk");
         let found = locate_local_in(&tmp.0, "sess-1", AID).unwrap();
-        assert_eq!(
-            found,
-            fs::canonicalize(dir.join("app-release.apk")).unwrap()
-        );
+        assert_eq!(found, fs::canonicalize(file).unwrap());
         assert_eq!(target_with(&tmp.0, None, "sess-1", AID), Ok(found));
     }
 
@@ -257,37 +404,64 @@ mod tests {
         let tmp = TempDir::new("refuse");
         let outside = tmp.0.join("secret.txt");
         fs::write(&outside, b"not sent").unwrap();
+        let ids = (0..8).map(|n| format!("{n:032x}")).collect::<Vec<_>>();
 
-        // Two entries: not the daemon's layout.
-        let two = artifact_dir(&tmp.0, "sess-1", AID);
-        fs::write(two.join("a.txt"), b"a").unwrap();
-        fs::write(two.join("b.txt"), b"b").unwrap();
-        assert_eq!(locate_local_in(&tmp.0, "sess-1", AID), None);
+        // No index row, or a row that is not a sent file kept here.
+        fs::write(artifact_dir(&tmp.0, "sess-1", &ids[0]).join("a.txt"), b"a").unwrap();
+        assert_eq!(locate_local_in(&tmp.0, "sess-1", &ids[0]), None);
+        let dir = artifact_dir(&tmp.0, "sess-1", &ids[1]);
+        fs::write(dir.join("a.txt"), b"a").unwrap();
+        let index = tmp.0.join("sessions/sess-1/artifacts.json");
+        for (key, value) in [
+            ("kind", "artifact"),
+            ("location", "workspace"),
+            ("path", "artifacts/elsewhere"),
+        ] {
+            let mut row = serde_json::json!({
+                "id": ids[1], "path": format!("artifacts/{}", ids[1]),
+                "location": "session", "kind": "sent_file", "name": "a.txt",
+            });
+            row[key] = value.into();
+            fs::write(&index, serde_json::to_vec(&[row]).unwrap()).unwrap();
+            assert_eq!(locate_local_in(&tmp.0, "sess-1", &ids[1]), None, "{key}");
+        }
+        fs::write(&index, b"not json").unwrap();
+        assert_eq!(locate_local_in(&tmp.0, "sess-1", &ids[1]), None);
+        fs::remove_file(&index).unwrap();
 
-        // A folder in place of the file.
-        let other = "fedcba9876543210fedcba9876543210";
-        fs::create_dir_all(artifact_dir(&tmp.0, "sess-1", other).join("nested")).unwrap();
-        assert_eq!(locate_local_in(&tmp.0, "sess-1", other), None);
+        // A recorded name that is not a safe name never reaches the disk.
+        for (aid, name) in [(&ids[2], "../../secret.txt"), (&ids[3], "a:b.txt")] {
+            artifact_dir(&tmp.0, "sess-1", aid);
+            record(&tmp.0, "sess-1", aid, name);
+            assert_eq!(locate_local_in(&tmp.0, "sess-1", aid), None, "{name:?}");
+        }
+
+        // A folder in place of the file; a recorded name that is missing.
+        fs::create_dir_all(artifact_dir(&tmp.0, "sess-1", &ids[4]).join("nested")).unwrap();
+        record(&tmp.0, "sess-1", &ids[4], "nested");
+        assert_eq!(locate_local_in(&tmp.0, "sess-1", &ids[4]), None);
+        let gone = sent(&tmp.0, "sess-1", &ids[5], "gone.txt");
+        fs::remove_file(gone).unwrap();
+        assert_eq!(locate_local_in(&tmp.0, "sess-1", &ids[5]), None);
 
         #[cfg(unix)]
         {
-            let link = "11111111111111111111111111111111";
-            let dir = artifact_dir(&tmp.0, "sess-1", link);
+            let dir = artifact_dir(&tmp.0, "sess-1", &ids[6]);
             std::os::unix::fs::symlink(&outside, dir.join("secret.txt")).unwrap();
-            assert_eq!(locate_local_in(&tmp.0, "sess-1", link), None);
+            record(&tmp.0, "sess-1", &ids[6], "secret.txt");
+            assert_eq!(locate_local_in(&tmp.0, "sess-1", &ids[6]), None);
 
             // The artifact folder itself a link out.
             let base = tmp.0.join("sessions/sess-1/artifacts");
-            let linked = "22222222222222222222222222222222";
             let elsewhere = tmp.0.join("elsewhere");
             fs::create_dir_all(&elsewhere).unwrap();
             fs::write(elsewhere.join("x.txt"), b"x").unwrap();
-            std::os::unix::fs::symlink(&elsewhere, base.join(linked)).unwrap();
-            assert_eq!(locate_local_in(&tmp.0, "sess-1", linked), None);
+            std::os::unix::fs::symlink(&elsewhere, base.join(&ids[7])).unwrap();
+            record(&tmp.0, "sess-1", &ids[7], "x.txt");
+            assert_eq!(locate_local_in(&tmp.0, "sess-1", &ids[7]), None);
         }
 
-        let good = artifact_dir(&tmp.0, "sess-2", AID);
-        fs::write(good.join("hi.txt"), b"hi").unwrap();
+        sent(&tmp.0, "sess-2", AID, "hi.txt");
         assert!(locate_local_in(&tmp.0, "sess-2", AID).is_some());
         for bad in ["", "../x", "0123456789ABCDEF0123456789ABCDEF", "0123"] {
             assert_eq!(locate_local_in(&tmp.0, "sess-2", bad), None, "{bad:?}");
@@ -312,8 +486,7 @@ mod tests {
         let received = tmp.0.join("received");
         let downloads = tmp.0.join("Downloads");
 
-        let local = artifact_dir(&data, "sess-1", AID);
-        fs::write(local.join("hi.txt"), b"hi").unwrap();
+        sent(&data, "sess-1", AID, "hi.txt");
         assert_eq!(
             status_with(&data, Some(&received), "sess-1", AID),
             Ok(FileStatus::new("local", 2))
@@ -353,6 +526,86 @@ mod tests {
             status_with(&data, None, bridged, AID),
             Ok(FileStatus::new("none", 0))
         );
+    }
+
+    #[test]
+    fn open_refuses_every_kind_outside_the_allowlist() {
+        let tmp = TempDir::new("openable");
+        let plain = "pdf png jpg jpeg gif webp bmp mp4 webm mov mkv mp3 wav m4a ogg flac aac \
+                     txt md csv log json zip tar gz tgz 7z";
+        let mut allowed: Vec<String> = plain.split_whitespace().map(|e| format!("a.{e}")).collect();
+        // Lowercased, and taken after Windows drops trailing spaces and dots.
+        for name in ["Report.PDF", "report.pdf. . ", "logs.tar.gz", ".pdf"] {
+            allowed.push(name.into());
+        }
+        let programs = "setup.exe fix.js run.vbs setup.hta x.scr go.lnk site.url tool.py \
+                        app-release.apk run.sh x.desktop page.html img.svg x.pdf.exe pdf \
+                        a\u{202E}fdp.exe";
+        let mut refused: Vec<String> = programs.split_whitespace().map(String::from).collect();
+        for name in ["x.exe. .", "x.p df", "x.pdf\u{2007}"] {
+            refused.push(name.into());
+        }
+        for (n, name) in allowed.iter().chain(refused.iter()).enumerate() {
+            let want = allowed.contains(name);
+            assert_eq!(is_openable(name), want, "{name:?}");
+            // Through the door, for every name the daemon could record.
+            if safe_name(name) != *name {
+                continue;
+            }
+            let aid = format!("{n:032x}");
+            sent(&tmp.0, "sess-1", &aid, name);
+            let got = open_target_with(&tmp.0, None, "sess-1", &aid);
+            if want {
+                assert!(got.is_ok(), "{name:?} should open: {got:?}");
+            } else {
+                assert_eq!(got, Err("not_openable".into()), "{name:?}");
+            }
+        }
+        // Lookup errors still come first.
+        assert_eq!(
+            open_target_with(&tmp.0, None, "sess-1", "nope"),
+            Err("bad_id".into())
+        );
+        assert_eq!(
+            open_target_with(&tmp.0, None, "sess-9", AID),
+            Err("not_found".into())
+        );
+    }
+
+    #[test]
+    fn verbatim_paths_reach_the_opener_in_plain_form() {
+        let plain = |p: &str| without_verbatim(p);
+        assert_eq!(
+            plain(r"\\?\C:\Users\me\AppData\Roaming\tst-desk\sessions\s\artifacts\a\report.pdf"),
+            Some(r"C:\Users\me\AppData\Roaming\tst-desk\sessions\s\artifacts\a\report.pdf".into())
+        );
+        assert_eq!(
+            plain(r"\\?\UNC\server\share\tst-desk\résumé.pdf"),
+            Some(r"\\server\share\tst-desk\résumé.pdf".into())
+        );
+        let long = format!(r"\\?\C:\{}\x.pdf", "d".repeat(260));
+        // Kept verbatim: the plain form would name another file, or none.
+        for keep in [
+            r"C:\plain\report.pdf",
+            r"\\?\C:",
+            r"\\?\C:\",
+            r"\\?\C:\dir\CON.txt",
+            r"\\?\C:\dir\lpt1",
+            r"\\?\C:\dir\name.",
+            r"\\?\C:\dir\a b \x.pdf",
+            r"\\?\C:\dir\..\x.pdf",
+            r"\\?\C:\dir\.\x.pdf",
+            r"\\?\C:\dir\\x.pdf",
+            r"\\?\C:\dir\a?b.pdf",
+            r"\\?\C:\dir/x.pdf",
+            r"\\?\C:\dir\x.pdf\",
+            r"\\?\Volume{0f8c2a4e-1b3d-4c5e-8f90-123456789abc}\x.pdf",
+            r"\\?\GLOBALROOT\Device\HarddiskVolume1\x.pdf",
+            r"\\?\UNC\server",
+            long.as_str(),
+        ] {
+            assert_eq!(plain(keep), None, "{keep:?}");
+        }
     }
 
     #[test]
