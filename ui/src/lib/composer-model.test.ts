@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 //
 // The composer keeps the draft full width. Plan and the model dropdowns
-// sit on a bar under the text, with Send on the right. The title bar keeps
-// the live model readout.
+// sit on a bar under the text, with Send on the right. The title bar does
+// not repeat the model name.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mount, tick, unmount } from "svelte";
@@ -111,7 +111,7 @@ describe("composer model controls", () => {
 		expect(tier?.options[2]?.disabled).toBe(true);
 	});
 
-	it("leaves the tier picker out of the title bar and keeps the live model there", async () => {
+	it("leaves the model name out of the title bar", async () => {
 		app = mount(TitleBar, {
 			target: document.body,
 			props: { pickDirectory: async () => null },
@@ -124,8 +124,7 @@ describe("composer model controls", () => {
 		const labels = [...document.querySelectorAll("button")].map((el) => el.textContent?.trim());
 		expect(labels).not.toContain("Plan");
 		expect(labels.some((label) => label?.includes("brain"))).toBe(false);
-		expect(document.querySelector('[aria-label="Live model"]')?.textContent).toBe(
-			"kimi · 192.168.1.49:4000",
-		);
+		expect(document.querySelector('[aria-label="Live model"]')).toBeNull();
+		expect(document.body.textContent).not.toContain("192.168.1.49:4000");
 	});
 });

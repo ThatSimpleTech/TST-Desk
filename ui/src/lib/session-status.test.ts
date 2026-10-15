@@ -24,7 +24,6 @@ import {
   focusSession,
   followingRemoteSession,
   ingestEvent,
-  liveModelLabel,
   localWorkspacePath,
   openWorkspace,
   resetSession,
@@ -299,22 +298,6 @@ describe("tier state", () => {
     } as DaemonEventUnion);
     expect(session.preset).toBe("");
     expect(session.hosts).toEqual({});
-  });
-});
-
-describe("liveModelLabel", () => {
-  it("joins slug and host for the active tier", () => {
-    expect(
-      liveModelLabel("brain", { brain: "stealth/ox-alpha" }, { brain: "openrouter.ai" }),
-    ).toBe("stealth/ox-alpha · openrouter.ai");
-  });
-
-  it("shows the host alone when the slug is still unresolved", () => {
-    expect(liveModelLabel("brain", {}, { brain: "127.0.0.1:8002" })).toBe("127.0.0.1:8002");
-  });
-
-  it("does not invent a host from the slug", () => {
-    expect(liveModelLabel("brain", { brain: "stealth/ox-alpha" }, {})).toBe("stealth/ox-alpha");
   });
 });
 
