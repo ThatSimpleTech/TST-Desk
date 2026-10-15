@@ -9,6 +9,16 @@
 /** Vertical padding the composer textarea adds around one line of text. */
 export const COMPOSER_LINE_PADDING = 16;
 
+/**
+ * Dropdown label for a tier: the role, then the model that tier is actually
+ * running. `brain (moonshotai/kimi-k3)`. No parentheses until a model exists.
+ */
+export function tierMenuLabel(tier: string, slug: string | null | undefined): string {
+	const model = (slug ?? "").trim();
+	if (model === "") return tier;
+	return `${tier} (${model})`;
+}
+
 /** Width the draft has while the model controls share its row. */
 export function inlineDraftWidth(
 	entryWidth: number,
