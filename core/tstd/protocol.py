@@ -1095,6 +1095,27 @@ class OpenArtifact(ClientMessage):
     artifact_id: str = Field(min_length=1)
 
 
+# One ``artifact_chunk`` frame carries at most this many file bytes. As
+# base64 in JSON that is about 700 KB, under the 1 MiB frame limit every
+# websockets hop keeps by default (TD-5143).
+CHUNK_MAX = 524_288
+
+
+class ReadArtifactChunk(ClientMessage):
+    """Read part of a file the agent sent (TD-5143). Answered with ``artifact_chunk``.
+
+    Only ``kind == "sent_file"`` artifacts, by id. No path is accepted, so
+    this cannot become a "read anything" verb. ``length`` is capped at
+    ``CHUNK_MAX`` so one reply fits a websockets frame on every hop.
+    """
+
+    type: Literal["read_artifact_chunk"] = "read_artifact_chunk"
+    session_id: str = Field(min_length=1)
+    artifact_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    offset: int = Field(ge=0)
+    length: int = Field(default=CHUNK_MAX, ge=1, le=CHUNK_MAX)
+
+
 class DesignHitTest(ClientMessage):
     """Ask the last computer-use surface what is at a CSS-pixel point.
 
@@ -2456,12 +2477,24 @@ class LogTrimmed(DaemonEvent):
 
 
 class ArtifactEntry(BaseModel):
-    """One artifact on ``artifact_list`` (TD-3201). Path, not bytes."""
+    """One artifact on ``artifact_list`` (TD-3201). Path, not bytes.
+
+    ``kind == "sent_file"`` (TD-5143) is a copy the agent sent with
+    ``send_file``: it always carries ``name``, ``size``, ``sha256`` and
+    ``tool_call_id``, and its ``path`` is the folder ``artifacts/<id>``,
+    which clients never open. The bytes come from ``read_artifact_chunk``.
+    """
 
     artifact_id: str = Field(min_length=1)
     title: str
     mime: str
     path: str
+    kind: Literal["artifact", "sent_file"] = "artifact"
+    name: str | None = None
+    size: int | None = Field(default=None, ge=0)
+    sha256: str | None = None
+    caption: str | None = None
+    tool_call_id: str | None = None
 
 
 class ArtifactReady(DaemonEvent):
@@ -2469,6 +2502,7 @@ class ArtifactReady(DaemonEvent):
 
     Session-scoped: it rides the event log so attach can replay the
     notice.  ``list_artifacts`` is the source of truth after a trim.
+    The optional fields are the ``sent_file`` ones on ``ArtifactEntry``.
     """
 
     type: Literal["artifact_ready"] = "artifact_ready"
@@ -2477,6 +2511,12 @@ class ArtifactReady(DaemonEvent):
     title: str
     mime: str
     path: str
+    kind: Literal["artifact", "sent_file"] = "artifact"
+    name: str | None = None
+    size: int | None = Field(default=None, ge=0)
+    sha256: str | None = None
+    caption: str | None = None
+    tool_call_id: str | None = None
 
 
 class ArtifactList(DaemonEvent):
@@ -2492,6 +2532,7 @@ class Artifact(DaemonEvent):
     """Response to ``open_artifact`` (TD-3201): metadata and path.
 
     Connection-scoped.  Bytes stay on disk; the client opens the path.
+    The optional fields are the ``sent_file`` ones on ``ArtifactEntry``.
     """
 
     type: Literal["artifact"] = "artifact"
@@ -2501,6 +2542,31 @@ class Artifact(DaemonEvent):
     title: str
     mime: str
     path: str
+    kind: Literal["artifact", "sent_file"] = "artifact"
+    name: str | None = None
+    size: int | None = Field(default=None, ge=0)
+    sha256: str | None = None
+    caption: str | None = None
+    tool_call_id: str | None = None
+
+
+class ArtifactChunk(DaemonEvent):
+    """Bytes for ``read_artifact_chunk`` (TD-5143). Connection-scoped, never logged.
+
+    ``data_b64`` is exempt from the wire scrub; ``error_code`` set means
+    empty data. ``offset == size`` answers ``eof`` with no data.
+    """
+
+    type: Literal["artifact_chunk"] = "artifact_chunk"
+    seq: int = 1
+    session_id: str
+    artifact_id: str
+    offset: int = Field(ge=0)
+    size: int = Field(default=0, ge=0)
+    sha256: str = ""
+    data_b64: str = ""
+    eof: bool = False
+    error_code: str | None = None
 
 
 class Ping(BaseModel):
@@ -2969,6 +3035,7 @@ ClientMessageT = Annotated[
     | DeleteApiKey
     | ListArtifacts
     | OpenArtifact
+    | ReadArtifactChunk
     | DesignHitTest
     | CheckCuPermissions
     | ResetCuPermissions
@@ -3044,6 +3111,7 @@ DaemonEventT = Annotated[
     | ArtifactReady
     | ArtifactList
     | Artifact
+    | ArtifactChunk
     | Ping
     | Error
     | ScreenFrame
@@ -3151,6 +3219,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "export_usage",
         "list_artifacts",
         "open_artifact",
+        "read_artifact_chunk",
         "design_hit_test",
         "check_cu_permissions",
         "reset_cu_permissions",
@@ -3226,6 +3295,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "artifact_ready",
         "artifact_list",
         "artifact",
+        "artifact_chunk",
         "ping",
         "error",
         "screen_frame",

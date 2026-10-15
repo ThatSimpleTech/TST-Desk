@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ProtocolClient, type SocketLike } from "./client";
+import fixtures from "./protocol-fixtures.json";
 
 interface FakeServer {
   socket: FakeSocket;
@@ -409,6 +410,41 @@ describe("from_seq replay — no gaps, no duplicates", () => {
     );
     expect(h.onEvent).toHaveBeenCalledTimes(before + 1);
     expect(h.onEvent.mock.calls[before][0].type).toBe("transcript");
+    expect(h.client.lastSeq("sess-1")).toBe(1);
+    h.client.stop();
+  });
+
+  // TD-5143: the artifact replies are connection-scoped like design_hit.
+  // Through acceptSequenced they were dropped once attach passed seq 1.
+  it.each(["artifact_list", "artifact", "artifact_chunk"] as const)(
+    "delivers %s even when seq=1 is behind lastSeq",
+    async (type) => {
+      const h = buildClient();
+      await h.client.start();
+      h.servers[0].handshake();
+      h.client.attach("sess-1");
+      h.servers[0].push(JSON.stringify({ type: "session_state", session_id: "sess-1", state: "running", seq: 1 }));
+      h.servers[0].push(JSON.stringify({ type: "assistant_delta", session_id: "sess-1", delta: "Hi", seq: 2 }));
+      const before = h.onEvent.mock.calls.length;
+      h.servers[0].push(JSON.stringify(fixtures[type]));
+      expect(h.onEvent).toHaveBeenCalledTimes(before + 1);
+      expect(h.onEvent.mock.calls[before][0].type).toBe(type);
+      expect(h.client.lastSeq("sess-1")).toBe(2);
+      h.client.stop();
+    },
+  );
+
+  it("an artifact_chunk before the first logged event leaves the log's seq 1 deliverable", async () => {
+    // Taken as sequenced, the chunk's fixed seq=1 would claim the cursor and
+    // the session's real first event would then be dropped as a duplicate.
+    const h = buildClient();
+    await h.client.start();
+    h.servers[0].handshake();
+    h.client.attach("sess-1");
+    h.servers[0].push(JSON.stringify(fixtures.artifact_chunk));
+    expect(h.client.lastSeq("sess-1")).toBe(0);
+    h.servers[0].push(JSON.stringify({ type: "session_state", session_id: "sess-1", state: "running", seq: 1 }));
+    expect(h.onEvent.mock.calls.map((c) => c[0].type)).toEqual(["artifact_chunk", "session_state"]);
     expect(h.client.lastSeq("sess-1")).toBe(1);
     h.client.stop();
   });

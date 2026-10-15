@@ -18,6 +18,20 @@ import type { ClientMessageUnion, DaemonEventUnion, HelloAck } from "./protocol"
 import { daemonWsUrl } from "./remote-connect";
 
 /**
+ * Replies the daemon answers on one connection with seq fixed at 1. They are
+ * not in any session's log, so they never touch the replay cursor:
+ * design_hit (TD-3403), transcript (TD-4701), artifact_list and artifact
+ * (TD-3201) and artifact_chunk (TD-5143).
+ */
+const CONNECTION_SCOPED: ReadonlySet<string> = new Set([
+  "design_hit",
+  "transcript",
+  "artifact_list",
+  "artifact",
+  "artifact_chunk",
+]);
+
+/**
  * The daemon event types this client version understands. Messages whose
  * `type` is not here are still seq-advancing but are dropped with a warning.
  * TypeScript cannot enumerate a union's literal members at runtime, so this
@@ -68,6 +82,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "artifact_ready", // TD-3201
   "artifact_list", // TD-3201
   "artifact", // TD-3201
+  "artifact_chunk", // TD-5143
   "error",
   "screen_frame", // TD-1710
   "cu_kill_state", // TD-3402 / TD-3404
@@ -533,16 +548,11 @@ export class ProtocolClient {
       return;
     }
 
-    // TD-3403: design_hit is connection-scoped (seq=1, not in the log).
-    // acceptSequenced would drop it after attach the same way it dropped
-    // instruction_stack snapshots before TD-1204.
-    if (type === "design_hit") {
-      this.dispatch(msg as DaemonEventUnion);
-      return;
-    }
-
-    // TD-4701: transcript is connection-scoped (seq=1, not in the log).
-    if (type === "transcript") {
+    // Connection-scoped replies (seq=1, not in the log). acceptSequenced
+    // would drop them after attach the way it dropped instruction_stack
+    // snapshots before TD-1204, or take seq 1 as the log's first event
+    // before attach and then drop the real one as a duplicate.
+    if (CONNECTION_SCOPED.has(type)) {
       this.dispatch(msg as DaemonEventUnion);
       return;
     }

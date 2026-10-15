@@ -109,10 +109,12 @@ import type {
   LogTrimmed,
   ListArtifacts,
   OpenArtifact,
+  ReadArtifactChunk,
   CheckCuPermissions,
   ArtifactReady,
   ArtifactList,
   Artifact,
+  ArtifactChunk,
   ScreenFrame,
   CuKillState,
   CuSession,
@@ -973,7 +975,7 @@ describe("All fixtures have required shape", () => {
       "set_mcp_server", "delete_mcp_server",
       "run_diagnostics",
       "get_usage", "export_usage",
-      "list_artifacts", "open_artifact",
+      "list_artifacts", "open_artifact", "read_artifact_chunk",
       "design_hit_test",
       "check_cu_permissions",
       "set_cu_kill",
@@ -1006,7 +1008,7 @@ describe("All fixtures have required shape", () => {
       "instruction_stack", "instruction_files", "command_list", "context_pins", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",
-      "artifact_ready", "artifact_list", "artifact",
+      "artifact_ready", "artifact_list", "artifact", "artifact_chunk",
       "screen_frame",
       "cu_kill_state",
       "cu_session",
@@ -1233,6 +1235,49 @@ describe("Artifact messages match TypeScript types (TD-3201)", () => {
     expect(isBoolean(m.killed)).toBe(true);
     expect(isNumber(m.seq)).toBe(true);
     expect("session_id" in m).toBe(false);
+  });
+
+  // TD-5143: the artifact_ready sample is a sent file, and artifact_list
+  // carries a TD-3201 entry next to one, so both shapes cross the wire.
+  it("a sent_file carries name, size, sha256, caption and its tool call", () => {
+    const m = fixtures.artifact_ready as ArtifactReady;
+    expect(m.kind).toBe("sent_file");
+    expect(isString(m.name)).toBe(true);
+    expect(isNumber(m.size)).toBe(true);
+    expect(m.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(isString(m.caption)).toBe(true);
+    expect(isString(m.tool_call_id)).toBe(true);
+    expect(m.path).toBe(`artifacts/${m.artifact_id}`);
+  });
+
+  it("artifact_list keeps a TD-3201 artifact beside a sent_file", () => {
+    const m = fixtures.artifact_list as ArtifactList;
+    expect(m.artifacts.map((a) => a.kind)).toEqual(["artifact", "sent_file"]);
+    expect(m.artifacts[0]?.name).toBeNull();
+    const ready = fixtures.artifact_ready as ArtifactReady;
+    for (const key of ["artifact_id", "kind", "name", "size", "sha256", "caption", "tool_call_id"] as const) {
+      expect(m.artifacts[1]?.[key]).toBe(ready[key]);
+    }
+  });
+
+  it("read_artifact_chunk names an id and a range, never a path", () => {
+    const m = fixtures.read_artifact_chunk as ReadArtifactChunk;
+    expect(m.type).toBe("read_artifact_chunk");
+    expect(m.artifact_id).toMatch(/^[0-9a-f]{32}$/);
+    expect(isNumber(m.offset)).toBe(true);
+    expect(m.length).toBe(524288);
+    expect(hasKeys(m, ["path"])).toBe(false);
+  });
+
+  it("artifact_chunk is base64 bytes with the file's size and hash", () => {
+    const m = fixtures.artifact_chunk as ArtifactChunk;
+    expect(m.type).toBe("artifact_chunk");
+    expect(m.seq).toBe(1);
+    expect(atob(m.data_b64)).toBe("hi");
+    expect(m.size).toBe(2);
+    expect(m.sha256).toBe((fixtures.artifact_ready as ArtifactReady).sha256);
+    expect(m.eof).toBe(true);
+    expect(m.error_code).toBeNull();
   });
 
   it("artifact is metadata and path, not bytes", () => {
