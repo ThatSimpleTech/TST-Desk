@@ -96,6 +96,10 @@ class _Hub:
         return None if reply is None else json.loads(reply)
 
 
+def _chunk_read(sid: str) -> dict[str, Any]:
+    return {"type": "read_artifact_chunk", "session_id": sid, "artifact_id": "a" * 32, "offset": 0}
+
+
 @pytest.fixture
 async def remote(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[FakeRemote]:
     FakeKeychain().install(monkeypatch).keys[MCH] = KEY
@@ -211,13 +215,16 @@ async def test_a_full_or_expired_queue_answers_machine_unreachable(
     viewer = _Viewer()
     hub.bridge.viewer_connected(viewer)
     await remote.stop()  # nothing answers now: the lane stays connecting
-    for _ in range(FAST.queue_limit):
+    for _ in range(FAST.queue_limit - 1):
         assert hub.forward(viewer, type="cancel", session_id=S1) is None
-    full = hub.forward(viewer, type="cancel", session_id=S1)
+    assert hub.forward(viewer, **_chunk_read(S1)) is None
+    full = hub.forward(viewer, **_chunk_read(S1))
     assert full is not None and full["code"] == "machine_unreachable"
     assert full["session_id"] == S1 and full["machine"] == MCH
+    assert full["in_reply_to"] == "read_artifact_chunk"  # TD-5144
     expired = [await viewer.next(2) for _ in range(FAST.queue_limit)]
     assert {(e["code"], e["session_id"]) for e in expired} == {("machine_unreachable", S1)}
+    assert sorted(e["in_reply_to"] for e in expired) == ["cancel", "cancel", "read_artifact_chunk"]
 
 
 async def test_an_unreachable_computer_answers_at_once(tmp_path: Path, remote: FakeRemote) -> None:
@@ -236,6 +243,10 @@ async def test_an_unreachable_computer_answers_at_once(tmp_path: Path, remote: F
         reply = made.forward(_Viewer(), type="user_message", session_id=S1, content="x")
         assert reply is not None and reply["code"] == "machine_unreachable"
         assert reply["message"] == "ezer isn't reachable right now. Try again when it is."
+        assert reply["in_reply_to"] == "user_message"  # TD-5144
+        chunk = made.forward(_Viewer(), **_chunk_read(S1))
+        assert chunk is not None and chunk["code"] == "machine_unreachable"
+        assert chunk["in_reply_to"] == "read_artifact_chunk"
     finally:
         await made.bridge.stop()
 
@@ -424,3 +435,19 @@ async def test_a_parked_computer_is_not_woken_by_viewers_or_verbs(
         assert (await first.next())["seq"] == 1
     finally:
         await made.bridge.stop()
+
+
+async def test_refusals_for_an_unknown_computer_or_id_name_the_verb(
+    hub: _Hub, remote: FakeRemote
+) -> None:
+    """TD-5144: the viewer can tie a hub refusal to the request it made."""
+    viewer = _Viewer()
+    gone = "s1:mch_ffffffffffff"
+    for frame in (_chunk_read(gone), {"type": "user_message", "session_id": gone, "content": "x"}):
+        reply = hub.forward(viewer, **frame)
+        assert reply is not None and reply["code"] == "machine_not_found", reply
+        assert (reply["session_id"], reply["in_reply_to"]) == (gone, frame["type"])
+    for frame in (_chunk_read("s1"), {"type": "user_message", "session_id": "s1", "content": "x"}):
+        reply = hub.forward(viewer, **frame)
+        assert reply is not None and reply["code"] == "bad_request", reply
+        assert reply["in_reply_to"] == frame["type"]

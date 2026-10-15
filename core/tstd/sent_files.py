@@ -22,7 +22,7 @@ import stat
 import threading
 import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -41,6 +41,7 @@ FREE_MARGIN = 256 * 1024 * 1024
 _BLOCK = 1024 * 1024
 _PART_MAX_AGE_S = 3600.0
 _PART_NAME = re.compile(r"\.[0-9a-f]{32}\.part")
+_AID = re.compile(r"[0-9a-f]{32}")
 # Per-session locks, process-wide: parallel sends in one batch serialize per
 # session even if two runtimes ever build a ``SentFiles`` for the same id.
 _SESSION_LOCKS: dict[str, threading.Lock] = {}
@@ -81,6 +82,8 @@ _DEVICE_NAMES = frozenset(
 )
 _SEPARATORS = re.compile(r"[/\\]")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+# Bidi controls: "invoice\u202efdp.exe" shows as "invoiceexe.pdf" in a file manager.
+_BIDI = re.compile(r"[\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 _RESERVED = re.compile(r'[:*?"<>|]')
 # Python only: an undecodable name (surrogateescape) holds lone surrogates,
 # which UTF-8 cannot encode. They become U+FFFD, as a lossy decode does.
@@ -111,6 +114,7 @@ def safe_file_name(raw: str) -> str:
     """A file name that is safe on every OS the file can land on (§1.4)."""
     name = _SEPARATORS.split(raw)[-1]  # 1. basename
     name = _CONTROL.sub("", _SURROGATE.sub("�", name))  # 2. controls
+    name = _BIDI.sub("", name)  # 2b. bidi controls
     name = _RESERVED.sub("_", name)  # 3. reserved chars
     name = name.rstrip(" .")  # 4. trailing spaces and dots
     name = _device_prefixed(name)  # 5. device names
@@ -221,6 +225,42 @@ class SendError(Exception):
         self.message = message
 
 
+class SendGate:
+    """Settles, once, whether a send's copies get indexed (TD-5143).
+
+    The handler calls ``cancel`` when its task is cancelled; the copy thread
+    calls ``commit`` just before indexing. Whichever comes first wins, so a
+    cancelled send is either undone (nothing indexed or announced) or, if
+    indexing already began, indexed and then announced by the handler.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._state = "open"
+
+    @property
+    def cancelled(self) -> bool:
+        return self._state == "cancelled"
+
+    def cancel(self) -> bool:
+        """True if the copies will be undone; False if indexing already began."""
+        with self._lock:
+            if self._state == "open":
+                self._state = "cancelled"
+            return self._state == "cancelled"
+
+    def commit(self) -> bool:
+        """True if the copies may be indexed; False if the send was cancelled."""
+        with self._lock:
+            if self._state == "open":
+                self._state = "committed"
+            return self._state == "committed"
+
+
+def _cancelled() -> SendError:
+    return SendError("cancelled", "The send was cancelled. Nothing was sent.")
+
+
 class _Source:
     """One file to send, opened and stat'ed before any copy starts."""
 
@@ -249,6 +289,37 @@ def _sweep_parts(bytes_dir: Path) -> None:
             continue
 
 
+def sweep_leftovers(bytes_dir: Path, indexed: set[str]) -> int:
+    """Remove every ``.<aid>.part`` and every ``<aid>/`` folder with no index row.
+
+    A crash mid-send leaves both. ``ArtifactStore`` calls this on its first
+    load of a session's index, before this process can have a send in flight
+    there (one daemon per data dir, TD-5022), so age does not matter. TD-3201
+    content artifacts are plain files, never folders, and are left alone.
+    Returns how many entries went.
+    """
+    try:
+        entries = list(os.scandir(bytes_dir))
+    except OSError:
+        return 0
+    removed = 0
+    for entry in entries:
+        try:
+            st = entry.stat(follow_symlinks=False)
+            if _PART_NAME.fullmatch(entry.name) and stat.S_ISREG(st.st_mode):
+                os.unlink(entry.path)
+            elif _AID.fullmatch(entry.name) and stat.S_ISDIR(st.st_mode):
+                if entry.name in indexed:
+                    continue
+                shutil.rmtree(entry.path)
+            else:
+                continue
+        except OSError:
+            continue
+        removed += 1
+    return removed
+
+
 def _write_all(fd: int, data: bytes) -> None:
     view = memoryview(data)
     while view:
@@ -271,6 +342,18 @@ class SentFiles:
     def __init__(self, store: ArtifactStore, config: SessionConfig) -> None:
         self._store = store
         self._config = config
+        self._guard: Callable[[], PathGuard | None] | None = None
+
+    def bind_guard(self, guard: Callable[[], PathGuard | None]) -> None:
+        """Re-check paths with the dispatcher's own guard, read at each call.
+
+        The dispatcher canonicalizes and judges ``files`` with its guard
+        before the handler runs, so the re-check uses that same wall rather
+        than a second idea of the root; a live move (TD-1715) rebinds the
+        guard and the re-check follows it. Unbound, or with no guard yet,
+        the ``workspace`` passed to ``copy_all`` is the wall.
+        """
+        self._guard = guard
 
     @staticmethod
     def _lock_for(session_id: str) -> threading.Lock:
@@ -285,22 +368,28 @@ class SentFiles:
         workspace: Path,
         caption: str | None = None,
         tool_call_id: str = "",
+        gate: SendGate | None = None,
     ) -> list[ArtifactRecord]:
         """Copy every file in *paths*, or none. Raises ``SendError``."""
         caption = (caption or "").strip() or None
+        gate = gate or SendGate()
         with self._lock_for(session_id):
+            if gate.cancelled:
+                raise _cancelled()
             sources = self._open_all(paths, workspace)
             try:
                 self._check_room(session_id, sources)
-                return self._copy_sources(session_id, sources, caption, tool_call_id)
+                return self._copy_sources(session_id, sources, caption, tool_call_id, gate)
             finally:
                 for source in sources:
                     os.close(source.fd)
 
     def _open_all(self, paths: Sequence[str], workspace: Path) -> list[_Source]:
         """Re-check, dedupe, open and stat every file before copying any."""
-        root = canonical_path(workspace)
-        guard = PathGuard(Boundary(workspace_root=workspace))
+        guard = self._guard() if self._guard is not None else None
+        if guard is None or guard.boundary.workspace_root is None:
+            guard = PathGuard(Boundary(workspace_root=workspace))
+        root = canonical_path(guard.boundary.workspace_root or workspace)
         sources: list[_Source] = []
         seen: set[Path] = set()
         try:
@@ -368,6 +457,8 @@ class SentFiles:
         return _Source(fd, st, path, rel)
 
     def _check_room(self, session_id: str, sources: list[_Source]) -> None:
+        if not sources:
+            return
         total = sum(s.st.st_size for s in sources)
         used = self._store.sent_bytes_total(session_id)
         quota = self._config.send_file_session_max_bytes
@@ -379,8 +470,13 @@ class SentFiles:
                 "(session.send_file_session_max_bytes). Nothing was sent.",
             )
         bytes_dir = self._store.bytes_dir(session_id)
-        bytes_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-        free = shutil.disk_usage(bytes_dir).free
+        try:
+            bytes_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+            free = shutil.disk_usage(bytes_dir).free
+        except OSError:
+            # Any failure here is "no room to keep a copy". Its text names the
+            # data dir, which the model must never read.
+            raise SendError("disk_full", self._disk_full(sources[0])) from None
         needed = FREE_MARGIN
         for source in sources:
             needed += source.st.st_size
@@ -400,6 +496,7 @@ class SentFiles:
         sources: list[_Source],
         caption: str | None,
         tool_call_id: str,
+        gate: SendGate,
     ) -> list[ArtifactRecord]:
         bytes_dir = self._store.bytes_dir(session_id)
         _sweep_parts(bytes_dir)
@@ -410,8 +507,12 @@ class SentFiles:
             for source in sources:
                 current = source
                 records.append(
-                    self._copy_one(session_id, source, bytes_dir, created, caption, tool_call_id)
+                    self._copy_one(
+                        session_id, source, bytes_dir, created, caption, tool_call_id, gate
+                    )
                 )
+            if not gate.commit():
+                raise _cancelled()
             self._store.append_records(session_id, records)
         except SendError:
             self._undo(created)
@@ -447,6 +548,7 @@ class SentFiles:
         created: list[Path],
         caption: str | None,
         tool_call_id: str,
+        gate: SendGate,
     ) -> ArtifactRecord:
         aid = uuid.uuid4().hex
         part = bytes_dir / f".{aid}.part"
@@ -461,6 +563,8 @@ class SentFiles:
         copied = 0
         try:
             while block := os.read(source.fd, _BLOCK):
+                if gate.cancelled:
+                    raise _cancelled()
                 copied += len(block)
                 if copied > source.st.st_size:
                     raise changed

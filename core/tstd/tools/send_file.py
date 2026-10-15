@@ -9,6 +9,9 @@ in Class A, so no approval card appears in any mode.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+from collections.abc import Awaitable, Callable
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -17,7 +20,9 @@ from .registry import Tool, ToolRegistry
 from .results import HandlerRefusal
 
 if TYPE_CHECKING:
-    from ..sent_files import SentFiles
+    from ..artifacts import ArtifactRecord
+    from ..protocol import ArtifactReady
+    from ..sent_files import SendGate, SentFiles
 
 log = get_logger("tstd.tools.send_file")
 
@@ -78,10 +83,16 @@ async def send_file(
     caption: str | None = None,
     service: SentFiles | None,
 ) -> str:
-    """Copy *files* into the session and emit one ``artifact_ready`` each."""
+    """Copy *files* into the session and emit one ``artifact_ready`` each.
+
+    A cancel (Stop, a timeout, shutdown) cannot stop the copy thread, so the
+    two settle on a ``SendGate``: cancelled before indexing, the thread undoes
+    its copies and nothing is announced; cancelled once indexing began, the
+    rows land and the cards are announced anyway. The index and the chat
+    always agree.
+    """
     # Imported here: sent_files -> artifacts -> tools.boundary loads this package.
-    from ..artifacts import artifact_ready_for
-    from ..sent_files import SendError, result_text
+    from ..sent_files import SendError, SendGate, result_text
 
     session_id = getattr(session, "id", None)
     persist_dir = getattr(session, "persist_dir", None)
@@ -96,17 +107,44 @@ async def send_file(
         or not workspace
     ):
         raise HandlerRefusal("send_unavailable", _UNAVAILABLE)
+    gate = SendGate()
+    copy = partial(
+        service.copy_all,
+        session_id,
+        files,
+        workspace=Path(workspace),
+        caption=caption,
+        tool_call_id=tool_call_id,
+        gate=gate,
+    )
+    # Shielded: cancelling the handler never cancels the copy-then-announce task.
+    sending = asyncio.ensure_future(_copy_and_announce(copy, gate, add))
+    sending.add_done_callback(_retrieve)
     try:
-        records = await asyncio.to_thread(
-            service.copy_all,
-            session_id,
-            files,
-            workspace=Path(workspace),
-            caption=caption,
-            tool_call_id=tool_call_id,
-        )
+        records = await asyncio.shield(sending)
+    except asyncio.CancelledError:
+        if not gate.cancel():
+            # Indexing began first: let the cards land with the rows.
+            with contextlib.suppress(SendError):
+                await asyncio.shield(sending)
+        raise
     except SendError as exc:
         raise HandlerRefusal(exc.code, exc.message) from None
+    return result_text(records, records[0].caption if records else None)
+
+
+async def _copy_and_announce(
+    copy: Callable[[], list[ArtifactRecord]],
+    gate: SendGate,
+    add: Callable[[ArtifactReady], Awaitable[object]],
+) -> list[ArtifactRecord]:
+    from ..artifacts import artifact_ready_for
+
+    try:
+        records = await asyncio.to_thread(copy)
+    except asyncio.CancelledError:
+        gate.cancel()  # the event loop is going away; undo unless indexing began
+        raise
     for record in records:
         await add(artifact_ready_for(record))
         log.info(
@@ -115,4 +153,10 @@ async def send_file(
                 "extra_fields": {"artifact_id": record.id, "size": record.size, "mime": record.mime}
             },
         )
-    return result_text(records, records[0].caption if records else None)
+    return records
+
+
+def _retrieve(task: asyncio.Future[list[ArtifactRecord]]) -> None:
+    """Mark the outcome seen: after a cancel, no one else awaits it."""
+    if not task.cancelled():
+        task.exception()

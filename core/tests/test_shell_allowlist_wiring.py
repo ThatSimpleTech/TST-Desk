@@ -14,6 +14,7 @@ that is the point.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -148,10 +149,17 @@ class TestTheDaemonsOwnWiring:
         def _spy(
             dispatcher: object,
             allowed_commands: tuple[str, ...] | None = None,
+            shell_allowlist: Callable[[], tuple[str, ...] | None] | None = None,
             **kwargs: object,
         ) -> None:
-            seen.append(allowed_commands)
-            real(dispatcher, allowed_commands=allowed_commands, **kwargs)  # type: ignore[arg-type]
+            # Since TD-1715 the daemon hands over a live read of the list.
+            seen.append(shell_allowlist() if shell_allowlist is not None else allowed_commands)
+            real(
+                dispatcher,  # type: ignore[arg-type]
+                allowed_commands=allowed_commands,
+                shell_allowlist=shell_allowlist,
+                **kwargs,  # type: ignore[arg-type]
+            )
 
         monkeypatch.setattr(daemon_mod, "register_builtin_handlers", _spy)
 

@@ -101,12 +101,21 @@ class Bridge:
         with contextlib.suppress(Exception):
             await self._deliver(viewer, payload)
 
-    def unreachable(self, machine: MachineState, session_id: str, detail: str | None = None) -> str:
+    def unreachable(
+        self,
+        machine: MachineState,
+        session_id: str,
+        detail: str | None = None,
+        *,
+        in_reply_to: str | None = None,
+    ) -> str:
+        """``machine_unreachable`` for one verb; ``in_reply_to`` names it (TD-5144)."""
         return build_error(
             "machine_unreachable",
             detail or f"{machine.name} isn't reachable right now. Try again when it is.",
             session_id=session_id,
             machine=machine.mch,
+            in_reply_to=in_reply_to,
         )
 
     def machines_changed(self) -> None:
@@ -262,12 +271,16 @@ class Bridge:
         """Send one viewer verb for a bridged id. Never awaits the network.
 
         Returns an error frame to answer at once, or None (any answer comes
-        down the lane).
+        down the lane). Every refusal names the verb it answers (TD-5144).
         """
+        kind = frame.get("type")
+        verb = kind if isinstance(kind, str) else None
         parts = rewrite_to_remote(frame)
         sid = frame.get("session_id")
         if parts is None or not isinstance(sid, str):
-            return build_error("bad_request", "That isn't another computer's session.")
+            return build_error(
+                "bad_request", "That isn't another computer's session.", in_reply_to=verb
+            )
         mch, upstream = parts
         machine = self._machines.get(mch)
         if machine is None:
@@ -276,13 +289,13 @@ class Bridge:
                 "That computer isn't paired with this one anymore.",
                 session_id=sid,
                 machine=mch,
+                in_reply_to=verb,
             )
-        kind = frame.get("type")
         status, detail = machine.current_status()
         parked = status in PARKED_STATUSES
         if parked and kind not in ("attach", "detach"):
             # Refused, locked or outdated: answer now, never dial for it.
-            return self.unreachable(machine, sid, detail)
+            return self.unreachable(machine, sid, detail, in_reply_to=verb)
         lane = self._lanes.get((viewer, mch))
         if kind in APPROVAL_VERBS:
             # Never queued: the open lane, else the open control link.
@@ -292,7 +305,7 @@ class Bridge:
             self._ensure_lane(viewer, machine)
             if machine.send_approval(viewer, sid, upstream):
                 return None
-            return self.unreachable(machine, sid)
+            return self.unreachable(machine, sid, in_reply_to=verb)
         # A parked computer's lane only remembers attaches until it is back.
         lane = self._ensure_lane(viewer, machine, dial=not parked)
         raw = upstream["session_id"]
@@ -306,7 +319,7 @@ class Bridge:
             lane.send(upstream)
             return None
         if status not in ("connecting", "connected"):
-            return self.unreachable(machine, sid)
+            return self.unreachable(machine, sid, in_reply_to=verb)
         return lane.enqueue(upstream, sid)
 
     # ── machine verbs ─────────────────────────────────────────────────

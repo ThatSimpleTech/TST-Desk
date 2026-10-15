@@ -11,11 +11,14 @@ DB.
 from __future__ import annotations
 
 import asyncio
+import errno
 import hashlib
 import json
 import logging
 import os
+import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -109,6 +112,7 @@ def _env(tmp_path: Path, config: SessionConfig | None = None) -> Env:
         workspace=ws,
     )
     dispatcher.policy = PolicyConfig()
+    service.bind_guard(lambda: dispatcher.path_guard)  # as the daemon does
     env = Env(ws, persist, store, service, session, dispatcher)
 
     async def _approve(*args: Any) -> ApprovalOutcome:
@@ -373,6 +377,32 @@ async def test_too_large_session_quota_disk_full_refused_and_nothing_written(
     assert len(env.ready()) == 1
 
 
+@pytest.mark.parametrize("how", ["enospc", "not_a_dir"])
+async def test_room_check_os_error_is_disk_full_and_names_no_data_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, how: str
+) -> None:
+    env = _env(tmp_path)
+    _write(env.ws / "a.txt", "a")
+    _write(env.ws / "b.txt", "bb")
+    if how == "enospc":
+
+        def full(path: Any) -> Any:
+            raise OSError(errno.ENOSPC, "No space left on device", str(path))
+
+        monkeypatch.setattr(sent_files.shutil, "disk_usage", full)
+    else:
+        # The first send in a session makes artifacts/; a file in its way fails mkdir.
+        _write(env.bytes_dir, "in the way")
+    result = await env.send(["a.txt", "b.txt"])
+    assert result.error_code == "disk_full"
+    assert result.output == (
+        "Not enough free disk space to keep a copy of a.txt (1 bytes). Nothing was sent."
+    )
+    assert str(env.persist.dir_for(env.session.id)) not in result.output
+    assert str(tmp_path) not in result.output
+    assert env.store.sent_bytes_total(env.session.id) == 0 and env.ready() == []
+
+
 @pytest.mark.parametrize("how", ["grows", "touched"])
 async def test_file_changed_during_copy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, how: str
@@ -430,6 +460,104 @@ async def test_all_or_nothing_on_second_file_failure(
     assert failed.error_code == "copy_failed"
     assert failed.output.endswith("Nothing was sent.")
     assert env.ready() == [] and env.on_disk() == []
+
+
+async def test_send_follows_the_dispatcher_root_after_a_live_move(tmp_path: Path) -> None:
+    # send_file re-checks against the guard the dispatcher judged with, as
+    # fs_read does, even when the session's root changed under it. (A real
+    # move also rebinds that guard: test_artifact_chunks covers it end to end.)
+    env = _env(tmp_path)
+    _write(env.ws / "app.apk", b"PK-old")
+    _write(env.ws / "notes.txt", "hi")
+    ws2 = tmp_path / "ws2"
+    _write(ws2 / "app.apk", b"PK-new")
+    env.session.reassign_workspace(str(ws2))
+    sent = await env.send(["app.apk"])
+    assert sent.status == "success", sent.output
+    read = await env.dispatcher.dispatch("c2", "fs_read", {"path": "notes.txt"}, env.session)
+    assert read.status == "success"
+    assert (await env.send([str(env.ws / "notes.txt")])).status == "success"
+    assert (await env.send([str(ws2 / "app.apk")])).error_code == "boundary_refusal"
+
+    # Once the dispatcher is bound to the new root, sends follow it there.
+    env.dispatcher.path_guard = PathGuard(Boundary(workspace_root=ws2))
+    assert (await env.send(["app.apk"])).status == "success"
+    copies = [
+        (env.bytes_dir / r.id / (r.name or "")).read_bytes()
+        for r in env.rows()
+        if r.name == "app.apk"
+    ]
+    assert copies == [b"PK-old", b"PK-new"]
+
+
+async def _worker_done(env: Env) -> None:
+    """The copy thread holds the session lock until it has indexed or undone."""
+    lock = SentFiles._lock_for(env.session.id)
+    assert await asyncio.to_thread(lock.acquire, True, 10)
+    lock.release()
+
+
+async def test_cancel_mid_copy_neither_indexes_nor_announces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(tmp_path)
+    _write(env.ws / "a.apk", b"a" * 10)
+    _write(env.ws / "b.apk", b"b" * 10)
+    copying, release = threading.Event(), threading.Event()
+    real = sent_files._write_all
+
+    def write(fd: int, block: bytes) -> None:
+        if block[:1] == b"b":  # a.apk is already in its folder
+            copying.set()
+            release.wait(10)
+        real(fd, block)
+
+    monkeypatch.setattr(sent_files, "_write_all", write)
+    files = [str(env.ws / "a.apk"), str(env.ws / "b.apk")]
+    task = asyncio.ensure_future(
+        send_file(session=env.session, tool_call_id="c1", files=files, service=env.service)
+    )
+    assert await asyncio.to_thread(copying.wait, 10)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    release.set()
+    await _worker_done(env)
+    assert env.rows() == [] and env.ready() == [] and env.on_disk() == []
+    assert env.store.sent_bytes_total(env.session.id) == 0
+
+
+async def test_cancel_while_indexing_still_announces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(tmp_path)
+    _write(env.ws / "a.apk", b"a" * 10)
+    indexing, release = threading.Event(), threading.Event()
+    real = env.store.append_records
+
+    def append(session_id: str, records: list[ArtifactRecord]) -> None:
+        indexing.set()
+        release.wait(10)
+        real(session_id, records)
+
+    monkeypatch.setattr(env.store, "append_records", append)
+    task = asyncio.ensure_future(
+        send_file(
+            session=env.session,
+            tool_call_id="c1",
+            files=[str(env.ws / "a.apk")],
+            service=env.service,
+        )
+    )
+    assert await asyncio.to_thread(indexing.wait, 10)
+    task.cancel()
+    await asyncio.sleep(0)
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await _worker_done(env)
+    [row] = env.rows()
+    assert [e.artifact_id for e in env.ready()] == [row.id]
 
 
 async def test_dedupes_repeated_paths(tmp_path: Path) -> None:
@@ -586,6 +714,9 @@ async def test_parallel_sends_keep_every_record(tmp_path: Path) -> None:
 
 async def test_stale_part_files_swept(tmp_path: Path) -> None:
     env = _env(tmp_path)
+    # A daemon that already loaded this session: from here on only the hour rule
+    # applies, since a fresh part may be a copy in flight.
+    assert env.store.sent_bytes_total(env.session.id) == 0
     env.bytes_dir.mkdir(parents=True)
     stale = _write(env.bytes_dir / f".{'a' * 32}.part", "crash leftover")
     fresh = _write(env.bytes_dir / f".{'b' * 32}.part", "copy in flight")
@@ -597,6 +728,122 @@ async def test_stale_part_files_swept(tmp_path: Path) -> None:
     assert (await env.send(["a.txt"])).status == "success"
     assert not stale.exists()
     assert fresh.exists() and other.exists()
+
+
+_CRASH_CHILD = """
+import os, sys
+from pathlib import Path
+from tstd import sent_files
+from tstd.artifacts import ArtifactStore
+from tstd.config import SessionConfig
+from tstd.session_persist import SessionPersist
+
+data, ws, sid = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+real = sent_files._write_all
+
+def write(fd, block):
+    if block[:1] == b"B":
+        os._exit(9)  # killed while copying the second file
+    real(fd, block)
+
+sent_files._write_all = write
+store = ArtifactStore(SessionPersist(data))
+sent_files.SentFiles(store, SessionConfig()).copy_all(
+    sid, [str(ws / "a.apk"), str(ws / "b.apk")], workspace=ws
+)
+"""
+
+
+def test_crash_mid_send_leftovers_swept_when_the_store_loads(tmp_path: Path) -> None:
+    env = _env(tmp_path)
+    _write(env.ws / "kept.txt", "kept")
+    env.service.copy_all(env.session.id, [str(env.ws / "kept.txt")], workspace=env.ws)
+    _write(env.ws / "a.apk", b"A" * 4_096)
+    _write(env.ws / "b.apk", b"B" * 4_096)
+    done = subprocess.run(
+        [sys.executable, "-c", _CRASH_CHILD, str(tmp_path / "data"), str(env.ws), env.session.id],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        timeout=60,
+    )
+    assert done.returncode == 9, done.stderr[-500:]
+    folders = [p for p in env.bytes_dir.iterdir() if p.is_dir()]
+    assert len(folders) == 2  # the kept send and the crashed a.apk copy
+    assert any(p.name.endswith(".part") for p in env.bytes_dir.iterdir())
+    # Not ours: a TD-3201 content file, an odd folder and a stray file stay.
+    content = env.store.record(env.session.id, "Doc", "text/plain", env.ws, content=b"doc")
+    _write(env.bytes_dir / "notes" / "x.txt", "x")
+    _write(env.bytes_dir / ("c" * 32), "a plain file, not a sent-file folder")
+
+    restarted = ArtifactStore(env.persist)  # the daemon after the crash
+    assert restarted.sent_bytes_total(env.session.id) == 4
+    rows = restarted.list_records(env.session.id, env.ws)
+    assert sorted(r.title for r in rows) == ["Doc", "kept.txt"]
+    left = sorted(p.name for p in env.bytes_dir.iterdir())
+    kept = next(r for r in rows if r.kind == "sent_file")
+    assert left == sorted([kept.id, content.id, "notes", "c" * 32])
+
+
+def test_leftover_sweep_runs_once_and_never_takes_a_copy_in_flight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(tmp_path)
+    _write(env.ws / "a.txt", "a")
+    _write(env.ws / "b.txt", "b")
+    real = sent_files._write_all
+    seen: list[int] = []
+
+    def write(fd: int, block: bytes) -> None:
+        if block == b"b":  # a.txt's folder exists and is not indexed yet
+            env.store.list_records(env.session.id, env.ws)
+            seen.append(sum(p.is_dir() for p in env.bytes_dir.iterdir()))
+        real(fd, block)
+
+    monkeypatch.setattr(sent_files, "_write_all", write)
+    records = env.service.copy_all(
+        env.session.id, [str(env.ws / "a.txt"), str(env.ws / "b.txt")], workspace=env.ws
+    )
+    assert seen == [1] and len(records) == 2
+    assert all((env.bytes_dir / r.id / r.name).is_file() for r in records if r.name)
+
+
+def test_leftover_sweep_keeps_folders_the_index_names_or_cannot_be_read(tmp_path: Path) -> None:
+    env = _env(tmp_path)
+    future, orphan = "d" * 32, "e" * 32
+    _write(env.bytes_dir / future / "new.bin", "a row this daemon cannot validate")
+    _write(env.bytes_dir / orphan / "old.bin", "no row at all")
+    index = env.persist.dir_for(env.session.id) / "artifacts.json"
+    index.write_text(json.dumps([{"id": future, "kind": "from-a-newer-daemon"}]))
+    assert ArtifactStore(env.persist).sent_bytes_total(env.session.id) == 0
+    assert (env.bytes_dir / future).is_dir() and not (env.bytes_dir / orphan).exists()
+
+    # An unreadable index names nothing for sure, so nothing is removed.
+    _write(env.bytes_dir / orphan / "old.bin", "no row at all")
+    index.write_text("{not json")
+    assert ArtifactStore(env.persist).sent_bytes_total(env.session.id) == 0
+    assert (env.bytes_dir / orphan).is_dir()
+
+
+def test_leftover_sweep_runs_only_for_known_sessions(tmp_path: Path) -> None:
+    """A store bound to the registry sweeps a session only under its exact id.
+
+    On a case-insensitive disk ``S1`` and ``s1`` are one folder: an unknown
+    spelling must neither sweep it nor use up the known id's one sweep.
+    """
+    env = _env(tmp_path)
+    orphan = env.bytes_dir / ("e" * 32)
+    _write(orphan / "old.bin", "a crash leftover")
+    sid = env.session.id
+    store = ArtifactStore(env.persist, known_session=lambda s: s == sid)
+    spelled = sid.upper() if sid.upper() != sid else f"{sid}-x"
+    real = env.persist.dir_for
+    folded = {spelled: sid}
+    env.persist.dir_for = lambda s: real(folded.get(s, s))  # type: ignore[method-assign]
+
+    assert store.sent_bytes_total(spelled) == 0
+    assert orphan.is_dir()
+    assert store.sent_bytes_total(sid) == 0
+    assert not orphan.exists()
 
 
 # ── Names and MIME (§1.4, §1.5) ────────────────────────────────────────
@@ -620,6 +867,7 @@ _NAME_VECTORS = [
     ("a" * 130 + ".verylongextension12", "a" * 120),
     ("name with spaces.zip", "name with spaces.zip"),
     ("CON" + " " * 150 + "y.log", "_CON" + " " * 112 + ".log"),
+    ("a\u202efdp.exe", "afdp.exe"),
 ]
 
 
@@ -628,6 +876,16 @@ def test_safe_file_name_vectors_and_idempotent(raw: str, expected: str) -> None:
     assert safe_file_name(raw) == expected
     assert safe_file_name(expected) == expected
     assert len(expected.encode("utf-8")) <= 120
+
+
+def test_safe_file_name_drops_every_bidi_control() -> None:
+    # Step 2b: a bidi override can show "invoice<RLO>fdp.exe" as a PDF name.
+    bidi = "\u200e\u200f" + "".join(map(chr, range(0x202A, 0x202F)))
+    bidi += "".join(map(chr, range(0x2066, 0x206A)))
+    assert safe_file_name(f"in{bidi}voice.exe") == "invoice.exe"
+    # Neighbours of the ranges are ordinary characters and stay.
+    kept = "\u200d\u2029\u202f\u2065\u206a"
+    assert safe_file_name(f"a{kept}b.txt") == f"a{kept}b.txt"
 
 
 def test_safe_file_name_handles_undecodable_names() -> None:

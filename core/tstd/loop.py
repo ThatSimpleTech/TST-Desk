@@ -960,6 +960,78 @@ async def dispatch_worker_child_tools(
     return await dispatcher.dispatch_many(items, session)
 
 
+def _assembler_for(
+    session: Session, config: ModelConfig, calibration: CalibrationStore
+) -> PromptAssembler:
+    """The prompt assembler for the session's current root (TD-305)."""
+    return PromptAssembler(
+        session.workspace_path,
+        claude_global_fallback=config.steering.claude_global_fallback,
+        manifest_config=brain_manifest_config(
+            session.config if session.config is not None else config, calibration
+        ),
+    )
+
+
+def _load_import_approvals(workspace_path: str) -> set[Path]:
+    """Durable external-import approvals for *workspace_path* (TD-505).
+
+    A malformed config falls back to an empty allowlist (same
+    tolerate-with-warning pattern as the daemon's config loaders) rather
+    than crashing the session.
+    """
+    try:
+        return set(load_approved_imports(workspace_path))
+    except ConfigError as e:
+        log.warning(
+            "approved-imports config invalid; using empty allowlist",
+            extra={"extra_fields": {"workspace_path": str(workspace_path), "error": str(e)}},
+        )
+        return set()
+
+
+def session_boundary(session: Session) -> Boundary:
+    """The wall the session's tools run inside: its root and its boundary config."""
+    return Boundary(
+        workspace_root=Path(session.workspace_path),
+        writable_patterns=tuple(session.boundary_config.boundary.writable_paths),
+        allowed_hosts=session.boundary_config.allowed_hosts,
+    )
+
+
+def _checkpointer_for(session: Session) -> Checkpointer:
+    """Checkpoints on ``tst/session/<id>``, or the charter's auto branch (TD-4102)."""
+    branch = None
+    if session.autonomy and session.charter is not None:
+        branch = auto_branch(session.charter.slug)
+    return Checkpointer(Path(session.workspace_path), session.id, branch=branch)
+
+
+def rebind_workspace(session: Session, dispatcher: ToolDispatcher) -> None:
+    """Point every root-bound piece of *dispatcher* at the session's root (TD-1715).
+
+    The loop wires these once, from the root the session opened in. After a
+    live move the next tool call must canonicalize and judge its paths,
+    checkpoint, commit memory, log its decision and resolve its approval in
+    the new project, not quietly in the old one (review finding 17). The
+    session's boundary config and policy are already reloaded by the time
+    this runs. Pieces a caller left unset stay unset.
+    """
+    boundary = session_boundary(session)
+    workspace = Path(session.workspace_path)
+    dispatcher.path_guard = PathGuard(boundary)
+    if dispatcher.classifier is not None:
+        dispatcher.classifier.rebind(boundary)
+    if dispatcher.checkpointer is not None:
+        dispatcher.checkpointer = _checkpointer_for(session)
+    if dispatcher.memory_committer is not None:
+        dispatcher.memory_committer = MemoryCommitter(workspace)
+    if dispatcher.ledger is not None:
+        dispatcher.ledger = DecisionLedger(session.workspace_path)
+    dispatcher.policy = session.policy
+    dispatcher.workspace = workspace
+
+
 async def agent_loop(
     session: Session,
     router: TierRouter,
@@ -1014,33 +1086,12 @@ async def agent_loop(
     # The map is sized for the brain this session's calls go to: its own
     # preset snapshot when it has one (TD-1721), as at turn start and in
     # the instruction inspector, not the daemon's active preset.
-    assembler = prompt_assembler or PromptAssembler(
-        session.workspace_path,
-        claude_global_fallback=config.steering.claude_global_fallback,
-        manifest_config=brain_manifest_config(
-            session.config if session.config is not None else config, calibration
-        ),
-    )
+    assembler = prompt_assembler or _assembler_for(session, config, calibration)
     embeddings_client = EmbeddingsClient.from_config(config)
 
     # External-import approvals (TD-505): approved paths are durable per
-    # workspace; denied paths are session-scoped and not re-prompted.  A
-    # malformed config falls back to an empty allowlist (same
-    # tolerate-with-warning pattern as the daemon's config loaders) rather
-    # than crashing the session at loop start.
-    try:
-        approved_imports: set[Path] = set(load_approved_imports(session.workspace_path))
-    except ConfigError as e:
-        log.warning(
-            "approved-imports config invalid; using empty allowlist",
-            extra={
-                "extra_fields": {
-                    "workspace_path": str(session.workspace_path),
-                    "error": str(e),
-                }
-            },
-        )
-        approved_imports = set()
+    # workspace; denied paths are session-scoped and not re-prompted.
+    approved_imports = _load_import_approvals(session.workspace_path)
     denied_imports: set[Path] = set()
 
     # Conversation messages only; the system message is assembled per
@@ -1116,11 +1167,7 @@ async def agent_loop(
     # completion on the worker tier's model, tracked as separate
     # classifier cost (it never touches the main turn accounting).
     if tool_dispatcher is not None:
-        boundary = Boundary(
-            workspace_root=Path(session.workspace_path),
-            writable_patterns=tuple(session.boundary_config.boundary.writable_paths),
-            allowed_hosts=session.boundary_config.allowed_hosts,
-        )
+        boundary = session_boundary(session)
         judgments_cfg = config.judgments
         if tool_dispatcher.classifier is None:
 
@@ -1171,14 +1218,7 @@ async def agent_loop(
         # non-git workspaces degrade inside the checkpointer; autonomy
         # refuses at start instead.
         if tool_dispatcher.checkpointer is None:
-            branch = None
-            if session.autonomy and session.charter is not None:
-                branch = auto_branch(session.charter.slug)
-            tool_dispatcher.checkpointer = Checkpointer(
-                Path(session.workspace_path),
-                session.id,
-                branch=branch,
-            )
+            tool_dispatcher.checkpointer = _checkpointer_for(session)
 
         # Memory HEAD commits (TD-2104): accepted memory writes land on
         # the workspace repo as ``tst: memory update``. Not the
@@ -1201,6 +1241,26 @@ async def agent_loop(
             tool_dispatcher.workspace = Path(session.workspace_path)
         if tool_dispatcher.approval_handler is None:
             tool_dispatcher.approval_handler = session.request_approval
+
+    # TD-1715: a live move (between turns) rebinds everything above, the
+    # prompt assembler and the import approvals to the new root, so the
+    # next turn neither reads, judges, commits nor is steered in the old one.
+    def _on_workspace_moved() -> None:
+        nonlocal assembler
+        if tool_dispatcher is not None:
+            rebind_workspace(session, tool_dispatcher)
+        if prompt_assembler is None:
+            assembler = _assembler_for(session, config, calibration)
+        # A delegate child shares the (rebound) dispatcher and reads the
+        # session's root and boundary at spawn; the assembler is the only
+        # root-bound piece the runtime holds a copy of.
+        runtime = session.delegate_runtime
+        if runtime is not None:
+            runtime.assembler = assembler
+        approved_imports.clear()
+        approved_imports.update(_load_import_approvals(session.workspace_path))
+
+    session.on_workspace_moved = _on_workspace_moved
 
     # TD-4103: unattended runs poll definition-of-done after each turn.
     # Interactive sessions never attach a poller.

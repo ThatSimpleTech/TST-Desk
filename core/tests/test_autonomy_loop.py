@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.machine_helpers import eventually
 from tests.test_cap_enforcement import (
     big_tool_call_sequence,
     make_echo_session,
@@ -21,6 +22,7 @@ from tests.test_cap_enforcement import (
 )
 from tests.test_dispatch import make_classifier, make_config, start_loop, wait_for_turn
 from tests.test_loop import start_loop as start_text_loop
+from tests.test_two_daemons import _Steps
 from tstd.autonomy import Boundary
 from tstd.autonomy.charter import Charter
 from tstd.autonomy.classifier import DecisionClassifier
@@ -40,7 +42,13 @@ from tstd.boundary_config import BoundaryConfig, CapsSection
 from tstd.daemon import Daemon
 from tstd.mock import MockProvider, Script
 from tstd.policy import PolicyConfig
-from tstd.protocol import ApprovalRequest, DecisionLogged, TurnComplete
+from tstd.protocol import (
+    ApprovalRequest,
+    BoundaryUpdate,
+    DecisionLogged,
+    ToolResult,
+    TurnComplete,
+)
 from tstd.router import TierRouter
 from tstd.session import Session
 from tstd.tools import ToolDispatcher, create_registry, register_builtin_handlers
@@ -351,3 +359,80 @@ class TestLaunch:
         await wait_for_state(session, "complete")
         assert seen and "Ship the CSV importer" in seen[0]
         await daemon._shutdown()
+
+    async def test_resume_keeps_the_charter_shell_allowlist(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Resume reloads the workspace config; a charter's wall must stay over it.
+
+        The workspace has no config (any command), the charter allows only
+        pytest and git. The shell reads the session's allowlist per call, so
+        a resume that dropped the charter would let ``echo`` run.
+        """
+        from tstd import daemon as daemon_module
+
+        gate = asyncio.Event()
+        real_loop = daemon_module.agent_loop
+
+        async def _gated(session: Session, *args: object, **kwargs: object) -> None:
+            await gate.wait()
+            await real_loop(session, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr("tstd.daemon.agent_loop", _gated)
+        steps = [
+            Script(kind="tool_call", tool_name="shell", tool_arguments='{"command": "echo hi"}'),
+            Script(kind="stream", content="Done."),
+        ]
+        daemon = Daemon(data_dir=tmp_path / "data", provider=_Steps(steps))
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        charter = make_charter(max_iterations=1, allowed_commands=["pytest", "git"])
+        sid = await daemon._launch_autonomy_run(ws, charter)
+        session = daemon.session_registry.get(sid)
+        assert session is not None
+        try:
+            await daemon._handle_message(json.dumps({"type": "resume", "session_id": sid}), None)
+
+            assert session.boundary_config.boundary == charter.boundary
+            assert session.boundary_config.caps == charter.caps
+            log = session.event_log
+            resumed = [
+                e for e in log.all_events if isinstance(e, BoundaryUpdate) and e.source == "resume"
+            ]
+            assert [e.allowed_commands for e in resumed] == [["pytest", "git"]]
+
+            gate.set()
+
+            def results() -> list[ToolResult]:
+                return [e for e in log.all_events if isinstance(e, ToolResult)]
+
+            await eventually(lambda: len(results()) >= 1, within=20)
+            shelled = results()[0]
+            assert shelled.status == "error", shelled.output
+            assert "allowed_commands" in shelled.output
+        finally:
+            gate.set()
+            runner = daemon.session_registry.get_runner(sid)
+            if runner is not None:
+                await runner.cancel()
+            await daemon._shutdown()
+
+
+def test_no_session_boundary_reload_bypasses_the_charter_helper() -> None:
+    """Open, revive, move and resume all reload through reload_session_boundary.
+
+    A bare ``x.boundary_config = load_workspace_boundary(...)`` is how the
+    resume path dropped a charter's wall; keep it from coming back.
+    """
+    import re
+
+    import tstd
+
+    pattern = re.compile(r"\.boundary_config\s*=\s*load_workspace_boundary\(")
+    root = Path(tstd.__file__).parent
+    offenders = [
+        str(path.relative_to(root))
+        for path in sorted(root.rglob("*.py"))
+        if pattern.search(path.read_text(encoding="utf-8"))
+    ]
+    assert offenders == []

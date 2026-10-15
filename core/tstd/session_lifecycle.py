@@ -21,10 +21,10 @@ import asyncio
 from collections.abc import Callable
 from pathlib import Path
 
-from .boundary_config import boundary_source, load_workspace_boundary
+from .boundary_config import BoundaryConfig, boundary_source, load_workspace_boundary
 from .config import ConfigError
 from .logging import get_logger
-from .policy import load_policy
+from .policy import PolicyConfig, load_policy
 from .protocol import BoundaryUpdate as BoundaryUpdateEvent
 from .protocol import build_error
 from .session import Session, SessionRegistry
@@ -175,6 +175,37 @@ async def move_session(
     return None
 
 
+def reload_session_boundary(
+    session: Session,
+    workspace_path: str,
+    *,
+    fallback: BoundaryConfig | None = None,
+) -> ConfigError | None:
+    """Reload *session*'s boundary from *workspace_path*, a charter's wall on top.
+
+    Every reload of a live session's boundary goes through here (open,
+    revive, move, resume), so none can forget the charter: a charter run's
+    wall and caps are the charter's, whatever the workspace file says. The
+    shell reads the session's allowlist per call, so a reload that dropped
+    the charter would widen it on the spot.
+
+    An invalid file gives the session *fallback*, or leaves its current
+    config when that is None; the error is returned for the caller to log
+    or announce. Nothing raises.
+    """
+    error: ConfigError | None = None
+    try:
+        cfg = load_workspace_boundary(workspace_path)
+    except ConfigError as e:
+        error = e
+        cfg = fallback if fallback is not None else session.boundary_config
+    if session.charter is not None:
+        cfg.boundary = session.charter.boundary
+        cfg.caps = session.charter.caps
+    session.boundary_config = cfg
+    return error
+
+
 async def _reload_working_context(session: Session, workspace_path: str) -> None:
     """Re-resolve boundary + policy for the new root and announce the wall.
 
@@ -184,16 +215,17 @@ async def _reload_working_context(session: Session, workspace_path: str) -> None
     A restored tombstone has no loop to reconfigure, so it gets the durable
     record only — there is nothing to announce.
     """
-    source = "defaults"
-    try:
-        session.boundary_config = load_workspace_boundary(workspace_path)
+    # Defaults on an invalid config, as announced: never the previous
+    # project's wall.
+    error = reload_session_boundary(session, workspace_path, fallback=BoundaryConfig())
+    if error is None:
         source = boundary_source(workspace_path)
-    except ConfigError as e:
+    else:
         log.warning(
             "workspace boundary config invalid after move; using defaults",
-            extra={"extra_fields": {"workspace_path": workspace_path, "error": str(e)}},
+            extra={"extra_fields": {"workspace_path": workspace_path, "error": str(error)}},
         )
-        source = f"defaults — invalid config ({e})"
+        source = f"defaults — invalid config ({error})"
     try:
         session.policy = load_policy(workspace_path)
     except ConfigError as e:
@@ -201,6 +233,12 @@ async def _reload_working_context(session: Session, workspace_path: str) -> None
             "workspace policy config invalid after move; using defaults",
             extra={"extra_fields": {"workspace_path": workspace_path, "error": str(e)}},
         )
+        session.policy = PolicyConfig()
+    # The loop built its guard, classifier, checkpointer, ledger, policy
+    # gate and prompt assembler from the old root: rebind them before the
+    # next turn, so the wall announced below is the one tools run under.
+    if session.on_workspace_moved is not None:
+        session.on_workspace_moved()
 
     cfg = session.boundary_config
     await session.event_log.add(

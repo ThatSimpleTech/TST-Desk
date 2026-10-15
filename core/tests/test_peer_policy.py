@@ -120,6 +120,7 @@ def test_every_client_type_not_listed_is_refused_for_a_machine_peer() -> None:
         else:
             expected = "loopback_only" if kind in LOOPBACK_VERBS else "not_allowed"
             assert json.loads(refusal)["code"] == expected, kind
+            assert json.loads(refusal)["in_reply_to"] == kind  # TD-5144
     assert set(allowed) == MACHINE_PEER_VERBS
 
 
@@ -134,6 +135,7 @@ def test_drain_is_loopback_only() -> None:
     for peer in (PHONE_VIEWER, PLAIN_REMOTE, MACHINE, self_paired):
         refusal = check(drain, peer, bridged=False)
         assert refusal is not None and json.loads(refusal)["code"] == "loopback_only", peer
+        assert json.loads(refusal)["in_reply_to"] == "drain"
 
 
 def test_a_machine_peer_never_reaches_a_bridged_id() -> None:
@@ -144,6 +146,7 @@ def test_a_machine_peer_never_reaches_a_bridged_id() -> None:
         "code": "bridged_session",
         "message": "That session is on another computer. Open it from the computer it runs on.",
         "session_id": BRIDGED,
+        "in_reply_to": "attach",
     }
 
 
@@ -153,6 +156,7 @@ def test_machine_verbs_are_loopback_only_except_listing_for_viewers() -> None:
     for peer in (PHONE_VIEWER, PLAIN_REMOTE):
         refusal = check(add, peer, bridged=False)
         assert refusal is not None and json.loads(refusal)["code"] == "loopback_only"
+        assert json.loads(refusal)["in_reply_to"] == "add_machine"
     listing = _msg("list_machines")
     assert check(listing, PHONE_VIEWER, bridged=False) is None
     assert check(listing, PLAIN_REMOTE, bridged=False) is not None
@@ -165,6 +169,7 @@ def test_a_viewer_gets_only_forwarded_verbs_on_a_bridged_id() -> None:
     refusal = check(_msg("list_policy_rules", session_id=BRIDGED), VIEWER, bridged=True)
     assert refusal is not None and json.loads(refusal)["code"] == "not_on_remote"
     assert json.loads(refusal)["session_id"] == BRIDGED
+    assert json.loads(refusal)["in_reply_to"] == "list_policy_rules"
 
 
 def test_read_artifact_chunk_forwarded() -> None:
@@ -182,6 +187,7 @@ def test_read_artifact_chunk_forwarded() -> None:
     assert check(own, PLAIN_REMOTE, bridged=False) is None
     second_hop = check(bridged, MACHINE, bridged=True)
     assert second_hop is not None and json.loads(second_hop)["code"] == "bridged_session"
+    assert json.loads(second_hop)["in_reply_to"] == "read_artifact_chunk"
 
 
 # ── on a real daemon ─────────────────────────────────────────────────
