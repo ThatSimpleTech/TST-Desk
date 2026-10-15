@@ -463,8 +463,9 @@ async def test_all_or_nothing_on_second_file_failure(
 
 
 async def test_send_follows_the_dispatcher_root_after_a_live_move(tmp_path: Path) -> None:
-    # TD-1715 moves a live session; the dispatcher keeps the guard it judged
-    # paths with, so send_file must re-check against that one, as fs_read does.
+    # send_file re-checks against the guard the dispatcher judged with, as
+    # fs_read does, even when the session's root changed under it. (A real
+    # move also rebinds that guard: test_artifact_chunks covers it end to end.)
     env = _env(tmp_path)
     _write(env.ws / "app.apk", b"PK-old")
     _write(env.ws / "notes.txt", "hi")

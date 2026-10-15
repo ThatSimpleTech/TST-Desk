@@ -3411,7 +3411,8 @@ class Daemon:
         sent_files.bind_guard(lambda: tool_dispatcher.path_guard)
         register_builtin_handlers(
             tool_dispatcher,
-            allowed_commands=sess.boundary_config.boundary.shell_allowlist(),
+            # Read per call: a live move (TD-1715) reloads boundary_config.
+            shell_allowlist=lambda: sess.boundary_config.boundary.shell_allowlist(),
             desktop_driver=self.desktop_driver,
             browser_driver=self.browser_driver,
             grounding_client=GroundingClient.from_config(self.config.computer_use.grounding),

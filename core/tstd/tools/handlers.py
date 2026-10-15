@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import fnmatch
 import os
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -41,6 +42,7 @@ from .write import fs_edit, fs_write
 if TYPE_CHECKING:
     # sent_files imports artifacts, which imports this package: type-only here.
     from ..sent_files import SentFiles
+    from ..session import Session
 
 # Handler-level cap on formatted lines.  Dispatch additionally caps the
 # returned string's byte length with its own truncation marker.
@@ -156,6 +158,19 @@ async def fs_list(
     return await asyncio.to_thread(_list_dir, Path(path), pattern, recursive)
 
 
+async def _shell_under_live_allowlist(
+    session: Session | None,
+    command: str,
+    timeout_secs: int = 30,
+    tool_call_id: str = "",
+    *,
+    allowlist: Callable[[], tuple[str, ...] | None],
+) -> str:
+    """``run_shell`` with the allowlist read at the call, not at registration."""
+    policy = ShellPolicy(allowed_commands=allowlist())
+    return await run_shell(session, command, timeout_secs, tool_call_id, policy=policy)
+
+
 def register_builtin_handlers(
     dispatcher: ToolDispatcher,
     allowed_commands: tuple[str, ...] | None = None,
@@ -163,11 +178,15 @@ def register_builtin_handlers(
     browser_driver: BrowserDriver | None = None,
     grounding_client: GroundingLocator | None = None,
     sent_files: SentFiles | None = None,
+    shell_allowlist: Callable[[], tuple[str, ...] | None] | None = None,
 ) -> None:
     """Register the built-in tool handlers on *dispatcher*.
 
     ``allowed_commands`` restricts the shell tool to the given binaries
-    when set (TD-605); ``None`` leaves it unrestricted.  ``desktop_driver``
+    when set (TD-605); ``None`` leaves it unrestricted.  ``shell_allowlist``
+    instead reads the allowlist at every call, so a session moved to
+    another project (TD-1715) runs under that project's list; it wins over
+    ``allowed_commands``.  ``desktop_driver``
     is the process-wide computer-use backend (TD-3301); omitted means the
     in-process mock so every builtin still has a handler.  ``browser_driver``
     is the session browser (TD-1710); omitted is the in-process mock.
@@ -182,9 +201,11 @@ def register_builtin_handlers(
     dispatcher.register_handler("web_fetch", web_fetch)
     dispatcher.register_handler("fs_write", fs_write)
     dispatcher.register_handler("fs_edit", fs_edit)
-    dispatcher.register_handler(
-        "shell", partial(run_shell, policy=ShellPolicy(allowed_commands=allowed_commands))
-    )
+    if shell_allowlist is not None:
+        shell = partial(_shell_under_live_allowlist, allowlist=shell_allowlist)
+    else:
+        shell = partial(run_shell, policy=ShellPolicy(allowed_commands=allowed_commands))
+    dispatcher.register_handler("shell", shell)
     register_desktop_handlers(
         dispatcher,
         desktop_driver if desktop_driver is not None else MockDesktopDriver(),

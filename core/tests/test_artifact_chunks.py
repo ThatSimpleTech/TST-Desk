@@ -365,18 +365,28 @@ async def test_a_daemon_session_sends_with_no_card_and_serves_the_bytes(tmp_path
         await _shutdown(daemon, sid)
 
 
-async def test_a_daemon_session_still_sends_after_a_live_move(tmp_path: Path) -> None:
-    """TD-1715 moves a live session; send_file judges paths as the dispatcher does."""
-    call = json.dumps({"files": ["app-release.apk"]})
-    steps = [
-        Script(kind="tool_call", tool_name="send_file", tool_arguments=call),
-        Script(kind="stream", content="Sent."),
-    ]
-    daemon = Daemon(data_dir=tmp_path / "data", provider=_Steps(steps))
+async def test_a_live_move_rebinds_every_path_tool_to_the_new_root(tmp_path: Path) -> None:
+    """TD-1715 moves a live session: from the next call on, the new root is the wall.
+
+    Both roots hold an ``app.apk``; after the move the agent must get the new
+    one from send_file and fs_read alike, and the old root is outside.
+    """
     ws, ws2 = tmp_path / "ws", tmp_path / "ws2"
     for root in (ws, ws2):
         root.mkdir()
-        (root / "app-release.apk").write_bytes(MARKER + root.name.encode())
+        (root / "app.apk").write_bytes(MARKER + root.name.encode())
+    old_apk = str(ws / "app.apk")
+    steps = [
+        Script(kind="tool_call", tool_name="send_file", tool_arguments='{"files": ["app.apk"]}'),
+        Script(kind="tool_call", tool_name="fs_read", tool_arguments='{"path": "app.apk"}'),
+        Script(kind="tool_call", tool_name="fs_read", tool_arguments=json.dumps({"path": old_apk})),
+        Script(
+            kind="tool_call", tool_name="send_file", tool_arguments=json.dumps({"files": [old_apk]})
+        ),
+        Script(kind="stream", content="Done."),
+    ]
+    daemon = Daemon(data_dir=tmp_path / "data", provider=_Steps(steps))
+    daemon.skip_all_approvals = True  # fs_read is class B; the wall still holds
     sid = await _open(daemon, ws)
     try:
         session = daemon.session_registry.get(sid)
@@ -387,11 +397,20 @@ async def test_a_daemon_session_still_sends_after_a_live_move(tmp_path: Path) ->
         message = {"type": "user_message", "session_id": sid, "content": "send me the build"}
         await daemon._handle_message(json.dumps(message), None)
         log = session.event_log
-        await eventually(lambda: any(isinstance(e, ToolResult) for e in log.all_events), within=20)
-        [result] = [e for e in log.all_events if isinstance(e, ToolResult)]
-        assert result.status == "success", result.output
-        [ready] = [e for e in log.all_events if isinstance(e, ArtifactReady)]
-        reply = await _chunk(daemon, sid, ready.artifact_id, 0)
-        assert base64.b64decode(reply["data_b64"]).startswith(MARKER)
+
+        def results() -> list[ToolResult]:
+            return [e for e in log.all_events if isinstance(e, ToolResult)]
+
+        await eventually(lambda: len(results()) == 4, within=20)
+        sent, read, read_old, sent_old = results()
+        assert sent.status == "success", sent.output
+        ready = [e for e in log.all_events if isinstance(e, ArtifactReady)]
+        reply = await _chunk(daemon, sid, ready[0].artifact_id, 0)
+        assert base64.b64decode(reply["data_b64"]) == MARKER + b"ws2"
+        assert read.status == "success", read.output
+        assert (MARKER + b"ws2").decode() in read.output
+        assert (read_old.status, read_old.error_code) == ("error", "boundary_refusal")
+        assert (sent_old.status, sent_old.error_code) == ("error", "boundary_refusal")
+        assert len(ready) == 1
     finally:
         await _shutdown(daemon, sid)

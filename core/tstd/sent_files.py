@@ -348,10 +348,10 @@ class SentFiles:
         """Re-check paths with the dispatcher's own guard, read at each call.
 
         The dispatcher canonicalizes and judges ``files`` with its guard
-        before the handler runs, and a live move (TD-1715) does not rebind
-        it, so the session's new ``workspace_path`` would refuse paths the
-        dispatcher just passed. Unbound, or with no guard yet, the
-        ``workspace`` passed to ``copy_all`` is the wall.
+        before the handler runs, so the re-check uses that same wall rather
+        than a second idea of the root; a live move (TD-1715) rebinds the
+        guard and the re-check follows it. Unbound, or with no guard yet,
+        the ``workspace`` passed to ``copy_all`` is the wall.
         """
         self._guard = guard
 

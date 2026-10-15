@@ -21,10 +21,10 @@ import asyncio
 from collections.abc import Callable
 from pathlib import Path
 
-from .boundary_config import boundary_source, load_workspace_boundary
+from .boundary_config import BoundaryConfig, boundary_source, load_workspace_boundary
 from .config import ConfigError
 from .logging import get_logger
-from .policy import load_policy
+from .policy import PolicyConfig, load_policy
 from .protocol import BoundaryUpdate as BoundaryUpdateEvent
 from .protocol import build_error
 from .session import Session, SessionRegistry
@@ -193,7 +193,13 @@ async def _reload_working_context(session: Session, workspace_path: str) -> None
             "workspace boundary config invalid after move; using defaults",
             extra={"extra_fields": {"workspace_path": workspace_path, "error": str(e)}},
         )
+        # Defaults, as announced: never the previous project's wall.
+        session.boundary_config = BoundaryConfig()
         source = f"defaults — invalid config ({e})"
+    if session.charter is not None:
+        # A charter run's wall is its charter's, wherever it lives (as at open).
+        session.boundary_config.boundary = session.charter.boundary
+        session.boundary_config.caps = session.charter.caps
     try:
         session.policy = load_policy(workspace_path)
     except ConfigError as e:
@@ -201,6 +207,12 @@ async def _reload_working_context(session: Session, workspace_path: str) -> None
             "workspace policy config invalid after move; using defaults",
             extra={"extra_fields": {"workspace_path": workspace_path, "error": str(e)}},
         )
+        session.policy = PolicyConfig()
+    # The loop built its guard, classifier, checkpointer, ledger, policy
+    # gate and prompt assembler from the old root: rebind them before the
+    # next turn, so the wall announced below is the one tools run under.
+    if session.on_workspace_moved is not None:
+        session.on_workspace_moved()
 
     cfg = session.boundary_config
     await session.event_log.add(
