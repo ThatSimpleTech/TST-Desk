@@ -116,7 +116,7 @@ def safe_file_name(raw: str) -> str:
     name = _device_prefixed(name)  # 5. device names
     name = _truncated(name)  # 6. 120 UTF-8 bytes, extension kept
     name = name.rstrip(" .")  # 7. again
-    name = _device_prefixed(name)  # 8. again
+    name = _truncated(_device_prefixed(name))  # 8. again; a new "_" can need one more cut
     return name or "file"  # 9. never empty
 
 
