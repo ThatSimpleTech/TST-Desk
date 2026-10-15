@@ -298,7 +298,13 @@ async def test_overflow_retry_still_recovers(tmp_path: Path) -> None:
     assert len(mock.calls) == 3
     half = max(1, budget_threshold(_forge_config().tier("brain")) // 2)
     first, _ = estimate_tokens(_messages(mock.calls[1]), _COUNTER, mock.calls[1].tools)
-    retry, _ = estimate_tokens(_messages(mock.calls[2]), _COUNTER, mock.calls[2].tools)
-    assert retry <= _target(half)
+    retry_messages = _messages(mock.calls[2])
+    retry, _ = estimate_tokens(retry_messages, _COUNTER, mock.calls[2].tools)
+    # The target rises with the floor (the prompt with every in-flight
+    # result at the keep floor, tool definitions included), so a bigger
+    # tool list must not turn this into a false failure.
+    inflight = context_fit._inflight_tool_indexes(retry_messages)
+    floor = context_fit._floor_tokens(retry_messages, inflight, _COUNTER, mock.calls[2].tools)
+    assert retry <= elision_target(half, floor) <= half
     assert retry < first
     assert "Recovered." in _assistant_text(session)
