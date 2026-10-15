@@ -41,6 +41,7 @@ FREE_MARGIN = 256 * 1024 * 1024
 _BLOCK = 1024 * 1024
 _PART_MAX_AGE_S = 3600.0
 _PART_NAME = re.compile(r"\.[0-9a-f]{32}\.part")
+_AID = re.compile(r"[0-9a-f]{32}")
 # Per-session locks, process-wide: parallel sends in one batch serialize per
 # session even if two runtimes ever build a ``SentFiles`` for the same id.
 _SESSION_LOCKS: dict[str, threading.Lock] = {}
@@ -250,6 +251,37 @@ def _sweep_parts(bytes_dir: Path) -> None:
                 os.unlink(entry.path)
         except OSError:
             continue
+
+
+def sweep_leftovers(bytes_dir: Path, indexed: set[str]) -> int:
+    """Remove every ``.<aid>.part`` and every ``<aid>/`` folder with no index row.
+
+    A crash mid-send leaves both. ``ArtifactStore`` calls this on its first
+    load of a session's index, before this process can have a send in flight
+    there (one daemon per data dir, TD-5022), so age does not matter. TD-3201
+    content artifacts are plain files, never folders, and are left alone.
+    Returns how many entries went.
+    """
+    try:
+        entries = list(os.scandir(bytes_dir))
+    except OSError:
+        return 0
+    removed = 0
+    for entry in entries:
+        try:
+            st = entry.stat(follow_symlinks=False)
+            if _PART_NAME.fullmatch(entry.name) and stat.S_ISREG(st.st_mode):
+                os.unlink(entry.path)
+            elif _AID.fullmatch(entry.name) and stat.S_ISDIR(st.st_mode):
+                if entry.name in indexed:
+                    continue
+                shutil.rmtree(entry.path)
+            else:
+                continue
+        except OSError:
+            continue
+        removed += 1
+    return removed
 
 
 def _write_all(fd: int, data: bytes) -> None:

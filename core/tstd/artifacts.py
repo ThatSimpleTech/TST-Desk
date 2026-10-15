@@ -106,6 +106,8 @@ class ArtifactStore:
     def __init__(self, persist: SessionPersist) -> None:
         self._persist = persist
         self._lock = threading.Lock()
+        # Sessions whose crash leftovers this store already swept (TD-5143).
+        self._swept: set[str] = set()
 
     def record(
         self,
@@ -297,7 +299,11 @@ class ArtifactStore:
 
     def _load(self, session_id: str) -> list[ArtifactRecord]:
         path = self._persist.dir_for(session_id) / _META
+        first = session_id not in self._swept
+        self._swept.add(session_id)
         if not path.is_file():
+            if first:
+                self._sweep(session_id, [])
             return []
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
@@ -309,6 +315,8 @@ class ArtifactStore:
             return []
         if not isinstance(raw, list):
             return []
+        if first:
+            self._sweep(session_id, raw)
         out: list[ArtifactRecord] = []
         for item in raw:
             if not isinstance(item, dict):
@@ -318,6 +326,22 @@ class ArtifactStore:
             except ValidationError:
                 continue
         return out
+
+    def _sweep(self, session_id: str, raw: list[object]) -> None:
+        """Drop sent-file crash leftovers once, under ``_lock`` (TD-5143).
+
+        Ids come from the raw rows, so a row this version cannot validate
+        keeps its folder. An unreadable index never gets here.
+        """
+        from .sent_files import sweep_leftovers  # sent_files imports this module
+
+        indexed = {str(item.get("id")) for item in raw if isinstance(item, dict)}
+        removed = sweep_leftovers(self.bytes_dir(session_id), indexed)
+        if removed:
+            log.info(
+                "sent-file leftovers removed",
+                extra={"extra_fields": {"session_id": session_id, "removed": removed}},
+            )
 
     def _save(self, session_id: str, records: list[ArtifactRecord]) -> None:
         path = self._persist.dir_for(session_id) / _META

@@ -16,6 +16,7 @@ import hashlib
 import json
 import logging
 import os
+import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
@@ -613,6 +614,9 @@ async def test_parallel_sends_keep_every_record(tmp_path: Path) -> None:
 
 async def test_stale_part_files_swept(tmp_path: Path) -> None:
     env = _env(tmp_path)
+    # A daemon that already loaded this session: from here on only the hour rule
+    # applies, since a fresh part may be a copy in flight.
+    assert env.store.sent_bytes_total(env.session.id) == 0
     env.bytes_dir.mkdir(parents=True)
     stale = _write(env.bytes_dir / f".{'a' * 32}.part", "crash leftover")
     fresh = _write(env.bytes_dir / f".{'b' * 32}.part", "copy in flight")
@@ -624,6 +628,100 @@ async def test_stale_part_files_swept(tmp_path: Path) -> None:
     assert (await env.send(["a.txt"])).status == "success"
     assert not stale.exists()
     assert fresh.exists() and other.exists()
+
+
+_CRASH_CHILD = """
+import os, sys
+from pathlib import Path
+from tstd import sent_files
+from tstd.artifacts import ArtifactStore
+from tstd.config import SessionConfig
+from tstd.session_persist import SessionPersist
+
+data, ws, sid = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+real = sent_files._write_all
+
+def write(fd, block):
+    if block[:1] == b"B":
+        os._exit(9)  # killed while copying the second file
+    real(fd, block)
+
+sent_files._write_all = write
+store = ArtifactStore(SessionPersist(data))
+sent_files.SentFiles(store, SessionConfig()).copy_all(
+    sid, [str(ws / "a.apk"), str(ws / "b.apk")], workspace=ws
+)
+"""
+
+
+def test_crash_mid_send_leftovers_swept_when_the_store_loads(tmp_path: Path) -> None:
+    env = _env(tmp_path)
+    _write(env.ws / "kept.txt", "kept")
+    env.service.copy_all(env.session.id, [str(env.ws / "kept.txt")], workspace=env.ws)
+    _write(env.ws / "a.apk", b"A" * 4_096)
+    _write(env.ws / "b.apk", b"B" * 4_096)
+    done = subprocess.run(
+        [sys.executable, "-c", _CRASH_CHILD, str(tmp_path / "data"), str(env.ws), env.session.id],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        timeout=60,
+    )
+    assert done.returncode == 9, done.stderr[-500:]
+    folders = [p for p in env.bytes_dir.iterdir() if p.is_dir()]
+    assert len(folders) == 2  # the kept send and the crashed a.apk copy
+    assert any(p.name.endswith(".part") for p in env.bytes_dir.iterdir())
+    # Not ours: a TD-3201 content file, an odd folder and a stray file stay.
+    content = env.store.record(env.session.id, "Doc", "text/plain", env.ws, content=b"doc")
+    _write(env.bytes_dir / "notes" / "x.txt", "x")
+    _write(env.bytes_dir / ("c" * 32), "a plain file, not a sent-file folder")
+
+    restarted = ArtifactStore(env.persist)  # the daemon after the crash
+    assert restarted.sent_bytes_total(env.session.id) == 4
+    rows = restarted.list_records(env.session.id, env.ws)
+    assert sorted(r.title for r in rows) == ["Doc", "kept.txt"]
+    left = sorted(p.name for p in env.bytes_dir.iterdir())
+    kept = next(r for r in rows if r.kind == "sent_file")
+    assert left == sorted([kept.id, content.id, "notes", "c" * 32])
+
+
+def test_leftover_sweep_runs_once_and_never_takes_a_copy_in_flight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(tmp_path)
+    _write(env.ws / "a.txt", "a")
+    _write(env.ws / "b.txt", "b")
+    real = sent_files._write_all
+    seen: list[int] = []
+
+    def write(fd: int, block: bytes) -> None:
+        if block == b"b":  # a.txt's folder exists and is not indexed yet
+            env.store.list_records(env.session.id, env.ws)
+            seen.append(sum(p.is_dir() for p in env.bytes_dir.iterdir()))
+        real(fd, block)
+
+    monkeypatch.setattr(sent_files, "_write_all", write)
+    records = env.service.copy_all(
+        env.session.id, [str(env.ws / "a.txt"), str(env.ws / "b.txt")], workspace=env.ws
+    )
+    assert seen == [1] and len(records) == 2
+    assert all((env.bytes_dir / r.id / r.name).is_file() for r in records if r.name)
+
+
+def test_leftover_sweep_keeps_folders_the_index_names_or_cannot_be_read(tmp_path: Path) -> None:
+    env = _env(tmp_path)
+    future, orphan = "d" * 32, "e" * 32
+    _write(env.bytes_dir / future / "new.bin", "a row this daemon cannot validate")
+    _write(env.bytes_dir / orphan / "old.bin", "no row at all")
+    index = env.persist.dir_for(env.session.id) / "artifacts.json"
+    index.write_text(json.dumps([{"id": future, "kind": "from-a-newer-daemon"}]))
+    assert ArtifactStore(env.persist).sent_bytes_total(env.session.id) == 0
+    assert (env.bytes_dir / future).is_dir() and not (env.bytes_dir / orphan).exists()
+
+    # An unreadable index names nothing for sure, so nothing is removed.
+    _write(env.bytes_dir / orphan / "old.bin", "no row at all")
+    index.write_text("{not json")
+    assert ArtifactStore(env.persist).sent_bytes_total(env.session.id) == 0
+    assert (env.bytes_dir / orphan).is_dir()
 
 
 # ── Names and MIME (§1.4, §1.5) ────────────────────────────────────────
