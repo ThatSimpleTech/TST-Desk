@@ -4,16 +4,28 @@
 	// the fold collapses. While the call runs it is one skeleton naming the
 	// first file; a refused call shows nothing, since the fold carries the
 	// refusal. The caption shows once for the group.
+	//
+	// The skeleton needs the turn to be live. A restart that cuts the call
+	// off seals the turn with no tool_result for it, so a call with no
+	// status on a finished row will never send: it says so instead of
+	// "Sending…" forever (TD-5144 review finding 28).
 	import type { ToolBlock } from "../../chat-store";
 	import { sendingText } from "../../sent-files";
 	import FileCard from "./FileCard.svelte";
 
-	let { block }: { block: ToolBlock } = $props();
+	let {
+		block,
+		live = true,
+	}: {
+		block: ToolBlock;
+		/** The row's turn is still running (the message is not complete). */
+		live?: boolean;
+	} = $props();
 
 	const files = $derived(block.files ?? []);
-	const sending = $derived(
-		block.status === undefined && files.length === 0 ? sendingText(block.arguments.files) : null,
-	);
+	const unfinished = $derived(block.status === undefined && files.length === 0);
+	const sending = $derived(unfinished && live ? sendingText(block.arguments.files) : null);
+	const cut = $derived(unfinished && !live);
 	const caption = $derived(files.find((f) => f.caption !== null)?.caption ?? null);
 </script>
 
@@ -34,6 +46,8 @@
 				<span class="line">{sending}</span>
 			</div>
 		</div>
+	{:else if cut}
+		<p class="not-sent">Not sent: the turn was cut off.</p>
 	{/if}
 {/if}
 
@@ -56,6 +70,12 @@
 		line-clamp: 2;
 		-webkit-box-orient: vertical;
 		overflow: hidden;
+	}
+
+	.not-sent {
+		margin: var(--space-2) 0 var(--space-3);
+		font-size: var(--text-sm);
+		color: var(--color-ink-muted);
 	}
 
 	.skeleton {

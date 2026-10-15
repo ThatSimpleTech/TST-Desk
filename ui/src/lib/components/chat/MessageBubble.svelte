@@ -117,8 +117,8 @@
 				     after it instead of above the whole answer. -->
 				{#each parts as part, i (i)}
 					{#if part.kind === "tool"}
-						<ToolFold messageId={message.id} block={part.tool} />
-						{#if part.tool.name === "send_file"}<FileCards block={part.tool} />{/if}
+						<ToolFold messageId={message.id} block={part.tool} complete={message.complete} />
+						{#if part.tool.name === "send_file"}<FileCards block={part.tool} live={!message.complete} />{/if}
 					{:else if part.text !== ""}
 						<Markdown text={part.text} live={!message.complete && i === lastTextIndex} />
 						<!-- The caret marks the answer being written. Over an
@@ -135,8 +135,8 @@
 			{:else}
 				{#if message.tools}
 					{#each message.tools as block (block.toolCallId)}
-						<ToolFold messageId={message.id} {block} />
-						{#if block.name === "send_file"}<FileCards {block} />{/if}
+						<ToolFold messageId={message.id} {block} complete={message.complete} />
+						{#if block.name === "send_file"}<FileCards {block} live={!message.complete} />{/if}
 					{/each}
 				{/if}
 				<Markdown text={message.text} live={!message.complete} />

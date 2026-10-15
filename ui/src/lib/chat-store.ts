@@ -19,6 +19,7 @@ import { createDraftStore, noteSent, type DraftStore } from "./draft-store";
 import { createFirstTokenWait } from "./first-token-wait";
 import { resetDisclosures } from "./reasoning-disclosure.svelte.js";
 import { applyBind } from "./session-binding";
+import type { SentFileRef } from "./sent-files";
 import type {
   ClientMessageUnion,
   DaemonEventUnion,
@@ -238,6 +239,9 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
 
   const forks = createBranchSnaps();
   const hold: BindHold = { sessionId: null, lastList: [] };
+  // Sent files that arrived before their call (chat-events.ts). They belong
+  // to the bound session, so a bind lets them go with its rows.
+  const earlyFiles = new Map<string, SentFileRef[]>();
 
   function switchSession(sessionId: string | null, turnState: SessionState["state"] | null): void {
     const moving = state.sessionId !== sessionId;
@@ -246,6 +250,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     applyBind(state, { queue, wait, deps, onUnbind: resetDisclosures }, sessionId, turnState);
     forks.clear();
     if (moving) {
+      earlyFiles.clear();
       sending.length = 0;
       state.draft = sessionId === null ? "" : drafts.restore(sessionId);
     }
@@ -268,6 +273,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     hold,
     sending,
     flushDraft,
+    earlyFiles,
   };
 
   return {
@@ -376,6 +382,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       state.lastTurnError = null;
       state.draft = "";
       sending.length = 0;
+      earlyFiles.clear();
     },
   };
 }
