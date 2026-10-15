@@ -81,6 +81,8 @@ _DEVICE_NAMES = frozenset(
 )
 _SEPARATORS = re.compile(r"[/\\]")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+# Bidi controls: "invoice\u202efdp.exe" shows as "invoiceexe.pdf" in a file manager.
+_BIDI = re.compile(r"[\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 _RESERVED = re.compile(r'[:*?"<>|]')
 # Python only: an undecodable name (surrogateescape) holds lone surrogates,
 # which UTF-8 cannot encode. They become U+FFFD, as a lossy decode does.
@@ -111,6 +113,7 @@ def safe_file_name(raw: str) -> str:
     """A file name that is safe on every OS the file can land on (§1.4)."""
     name = _SEPARATORS.split(raw)[-1]  # 1. basename
     name = _CONTROL.sub("", _SURROGATE.sub("�", name))  # 2. controls
+    name = _BIDI.sub("", name)  # 2b. bidi controls
     name = _RESERVED.sub("_", name)  # 3. reserved chars
     name = name.rstrip(" .")  # 4. trailing spaces and dots
     name = _device_prefixed(name)  # 5. device names

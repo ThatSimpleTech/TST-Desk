@@ -620,6 +620,7 @@ _NAME_VECTORS = [
     ("a" * 130 + ".verylongextension12", "a" * 120),
     ("name with spaces.zip", "name with spaces.zip"),
     ("CON" + " " * 150 + "y.log", "_CON" + " " * 112 + ".log"),
+    ("a\u202efdp.exe", "afdp.exe"),
 ]
 
 
@@ -628,6 +629,16 @@ def test_safe_file_name_vectors_and_idempotent(raw: str, expected: str) -> None:
     assert safe_file_name(raw) == expected
     assert safe_file_name(expected) == expected
     assert len(expected.encode("utf-8")) <= 120
+
+
+def test_safe_file_name_drops_every_bidi_control() -> None:
+    # Step 2b: a bidi override can show "invoice<RLO>fdp.exe" as a PDF name.
+    bidi = "\u200e\u200f" + "".join(map(chr, range(0x202A, 0x202F)))
+    bidi += "".join(map(chr, range(0x2066, 0x206A)))
+    assert safe_file_name(f"in{bidi}voice.exe") == "invoice.exe"
+    # Neighbours of the ranges are ordinary characters and stay.
+    kept = "\u200d\u2029\u202f\u2065\u206a"
+    assert safe_file_name(f"a{kept}b.txt") == f"a{kept}b.txt"
 
 
 def test_safe_file_name_handles_undecodable_names() -> None:
