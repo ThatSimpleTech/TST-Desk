@@ -838,7 +838,8 @@
     "session_id": null,
     "code": "test",
     "message": "fail",
-    "machine": null
+    "machine": null,
+    "in_reply_to": null
   },
   "error_with_session": {
     "type": "error",
@@ -846,7 +847,8 @@
     "session_id": "sess-1",
     "code": "test",
     "message": "fail",
-    "machine": null
+    "machine": null,
+    "in_reply_to": null
   },
   "shell_output": {
     "type": "shell_output",

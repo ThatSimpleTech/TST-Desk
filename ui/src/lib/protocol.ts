@@ -1722,6 +1722,9 @@ export interface Error extends DaemonEvent {
   /** TD-5015: set when another computer sent this error with no session id;
    *  `message` then starts "On <name>: ". Local-only stores ignore these. */
   machine?: string | null;
+  /** TD-5144: the client message type this error answers, when the sender
+   *  knows it (a hub refusing a forwarded verb). Absent from older daemons. */
+  in_reply_to?: string | null;
 }
 
 /** A browser screenshot written to the session dir (TD-1710). Path, not bytes. */
