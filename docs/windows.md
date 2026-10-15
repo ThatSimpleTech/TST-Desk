@@ -109,7 +109,7 @@ On POSIX the child is started with `setsid`, so it leads its own process group a
 `SIGKILL` to the group takes backgrounded grandchildren with it.
 
 Windows has no `killpg`. The child is spawned with `CREATE_NEW_PROCESS_GROUP` so it is a group
-leader, and the kill path runs `taskkill /T /F /PID` **while that leader is still alive**, then
+leader, and `CREATE_NO_WINDOW` so each command does not flash a console. The kill path runs `taskkill /T /F /PID` **while that leader is still alive**, then
 `TerminateProcess` on the direct child. `taskkill /T` walks the parent chain the OS already
 records. Killing the leader first orphans grandchildren; `taskkill` then reports the pid gone
 and leaves them running. `taskkill` ships with Windows, so this adds no dependency. If
@@ -120,6 +120,11 @@ timeout tests in `core/tests/test_shell_tools.py` run on `win32`: a PowerShell e
 writes this powershell pid plus a parked grandchild, then `_assert_group_gone` asks
 `OpenProcess` whether those pids are still `STILL_ACTIVE`. Helper argv tests in
 `core/tests/test_shell_windows_kill.py` pin `taskkill /T /F /PID` on every host.
+
+The same `cmd /c` path is why `allowed_commands: [echo]` works on a stock Windows PATH.
+`echo` is a `cmd.exe` internal, not a file, so `which` cannot see it. The allowlist matches
+that closed set of internals by name. A path-shaped token (`C:\evil\echo`) is not an
+internal and is still refused unless it resolves to a real file on the list.
 
 ---
 
@@ -186,9 +191,12 @@ arrives. There is no workaround; that is the boundary that makes UAC meaningful.
 tool error is `secure_desktop`.
 
 Neither is a permission the user can grant in Settings. A hang waiting for a prompt that will
-not appear is a defect. The first desktop computer-use attempt on Windows emits `cu_permissions`
-with this explanation (`platform: "windows"`). Settings reopens the same pane. macOS first-run
-is unchanged (Screen Recording + Accessibility).
+not appear is a defect. The sidecar detects the secure desktop with `OpenInputDesktop` (a
+NULL handle, or a handle whose name is not this process's desktop) and raises the typed
+`secure_desktop` error **before** capture or input, so a UAC prompt does not come back as a
+black screenshot that looks like success. The first desktop computer-use attempt on Windows
+emits `cu_permissions` with this explanation (`platform: "windows"`). Settings reopens the same
+pane. macOS first-run is unchanged (Screen Recording + Accessibility).
 
 The report itself is `tst_cu_mcp.permissions.build_windows_report`. The daemon parses it; it
 does not grow a second Windows backend.

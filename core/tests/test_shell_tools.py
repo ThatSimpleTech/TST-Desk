@@ -50,7 +50,7 @@ from tstd.tools import (
     run_shell,
 )
 from tstd.tools.boundary import PathGuard
-from tstd.tools.shell import sanitized_env
+from tstd.tools.shell import check_allowed, sanitized_env
 
 # A command that names its own process group, then parks an escapee in it:
 # the shell (the group leader) writes its pid — the test's spawn-ack and
@@ -864,8 +864,82 @@ class TestAllowlist:
         result = await dispatcher.dispatch("c1", "shell", {"command": "ls"}, session)
         assert result.status == "success"
 
+    # ── Handler-level guards ───────────────────────────────────────────────
 
-# ── Handler-level guards ───────────────────────────────────────────────
+    def test_cmd_internal_is_allowed_when_which_misses(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr("tstd.tools.shell.shutil.which", lambda _name: None)
+        check_allowed("echo hi", ShellPolicy(allowed_commands=("echo",)))
+
+    def test_cmd_internal_must_still_be_listed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr("tstd.tools.shell.shutil.which", lambda _name: None)
+        with pytest.raises(ValueError, match="not in allowed_commands"):
+            check_allowed("dir", ShellPolicy(allowed_commands=("echo",)))
+
+    def test_unknown_unresolvable_still_refused_on_windows(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr("tstd.tools.shell.shutil.which", lambda _name: None)
+        with pytest.raises(ValueError, match="cannot resolve"):
+            check_allowed(
+                "definitely_not_a_real_binary_605", ShellPolicy(allowed_commands=("echo",))
+            )
+
+    def test_path_shaped_echo_is_not_an_internal(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr("tstd.tools.shell.shutil.which", lambda _name: None)
+        with pytest.raises(ValueError, match="cannot resolve"):
+            check_allowed("C:/evil/echo hi", ShellPolicy(allowed_commands=("echo",)))
+
+
+# ── TD-1406: Windows spawn flags and taskkill "already gone" (every host) ──
+
+
+class TestWindowsSpawnAndGone:
+    async def test_spawn_ors_new_process_group_and_no_window(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CREATE_NEW_PROCESS_GROUP is the walk's edge; CREATE_NO_WINDOW
+        stops a console flash. Both must reach the spawn (TD-1406)."""
+        from tstd.tools import shell as shell_mod
+
+        captured: dict[str, object] = {}
+        real = asyncio.create_subprocess_shell
+
+        async def _spy(*args: object, **kwargs: object) -> object:
+            captured.update(kwargs)
+            safe = dict(kwargs)
+            # POSIX Popen ignores creationflags; keep the real spawn at 0
+            # so this contract still runs on Linux.
+            safe["creationflags"] = 0
+            return await real(*args, **safe)
+
+        monkeypatch.setattr(shell_mod, "_CREATE_NEW_PROCESS_GROUP", 0x200)
+        monkeypatch.setattr(shell_mod, "_CREATE_NO_WINDOW", 0x08000000)
+        monkeypatch.setattr(asyncio, "create_subprocess_shell", _spy)
+        session = make_session(tmp_path)
+        await run_shell(session, "echo hi")
+        assert captured["creationflags"] == 0x200 | 0x08000000
+        assert captured["start_new_session"] is True
+
+    @pytest.mark.parametrize(
+        ("code", "stderr", "gone"),
+        [
+            (128, b"", True),
+            (1, b'ERROR: The process "cmd.exe" (PID 9) not found.', True),
+            (1, b"There is no running instance of the task.", True),
+            (1, b"Access denied", False),
+            (0, b"", False),
+        ],
+    )
+    def test_already_gone_is_not_a_veto(self, code: int, stderr: bytes, gone: bool) -> None:
+        from tstd.tools import shell as shell_mod
+
+        assert shell_mod._taskkill_already_gone(code, stderr) is gone
 
 
 class TestGuards:
