@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 //
-// The tier picker lives in the composer: beside Send while the draft is one
-// line, and in a footer under the text once the draft breaks onto a second
-// line. The title bar keeps the live model readout.
+// The composer keeps the draft full width. Plan and the model dropdowns
+// sit on a bar under the text, with Send on the right. The title bar keeps
+// the live model readout.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mount, tick, unmount } from "svelte";
@@ -50,39 +50,41 @@ afterEach(async () => {
 });
 
 describe("composer model controls", () => {
-	it("places brain, worker, and validator to the right of Send on one line", async () => {
+	it("keeps the draft full width and the model bar under it", async () => {
 		mountComposer("hello");
 		await tick();
 
-		const entry = document.querySelector("[data-model-placement]");
-		expect(entry?.getAttribute("data-model-placement")).toBe("inline");
-
+		const draft = document.querySelector(".draft");
+		const bar = document.querySelector(".bar");
 		const send = document.querySelector('[aria-label="Send message"]');
 		const tier = document.querySelector<HTMLSelectElement>('[aria-label="Model tier"]');
-		expect(send).not.toBeNull();
+		const field = document.querySelector("textarea");
+		expect(draft?.contains(field ?? null)).toBe(true);
+		expect(draft?.contains(tier ?? null)).toBe(false);
+		expect(bar?.contains(tier ?? null)).toBe(true);
+		expect(document.querySelector(".actions")?.contains(send ?? null)).toBe(true);
+		expect(document.querySelector(".model-slot")?.contains(tier ?? null)).toBe(true);
+		expect(tier!.compareDocumentPosition(send!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
 		expect(tier?.value).toBe("brain");
 		expect([...tier!.options].map((option) => option.text)).toEqual([
 			"brain (kimi)",
 			"worker (flash)",
 			"validator (pro)",
 		]);
-		expect(send!.compareDocumentPosition(tier!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
 		expect(document.querySelector('[aria-label="Session preset"]')).not.toBeNull();
 		expect(document.body.textContent).toContain("Plan");
 	});
 
-	it("drops the controls into a footer once the draft has a second line", async () => {
+	it("uses that same bar when the draft is more than one line", async () => {
 		mountComposer("hello\nthere");
 		await tick();
 
-		expect(document.querySelector("[data-model-placement]")?.getAttribute("data-model-placement")).toBe(
-			"footer",
-		);
 		const tier = document.querySelector('[aria-label="Model tier"]');
-		expect(document.querySelector(".actions")?.contains(tier ?? null)).toBe(false);
+		expect(document.querySelector(".draft")?.contains(tier ?? null)).toBe(false);
 		expect(document.querySelector(".model-slot")?.contains(tier ?? null)).toBe(true);
-		const send = document.querySelector('[aria-label="Send message"]');
-		expect(send!.compareDocumentPosition(tier!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+		expect(document.querySelector(".actions")?.contains(document.querySelector('[aria-label="Send message"]'))).toBe(
+			true,
+		);
 	});
 
 	it("lists each tier with its model in parentheses", async () => {

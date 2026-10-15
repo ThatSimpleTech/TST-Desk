@@ -58,53 +58,56 @@
 			>
 				Plan
 			</button>
-			<select
-				class="tier"
-				aria-label="Model tier"
-				title={session.tierOverride !== null
-					? "Pinned for this session. Choosing a tier pins it."
-					: "Choosing a tier pins it for this session."}
-				value={session.tier}
-				onchange={onTierChange}
-			>
-				{#each TIERS as tier (tier)}
-					<option value={tier} disabled={session.planMode && tier !== "brain"}>
-						{tierMenuLabel(tier, session.modelSlugs[tier])}
-					</option>
-				{/each}
-			</select>
+			<span class="menu">
+				<select
+					class="tier"
+					aria-label="Model tier"
+					title={session.tierOverride !== null
+						? "Pinned for this session. Choosing a tier pins it."
+						: "Choosing a tier pins it for this session."}
+					value={session.tier}
+					onchange={onTierChange}
+				>
+					{#each TIERS as tier (tier)}
+						<option value={tier} disabled={session.planMode && tier !== "brain"}>
+							{tierMenuLabel(tier, session.modelSlugs[tier])}
+						</option>
+					{/each}
+				</select>
+			</span>
 		{/if}
 
 		{#if presetOptions.length > 0}
-			<select
-				class="preset"
-				aria-label="Session preset"
-				title={session.turnActive
-					? "Cannot change preset while a turn is running"
-					: "Preset for this session"}
-				value={session.preset}
-				disabled={session.turnActive}
-				onchange={(e) => {
-					const name = e.currentTarget.value;
-					if (name !== session.preset) setSessionPreset(name);
-				}}
-			>
-				{#each presetOptions as name (name)}
-					<option value={name}>{name}</option>
-				{/each}
-			</select>
+			<span class="menu">
+				<select
+					class="preset"
+					aria-label="Session preset"
+					title={session.turnActive
+						? "Cannot change preset while a turn is running"
+						: "Preset for this session"}
+					value={session.preset}
+					disabled={session.turnActive}
+					onchange={(e) => {
+						const name = e.currentTarget.value;
+						if (name !== session.preset) setSessionPreset(name);
+					}}
+				>
+					{#each presetOptions as name (name)}
+						<option value={name}>{name}</option>
+					{/each}
+				</select>
+			</span>
 		{/if}
 	</div>
 {/if}
 
 <style>
 	.controls {
-		position: relative;
 		display: flex;
 		flex-wrap: wrap;
-		justify-content: flex-end;
+		justify-content: flex-start;
 		align-items: center;
-		gap: var(--space-2);
+		gap: var(--space-1);
 		min-width: 0;
 		max-width: 100%;
 	}
@@ -122,17 +125,17 @@
 		font-weight: var(--weight-medium);
 		color: var(--color-ink-secondary);
 		background: transparent;
-		border: var(--border-width) solid var(--color-hairline);
+		border: none;
 		border-radius: var(--radius-full);
 		padding: var(--space-1) var(--space-2);
 		cursor: pointer;
 		transition:
-			border-color var(--transition-fast),
+			background var(--transition-fast),
 			color var(--transition-fast);
 	}
 
 	.chip:hover:not(:disabled) {
-		border-color: var(--color-ink-muted);
+		background: var(--color-sunken);
 		color: var(--color-ink);
 	}
 
@@ -153,22 +156,49 @@
 		color: var(--color-on-accent);
 	}
 
+	.menu {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		min-width: 0;
+		max-width: 100%;
+	}
+
+	.menu::after {
+		content: "";
+		position: absolute;
+		right: var(--space-2);
+		width: 5px;
+		height: 5px;
+		border-right: 1.5px solid var(--color-ink-muted);
+		border-bottom: 1.5px solid var(--color-ink-muted);
+		transform: translateY(-1px) rotate(45deg);
+		pointer-events: none;
+	}
+
 	.tier,
 	.preset {
+		appearance: none;
 		max-width: 8rem;
+		font-family: var(--font-sans);
 		font-size: var(--text-xs);
 		font-weight: var(--weight-medium);
 		color: var(--color-ink-secondary);
 		background: transparent;
-		border: var(--border-width) solid var(--color-hairline);
+		border: none;
 		border-radius: var(--radius-full);
-		padding: var(--space-1) var(--space-2);
+		padding: var(--space-1) var(--space-5) var(--space-1) var(--space-2);
 		cursor: pointer;
 	}
 
+	.tier:hover,
+	.preset:hover {
+		background: var(--color-sunken);
+		color: var(--color-ink);
+	}
+
 	.tier {
-		max-width: 22rem;
-		font-family: var(--font-mono);
+		max-width: 18rem;
 	}
 
 	.preset:disabled {
