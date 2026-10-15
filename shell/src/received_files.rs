@@ -12,10 +12,11 @@
 //! so the tests run them against temp dirs; the Tauri commands only work
 //! out where those directories are.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
 
 use base64::Engine as _;
@@ -55,6 +56,20 @@ pub(crate) fn received_root(app: &AppHandle) -> Result<PathBuf, String> {
         .app_cache_dir()
         .map(|dir| dir.join("received"))
         .map_err(|e| format!("io: {e}"))
+}
+
+/// One lock per artifact id. The commands run on a thread pool, and two
+/// windows on one session, or Cancel followed at once by Download, can call
+/// begin, append, finish and discard on the same id together: two appends
+/// would both pass the offset check, and a finish could lose its rename to
+/// another finish. Different ids never wait for each other.
+static BUSY: Mutex<BTreeMap<String, Arc<Mutex<()>>>> = Mutex::new(BTreeMap::new());
+
+fn id_lock(aid: &str) -> Arc<Mutex<()>> {
+    let mut locks = BUSY.lock().unwrap_or_else(PoisonError::into_inner);
+    // Forget the locks nobody holds or waits for, so the map stays small.
+    locks.retain(|_, lock| Arc::strong_count(lock) > 1);
+    Arc::clone(locks.entry(aid.to_string()).or_default())
 }
 
 fn part_path(root: &Path, aid: &str) -> PathBuf {
@@ -209,6 +224,8 @@ pub(crate) fn begin_in(
     if !is_sha256(sha256) {
         return Err("bad_id".into());
     }
+    let lock = id_lock(aid);
+    let _one_at_a_time = lock.lock().unwrap_or_else(PoisonError::into_inner);
     ensure_root(root)?;
     sweep(root, aid, now);
 
@@ -266,6 +283,8 @@ pub(crate) fn append_in(
     data_b64: &str,
 ) -> Result<u64, String> {
     check_id(aid)?;
+    let lock = id_lock(aid);
+    let _one_at_a_time = lock.lock().unwrap_or_else(PoisonError::into_inner);
     let Some(meta) = read_meta(root, aid) else {
         return Err("io: no download in progress".into());
     };
@@ -311,6 +330,9 @@ fn hash_file(path: &Path) -> io::Result<String> {
 /// Check the whole part and move it to `downloads`. Returns the final path.
 pub(crate) fn finish_in(root: &Path, downloads: &Path, aid: &str) -> Result<String, String> {
     check_id(aid)?;
+    // Held through the hash too, so nothing can change the part under it.
+    let lock = id_lock(aid);
+    let _one_at_a_time = lock.lock().unwrap_or_else(PoisonError::into_inner);
     let Some(mut meta) = read_meta(root, aid) else {
         return Err("not_found".into());
     };
@@ -377,6 +399,8 @@ fn move_unique(from: &Path, dir: &Path, name: &str) -> Result<PathBuf, String> {
 /// Throw the part and the meta away. The user's copy in Downloads stays.
 pub(crate) fn discard_in(root: &Path, aid: &str) -> Result<(), String> {
     check_id(aid)?;
+    let lock = id_lock(aid);
+    let _one_at_a_time = lock.lock().unwrap_or_else(PoisonError::into_inner);
     for path in [
         part_path(root, aid),
         meta_path(root, aid),
@@ -805,6 +829,73 @@ mod tests {
         assert_eq!(status_in(&root, AID), FileStatus::new("received", 2));
         fs::write(&done, b"three").unwrap();
         assert_eq!(status_in(&root, AID), FileStatus::new("none", 0));
+    }
+
+    /// Run `work` on `n` threads released together; their results in order.
+    fn together<T: Send>(n: usize, work: impl Fn(usize) -> T + Sync) -> Vec<T> {
+        let start = std::sync::Barrier::new(n);
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..n)
+                .map(|i| {
+                    let (start, work) = (&start, &work);
+                    scope.spawn(move || {
+                        start.wait();
+                        work(i)
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        })
+    }
+
+    fn sha_hex(bytes: &[u8]) -> String {
+        Sha256::digest(bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+
+    #[test]
+    fn received_calls_on_one_id_never_interleave() {
+        let tmp = TempDir::new("serial");
+        let root = tmp.0.join("received");
+        let downloads = tmp.0.join("Downloads");
+        let chunk = vec![7u8; 1024 * 1024];
+        let body = chunk.repeat(4);
+        let sha = sha_hex(&body);
+        let size = body.len() as u64;
+        for round in 0..5 {
+            // Two windows append the same chunk: one lands, once.
+            discard_in(&root, AID).unwrap();
+            begin(&root, "big.bin", size, &sha).unwrap();
+            let wrote = together(8, |_| append_in(&root, AID, 0, &b64(&chunk)));
+            let landed = wrote.iter().filter(|r| r.is_ok()).count();
+            assert_eq!(landed, 1, "round {round}: {wrote:?}");
+            assert_eq!(part_len(&root, AID), Some(chunk.len() as u64));
+            for offset in 1..4u64 {
+                append_in(&root, AID, offset * chunk.len() as u64, &b64(&chunk)).unwrap();
+            }
+
+            // Two finishes, with a begin between them: all see one file.
+            let results = together(4, |i| {
+                if i == 3 {
+                    begin(&root, "big.bin", size, &sha).map(|_| String::new())
+                } else {
+                    finish_in(&root, &downloads, AID)
+                }
+            });
+            let done = results[0].clone().unwrap();
+            assert_eq!(results[1], Ok(done.clone()), "round {round}");
+            assert_eq!(results[2], Ok(done.clone()), "round {round}");
+            assert!(results[3].is_ok(), "round {round}: {:?}", results[3]);
+            assert!(
+                !part_path(&root, AID).exists(),
+                "round {round}: orphan part"
+            );
+            assert_eq!(status_in(&root, AID), FileStatus::new("received", size));
+            assert_eq!(fs::read_dir(&downloads).unwrap().count(), 1);
+            fs::remove_file(done).unwrap();
+        }
     }
 
     #[test]
