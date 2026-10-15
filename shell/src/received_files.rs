@@ -482,12 +482,21 @@ fn truncate(name: String) -> String {
     }
 }
 
+/// Step 2: C0 controls and DEL, and the bidi controls that let a name such
+/// as `invoice\u{202E}fdp.exe` show as a PDF in a file manager.
+fn is_dropped(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x00..=0x1F | 0x7F | 0x200E | 0x200F | 0x202A..=0x202E | 0x2066..=0x2069
+    )
+}
+
 /// A file name safe on every desktop OS, from whatever the peer sent.
 pub(crate) fn safe_name(raw: &str) -> String {
     let base = raw.rsplit(['/', '\\']).next().unwrap_or("");
     let cleaned: String = base
         .chars()
-        .filter(|c| !matches!(*c as u32, 0x00..=0x1F | 0x7F))
+        .filter(|c| !is_dropped(*c))
         .map(|c| match c {
             ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
             other => other,
@@ -798,6 +807,7 @@ mod tests {
                 "a".repeat(120),
             ),
             ("name with spaces.zip".into(), "name with spaces.zip".into()),
+            ("a\u{202E}fdp.exe".into(), "afdp.exe".into()),
             (
                 format!("CON{}y.log", " ".repeat(150)),
                 format!("_CON{}.log", " ".repeat(112)),
@@ -808,6 +818,25 @@ mod tests {
             assert_eq!(&got, want, "{input:?}");
             assert_eq!(safe_name(&got), got, "not idempotent for {input:?}");
             assert!(got.len() <= MAX_NAME_BYTES);
+        }
+    }
+
+    #[test]
+    fn safe_name_drops_every_bidi_control() {
+        let bidi = [0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E]
+            .into_iter()
+            .chain(0x2066..=0x2069);
+        for code in bidi {
+            let mark = char::from_u32(code).unwrap();
+            assert_eq!(
+                safe_name(&format!("in{mark}voice.pdf")),
+                "invoice.pdf",
+                "{code:X}"
+            );
+        }
+        // Neighbours of the ranges are ordinary text and stay.
+        for kept in ['\u{200D}', '\u{2029}', '\u{202F}', '\u{2065}', '\u{206A}'] {
+            assert_eq!(safe_name(&format!("a{kept}b")), format!("a{kept}b"));
         }
     }
 
