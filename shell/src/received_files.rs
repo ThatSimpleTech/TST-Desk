@@ -75,6 +75,17 @@ fn id_lock(aid: &str) -> Arc<Mutex<()>> {
     Arc::clone(locks.entry(aid.to_string()).or_default())
 }
 
+/// The user's Downloads folder: the platform's own, else `~/Downloads`.
+/// On Linux `dirs` reads it from `~/.config/user-dirs.dirs`, which minimal
+/// and tiling-WM setups often lack.
+pub(crate) fn downloads_dir() -> Option<PathBuf> {
+    downloads_from(dirs::download_dir(), dirs::home_dir())
+}
+
+fn downloads_from(download: Option<PathBuf>, home: Option<PathBuf>) -> Option<PathBuf> {
+    download.or_else(|| home.map(|home| home.join("Downloads")))
+}
+
 fn part_path(root: &Path, aid: &str) -> PathBuf {
     root.join(format!("{aid}.part"))
 }
@@ -670,6 +681,8 @@ pub fn received_file_begin(
     sha256: String,
 ) -> Result<FileStatus, String> {
     let root = received_root(&app)?;
+    // Known before any byte moves, not after the whole file has arrived.
+    downloads_dir().ok_or_else(|| "io: no Downloads folder".to_string())?;
     begin_in(
         &root,
         &artifact_id,
@@ -695,7 +708,7 @@ pub fn received_file_append(
 #[tauri::command]
 pub async fn received_file_finish(app: AppHandle, artifact_id: String) -> Result<String, String> {
     let root = received_root(&app)?;
-    let downloads = dirs::download_dir().ok_or_else(|| "io: no Downloads folder".to_string())?;
+    let downloads = downloads_dir().ok_or_else(|| "io: no Downloads folder".to_string())?;
     tauri::async_runtime::spawn_blocking(move || finish_in(&root, &downloads, &artifact_id))
         .await
         .map_err(|e| format!("io: {e}"))?
@@ -841,6 +854,21 @@ mod tests {
         let tmp = TempDir::new("free");
         assert!(free_space(&tmp.0).is_some_and(|n| n > 0));
         assert_eq!(free_space(&tmp.0.join("missing")), None);
+    }
+
+    #[test]
+    fn downloads_falls_back_to_home_downloads() {
+        let (xdg, home) = (PathBuf::from("/x/dl"), PathBuf::from("/home/u"));
+        assert_eq!(
+            downloads_from(Some(xdg.clone()), Some(home.clone())),
+            Some(xdg)
+        );
+        // Linux without ~/.config/user-dirs.dirs: dirs reports no Downloads.
+        assert_eq!(
+            downloads_from(None, Some(home)),
+            Some(PathBuf::from("/home/u/Downloads"))
+        );
+        assert_eq!(downloads_from(None, None), None);
     }
 
     #[test]

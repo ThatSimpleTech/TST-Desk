@@ -296,7 +296,7 @@ pub async fn sent_file_save_as(
     let source = target(&app, &session_id, &artifact_id)?;
     tauri::async_runtime::spawn_blocking(move || {
         let mut dialog = app.dialog().file().set_file_name(safe_name(&name));
-        if let Some(dir) = dirs::download_dir() {
+        if let Some(dir) = received_files::downloads_dir().filter(|dir| dir.is_dir()) {
             dialog = dialog.set_directory(dir);
         }
         let Some(chosen) = dialog.blocking_save_file() else {
