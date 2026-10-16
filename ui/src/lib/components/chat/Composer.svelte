@@ -589,7 +589,10 @@
 	}
 
 	/* The two-item add menu: upload, or take a photo. Anchored above the
-	   toolbar because the composer sits at the bottom edge of the window. */
+	   toolbar because the composer sits at the bottom edge of the window.
+	   Narrow viewport (TD-3701 breakpoint): the paperclip sits near the
+	   right edge, so the menu overlays to the centre of the screen instead
+	   of hanging off it. */
 	.attach-menu {
 		position: absolute;
 		bottom: calc(100% + var(--space-1));
@@ -602,6 +605,13 @@
 		background: var(--color-lifted);
 		border: var(--border-width) solid var(--color-hairline);
 		border-radius: var(--radius-md);
+	}
+
+	@media (max-width: 639px) {
+		.attach-menu {
+			left: 50%;
+			transform: translateX(-50%);
+		}
 	}
 
 	.attach-item {
