@@ -39,6 +39,11 @@ credentials.json
 # cannot import on macOS.
 /darwin.py
 files_*.zip
+# Sideload APK copies and reference screenshots parked at the root during
+# sessions; the build outputs live under android/app/build/outputs/.
+/*.apk
+/*.png
+/*.jpg
 
 # --- OS artifacts ---
 .DS_Store
