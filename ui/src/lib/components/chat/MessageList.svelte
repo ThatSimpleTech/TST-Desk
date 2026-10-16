@@ -7,7 +7,7 @@
 	// and stops the moment the user scrolls up; the jump button re-pins.
 	import { untrack } from "svelte";
 	import { createVirtualizer } from "@tanstack/svelte-virtual";
-	import { createAutoScroll, type AutoScroll } from "../../autoscroll";
+	import { createAutoScroll, type AutoScroll } from "../../autoscroll.svelte";
 	import type { ChatMessage } from "../../chat-store";
 	import MessageBubble from "./MessageBubble.svelte";
 	import Icon from "../Icon.svelte";

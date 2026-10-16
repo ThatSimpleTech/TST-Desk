@@ -1,9 +1,11 @@
 // Auto-scroll logic (TD-1004).
 //
-// DOM-free and rune-free so it is unit-testable in node: the pane wraps the
-// returned object in $state, which makes `pinned` reactive for the
-// jump-to-latest button. Mutations go through the returned object itself, so
-// a proxy wrapping it observes every change.
+// DOM-free so it is unit-testable in node. `pinned` is reactive because it is
+// backed by `$state` inside the factory, which is why this file is a
+// `.svelte.ts` module. A plain rune-free object wrapped in the pane's `$state`
+// does NOT work: the factory's methods close over the raw target and mutate it
+// directly, bypassing the proxy, so the jump button's `!auto.pinned` read never
+// re-runs and the button never appears.
 
 export const BOTTOM_THRESHOLD_PX = 48;
 
@@ -34,12 +36,22 @@ export interface AutoScroll {
 }
 
 export function createAutoScroll(container: ScrollContainerLike): AutoScroll {
+  // Backed by $state so `pinned` is reactive within this module; the factory's
+  // own methods read/write it through `self.pinned` (the getter below), which
+  // is what keeps the jump-to-latest button reactive.
+  const pinnedState = $state({ pinned: true });
+
   function onScroll(): void {
-    self.pinned = isAtBottom(container.scrollTop, container.clientHeight, container.scrollHeight);
+    pinnedState.pinned = isAtBottom(container.scrollTop, container.clientHeight, container.scrollHeight);
   }
 
   const self: AutoScroll = {
-    pinned: true,
+    get pinned() {
+      return pinnedState.pinned;
+    },
+    set pinned(v: boolean) {
+      pinnedState.pinned = v;
+    },
     maybeFollow() {
       if (self.pinned) container.scrollTop = container.scrollHeight;
     },

@@ -1,41 +1,48 @@
 <script lang="ts">
-	// Playful background (TD-1750). A field of slow twinkling sparkles under
-	// the chat column, and a ring of light that expands from every click.
-	// Pure maths lives in playful-bg.ts; this component owns the canvas, DPR
-	// scaling, the loop, and token colours — sparkles and ripples both read
-	// the accent token, so they land right on both grounds. It sits under
-	// the content and never takes pointer events; ripples listen on window
-	// so a click anywhere in the pane (through the canvas) lights one off.
-	// Reduced motion freezes the field at a static twinkle and skips
-	// ripples — same stance as the GlowLayer.
+	// Playful background (TD-1750). A field of fine dust that twinkles
+	// slowly and drifts upward — sparse light specks on the ground colour,
+	// the Claude Code starfield look — and a ring of light that expands
+	// from every click. Pure maths lives in playful-bg.ts; this component
+	// owns the canvas, DPR scaling, the loop, and token colours: specks
+	// read the ink token so they stay neutral on both grounds, ripples read
+	// the accent. It sits under the content and never takes pointer events;
+	// ripples listen on window so a click anywhere in the pane (through the
+	// canvas) lights one off. Reduced motion freezes the field at a static
+	// twinkle and skips ripples — same stance as the GlowLayer.
 	import {
+		driftY,
+		dustField,
 		pushRipple,
 		rippleAlpha,
 		rippleAt,
 		rippleRadius,
-		sparkleField,
-		stepRipples,
 		staticAlpha,
+		stepRipples,
 		shouldAnimate,
 		twinkleAlpha,
+		type Dust,
 		type Ripple,
-		type Sparkle,
 	} from "../playful-bg";
 
 	let canvas: HTMLCanvasElement | undefined = $state();
 	let host: HTMLDivElement | undefined = $state();
 
-	let sparkles: Sparkle[] = [];
+	let specks: Dust[] = [];
 	let ripples: Ripple[] = [];
 	let raf = 0;
 	let lastT = 0;
 	let reduceQuery: MediaQueryList | null = null;
 	let reduced = false;
 	let accent = "";
+	let ink = "";
+	let inkSoft = "";
 
 	function tokenColors(): void {
 		if (!host) return;
-		accent = getComputedStyle(host).getPropertyValue("--color-accent").trim();
+		const cs = getComputedStyle(host);
+		accent = cs.getPropertyValue("--color-accent").trim();
+		ink = cs.getPropertyValue("--color-ink").trim();
+		inkSoft = cs.getPropertyValue("--color-ink-secondary").trim() || ink;
 	}
 
 	function hexToRgb(hex: string): [number, number, number] | null {
@@ -60,7 +67,7 @@
 		canvas.height = Math.max(1, Math.round(h * dpr));
 		const ctx = canvas.getContext("2d");
 		if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-		sparkles = sparkleField({ seed: 0x5eed, width: w, height: h });
+		specks = dustField({ seed: 0x5eed, width: w, height: h });
 	}
 
 	function draw(tMs: number): void {
@@ -71,11 +78,15 @@
 		const h = host.clientHeight;
 		ctx.clearRect(0, 0, w, h);
 		const tSec = tMs / 1000;
-		for (const s of sparkles) {
-			const a = reduced ? staticAlpha() : twinkleAlpha(s, tMs);
-			ctx.fillStyle = rgba(accent, a);
+		for (const s of specks) {
+			const a = reduced ? staticAlpha(s) : twinkleAlpha(s, tMs);
+			const y = reduced ? s.y : driftY(s.y, tSec, h);
+			// The brightest specks read in ink (white on dark), the quiet
+			// majority in its secondary — the reference field is neutral,
+			// not accent-coloured; the accent stays reserved for ripples.
+			ctx.fillStyle = rgba(s.bright > 0.75 ? ink : inkSoft, a);
 			ctx.beginPath();
-			ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+			ctx.arc(s.x, y, s.r, 0, Math.PI * 2);
 			ctx.fill();
 		}
 		if (reduced) return; // ripples are motion; static mode skips them.

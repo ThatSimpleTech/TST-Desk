@@ -1,10 +1,11 @@
 // Playful background core (TD-1750).
 //
-// The sparkle field the chat pane floats on, and a ring of light that
-// expands from wherever the user clicks. Pure and rune-free so the layout,
-// the seeded randomness, and the reduced-motion rule are unit-testable in
-// node; the Svelte component owns the canvas, the animation loop, and
-// reading the design tokens.
+// A field of fine dust that twinkles slowly and drifts upward, the same
+// idea as Claude Code's starfield: sparse specks on the ground colour,
+// a little brighter where the ambient band lights the top of the pane.
+// Pure and rune-free so the seeded randomness, the drift wrap, and the
+// reduced-motion rule are unit-testable in node; the Svelte component
+// owns the canvas, the animation loop, and reading the design tokens.
 //
 // Colours arrive as resolved hex strings from the caller — the module
 // never hardcodes a colour, so the tokens in tokens.css stay the only
@@ -22,67 +23,83 @@ export function mulberry32(seed: number): () => number {
 	};
 }
 
-export interface Sparkle {
+export interface Dust {
 	x: number;
 	y: number;
 	/** Radius in CSS pixels at full twinkle. */
 	r: number;
-	/** Phase offset so sparkles never blink in lockstep. */
+	/** Phase offset so specks never blink in lockstep. */
 	phase: number;
 	/** Twinkle speed in cycles per second. */
 	cps: number;
+	/** Per-speck brightness weight 0–1; most are faint, a few are bright. */
+	bright: number;
 }
 
 export interface FieldOptions {
 	seed: number;
 	width: number;
 	height: number;
-	/** Sparkles per 100k CSS px²; density scales with area. */
-	density?: number;
 	minR?: number;
 	maxR?: number;
 	minCps?: number;
 	maxCps?: number;
 }
 
-export const DEFAULT_FIELD = {
-	density: 4,
-	minR: 0.7,
-	maxR: 2.2,
-	minCps: 0.05,
-	maxCps: 0.2,
+export const DUST = {
+	/** Specks per 100k CSS px²; density scales with area. */
+	density: 9,
+	minR: 0.5,
+	maxR: 1.6,
+	minCps: 0.03,
+	maxCps: 0.12,
+	/** Upward drift in CSS px per second. Barely perceptible; it is what
+	 *  makes the field read as alive rather than painted on. */
+	driftPxPerSec: 1.4,
 } as const;
 
-/** The static sparkle field. Deterministic for a given seed and size. */
-export function sparkleField(opts: FieldOptions): Sparkle[] {
+/** The seeded dust field. Deterministic for a given seed and size.
+ *  Brightness is skewed faint — squaring the roll keeps most specks quiet
+ *  and lets only a few shine, which is what reads as depth. */
+export function dustField(opts: FieldOptions): Dust[] {
 	const {
-		density = DEFAULT_FIELD.density,
-		minR = DEFAULT_FIELD.minR,
-		maxR = DEFAULT_FIELD.maxR,
-		minCps = DEFAULT_FIELD.minCps,
-		maxCps = DEFAULT_FIELD.maxCps,
+		minR = DUST.minR,
+		maxR = DUST.maxR,
+		minCps = DUST.minCps,
+		maxCps = DUST.maxCps,
 	} = opts;
 	if (opts.width <= 0 || opts.height <= 0) return [];
 	const rand = mulberry32(opts.seed);
-	const count = Math.round((opts.width * opts.height) / 100_000) * density;
-	const sparkles: Sparkle[] = [];
+	const count = Math.round((opts.width * opts.height) / 100_000) * DUST.density;
+	const specks: Dust[] = [];
 	for (let i = 0; i < count; i++) {
-		sparkles.push({
+		specks.push({
 			x: rand() * opts.width,
 			y: rand() * opts.height,
 			r: minR + rand() * (maxR - minR),
 			phase: rand(),
 			cps: minCps + rand() * (maxCps - minCps),
+			bright: rand() * rand(),
 		});
 	}
-	return sparkles;
+	return specks;
 }
 
-/** Alpha 0–1 for one sparkle at time `tMs`. A slow sine with a soft floor
- *  so the field shimmers and never goes fully dark. */
-export function twinkleAlpha(sparkle: Sparkle, tMs: number): number {
-	const wave = 0.5 + 0.5 * Math.sin(2 * Math.PI * (sparkle.phase + (tMs / 1000) * sparkle.cps));
-	return 0.2 + 0.6 * wave;
+/** Alpha 0–0.9 for one speck at time `tMs`. A slow sine with a soft floor,
+ *  scaled by the speck's brightness weight (a quiet speck peaks at 0.5, a
+ *  bright one at 0.9), so the field shimmers and never goes fully dark but
+ *  stays quiet overall. */
+export function twinkleAlpha(speck: Dust, tMs: number): number {
+	const wave = 0.5 + 0.5 * Math.sin(2 * Math.PI * (speck.phase + (tMs / 1000) * speck.cps));
+	return (0.1 + 0.8 * wave) * (0.5 + 0.5 * speck.bright);
+}
+
+/** A speck's y at time `tSec` after a slow upward drift, wrapped so specks
+ *  that leave the top re-enter at the bottom. */
+export function driftY(y: number, tSec: number, height: number): number {
+	if (height <= 0) return y;
+	const shifted = y - tSec * DUST.driftPxPerSec;
+	return ((shifted % height) + height) % height;
 }
 
 // ── Click ripples ───────────────────────────────────────────────────────────
@@ -152,15 +169,15 @@ export function pushRipple(ripples: Ripple[], ripple: Ripple): Ripple[] {
 	return next.length > RIPPLE.maxRipples ? next.slice(next.length - RIPPLE.maxRipples) : next;
 }
 
-/** Reduced motion kills the animation loop: sparkles hold a fixed mid
- *  twinkle and ripples are skipped entirely. Static is the rule, not the
- *  exception (same stance as the GlowLayer). */
+/** Reduced motion kills the animation loop: the field holds a fixed mid
+ *  twinkle, no drift, and ripples are skipped entirely. Static is the
+ *  rule, not the exception (same stance as the GlowLayer). */
 export function shouldAnimate(prefersReducedMotion: boolean): boolean {
 	return !prefersReducedMotion;
 }
 
-/** Fixed alpha used for every sparkle in static mode (wave mid-point at
- *  t = 0 under the sine above, minus the motion). */
-export function staticAlpha(): number {
-	return twinkleAlpha({ x: 0, y: 0, r: 1, phase: 0, cps: 0 }, 0);
+/** Fixed alpha used for every speck in static mode (wave mid-point at
+ * t = 0 under the sine above, minus the motion). */
+export function staticAlpha(speck: Dust): number {
+	return twinkleAlpha({ ...speck, phase: 0, cps: 0 }, 0);
 }

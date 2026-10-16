@@ -8,7 +8,7 @@ import {
   createAutoScroll,
   isAtBottom,
   type ScrollContainerLike,
-} from "./autoscroll";
+} from "./autoscroll.svelte";
 
 interface FakeContainer extends ScrollContainerLike {
   fireScroll(): void;

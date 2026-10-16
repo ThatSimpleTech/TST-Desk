@@ -9,6 +9,7 @@ import { onEvent } from "./connection-status.svelte.js";
 import { isBridged } from "./bridged-id";
 import { isTauri } from "./open-file";
 import type { DaemonEventUnion, ToolCall } from "./protocol";
+import { hostCommandError, readTextFileCommand } from "./host-read";
 import { isCuTool, screenPreviewSidecar } from "./screen";
 
 export const screen = $state({
@@ -112,7 +113,7 @@ async function loadPreview(sessionId: string, path: string): Promise<void> {
 	} catch (err) {
 		if (token !== previewToken) return;
 		screen.preview = null;
-		screen.error = err instanceof Error ? err.message : "Could not read screen frame.";
+		screen.error = hostCommandError(err, "Could not read screen frame.");
 	}
 }
 
@@ -121,9 +122,12 @@ async function defaultScreenReader(args: { path: string; sessionId: string }): P
 		throw new Error("Screen preview is available in the desktop app.");
 	}
 	const { invoke } = await import("@tauri-apps/api/core");
-	return invoke<string>("read_text_file", {
-		path: args.path,
-		workspace: null,
-		session_id: args.sessionId,
-	});
+	return invoke<string>(
+		"read_text_file",
+		readTextFileCommand({
+			path: args.path,
+			workspace: null,
+			sessionId: args.sessionId,
+		}),
+	);
 }

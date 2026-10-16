@@ -23,6 +23,7 @@
 		type AttachmentRefusal,
 	} from "../../attachments";
 	import { shouldSubmit } from "../../chat-store";
+	import { capturePhoto, photoName } from "../../camera";
 	import { COMPOSER_LINE_PADDING } from "../../composer-layout";
 	import { commands, loadCommands } from "../../commands.svelte.js";
 	import { acceptPickDrafts } from "../../design";
@@ -113,11 +114,18 @@
 	    The first refusal stops the batch and is what the user is told: naming
 	    one file and its fix beats a list nobody reads. */
 	async function addFiles(files: readonly File[]): Promise<void> {
+		const read: { name: string; bytes: Uint8Array }[] = [];
+		for (const file of files) read.push({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
+		await addBytes(read);
+	}
+
+	/** The same gate as addFiles, for bytes that never were a File — a camera
+	    frame arrives as bytes already (a File is just bytes with a name). */
+	async function addBytes(files: readonly { name: string; bytes: Uint8Array }[]): Promise<void> {
 		if (disabled) return;
 		refusal = null;
 		for (const file of files) {
-			const bytes = new Uint8Array(await file.arrayBuffer());
-			const outcome = acceptAttachment(file.name, bytes, limits, attachments, allowImages);
+			const outcome = acceptAttachment(file.name, file.bytes, limits, attachments, allowImages);
 			if (!outcome.ok) {
 				refusal = outcome.refusal;
 				return;
@@ -137,6 +145,51 @@
 		void addFiles([...(input.files ?? [])]);
 		// Reset so picking the same file twice in a row still fires a change.
 		input.value = "";
+		attachMenuOpen = false;
+	}
+
+	// The paperclip opens a two-item menu: pick a file, or take a photo. The
+	// photo path opens the camera, grabs one frame as PNG, and hands the bytes
+	// to the same attachment gate as a picked file — the caps do not care where
+	// the bytes came from, and a refusal here is the same courtesy copy.
+	let attachMenuOpen = $state(false);
+	let cameraBusy = $state(false);
+
+	// Close the menu when focus or a click lands outside it. The rail's menus
+	// close on toggle alone; this one is anchored over the toolbar, so a click
+	// elsewhere needs to dismiss it too.
+	$effect(() => {
+		if (!attachMenuOpen) return;
+		const onPointerDown = (event: PointerEvent): void => {
+			if (!event.composedPath().some((el) => el instanceof HTMLElement && el.classList.contains("attach-wrap"))) {
+				attachMenuOpen = false;
+			}
+		};
+		const onKey = (event: KeyboardEvent): void => {
+			if (event.key === "Escape") attachMenuOpen = false;
+		};
+		document.addEventListener("pointerdown", onPointerDown);
+		document.addEventListener("keydown", onKey);
+		return () => {
+			document.removeEventListener("pointerdown", onPointerDown);
+			document.removeEventListener("keydown", onKey);
+		};
+	});
+
+	async function takePhoto(): Promise<void> {
+		attachMenuOpen = false;
+		if (cameraBusy) return;
+		cameraBusy = true;
+		try {
+			const outcome = await capturePhoto();
+			if (!outcome.ok) {
+				refusal = { name: photoName(), code: outcome.failure.code, message: outcome.failure.message };
+				return;
+			}
+			await addBytes([{ name: photoName(), bytes: outcome.bytes }]);
+		} finally {
+			cameraBusy = false;
+		}
 	}
 
 	function handleDrop(event: DragEvent): void {
@@ -325,25 +378,55 @@
 				</div>
 				<div class="actions">
 					<DictationButton {disabled} ontranscript={appendDictation} />
-					<input
-						bind:this={picker}
-						type="file"
-						multiple
-						class="picker"
-						tabindex="-1"
-						aria-hidden="true"
-						onchange={handlePick}
-					/>
-					<button
-						type="button"
-						class="attach"
-						{disabled}
-						title="Attach text files"
-						onclick={() => picker?.click()}
-						aria-label="Attach text files"
-					>
-						<Icon name="paperclip" size={16} />
-					</button>
+					<div class="attach-wrap">
+						<input
+							bind:this={picker}
+							type="file"
+							multiple
+							class="picker"
+							tabindex="-1"
+							aria-hidden="true"
+							onchange={handlePick}
+						/>
+						<button
+							type="button"
+							class="attach"
+							{disabled}
+							title="Attach a file or take a photo"
+							aria-label="Attach a file or take a photo"
+							aria-haspopup="menu"
+							aria-expanded={attachMenuOpen}
+							onclick={() => (attachMenuOpen = !attachMenuOpen)}
+						>
+							<Icon name="paperclip" size={16} />
+						</button>
+						{#if attachMenuOpen}
+							<div class="attach-menu" role="menu" aria-label="Add attachment">
+								<button
+									type="button"
+									class="attach-item"
+									role="menuitem"
+									onclick={() => {
+										attachMenuOpen = false;
+										picker?.click();
+									}}
+								>
+									<Icon name="file" size={14} />
+									<span>Upload files</span>
+								</button>
+								<button
+									type="button"
+									class="attach-item"
+									role="menuitem"
+									disabled={cameraBusy}
+									onclick={() => void takePhoto()}
+								>
+									<Icon name="camera" size={14} />
+									<span>{cameraBusy ? "Taking a photo…" : "Take a photo"}</span>
+								</button>
+							</div>
+						{/if}
+					</div>
 					{#if running && !disabled}
 						<button
 							type="button"
@@ -498,6 +581,55 @@
 	/* The native control is never shown; the paperclip drives it. */
 	.picker {
 		display: none;
+	}
+
+	.attach-wrap {
+		position: relative;
+		display: inline-flex;
+	}
+
+	/* The two-item add menu: upload, or take a photo. Anchored above the
+	   toolbar because the composer sits at the bottom edge of the window. */
+	.attach-menu {
+		position: absolute;
+		bottom: calc(100% + var(--space-1));
+		left: 0;
+		z-index: 10;
+		display: flex;
+		flex-direction: column;
+		min-width: 160px;
+		padding: var(--space-1);
+		background: var(--color-lifted);
+		border: var(--border-width) solid var(--color-hairline);
+		border-radius: var(--radius-md);
+	}
+
+	.attach-item {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		padding: var(--space-1) var(--space-2);
+		font-size: var(--text-sm);
+		text-align: left;
+		color: var(--color-ink);
+		background: transparent;
+		border: none;
+		border-radius: var(--radius-sm);
+		cursor: pointer;
+	}
+
+	.attach-item:hover:not(:disabled) {
+		background: var(--color-sunken);
+	}
+
+	.attach-item:focus-visible {
+		outline: 2px solid var(--color-accent);
+		outline-offset: -1px;
+	}
+
+	.attach-item:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 
 	.attach {

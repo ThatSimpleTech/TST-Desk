@@ -584,8 +584,7 @@ describe("presentation helpers", () => {
     expect(recencyLabel("not-a-date", now)).toBe("");
   });
 
-  it("row title is the short id; subtitle names the workspace and the recency", () => {
-    const now = Date.parse("2026-08-14T12:00:00Z");
+  it("row title is the short id; subtitle names the workspace", () => {
     const row = {
       sessionId: "abc12345-0000-0000-0000-000000000000",
       workspacePath: "/ws/api-server",
@@ -599,7 +598,7 @@ describe("presentation helpers", () => {
       machine: null,
     };
     expect(rowTitle(row)).toBe("abc12345");
-    expect(rowSubtitle(row, now)).toBe("api-server · 1h");
+    expect(rowSubtitle(row)).toBe("api-server");
   });
 
   it("session_list rows carry the daemon's preset (TD-1721)", () => {
@@ -626,7 +625,6 @@ describe("presentation helpers", () => {
   });
 
   it("row subtitle names the session preset when the list carries one (TD-1721)", () => {
-    const now = Date.parse("2026-08-14T12:00:00Z");
     const row = {
       sessionId: "abc12345-0000-0000-0000-000000000000",
       workspacePath: "/ws/api-server",
@@ -639,7 +637,7 @@ describe("presentation helpers", () => {
       busy: false,
       machine: null,
     };
-    expect(rowSubtitle(row, now)).toBe("api-server · budget · 1h");
+    expect(rowSubtitle(row)).toBe("api-server · budget");
   });
 
   it("row title prefers the daemon title over the short id (TD-3001)", () => {

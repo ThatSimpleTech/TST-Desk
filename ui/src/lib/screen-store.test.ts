@@ -3,7 +3,10 @@ import type { DaemonEventUnion } from "./protocol";
 
 const mocks = vi.hoisted(() => ({
 	handler: null as ((e: DaemonEventUnion) => void) | null,
+	invoke: vi.fn(async () => "data:image/png;base64,from-host"),
 }));
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 
 vi.mock("./connection-status.svelte.js", () => ({
 	onEvent: (handler: (e: DaemonEventUnion) => void) => {
@@ -123,5 +126,52 @@ describe("screen store (TD-1710, TD-3401)", () => {
 			expect(screen.preview).toBe("data:image/png;base64,abc");
 		});
 		expect(screen.error).toBeNull();
+	});
+
+	it("asks the host for the sidecar with a camelCase session id", async () => {
+		(globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+		mocks.invoke.mockClear();
+		try {
+			emit({
+				type: "screen_frame",
+				seq: 5,
+				session_id: "s1",
+				path: "screens/aa.png",
+				mime: "image/png",
+				width: 768,
+				height: 427,
+				tool_call_id: "c4",
+			});
+			await vi.waitFor(() => {
+				expect(screen.preview).toBe("data:image/png;base64,from-host");
+			});
+			expect(mocks.invoke).toHaveBeenCalledWith("read_text_file", {
+				path: "screens/aa.dataurl",
+				workspace: null,
+				sessionId: "s1",
+			});
+		} finally {
+			delete (globalThis as { window?: unknown }).window;
+		}
+	});
+
+	it("shows a string refusal from the host", async () => {
+		setScreenPreviewReader(async () => {
+			throw "refused: no workspace or session dir to read under";
+		});
+		emit({
+			type: "screen_frame",
+			seq: 4,
+			session_id: "s1",
+			path: "screens/aa.png",
+			mime: "image/png",
+			width: 768,
+			height: 427,
+			tool_call_id: "c3",
+		});
+		await vi.waitFor(() => {
+			expect(screen.error).toBe("refused: no workspace or session dir to read under");
+		});
+		expect(screen.preview).toBeNull();
 	});
 });
