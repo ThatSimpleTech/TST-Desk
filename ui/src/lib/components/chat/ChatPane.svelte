@@ -209,7 +209,9 @@
 		height: 100%;
 		min-height: 0;
 		overflow: hidden;
-		background: var(--color-ground);
+		/* Transparent so the ambient BackgroundOrbit mounted in the layout
+		   shows through; the root background still paints --color-ground. */
+		background: transparent;
 	}
 
 	.ambient {

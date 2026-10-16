@@ -3,6 +3,7 @@
 	import { page } from '$app/state';
 	import '../app.css';
 	import favicon from '$lib/assets/favicon.svg';
+	import BackgroundOrbit from '$lib/BackgroundOrbit.svelte';
 	import { connect, disconnect } from '$lib/connection-status.svelte.js';
 	import { startMachines } from '$lib/machines.svelte.js';
 
@@ -25,6 +26,8 @@
 <svelte:head>
 	<link rel="icon" href={favicon} />
 </svelte:head>
+
+<BackgroundOrbit />
 
 {#if isQuickEntry}
 	{@render children()}

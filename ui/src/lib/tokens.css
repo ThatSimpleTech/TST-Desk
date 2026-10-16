@@ -47,6 +47,18 @@
 	--color-warn:           #9a6a1b;
 	--color-err:            #a0432e;
 
+	/* ---- Ambient background — "Orbit Halo" (light) ----
+	   The orbit field layers over --color-ground; the base is not painted
+	   here so the existing page ground shows through. Light keeps it faint and
+	   warm — dot in warm taupe, the anchor dot in rust, glow barely there.
+	   --bg-orbit-opacity is the global multiplier the component reads. */
+	--bg-orbit-dot:       #c9a98f;
+	--bg-orbit-dot-hot:   #b4532a;
+	--bg-orbit-glow:      rgb(180 83 42 / 0.10);
+	--bg-orbit-wash:      rgb(94 88 74 / 0.05);
+	--bg-orbit-vignette:  rgb(25 24 23 / 0.06);
+	--bg-orbit-opacity:   0.55;
+
 	/* ---- Syntax highlighting (TD-1609) ----
 	   Warm code palette consumed by hljs-theme.css; dark lifts each hue. */
 	--syn-comment:          #706b5b;
@@ -135,16 +147,16 @@
    `tokens.test.ts` fails if the two ever drift apart. */
 @media (prefers-color-scheme: dark) {
 	:root:not([data-theme="light"]) {
-		--color-ground:         #1f1f1c;
-		--color-lifted:         #2e2e2a;
-		--color-sunken:         #262622;
-		--color-ink:            #edeae3;
-		--color-ink-secondary:  #a39e93;
-		--color-ink-muted:      #9a9588;
-		--color-hairline:       #42423b;
-		--color-user-bubble:    #3b392f;
-		--color-accent:         #d0794f;
-		--color-accent-hover:   #dc8a64;
+		--color-ground:         #131210;
+		--color-lifted:         #1f1e1b;
+		--color-sunken:         #181715;
+		--color-ink:            #f3efe6;
+		--color-ink-secondary:  #c2bbb0;
+		--color-ink-muted:      #a39e92;
+		--color-hairline:       #3c3a34;
+		--color-user-bubble:    #2b2823;
+		--color-accent:         #e39462;
+		--color-accent-hover:   #eea67a;
 		--color-on-accent:      #ffffff;
 		/* Status hues lifted to stay legible on charcoal. */
 		--color-ok:             #7fb08c;
@@ -163,20 +175,29 @@
 		--shadow-sm: 0 1px 2px rgb(0 0 0 / 0.05);
 		--shadow-md: 0 4px 8px rgb(0 0 0 / 0.12);
 		--shadow-lg: 0 12px 24px rgb(0 0 0 / 0.3);
+
+		/* Ambient background — dark. The photo's signature look lives here:
+		   dot field in soft cyan, anchor dot near-white, glow diffuse. */
+		--bg-orbit-dot:       #2f7f96;
+		--bg-orbit-dot-hot:   #bfe9f7;
+		--bg-orbit-glow:      rgb(95 224 255 / 0.35);
+		--bg-orbit-wash:      rgb(16 19 26 / 0.6);
+		--bg-orbit-vignette:  rgb(0 0 0 / 0.45);
+		--bg-orbit-opacity:   1;
 	}
 }
 
 :root[data-theme="dark"] {
-	--color-ground:         #1f1f1c;
-	--color-lifted:         #2e2e2a;
-	--color-sunken:         #262622;
-	--color-ink:            #edeae3;
-	--color-ink-secondary:  #a39e93;
-	--color-ink-muted:      #9a9588;
-	--color-hairline:       #42423b;
-	--color-user-bubble:    #3b392f;
-	--color-accent:         #d0794f;
-	--color-accent-hover:   #dc8a64;
+	--color-ground:         #131210;
+	--color-lifted:         #1f1e1b;
+	--color-sunken:         #181715;
+	--color-ink:            #f3efe6;
+	--color-ink-secondary:  #c2bbb0;
+	--color-ink-muted:      #a39e92;
+	--color-hairline:       #3c3a34;
+	--color-user-bubble:    #2b2823;
+	--color-accent:         #e39462;
+	--color-accent-hover:   #eea67a;
 	--color-on-accent:      #ffffff;
 	/* Status hues lifted to stay legible on charcoal. */
 	--color-ok:             #7fb08c;
@@ -195,4 +216,13 @@
 	--shadow-sm: 0 1px 2px rgb(0 0 0 / 0.05);
 	--shadow-md: 0 4px 8px rgb(0 0 0 / 0.12);
 	--shadow-lg: 0 12px 24px rgb(0 0 0 / 0.3);
+
+	/* Ambient background — dark. Mirrors the media-query dark block;
+	   tokens.test.ts fails if the two dark palettes drift. */
+	--bg-orbit-dot:       #2f7f96;
+	--bg-orbit-dot-hot:   #bfe9f7;
+	--bg-orbit-glow:      rgb(95 224 255 / 0.35);
+	--bg-orbit-wash:      rgb(16 19 26 / 0.6);
+	--bg-orbit-vignette:  rgb(0 0 0 / 0.45);
+	--bg-orbit-opacity:   1;
 }
