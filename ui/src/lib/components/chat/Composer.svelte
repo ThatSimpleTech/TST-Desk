@@ -23,7 +23,8 @@
 		type AttachmentRefusal,
 	} from "../../attachments";
 	import { shouldSubmit } from "../../chat-store";
-	import { capturePhoto, photoName } from "../../camera";
+	import { capturePhoto, captureRoute, photoName } from "../../camera";
+	import { detectPlatform } from "../../sent-files";
 	import { COMPOSER_LINE_PADDING } from "../../composer-layout";
 	import { commands, loadCommands } from "../../commands.svelte.js";
 	import { acceptPickDrafts } from "../../design";
@@ -67,6 +68,7 @@
 
 	let textarea: HTMLTextAreaElement | null = $state(null);
 	let picker: HTMLInputElement | null = $state(null);
+	let capturePicker: HTMLInputElement | null = $state(null);
 	let attachments: AttachmentDraft[] = $state([]);
 	let refusal: AttachmentRefusal | null = $state(null);
 	let dragging = $state(false);
@@ -179,6 +181,13 @@
 	async function takePhoto(): Promise<void> {
 		attachMenuOpen = false;
 		if (cameraBusy) return;
+		// On Android the camera *app* opens and the shot comes back through the
+		// file-input path; getUserMedia there would capture silently without
+		// ever opening the camera UI. Everywhere else (desktop) capture in-page.
+		if (captureRoute(detectPlatform()) === "camera-app") {
+			capturePicker?.click();
+			return;
+		}
 		cameraBusy = true;
 		try {
 			const outcome = await capturePhoto();
@@ -383,6 +392,19 @@
 							bind:this={picker}
 							type="file"
 							multiple
+							class="picker"
+							tabindex="-1"
+							aria-hidden="true"
+							onchange={handlePick}
+						/>
+						<!-- Camera-app route (Android): `capture` makes the shell launch the
+						     camera instead of the picker; the shot returns on the same
+						     change path. Ignored on desktop, where this input is never used. -->
+						<input
+							bind:this={capturePicker}
+							type="file"
+							accept="image/png,image/jpeg"
+							capture="environment"
 							class="picker"
 							tabindex="-1"
 							aria-hidden="true"

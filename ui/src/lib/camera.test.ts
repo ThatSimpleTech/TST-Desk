@@ -6,7 +6,7 @@
 // nothing, so the real drawImage path is exercised in the browser.
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { capturePhoto, photoName } from "./camera";
+import { capturePhoto, captureRoute, photoName } from "./camera";
 
 function fakeStream(): MediaStream {
   const stop = vi.fn();
@@ -71,5 +71,16 @@ describe("capturePhoto", () => {
   it("names the photo photo-YYYY-MM-DD-HHMMSS.png", () => {
     const d = new Date(2026, 1, 14, 9, 3, 12);
     expect(photoName(d)).toBe("photo-2026-02-14-090312.png");
+  });
+
+  it("routes Android to the camera app, everything else to getUserMedia", () => {
+    // On Android getUserMedia captures silently — no camera UI opens — which
+    // reads as a bug. The `<input capture>` route makes the shell launch the
+    // camera app instead. Desktop keeps in-page capture (no camera UI there
+    // to launch anyway).
+    expect(captureRoute("android")).toBe("camera-app");
+    expect(captureRoute("android-old")).toBe("camera-app");
+    expect(captureRoute("desktop")).toBe("getUserMedia");
+    expect(captureRoute("browser")).toBe("getUserMedia");
   });
 });

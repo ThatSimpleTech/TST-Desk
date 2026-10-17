@@ -604,8 +604,10 @@
 	.pane-chat,
 	.pane-activity {
 		height: 100%;
-		background: var(--color-ground);
 		color: var(--color-ink);
+		/* BackgroundOrbit is fixed at z-index -1, under this shell and above
+		   the page ground. A solid fill on either column hides the field. */
+		background: transparent;
 	}
 
 	.pane-layer {
@@ -617,9 +619,7 @@
 		display: none;
 	}
 
-	/* Subtle tonal separation so the two-pane split reads at a glance. */
 	.pane-activity {
-		background: var(--color-sunken);
 		display: flex;
 		flex-direction: column;
 	}

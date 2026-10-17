@@ -209,8 +209,9 @@
 		height: 100%;
 		min-height: 0;
 		overflow: hidden;
-		/* Transparent so the ambient BackgroundOrbit mounted in the layout
-		   shows through; the root background still paints --color-ground. */
+		/* Transparent so BackgroundOrbit shows through. AppShell's .pane-chat
+		   wraps this pane and has to stay transparent too, or it paints the
+		   page ground over the field. */
 		background: transparent;
 	}
 

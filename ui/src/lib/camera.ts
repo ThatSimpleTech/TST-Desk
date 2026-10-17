@@ -1,9 +1,26 @@
-// Composer camera capture. Opens the default camera with getUserMedia,
-// grabs one frame as PNG bytes, and releases the device — the camera light
-// should not outlive the shot. The bytes go through the same attachment
-// gate as a picked or pasted file (acceptAttachment); nothing here bypasses
-// the caps. `open` and `grabFrame` are injectable so this unit-tests without
-// a real camera (a jsdom video element decodes nothing).
+// Composer camera capture. Two routes (see captureRoute):
+//
+// - Android opens the *camera app* through an `<input type="file" capture>`:
+//   WebView turns that into an image-capture intent and the shot returns on
+//   the normal file-input path. getUserMedia here is a silent background
+//   capture (the privacy dot blinks, no app opens), which reads as a bug on
+//   a phone even when it works.
+// - Everywhere else (the desktop shells) uses getUserMedia: open the default
+//   camera, grab one frame as PNG bytes, release the device — the camera
+//   light should not outlive the shot.
+//
+// Both routes end at the same attachment gate (acceptAttachment); nothing
+// bypasses the caps. `open` and `grabFrame` are injectable so this unit-tests
+// without a real camera (a jsdom video element decodes nothing).
+
+import type { Platform } from './sent-files';
+
+/** Android launches the camera app; everything else captures in-page.
+ *  `android-old` has no file bridge, but `<input capture>` is handled by the
+ *  shell's file chooser, so the app route works there too. */
+export function captureRoute(platform: Platform): 'camera-app' | 'getUserMedia' {
+  return platform === 'android' || platform === 'android-old' ? 'camera-app' : 'getUserMedia';
+}
 
 /** What a failed capture reports. `message` is the copy the composer shows;
  *  a refusal never claims a photo was taken. */
