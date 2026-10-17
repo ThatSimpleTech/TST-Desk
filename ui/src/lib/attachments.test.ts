@@ -267,9 +267,25 @@ describe("the defaults mirror the daemon's", () => {
     // Two hand-kept sides, like the protocol itself. A drift here means the
     // composer promises a send the daemon refuses.
     expect(DEFAULT_ATTACHMENT_LIMITS).toEqual({
-      max_file_bytes: 256_000,
-      max_total_bytes: 512_000,
+      max_file_bytes: 4_000_000,
+      max_total_bytes: 8_000_000,
       max_count: 10,
     });
+  });
+
+  it("accepts a phone screenshot under the default cap", () => {
+    const png = new Uint8Array(484_000);
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const outcome = acceptAttachment(
+      "Screenshot_20261016-150729.png",
+      png,
+      DEFAULT_ATTACHMENT_LIMITS,
+      [],
+      true,
+    );
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.draft.size).toBe(484_000);
+    expect(outcome.draft.name).toBe("Screenshot_20261016-150729.png");
   });
 });

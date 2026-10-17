@@ -27,13 +27,18 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
-# Defaults when `.tst/config.yaml` declares no `attachments:` section.  Sized
-# against the websocket frame ceiling (1 MiB, the `websockets` default): the
-# total cap plus base64's third again has to fit inside one frame, or an
-# oversize message would be dropped by the transport before this module ever
-# got the chance to refuse it with copy the user can act on.
-DEFAULT_MAX_FILE_BYTES = 256_000
-DEFAULT_MAX_TOTAL_BYTES = 512_000
+# Local websocket frame. ``ws.serve`` passes this as ``max_size``. Base64
+# adds a third, so a full message at the default total cap (about 10.7 MB
+# on the wire) still fits, and an oversize message is refused here instead
+# of being dropped by the transport. The library's own default is 1 MiB.
+WS_MAX_FRAME_BYTES = 16 * 1024 * 1024
+
+# Defaults when `.tst/config.yaml` declares no `attachments:` section.
+# A phone screenshot is a few hundred KB and has to fit whole. Images are
+# kept at full size (TD-4705); a file over the cap is refused, not resized.
+# The total cap plus base64's third has to fit inside ``WS_MAX_FRAME_BYTES``.
+DEFAULT_MAX_FILE_BYTES = 4_000_000
+DEFAULT_MAX_TOTAL_BYTES = 8_000_000
 DEFAULT_MAX_COUNT = 10
 
 

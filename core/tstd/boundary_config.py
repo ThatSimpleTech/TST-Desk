@@ -166,8 +166,8 @@ DEFAULT_CONFIG_TEMPLATE = """\
 #   max_iterations: 200    # autonomy pauses past this many iterations
 
 # attachments:
-#   max_file_bytes: 256000   # per text file attached to a message
-#   max_total_bytes: 512000  # per message, across all its attachments
+#   max_file_bytes: 4000000  # per file attached to a message
+#   max_total_bytes: 8000000 # per message, across all its attachments
 #   max_count: 10            # files per message
 
 # memory:

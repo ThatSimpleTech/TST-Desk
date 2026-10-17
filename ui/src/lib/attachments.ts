@@ -19,8 +19,8 @@ import type { Attachment, AttachmentLimits } from "./protocol";
 /** Mirrors core/tstd/attachments.py. Used only until the first
  *  `boundary_update` names the workspace's real numbers. */
 export const DEFAULT_ATTACHMENT_LIMITS: AttachmentLimits = {
-  max_file_bytes: 256_000,
-  max_total_bytes: 512_000,
+  max_file_bytes: 4_000_000,
+  max_total_bytes: 8_000_000,
   max_count: 10,
 };
 

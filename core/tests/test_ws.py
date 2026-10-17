@@ -8,10 +8,12 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from websockets.asyncio.client import connect
 
+from tstd.attachments import DEFAULT_MAX_TOTAL_BYTES, WS_MAX_FRAME_BYTES
 from tstd.protocol import PROTOCOL_VERSION
 from tstd.remote_auth import (
     connection_is_remote,
@@ -185,6 +187,30 @@ async def _do_handshake(uri: str, token: str) -> None:
 
 
 class TestWebSocketServer:
+    @pytest.mark.asyncio
+    async def test_listeners_use_the_attachment_frame(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A screenshot message has to fit the frame the server actually opens."""
+        seen: list[object] = []
+
+        async def fake_serve(*_args: object, **kwargs: object) -> Any:
+            seen.append(kwargs.get("max_size"))
+            server = Mock()
+            server.sockets = [Mock()]
+            server.sockets[0].getsockname.return_value = ("127.0.0.1", 9)
+            server.wait_closed = AsyncMock()
+            return server
+
+        monkeypatch.setattr("tstd.ws.serve", fake_serve)
+        server = WebSocketServer(tmp_path, ping_interval=0)
+        await server.start()
+        try:
+            assert seen == [WS_MAX_FRAME_BYTES]
+            assert (DEFAULT_MAX_TOTAL_BYTES * 4) // 3 + 65_536 < WS_MAX_FRAME_BYTES
+        finally:
+            await server.stop()
+
     @pytest.mark.asyncio
     async def test_start_and_stop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
