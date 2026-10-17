@@ -532,8 +532,10 @@
 		min-width: 0;
 	}
 
-	/* Text above, choices on the left, send on the right. */
+	/* Text above, choices on the left, send on the right. The attach menu
+	   positions against this card on narrow screens. */
 	.bar {
+		position: relative;
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
@@ -589,14 +591,14 @@
 	}
 
 	/* The two-item add menu: upload, or take a photo. Anchored above the
-	   toolbar because the composer sits at the bottom edge of the window.
-	   Narrow viewport (TD-3701 breakpoint): the paperclip sits near the
-	   right edge, so the menu overlays to the centre of the screen instead
-	   of hanging off it. */
+	   toolbar because the composer sits at the bottom edge of the window,
+	   and anchored to the right so it opens leftward — the paperclip sits
+	   at the right edge of the toolbar, and a left-anchored menu hangs off
+	   the screen on narrow viewports. */
 	.attach-menu {
 		position: absolute;
 		bottom: calc(100% + var(--space-1));
-		left: 0;
+		right: 0;
 		z-index: 10;
 		display: flex;
 		flex-direction: column;
@@ -607,8 +609,15 @@
 		border-radius: var(--radius-md);
 	}
 
+	/* Narrow viewport (TD-3701 breakpoint): overlay to the centre of the
+	   composer instead of hanging off the screen edge. Dropping the wrap's
+	   anchor lets the menu position against the bar, which spans the card. */
 	@media (max-width: 639px) {
+		.attach-wrap {
+			position: static;
+		}
 		.attach-menu {
+			right: auto;
 			left: 50%;
 			transform: translateX(-50%);
 		}
