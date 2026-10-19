@@ -19,15 +19,19 @@ the front. An environment assignment stays on, since ``LD_PRELOAD=…`` or
 ``ask`` and ``never`` rules are checked against: the command as written,
 unquoted, and with each wrapper, keyword, redirect, ``env``, ``sudo`` or
 ``xargs`` peeled off the front in turn, each also with the program named
-without its folder (``/usr/bin/curl`` reads as ``curl``).
+without its folder (``/usr/bin/curl`` reads as ``curl``), and all of them
+again after bash's brace expansion (``{curl,x}`` reads as ``curl x``).
 
 Reading less than the shell runs is the failure that matters, so this module
 errs toward reading more. Where the shells disagree, or the text is too odd
-to split with confidence (``$'…'``, ``$((…))``, ``((…))``, ``case`` inside a
-substitution, an unclosed quote, a heredoc whose end bash and dash place
-apart, a ``\\``-newline that joins two halves of an operator, cmd's
-``for /f``), the result is incomplete: no ``auto`` rule applies, and ``ask``
-and ``never`` rules still see everything read so far. A differential test
+to split with confidence (``$'…'``, ``$((…))``, ``$[…]``, ``((…))``, ``case``
+inside a substitution, an unclosed quote, a heredoc whose end bash and dash
+place apart, a ``\\``-newline that joins two halves of an operator, bash's
+``${ cmd; }``, ``[[``, a ``(`` glued to a word as in ``a=(…)`` or
+``@(…)``, a ``name[…]`` subscript holding a space or an operator, a
+program name bash brace-expands, cmd's ``for /f``), the result is
+incomplete: no ``auto`` rule applies, and ``ask`` and ``never`` rules still
+see everything read so far. A differential test
 (``tests/test_policy_shell_differential.py``) runs a corpus under bash, bash
 ``--posix``, dash and busybox ash and holds the scanner to that. Nothing
 here runs a shell.
@@ -39,7 +43,7 @@ import sys
 from dataclasses import dataclass
 
 from .policy_shell_scan import Dialect, Scanner, Seg
-from .policy_shell_words import allow_start, deny_readings, unquote
+from .policy_shell_words import allow_start, brace_words, deny_readings, peel_all, unquote
 
 __all__ = ["Command", "Dialect", "Split", "host_dialects", "split_command"]
 
@@ -91,7 +95,17 @@ def split_command(command: str, dialects: tuple[Dialect, ...] | None = None) -> 
         scanner.run()
         commands.extend(_command(seg, dialect) for seg in scanner.segs)
         complete = complete and scanner.complete
+        if dialect == "posix":
+            complete = complete and not any(_braced_program(seg) for seg in scanner.segs)
     return Split(tuple(commands), complete)
+
+
+def _braced_program(seg: Seg) -> bool:
+    """Whether bash's brace expansion changes which program runs
+    (``{curl,x}`` runs ``curl x``; dash runs ``{curl,x}``)."""
+    words = [unquote(w, True) for w in seg.raw_words()]
+    k = peel_all(words)
+    return k < len(words) and brace_words(words[k]) is not None
 
 
 def _command(seg: Seg, dialect: Dialect) -> Command:

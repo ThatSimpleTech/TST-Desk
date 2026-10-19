@@ -14199,7 +14199,7 @@ guard runs. Recorded as a follow-up on TD-5148.
 
 **Decision:** `split_command` is held to the shells themselves. A
 differential test (`core/tests/test_policy_shell_differential.py`, corpus
-in `core/tests/shell_corpus.py`) builds about 3,800 command texts from
+in `core/tests/shell_corpus.py`) builds about 4,250 command texts from
 `:`, `true` and `echo m<k> >>o` only, joined by every line-structure
 construct (newlines, `\`-newline, comments, heredocs, quotes across lines,
 `&`, `|&`, `;;`, `()`, `{}`, `$(…)`, backticks, carriage returns, odd
@@ -14261,3 +14261,55 @@ a fixed list of known-bad texts (it would not find the next one). macOS
 `/bin/sh` is bash 3.2, which is not on CI or this host; the corpus was
 also run against bash 5.1 (ubuntu 22.04), 5.2 (ubuntu 24.04, debian 12),
 5.3 and busybox ash (alpine 3.20) by hand.
+
+**Review of PR #20 (2026-10-19).** The first corpus left out bash-only
+words that hold `(`, `#` or `<<` as text, and the review found texts in
+them that bash split differently while the scanner said complete. The
+corpus now covers them, and each is held to the shells like the rest:
+
+8. **`${` must be followed by a name, a digit or a special parameter.**
+   bash 5.3 runs `${ cmd; }` and `${| cmd; }` as commands (dash rejects
+   them), so anything else after `${` is incomplete. A `${…}` ends at its
+   first `}`, as in every shell; the scanner had counted a bare `{` as
+   nesting, which hid `${x:-{}; cmd; : }`'s `cmd`.
+9. **Any `[[` word is incomplete.** bash reads `( #)` after `=~` and
+   `@( #)` after `==` as one word; dash runs `[[` as a command. Reading
+   `[[ ]]` the bash way was the alternative, but its grammar (regex
+   words, implicit extglob, `<` as a comparison) is wide, and failing
+   closed costs only `auto` on lines that use it. Conservative choice.
+10. **A `(` glued to a word is incomplete, except `name()`.** bash reads
+    `a=(…)` (an array, with `[i<<2]` subscripts in it), and `@(…)`, `!(…)`
+    and the other extglob forms once extglob is on (it can be set on an
+    earlier line or from the environment), as one word. Outside bash such
+    a `(` is a syntax error, so no working line loses `auto` but arrays.
+11. **A `name[…]` subscript must be plain.** bash reads `a[1<<2]=x` and
+    `a[x #]=y` whole; the scanner saw a heredoc and a comment. A subscript
+    holding a space, an operator, a quote, a backslash or `$(` is
+    incomplete; `a[i]`, `a[$i]` and globs like `x[0-9]` stay complete.
+12. **`$[…]`** (bash's old arithmetic, where `<<` is a shift) is
+    incomplete.
+13. **bash's brace expansion is read for `never` and `ask`.** `{curl,x}`
+    runs `curl x` in bash and `{curl,x}` in dash; deny readings now
+    include every word brace-expanded (at most 64 words from one), and a
+    program word bash would expand makes the line incomplete. Brace
+    expansion in arguments (`cp a{,.bak}`) keeps the line complete: it
+    cannot change which program runs.
+14. **`coproc NAME { cmd; }`**: deny readings skip NAME, so `never` sees
+    `cmd`.
+15. **The rough cut of an incomplete line** cuts at braces as well, in a
+    second pass, so `${ cmd; }` leaves `cmd` at the start of a piece while
+    `curl {a,b}` keeps its arguments in the first.
+16. **The test's oracle is tighter.** An expansion in an `echo`'s
+    arguments used to match any output line (`.*`), so one `echo $(…)`
+    could stand in for an atom the splitter missed. It now matches
+    anything but a marker (no atom prints its marker to stdout), reads
+    `$name` whole, and reads an argument bash brace-expands as an
+    expansion. A test checks the oracle itself.
+
+The widened corpus fails on this PR's first scanner (634 disagreements,
+295 `never` misses) and passes on the new one under bash 5.3,
+`bash --posix`, dash and busybox ash on this host, and by hand in
+offline containers under bash 5.1.16 (ubuntu 22.04), 5.2.21 (ubuntu
+24.04) and 5.3.9 (ubuntu 26.04), each with `--posix`, their dash, and
+busybox 1.36.1 ash (alpine 3.20). The bash-only checks live in
+`core/tstd/policy_shell_bash.py`, which keeps the scanner at 400 lines.

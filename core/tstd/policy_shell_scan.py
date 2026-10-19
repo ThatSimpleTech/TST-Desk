@@ -4,7 +4,8 @@ Walks a command line the way ``sh`` (or ``cmd``) reads it and records each
 simple command's span and words. Quotes, escapes, comments, line
 continuations and heredoc bodies are honoured, because a quote the scanner
 misreads could hide a separator the shell sees. Constructs where shells
-disagree raise ``Incomplete`` instead of guessing; the differential test
+disagree raise ``Incomplete`` instead of guessing (bash-only words are
+checked in :mod:`tstd.policy_shell_bash`); the differential test
 in ``tests/test_policy_shell_differential.py`` checks that against the
 shells themselves.
 """
@@ -15,6 +16,7 @@ import contextlib
 import re
 from dataclasses import dataclass, field
 
+from . import policy_shell_bash as bash
 from .policy_shell_heredoc import Heredoc, body_end, read_operator, skip_splices, unsplice
 from .policy_shell_words import Dialect, Incomplete, run_strings, unquote
 
@@ -24,7 +26,9 @@ __all__ = ["Dialect", "Scanner", "Seg"]
 # the caps keep the recursion far from Python's limit.
 _MAX_DEPTH = 4  # scanners inside scanners: backticks, bodies, eval, sh -c
 _MAX_NEST = 16  # $( and ${ inside one another, within one scanner
-_ROUGH_SEPARATOR = re.compile(r"[^;&|\n()`]+")
+# Rough cuts of an incomplete line: at operators (`curl {a,b}` keeps its
+# arguments), and at braces too (`${ cmd; }` puts `cmd` first in a piece).
+_ROUGH_SEPARATORS = (re.compile(r"[^;&|\n()`]+"), re.compile(r"[^;&|\n(){}`]+"))
 _WORD = re.compile(r"[^\s\"']+")
 # An operator split by `\`-newline: the shell joins the halves (`&` + `&`).
 _JOINS = {"<": "<>&|(", ">": "<>&|(", "&": "&>|", "|": "|&", ";": ";&", "(": "("}
@@ -92,7 +96,7 @@ class Scanner:
                 self._rough(self.text.replace("\\\n", ""))
 
     def _rough(self, text: str) -> None:
-        for piece in _ROUGH_SEPARATOR.finditer(text):
+        for piece in (p for cut in _ROUGH_SEPARATORS for p in cut.finditer(text)):
             words = [(m.start(), m.end()) for m in _WORD.finditer(text, *piece.span())]
             if not words:
                 continue
@@ -162,6 +166,8 @@ class Scanner:
             elif c == "(":
                 if posix and text.startswith("((", i):
                     raise Incomplete  # bash arithmetic or two subshells: shells disagree
+                if posix and frame.word_start is not None:
+                    bash.glued_paren(text, frame.word_start, i)
                 self._close_seg(frame, i)
                 self.i += 1
                 paren_depth += 1
@@ -179,6 +185,8 @@ class Scanner:
                 self.i += 1
                 frame = self._new_frame()
             else:
+                if posix and c == "[" and frame.word_start is not None:
+                    bash.subscript(text, frame.word_start, i)
                 self._open_word(frame, i)
                 self.i += 1
                 if c in "<>":
@@ -210,8 +218,11 @@ class Scanner:
     def _close_word(self, frame: _Frame, i: int) -> None:
         if frame.word_start is None:
             return
-        if self._subs and self.text[frame.word_start : i].replace("\\\n", "") == "case":
+        word = self.text[frame.word_start : i].replace("\\\n", "")
+        if self._subs and word == "case":
             raise Incomplete  # `pattern)` would close the $( early
+        if self.posix:
+            bash.closed_word(word)
         frame.words.append((frame.word_start, i))
         frame.word_start = None
 
@@ -264,8 +275,10 @@ class Scanner:
         text, i = self.text, self.i
         if text.startswith("$\\\n", i):
             raise Incomplete  # the shell joins them: `$` + `(` is a substitution
-        if text.startswith("$((", i):
-            raise Incomplete  # bash falls back to $( ( … ) ) when it isn't arithmetic
+        if text.startswith(("$((", "$["), i):
+            # bash falls back to $( ( … ) ) when it isn't arithmetic, and
+            # reads `<<` in `$[ … ]` (old arithmetic) as a shift.
+            raise Incomplete
         if not quoted and text.startswith("$'", i):
             raise Incomplete  # bash reads `\'` inside; dash ends at it
         if text.startswith("$(", i):
@@ -277,9 +290,11 @@ class Scanner:
             self.i += 1
 
     def _brace(self) -> None:
+        """``${…}`` ends at the first ``}`` that is not inside a nested
+        expansion: every shell does so, ``{`` inside does not nest."""
         self._enter()
         self.i += 2
-        depth = 1
+        bash.parameter(self.text, self.i)  # `${ cmd; }`: bash 5.3 runs cmd
         while self.i < self.n:
             c = self.text[self.i]
             if c == "\\":
@@ -292,13 +307,9 @@ class Scanner:
                 self._backtick(in_dquote=True)
             else:
                 self.i += 1
-                if c == "{":
-                    depth += 1
-                elif c == "}":
-                    depth -= 1
-                    if depth == 0:
-                        self._nest -= 1
-                        return
+                if c == "}":
+                    self._nest -= 1
+                    return
         raise Incomplete
 
     def _backtick(self, *, in_dquote: bool) -> None:

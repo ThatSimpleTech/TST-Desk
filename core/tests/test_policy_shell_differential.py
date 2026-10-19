@@ -32,7 +32,7 @@ from tstd.autonomy.classifier import DecisionClass
 from tstd.policy import PolicyConfig, PolicyRule, resolve
 from tstd.policy_shell import split_command
 from tstd.policy_shell_scan import Scanner
-from tstd.policy_shell_words import Incomplete, peel_all, unquote
+from tstd.policy_shell_words import Incomplete, brace_words, peel_all, unquote
 from tstd.tools import Tool
 
 from .shell_corpus import available_shells, corpus, run_all
@@ -40,6 +40,12 @@ from .shell_corpus import available_shells, corpus, run_all
 SHELL = Tool(name="shell")
 _REDIRECT = re.compile(r"^[0-9]*(?:&>>|&>|>>|>&|>\||<>|<&|<<<|<<-|<<|>(?!\()|<(?!\())")
 _MARKER = re.compile(r"m[0-9]+")
+# What an expansion in an echo's arguments may print: anything but a
+# marker. No atom prints its marker to stdout, so a marker in an echo's
+# output is that echo's own literal text; letting `$(…)` match one would let
+# a line some unseen atom wrote pass as this echo's.
+_EXPANSION = r"(?:(?!m[0-9]).)*"
+_PARAMETER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?$!-]")
 SHELLS = available_shells()
 
 pytestmark = pytest.mark.skipif(
@@ -87,7 +93,8 @@ def _expected(text: str) -> list[re.Pattern[str]]:
 
 class _Output:
     """Regexes for the lines ``echo`` prints. An expansion may print
-    anything, and an unquoted word made only of expansions may vanish."""
+    anything but a marker, and an unquoted word made only of expansions
+    may vanish."""
 
     def __init__(self) -> None:
         self.lines = [""]
@@ -102,6 +109,10 @@ class _Output:
         mark = (len(self.lines), len(self.lines[-1]))
         vanish = True
         i, n = 0, len(raw)
+        if brace_words(unquote(raw, True)) is not None:
+            # bash's brace expansion: any words, or none (`{,}`).
+            self.lines[-1] += _EXPANSION
+            i = n
         while i < n:
             c = raw[i]
             if raw.startswith("\\\n", i):
@@ -120,7 +131,7 @@ class _Output:
                     i += 1
                 i, vanish = self._dquote(raw, i + 1), False
             elif c in "$`" or (c in "<>" and raw.startswith("(", i + 1)):
-                self.lines[-1] += ".*"
+                self.lines[-1] += _EXPANSION
                 i = _after_expansion(raw, i)
             else:
                 self._lit(c)
@@ -139,7 +150,7 @@ class _Output:
                 self._lit(raw[j + 1])
                 j += 2
             elif raw[j] in "$`":
-                self.lines[-1] += ".*"
+                self.lines[-1] += _EXPANSION
                 j = _after_expansion(raw, j, quoted=True)
             else:
                 self._lit(raw[j])
@@ -162,6 +173,8 @@ def _after_expansion(raw: str, i: int, *, quoted: bool = False) -> int:
             scanner._dollar(quoted=quoted)
     except Incomplete:
         return len(raw)
+    if scanner.i == i + 1 and (name := _PARAMETER.match(raw, scanner.i)):
+        return name.end()  # `$x`: the scanner reads the name as word text
     return scanner.i
 
 
@@ -186,6 +199,23 @@ def test_the_corpus_runs_and_mostly_splits(ran: dict[str, dict[str, list[str]]])
     assert all(lines == ["m1", "m2"] for lines in ran["echo m1 >>o; echo m2 >>o"].values())
     complete = sum(split_command(text, ("posix",)).complete for text in ran)
     assert complete / len(ran) > 0.6
+
+
+@pytest.mark.parametrize(
+    ("text", "line"),
+    [
+        ("echo m1 $(:) >>o", "m1"),
+        ('echo "$(:)" m1 >>o', " m1"),  # the quoted empty word stays
+        ("echo m1 `:` $x >>o", "m1"),
+    ],
+)
+def test_an_expansion_in_an_echo_never_stands_for_another_atom(text: str, line: str) -> None:
+    # Guards the oracle (PR #20 review): `.*` for an expansion matched every
+    # line, so an atom the splitter missed passed as this echo's output.
+    expected = _expected(f"{text}; echo m2 >>o")
+    assert any(p.match(line) for p in expected)
+    assert not any(p.match("m3") for p in expected)
+    assert sum(bool(p.match("m2")) for p in expected) == 1
 
 
 @pytest.mark.parametrize("text", EVERYDAY)

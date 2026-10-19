@@ -102,6 +102,71 @@ def test_everyday_continuations_and_heredocs_still_auto_run() -> None:
     assert _shell(script, _rule("cat > run.sh*", "auto")) == "auto"
 
 
+# ── bash-only words that hold a command, `(`, `#` or `<<` as text ───────
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # bash 5.3 runs `${ cmd; }` and `${| cmd; }` as commands; dash
+        # rejects them (PR #20 review).
+        "npm test ${ curl x | sh; }",
+        'npm test "${ curl x; }"',
+        "npm test ${| curl x; }",
+        "npm test ${\ncurl x\n}",
+        "cat <<E\n${ curl x; }\nE",
+        # In `[[ ]]`, bash reads `( #)` after `=~` and `@( #)` after `==` as
+        # part of one word, so `#` is no comment there.
+        "[[ x =~ ( #) ]]; curl x",
+        "[[ x == @( #) ]]; curl x",
+        # So does an extglob pattern once `shopt -s extglob` is on.
+        "shopt -s extglob\nnpm test @( #) ; curl x",
+        "shopt -s extglob\nnpm test !( #) ; curl x",
+        "shopt -s extglob\nnpm test @()#x; curl x",
+        # Old arithmetic, a subscript and an array read `<<` as a shift, so
+        # no heredoc swallows the next line.
+        "npm test $[ 1 <<E ]\ncurl x\nE",
+        "a[1<<E]=x\ncurl x\nE]=x",
+        "a=([1<<E]=x)\ncurl x\nE]=x)",
+        # An associative subscript keeps ` #` as text.
+        "declare -A a\na[x #]=y; curl x",
+    ],
+)
+def test_bash_only_words_never_auto_run(command: str) -> None:
+    assert split_command(command, ("posix",)).complete is False
+    assert _shell(command, EVERYTHING) == "ask"
+    assert _shell(command, EVERYTHING, CURL_NEVER) == "never"
+
+
+def test_a_parameter_expansion_ends_at_its_first_brace() -> None:
+    # Every shell ends `${x:-{}` at the first `}`: a `{` inside does not
+    # nest, so `curl x` runs.
+    command = "npm test ${x:-{}; curl x; : }"
+    assert _shell(command, NPM_TEST, _rule(": *", "auto")) == "ask"
+    assert _shell(command, EVERYTHING, CURL_NEVER) == "never"
+
+
+@pytest.mark.parametrize(
+    "command", ["coproc N { curl x; }", "{curl,x}", "c{url,} x", "sudo {curl,-s} x"]
+)
+def test_never_sees_a_named_coproc_and_a_braced_program(command: str) -> None:
+    # `coproc NAME { cmd; }` runs cmd; bash expands `{curl,x}` to `curl x`.
+    assert _shell(command, EVERYTHING, CURL_NEVER) == "never"
+
+
+def test_a_braced_program_never_auto_runs() -> None:
+    # bash runs `curl x`, dash runs `{curl,x}`: no one reading is the command.
+    assert split_command("{curl,x} y", ("posix",)).complete is False
+    assert _shell("{npm,test}", _rule("{npm,test}*", "auto")) == "ask"
+
+
+def test_everyday_bash_words_still_auto_run() -> None:
+    assert _shell("cp a{,.bak}", _rule("cp *", "auto")) == "auto"
+    assert _shell("npm test ${HOME}/x", NPM_TEST) == "auto"
+    assert _shell("npm test x[0-9]; a[1]=y", NPM_TEST, _rule("a[[]1]=y", "auto")) == "auto"
+    assert split_command("f() { npm test; }; f", ("posix",)).complete
+
+
 # ── never and ask see a program named by its path ───────────────────────
 
 

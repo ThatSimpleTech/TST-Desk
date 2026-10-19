@@ -1569,7 +1569,8 @@ too (TD-5156). Quoted text is not split, so `git commit -m "fix; docs"` is one c
   `rm *` also refuses `sudo rm -rf x`, `then rm -rf x` and `"rm" -rf x`. They also see the
   program without its folder (TD-5156): `curl *` refuses `/usr/bin/curl x`, and on Windows
   `C:\Tools\curl.exe x` (an `.exe`, `.com`, `.bat` or `.cmd` extension comes off too). `auto`
-  rules still match the path as written.
+  rules still match the path as written. They read bash's brace expansion (`{curl,x}` and
+  `c{url,} x` are `curl`) and the command of `coproc NAME { …; }`.
 - A heredoc's body belongs to the command that opens it, so an `auto` rule must match the body
   too. A trailing `*` matches any body.
 - A line that can't be split with confidence never auto-runs, whatever the rules say. That is
@@ -1578,9 +1579,14 @@ too (TD-5156). Quoted text is not split, so `git commit -m "fix; docs"` is one c
   whose end bash and dash put in different places (a body line ending in `\` just before the
   delimiter, a heredoc opened inside `$(…)` with its body after the `)`, or `EOF)` inside
   `$(…)`), a `\`-newline that joins two halves of an operator (`&`, newline, `&`) or follows
-  `$`, and on Windows `for /f … in ('…')`, which runs the quoted command. `never` and `ask`
-  rules still apply to it. TST Desk's tests run a corpus of lines under bash, bash `--posix`,
-  dash and busybox ash and check the split against what each shell ran.
+  `$`, and on Windows `for /f … in ('…')`, which runs the quoted command. bash reads some
+  words whole where other shells see structure, so these are incomplete too: `${ cmd; }` and
+  `${| cmd; }` (bash 5.3 runs `cmd`), any `[[ … ]]`, a `(` glued to a word (`a=(…)` arrays,
+  extglob `@(…)`, `!(…)`; `name()` is fine), a `name[…]` subscript with a space, an operator,
+  a quote or `$(` in it (`a[i]` and `a[$i]` are fine), the old arithmetic `$[…]`, and a
+  program name bash brace-expands (`{curl,x}`). `never` and `ask` rules still apply to it.
+  TST Desk's tests run a corpus of lines under bash, bash `--posix`, dash and busybox ash and
+  check the split against what each shell ran.
 - "Always allow" is offered only for a single command, and saves exactly that command, with any
   `*`, `?` or `[` in it made literal. It isn't offered for a chained line: one rule can't cover
   it, and a rule per command would let `sh` run on its own after `npm test | sh` was approved.

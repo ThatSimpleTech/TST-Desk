@@ -1,7 +1,8 @@
 """Command texts for the shell-split conformance test (TD-5156).
 
-Every text is built only from the builtins ``:``, ``true`` and ``eval``,
-shell keywords, functions it defines, and atoms of the form
+Every text is built only from the builtins ``:``, ``true``, ``eval``,
+``wait``, ``shopt`` and ``declare``, shell keywords, functions it defines,
+and atoms of the form
 ``echo m<k> >>o``: each atom appends its own marker to the file ``o`` in a
 throwaway folder, so running a text shows which atoms a shell ran, and with
 which arguments, whatever pipes, substitutions or background jobs sit around
@@ -11,8 +12,11 @@ that folder.
 The atoms are combined with the constructs that decide where a shell ends a
 command: newlines, ``\\``-newline, comments, here-documents, quotes that span
 lines, ``&``, ``|&``, ``;;``, ``()``, ``{}``, ``$(…)``, backticks, carriage
-returns and unusual whitespace. Each base text is used alone, inside every
-wrapper, and in a fixed sample of pairs.
+returns and unusual whitespace, and the bash-only words that hold ``(``,
+``#`` or ``<<`` as text (``${ cmd; }``, ``[[ … =~ ( ) ]]``, extglob,
+arrays and subscripts, ``$[ ]``). Each base text is used alone, inside every
+wrapper, and in a fixed sample of pairs. A line no shell can run as a
+command (``2]=x``) names no program on any host.
 """
 
 from __future__ import annotations
@@ -264,6 +268,34 @@ BASE: list[Piece] = [
     lambda t: f': "\\\n{t.a()}"',
     lambda t: f"{t.a()}\u3000; {t.a()}",
     lambda t: f"{t.a()}\u2003\n{t.a()}",
+    # bash-only words that hold `(`, `#`, `<<` or a command as text.
+    lambda t: f": ${{ {t.a()}; }}",
+    lambda t: f": ${{| {t.a()}; }}",
+    lambda t: f': "${{ {t.a()}; }}"',
+    lambda t: f": ${{\n{t.a()}\n}}",
+    lambda t: f": ${{\t{t.a()};}}",
+    lambda t: f": ${{x:-{{}}; {t.a()}; : }}",
+    lambda t: f"[[ x =~ ( #) ]]; {t.a()}",
+    lambda t: f"[[ x == @( #) ]]; {t.a()}",
+    lambda t: f"[[ ( #x ) ]]; {t.a()}",
+    lambda t: f"[[ x ]] && {t.a()}",
+    lambda t: f"shopt -s extglob\n: @( #) ; {t.a()}",
+    lambda t: f"shopt -s extglob\n: !( #) ; {t.a()}",
+    lambda t: f"shopt -s extglob\n: @()#x; {t.a()}",
+    lambda t: f"x=@( #); {t.a()}",
+    lambda t: f"a=( #) ; {t.a()}\n)",
+    lambda t: f"a=([1<<true]=x)\n{t.a()}\ntrue]=x)\n{t.a()}",
+    lambda t: f"a[1<<true]=x\n{t.a()}\ntrue]=x\n{t.a()}",
+    lambda t: f"declare -A a\na[x #]=y; {t.a()}",
+    lambda t: f"a[1]=x; {t.a()}",
+    lambda t: f": $[ 1 <<true ]\n{t.a()}\ntrue\n{t.a()}",
+    lambda t: f"coproc N {{ {t.a()}; }}; wait",
+    lambda t: f"coproc N ( {t.a()} ); wait",
+    lambda t: t.a("{{echo,{m}}} >>o"),
+    lambda t: t.a("echo {m} {{a,b}} >>o"),
+    # An echo whose arguments hold an expansion, next to other atoms.
+    lambda t: t.a("echo {m} $(:) >>o") + f"; {t.a()}",
+    lambda t: t.a('echo "$x" {m} >>o') + f"\n{t.a()}",
 ]
 # fmt: on
 
