@@ -1340,6 +1340,44 @@ Steering files (`AGENTS.md`, `CLAUDE.md`, `.tst/rules/**`) and the approval poli
 (`.tst/config.yaml`) are refused for writing no matter what you put in this list. That is
 enforced in the tool, not by configuration.
 
+**Paths that run code later ask first (TD-5108).** Some files run nothing when written, but
+git, a login shell, direnv or an editor runs what they say the next time it starts. A write to
+one of them is Class C, so it asks even though it is inside the workspace and inside this
+list:
+
+- any path with a `.git`, `.vscode`, `.idea` or `.husky` folder in it, at any depth — a nested
+  `sub/.git/` with `HEAD` and `config` makes `sub` a repo, and a `.git` file is a pointer to one;
+- `.envrc`, `.gitconfig`, and shell startup files (`.profile`, `.bashrc`, `.bash_profile`,
+  `.bash_login`, `.bash_logout`, `.bash_aliases`, `.zshrc`, `.zshenv`, `.zprofile`, `.zlogin`,
+  `.zlogout`), by name at any depth;
+- git hook-manager configs: `.pre-commit-config.yaml`, and lefthook's `lefthook.yml` and
+  `lefthook-local.yml` in any of `.yml`, `.yaml`, `.toml`, `.json`, dotted or not. Your own
+  `git commit` runs what they name.
+
+Names match ignoring case. This covers `fs_write` and `fs_edit`, and shell redirects and `tee`
+into these paths (`echo … > .git/hooks/pre-commit`, `… >> ~/.bashrc`). Other shell write forms
+(`cp`, `mv`, `sed -i`) are not parsed; they ask through the shell floor below. Unlike a steering
+file, you can approve the write. An `auto` policy rule cannot pre-approve it (§4.4), and
+"Always allow" is not offered. Reads are unaffected. Skip-all runs these writes without asking,
+like every other Class C ask (§4.4); an autonomous run stops on them.
+
+Every git command the daemon runs itself (checkpoints, memory commits, the charter sign, the
+workspace manifest, `fs_grep`, the autonomy gate and summary, revert, the GitHub connector) is
+started with `-c core.fsmonitor=false -c core.hooksPath=/dev/null -c
+safe.bareRepository=explicit` (`nul` on Windows). Command-line settings beat every config file,
+so with or without skip-all the daemon never runs a repo's fsmonitor command or any hook: not
+`.git/hooks`, not a `core.hooksPath` folder, not a workspace script a hook calls. Your own `git
+commit` still runs your hooks; the daemon's memory and charter commits and the connector's push
+skip them, including a secret scanner. The validator's diff runs no external diff or textconv.
+
+Not pinned: a filter driver (`clean` on the daemon's `git add` and `git status`, `smudge` on
+revert), `gpg.program` when `commit.gpgSign` is set (memory and charter commits), and
+`core.askPass` (the connector). They run only when a config file names them, and `.git/config`,
+`.git/info/attributes` and `.gitconfig` are Class C to write, so planting one asks. Under
+skip-all it does not ask, and the daemon would then run the planted command. An in-tree
+`.gitattributes` (Class A) can also route a file to a filter you already configured. This is
+recorded in DECISIONS.md (TD-5108) as residual risk.
+
 **`allowed_commands` matching.** The command is split into top-level segments on pipes,
 semicolons, and the like; each segment's leading binary — after skipping `VAR=value` prefixes —
 is resolved with `which` and matched on the basename, so `git` and `/usr/bin/git` both match
@@ -1545,8 +1583,13 @@ so prefer exact commands for `auto`, and use `never` for what must not run.
 **Dangerously skip permissions** (skip-all) is not a key in this file. Settings → Policy
 has a machine-wide toggle that lives in the user data dir as `approvals.yaml`, so a clone
 cannot carry it. While it is on, every `ask` runs as auto — including `shell` and Class C —
-and caps do not pause. A `never` rule still refuses. The fs-tool boundary still refuses
-steering-file writes. The classifier still runs. `effect: yolo` is not a valid rule.
+and caps do not pause. That includes writes to paths that run code later (§4.1, TD-5108):
+skip-all does not ask for them, as Claude Code's bypass mode does not. The daemon's own git
+still never runs a repo's fsmonitor command or a hook, but a filter driver or `gpg.program`
+planted in `.git/config` without asking does run on its next `git add` or commit (§4.1). A
+`never` rule still refuses. The fs-tool
+boundary still refuses steering-file writes. The classifier still runs. `effect: yolo` is not
+a valid rule.
 
 **Computer-use glow**, **Agent cursor**, and **Show indicators on the real display** are also
 not keys in this file. Settings → Appearance persists them as `cu-indicators.yaml` in the

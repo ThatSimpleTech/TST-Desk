@@ -13908,6 +13908,85 @@ in front of the permission prompts, so it cannot be the check CI runs.
 
 ---
 
+## 2026-10-19 — Paths that run code later are Class C; daemon git pins fsmonitor and hooks off (TD-5108, Class B)
+
+**Decision:** A write is Class C (`exec-later-write` for the fs tools,
+`shell-exec-later-write` for shell redirects and `tee`) when its path
+has a `.git`, `.vscode`, `.idea` or `.husky` segment at any depth, or
+its basename is `.envrc`, `.gitconfig`, a shell startup file
+(`.profile`, `.bashrc`, `.bash_profile`, `.bash_login`, `.bash_logout`,
+`.bash_aliases`, `.zshrc`, `.zshenv`, `.zprofile`, `.zlogin`,
+`.zlogout`) or a git hook-manager config (`.pre-commit-config.yaml`,
+`lefthook.yml`/`.yaml` and dotted forms). Names case-fold. Inside the
+workspace only the relative segments count; outside it the whole
+canonical path does, so `>> ~/.bashrc` is caught. The rules sit ahead
+of `memory-file-write`, so a `.git` under `.tst/memory/` is caught.
+Class C asks; the user can approve, unlike a steering write.
+
+Every git call the daemon makes starts with `git_command()`
+(`core/tstd/git_safe.py`): `-c core.fsmonitor=false -c
+core.hooksPath=/dev/null -c safe.bareRepository=explicit` (`nul` on
+Windows). The first and last are the pair `fs_grep` already used
+(TD-5141). The hooks pin means the daemon's own git runs no hook at
+all: not the memory or charter commit's commit hooks, not the
+`reference-transaction` hook the checkpointer's `update-ref` fires, not
+the GitHub connector's `pre-push`. The validator's `git diff` also
+passes `--no-ext-diff --no-textconv`. A test fails on any raw `"git"`
+argv in `tstd` outside the developer harnesses.
+
+Skip-all still runs these writes without asking. It is skip-everything
+(TD-806), Claude Code's bypass mode allows protected-path writes, and
+the approvals are off on EZER by Adam's choice. An autonomous run stops
+on them (Class C never auto-runs there, TD-4101). With or without
+skip-all, the daemon's own git never runs a repo's fsmonitor command or
+a hook.
+
+**Residual risk (recorded, not closed):** git config can name other
+commands, and the daemon's git still runs them when a config file names
+them: a filter driver's `clean` on the checkpointer's and memory
+commit's `git add` and on `git status`, its `smudge` on revert's
+`checkout-index`, `gpg.program` on the memory and charter commits when
+`commit.gpgSign` is set, and `core.askPass` on the connector's fetch or
+push. The files that name them (`.git/config`, `.git/info/attributes`,
+`.gitconfig`) are Class C, so in a mode that asks, planting one needs an
+approval. Under skip-all that write runs without asking, and the
+daemon then runs the planted command outside the wall. One Class A
+path remains too: an in-tree `.gitattributes` can point a file at a
+filter the user configured, and a filter such as `python -m nbstripout`
+imports from the repo root first, so a workspace `nbstripout.py` would
+run. Closing these means staging blobs without filters
+(`hash-object --no-filters` plus `update-index --cacheinfo`) and
+restoring by writing blob bytes, which changes what checkpoints store
+for CRLF and LFS files. That is a follow-up story, not this one.
+
+**Rationale:** One Class A `fs_write` to `.git/config` setting
+`core.fsmonitor` ran that command on the checkpointer's next `git add`,
+outside the wall and with no approval (found by the TD-5141 review).
+The story names `.git`, `.envrc`, shell rc files, `.vscode` and
+`.idea`. The other shell startup files are the same thing. `.gitconfig`
+is git config like `.git/config`. The hook managers (`.husky`,
+`.pre-commit-config.yaml`, every lefthook base and `-local` name) are
+listed because the user's own `git commit` runs what they name. They
+do not protect the daemon: a name list cannot, because a user's
+`core.hooksPath` folder can have any name and an existing hook can call
+any workspace script, both ordinary Class A edits (PR #13 review). The
+daemon is protected by running no hooks.
+
+**Alternatives rejected:** Refusing these writes outright like steering
+(the story says Class C; editing `.vscode/settings.json` is legitimate).
+Making skip-all still ask for them (adds an approval to the mode that
+exists to have none). Keeping hooks on for the daemon's own commits
+so a user's secret scanner checks the memory commit: the first draft
+did this and relied on the hook-manager names, which do not close the
+path (above). The memory commit holds only `.tst/memory/` notes, and the
+user's own commits and CI still run their checks. `--no-verify` alone
+(it skips only `pre-commit` and `commit-msg`). Claude Code's whole list (`.npmrc`,
+`.bazelrc`, `.devcontainer` and others): nothing in TST Desk runs them,
+so they can be promoted later. Parsing `cp`/`mv`/`sed -i` targets: they
+still ask through the shell floor.
+
+---
+
 ## 2026-10-19 — TD-5101: Shell rules judge every segment, deny first (Class B)
 
 **Decision:** Policy rules are deny first for every tool: any matching
