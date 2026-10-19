@@ -17,6 +17,16 @@
     "content": "hello world",
     "attachments": []
   },
+  "send_queued": {
+    "type": "send_queued",
+    "session_id": "sess-1",
+    "queued_id": "q-1"
+  },
+  "remove_queued": {
+    "type": "remove_queued",
+    "session_id": "sess-1",
+    "queued_id": "q-1"
+  },
   "fork_from": {
     "type": "fork_from",
     "session_id": "sess-1",
@@ -628,6 +638,23 @@
     "session_id": "sess-1",
     "turn_id": "turn-1",
     "content": "Fix the tests"
+  },
+  "queued_messages": {
+    "type": "queued_messages",
+    "seq": 4,
+    "session_id": "sess-1",
+    "messages": [
+      {
+        "queued_id": "q-1",
+        "content": "Also check b.txt",
+        "images_dropped": 0
+      },
+      {
+        "queued_id": "q-2",
+        "content": "Look at this\n\n[Images attached: shot.png (2048 bytes)]",
+        "images_dropped": 1
+      }
+    ]
   },
   "assistant_delta": {
     "type": "assistant_delta",
@@ -1395,6 +1422,9 @@
     "running": [
       "s1"
     ],
+    "paused": [
+      "s3"
+    ],
     "awaiting_approval": [
       "s2"
     ],
@@ -2100,9 +2130,11 @@
     "memory_reject",
     "new_session",
     "read_artifact_chunk",
+    "remove_queued",
     "rename_session",
     "resume",
     "run_verify",
+    "send_queued",
     "set_branch",
     "set_plan",
     "set_session_preset",

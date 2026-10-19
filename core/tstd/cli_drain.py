@@ -7,9 +7,12 @@ daemon refuses new turns while it waits up to ``--timeout`` seconds for
 the open ones, and for ``--hold`` seconds after; the hold ends by itself.
 ``--release`` lifts it at once.
 
-Exit 0 when drained, 2 when a turn is still running or waiting on an
-approval, 1 when no daemon is running. Only session ids are printed,
-never a title or a message.
+Exit 0 when no turn is still running, 2 when one is, 1 when no daemon
+is running. A turn paused for the person (the progress guard or a cap)
+or parked on an approval never finishes by itself, so it is listed apart
+and does not hold a deploy up: the restart seals it, and Continue picks
+it up (TD-5018). ``--strict`` exits 2 for those too (TD-5155). Only
+session ids are printed, never a title or a message.
 """
 
 from __future__ import annotations
@@ -53,6 +56,11 @@ def add_drain_command(sub: Any, add_data_dir: Callable[[argparse.ArgumentParser]
         help="seconds to keep refusing new turns after the wait (0-600, default: 120)",
     )
     drain_p.add_argument("--release", action="store_true", help="lift a hold now")
+    drain_p.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit 2 for a turn paused or waiting for approval too, not only a running one",
+    )
     drain_p.add_argument("--json", action="store_true", help="print the daemon's drain_result")
     add_data_dir(drain_p)
 
@@ -72,21 +80,46 @@ def _ids(result: dict[str, Any], key: str) -> list[str]:
     return [str(sid) for sid in raw] if isinstance(raw, list) else []
 
 
-def _report(result: dict[str, Any], *, release: bool) -> None:
+_PAUSED = "paused, waiting on the user"
+_APPROVAL = "waiting for approval"
+
+
+def _waiting_on_user(result: dict[str, Any]) -> list[tuple[str, str]]:
+    """Turns that only the person can move on, each with how it waits."""
+    return [(sid, _PAUSED) for sid in _ids(result, "paused")] + [
+        (sid, _APPROVAL) for sid in _ids(result, "awaiting_approval")
+    ]
+
+
+def exit_code(result: dict[str, Any], *, strict: bool) -> int:
+    """0 when the restart may go ahead, else 2 (TD-5155).
+
+    A daemon from before TD-5155 lists a paused turn as running, so it
+    still exits 2 here.
+    """
+    if strict:
+        return 0 if result.get("drained") is True else 2
+    return 2 if _ids(result, "running") else 0
+
+
+def _report(result: dict[str, Any], *, release: bool, strict: bool) -> None:
     if release:
         print("Released. New turns are taken again.")
         return
-    running = _ids(result, "running")
-    waiting = _ids(result, "awaiting_approval")
-    if not running and not waiting:
+    waiting = _waiting_on_user(result)
+    if exit_code(result, strict=strict) == 0:
         until = result.get("hold_until")
         print(f"Drained. New turns are held until {until}." if until else "Drained.")
+        if waiting:
+            print("Waiting on the user (a restart seals these; Continue picks them up):")
+            for sid, how in waiting:
+                print(f"  {sid}  {how}")
         return
     print("Still open:")
-    for sid in running:
+    for sid in _ids(result, "running"):
         print(f"  {sid}  running")
-    for sid in waiting:
-        print(f"  {sid}  waiting for approval")
+    for sid, how in waiting:
+        print(f"  {sid}  {how}")
 
 
 async def _ask_daemon(info: dict[str, Any], frame: dict[str, Any]) -> dict[str, Any] | None:
@@ -118,7 +151,9 @@ async def _ask_daemon(info: dict[str, Any], frame: dict[str, Any]) -> dict[str, 
         raise CliError("the daemon closed the connection") from e
 
 
-async def drain(data_dir: Path, frame: dict[str, Any], *, as_json: bool) -> int:
+async def drain(
+    data_dir: Path, frame: dict[str, Any], *, as_json: bool, strict: bool = False
+) -> int:
     """``tst drain``. Never starts a daemon."""
     info = await asyncio.to_thread(live_port_info, data_dir)
     if info is None:
@@ -131,13 +166,13 @@ async def drain(data_dir: Path, frame: dict[str, Any], *, as_json: bool) -> int:
     if as_json:
         print(json.dumps(result))
     else:
-        _report(result, release=release)
+        _report(result, release=release, strict=strict)
     if release:
         return 0
-    return 0 if result.get("drained") is True else 2
+    return exit_code(result, strict=strict)
 
 
 def run_drain_command(args: argparse.Namespace, data_dir: Path) -> int:
     """Dispatch ``drain`` from :func:`tstd.cli.main`."""
     frame = drain_frame(args.timeout, args.hold, args.release)
-    return asyncio.run(drain(data_dir, frame, as_json=args.json))
+    return asyncio.run(drain(data_dir, frame, as_json=args.json, strict=args.strict))

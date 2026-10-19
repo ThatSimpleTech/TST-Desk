@@ -14567,3 +14567,75 @@ for a later story. A confirmed ask-mode review still runs inside the
 fork, compaction and the restart drain wait on an advisory call);
 cancelling the review from `stop_turn` directly (the session would have
 to own the review's task, and the loop's task already owns it).
+
+## 2026-10-19 — TD-5155: queued messages live in the session's store, and drain names a paused turn (Class B)
+
+2026-10-19, EZER: a session's turn was paused by the progress guard (52
+model calls without a file write). The window does not hold sends while a
+turn is paused (`showCancel` is false), so the user's next message went
+straight to the daemon, which logged `user message enqueued` and put it on
+`Session._user_message_queue`, in memory only. The deploy restart dropped
+it. `tst drain` had also listed that session as `running`, and since a
+paused turn never ends without the person, every deploy waited on it.
+
+**Decision (store).** Every message waiting for the loop is written to
+`sessions/<id>/queued.json` (temp file and rename, 0600, under the persist
+write lock) before `add_user_message` hands it to the loop, so before the
+`user_message` handler returns. The loop logs the message's `user_turn`
+under the message's own id (`turn_id`), saves the conversation, and only
+then takes it off the file. A stop between those steps is settled on
+restore: a row whose id is a `user_turn` in the log already ran and is
+not held again. An empty queue removes the file; deleting the session
+removes the directory with it. A failed write is logged, as every session
+snapshot write is, and the message still goes to the loop: refusing a
+send because the disk is full would lose the text in the window instead.
+
+**Decision (restart).** What the file holds when a session is revived
+comes back *held*: on `Session.held_messages`, logged as
+`queued_messages`, never on the loop's queue. TD-5018 rejected sending
+anything after a restart by itself, and the turn these messages were
+queued behind has just been sealed as cut, so none of them is "sent
+anyway": the person picks `send_queued` (it joins the loop's queue as if
+just sent, so a drain hold refuses it) or `remove_queued`. The event
+carries the whole list each time, logged after a revive that holds any
+(or that must clear a list the log still shows), on each Send or Remove,
+and again on attach when the log window has trimmed the last one away.
+
+**Decision (attachments).** Image bytes are never written to the queue
+file. A held message keeps its display text and the model's text (text
+attachments are already folded into both), `images_dropped` counts what
+it lost, and the model's text gets one line saying the images did not
+survive a restart. Keeping the images would mean rewriting megabytes of
+base64 on every enqueue and dequeue for a rare case; the story allowed
+dropping them, and the row says so before the person sends it.
+
+**Decision (window).** Held rows are the daemon's, not the pane's
+TD-1704 queue: a read-only strip above the queue, "Kept through a
+restart, not sent yet", with Send and Remove and a note for lost images.
+A row stays until the daemon's next list drops it (pending in between,
+so a second click cannot ask twice); a refusal names `in_reply_to`, so
+the reducer clears the pending flag and never hands an unrelated composer
+send back to the draft. A send of the pane's own that the daemon held
+loses its echo row from the transcript: the held row is where it is now.
+The restart walk (`e2e/app-walk.spec.ts`) never restarts its daemon, so
+the strip is not in its census; vitest mounts the pane and clicks both.
+
+**Decision (drain).** `drain_result` gains `paused`: a turn paused for
+the person (the progress guard or a cap) is no longer listed as
+`running`. `drained` keeps its meaning (nothing open at all). `tst drain`
+now exits 0 when no turn is *running*: paused and approval turns are
+printed under "Waiting on the user" and the deploy goes ahead; `--strict`
+exits 2 for them too. This is the default because those turns never
+finish by themselves, so exiting 2 for them blocked every deploy for as
+long as nobody was at the window, and the restart now loses nothing: the
+turn is sealed with Continue (TD-5018) and its queued messages come back
+held. A daemon from before this story lists a paused turn as running, so
+the new CLI still exits 2 against it.
+
+**Rejected:** auto-sending held messages after the restart (answers for
+the user; TD-5018 rejected it); keeping the pane's own queue in the
+daemon (TD-1704 keeps it client-side so rows stay editable; TD-5019
+already saves it as a draft); making held rows editable in place (a new
+edit verb for a rare case; Remove and a new message do the same); exit 2
+by default with a flag to accept paused turns (the deploy script would
+need the flag to stop blocking, which is the failure being fixed).

@@ -43,6 +43,10 @@ MACHINE_PEER_VERBS: frozenset[str] = frozenset(
         "attach",
         "detach",
         "user_message",
+        # TD-5155: a held message is a user_message the person already
+        # wrote; sending or dropping it is the same act.
+        "send_queued",
+        "remove_queued",
         "stop_turn",
         "cancel",
         "resume",

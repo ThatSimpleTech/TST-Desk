@@ -28,6 +28,8 @@ log = get_logger("tstd.session_persist")
 
 _EVENTS = "events.jsonl"
 _CONVERSATION = "conversation.json"
+# Messages the daemon accepted that no turn has started yet (TD-5155).
+_QUEUED = "queued.json"
 
 
 def _write_all(fd: int, text: str) -> None:
@@ -226,6 +228,49 @@ class SessionPersist:
         path.mkdir(parents=True, exist_ok=True)
         with self._write_lock:
             self._write_json(path / _CONVERSATION, payload)
+
+    def save_queue(self, session_id: str, entries: list[dict[str, Any]]) -> None:
+        """Replace the queued-message file; an empty queue removes it (TD-5155).
+
+        Under the write lock, through a temp file and a rename, 0600 like
+        the conversation. A failed write is logged, as every snapshot is.
+        """
+        path = self.dir_for(session_id)
+        path.mkdir(parents=True, exist_ok=True)
+        with self._write_lock:
+            if entries:
+                self._write_json(path / _QUEUED, entries)
+                return
+            try:
+                (path / _QUEUED).unlink(missing_ok=True)
+            except OSError as e:
+                log.warning(
+                    "failed to clear queued messages",
+                    extra={"extra_fields": {"session_id": session_id, "error": str(e)}},
+                )
+
+    def load_queue(self, session_id: str) -> list[dict[str, Any]]:
+        """The queued-message rows on disk, or [] when there are none (TD-5155).
+
+        Rows that are not objects are skipped; the caller checks fields.
+        """
+        path = self.dir_for(session_id) / _QUEUED
+        if not path.is_file():
+            return []
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            log.warning(
+                "queued messages unreadable",
+                extra={"extra_fields": {"session_id": session_id, "error": str(e)}},
+            )
+            return []
+        if not isinstance(raw, list):
+            log.warning(
+                "queued messages are not a list", extra={"extra_fields": {"session_id": session_id}}
+            )
+            return []
+        return [row for row in raw if isinstance(row, dict)]
 
     def load(self, session_id: str) -> LoadedSession | None:
         """Read what is on disk. ``None`` if this session has no directory.
