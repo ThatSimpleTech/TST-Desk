@@ -183,11 +183,7 @@ pub fn term_spawned_group(leader_pid: u32) {
         return;
     }
     #[cfg(unix)]
-    {
-        let _ = std::process::Command::new("kill")
-            .args(["-TERM", &format!("-{leader_pid}")])
-            .status();
-    }
+    signal_group(leader_pid, libc::SIGTERM);
     #[cfg(windows)]
     {
         let _ = std::process::Command::new("taskkill")
@@ -204,16 +200,39 @@ pub fn kill_spawned_group(leader_pid: u32) {
         return;
     }
     #[cfg(unix)]
-    {
-        let _ = std::process::Command::new("kill")
-            .args(["-KILL", &format!("-{leader_pid}")])
-            .status();
-    }
+    signal_group(leader_pid, libc::SIGKILL);
     #[cfg(windows)]
     {
         let _ = std::process::Command::new("taskkill")
             .args(["/PID", &leader_pid.to_string(), "/T", "/F"])
             .status();
+    }
+}
+
+/// The process-group id `kill(2)` should get for `leader_pid`, negated.
+/// `None` for 0 and 1: `kill(0)` is our own group and `kill(-1)` is every
+/// process we may signal, so neither may ever be a daemon's group.
+#[cfg(unix)]
+fn group_target(leader_pid: u32) -> Option<libc::pid_t> {
+    let pid = libc::pid_t::try_from(leader_pid).ok()?;
+    (pid > 1).then_some(-pid)
+}
+
+/// Signal the whole group with the syscall, not `/usr/bin/kill`.
+///
+/// procps-ng 4.0.4 as shipped in Ubuntu 24.04 reads the first digit of
+/// `kill -KILL -1234` as an option: `-9115` signalled group 9 (nothing,
+/// so the daemon outlived quit) and `-1208` signalled -1, every process
+/// the user owns. Ubuntu 26.04's procps is patched. A missing group is
+/// fine; this is a backstop.
+#[cfg(unix)]
+fn signal_group(leader_pid: u32, signal: libc::c_int) {
+    let Some(target) = group_target(leader_pid) else {
+        return;
+    };
+    // SAFETY: kill(2) takes plain integers and touches no memory of ours.
+    unsafe {
+        libc::kill(target, signal);
     }
 }
 
@@ -274,6 +293,55 @@ mod tests {
             11,
             parents(&[(11, 12), (12, 11)]),
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn group_target_never_names_our_group_or_everyone() {
+        assert_eq!(group_target(0), None);
+        assert_eq!(group_target(1), None);
+        assert_eq!(group_target(u32::MAX), None);
+        assert_eq!(group_target(1208), Some(-1208));
+    }
+
+    /// Ubuntu 24.04's `kill -TERM -1208` signalled every process the user
+    /// owns, and `-9115` signalled group 9. Either way the neighbour
+    /// group's fate gives it away.
+    #[cfg(unix)]
+    #[test]
+    fn group_signals_reach_that_group_and_no_other() {
+        use std::os::unix::process::{CommandExt, ExitStatusExt};
+        use std::time::{Duration, Instant};
+
+        let spawn = || {
+            std::process::Command::new("sleep")
+                .arg("30")
+                .process_group(0)
+                .spawn()
+                .expect("sleep")
+        };
+        let reaped = |child: &mut std::process::Child| {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    return status.signal();
+                }
+                assert!(Instant::now() < deadline, "group was not signalled");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        };
+        let mut target = spawn();
+        let mut neighbour = spawn();
+
+        term_spawned_group(target.id());
+        assert_eq!(reaped(&mut target), Some(libc::SIGTERM));
+        assert!(
+            neighbour.try_wait().unwrap().is_none(),
+            "SIGTERM reached another group"
+        );
+
+        kill_spawned_group(neighbour.id());
+        assert_eq!(reaped(&mut neighbour), Some(libc::SIGKILL));
     }
 
     #[test]
