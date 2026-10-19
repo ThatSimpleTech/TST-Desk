@@ -585,7 +585,7 @@ def _register_builtins(registry: ToolRegistry, *, search: SearchConfig | None = 
 def create_registry(
     *, candidate_selection: bool = False, search: SearchConfig | None = None
 ) -> ToolRegistry:
-    """Create a registry with builtins, skills, delegate, send_file, then plugins.
+    """Create a registry with builtins, skills, delegate, send_file, steering, then plugins.
 
     ``candidate_selection`` (judgments.candidate_selection, TD-711) adds
     ``browser_pick`` to the tool surface.
@@ -596,6 +596,7 @@ def create_registry(
     from .desktop import register_desktop_tools
     from .plugins import load_plugins
     from .send_file import register_send_file_tool
+    from .steering_edit import register_steering_edit_tool
 
     registry = ToolRegistry()
     _register_builtins(registry, search=search)
@@ -604,6 +605,7 @@ def create_registry(
     register_skill_tools(registry)
     register_delegate_tools(registry)
     register_send_file_tool(registry)
+    register_steering_edit_tool(registry)
     # Before plugins so a plugin cannot take a GitHub tool name (TD-4852).
     from ..connectors.github_tools import register_github_tools
 

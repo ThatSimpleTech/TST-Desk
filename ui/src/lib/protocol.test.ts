@@ -48,6 +48,11 @@ import type {
   MemoryEdit,
   MemoryProposal,
   MemoryReject,
+  SteeringAccept,
+  SteeringDecision,
+  SteeringEdit,
+  SteeringProposal,
+  SteeringReject,
   Shutdown,
   ListSessions,
   Ready,
@@ -425,6 +430,18 @@ describe("Client message fixtures match TypeScript types", () => {
     const m = fixtures.memory_reject as MemoryReject;
     expect(m.type).toBe("memory_reject");
     expect(isString(m.proposal_id)).toBe(true);
+  });
+
+  it("steering_accept, steering_edit, steering_reject (TD-5140)", () => {
+    const accept = fixtures.steering_accept as SteeringAccept;
+    expect(accept.type).toBe("steering_accept");
+    expect(isString(accept.session_id) && isString(accept.proposal_id)).toBe(true);
+    const edit = fixtures.steering_edit as SteeringEdit;
+    expect(edit.type).toBe("steering_edit");
+    expect(isString(edit.content)).toBe(true);
+    const reject = fixtures.steering_reject as SteeringReject;
+    expect(reject.type).toBe("steering_reject");
+    expect(isString(reject.proposal_id)).toBe(true);
   });
 
   it("end_session", () => {
@@ -1026,6 +1043,7 @@ describe("All fixtures have required shape", () => {
       "get_charter", "save_charter", "start_autonomy",
       "list_pins", "add_pin", "remove_pin",
       "memory_accept", "memory_edit", "memory_reject", "end_session",
+      "steering_accept", "steering_edit", "steering_reject",
       "get_setup_state", "set_api_key", "validate_api_key", "set_preset", "set_engine",
       "set_grok_mode", "run_grok_command", "list_grok_sessions", "open_in_terminal",
       "approve_grok_plan", "list_grok_extensions",
@@ -1069,7 +1087,7 @@ describe("All fixtures have required shape", () => {
       "shell_output", "tool_progress", "approval_request", "approval_request_always_allow", "decision_logged",
       "checkpoint_notice", "verify_result", "cost_update", "boundary_update", "boundary_update_config_trust", "turn_complete",
       "tier_state", "tier_state_plan", "context_compacted", "context_compacted_manual", "context_usage", "steering_reloaded", "rule_activated", "tier_switched",
-      "instruction_stack", "instruction_files", "command_list", "context_pins", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "session_list", "policy_rules", "error",
+      "instruction_stack", "instruction_files", "command_list", "context_pins", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "steering_proposal", "steering_decision", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",
       "artifact_ready", "artifact_list", "artifact", "artifact_chunk",
@@ -1215,6 +1233,23 @@ describe("Session lifecycle messages match TypeScript types", () => {
     const m = fixtures.context_pins as ContextPins;
     expect(m.type).toBe("context_pins");
     expect(m.pins[0]?.kind).toBe("file");
+  });
+
+  it("steering_proposal and steering_decision (TD-5140)", () => {
+    const m = fixtures.steering_proposal as SteeringProposal;
+    expect(m.type).toBe("steering_proposal");
+    expect(isString(m.proposal_id)).toBe(true);
+    expect(m.files[0]?.action).toBe("replace");
+    expect(isString(m.files[0]?.diff)).toBe(true);
+    expect(m.replaces).toBeNull();
+    expect(m.autonomy).toBe(false);
+    const fresh = fixtures.steering_proposal_fresh as SteeringProposal;
+    expect(fresh.replaces).toBe("sp-1");
+    expect(fresh.autonomy).toBe(true);
+    const d = fixtures.steering_decision as SteeringDecision;
+    expect(d.type).toBe("steering_decision");
+    expect(d.decision).toBe("accepted");
+    expect(d.files[0]?.path).toBe("AGENTS.md");
   });
 
   it("memory_proposal", () => {

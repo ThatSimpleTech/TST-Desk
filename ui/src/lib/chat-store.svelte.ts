@@ -18,6 +18,7 @@ import { createChatState, createChatStore, type ChatState } from "./chat-store";
 import { bindApprovals } from "./approval-store.svelte.js";
 import { bindDecisions } from "./decisions.svelte.js";
 import { bindMemoryProposal } from "./memory-proposal-store.svelte.js";
+import { bindSteeringProposal } from "./steering-proposal-store.svelte.js";
 import { bindSession } from "./timeline-store.svelte.js";
 import type { SessionState } from "./protocol";
 
@@ -36,6 +37,7 @@ const store = createChatStore(
       bindDecisions(sessionId);
       bindApprovals(sessionId);
       bindMemoryProposal(sessionId);
+      bindSteeringProposal(sessionId);
     },
   },
   chat,

@@ -341,6 +341,9 @@ from .protocol import (
     Shutdown,
     StartAutonomy,
     StartPairing,
+    SteeringAccept,
+    SteeringEdit,
+    SteeringReject,
     StopTurn,
     TestEmail,
     TierState,
@@ -464,6 +467,8 @@ from .shutdown_phases import (
     reap_shutdown_distill,
 )
 from .speech import transcribe as transcribe_speech
+from .steering_proposals import decide as decide_steering
+from .steering_proposals import expire_restored as expire_restored_steering
 from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
 from .turn_seal import INTERRUPTED_BY_RESTART, open_turn, repair_cut_conversation
@@ -2155,6 +2160,8 @@ class Daemon:
             sess.preset = chosen
             if loaded is not None and loaded.events:
                 sess.event_log.replace(loaded.events)
+                # TD-5140: a replay-only session holds no proposal either.
+                await expire_restored_steering(sess, loaded.events)
             if final_state != record.state:
                 await self._session_store.update_state(record.session_id, final_state)
             log.info(
@@ -3522,6 +3529,17 @@ class Daemon:
             del self._pending_memory[msg.session_id]
             return await self._memory_files_reply(found.workspace_path)
 
+        if isinstance(msg, SteeringAccept | SteeringEdit | SteeringReject):
+            # TD-5140: the only path that writes an agent-proposed steering
+            # edit, and only from the user's own message.
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            return await decide_steering(found, msg)
+
         if isinstance(msg, Shutdown):
             self._request_shutdown("websocket")
             log.info("shutdown requested via websocket")
@@ -3550,6 +3568,9 @@ class Daemon:
         the window stops showing it as running and the next request is
         one a provider accepts. Once sealed the log has its
         ``turn_complete``, so a second restore finds nothing to seal.
+        The same goes for a steering proposal still open in the log: the
+        old process held it in memory, so it is closed as ``expired``
+        (TD-5140) rather than replayed as a card nothing can act on.
         """
         sess = await self.session_registry.restore(session_id, workspace_path, "idle")
         record = self._session_store.get(session_id)
@@ -3569,6 +3590,8 @@ class Daemon:
         await self._attach_session_runtime(sess)
         if cut:
             await self._seal_cut_turn(sess)
+        # TD-5140: open steering proposals lived in the old process's memory.
+        await expire_restored_steering(sess, loaded.events)
         await self._emit_working_context(sess, config_source(sess))
         log.info(
             "revived session",

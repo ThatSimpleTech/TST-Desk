@@ -9329,6 +9329,138 @@ allow" is not offered for a chained command. Tests:
 `core/tests/test_policy_shell.py`, plus loop and daemon cases in
 `core/tests/test_approval_flow.py`.
 
+Criteria 1 and 2 were unticked after the PR #14 review found lines bash
+splits differently from the scanner (a command on a later line missed
+both `auto` and `never`). They were ticked again on 2026-10-19 once
+TD-5156's differential test, which runs a corpus under bash, `bash
+--posix`, dash and busybox ash, passed: every command any shell ran is
+one of the splitter's segments or the split is incomplete, and a `never`
+rule naming any command that ran refuses the line. The PR #20 review then
+found bash-only words the first corpus left out (bash 5.3's `${ cmd; }`,
+`[[ x =~ ( #) ]]`, extglob); the corpus now covers them and the test
+passed again under bash 5.1, 5.2 and 5.3 (with and without `--posix`),
+dash and busybox ash before the ticks stayed.
+
+### TD-5156 — Shell rule scanner fails closed where shells split a command differently
+**Size:** 3 · **Depends on:** TD-5101
+
+Follow-up to TD-5101 (PR #14). Its review found that `split_command`
+reported some lines as completely split when bash, the `/bin/sh` of
+macOS, Fedora and Arch, reads their line breaks differently, so commands
+on later lines missed both `auto` and `never` rules. dash read them the
+way the scanner did.
+
+**Acceptance criteria:**
+- [x] A differential test builds a corpus of command texts from harmless
+      builtins only (`echo` with unique markers, `true`, `:`) and every
+      line-structure construct (newlines, `\`-newline, comments,
+      heredocs, quotes across lines, `&`, `|&`, `;;`, `()`, `{}`, `$(…)`,
+      backticks, carriage returns, odd whitespace, and the bash-only
+      words that hold `(`, `#`, `<<` or a command as text: `${ cmd; }`,
+      `${| cmd; }`, `[[ ]]`, extglob, arrays and subscripts, `$[ ]`,
+      brace expansion, `coproc NAME`), runs each under every
+      shell on the host (`bash -c`, `bash --posix -c`, `dash -c`, `sh -c`,
+      `busybox sh -c`; a missing one is skipped) and records which
+      markers ran
+- [x] Any text where a shell ran a command that is not one of the
+      splitter's segments comes back `complete=False`, so it never
+      auto-runs. The test stays in the suite
+- [x] A `never` rule naming any command that ran refuses the line,
+      complete or not
+- [x] `never` and `ask` rules match a program written as a full path
+      (`curl *` refuses `/usr/bin/curl x`); `auto` still needs the path
+      as written
+- [x] The `AlwaysAllow` docstring lists the `not_always_allowable`
+      refusal for chained shell commands
+- [x] On Windows, cmd's `for /f … in ('cmd')` and the usebackq
+      `` (`cmd`) `` form are incomplete, and `never` rules see the inner
+      command
+- [x] TD-5101's criteria 1 and 2 are re-verified by the differential test
+- [x] The test's oracle cannot let an expansion in one `echo` stand in
+      for an atom the splitter missed (an expansion matches anything but
+      a marker), and a test checks the oracle itself
+- [x] Tests fail on the old code (937 disagreements and 237 `never`
+      misses on the TD-5101 code with the first corpus; 634 and 295 on
+      this PR's first scanner with the widened one) and pass on the new
+
+Done (2026-10-19): `\`-newline is removed before words are read, and
+joins that would form an operator are incomplete. Heredoc ends are read
+the bash way and the dash way, and a difference is incomplete, as is a
+heredoc left open when its `$(…)` closes. An unquoted body's
+substitutions are read with and without its line continuations. `alias`
+values and `trap` actions are read as commands. After the PR #20 review:
+`${` must be followed by a parameter name (bash 5.3's `${ cmd; }` is
+incomplete) and ends at its first `}`; `[[`, a `(` glued to a word other
+than `name()`, a `name[…]` subscript holding structure, and `$[ ]` are
+incomplete; deny readings include bash's brace expansion and skip a
+`coproc` NAME, and a program word bash brace-expands is incomplete.
+Heredoc reading moved to `core/tstd/policy_shell_heredoc.py` and the
+bash-only checks to `core/tstd/policy_shell_bash.py`. Tests:
+`core/tests/test_policy_shell_differential.py` (corpus in
+`core/tests/shell_corpus.py`) and
+`core/tests/test_policy_shell_fail_closed.py`. See DECISIONS.md.
+
+**Not covered:** macOS `/bin/sh` (bash 3.2) is not on CI; the widened
+corpus was run by hand in containers against bash 5.1.16 (ubuntu 22.04),
+5.2.21 (ubuntu 24.04) and 5.3.9 (ubuntu 26.04 and this host), each with
+`--posix`, their dash, and busybox 1.36.1 ash (alpine 3.20): 0
+disagreements and 0 `never` misses. Brace expansion in arguments keeps a
+line complete, since it cannot change which program runs. Text bash
+evaluates later from inside quotes (an array subscript given to
+`[ -v ]`, `PS4` with `set -x`) is still data to the scanner, like a
+command spelled through a variable.
+
+---
+
+### TD-5140 — Agent-proposed steering edits, written only on approval
+**Size:** 5 · **Depends on:** TD-5101, TD-5108, TD-5113 (Adam's order: after the safety batch)
+
+From the 2026-10-14 gap audit (docs/gap-audit-2026-10-14.md, Adam's decision 4: "agents may
+propose edits to steering files; only the user's approval writes them"). Directive 4 barred
+any agent path to a steering edit, even one the user would approve, so "add this to
+AGENTS.md" and "draft a starter AGENTS.md" had no hand-off like memory's.
+
+**Acceptance criteria:**
+- [x] A `propose_steering_edit` tool takes a steering path (`AGENTS.md`, `CLAUDE.md`,
+      `.tst/rules/**`, a `SKILL.md` or a slash-command file) and the full new text. It writes
+      nothing. The daemon builds the diff and emits `steering_proposal`, shaped like
+      `memory_proposal` (a proposal id, then action, path, diff, before and after per file)
+- [x] The window shows the diff on a card with Accept, Edit and Reject, like the memory card.
+      Only the user's Accept, or Edit then Save, writes the file, and the daemon writes it, not
+      the filesystem tool. The fs tools still refuse every steering write, so directive 4 stays
+      enforced in the tool
+- [x] If the file changed on disk after the proposal, Accept refuses with "the file changed
+      since this was proposed" and offers a fresh diff. The signed charter
+      (`.tst/autonomy/CHARTER.md`) and `.tst/config.yaml` can't be proposed
+- [x] Every accepted or rejected proposal goes in the session log with its diff and the
+      decision. In an autonomy run the proposal is parked for the run summary and never
+      accepted by itself. Skip-all doesn't accept proposals; today it doesn't open steering
+      files to writes either
+- [x] AGENTS.md directive 4 is reworded to "the agent never writes steering files; it may
+      propose an exact diff, and only the user's approval writes it". DECISIONS.md records why
+- [x] Covers two appendix gaps: "Generate a starter instruction file" (the agent proposes a
+      starter `AGENTS.md` from a scan of the repo) and "Remember this / add to instructions on
+      request"
+
+Done (2026-10-19): `core/tstd/tools/steering_edit.py` (the tool, Class A by the static rule
+`steering-proposal`) and `core/tstd/steering_proposals.py` (proposable paths, diff, parking,
+the daemon's checked write). Decisions are `steering_accept` / `steering_edit` (loopback only)
+and `steering_reject`, logged as `steering_decision`; a stale file gets
+`steering_proposal_stale` and a fresh `steering_proposal` that `replaces` the old one. The
+window's card is `SteeringProposalCard.svelte` in a footer bar; the wake-up card lists what an
+unattended run left waiting (`autonomy_summary.steering_proposals`). Open proposals live in
+daemon memory; a restart closes them, logged as `steering_decision` `expired` when the
+session is restored, so no dead card comes back. Review fixes (PR #18): a proposal or Save
+the session log's secret scrub would change is refused (`steering_secret_shaped`), so the
+card shows exactly what Accept writes and Edit never saves `[REDACTED]` over real text; a
+card the daemon no longer holds says nothing was written and offers only Dismiss. Tests: `core/tests/test_steering_proposals.py`,
+`core/tests/test_steering_decisions.py`, `ui/src/lib/steering-proposal-store.test.ts`,
+`ui/src/lib/steering-proposal-component.test.ts`. Class B entry and the conservative Class C
+choices (loopback-only accept, no deletes, workspace files only) in DECISIONS.md; see
+docs/steering.md "Proposed edits" and docs/configuration.md §4.1.
+
+---
+
 ### TD-5147 — Edit and branch arrows pick the right turn after compaction
 **Size:** 2 · **Depends on:** TD-1708, TD-5109
 

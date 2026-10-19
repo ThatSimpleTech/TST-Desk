@@ -617,6 +617,28 @@ def _rule_send_file(req: DecisionRequest, boundary: Boundary) -> bool:
     )
 
 
+def _rule_steering_proposal(req: DecisionRequest, boundary: Boundary) -> bool:
+    """``propose_steering_edit`` writes nothing (TD-5140).
+
+    It parks a diff for the user; only the user's Accept on the card
+    writes the file, through the daemon, never through a tool. Asking
+    here as well would put two approvals on one edit. Only the builtin
+    matches, with exactly one in-workspace read path: an MCP or plugin
+    tool of that name carries provenance and gets no grant, and an
+    outside path was Class C above.
+    """
+    return (
+        req.tool_name == "propose_steering_edit"
+        and req.provenance is None
+        and req.side_effect_class == "auto"
+        and not req.is_mutation
+        and len(req.reads) == 1
+        and not req.writes
+        and not req.hosts
+        and is_in_workspace(boundary, req.reads[0])
+    )
+
+
 def _rule_in_workspace_edit(req: DecisionRequest, boundary: Boundary) -> bool:
     """An in-workspace write inside writable_paths is a reversible Class A edit."""
     if not req.is_mutation or not req.writes:
@@ -785,6 +807,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="send_file of in-workspace files",
         decision_class=DecisionClass.A,
         match=_rule_send_file,
+    ),
+    Rule(
+        id="steering-proposal",
+        description="propose_steering_edit parks a diff for the user; writes nothing",
+        decision_class=DecisionClass.A,
+        match=_rule_steering_proposal,
     ),
     # GitHub reads have no path or host metadata. A host on the request
     # would be Class C under the default network deny, and a path would
