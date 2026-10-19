@@ -30,6 +30,7 @@ from .protocol import (
 )
 from .protocol import SessionState as SessionStateEvent
 from .provider import ChatMessage
+from .workspace_trust import TrustStore, WorkspaceConfigView
 
 if TYPE_CHECKING:
     from .config import ModelConfig
@@ -275,6 +276,11 @@ class Session:
         self.cost_tracker: CostTracker | None = None
         # Approval policy (TD-801), resolved by the daemon on open.
         self.policy = PolicyConfig()
+        # Workspace config trust (TD-5113). The daemon attaches its store
+        # before the first config load; None (library use) gates nothing.
+        # ``config_view`` is the read the boundary was last loaded from.
+        self.trust_store: TrustStore | None = None
+        self.config_view: WorkspaceConfigView | None = None
         # Pending approvals (TD-802), owned by the session — NOT by any
         # websocket — so a client disconnect leaves them parked and
         # resumable (prime directive §2.5).  Each record carries the call
@@ -289,6 +295,11 @@ class Session:
         # Set by the loop (TD-1715): rebinds what it built from the old root
         # (dispatcher, assembler, import approvals) after a live move.
         self.on_workspace_moved: Callable[[], None] | None = None
+        # Set by the loop (TD-5113): re-applies a reloaded boundary and
+        # policy (path guard, classifier wall, policy gate, import
+        # approvals) without touching root-bound pieces, so it is safe
+        # while a turn runs.
+        self.on_config_reloaded: Callable[[], None] | None = None
         # Turns owed to the user (TD-1715): raised when a message is queued,
         # lowered when the loop reports that turn finished. `session_state`
         # cannot answer "is a turn in flight" — "running" means the loop is
@@ -576,6 +587,13 @@ class Session:
 
     # ── Approvals (TD-802) ──────────────────────────────────────────
 
+    async def _config_writable(self) -> bool:
+        """True when TST Desk may save into the workspace config now (TD-5113)."""
+        store = self.trust_store
+        if store is None:
+            return True
+        return await asyncio.to_thread(store.writable, self.workspace_path)
+
     async def request_approval(
         self,
         tool_call_id: str,
@@ -602,8 +620,12 @@ class Session:
         )
         # The rule "always allow" would write (TD-803), surfaced on the
         # card so the user sees it before committing to save it.  None for
-        # a class-C call — the boundary can never be always-allowed.
+        # a class-C call — the boundary can never be always-allowed — and
+        # while the workspace config is not in force (TD-5113): the rule
+        # could not be saved, so the card offers approve once instead.
         proposed = propose_always_allow(tool, arguments, decision_class, Path(self.workspace_path))
+        if proposed is not None and not await self._config_writable():
+            proposed = None
         await self.event_log.add(
             ApprovalRequestEvent(
                 session_id=self.id,

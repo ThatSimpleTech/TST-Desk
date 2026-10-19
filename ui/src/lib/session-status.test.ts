@@ -21,6 +21,7 @@ vi.mock("./last-workspace", () => ({
 import {
   session,
   bindClient,
+  decideWorkspaceTrust,
   focusSession,
   followingRemoteSession,
   ingestEvent,
@@ -447,5 +448,74 @@ describe("context gauge (TD-5109)", () => {
     ingestEvent(usage("s1", 1000));
     focusSession("s2", "idle");
     expect(session.context).toBeNull();
+  });
+});
+
+// ── Workspace config trust (TD-5113) ──────────────────────────────────
+
+describe("workspace config trust", () => {
+  const SHA = "a".repeat(64);
+  const wall = (sessionId: string, configTrust: unknown): DaemonEventUnion =>
+    ({
+      type: "boundary_update",
+      session_id: sessionId,
+      seq: 2,
+      writable_paths: ["**"],
+      allowed_commands: [],
+      network: "deny",
+      spend_usd: 25,
+      wall_clock_hours: 8,
+      max_iterations: 200,
+      source: "defaults — workspace config not trusted yet",
+      config_trust: configTrust,
+    }) as DaemonEventUnion;
+  const pending = {
+    state: "pending",
+    sha256: SHA,
+    loosened: [{ key: "policy.rules", value: "shell: touch * → auto", default: "ask (class B and C)" }],
+  };
+
+  it("keeps the trust state the daemon announces with the wall", () => {
+    ingestEvent(sessionState("s1"));
+    ingestEvent(wall("s1", pending));
+    expect(session.configTrust?.state).toBe("pending");
+    expect(session.configTrust?.loosened[0]?.key).toBe("policy.rules");
+    ingestEvent(wall("s1", null));
+    expect(session.configTrust).toBeNull();
+  });
+
+  it("answers with the hash it was shown", () => {
+    const messages: unknown[] = [];
+    bindClient({
+      ...fakeClient,
+      send: (m: unknown) => (messages.push(m), true),
+    } as unknown as ProtocolClient);
+    ingestEvent(sessionState("s1"));
+    ingestEvent(wall("s1", pending));
+    expect(decideWorkspaceTrust(true)).toBe(true);
+    expect(messages).toEqual([
+      { type: "trust_workspace_config", session_id: "s1", sha256: SHA, trust: true },
+    ]);
+  });
+
+  it("sends nothing with nothing to decide, or for another computer's session", () => {
+    const messages: unknown[] = [];
+    bindClient({
+      ...fakeClient,
+      send: (m: unknown) => (messages.push(m), true),
+    } as unknown as ProtocolClient);
+    ingestEvent(sessionState("s1"));
+    expect(decideWorkspaceTrust(true)).toBe(false);
+    focusSession("abc:mch_0123456789ab", "idle");
+    ingestEvent(wall("abc:mch_0123456789ab", pending));
+    expect(decideWorkspaceTrust(true)).toBe(false);
+    expect(messages).toEqual([]);
+  });
+
+  it("clears when the window follows another session", () => {
+    ingestEvent(sessionState("s1"));
+    ingestEvent(wall("s1", pending));
+    focusSession("s2", "idle");
+    expect(session.configTrust).toBeNull();
   });
 });

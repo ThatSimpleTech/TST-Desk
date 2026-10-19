@@ -1,10 +1,14 @@
 """Approval policy model (TD-801) — per-workspace rules in ``.tst/config.yaml``.
 
 A policy maps ``(tool, argument pattern) → auto | ask | never``.  Rules are
-globs over the tool name and a normalized *argument summary*; the most
-specific matching rule wins.  When no rule matches, the effect derives from
-the decision class (spec §12.2): A → ``auto``, B → ``ask``, C → the
-configured ``class_c_default`` (``ask`` unless the workspace says ``never``).
+globs over the tool name and a normalized *argument summary*.  Deny comes
+first (TD-5101): any matching ``never`` rule refuses, then any matching
+``ask`` rule asks, and only then can ``auto`` apply; specificity picks the
+reported rule within one effect.  A shell command is judged segment by
+segment (:mod:`tstd.policy_shell`), and ``auto`` needs a rule for every
+segment.  When no rule applies, the effect derives from the decision class
+(spec §12.2): A → ``auto``, B → ``ask``, C → the configured
+``class_c_default`` (``ask`` unless the workspace says ``never``).
 
 The boundary always wins (prime directive §2 territory): dispatch refuses
 boundary-crossing calls *before* policy is ever consulted (TD-602 ordering),
@@ -29,6 +33,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from .autonomy.classifier import DecisionClass
 from .config import ConfigError
+from .policy_shell import split_command
 
 if TYPE_CHECKING:
     # Type hints only.  A runtime import would cycle: tools/__init__ →
@@ -40,9 +45,6 @@ if TYPE_CHECKING:
 # Same vocabulary as tools.registry.SideEffectClass, defined here so policy
 # stays importable from dispatch without a cycle (TD-802).
 PolicyEffect = Literal["auto", "ask", "never"]
-
-# Restrictiveness ranking for tie-breaking: never > ask > auto.
-_RESTRICTIVENESS: dict[str, int] = {"never": 2, "ask": 1, "auto": 0}
 
 
 class PolicyRule(BaseModel):
@@ -119,7 +121,9 @@ def summarize_arguments(
       gives every element, and that is what rules are checked against
     - a tool with ``host_fields`` → the host
     - any tool with a string ``command`` argument → the command line
-      (the shell tool's v0.1 convention, so ``npm test*`` rules read naturally)
+      (the shell tool's v0.1 convention, so ``npm test*`` rules read
+      naturally).  Rules are checked against each of its segments, not
+      this whole line, except that ``ask`` and ``never`` see it too (TD-5101)
     - anything else → canonical JSON (sorted keys, compact)
     """
     for field in tool.path_fields:
@@ -203,10 +207,11 @@ def resolve(
 ) -> PolicyEffect:
     """Resolve the policy effect for a classified tool call.
 
-    Most-specific matching rule wins; exact ties break toward the most
-    restrictive effect.  No match → the decision-class default.  A class-C
-    call never resolves to ``auto`` — policy cannot grant what the boundary
-    forbids.  Thin wrapper over :func:`resolve_explained` (TD-802).
+    ``never`` beats ``ask`` beats ``auto``, whatever their specificity, and
+    ``auto`` needs a rule for every path or shell segment (TD-5101).  No
+    rule → the decision-class default.  A class-C call never resolves to
+    ``auto`` — policy cannot grant what the boundary forbids.  Thin wrapper
+    over :func:`resolve_explained` (TD-802).
     """
     return resolve_explained(
         config,
@@ -219,26 +224,91 @@ def resolve(
     ).effect
 
 
+@dataclass(frozen=True)
+class _Targets:
+    """What a call's rules are checked against (TD-5101).
+
+    ``allow`` holds one text per unit (a path, or a shell segment); an
+    ``auto`` rule applies only when every unit matches one.  None means no
+    ``auto`` rule may apply: the command could not be split with confidence.
+    ``deny`` holds every text ``ask`` and ``never`` rules are checked against.
+    """
+
+    allow: tuple[str, ...] | None
+    deny: tuple[str, ...]
+
+
+def _command_line(tool: Tool, arguments: dict[str, Any]) -> str | None:
+    """The command line when it is what :func:`summarize_arguments` returns."""
+    for name in (*tool.path_fields, *tool.host_fields):
+        raw = arguments.get(name)
+        if isinstance(raw, str) or (
+            name in tool.path_fields
+            and isinstance(raw, list)
+            and raw
+            and all(isinstance(v, str) for v in raw)
+        ):
+            return None
+    command = arguments.get("command")
+    return command if isinstance(command, str) else None
+
+
+def _targets(tool: Tool, arguments: dict[str, Any], workspace: Path | None) -> _Targets:
+    command = _command_line(tool, arguments)
+    if command is None:
+        each = tuple(summarize_each(tool, arguments, workspace))
+        return _Targets(each, each)
+    split = split_command(command)
+    allow = (split.allow_texts or (command,)) if split.complete else None
+    return _Targets(allow, tuple(dict.fromkeys((command, *split.deny_texts))))
+
+
+def _named(rule: PolicyRule) -> str:
+    return f"`{rule.tool}: {rule.args}`"
+
+
+def _on(text: str) -> str:
+    one_line = " ".join(text.split())
+    return one_line if len(one_line) <= 80 else one_line[:79] + "…"
+
+
 def _decide(
-    config: PolicyConfig, tool: Tool, summary: str, decision_class: DecisionClass
+    config: PolicyConfig, tool: Tool, targets: _Targets, decision_class: DecisionClass
 ) -> PolicyDecision:
-    """The rule match or class default for one argument summary."""
-    matches = [
-        rule
-        for rule in config.rules
-        if fnmatch.fnmatchcase(tool.name, rule.tool) and _args_match(rule, summary)
-    ]
-    if matches:
-        best = max(_specificity(rule) for rule in matches)
-        tied = [rule for rule in matches if _specificity(rule) == best]
-        # Most restrictive effect wins among exact ties; the first tied rule
-        # carrying it stands as provenance.
-        winner = max(tied, key=lambda r: _RESTRICTIVENESS[r.effect])
-        return PolicyDecision(
-            winner.effect,
-            f"policy rule `{winner.tool}: {winner.args}` → {winner.effect}",
-            winner,
-        )
+    """Deny first: never, then ask, then auto for every unit, then the class default.
+
+    Within one effect the most specific rule is the one reported; on a tie,
+    the first declared.  The text a never or ask rule matched is named when
+    it is not the whole call.
+    """
+    rules = [rule for rule in config.rules if fnmatch.fnmatchcase(tool.name, rule.tool)]
+    for effect in ("never", "ask"):
+        hits = [
+            (rule, text)
+            for rule in rules
+            if rule.effect == effect
+            for text in targets.deny
+            if _args_match(rule, text)
+        ]
+        if hits:
+            # max() keeps the first of equals, and hits run in declaration order.
+            rule = max((r for r, _ in hits), key=_specificity)
+            text = next(t for r, t in hits if r is rule)
+            where = "" if text == targets.deny[0] else f" (on `{_on(text)}`)"
+            return PolicyDecision(
+                rule.effect, f"policy rule {_named(rule)} → {effect}{where}", rule
+            )
+    if targets.allow is not None:
+        covering: list[PolicyRule] = []
+        for unit in targets.allow:
+            autos = [r for r in rules if r.effect == "auto" and _args_match(r, unit)]
+            if not autos:
+                break
+            covering.append(max(autos, key=_specificity))
+        else:
+            named = list(dict.fromkeys(_named(r) for r in covering))
+            label = "policy rule" if len(named) == 1 else "policy rules"
+            return PolicyDecision("auto", f"{label} {', '.join(named)} → auto", covering[0])
     effect = _class_default(decision_class, config)
     reason = {
         DecisionClass.A: "decision class A runs automatically",
@@ -270,14 +340,9 @@ def resolve_explained(
     through the fs tools; a Class C shell redirect will run. Turning
     it on is skip-everything: the user accepted that.
     """
-    # Every path of a list is checked (TD-5143); the first decision with
-    # the highest restrictiveness stands, so one ``never`` refuses the call.
-    first, *rest = summarize_each(tool, arguments, workspace)
-    decision = _decide(config, tool, first, decision_class)
-    for summary in rest:
-        candidate = _decide(config, tool, summary, decision_class)
-        if _RESTRICTIVENESS[candidate.effect] > _RESTRICTIVENESS[decision.effect]:
-            decision = candidate
+    # Every path of a list (TD-5143) and every segment of a shell command
+    # (TD-5101) is checked: one never refuses, and auto must cover them all.
+    decision = _decide(config, tool, _targets(tool, arguments, workspace), decision_class)
 
     if decision_class is DecisionClass.C and decision.effect == "auto" and not skip_all:
         # The wall stands unless skip-all is on (TD-806). A never rule
@@ -368,12 +433,21 @@ def load_policy(workspace: str | Path) -> PolicyConfig:
 
     # An empty or comment-only file (e.g. the scaffolded template, TD-1103)
     # means "no rules", not an error.
+    if data is not None and not isinstance(data, dict):
+        raise ConfigError(f"{path} must contain a YAML mapping at the top level")
+    return policy_from_mapping(path, data)
+
+
+def policy_from_mapping(path: Path, data: dict[str, Any] | None) -> PolicyConfig:
+    """The ``policy:`` section of an already-parsed config; ``None`` is the defaults.
+
+    Shared by :func:`load_policy` and the trust gate (TD-5113).
+
+    Raises:
+        ConfigError: Naming the offending key.
+    """
     if data is None:
         return PolicyConfig()
-
-    if not isinstance(data, dict):
-        raise ConfigError(f"{path} must contain a YAML mapping at the top level")
-
     section: Any = data.get("policy", {})
     try:
         return PolicyConfig.model_validate(section)
@@ -439,11 +513,19 @@ def load_approved_imports(workspace: str | Path) -> frozenset[Path]:
     except yaml.YAMLError as e:
         raise ConfigError(f"Invalid YAML in {path}: {e}") from e
     # An empty or comment-only file (the TD-1103 scaffold) means no approvals.
+    if data is not None and not isinstance(data, dict):
+        raise ConfigError(f"{path} must contain a YAML mapping at the top level")
+    return approved_imports_from_mapping(path, data)
+
+
+def approved_imports_from_mapping(path: Path, data: dict[str, Any] | None) -> frozenset[Path]:
+    """``approved_external_imports`` of an already-parsed config (TD-5113).
+
+    Raises:
+        ConfigError: If the key is not a list of non-empty strings.
+    """
     if data is None:
         return frozenset()
-    if not isinstance(data, dict):
-        raise ConfigError(f"{path} must contain a YAML mapping at the top level")
-
     raw: Any = data.get("approved_external_imports", [])
     if not isinstance(raw, list):
         raise ConfigError(f"Invalid approved_external_imports in {path}: expected a list")
@@ -504,14 +586,32 @@ def propose_always_allow(
     ``args="**"`` grant for the whole tool.  A class-C call returns ``None``:
     the boundary can never be always-allowed, regardless of how the rule is
     phrased (criterion 4).
+
+    A shell command is matched segment by segment (TD-5101), so its rule is
+    the one segment's ``auto`` text (``timeout 60 npm test`` → ``npm test``).
+    A command of several segments returns ``None``: one rule cannot cover
+    them, and a rule per segment would allow ``sh`` on its own after
+    ``npm test | sh`` was approved.  Glob characters in the text are
+    escaped, so the rule matches the call it was made from and nothing
+    wider (``ls *.py`` must not allow ``ls x; …; y.py``, and
+    ``src/[id].tsx`` must match itself).
     """
     if decision_class is DecisionClass.C:
         return None
-    return PolicyRule(
-        tool=tool.name,
-        args=summarize_arguments(tool, arguments, workspace),
-        effect="auto",
-    )
+    command = _command_line(tool, arguments)
+    if command is None:
+        args = summarize_arguments(tool, arguments, workspace)
+    else:
+        split = split_command(command)
+        if not split.complete or len(split.allow_texts) != 1:
+            return None
+        args = split.allow_texts[0]
+    return PolicyRule(tool=tool.name, args=_literal(args), effect="auto")
+
+
+def _literal(text: str) -> str:
+    """An fnmatch pattern that matches exactly *text*."""
+    return "".join(f"[{c}]" if c in "*?[" else c for c in text)
 
 
 def add_rule(config: PolicyConfig, rule: PolicyRule) -> PolicyConfig:

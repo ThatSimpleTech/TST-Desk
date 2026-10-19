@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from ..git_safe import git_command
 from ..logging import get_logger
 from ..proc_lifecycle import finish_subprocess
 from .classifier import DecisionClass
@@ -166,11 +167,7 @@ async def checkpoint_start_error(workspace: str | Path) -> str | None:
         env.pop(var, None)
     try:
         proc = await asyncio.create_subprocess_exec(
-            "git",
-            "-C",
-            str(workspace),
-            "rev-parse",
-            "--is-inside-work-tree",
+            *git_command("-C", str(workspace), "rev-parse", "--is-inside-work-tree"),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
@@ -462,10 +459,7 @@ class Checkpointer:
 
             env = sanitized_env()
         proc = await asyncio.create_subprocess_exec(
-            "git",
-            "-C",
-            str(self._workspace),
-            *args,
+            *git_command("-C", str(self._workspace), *args),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,

@@ -23,18 +23,19 @@ from pathlib import Path
 
 from .boundary_config import (
     BoundaryConfig,
+    boundary_from_mapping,
     boundary_source,
-    configured_spend,
-    load_workspace_boundary,
+    configured_spend_from_mapping,
 )
 from .config import ConfigError
 from .logging import get_logger
-from .policy import PolicyConfig, load_policy
+from .policy import PolicyConfig, policy_from_mapping
 from .protocol import BoundaryUpdate as BoundaryUpdateEvent
-from .protocol import build_error
+from .protocol import ConfigTrust, LoosenedSetting, build_error
 from .session import Session, SessionRegistry
 from .session_persist import SessionPersist
 from .session_store import SessionStore
+from .workspace_trust import read_view
 
 log = get_logger("tstd.session_lifecycle")
 
@@ -180,10 +181,48 @@ async def move_session(
     return None
 
 
+def _config_trust(session: Session) -> ConfigTrust | None:
+    """The trust card's payload: only when the daemon gates and there is something to ask."""
+    view = session.config_view
+    if session.trust_store is None or view is None or view.sha256 is None:
+        return None
+    if not view.loosened or view.state == "none":
+        return None
+    return ConfigTrust(
+        state=view.state,
+        sha256=view.sha256,
+        loosened=[
+            LoosenedSetting(key=item.key, value=item.value, default=item.default)
+            for item in view.loosened
+        ],
+    )
+
+
+def _spend_configured(session: Session) -> bool:
+    """A charter's cap, or ``caps.spend_usd`` in a config that is in force."""
+    if session.charter is not None:
+        return True
+    view = session.config_view
+    return view is not None and configured_spend_from_mapping(view.effective) is not None
+
+
+def config_source(session: Session) -> str:
+    """Where the session's wall came from, for ``boundary_update.source``.
+
+    An untrusted config says so instead of naming a file whose settings
+    are not in force (TD-5113).
+    """
+    view = session.config_view
+    if view is not None and not view.applies:
+        why = "declined" if view.state == "declined" else "not trusted yet"
+        return f"defaults — workspace config {why}"
+    return boundary_source(session.workspace_path)
+
+
 def boundary_update_event(session: Session, source: str) -> BoundaryUpdateEvent:
     """The wall event for *session*, including whether a spend budget is set."""
     cfg = session.boundary_config
-    configured = session.charter is not None or configured_spend(session.workspace_path) is not None
+    configured = _spend_configured(session)
     return BoundaryUpdateEvent(
         session_id=session.id,
         writable_paths=list(cfg.boundary.writable_paths),
@@ -195,6 +234,7 @@ def boundary_update_event(session: Session, source: str) -> BoundaryUpdateEvent:
         source=source,
         attachments=cfg.attachments,
         spend_configured=configured,
+        config_trust=_config_trust(session),
         seq=1,
     )
 
@@ -218,8 +258,13 @@ def reload_session_boundary(
     or announce. Nothing raises.
     """
     error: ConfigError | None = None
+    session.config_view = None
     try:
-        cfg = load_workspace_boundary(workspace_path)
+        # One read: the hash judged for trust and the settings applied
+        # come from the same bytes (TD-5113). Untrusted → defaults.
+        view = read_view(workspace_path, session.trust_store)
+        session.config_view = view
+        cfg = boundary_from_mapping(view.path, view.effective)
     except ConfigError as e:
         error = e
         cfg = fallback if fallback is not None else session.boundary_config
@@ -228,6 +273,42 @@ def reload_session_boundary(
         cfg.caps = session.charter.caps
     session.boundary_config = cfg
     return error
+
+
+def reload_session_policy(session: Session, workspace_path: str) -> ConfigError | None:
+    """Reload *session*'s approval policy through the trust gate (TD-5113).
+
+    An untrusted config gives the packaged default policy. An invalid one
+    gives the defaults too, and the error is returned for the caller to log.
+    """
+    try:
+        view = read_view(workspace_path, session.trust_store)
+        session.policy = policy_from_mapping(view.path, view.effective)
+    except ConfigError as e:
+        session.policy = PolicyConfig()
+        return e
+    return None
+
+
+async def apply_workspace_config(session: Session) -> None:
+    """Re-read the workspace config after a trust decision and announce the wall.
+
+    Same root, so only what the config feeds is rebound (the loop's
+    ``on_config_reloaded``), which is safe while a turn runs. Invalid
+    config falls back to defaults, as on open.
+    """
+    error = reload_session_boundary(session, session.workspace_path, fallback=BoundaryConfig())
+    policy_error = reload_session_policy(session, session.workspace_path)
+    for problem in (error, policy_error):
+        if problem is not None:
+            log.warning(
+                "workspace config invalid after trust decision; using defaults",
+                extra={"extra_fields": {"session_id": session.id, "error": str(problem)}},
+            )
+    if session.on_config_reloaded is not None:
+        session.on_config_reloaded()
+    source = config_source(session) if error is None else f"defaults — invalid config ({error})"
+    await session.event_log.add(boundary_update_event(session, source))
 
 
 async def _reload_working_context(session: Session, workspace_path: str) -> None:
@@ -243,21 +324,19 @@ async def _reload_working_context(session: Session, workspace_path: str) -> None
     # project's wall.
     error = reload_session_boundary(session, workspace_path, fallback=BoundaryConfig())
     if error is None:
-        source = boundary_source(workspace_path)
+        source = config_source(session)
     else:
         log.warning(
             "workspace boundary config invalid after move; using defaults",
             extra={"extra_fields": {"workspace_path": workspace_path, "error": str(error)}},
         )
         source = f"defaults — invalid config ({error})"
-    try:
-        session.policy = load_policy(workspace_path)
-    except ConfigError as e:
+    policy_error = reload_session_policy(session, workspace_path)
+    if policy_error is not None:
         log.warning(
             "workspace policy config invalid after move; using defaults",
-            extra={"extra_fields": {"workspace_path": workspace_path, "error": str(e)}},
+            extra={"extra_fields": {"workspace_path": workspace_path, "error": str(policy_error)}},
         )
-        session.policy = PolicyConfig()
     # The loop built its guard, classifier, checkpointer, ledger, policy
     # gate and prompt assembler from the old root: rebind them before the
     # next turn, so the wall announced below is the one tools run under.

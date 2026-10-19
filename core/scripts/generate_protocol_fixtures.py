@@ -45,6 +45,7 @@ from tstd.protocol import (
     CheckpointNotice,
     CommandEntry,
     CommandList,
+    ConfigTrust,
     ContextCompacted,
     ContextPinEntry,
     ContextPins,
@@ -125,6 +126,7 @@ from tstd.protocol import (
     ListPolicyRules,
     ListSessions,
     LogTrimmed,
+    LoosenedSetting,
     MachineList,
     MachineSummary,
     McpServerSummary,
@@ -211,6 +213,7 @@ from tstd.protocol import (
     ToolResult,
     Transcribe,
     Transcript,
+    TrustWorkspaceConfig,
     TurnComplete,
     UsageExported,
     UsageReport,
@@ -254,6 +257,10 @@ FIXTURES = {
     "always_allow": AlwaysAllow(session_id="sess-1", tool_call_id="tc-1"),
     "list_policy_rules": ListPolicyRules(session_id="sess-1"),
     "revoke_policy_rule": RevokePolicyRule(session_id="sess-1", tool="shell", args="rm *"),
+    # TD-5113: the hash the trust card showed. A placeholder, not a real file's.
+    "trust_workspace_config": TrustWorkspaceConfig(
+        session_id="sess-1", sha256="0" * 64, trust=True
+    ),
     "set_skip_all_approvals": SetSkipAllApprovals(enabled=True),
     "set_load_global_memory": SetLoadGlobalMemory(enabled=True),
     "set_coworker": SetCoworker(enabled=True),
@@ -554,6 +561,28 @@ FIXTURES = {
         wall_clock_hours=8.0,
         max_iterations=200,
         source="defaults",
+        seq=12,
+    ),
+    # TD-5113: a repo config that loosens settings, not yet trusted.
+    "boundary_update_config_trust": BoundaryUpdate(
+        session_id="sess-1",
+        writable_paths=["**"],
+        allowed_commands=[],
+        network="deny",
+        spend_usd=25.0,
+        wall_clock_hours=8.0,
+        max_iterations=200,
+        source="defaults — workspace config not trusted yet",
+        config_trust=ConfigTrust(
+            state="pending",
+            sha256="0" * 64,
+            loosened=[
+                LoosenedSetting(
+                    key="policy.rules", value="shell: npm * → auto", default="ask (class B and C)"
+                ),
+                LoosenedSetting(key="boundary.network", value="registry.npmjs.org", default="deny"),
+            ],
+        ),
         seq=12,
     ),
     "turn_complete": TurnComplete(

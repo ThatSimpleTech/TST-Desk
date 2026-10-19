@@ -56,6 +56,9 @@ import type {
   AssistantReasoning,
   UserTurn,
   BoundaryUpdate,
+  ConfigTrust,
+  LoosenedSetting,
+  TrustWorkspaceConfig,
   ToolCall,
   ToolResult,
   ShellOutput,
@@ -756,6 +759,27 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect((withFiles.attachments?.[1] as Attachment).content_b64).toBe("");
   });
 
+  it("boundary_update carries the config trust card (TD-5113)", () => {
+    const plain = fixtures.boundary_update as BoundaryUpdate;
+    expect(plain.config_trust ?? null).toBeNull();
+    const m = fixtures.boundary_update_config_trust as BoundaryUpdate;
+    const trust = m.config_trust as ConfigTrust;
+    expect(trust.state).toBe("pending");
+    expect(trust.sha256).toMatch(/^[0-9a-f]{64}$/);
+    const first = trust.loosened[0] as LoosenedSetting;
+    expect(isString(first.key)).toBe(true);
+    expect(isString(first.value)).toBe(true);
+    expect(isString(first.default)).toBe(true);
+  });
+
+  it("trust_workspace_config", () => {
+    const m = fixtures.trust_workspace_config as TrustWorkspaceConfig;
+    expect(m.type).toBe("trust_workspace_config");
+    expect(isString(m.session_id)).toBe(true);
+    expect(m.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(typeof m.trust).toBe("boolean");
+  });
+
   it("boundary_update", () => {
     const m = fixtures.boundary_update as BoundaryUpdate;
     expect(m.type).toBe("boundary_update");
@@ -980,6 +1004,7 @@ describe("All fixtures have required shape", () => {
     const clientTypes = [
       "hello", "open_workspace", "user_message", "fork_from", "set_branch", "approve", "deny",
       "deny_no_reason", "always_allow", "list_policy_rules", "revoke_policy_rule",
+      "trust_workspace_config",
       "set_skip_all_approvals",
       "set_load_global_memory",
       "set_coworker",
@@ -1037,7 +1062,7 @@ describe("All fixtures have required shape", () => {
       "ready", "session_state", "conversation_reset", "user_turn", "assistant_delta", "assistant_reasoning", "tool_call", "tool_result",
       "tool_result_truncated", "tool_result_diff", "tool_result_denied",
       "shell_output", "tool_progress", "approval_request", "approval_request_always_allow", "decision_logged",
-      "checkpoint_notice", "verify_result", "cost_update", "boundary_update", "turn_complete",
+      "checkpoint_notice", "verify_result", "cost_update", "boundary_update", "boundary_update_config_trust", "turn_complete",
       "tier_state", "tier_state_plan", "context_compacted", "context_compacted_manual", "context_usage", "steering_reloaded", "rule_activated", "tier_switched",
       "instruction_stack", "instruction_files", "command_list", "context_pins", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",

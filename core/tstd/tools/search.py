@@ -36,6 +36,7 @@ from pathlib import Path
 import regex
 
 from ..context.manifest import _FALLBACK_IGNORE
+from ..git_safe import git_command
 
 #: Output modes, named for what each line is.
 OUTPUT_MODES = ("files", "content", "count")
@@ -171,22 +172,16 @@ def _ignored(rel: str) -> bool:
     return any(part in _FALLBACK_IGNORE for part in rel.split("/")[:-1])
 
 
-# A repo's own config can name a command for git to run: core.fsmonitor
-# runs on ls-files. fs_grep is Class A with no approval (TD-5141), so a
-# planted .git/config or a committed bare repo folder (HEAD, config,
-# objects/, refs/) would turn a search into a command nobody approved.
-# Command-line -c beats every config file and include. An embedded bare
-# repo makes git fail instead, and the search falls back to the walk.
-_GIT_SAFE_CONFIG = ("-c", "core.fsmonitor=false", "-c", "safe.bareRepository=explicit")
-
-
+# fs_grep is Class A with no approval (TD-5141), so a planted .git/config
+# or a committed bare repo folder must not turn a search into a command
+# nobody approved. git_command pins core.fsmonitor off and bare repos to
+# explicit only (TD-5108); an embedded bare repo makes git fail instead,
+# and the search falls back to the walk.
 def _git_files(root: Path) -> list[str] | None:
     """Tracked plus untracked, non-ignored files under *root*, or None."""
     try:
         result = subprocess.run(
-            [
-                "git",
-                *_GIT_SAFE_CONFIG,
+            git_command(
                 "-C",
                 str(root),
                 "ls-files",
@@ -194,7 +189,7 @@ def _git_files(root: Path) -> list[str] | None:
                 "--others",
                 "--exclude-standard",
                 "-z",
-            ],
+            ),
             capture_output=True,
             timeout=30,
         )

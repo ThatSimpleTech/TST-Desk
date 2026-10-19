@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from ..git_safe import git_command
 from ..logging import get_logger
 from ..proc_lifecycle import finish_subprocess
 from .checkpoint import auto_branch, auto_ref
@@ -305,10 +306,7 @@ async def _git(
         env = _git_env()
     try:
         proc = await asyncio.create_subprocess_exec(
-            "git",
-            "-C",
-            str(workspace),
-            *args,
+            *git_command("-C", str(workspace), *args),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
