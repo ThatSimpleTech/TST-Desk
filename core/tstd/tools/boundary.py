@@ -233,7 +233,8 @@ class PathGuard:
                 "steering_file",
                 target,
                 "steering files (AGENTS.md/CLAUDE.md/.tst/rules) and the "
-                "approval policy (.tst/config.yaml) are read-only",
+                "approval policy (.tst/config.yaml) are read-only; to change a "
+                "steering file, propose it with propose_steering_edit",
             )
         root = self.boundary.workspace_root
         if root is None or not is_in_workspace(self.boundary, target):

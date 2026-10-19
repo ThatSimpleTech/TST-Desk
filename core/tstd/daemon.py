@@ -337,6 +337,9 @@ from .protocol import (
     Shutdown,
     StartAutonomy,
     StartPairing,
+    SteeringAccept,
+    SteeringEdit,
+    SteeringReject,
     StopTurn,
     TestEmail,
     TierState,
@@ -460,6 +463,7 @@ from .shutdown_phases import (
     reap_shutdown_distill,
 )
 from .speech import transcribe as transcribe_speech
+from .steering_proposals import decide as decide_steering
 from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
 from .turn_seal import INTERRUPTED_BY_RESTART, open_turn, repair_cut_conversation
@@ -3478,6 +3482,17 @@ class Daemon:
             await MemoryCommitter(Path(found.workspace_path)).commit(paths)
             del self._pending_memory[msg.session_id]
             return await self._memory_files_reply(found.workspace_path)
+
+        if isinstance(msg, SteeringAccept | SteeringEdit | SteeringReject):
+            # TD-5140: the only path that writes an agent-proposed steering
+            # edit, and only from the user's own message.
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            return await decide_steering(found, msg)
 
         if isinstance(msg, Shutdown):
             self._request_shutdown("websocket")
