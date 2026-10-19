@@ -1450,7 +1450,7 @@ memory:
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `rules` | list of rules | `[]` | Per-tool overrides. The most specific match wins; an exact tie breaks toward the most restrictive effect. |
+| `rules` | list of rules | `[]` | Per-tool overrides. `never` beats `ask` beats `auto`, however specific the rules are. A shell command is checked one command at a time (below). |
 | `class_c_default` | `ask` or `never` | `ask` | What happens to a Class C call that no rule matches. `never` refuses it outright instead of asking. |
 | `approval_timeout_seconds` | float ≥ 0, or null | `null` | How long an approval request waits before being treated as a denial. Null waits indefinitely. |
 
@@ -1491,12 +1491,56 @@ policy:
   ignored, as most templates already do. `fs_list` shows names only, never contents.
 - `ask` and `never` rules ignore case, so `.ENV` is caught on macOS and Windows, where it opens
   `.env`. `auto` rules match case exactly.
-- The most specific rule wins, and fewer wildcards counts as more specific. A broad
-  `fs_read: "*"` auto rule beats `*.env*`, so remove it (reads auto-run anyway). An exact tool
-  name also beats a glob such as `fs_*`.
+- A `never` rule wins over any `auto` rule (TD-5101), so a broad `fs_read: "*"` auto rule no
+  longer hides `*.env*`. Specificity only picks which rule a refusal names: fewer wildcards and
+  an exact tool name count as more specific.
 
 Outside the workspace nothing changed: reads there are Class C and the path guard refuses them
 before any rule is read, symlinks included.
+
+**Rules are deny first (TD-5101).** A call is refused when any `never` rule matches it. If none
+does, it asks when any `ask` rule matches. Only then can `auto` apply. A narrow `auto` rule never
+beats a broad `never` or `ask` rule. When several rules of the winning effect match, the most
+specific one is the one the refusal or approval card names. No matching rule leaves the
+decision class to decide, as before.
+
+**Shell rules judge every command in the line (TD-5101).** `args` for `shell` is matched against
+each command of a chained line, not the line as a whole. The line is split at `;`, `&&`, `||`,
+`|`, `&`, newlines and parentheses, and the commands inside `$(…)`, backticks, `<(…)`, the
+`$(…)` of an unquoted heredoc and the string given to `eval` or `sh -c` count as commands too.
+Quoted text is not split, so `git commit -m "fix; docs"` is one command.
+
+- An `auto` rule applies only when every command matches an `auto` rule. With `npm test*`
+  allowed, `npm test; curl x`, `npm test && rm -rf y`, `npm test | sh` and `npm test $(curl x)`
+  all ask, because `curl x`, `rm -rf y`, `sh` and the substitution have no rule.
+- A `never` or `ask` rule refuses or asks when it matches any one of the commands, or the whole
+  line. The refusal names the command: ``policy rule `shell: curl *` → never (on `curl x`)``.
+- `timeout`, `nice`, `nohup`, `time` and `stdbuf` are taken off the front before an `auto` rule
+  is matched, so `npm test*` covers `timeout 60 npm test`. An option these wrappers don't
+  usually take (`time -o file`) keeps the wrapper on, so the command asks.
+- Environment assignments stay on for `auto`: `FOO=1 npm test` and `env FOO=1 npm test` do not
+  match `npm test*`, because `LD_PRELOAD`, `NODE_OPTIONS` or `PATH` change what runs. Write
+  `FOO=1 npm test*` if you want that form allowed.
+- `never` and `ask` rules see through more: wrappers, `env`, assignments, `sudo`, `doas`,
+  `xargs`, `exec`, `command`, leading redirects, shell keywords such as `then`, and quoting, so
+  `rm *` also refuses `sudo rm -rf x`, `then rm -rf x` and `"rm" -rf x`.
+- A heredoc's body belongs to the command that opens it, so an `auto` rule must match the body
+  too. A trailing `*` matches any body.
+- A line that can't be split with confidence never auto-runs, whatever the rules say. That is
+  an unclosed quote or `$(`, `$'…'`, `$((…))`, `((…))`, `case` inside `$(…)`, or nesting more
+  than 16 levels deep. `never` and `ask` rules still apply to it.
+- "Always allow" is offered only for a single command, and saves exactly that command, with any
+  `*`, `?` or `[` in it made literal. It isn't offered for a chained line: one rule can't cover
+  it, and a rule per command would let `sh` run on its own after `npm test | sh` was approved.
+  Add a rule for each command here instead.
+- On Windows the line is read both as `cmd /c` reads it (single quotes don't quote there) and
+  as `sh -c` does, for autonomy runs, and a rule must hold under both.
+
+These rules match text, so they are a guard rail, not a sandbox. A command spelled through a
+variable (`$C x`), brace expansion, a script file or another program's arguments
+(`find -exec`, `ssh host …`) is not seen as the command it runs. An
+`auto` rule with a trailing `*` also covers redirects on that command (`git status > out.txt`),
+so prefer exact commands for `auto`, and use `never` for what must not run.
 
 **Dangerously skip permissions** (skip-all) is not a key in this file. Settings → Policy
 has a machine-wide toggle that lives in the user data dir as `approvals.yaml`, so a clone
@@ -1598,8 +1642,10 @@ attachments:
 ```
 
 **Loosening approvals on a workspace you trust.** Reads, listings and content searches inside
-the workspace never ask anyway (§4.4). Here `git status` never asks either, anything Class C
-still does, and an unanswered request denies after five minutes:
+the workspace never ask anyway (§4.4). Here `git status` and `git diff` never ask, alone or
+chained to each other, and `curl` and `rm` are refused wherever they appear in a line, even
+chained after an allowed command. Anything Class C still asks, and an unanswered request
+denies after five minutes:
 
 <!-- verify: workspace -->
 ```yaml
@@ -1608,11 +1654,24 @@ policy:
   approval_timeout_seconds: 300.0
   rules:
     - tool: shell
-      args: "git status*"
+      args: "git status"
       effect: auto
+    - tool: shell
+      args: "git diff"
+      effect: auto
+    - tool: shell
+      args: "curl *"
+      effect: never
+    - tool: shell
+      args: "rm *"
+      effect: never
 approved_external_imports:
   - ~/notes/house-style.md
 ```
+
+The rules are exact rather than `git status*`: a trailing `*` would also allow
+`git status > src/app.py`. Before TD-5101 the glob covered the whole line, so `git status*`
+also auto-ran `git status; curl x | sh`.
 
 **A whole file, sections combined.** Nothing stops you from setting all four at once:
 

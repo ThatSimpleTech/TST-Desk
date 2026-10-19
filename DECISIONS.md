@@ -13905,3 +13905,72 @@ login keychain and off the network.
 **Rejected:** Clicking the installed `.app` through the macOS
 accessibility tree. That needs a display, a signed bundle, and a human
 in front of the permission prompts, so it cannot be the check CI runs.
+
+---
+
+## 2026-10-19 — TD-5101: Shell rules judge every segment, deny first (Class B)
+
+**Decision:** Policy rules are deny first for every tool: any matching
+`never` refuses, then any matching `ask` asks, and only then can `auto`
+apply. Specificity only picks the rule a decision names. A shell command
+(any tool whose summary is its `command`) is split by a new scanner,
+`core/tstd/policy_shell.py`, at `;`, `&`, `&&`, `|`, `||`, newlines and
+parentheses, and into `$(…)`, backticks, `<(…)`/`>(…)`, unquoted heredoc
+substitutions and `eval`/`sh -c`/`cmd /c` strings. `auto` applies only
+when every segment matches an `auto` rule; `never` and `ask` are checked
+against every segment, several unwrapped readings of it, and the whole
+line. Lists of paths (TD-5143) use the same rule: `auto` needs every
+path.
+
+Choices the story left open, each the conservative one:
+
+1. **Two readings per segment.** `auto` sees the segment as written with
+   only `timeout`, `nice`, `nohup`, `time` and `stdbuf` taken off, and an
+   unknown wrapper option keeps the wrapper on. `env`, `NAME=value`,
+   `sudo` and `xargs` are not stripped for `auto`: `LD_PRELOAD=` or
+   `NODE_OPTIONS=` change what a command runs, and `xargs` adds
+   arguments. `never` and `ask` see through all of them, plus keywords,
+   leading redirects and quoting. Reading more can only make those
+   stricter.
+2. **Odd text never auto-runs.** `$'…'` (bash and dash end it at
+   different quotes), `$((…))` (bash falls back to a command
+   substitution), `((…))` (bash arithmetic, dash subshells), `case`
+   inside `$(…)`, unclosed quotes and nesting past the caps mark the
+   split incomplete. Then no `auto` rule applies, even `**`, and the whole
+   text is cut at every operator for `never` and `ask`.
+3. **Heredoc bodies belong to their command.** A body is data, so it is
+   not split, but it is part of the text an `auto` rule must match, so an
+   exact rule saved from one heredoc does not allow another body. An
+   unquoted body's substitutions are commands.
+4. **Comments are honoured.** Ignoring `#` would let an apostrophe in a
+   comment open a quote that hides the next line's commands.
+5. **Windows reads both ways.** Interactive shell runs through `cmd /c`,
+   where single quotes don't quote, and autonomy runs `sh -c` in a
+   container, so on Windows a rule must hold under both readings.
+6. **Always allow.** Offered only for a one-segment command, saving its
+   `auto` text with `*`, `?` and `[` made literal. A chained command gets
+   no proposal and the daemon refuses `always_allow` for it with
+   `not_always_allowable`: a rule per segment would allow `sh` alone after
+   `npm test | sh` was approved. Escaping also fixes a rule saved for
+   `src/[id].tsx` that never matched its own path.
+
+**Rationale:** Claude Code's permission docs say a prefix rule does not
+cover a command chained onto it and that deny rules are checked first.
+The old single `fnmatch` over the whole line auto-ran `npm test; curl x`
+under `npm test*`, and a narrow `auto` beat a broad `never`. The story
+pointed at the classifier's `shlex` lexer, but it drops quotes and
+positions, so it cannot tell `'$(x)'` from `"$(x)"` or keep the text a
+rule is written against; the new scanner keeps both.
+
+**Alternatives rejected:** Matching a wildcard-free `auto` rule against
+the whole line, so old exact always-allow rules for chains keep working:
+it contradicts "every segment". Stripping `env`/assignments for `auto`
+too, as the story's wrapper list could be read: it widens `auto`.
+Treating a redirect inside a segment as uncovered: out of scope here;
+TD-5103 handles redirects for its read-only list, and the docs steer
+`auto` rules to exact commands.
+
+**Compatibility:** A saved rule that covered a chain as one string, or a
+wrapped command as written (`timeout 60 npm test`), now asks again. That
+fails safe. The docs example `git status*` became exact `git status` and
+`git diff` rules plus `never` rules for `curl *` and `rm *`.
