@@ -9407,9 +9407,14 @@ each freed about 1k tokens and the session looked like it was thrashing.
 - [x] An event with no `trigger` still reads as `auto`, and the trim
       event keeps every field an older window reads
 - [x] The window (and the phone, the same app) shows a trim as its own
-      row: "Trim", "Trimmed tool output (N results)", the tokens freed,
-      and quieter than a compaction (neutral tone, muted text, its own
-      glyph); a compaction row is unchanged
+      row: "Trim", then "N results · Xk tokens freed", and from a 360px
+      pane "Trimmed tool output · before → after tokens"; quieter than a
+      compaction (neutral tone, muted text, its own glyph); a compaction
+      row is unchanged
+- [x] The count and the tokens freed are on screen without expanding the
+      row at the phone's 200px activity pane and the desktop's 305px and
+      320px, never cut away for the preview (`e2e/trim-row.spec.ts`
+      measures it in Chromium)
 - [x] A trigger the window does not know gets the "Context compacted"
       title, never a blank one
 - [x] `docs/architecture.md`'s `context_compacted` row names every

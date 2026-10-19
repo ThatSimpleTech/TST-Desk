@@ -14201,13 +14201,31 @@ TD-4839/TD-5010) keeps sending `ContextCompacted`, now with the new
 shape: `dropped_messages` carries the number of tool results trimmed (no
 message leaves the conversation), `kept_messages` is every message, and
 the token figures are as before. The window maps it to a new timeline
-kind, `trim`: label "Trim", title "Trimmed tool output (N results)",
-preview "X tokens freed · before → after", the `ellipsis` glyph, a
-neutral tone and muted text (`isQuietEntry`), so a compaction (amber
-glyph, "Compaction") still stands out among a dozen trims. The expanded
-row says `trimmed_results` and `tokens_freed`, not `dropped_messages`.
-Compaction itself (`maybe_compact`, `/compact`, "Summarize from here")
-is unchanged.
+kind, `trim`: label "Trim", title "N results · Xk tokens freed",
+preview "Trimmed tool output · before → after tokens", the `ellipsis`
+glyph, a neutral tone and muted text (`isQuietEntry`), so a compaction
+(amber glyph, "Compaction") still stands out among a dozen trims. The
+expanded row says `trimmed_results` and `tokens_freed`, not
+`dropped_messages`. Compaction itself (`maybe_compact`, `/compact`,
+"Summarize from here") is unchanged.
+
+**Layout (review of PR #16):** The first cut titled the row "Trimmed tool
+output (N results)" and put the tokens freed in the preview. Measured in
+Chromium, the preview (flex basis 0) got no width at the activity pane's
+200px minimum, which is what a phone gets, or at the desktop's default
+320px, and the title was cut before its count: "TRIM Trimmed to…" on
+the phone, no tokens freed on the desktop. So the title is now the two
+numbers, set in the UI face (shorter than mono), and takes its width
+before the preview; when the row cannot hold it, the tail is cut and the
+numbers at its start stay. Below 360px (a container query on the row)
+the preview, which would be a stub like "Trimm…", is dropped and its gap
+goes to the title. `e2e/trim-row.spec.ts` measures what is on screen at
+200, 305, 320 and 480px. At 200px Arial/Liberation, Noto and Roboto (the
+phone) show at least "3 results · 1.2k"; DejaVu Sans, the widest common face,
+shows the count and only "1." of the tokens. Rejected: hiding the "Trim"
+label on a narrow row to make room, since the label is what tells a trim
+from a compaction, and a minimum width for the preview, which would cut
+the count instead.
 
 **Rationale:** The story asks for the additive `trigger` field TD-5109
 added, and it is the smallest change: one new literal on the wire, one

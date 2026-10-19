@@ -20,6 +20,7 @@
 // activity kinds shown here.
 
 import type { ContextCompacted, DaemonEventUnion, SessionState, TurnComplete, UserTurn } from "./protocol";
+import { formatTokens } from "./context-gauge";
 
 /** Presentation category driving visually distinct treatment (AC #6).
  *  `turn` is the group header the other kinds sit under: one per user
@@ -99,7 +100,10 @@ function compactionTitle(trigger: string): string {
 
 /** The in-turn trim (TD-5150) arrives as context_compacted but folds no
  *  turn away: it shortened this turn's tool results, so it gets its own
- *  quieter row and says how many results and how many tokens it freed. */
+ *  quieter row and says how many results and how many tokens it freed.
+ *  The title is the two numbers and nothing else: the "Trim" label says
+ *  what happened, and a 200px activity pane (the phone) has room for the
+ *  label and the start of the title only, so the numbers go first. */
 function trimEntry(event: ContextCompacted): TimelineEntry {
   const results = event.dropped_messages;
   const freed = Math.max(0, event.tokens_before - event.tokens_after);
@@ -107,9 +111,8 @@ function trimEntry(event: ContextCompacted): TimelineEntry {
     id: `trim:${event.seq}`,
     kind: "trim",
     seq: event.seq,
-    title: `Trimmed tool output (${results} ${results === 1 ? "result" : "results"})`,
-    // What it freed first: on the phone's narrow row the tail is cut.
-    preview: `${freed} tokens freed · ${event.tokens_before} → ${event.tokens_after}`,
+    title: `${results} ${results === 1 ? "result" : "results"} · ${formatTokens(freed)} tokens freed`,
+    preview: `Trimmed tool output · ${event.tokens_before} → ${event.tokens_after} tokens`,
     details: {
       trimmed_results: results,
       tokens_freed: freed,

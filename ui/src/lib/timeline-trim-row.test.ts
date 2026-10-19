@@ -41,8 +41,8 @@ describe("TimelineEntryRow for context_compacted (TD-5150)", () => {
 		expect(el.classList.contains("row--quiet")).toBe(true);
 		expect(el.classList.contains("row--neutral")).toBe(true);
 		expect(el.querySelector(".kind")?.textContent).toBe("Trim");
-		expect(el.querySelector(".title")?.textContent).toBe("Trimmed tool output (3 results)");
-		expect(el.querySelector(".preview")?.textContent).toBe("1200 tokens freed · 30500 → 29300");
+		expect(el.querySelector(".title")?.textContent).toBe("3 results · 1.2k tokens freed");
+		expect(el.querySelector(".preview")?.textContent).toBe("Trimmed tool output · 30500 → 29300 tokens");
 	});
 
 	it("keeps a compaction loud", () => {

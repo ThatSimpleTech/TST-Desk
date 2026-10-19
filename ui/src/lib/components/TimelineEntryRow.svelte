@@ -119,6 +119,8 @@
 		font-size: var(--text-xs);
 		cursor: pointer;
 		text-align: left;
+		/* A quiet row's narrow layout asks how wide the row is (TD-5150). */
+		container-type: inline-size;
 	}
 
 	.row-main:hover {
@@ -170,9 +172,12 @@
 	}
 
 	/* Bookkeeping rows (a tool-output trim, TD-5150) step back: muted words,
-	   regular weight, so a compaction still stands out among them. The
-	   title carries the count, so it keeps its width on a phone and the
-	   preview gives way instead. */
+	   regular weight, so a compaction still stands out among them. Their
+	   title is the numbers ("3 results · 1.2k tokens freed"), set in the
+	   UI face, not mono, so it is short. It takes its full width before the
+	   preview gets any (the preview's basis is 0), and when the row cannot
+	   hold it the tail is cut, never the numbers at its start. Measured in
+	   e2e/trim-row.spec.ts at the phone's 200px pane and the desktop's 320px. */
 	.row--quiet .kind,
 	.row--quiet .title,
 	.row--quiet .preview {
@@ -181,9 +186,19 @@
 	}
 
 	.row--quiet .title {
+		font-family: var(--font-sans);
 		max-width: none;
-		flex-shrink: 1;
+		flex: 0 1 auto;
 		min-width: 0;
+	}
+
+	/* Below 360px (the phone's 200px pane, the desktop's default 320px)
+	   the preview would be a stub like "Trimm…": it goes, and its gap goes
+	   to the title. Wider panes show "Trimmed tool output · before → after". */
+	@container (max-width: 359px) {
+		.row--quiet .preview {
+			display: none;
+		}
 	}
 
 	.progress {

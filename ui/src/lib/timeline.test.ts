@@ -588,8 +588,9 @@ describe("in-turn trim vs compaction (TD-5150)", () => {
     const row = eventToEntry(trim())!;
     expect(row.kind).toBe("trim");
     expect(row.id).toBe("trim:21");
-    expect(row.title).toBe("Trimmed tool output (3 results)");
-    expect(row.preview).toBe("1200 tokens freed · 30500 → 29300");
+    // The numbers lead: a 200px pane (the phone) shows only the start.
+    expect(row.title).toBe("3 results · 1.2k tokens freed");
+    expect(row.preview).toBe("Trimmed tool output · 30500 → 29300 tokens");
     expect(row.details).toMatchObject({
       trimmed_results: 3,
       tokens_freed: 1200,
@@ -603,7 +604,16 @@ describe("in-turn trim vs compaction (TD-5150)", () => {
   });
 
   it("says one result in the singular", () => {
-    expect(eventToEntry(trim({ dropped_messages: 1 }))!.title).toBe("Trimmed tool output (1 result)");
+    expect(eventToEntry(trim({ dropped_messages: 1 }))!.title).toBe("1 result · 1.2k tokens freed");
+  });
+
+  it("says a small saving in plain tokens and a large one in k", () => {
+    expect(eventToEntry(trim({ tokens_before: 30500, tokens_after: 29860 }))!.title).toBe(
+      "3 results · 640 tokens freed",
+    );
+    expect(eventToEntry(trim({ tokens_before: 52000, tokens_after: 30000 }))!.title).toBe(
+      "3 results · 22k tokens freed",
+    );
   });
 
   it("keeps a real compaction a compaction", () => {
@@ -622,7 +632,7 @@ describe("in-turn trim vs compaction (TD-5150)", () => {
   it("reads the daemon's own fixture as a trim", () => {
     const row = eventToEntry(fixtures.context_compacted_inflight_trim as ContextCompacted)!;
     expect(row.kind).toBe("trim");
-    expect(row.title).toBe("Trimmed tool output (3 results)");
+    expect(row.title).toBe("3 results · 1.2k tokens freed");
   });
 
   it("a dozen trims in a turn add no compaction rows", () => {
