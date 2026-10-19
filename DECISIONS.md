@@ -14623,10 +14623,10 @@ which raises "generator didn't stop after athrow()" and can leave one
 suspended to be finalized after its loop is closed: an unraisable
 `RuntimeError`, which pyproject turns into a test error. That is the
 likely cause of the one-off failure of
-`test_an_off_turn_stall_is_returned_not_resent`; it could not be
-reproduced on demand, but holding the chain alive to shutdown
-reproduces the athrow error every time on the old code and never on the
-new. Now `retry_stream` closes each attempt in a `finally` (and before
+`test_an_off_turn_stall_is_returned_not_resent`. That one failure did
+not come back on demand. A probe that holds the chain alive to loop
+shutdown, with the heap shuffled so the close order varies, hit the
+closing error in 11 of 25 runs on the old code and 0 of 25 on the new. Now `retry_stream` closes each attempt in a `finally` (and before
 the retry delay), and `chat_completion_stream` closes `retry_stream` in
 a `finally`, so the hang-up reaches the server when the error is handed
 on, in order. Tests watch the response body's `aclose`.
