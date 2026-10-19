@@ -54,6 +54,19 @@ test("opens a workspace and gets a mock reply", async () => {
 	await composer.fill("Say hello");
 	await page.getByRole("button", { name: "Send message" }).click();
 	await expect(page.getByText(info.reply)).toBeVisible();
+
+	// With a session open the composer grows the model bar and the
+	// attach menu.
+	await snap("chat:session", page.getByRole("region", { name: "Chat pane" }));
+	const attach = page.getByRole("button", { name: "Attach a file or take a photo" });
+	await attach.click();
+	const attachMenu = page.getByRole("menu", { name: "Add attachment" });
+	await expect(attachMenu).toBeVisible();
+	await snap("attach-menu", attachMenu);
+	// Upload opens the OS picker and Take a photo opens the camera; both
+	// leave this window, so the walk only checks they are offered.
+	await attach.click();
+	await expect(attachMenu).toHaveCount(0);
 });
 
 test("visits every right-pane view", async () => {
@@ -115,6 +128,7 @@ test("walks every settings section and its enabled controls", async () => {
 	await page.getByRole("button", { name: /Open settings/ }).click();
 	const dialog = page.getByRole("dialog", { name: "Settings" });
 	await expect(dialog).toBeVisible();
+	await snap("settings-nav", dialog.getByRole("navigation", { name: "Settings sections" }));
 	const sections = [
 		"Appearance",
 		"Phones and devices",
@@ -122,6 +136,7 @@ test("walks every settings section and its enabled controls", async () => {
 		"Computer use",
 		"Engine",
 		"Model",
+		"Budget",
 		"Policy",
 		"MCP servers",
 		"API keys",
@@ -132,6 +147,13 @@ test("walks every settings section and its enabled controls", async () => {
 	for (const section of sections) {
 		await dialog.getByRole("button", { name: section, exact: true }).click();
 		await expect(dialog.getByRole("heading", { name: section })).toBeVisible();
+		if (section === "Budget") {
+			// Saving a number is what puts "of $…" on the title bar.
+			await dialog.getByRole("textbox", { name: "Spend" }).fill("5");
+			await dialog.getByRole("button", { name: "Save", exact: true }).click();
+			await expect(dialog.getByRole("button", { name: "Clear", exact: true })).toBeVisible();
+			await expect(page.getByText(/^of \$5/)).toBeVisible();
+		}
 		if (section === "GitHub") {
 			await expect(dialog.getByText("GitHub is off until config.yaml")).toBeVisible();
 		}
@@ -199,7 +221,9 @@ async function dismissExtraDialogs(page: Page): Promise<void> {
 	for (const name of ["Computer use permissions", "Pair a phone"]) {
 		const dialog = page.getByRole("dialog", { name });
 		if (await dialog.isVisible()) {
-			await dialog.getByRole("button", { name: "Close", exact: true }).click();
+			// "Close" after an error; "Cancel" while a pairing code is showing
+			// (a machine on a tailnet gets a real code).
+			await dialog.getByRole("button", { name: /^(Close|Cancel)$/ }).click();
 			await expect(dialog).toBeHidden();
 		}
 	}

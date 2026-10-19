@@ -1,8 +1,23 @@
 {
+	"attach-menu": [
+		"Take a photo",
+		"Upload files"
+	],
 	"chat": [
-		"Attach text files",
+		"Attach a file or take a photo",
 		"Message composer",
 		"Send message"
+	],
+	"chat:session": [
+		"Attach a file or take a photo",
+		"Copy message as markdown",
+		"Edit message",
+		"Message composer",
+		"Model tier",
+		"Plan",
+		"Retry: resend your last message",
+		"Send message",
+		"Session preset"
 	],
 	"decisions": [
 		"A",
@@ -82,6 +97,21 @@
 		"window slack ntfy email",
 		"~/Documents/project"
 	],
+	"settings-nav": [
+		"API keys",
+		"About",
+		"Appearance",
+		"Budget",
+		"Computer use",
+		"Computers",
+		"Email",
+		"Engine",
+		"GitHub",
+		"MCP servers",
+		"Model",
+		"Phones and devices",
+		"Policy"
+	],
 	"settings:API keys": [
 		"Add source",
 		"OpenRouter, EZER, …",
@@ -100,6 +130,11 @@
 		"Light",
 		"System",
 		"toggle"
+	],
+	"settings:Budget": [
+		"Clear",
+		"No budget",
+		"Save"
 	],
 	"settings:Computer use": [
 		"Add app",
