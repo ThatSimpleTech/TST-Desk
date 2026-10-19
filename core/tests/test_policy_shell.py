@@ -327,3 +327,6 @@ class TestSplit:
         assert split_command(command, ("posix",)).complete is False
         command = "eval " * 50 + "x"
         assert split_command(command, ("posix",)).complete is False
+        # Each unquoted heredoc body is scanned by a fresh scanner.
+        command = "cat <<E\n$(" * 400 + "x"
+        assert split_command(command, ("posix",)).complete is False

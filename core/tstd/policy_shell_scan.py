@@ -354,6 +354,8 @@ class Scanner:
     def run_body(self) -> None:
         """Read an unquoted heredoc body: data, except its substitutions."""
         try:
+            if self.depth > _MAX_DEPTH:
+                raise _Incomplete
             while self.i < self.n:
                 c = self.text[self.i]
                 if c == "\\":
