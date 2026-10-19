@@ -2920,6 +2920,13 @@ product-semantics work the skips point at.
       OpenProcess plus `GetExitCodeProcess != STILL_ACTIVE` (a dead process with an
       open handle otherwise reports alive); `test_parent_watchdog` green on the
       windows leg
+- [x] The host's Rust unit tests (`cargo test --lib` in `shell/`) run in the CI
+      rust job. Six process tests passed on Ubuntu 26.04 and hung on the
+      ubuntu-24.04 runner (2026-10-15): the host signalled the daemon's group
+      by running `kill -KILL -<pgid>`, and procps-ng 4.0.4 in 24.04 reads the
+      first digit of `-<pgid>` as an option, so `-9115` went to group 9 and a
+      pid starting with 1 went to -1 (every process the user owns). The host
+      now calls `kill(2)` on the group directly and never names group 0 or 1
 
 ---
 
