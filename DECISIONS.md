@@ -13885,3 +13885,35 @@ the JSON envelope. `send_file` chunks stay at `CHUNK_MAX` (TD-5143).
 **Alternative rejected:** Downscaling the PNG so it fits 256 KB. TD-4705
 already refused silent downscale. Also rejected: leaving the library's
 1 MiB frame and telling people to shrink screenshots.
+
+---
+
+## 2026-10-19 — TD-5148: the `tool_call` event is classified on workspace-joined paths (Class B)
+
+**Decision:** `canonicalize_path_fields(tool, arguments, guard)` in
+`core/tstd/tools/dispatch.py` is the one place that joins path fields to
+the workspace (`PathGuard.canonicalize`) before classification. Dispatch
+and `_build_assistant_tool_call` in `loop.py` both call it before
+`build_decision_request`. The event's `arguments` (and so the audit row's)
+stay as the model sent them; only the classification sees the joined
+paths.
+
+**Rationale:** The loop classified the event on raw arguments, so a
+relative `fs_read {"path": "a.txt"}` resolved against the daemon's cwd
+(`/` in the packaged sidecar) and the event said C. Dispatch joined the
+path first, classified A and ran the call with no approval. The audit
+writer copies the event's class, so the row said C and a failed call was
+stored as `refused`. One helper keeps the two classifications on the same
+input, which is the smallest change that makes them agree.
+
+**Alternatives rejected:** Making the event carry the class dispatch
+decided. The event is appended before the call runs (TD-702), and moving
+classification out of dispatch would split the chokepoint. Also rejected:
+putting the joined paths in the event's `arguments`. The timeline would
+then show paths the model never wrote, and the audit row would no
+longer record the call as it was asked.
+
+**Not changed:** A boundary refusal that forces C after the classifier
+said A or B (a hardlink, a Windows-unsafe form) still shows the
+classifier's class on the event, because the event is written before the
+guard runs. Recorded as a follow-up on TD-5148.

@@ -531,7 +531,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `conversation_reset` | session | The conversation forked or a sibling was selected. The viewer drops rows after that user turn and replaces it. |
 | `assistant_delta` | session | A streamed chunk of assistant output. |
 | `assistant_reasoning` | session | A streamed chunk of a reasoning model's thinking. Separate from `assistant_delta` because it is not part of the answer: the window folds it behind a disclosure, and it is never replayed to the provider as assistant speech. OpenRouter `reasoning_details` flatten into this event for the UI; the raw array is echoed on the next assistant message after tools, not as speech. |
-| `tool_call` | session | A tool call about to execute, with its decision class. |
+| `tool_call` | session | A tool call about to execute, with its decision class. The class is judged on the same workspace-joined paths dispatch uses, so a relative path shows the class the call runs with; `arguments` stay as the model sent them (TD-5148). |
 | `tool_result` | session | The outcome of a tool call, with an error code and diff when applicable. |
 | `shell_output` | session | A streamed chunk of a shell command's stdout or stderr. |
 | `tool_progress` | session | Progress an MCP server reported for a running tool call: count, optional total and message (TD-5105). Thinned to two a second. |
