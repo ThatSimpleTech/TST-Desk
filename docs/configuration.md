@@ -990,7 +990,9 @@ else in the prompt (the system prompt, the tools, the history compaction keeps, 
 results at 1,000 characters each) already fills more than 40% of it, the target rises, up to
 the budget itself, rather than cutting every result down to 1,000 characters. A provider that still reports a context overflow is retried once at half the budget,
 elided the same way. If it overflows again, the turn fails with a short message that names the
-configured window. The raw provider error stays in the log.
+configured window. The raw provider error stays in the log. Each trim shows on the timeline as a
+quiet **Trimmed tool output (N results)** row with the tokens it freed, not as a compaction: no
+message is dropped, and only the middles of this turn's results are shortened (TD-5150).
 
 ---
 

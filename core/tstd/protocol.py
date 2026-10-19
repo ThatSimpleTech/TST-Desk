@@ -1863,7 +1863,13 @@ class TurnComplete(DaemonEvent):
 class ContextCompacted(DaemonEvent):
     """Emitted when older conversation turns are compacted to stay inside
     the tier's context window (TD-405). Never silent: the timeline shows
-    exactly what compaction did."""
+    exactly what compaction did.
+
+    ``trigger: "inflight_trim"`` (TD-5150) is not compaction: the loop
+    shortened the middles of this turn's tool results (TD-5010) and no
+    message left the conversation.  ``dropped_messages`` then counts the
+    tool results trimmed, and ``kept_messages`` is every message.  The
+    window shows it as a quieter "Trimmed tool output" row."""
 
     type: Literal["context_compacted"] = "context_compacted"
     session_id: str
@@ -1873,7 +1879,8 @@ class ContextCompacted(DaemonEvent):
     tokens_after: int = Field(ge=0)
     #: What compacted (TD-5109): the budget (``auto``), ``/compact`` or
     #: the gauge (``manual``), or "Summarize from here" (``from_here``).
-    trigger: Literal["auto", "manual", "from_here"] = "auto"
+    #: ``inflight_trim`` is the in-turn tool-result trim (TD-5150).
+    trigger: Literal["auto", "manual", "from_here", "inflight_trim"] = "auto"
     guidance: str | None = None
 
 

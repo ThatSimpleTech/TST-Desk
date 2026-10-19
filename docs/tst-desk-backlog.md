@@ -9388,6 +9388,35 @@ the classifier said A or B (a hardlink, a Windows-unsafe form) still
 shows the classifier's class on the event, which is written before the
 guard runs.
 
+### TD-5150 — Trimmed tool output is labelled apart from compaction
+**Size:** 2 · **Depends on:** TD-405, TD-4839, TD-5010, TD-5109
+
+The loop sent the same `context_compacted` event for two things: real
+compaction, which folds old turns into a summary, and the in-turn trim
+of this turn's tool results (`fit_inflight_turn`), where
+`dropped_messages` was the number of results trimmed and no message
+left. The Activity panel and the phone showed both as a compaction row,
+so on 2026-10-14 a tool-heavy turn showed a dozen compaction rows that
+each freed about 1k tokens and the session looked like it was thrashing.
+
+**Acceptance criteria:**
+- [x] The in-turn trim sends `context_compacted` with the additive
+      `trigger: "inflight_trim"`; `dropped_messages` counts the results
+      trimmed and `kept_messages` is every message. Compaction by budget
+      stays `auto`, `/compact` `manual`, "Summarize from here" `from_here`
+- [x] An event with no `trigger` still reads as `auto`, and the trim
+      event keeps every field an older window reads
+- [x] The window (and the phone, the same app) shows a trim as its own
+      row: "Trim", "Trimmed tool output (N results)", the tokens freed,
+      and quieter than a compaction (neutral tone, muted text, its own
+      glyph); a compaction row is unchanged
+- [x] A trigger the window does not know gets the "Context compacted"
+      title, never a blank one
+- [x] `docs/architecture.md`'s `context_compacted` row names every
+      trigger (a test pins it), and the protocol fixtures carry
+      `context_compacted_inflight_trim`
+- [x] Tests in core and ui fail on the old code and pass on the new
+
 ---
 
 # Epic E52 — Files to the user

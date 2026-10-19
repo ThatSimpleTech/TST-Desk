@@ -14192,3 +14192,43 @@ longer record the call as it was asked.
 said A or B (a hardlink, a Windows-unsafe form) still shows the
 classifier's class on the event, because the event is written before the
 guard runs. Recorded as a follow-up on TD-5148.
+
+## 2026-10-19 — TD-5150: the in-turn trim is `context_compacted` with `trigger: inflight_trim` (Class B)
+
+**Decision:** The loop's in-turn tool-result elision (`fit_inflight_turn`,
+TD-4839/TD-5010) keeps sending `ContextCompacted`, now with the new
+`trigger` value `inflight_trim`. No field was added and none changed
+shape: `dropped_messages` carries the number of tool results trimmed (no
+message leaves the conversation), `kept_messages` is every message, and
+the token figures are as before. The window maps it to a new timeline
+kind, `trim`: label "Trim", title "Trimmed tool output (N results)",
+preview "X tokens freed · before → after", the `ellipsis` glyph, a
+neutral tone and muted text (`isQuietEntry`), so a compaction (amber
+glyph, "Compaction") still stands out among a dozen trims. The expanded
+row says `trimmed_results` and `tokens_freed`, not `dropped_messages`.
+Compaction itself (`maybe_compact`, `/compact`, "Summarize from here")
+is unchanged.
+
+**Rationale:** The story asks for the additive `trigger` field TD-5109
+added, and it is the smallest change: one new literal on the wire, one
+emitter. On 2026-10-14 a tool-heavy turn showed a dozen "compaction" rows
+that each freed about 1k tokens, and the session looked like it was
+thrashing. A separate kind, not just a different title, is what lets the
+row drop the "Compaction" label and the warning colour. Tokens freed is
+`tokens_before − tokens_after`, both figures the daemon sent.
+
+**Older clients (most conservative option):** An older window still
+parses the event (it has every field it reads) and shows the row as a
+compaction with no title, which is no worse than today. An older daemon's
+hub passes the frame on with a "malformed session frame" warning, as it
+does for any newer event field. A new window gives any trigger it does
+not know the "Context compacted" title, so the next new trigger cannot
+leave a blank row. Rejected: a new field (`elided_results`) with
+`trigger` left `auto`, which would keep old windows unchanged but adds
+wire surface the story did not ask for, and a protocol-version gate,
+which is far more than a label change needs.
+
+**Not changed:** Trims are not merged into one row per turn. The window
+shows one row per event, as the daemon sent it (the UI never derives
+truth it was not given); the quieter row is what stops them reading as
+thrashing.

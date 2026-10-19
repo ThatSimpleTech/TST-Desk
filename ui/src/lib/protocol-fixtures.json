@@ -1122,6 +1122,17 @@
     "trigger": "manual",
     "guidance": "keep the parser work"
   },
+  "context_compacted_inflight_trim": {
+    "type": "context_compacted",
+    "seq": 18,
+    "session_id": "sess-1",
+    "dropped_messages": 3,
+    "kept_messages": 14,
+    "tokens_before": 30500,
+    "tokens_after": 29300,
+    "trigger": "inflight_trim",
+    "guidance": null
+  },
   "context_usage": {
     "type": "context_usage",
     "seq": 18,

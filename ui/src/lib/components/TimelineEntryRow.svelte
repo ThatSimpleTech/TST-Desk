@@ -6,7 +6,7 @@
 	import Icon from './Icon.svelte';
 	import DiffPreview from './DiffPreview.svelte';
 	import type { TimelineEntry } from '../timeline';
-	import { KIND_LABELS, entryIcon, entryTone, isScalarDetail } from '../entry-view';
+	import { KIND_LABELS, entryIcon, entryTone, isQuietEntry, isScalarDetail } from '../entry-view';
 
 	interface Props {
 		entry: TimelineEntry;
@@ -19,6 +19,7 @@
 	let tone = $derived(entryTone(entry));
 	let icon = $derived(entryIcon(entry));
 	let kindLabel = $derived(KIND_LABELS[entry.kind]);
+	let quiet = $derived(isQuietEntry(entry));
 
 	let diff = $derived(typeof entry.details.diff === 'string' ? (entry.details.diff as string) : null);
 
@@ -40,7 +41,7 @@
 	}
 </script>
 
-<div class="row row--{tone}" class:expanded>
+<div class="row row--{tone}" class:row--quiet={quiet} class:expanded>
 	<button class="row-main" type="button" onclick={ontoggle} aria-expanded={expanded}>
 		<span class="glyph" aria-hidden="true"><Icon name={icon} size={14} /></span>
 		<span class="kind">{kindLabel}</span>
@@ -166,6 +167,23 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		flex: 1;
+	}
+
+	/* Bookkeeping rows (a tool-output trim, TD-5150) step back: muted words,
+	   regular weight, so a compaction still stands out among them. The
+	   title carries the count, so it keeps its width on a phone and the
+	   preview gives way instead. */
+	.row--quiet .kind,
+	.row--quiet .title,
+	.row--quiet .preview {
+		color: var(--color-ink-muted);
+		font-weight: var(--weight-normal);
+	}
+
+	.row--quiet .title {
+		max-width: none;
+		flex-shrink: 1;
+		min-width: 0;
 	}
 
 	.progress {

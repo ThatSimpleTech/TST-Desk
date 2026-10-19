@@ -1752,6 +1752,10 @@ async def agent_loop(
                         kept_messages=fit.kept_messages,
                         tokens_before=fit.tokens_before,
                         tokens_after=fit.tokens_after,
+                        # A trim, not a compaction: the window labels it
+                        # apart, so a tool-heavy turn does not look like
+                        # it is compacting over and over (TD-5150).
+                        trigger="inflight_trim",
                         seq=1,  # overwritten by the event log
                     )
                 )
