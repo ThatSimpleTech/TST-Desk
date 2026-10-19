@@ -6,6 +6,11 @@ Memory commits are the opposite: they land on the workspace repo as
 
 The write has already landed when this runs. A missing git repo or a
 failed commit never fails the write. The no-git notice is one-time.
+
+The commit is built with plumbing (``git_raw.commit_on_head``), not
+``git add`` and ``git commit``: those run the filter driver an in-tree
+``.gitattributes`` points a file at (TD-5157). The note is stored as the
+bytes on disk, and the user's index gets the same entry.
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ from typing import Literal
 
 from .autonomy.checkpoint import Notice
 from .git_safe import git_command
+from .git_stage import commit_on_head
 from .logging import get_logger
 from .memory_store import path_is_memory_file
 from .proc_lifecycle import finish_subprocess
@@ -78,26 +84,12 @@ class MemoryCommitter:
                     reason=self._disabled_reason,
                 )
 
-        rels = [self._rel(p) for p in paths]
-        env = self._identity_env()
-        for rel in rels:
-            rc, _, err = await self._git("add", "--", rel, env=env)
-            if rc != 0:
-                return MemoryCommitOutcome(
-                    status="error",
-                    reason=err.strip() or f"git add failed for {rel}",
-                )
-        rc, out, err = await self._git("commit", "-m", MEMORY_COMMIT_SUBJECT, "--", *rels, env=env)
-        if rc != 0:
-            return MemoryCommitOutcome(
-                status="error",
-                reason=(err or out).strip() or "git commit failed",
-            )
-        sha_rc, sha, _ = await self._git("rev-parse", "HEAD")
-        return MemoryCommitOutcome(
-            status="committed",
-            commit=sha.strip() if sha_rc == 0 else None,
+        commit = await commit_on_head(
+            self._workspace, paths, MEMORY_COMMIT_SUBJECT, env=self._identity_env()
         )
+        if commit is None:
+            return MemoryCommitOutcome(status="skipped", reason="nothing to commit")
+        return MemoryCommitOutcome(status="committed", commit=commit)
 
     async def _probe(self) -> None:
         self._probed = True
@@ -116,12 +108,6 @@ class MemoryCommitter:
                 "Memory write landed; this workspace is not a git repository "
                 "so there is no commit to revert."
             )
-
-    def _rel(self, path: Path) -> str:
-        try:
-            return path.relative_to(self._workspace).as_posix()
-        except ValueError:
-            return str(path)
 
     def _notice_once(self, code: str, message: str) -> Notice | None:
         if code in self._notified:

@@ -1378,13 +1378,22 @@ list:
 - `.envrc`, `.gitconfig`, and shell startup files (`.profile`, `.bashrc`, `.bash_profile`,
   `.bash_login`, `.bash_logout`, `.bash_aliases`, `.zshrc`, `.zshenv`, `.zprofile`, `.zlogin`,
   `.zlogout`), by name at any depth;
+- git's global folder, `~/.config/git/` or `$XDG_CONFIG_HOME/git/` (TD-5157): its `config` is
+  read like `~/.gitconfig` and can include other files, `attributes` can route any file through
+  a filter, and `ignore` sits beside them. Any path with `.config/git` in it counts, and so does
+  one written as `$XDG_CONFIG_HOME/git/…`, `${XDG_CONFIG_HOME:-…}/git/…` or
+  `%XDG_CONFIG_HOME%\git\…`, and the folder `XDG_CONFIG_HOME` names when it is set;
 - git hook-manager configs: `.pre-commit-config.yaml`, and lefthook's `lefthook.yml` and
   `lefthook-local.yml` in any of `.yml`, `.yaml`, `.toml`, `.json`, dotted or not. Your own
   `git commit` runs what they name.
 
 Names match ignoring case. This covers `fs_write` and `fs_edit`, and shell redirects and `tee`
-into these paths (`echo … > .git/hooks/pre-commit`, `… >> ~/.bashrc`). Other shell write forms
-(`cp`, `mv`, `sed -i`) are not parsed; they ask through the shell floor below. Unlike a steering
+into these paths (`echo … > .git/hooks/pre-commit`, `… >> ~/.bashrc`,
+`… >> ~/.config/git/config`). On Windows, where a command runs through `cmd /c`, the line is
+also read the way cmd reads it (TD-5157): `\` separates folders, `^` escapes the next character,
+and `>`, `>>`, `1>` and `>&` redirect with or without a space, so `echo x > .git\hooks\pre-commit`
+and `type nul > "%USERPROFILE%\.gitconfig"` ask too. Other shell write forms (`cp`, `mv`,
+`sed -i`, `copy`) are not parsed; they ask through the shell floor below. Unlike a steering
 file, you can approve the write. An `auto` policy rule cannot pre-approve it (§4.4), and
 "Always allow" is not offered. Reads are unaffected. Skip-all runs these writes without asking,
 like every other Class C ask (§4.4); an autonomous run stops on them.
@@ -1398,13 +1407,40 @@ so with or without skip-all the daemon never runs a repo's fsmonitor command or 
 commit` still runs your hooks; the daemon's memory and charter commits and the connector's push
 skip them, including a secret scanner. The validator's diff runs no external diff or textconv.
 
-Not pinned: a filter driver (`clean` on the daemon's `git add` and `git status`, `smudge` on
-revert), `gpg.program` when `commit.gpgSign` is set (memory and charter commits), and
-`core.askPass` (the connector). They run only when a config file names them, and `.git/config`,
-`.git/info/attributes` and `.gitconfig` are Class C to write, so planting one asks. Under
-skip-all it does not ask, and the daemon would then run the planted command. An in-tree
-`.gitattributes` (Class A) can also route a file to a filter you already configured. This is
-recorded in DECISIONS.md (TD-5108) as residual risk.
+The daemon's git runs no filter driver either (TD-5157). A driver's command lives in git config,
+but an in-tree `.gitattributes`, an ordinary write, can point any file at a driver you
+configured, such as `nbstripout` (which imports from the repo root) or git-lfs (which reads
+`.lfsconfig`). So checkpoints, memory commits and the charter sign stage the bytes on disk
+(`git hash-object --no-filters` into an index), never `git add` or `git commit`, and the drift
+revert writes blob bytes itself instead of `git checkout-index`. Git's own end-of-line rules are
+redone around that, so line endings come out as before. The calls that must read the
+working tree or write your index (`git status` for the dirty-tree notice, the validator's
+`git diff`, and updating your index after a memory or charter commit) set every configured
+driver's `clean`, `smudge` and `process` to nothing for that call. What changes:
+
+- **Line endings: unchanged.** The daemon applies git's own rules (`text`, `eol` and `crlf`
+  attributes, `core.autocrlf`, `core.eol`, and git's "safer autocrlf" checks): a CRLF file is
+  stored as LF in a checkpoint where `git add` would store it so, and a revert writes CRLF back
+  where a checkout would. A test holds both directions to git's own output. The `ident` and
+  `working-tree-encoding` attributes are not applied.
+- **git-lfs.** A checkpoint stores an LFS file's content, not a pointer, so the branch holds the
+  whole file. A revert that takes a pointer from HEAD fills it from the local store
+  (`.git/lfs/objects`) when the object is there and its size and SHA-256 match; nothing is
+  fetched. Otherwise it writes the pointer text, logs the path (`lfs_pointers`), and
+  `git lfs checkout` fills it in.
+- **Memory and charter commits** are built with `commit-tree` and land on HEAD with a
+  `commit: …` reflog line, as before. They are signed when `commit.gpgSign` is set. A memory
+  commit whose note did not change is skipped, and one during a merge, cherry-pick or revert is
+  refused, as `git commit -- <path>` refuses it.
+
+Still not pinned: `gpg.program` when `commit.gpgSign` is set (memory and charter commits), and
+`core.askPass` (the connector). They run only when a config file names them, and
+`.git/config`, `.gitconfig` and `~/.config/git/` are Class C to write, so planting one asks.
+Under skip-all it does not ask, and the daemon would then run the planted command. The
+connector's `clone` checks out like your own `git clone`, with your filters. The filter
+switch-off lists the drivers git config names just before each call, so a driver added in the
+moment between needs a write to one of those Class C files. This is recorded in DECISIONS.md
+(TD-5108, TD-5157) as residual risk.
 
 **`allowed_commands` matching.** The command is split into top-level segments on pipes,
 semicolons, and the like; each segment's leading binary — after skipping `VAR=value` prefixes —
@@ -1649,8 +1685,8 @@ has a machine-wide toggle that lives in the user data dir as `approvals.yaml`, s
 cannot carry it. While it is on, every `ask` runs as auto — including `shell` and Class C —
 and caps do not pause. That includes writes to paths that run code later (§4.1, TD-5108):
 skip-all does not ask for them, as Claude Code's bypass mode does not. The daemon's own git
-still never runs a repo's fsmonitor command or a hook, but a filter driver or `gpg.program`
-planted in `.git/config` without asking does run on its next `git add` or commit (§4.1). A
+still never runs a repo's fsmonitor command, a hook or a filter driver, but a `gpg.program`
+planted in `.git/config` without asking does run on its next memory or charter commit (§4.1). A
 `never` rule still refuses. The fs-tool
 boundary still refuses steering-file writes, and skip-all never accepts a proposed steering
 edit (TD-5140): only your Accept on the card writes one. An unattended run parks its

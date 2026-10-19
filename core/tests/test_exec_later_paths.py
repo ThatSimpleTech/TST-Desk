@@ -16,7 +16,9 @@ import pytest
 
 from tests.test_security_suite import make_dispatcher
 from tstd.autonomy import Boundary, DecisionClass, DecisionClassifier, DecisionRequest
+from tstd.autonomy import classifier as classifier_module
 from tstd.autonomy.classifier import RULE_TABLE, is_exec_later_write
+from tstd.autonomy.cmd_targets import cmd_write_targets
 from tstd.policy import ApprovalOutcome, PolicyConfig, PolicyRule, propose_always_allow
 from tstd.tools.boundary import PathGuard
 from tstd.tools.dispatch import ToolDispatcher
@@ -55,6 +57,12 @@ PROTECTED = [
     "lefthook.toml",
     "web/.lefthook.json",
     ".tst/memory/.git/config",
+    # git's global folder (TD-5157)
+    ".config/git/config",
+    ".config/git/attributes",
+    ".config/git/ignore",
+    "home/me/.config/git/config",
+    ".CONFIG/Git/attributes",
 ]
 
 NOT_PROTECTED = [
@@ -69,6 +77,10 @@ NOT_PROTECTED = [
     ".vscode-test/out.txt",
     "notes/zshrc.md",
     ".tst/memory/gotchas.md",
+    ".config/gitk",
+    ".config/nvim/init.lua",
+    "config/git/config",
+    "src/git/config.py",
 ]
 
 
@@ -127,6 +139,22 @@ class TestFsWrites:
         assert not is_exec_later_write(boundary, root / "src" / "extension.ts")
         assert is_exec_later_write(boundary, root / ".vscode" / "launch.json")
 
+    def test_git_global_folder_outside_the_workspace(self) -> None:
+        boundary = Boundary(workspace_root=WS)
+        assert is_exec_later_write(boundary, Path("/home/me/.config/git/config"))
+        assert is_exec_later_write(boundary, Path("/home/me/.config/git/attributes"))
+        assert not is_exec_later_write(boundary, Path("/home/me/.config/nvim/init.lua"))
+
+    def test_xdg_config_home_names_the_folder(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        xdg = tmp_path / "xdg"
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+        boundary = Boundary(workspace_root=WS)
+        assert is_exec_later_write(boundary, xdg / "git" / "config")
+        assert is_exec_later_write(boundary, xdg / "git" / "ignore")
+        assert not is_exec_later_write(boundary, xdg / "nvim" / "init.lua")
+
     @pytest.mark.skipif(not hasattr(Path, "symlink_to"), reason="no symlinks")
     def test_symlink_into_dot_git_is_judged_by_its_target(self, tmp_path: Path) -> None:
         hooks = tmp_path / ".git" / "hooks"
@@ -152,10 +180,20 @@ class TestShellTargets:
             "cat settings.json > .vscode/settings.json",
             "npm test && echo done > sub/.git/HEAD",
             "echo x >! .git/config",
+            # git's global folder (TD-5157): was the B floor, unlike ~/.gitconfig
+            "echo '[include] path = x' >> ~/.config/git/config",
+            "printf '* filter=x' > $XDG_CONFIG_HOME/git/attributes",
+            'echo x >> "${XDG_CONFIG_HOME:-$HOME/.config}/git/config"',
+            "echo '*.py filter=x' | tee -a ~/.config/git/attributes",
+            "echo build > /home/me/.config/git/ignore",
         ],
     )
     def test_redirect_or_tee_into_a_protected_path_is_class_c(self, command: str) -> None:
         assert _classify(_shell(command)) == ("C", "shell-exec-later-write")
+
+    def test_gitconfig_and_the_xdg_config_now_agree(self) -> None:
+        for command in ("echo x >> ~/.gitconfig", "echo x >> ~/.config/git/config"):
+            assert _classify(_shell(command)) == ("C", "shell-exec-later-write")
 
     @pytest.mark.parametrize(
         "command",
@@ -172,6 +210,65 @@ class TestShellTargets:
 
     def test_steering_redirect_still_reports_as_steering(self) -> None:
         assert _classify(_shell("echo x > AGENTS.md")) == ("C", "shell-steering-write")
+
+
+# ── cmd.exe redirects on Windows (TD-5157) ──────────────────────────────
+
+
+@pytest.fixture
+def windows_shell(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The host reads commands as Windows does: ``cmd /c`` and ``sh -c``."""
+    monkeypatch.setattr(classifier_module, "host_dialects", lambda: ("posix", "cmd"), raising=False)
+
+
+class TestCmdRedirects:
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "echo x > .git\\hooks\\pre-commit",
+            "echo x>.git\\hooks\\pre-commit",
+            "echo [core] 1>>.git\\config",
+            'echo x > ".git\\hooks\\pre-commit"',
+            "echo x > .g^it\\hooks\\pre-commit",
+            "(echo {}) > .vscode\\settings.json",
+            "echo a & echo b>>sub\\.envrc",
+            'type nul > "%USERPROFILE%\\.gitconfig"',
+            "echo [include] >> %USERPROFILE%\\.config\\git\\config",
+            "echo x > %XDG_CONFIG_HOME%\\git\\attributes",
+        ],
+    )
+    def test_native_redirect_into_a_protected_path_is_class_c(
+        self, command: str, windows_shell: None
+    ) -> None:
+        assert _classify(_shell(command)) == ("C", "shell-exec-later-write")
+
+    def test_steering_through_cmd_is_steering(self, windows_shell: None) -> None:
+        assert _classify(_shell("echo x > docs\\AGENTS.md")) == ("C", "shell-steering-write")
+
+    @pytest.mark.parametrize(
+        "command", ["echo x > notes.txt", 'echo ".git\\hooks\\x" > notes.txt', "dir 2>&1"]
+    )
+    def test_other_redirects_keep_the_shell_floor(self, command: str, windows_shell: None) -> None:
+        assert _classify(_shell(command)) == ("B", "shell-floor")
+
+    def test_a_posix_host_reads_backslashes_as_escapes(self) -> None:
+        """sh writes ``.githookspre-commit`` here, a plain file: the B floor."""
+        assert _classify(_shell("echo x > .git\\hooks\\pre-commit")) == ("B", "shell-floor")
+
+    @pytest.mark.parametrize(
+        ("command", "targets"),
+        [
+            ("echo a > b.txt", ["b.txt"]),
+            ("echo a ^> .git\\config", []),
+            ('echo ">" .git\\config', []),
+            ('echo a > "x y\\z.txt"', ["x y/z.txt"]),
+            ("echo a 2>&1", ["1"]),
+            ("echo a >>out.log&echo b", ["out.log"]),
+            ("(echo a)>x\\y)", ["x/y)", "x/y"]),
+        ],
+    )
+    def test_cmd_tokenizer(self, command: str, targets: list[str]) -> None:
+        assert cmd_write_targets(command) == targets
 
 
 # ── Rule order ──────────────────────────────────────────────────────────

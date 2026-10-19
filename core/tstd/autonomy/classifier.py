@@ -17,9 +17,11 @@ the *obvious* cases — the ones that must never reach the model:
   signed charter at ``.tst/autonomy/CHARTER.md`` — TD-4001) → C, even
   inside the workspace
 - a write to a path that runs code later (any ``.git``, ``.vscode``,
-  ``.idea`` or ``.husky`` segment; ``.envrc``, ``.gitconfig``, shell
-  startup files and git hook-manager configs by basename) → C, through
-  the fs tools and the shell write-target table (TD-5108)
+  ``.idea`` or ``.husky`` segment; git's global folder ``.config/git``;
+  ``.envrc``, ``.gitconfig``, shell startup files and git hook-manager
+  configs by basename) → C, through the fs tools and the shell
+  write-target table, read as ``cmd.exe`` reads it too on Windows
+  (TD-5108, TD-5157)
 - a write under ``.tst/memory/`` → A (spec §5; not steering)
 - a spent/spend/time/iteration cap that is already exceeded → C
 - an in-workspace edit inside ``writable_paths`` → A
@@ -42,11 +44,14 @@ import shlex
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
 from ..connectors.github_classify import GITHUB_READ_TOOLS
+from ..policy_shell import host_dialects
 from .charter import CHARTER_RELATIVE_PARTS
+from .cmd_targets import cmd_write_targets
 
 # ── Decision classes (spec §12.2) ─────────────────────────────────────
 
@@ -131,6 +136,31 @@ _EXEC_LATER_FILES = frozenset(
         *_LEFTHOOK_FILES,
     }
 )
+
+
+# git's global config folder (TD-5157): ``$XDG_CONFIG_HOME/git``, else
+# ``~/.config/git``. Its ``config`` is read like ``~/.gitconfig`` and can
+# include other files, ``attributes`` routes files through filter drivers,
+# and ``ignore`` sits beside them. A segment naming the folder that holds
+# it is ``.config`` or a reference to ``XDG_CONFIG_HOME`` as a shell or
+# cmd command writes it (``$XDG_CONFIG_HOME``, ``${XDG_CONFIG_HOME:-…}``,
+# ``%XDG_CONFIG_HOME%``); the variable's own value is checked separately.
+_GIT_GLOBAL_DIR = "git"
+
+
+def _names_config_home(segment: str) -> bool:
+    return segment.strip("{}\"'") == ".config" or "xdg_config_home" in segment
+
+
+def _in_git_global_dir(folded: Sequence[str], path: Path) -> bool:
+    """Whether *path* is in, or is, git's global config folder."""
+    if any(_names_config_home(a) and b == _GIT_GLOBAL_DIR for a, b in pairwise(folded)):
+        return True
+    xdg = os.environ.get("XDG_CONFIG_HOME", "")
+    if not xdg or not os.path.isabs(xdg):
+        return False
+    base = (*_fold(canonical_path(Path(xdg)).parts), _GIT_GLOBAL_DIR)
+    return _fold(canonical_path(path).parts)[: len(base)] == base
 
 
 def _fold(parts: Sequence[str]) -> tuple[str, ...]:
@@ -372,13 +402,14 @@ def is_exec_later_write(boundary: Boundary, path: Path) -> bool:
     """Whether writing *path* can make code run later (TD-5108).
 
     True for any path with a ``.git``, ``.vscode``, ``.idea`` or
-    ``.husky`` segment, and for shell startup files, ``.envrc``,
-    ``.gitconfig`` and git hook-manager configs by basename, at any
-    depth.  Inside the workspace only the workspace-relative segments
-    count, so a workspace that itself lives under such a folder is not
-    caught whole.  Outside it the whole canonical path counts: a shell
-    redirect to ``~/.bashrc`` has no workspace-relative form.  Segments
-    case-fold (TD-4804).
+    ``.husky`` segment, anything in git's global folder (``.config/git``
+    or ``$XDG_CONFIG_HOME/git``, TD-5157), and for shell startup files,
+    ``.envrc``, ``.gitconfig`` and git hook-manager configs by basename,
+    at any depth.  Inside the workspace only the workspace-relative
+    segments count, so a workspace that itself lives under such a folder
+    is not caught whole.  Outside it the whole canonical path counts: a
+    shell redirect to ``~/.bashrc`` has no workspace-relative form.
+    Segments case-fold (TD-4804).
     """
     root = boundary.workspace_root
     if root is not None and is_in_workspace(boundary, path):
@@ -388,7 +419,9 @@ def is_exec_later_write(boundary: Boundary, path: Path) -> bool:
     folded = _fold(parts)
     if not folded:
         return False
-    return folded[-1] in _EXEC_LATER_FILES or any(p in _EXEC_LATER_DIRS for p in folded)
+    if folded[-1] in _EXEC_LATER_FILES or any(p in _EXEC_LATER_DIRS for p in folded):
+        return True
+    return _in_git_global_dir(folded, path)
 
 
 def writes_match_writable(boundary: Boundary, request: DecisionRequest) -> bool:
@@ -529,8 +562,12 @@ def _shell_target_paths(req: DecisionRequest, boundary: Boundary) -> list[Path]:
     if not isinstance(command, str):
         return []
     root = boundary.workspace_root
+    tokens = _shell_write_targets(command)
+    if "cmd" in host_dialects():
+        # Windows runs it through cmd /c, where \ separates folders (TD-5157).
+        tokens += cmd_write_targets(command)
     targets: list[Path] = []
-    for token in _shell_write_targets(command):
+    for token in dict.fromkeys(tokens):
         target = Path(token)
         targets.append(target if target.is_absolute() else root / target)
     return targets

@@ -11,13 +11,11 @@ Interactive verify (TD-4204) does not import or call this module.
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import os
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from ..git_restore import restore_blobs
 from ..git_safe import git_command
 from ..logging import get_logger
 from ..proc_lifecycle import finish_subprocess
@@ -43,6 +41,8 @@ class RevertOutcome:
     reason: str = ""
     restored: tuple[str, ...] = ()
     deleted: tuple[str, ...] = ()
+    #: git-lfs paths written as a pointer: the object is not in the local store.
+    pointers: tuple[str, ...] = ()
 
 
 async def apply_drift_result(session: Session, result: object | None) -> bool:
@@ -77,6 +77,7 @@ async def apply_drift_result(session: Session, result: object | None) -> bool:
                 "serves_objective": getattr(result, "serves_objective", None),
                 "class_a_drifted": getattr(result, "class_a_drifted", None),
                 "progress_real": getattr(result, "progress_real", None),
+                "lfs_pointers": list(outcome.pointers),
             }
         },
     )
@@ -129,15 +130,16 @@ async def restore_auto_branch(
 ) -> RevertOutcome:
     """Move ``tst/auto/<slug>`` to *good_sha* and restore drifted paths.
 
-    Uses a temporary index + ``checkout-index`` so HEAD, the user's
-    index, and ``refs/heads/main`` are never written.
+    The blobs are written by ``git_restore`` rather than
+    ``checkout-index``, so no smudge filter runs (TD-5157); HEAD, the
+    user's index, and ``refs/heads/main`` are never written.
     """
     ref = auto_ref(branch)
     if ref in _PROTECTED_REFS:
         raise ValueError(f"refusing to write protected ref: {ref!r}")
     tip = await _rev_parse(workspace, ref)
     restore, delete = await _drifted_paths(workspace, good_sha, tip)
-    await _restore_paths(workspace, good_sha, restore)
+    written = await restore_blobs(workspace, good_sha, restore, env=_git_env())
     await _delete_paths(workspace, delete)
     rc, _, err = await _git(workspace, "update-ref", ref, good_sha)
     if rc != 0:
@@ -146,16 +148,18 @@ async def restore_auto_branch(
             good_sha=good_sha,
             branch=branch,
             reason=err.strip() or "git update-ref failed",
-            restored=tuple(restore),
+            restored=written.restored,
             deleted=tuple(delete),
+            pointers=written.pointers,
         )
     return RevertOutcome(
         status="reverted",
         good_sha=good_sha,
         branch=branch,
         reason="reverted to last good checkpoint",
-        restored=tuple(restore),
+        restored=written.restored,
         deleted=tuple(delete),
+        pointers=written.pointers,
     )
 
 
@@ -210,27 +214,6 @@ async def _drifted_paths(
     return restore, delete
 
 
-async def _restore_paths(workspace: Path, good_sha: str, paths: list[str]) -> None:
-    if not paths:
-        return
-    index_fd, index_path = tempfile.mkstemp(prefix="tstd-revert-index-")
-    os.close(index_fd)
-    os.unlink(index_path)
-    env = _git_env({"GIT_INDEX_FILE": index_path})
-    try:
-        rc, _, err = await _git(workspace, "read-tree", good_sha, env=env)
-        if rc != 0:
-            raise RuntimeError(f"git read-tree failed: {err.strip()}")
-        for i in range(0, len(paths), 64):
-            chunk = paths[i : i + 64]
-            rc, _, err = await _git(workspace, "checkout-index", "-f", "--", *chunk, env=env)
-            if rc != 0:
-                raise RuntimeError(f"git checkout-index failed: {err.strip()}")
-    finally:
-        with contextlib.suppress(OSError):
-            os.unlink(index_path)
-
-
 async def _delete_paths(workspace: Path, paths: list[str]) -> None:
     for rel in paths:
         target = _safe_rel(workspace, rel)
@@ -280,7 +263,7 @@ async def _rev_parse(workspace: Path, ref: str) -> str | None:
     return sha if rc == 0 and sha else None
 
 
-def _git_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+def _git_env() -> dict[str, str]:
     from ..tools.shell import sanitized_env
 
     env = sanitized_env()
@@ -292,8 +275,6 @@ def _git_env(extra: dict[str, str] | None = None) -> dict[str, str]:
         "GIT_COMMON_DIR",
     ):
         env.pop(var, None)
-    if extra:
-        env.update(extra)
     return env
 
 
