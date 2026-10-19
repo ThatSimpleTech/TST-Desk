@@ -517,6 +517,22 @@ the whole answer. The first gap is the whole prompt being read, so the
 after-write review's prompt is capped by `autonomy.verify_max_prompt_tokens`
 (TD-5153).
 
+A gateway can also fail inside a `200` stream. LiteLLM reports an
+upstream failure partway through a reply as an in-band
+`data: {"error": {...}}` event and then ends the body without
+`data: [DONE]`; OpenRouter sends the same `error` object beside a choice
+whose `finish_reason` is `"error"`. Either shape, and a `finish_reason`
+of `"error"` on its own, counts as the failure. Before anything has streamed, that event is treated as
+the HTTP error its `code` names: a 429 or 5xx is retried as above, and a
+400, 401 or 404 is not. An event without a usable status counts as a
+502. Once part of the reply has streamed, it ends the turn as
+`stream_interrupted` and is not retried, because a second attempt would
+repeat text the window already shows. A stream that ends with neither a
+`finish_reason` nor `[DONE]` is `stream_interrupted` too. The window
+shows "Response interrupted", the partial text is not kept as the
+model's answer, and Retry on the message resends it (TD-5152). The
+after-write review and memory distillation get the same errors.
+
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `max_retries` | int 0–20 | `3` | Retries after the initial attempt. `0` disables retrying; the first failure ends the turn. |
@@ -892,7 +908,7 @@ three tier definitions. You can pin a tier for a session from the title bar.
 | `connect_timeout` | float > 0 | `30` | Seconds to open the connection to `base_url`. |
 | `read_timeout` | float > 0 | `120` | Longest wait for any bytes from the server, the response headers included. A local model reading a long prompt sends nothing until its first token, so this is the knob for slow prefill — see §3.5. |
 | `total_timeout` | float > 0 or `null` | `null` | Wall-clock cap on one attempt, streaming included. `null` means no cap. A stream cut by it after output began is not retried. Before TD-5106 the client had a field named "total" set to 180; it was only the wait for a free pooled connection and never bounded a request. That wait stays 180 s and is not a key. |
-| `stream_idle_timeout` | float > 0 or `null` | `300` | Aborts a stream that sends no usable chunk for this long. SSE keep-alive comments (`: ping`) do not count, so a server that only pings is caught; `read_timeout` alone never catches it. A stall before any output is retried under `provider_retry`; a stall partway through a reply ends the turn as `stream_stalled`, because a retry would repeat text the window already shows. `null` turns the watchdog off. |
+| `stream_idle_timeout` | float > 0 or `null` | `300` | Aborts a stream that sends no usable chunk for this long. SSE keep-alive comments (`: ping`) do not count, so a server that only pings is caught; `read_timeout` alone never catches it. A stall before any output is retried under `provider_retry`; a stall partway through a reply ends the turn as `stream_stalled`, because a retry would repeat text the window already shows. Reading stops at `data: [DONE]`, so a server that holds the body open after a finished reply is not a stall (TD-5152). `null` turns the watchdog off. |
 
 **Prices are per million tokens, and they are yours to keep accurate.** They drive the live
 cost meter, the audit trail, and the spend cap. Nothing verifies them against your provider, so
