@@ -14581,8 +14581,13 @@ kept the partial text as the answer. TD-5146 caught this only in
 itself, so every consumer (the turn, the progress check, the off-turn
 calls) gets the same typed error.
 
-- An event whose JSON has a non-empty `error` and no `choices` is an
-  error. Its status comes from `error.code` the way a 2xx error envelope's
+- An event whose JSON has a non-empty top-level `error` is an error,
+  whether or not it also carries `choices`: LiteLLM sends the bare
+  `{"error": {...}}`, and OpenRouter (a shipped preset) sends the `error`
+  beside a choice with an empty delta and `finish_reason: "error"`, which
+  the chunk parser would otherwise read as a finished reply. A choice
+  that finishes with `"error"` and no `error` object counts too, as a
+  502 whose reason reads `finish_reason "error" with no message`. Its status comes from `error.code` the way a 2xx error envelope's
   does (`_error_envelope_status`; no usable status is a 502), and it goes
   through `_parse_error`, so the code and retry flag match an HTTP reply
   with that status (429 `rate_limited`, 5xx retryable, 400/401/404 not,

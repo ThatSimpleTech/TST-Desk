@@ -518,7 +518,9 @@ the whole answer.
 A gateway can also fail inside a `200` stream. LiteLLM reports an
 upstream failure partway through a reply as an in-band
 `data: {"error": {...}}` event and then ends the body without
-`data: [DONE]`. Before anything has streamed, that event is treated as
+`data: [DONE]`; OpenRouter sends the same `error` object beside a choice
+whose `finish_reason` is `"error"`. Either shape, and a `finish_reason`
+of `"error"` on its own, counts as the failure. Before anything has streamed, that event is treated as
 the HTTP error its `code` names: a 429 or 5xx is retried as above, and a
 400, 401 or 404 is not. An event without a usable status counts as a
 502. Once part of the reply has streamed, it ends the turn as

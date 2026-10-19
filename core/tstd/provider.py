@@ -1112,8 +1112,9 @@ class ProviderClient:
         a half-parsed tool call.  So does a stream that ends with neither
         a finish reason nor ``[DONE]`` (TD-5152): a gateway that gave up
         partway, whose text so far is not an answer.  An in-band
-        ``{"error": ...}`` event is mapped as an HTTP error with its status
-        before any chunk, and is ``stream_interrupted`` after one.
+        ``{"error": ...}`` event (with or without ``choices``) or a choice
+        that finishes with ``"error"`` is mapped as an HTTP error with its
+        status before any chunk, and is ``stream_interrupted`` after one.
 
         Args:
             request: The chat completion request.
@@ -1365,11 +1366,20 @@ class ProviderClient:
 
     @classmethod
     def _inband_error(cls, raw: str) -> tuple[str, int] | None:
-        """An SSE event that is an error, as ``(event JSON, status)`` (TD-5152).
+        """An SSE event that is an error, as ``(error JSON, status)`` (TD-5152).
 
-        LiteLLM reports an upstream failure partway through a stream as
-        ``data: {"error": {...}}`` and then ends the body. The event has no
-        ``choices``, so the chunk parser reads it as nothing at all.
+        Two shapes are in the wild, and either part alone is enough:
+
+        - LiteLLM reports an upstream failure partway through a stream as
+          ``data: {"error": {...}}`` and then ends the body. The event has
+          no ``choices``, so the chunk parser reads it as nothing at all.
+        - OpenRouter sends a top-level ``error`` beside a choice with an
+          empty delta and ``finish_reason: "error"``. The chunk parser
+          reads that as a finished reply, so the cut-off text would stand.
+
+        A choice that finishes with ``"error"`` and no ``error`` object is
+        an error too, with no status of its own (a 502) and a short reason
+        in place of a message, so the window never shows raw JSON.
         """
         if '"error"' not in raw:
             return None
@@ -1377,10 +1387,23 @@ class ProviderClient:
             data = json.loads(raw)
         except ValueError:
             return None
-        if not isinstance(data, dict) or data.get("choices") or not data.get("error"):
+        if not isinstance(data, dict):
             return None
-        status = cls._error_envelope_status({"error": data["error"]})
-        return raw.strip(), 502 if status is None else status
+        error = data.get("error")
+        choices = data.get("choices")
+        ended_in_error = isinstance(choices, list) and any(
+            isinstance(c, dict) and c.get("finish_reason") == "error" for c in choices
+        )
+        if error:
+            status = cls._error_envelope_status({"error": error})
+            return raw.strip(), 502 if status is None else status
+        if ended_in_error:
+            body = {
+                "error": {"message": 'finish_reason "error" with no message'},
+                "event": data,
+            }
+            return json.dumps(body), 502
+        return None
 
     def _inband_stream_error(
         self, response: httpx.Response, raw: str, status: int, yielded_any: bool

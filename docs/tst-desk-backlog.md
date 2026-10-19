@@ -9273,7 +9273,9 @@ fixed this only for the off-turn calls.
       `ProviderError` whose code and retry flag are mapped from its status
       the way an HTTP error's are: before the first chunk a 429 or 5xx is
       retried under `provider_retry` and a 4xx is not; after it the error
-      is `stream_interrupted` and is not retried
+      is `stream_interrupted` and is not retried. This covers LiteLLM's
+      bare `{"error": ...}`, OpenRouter's `error` beside a choice with
+      `finish_reason: "error"`, and `finish_reason: "error"` alone
 - [x] A stream that ends with no `finish_reason` and no `[DONE]` is
       `stream_interrupted`, not a finished answer
 - [x] The turn ends failed with `error_code: stream_interrupted`; the
@@ -9290,7 +9292,7 @@ fixed this only for the off-turn calls.
 
 Done (2026-10-19): `ProviderClient.chat_completion_stream` checks each
 event for an error envelope before parsing it as a chunk and tracks
-`[DONE]`. Tests: `core/tests/test_turn_stream_errors.py` (16 of its 23
+`[DONE]`. Tests: `core/tests/test_turn_stream_errors.py` (24 of its 32
 fail on the old code). Class B entry in DECISIONS.md.
 
 ### TD-5113 — Trust prompt for repo-supplied config

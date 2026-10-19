@@ -58,6 +58,24 @@ def _litellm_error(message: str, code: str) -> bytes:
     return _event({"error": {"message": message, "type": None, "param": None, "code": code}})
 
 
+def _openrouter_error(message: str, code: str | int = "server_error") -> bytes:
+    """OpenRouter's mid-stream error: a top-level ``error`` beside a choice
+    with an empty delta and ``finish_reason: "error"``."""
+    return _event(
+        {
+            "id": "c1",
+            "object": "chat.completion.chunk",
+            "error": {"code": code, "message": message},
+            "choices": [{"index": 0, "delta": {"content": ""}, "finish_reason": "error"}],
+        }
+    )
+
+
+def _finished_in_error() -> bytes:
+    """A choice that finishes with ``"error"`` and carries no error object."""
+    return _text("", finish="error")
+
+
 def _answer(text: str) -> bytes:
     return _text(text) + _text("", finish="stop") + _DONE
 
@@ -239,6 +257,107 @@ class TestInBandErrorEvent:
         assert '"code"' in error.detail
 
 
+class TestOpenRouterErrorEvent:
+    """An ``error`` beside ``choices``, or ``finish_reason: "error"`` (PR #21 review)."""
+
+    @pytest.mark.parametrize("done", [b"", _DONE], ids=["no-done", "done"])
+    async def test_after_output_it_is_stream_interrupted(self, done: bytes) -> None:
+        gateway = _Gateway(
+            lambda _: (
+                _text("The fix is ")
+                + _openrouter_error("Provider disconnected unexpectedly")
+                + done
+            )
+        )
+        items = await _stream(gateway.client(retries=3))
+
+        # Before the fix: a chunk with finish_reason "error" and no error,
+        # so the turn kept "The fix is " as a finished reply.
+        assert _shown(items) == "The fix is "
+        assert not any(isinstance(i, StreamChunk) and i.finish_reason == "error" for i in items)
+        (error,) = _errors(items)
+        assert items[-1] is error
+        assert error.code == "stream_interrupted"
+        assert error.retryable is False
+        assert error.status_code == 502
+        assert "Provider disconnected unexpectedly" in error.message
+        assert gateway.requests == 1
+
+    async def test_before_output_it_keeps_its_retry_rule(self) -> None:
+        gateway = _Gateway(
+            lambda attempt: (
+                _openrouter_error("Provider disconnected unexpectedly")
+                if attempt == 1
+                else _answer("hello")
+            )
+        )
+        items = await _stream(gateway.client(retries=2))
+
+        assert not _errors(items)
+        assert _shown(items) == "hello"
+        assert gateway.requests == 2
+
+    async def test_before_output_a_numeric_code_is_its_status(self) -> None:
+        gateway = _Gateway(lambda _: _openrouter_error("slow down", 429))
+        (error,) = await _stream(gateway.client(retries=0))
+
+        assert isinstance(error, ProviderError)
+        assert error.code == "rate_limited"
+        assert error.status_code == 429
+        assert error.retryable is True
+
+    async def test_finish_reason_error_alone_is_interrupted(self) -> None:
+        gateway = _Gateway(lambda _: _text("The fix is ") + _finished_in_error() + _DONE)
+        items = await _stream(gateway.client(retries=3))
+
+        assert _shown(items) == "The fix is "
+        (error,) = _errors(items)
+        assert error.code == "stream_interrupted"
+        assert error.retryable is False
+        assert "{" not in error.message
+        assert 'finish_reason "error"' in error.message
+        assert '"finish_reason": "error"' in error.detail
+        assert gateway.requests == 1
+
+    async def test_finish_reason_error_alone_before_output_is_a_bad_gateway(self) -> None:
+        gateway = _Gateway(lambda _: _finished_in_error())
+        (error,) = await _stream(gateway.client(retries=0))
+
+        assert isinstance(error, ProviderError)
+        assert error.code == "bad_gateway"
+        assert error.retryable is True
+        assert "{" not in error.message
+
+    async def test_a_null_error_beside_choices_is_a_normal_chunk(self) -> None:
+        chunk = _event(
+            {
+                "id": "c1",
+                "error": None,
+                "choices": [{"index": 0, "delta": {"content": "hello"}, "finish_reason": None}],
+            }
+        )
+        gateway = _Gateway(lambda _: chunk + _text("", finish="stop") + _DONE)
+        items = await _stream(gateway.client())
+
+        assert not _errors(items)
+        assert _shown(items) == "hello"
+
+    async def test_the_off_turn_calls_get_the_same_error(self) -> None:
+        gateway = _Gateway(
+            lambda _: _text("Looks fine") + _openrouter_error("Provider disconnected") + _DONE
+        )
+        client = gateway.client(retries=2)
+        try:
+            result = await complete_streamed(client, _request())
+        finally:
+            await client.close()
+
+        # Before the fix the review read "Looks fine" as its verdict.
+        assert isinstance(result, ProviderError)
+        assert result.code == "stream_interrupted"
+        assert gateway.requests == 1
+
+
 class TestStreamEnd:
     async def test_no_finish_reason_and_no_done_is_interrupted(self) -> None:
         gateway = _Gateway(lambda _: _text("The answer is ") + _text("forty"))
@@ -404,6 +523,22 @@ class TestTurn:
             e.delta for e in session.event_log.all_events if isinstance(e, AssistantDelta)
         )
         assert "I encountered an error" in shown
+        assert gateway.requests == 1
+
+    async def test_an_openrouter_error_event_fails_the_turn(self, tmp_path: Path) -> None:
+        gateway = _Gateway(
+            lambda _: (
+                _text("The fix is ")
+                + _openrouter_error("Provider disconnected unexpectedly")
+                + _DONE
+            )
+        )
+        session, (turn,) = await _run_turns(tmp_path, gateway, "fix it")
+
+        # Before the fix: TurnComplete(failed=False) and the cut-off text kept.
+        assert turn.failed is True
+        assert turn.error_code == "stream_interrupted"
+        assert all("The fix is" not in m for m in _assistant_messages(session))
         assert gateway.requests == 1
 
     async def test_a_body_that_just_ends_fails_the_turn(self, tmp_path: Path) -> None:
