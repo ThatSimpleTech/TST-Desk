@@ -16,7 +16,12 @@ from typing import Any
 import httpx
 
 from tests.test_compaction import pad, run_session, tiny_config
+from tests.test_context_fit import _forge_config, _run
+from tests.test_loop import wait_for_turn
+from tstd.compaction import compact_on_request
+from tstd.context.tokens import HeuristicTokenCounter
 from tstd.context_fit import transcript_failure_text
+from tstd.mock import MockProvider, Script
 from tstd.protocol import ContextCompacted
 from tstd.provider import (
     ChatCompletionRequest,
@@ -30,6 +35,9 @@ from tstd.provider import (
     wire_messages,
 )
 from tstd.scheduler.retry import is_transient_failure
+from tstd.session import Session
+
+COUNTER = HeuristicTokenCounter()
 
 # What LiteLLM relayed from llama.cpp on 2026-10-14 (ezer-forge, Qwen3.8).
 LITELLM_TEMPLATE_500 = {
@@ -238,6 +246,74 @@ async def test_request_after_a_real_compaction_passes_the_strict_template(
     assert "Test workspace steering" in sent[0]["content"]
     assert "[Earlier conversation compacted]" in sent[0]["content"]
     await runner.cancel()
+
+
+def _one_system_message_first(sent: list[dict[str, Any]]) -> None:
+    strict_template(sent)
+    assert [m["role"] for m in sent].count("system") == 1
+    assert sent[0]["role"] == "system"
+
+
+def test_real_from_here_compaction_goes_out_with_one_system_message() -> None:
+    """TD-5154: the real ``compact_on_request(..., from_position=...)``
+    output, not a hand-built copy, through ``wire_messages`` and the
+    template's checks, from every user turn of the conversation."""
+    original = _turns(3)
+    positions = [i for i, m in enumerate(original) if m.role == "user"]
+    assert positions == [1, 3, 5]
+    for position in positions:
+        result = compact_on_request(
+            original, COUNTER, guidance="keep the answers", from_position=position
+        )
+        assert result is not None, position
+        compacted, stats = result
+        # What is stored: the summary is a second system message, after the
+        # turns kept verbatim and with nothing after it yet.
+        assert [m.role for m in compacted].count("system") == 2
+        assert compacted[-1].role == "system"
+        assert stats.dropped_messages == len(original) - position
+
+        compacted.append(ChatMessage(role="user", content="carry on"))
+        wire = wire_messages(compacted)
+        assert [m.role for m in wire].count("system") == 1 and wire[0].role == "system"
+        assert wire[1:-1] == original[1:position]  # earlier turns go out verbatim
+        sent = body_messages(compacted)
+        _one_system_message_first(sent)
+        # Right after the prompt the summary joins it; after kept turns it
+        # goes ahead of the next user message.
+        summary = sent[0]["content"] if position == 1 else sent[-1]["content"]
+        assert summary.startswith("PROMPT\n\n[Earlier" if position == 1 else "[Earlier")
+        assert "keep the answers" in summary
+        assert sent[-1]["content"].endswith("carry on")
+        assert (sent[-1]["content"] == "carry on") == (position == 1)
+
+
+async def test_summarize_from_here_then_a_turn_passes_the_strict_template(
+    tmp_path: Path,
+) -> None:
+    """End to end: three turns, "Summarize from here" on the second, and
+    the next request the loop sends has one system message, first."""
+    mock = MockProvider(default=Script(kind="stream", content="ok"))
+    session = Session(str(tmp_path))
+    runner = await _run(session, mock, _forge_config(), tmp_path)
+    try:
+        for n in range(3):
+            await session.add_user_message(f"question {n}")
+            await wait_for_turn(session, n + 1, 15.0)
+        assert await session.compact_now("keep question 2", user_index=1) is None
+        await session.add_user_message("question 3")
+        await wait_for_turn(session, 4, 15.0)
+    finally:
+        await runner.cancel()
+
+    stored = mock.calls[-1].messages
+    assert [m.role for m in stored].count("system") == 2  # what used to go out
+    sent = mock.calls[-1].to_dict()["messages"]
+    _one_system_message_first(sent)
+    users = [m["content"] for m in sent if m["role"] == "user"]
+    assert users[0] == "question 0"
+    assert users[-1].startswith("[Earlier conversation compacted] (2 user turns)")
+    assert users[-1].endswith("\n\nquestion 3")
 
 
 # ── A template refusal fails once, in plain words ────────────────────
