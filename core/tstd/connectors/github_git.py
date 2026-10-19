@@ -14,6 +14,7 @@ import sys
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
+from ..git_safe import git_command
 from ..logging import redact_secrets
 from ..tools.shell import sanitized_env
 from .github_models import GithubError, require_owner
@@ -60,7 +61,7 @@ def git_argv(
     require_owner(repo)
     helper = "!" + shlex.quote(executable) + " -m tstd.connectors.github_credential"
     url = f"https://{web_host}/{owner}/{repo}.git"
-    prefix = ["git", "-c", "credential.helper=", "-c", f"credential.helper={helper}"]
+    prefix = git_command("-c", "credential.helper=", "-c", f"credential.helper={helper}")
     if action == "clone":
         return [*prefix, "clone", "--", url, dest]
     if action == "fetch":

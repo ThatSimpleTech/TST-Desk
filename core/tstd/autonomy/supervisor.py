@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..git_safe import git_command
 from ..logging import get_logger
 from ..proc_lifecycle import finish_subprocess
 from ..provider import ChatCompletionRequest, ChatMessage, ProviderError
@@ -366,10 +367,7 @@ async def _git(workspace: Path, *args: str) -> tuple[int, str]:
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            "git",
-            "-C",
-            str(workspace),
-            *args,
+            *git_command("-C", str(workspace), *args),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=sanitized_env(),
