@@ -343,7 +343,7 @@ exactly what it saw before.
 `MACHINE_PEER_VERBS` is the session verbs a hub needs (list, attach, detach, send, stop, the
 approval answers, verify, new and fork, branch, tier, plan, preset, rename, star, archive,
 delete, end, the instruction stack, the memory answers, `read_artifact_chunk` for a sent
-file's bytes) plus the self `remove_remote_device`.
+file's bytes, `compact_context`) plus the self `remove_remote_device`.
 Each was checked for a way to turn approvals off; the approval switches themselves
 (`set_skip_all_approvals`, `set_grok_mode`, `approve_grok_plan`, `start_autonomy`) and every
 key, credential, pairing, policy-rule, job, computer-use and machine-wide verb are not in it.
@@ -410,7 +410,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `user_message` | yes | Queue a user turn for the session's loop. |
 | `fork_from` | yes | Replace a past user turn and fork a sibling from there. `user_index` counts user turns from the start of the session and is mapped through compaction summaries; a turn inside one is refused with `user_turn_compacted` (TD-5147). Refused mid-turn. |
 | `set_branch` | yes | Switch to another sibling at a forked user turn, numbered and refused like `fork_from` (`user_turn_compacted` once that turn is inside a summary, TD-5147). Refused mid-turn. |
-| `compact_context` | yes | Compact now: everything before the latest user turn, or from a given user turn on, with optional guidance (TD-5109). Refused mid-turn. |
+| `compact_context` | yes | Compact now: everything before the latest user turn, or from a given user turn on, with optional guidance (TD-5109). Refused mid-turn. The compacted conversation is saved before `context_compacted` goes out, so it survives a restart. Forwarded for bridged ids (TD-5154). |
 | `approve` | yes | Approve a parked tool call. |
 | `deny` | yes | Deny a parked tool call, with an optional reason. |
 | `always_allow` | yes | Approve and save the narrowest policy rule that would have allowed it, with glob characters made literal. Refused for class-C calls (`class_c_not_always_allowable`), and with `not_always_allowable` for a chained shell command or one policy cannot split with confidence (TD-5101). While the workspace config is not trusted (TD-5113) it approves the call once, saves nothing and replies `workspace_config_untrusted`. When an `ask` or `never` rule with the same tool and args is saved, it saves nothing, approves the call once (`ask`) or denies it (`never`), and replies `policy_rule_stricter` (TD-5149). |

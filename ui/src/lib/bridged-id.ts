@@ -53,6 +53,7 @@ export const BRIDGED_VERBS: ReadonlySet<string> = new Set([
   "new_session",
   "fork_from",
   "set_branch",
+  "compact_context", // TD-5154: /compact and "Summarize from here" on another computer
   "set_tier",
   "set_plan",
   "set_session_preset",

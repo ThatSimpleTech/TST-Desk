@@ -642,32 +642,52 @@ async def retry_stream(
     while True:
         stream = open_stream()
         try:
-            first = await anext(stream)
-        except StopAsyncIteration:
+            try:
+                first = await anext(stream)
+            except StopAsyncIteration:
+                return
+
+            if isinstance(first, ProviderError) and _should_retry(
+                first, attempts, config, retry_if
+            ):
+                attempts += 1
+                delay = retry_delay(attempts, config, first.retry_after)
+                log.warning(
+                    "provider stream connection failed, retrying",
+                    extra={
+                        "extra_fields": {
+                            "attempt": attempts,
+                            "max_retries": config.max_retries,
+                            "code": first.code,
+                            "status_code": first.status_code,
+                            "delay": f"{delay:.2f}s",
+                        }
+                    },
+                )
+                # Hang up before the wait: a stalled attempt still holds its
+                # connection, and the server generates behind it (TD-5154).
+                await aclose_stream(stream)
+                await asyncio.sleep(delay)
+                continue
+
+            yield first
+            async for item in stream:
+                yield item
             return
+        finally:
+            # Every attempt is closed here, in order, the moment it is done
+            # with: a stream yields its error from inside the response's
+            # ``async with``, so one left to the garbage collector kept the
+            # connection open and was closed by asyncio's finalizer, which
+            # closes the nested generators in no fixed order (TD-5154).
+            await aclose_stream(stream)
 
-        if isinstance(first, ProviderError) and _should_retry(first, attempts, config, retry_if):
-            attempts += 1
-            delay = retry_delay(attempts, config, first.retry_after)
-            log.warning(
-                "provider stream connection failed, retrying",
-                extra={
-                    "extra_fields": {
-                        "attempt": attempts,
-                        "max_retries": config.max_retries,
-                        "code": first.code,
-                        "status_code": first.status_code,
-                        "delay": f"{delay:.2f}s",
-                    }
-                },
-            )
-            await asyncio.sleep(delay)
-            continue
 
-        yield first
-        async for item in stream:
-            yield item
-        return
+async def aclose_stream(stream: object) -> None:
+    """Close an async generator now. A plain iterator has nothing to close."""
+    close = getattr(stream, "aclose", None)
+    if close is not None:
+        await close()
 
 
 class StreamingClient(Protocol):
@@ -696,9 +716,7 @@ async def complete_streamed(
     finally:
         # Close it on an early return too; an abandoned generator is
         # otherwise closed only when it is collected.
-        aclose = getattr(stream, "aclose", None)
-        if aclose is not None:
-            await aclose()
+        await aclose_stream(stream)
 
 
 async def collect_stream(
@@ -1327,8 +1345,15 @@ class ProviderClient:
                     retryable=True,
                 )
 
-        async for chunk in retry_stream(_stream_once, self.retry_config, _retry_filter(request)):
-            yield chunk
+        attempts = retry_stream(_stream_once, self.retry_config, _retry_filter(request))
+        try:
+            async for chunk in attempts:
+                yield chunk
+        finally:
+            # ``async for`` does not close what it iterates. A consumer that
+            # stops early (an error handed on, Stop) closes this generator,
+            # and the hang-up has to reach the attempt and its response now.
+            await aclose_stream(attempts)
 
     def _stall_error(
         self, past_total: bool, yielded_any: bool, *, socket: bool = False

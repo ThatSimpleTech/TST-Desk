@@ -50,6 +50,17 @@ describe("refusedForBridged", () => {
     expect(refusedForBridged(msg)).toBe(false);
   });
 
+  // TD-5154: /compact, "Summarize from here" and the gauge's Compact button
+  // were dropped here for another computer's session, so they did nothing.
+  it("lets compact_context through for a bridged session", () => {
+    for (const msg of [
+      { type: "compact_context", session_id: BRIDGED },
+      { type: "compact_context", session_id: BRIDGED, guidance: "keep tests", user_index: 2 },
+    ]) {
+      expect(refusedForBridged(msg as ClientMessageUnion)).toBe(false);
+    }
+  });
+
   it("drops a local-only verb that names a bridged session", () => {
     for (const type of ["read_text_file", "list_artifacts", "set_design_mode", "open_in_terminal"]) {
       const msg = { type, session_id: BRIDGED } as unknown as ClientMessageUnion;

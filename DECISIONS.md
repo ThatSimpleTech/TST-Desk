@@ -14683,3 +14683,78 @@ cut by the provider or resent smaller after a timeout.
 tokenizes denser than prose); dropping the newest diffs first (the newest
 write is what the turn ended on); summarizing the cut material with a
 model call (a second slow call to save the first); a new estimator.
+
+## 2026-10-19 — TD-5154: local-model batch follow-ups (Class B)
+
+From the review of PR #10 (TD-5102, 5104, 5105, 5106, 5109, 5141).
+
+**`compact_context` is forwarded, not hidden.** On a session that lives
+on another computer (TD-5015) the window's send gate dropped the verb,
+so `/compact` toasted "A turn is running" with nothing running, and
+"Summarize from here" and the gauge's button did nothing. The verb now
+sits in `MACHINE_PEER_VERBS` next to `fork_from` and `set_branch`, so
+it is in `FORWARDED_VERBS` and the window's `BRIDGED_VERBS` too. It
+rewrites only that session's model context and its refusals are the
+same as on the computer itself; nothing in it can loosen an approval,
+which is the test every machine-peer verb passed. Hiding the controls
+on bridged sessions was the other option the review named; it removes a
+working feature to avoid a fix of one line per side. A computer still on
+an older build answers `not_allowed`, which the window shows as a toast
+from that computer ("Another computer can't do that here").
+
+**One call for every compact control.** `requestCompact` in the chat
+store shell sends `compact_context` and, when the send never left,
+toasts the real reason: a running turn, or no connection. The daemon's
+own refusals still arrive as error frames with their own copy. Before,
+only `/compact` handled a false return, always with the running-turn
+text.
+
+**Saved before the event.** `Session.compact_now` changed the
+conversation in memory only; `conversation.json` kept the old one until
+the next turn ended, so a restart in between brought back every turn
+the user had just folded. It now calls `conversation_changed()` before
+it sends `context_compacted`, so a window (or a hub) that hears of the
+compaction can rely on it being on disk. The loop's automatic
+compaction already saved with the turn.
+
+**`stream_stalled` is transient for the scheduler.** It is TD-5106's
+code for a provider that went quiet past `stream_idle_timeout`, or past
+`read_timeout` mid-stream, which used to surface as `timeout` before
+the response began or `stream_interrupted` after. It is the same wait
+as `timeout`, which the scheduler already retries, and the work check
+already treats it as a timeout. A scheduled run that stalls now tries
+again after `retry_delay` instead of waiting for its next regular slot.
+The reason a turn does not retry a mid-reply stall (shown text would be
+repeated) does not apply to a later, separate run.
+
+**Stream attempts close at once.** `_stream_once` yields its error from
+inside the response's `async with`. `retry_stream` neither closed a
+failed attempt before retrying nor closed the attempt when it was
+itself closed, and `chat_completion_stream`'s `async for` did not close
+`retry_stream`. So a stalled attempt kept its connection open (and the
+server kept generating) until asyncio's async-generator finalizer ran.
+When the chain was still alive at loop shutdown, `shutdown_asyncgens`
+closed the four nested generators concurrently and in no fixed order,
+which raises "generator didn't stop after athrow()" and can leave one
+suspended to be finalized after its loop is closed: an unraisable
+`RuntimeError`, which pyproject turns into a test error. That is the
+likely cause of the one-off failure of
+`test_an_off_turn_stall_is_returned_not_resent`. That one failure did
+not come back on demand. A probe that holds the chain alive to loop
+shutdown, with the heap shuffled so the close order varies, hit the
+closing error in 11 of 25 runs on the old code and 0 of 25 on the new. Now `retry_stream` closes each attempt in a `finally` (and before
+the retry delay), and `chat_completion_stream` closes `retry_stream` in
+a `finally`, so the hang-up reaches the server when the error is handed
+on, in order. Tests watch the response body's `aclose`.
+
+**HTTP MCP request ids are taken explicitly.** `call_tool` read
+`_next_id` and trusted `request()` to take the same number. On Python
+3.11 `asyncio.wait_for` starts the request in a new task, so a second
+concurrent call read the same id first and its cancel notice named the
+other call's request. `call_tool` now takes the id and passes it to a
+private `_request`; `request()` keeps its signature.
+
+**Rejected:** dropping `compact_context` from the UI on bridged
+sessions (above); wrapping each stream consumer in `aclosing` instead of
+closing inside the provider (every caller would have to remember it,
+and `retry_stream` would still leak its failed attempts).

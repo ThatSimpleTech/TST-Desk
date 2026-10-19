@@ -1225,7 +1225,9 @@ total_timeout: 3600        # no single reply runs past an hour
 A stall before any output is retried under `provider_retry`, so with the default three retries
 a dead server costs up to four waits of `read_timeout` (or `stream_idle_timeout` when the
 server pings). Lower `provider_retry.max_retries` with long timeouts. The after-write review
-and memory distillation never resend a stall (TD-5146), so they wait once.
+and memory distillation never resend a stall (TD-5146), so they wait once. A scheduled job
+whose turn ends as `stream_stalled` failed for a transient reason, like a timeout, so a job
+with `retries` tries again after its `retry_delay` (TD-5154).
 
 To ground computer-use clicks on the same loopback server, set
 `computer_use.grounding.base_url` to that `/v1` URL (or a dedicated
