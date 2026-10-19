@@ -236,7 +236,8 @@ updates, sessions that revive from disk after a restart or a closed window (clos
 below), headless runs via `tst run`, computer-use — a screenshot and clicks through the
 same classifier, behind a kill switch — on macOS, Windows, and Linux X11 via `tst-cu-mcp` (browser
 path on any OS), the agent sends files to the chat (`send_file`) as cards you can open, save,
-or download to the paired phone, where an APK opens the installer, remote attach over
+or download to the paired phone, where an APK opens the installer, steering edits the agent
+proposes (`propose_steering_edit`) as a diff that only your Accept writes, remote attach over
 Tailscale (never `0.0.0.0`) with Slack/ntfy notify
 and the scheduler rail, the `vllm` preset and UI-TARS grounding for local pixel loops,
 a validating `CHARTER.md` schema and the project-home charter editor, the

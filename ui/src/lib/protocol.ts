@@ -437,6 +437,28 @@ export interface MemoryReject extends ClientMessage {
   proposal_id: string;
 }
 
+/** Write an agent-proposed steering edit as proposed (TD-5140). Loopback only. */
+export interface SteeringAccept extends ClientMessage {
+  type: "steering_accept";
+  session_id: string;
+  proposal_id: string;
+}
+
+/** Write an agent-proposed steering edit with the user's own text (TD-5140). */
+export interface SteeringEdit extends ClientMessage {
+  type: "steering_edit";
+  session_id: string;
+  proposal_id: string;
+  content: string;
+}
+
+/** Reject an agent-proposed steering edit. Writes nothing; logged (TD-5140). */
+export interface SteeringReject extends ClientMessage {
+  type: "steering_reject";
+  session_id: string;
+  proposal_id: string;
+}
+
 /** Run distill for this session (TD-2302). Not a kill. */
 export interface EndSession extends ClientMessage {
   type: "end_session";
@@ -964,6 +986,9 @@ export type ClientMessageUnion =
   | MemoryAccept
   | MemoryEdit
   | MemoryReject
+  | SteeringAccept
+  | SteeringEdit
+  | SteeringReject
   | EndSession
   | Shutdown
   | Drain
@@ -1166,6 +1191,10 @@ export interface PolicyRuleSummary {
   tool: string;
   args: string;
   effect: "auto" | "ask" | "never";
+  /** The one text `args` matches when it has no wildcard, with Always
+   *  allow's escapes read back (`app/[[]id]/page.tsx` → `app/[id]/page.tsx`).
+   *  Null for a glob; absent from an older daemon (TD-5149). */
+  exact?: string | null;
 }
 
 export interface ApprovalRequest extends DaemonEvent {
@@ -1407,6 +1436,8 @@ export interface AutonomySummary extends DaemonEvent {
   changed: string[];
   refusals: string[];
   ledger_excerpt: string;
+  /** TD-5140: steering edits the run proposed, waiting for the user. */
+  steering_proposals?: string[];
 }
 
 export interface MemoryFileDiff {
@@ -1423,6 +1454,39 @@ export interface MemoryProposal extends DaemonEvent {
   session_id: string;
   proposal_id: string;
   files: MemoryFileDiff[];
+}
+
+/** One file in a steering proposal or decision (TD-5140). Path is workspace-relative. */
+export interface SteeringFileDiff {
+  action: "create" | "replace";
+  path: string;
+  diff: string;
+  before?: string | null;
+  after?: string | null;
+}
+
+/** The agent proposed a steering edit; nothing is written until the user decides (TD-5140). */
+export interface SteeringProposal extends DaemonEvent {
+  type: "steering_proposal";
+  session_id: string;
+  proposal_id: string;
+  files: SteeringFileDiff[];
+  tool_call_id?: string;
+  /** A stale proposal this fresh diff supersedes. */
+  replaces?: string | null;
+  /** Parked by an unattended run for its summary. */
+  autonomy?: boolean;
+}
+
+/** The user's decision on a steering proposal, with its diff (TD-5140).
+ *  `expired` is the daemon's: a restart dropped the open proposal and it was
+ *  closed when the session was restored, writing nothing. */
+export interface SteeringDecision extends DaemonEvent {
+  type: "steering_decision";
+  session_id: string;
+  proposal_id: string;
+  decision: "accepted" | "edited" | "rejected" | "expired";
+  files: SteeringFileDiff[];
 }
 
 export interface MemoryStackEntry {
@@ -1985,8 +2049,11 @@ export interface ContextCompacted extends DaemonEvent {
   kept_messages: number;
   tokens_before: number;
   tokens_after: number;
-  /** What asked for it (TD-5109); older daemons omit it, meaning "auto". */
-  trigger?: "auto" | "manual" | "from_here";
+  /** What asked for it (TD-5109); older daemons omit it, meaning "auto".
+   *  `inflight_trim` is not compaction: the loop trimmed this turn's tool
+   *  results, no message left, and `dropped_messages` counts the results
+   *  trimmed (TD-5150). */
+  trigger?: "auto" | "manual" | "from_here" | "inflight_trim";
   guidance?: string | null;
 }
 
@@ -2293,6 +2360,8 @@ export type DaemonEventUnion =
   | AutonomyStart
   | AutonomySummary
   | MemoryProposal
+  | SteeringProposal
+  | SteeringDecision
   | SessionList
   | PolicyRules
   | SetupState

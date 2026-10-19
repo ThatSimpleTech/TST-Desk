@@ -312,6 +312,16 @@ describe("notification routing", () => {
     expect(toasts[0].body).toBe(message);
   });
 
+  it("Always allow that would replace the user's own rule is a readable toast (TD-5149)", () => {
+    const message =
+      "Approved once. The rule `fs_read: src/app.py` → ask in /w/.tst/config.yaml covers this call, so Always allow did not replace it. Revoke that rule in Settings → Policy if you want this call to run without asking.";
+    notifyEvent({ type: "error", code: "policy_rule_stricter", message, session_id: "s1", seq: 3 } as DaemonEventUnion);
+    expect(banners).toHaveLength(0);
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].title).toBe("Rule not saved");
+    expect(toasts[0].body).toBe(message);
+  });
+
   it("a refused Delete/Move becomes a toast, not a banner (TD-1715)", () => {
     // Nothing is broken and no other work is blocked — the session is simply
     // busy — so this must not raise a blocking banner.

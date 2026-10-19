@@ -2,7 +2,8 @@
 
 import { describe, it, expect } from "vitest";
 import { Timeline, eventToEntry, formatProgress, summarizeArguments, type TimelineEntry } from "./timeline";
-import type { DaemonEventUnion } from "./protocol";
+import type { ContextCompacted, DaemonEventUnion } from "./protocol";
+import fixtures from "./protocol-fixtures.json";
 
 function evt(e: DaemonEventUnion): DaemonEventUnion {
   return e;
@@ -568,3 +569,79 @@ describe("Timeline turns", () => {
     expect(t.entries[0].title).toBe("Turn 1");
   });
 });
+
+describe("in-turn trim vs compaction (TD-5150)", () => {
+  const trim = (over: Partial<ContextCompacted> = {}): DaemonEventUnion =>
+    evt({
+      type: "context_compacted",
+      session_id: "s1",
+      dropped_messages: 3,
+      kept_messages: 14,
+      tokens_before: 30500,
+      tokens_after: 29300,
+      trigger: "inflight_trim",
+      seq: 21,
+      ...over,
+    });
+
+  it("labels a trim as trimmed tool output, with the results and tokens freed", () => {
+    const row = eventToEntry(trim())!;
+    expect(row.kind).toBe("trim");
+    expect(row.id).toBe("trim:21");
+    // The numbers lead: a 200px pane (the phone) shows only the start.
+    expect(row.title).toBe("3 results · 1.2k tokens freed");
+    expect(row.preview).toBe("Trimmed tool output · 30500 → 29300 tokens");
+    expect(row.details).toMatchObject({
+      trimmed_results: 3,
+      tokens_freed: 1200,
+      tokens_before: 30500,
+      tokens_after: 29300,
+      trigger: "inflight_trim",
+    });
+    // Nothing was dropped, so the row does not say so.
+    expect(row.details).not.toHaveProperty("dropped_messages");
+    expect(row.preview).not.toContain("dropped");
+  });
+
+  it("says one result in the singular", () => {
+    expect(eventToEntry(trim({ dropped_messages: 1 }))!.title).toBe("1 result · 1.2k tokens freed");
+  });
+
+  it("says a small saving in plain tokens and a large one in k", () => {
+    expect(eventToEntry(trim({ tokens_before: 30500, tokens_after: 29860 }))!.title).toBe(
+      "3 results · 640 tokens freed",
+    );
+    expect(eventToEntry(trim({ tokens_before: 52000, tokens_after: 30000 }))!.title).toBe(
+      "3 results · 22k tokens freed",
+    );
+  });
+
+  it("keeps a real compaction a compaction", () => {
+    const row = eventToEntry(trim({ trigger: "auto", dropped_messages: 12, seq: 22 }))!;
+    expect(row.kind).toBe("compaction");
+    expect(row.title).toBe("Context compacted");
+  });
+
+  it("gives a trigger this build does not know the compaction title", () => {
+    const future = { trigger: "from_the_future" } as unknown as Partial<ContextCompacted>;
+    const row = eventToEntry(trim({ ...future, seq: 23 }))!;
+    expect(row.kind).toBe("compaction");
+    expect(row.title).toBe("Context compacted");
+  });
+
+  it("reads the daemon's own fixture as a trim", () => {
+    const row = eventToEntry(fixtures.context_compacted_inflight_trim as ContextCompacted)!;
+    expect(row.kind).toBe("trim");
+    expect(row.title).toBe("3 results · 1.2k tokens freed");
+  });
+
+  it("a dozen trims in a turn add no compaction rows", () => {
+    const t = bound();
+    t.push(trim({ trigger: "auto", dropped_messages: 8, kept_messages: 4, seq: 1 }));
+    for (let i = 0; i < 12; i++) t.push(trim({ seq: 2 + i, dropped_messages: 1 }));
+    const kinds = t.entries.map((e) => e.kind);
+    expect(kinds.filter((k) => k === "compaction")).toHaveLength(1);
+    expect(kinds.filter((k) => k === "trim")).toHaveLength(12);
+  });
+});
+

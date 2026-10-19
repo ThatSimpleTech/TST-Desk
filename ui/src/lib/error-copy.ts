@@ -349,5 +349,10 @@ export function daemonErrorCopy(code: string, message: string): NoticeSpec {
 			body: `${message} If it moved, open the new location with the folder picker and remove the stale entry from the workspace menu.`,
 		};
 	}
+	if (code === "policy_rule_stricter") {
+		// TD-5149: Always allow met the user's own ask or never rule for this
+		// call. The message says whether the call ran once or was refused.
+		return { severity: "toast", title: "Rule not saved", body: message };
+	}
 	return { severity: "toast", title: `Daemon error: ${code}`, body: message };
 }

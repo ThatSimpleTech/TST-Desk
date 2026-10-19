@@ -31,6 +31,8 @@ export function entryIcon(entry: TimelineEntry): IconName {
       return 'layers';
     case 'compaction':
       return 'archive';
+    case 'trim':
+      return 'ellipsis';
     case 'steering_reload':
       return 'retry';
     case 'approval':
@@ -53,6 +55,7 @@ export const KIND_LABELS: Record<EntryKind, string> = {
   approval: 'Approval',
   tier_switch: 'Tier switch',
   compaction: 'Compaction',
+  trim: 'Trim',
   steering_reload: 'Steering',
   error: 'Error',
   verify: 'Verify'
@@ -88,10 +91,18 @@ export function entryTone(entry: TimelineEntry): EntryTone {
         return 'warning';
       }
       return 'neutral';
+    case 'trim':
     case 'tool_call':
     default:
       return 'neutral';
   }
+}
+
+/** Rows that are bookkeeping, not events to act on, and draw muted. A
+ *  tool-heavy turn can trim its results a dozen times (TD-5150); those
+ *  rows must not read as loudly as a compaction. */
+export function isQuietEntry(entry: TimelineEntry): boolean {
+  return entry.kind === 'trim';
 }
 
 /** The right-hand readout of a turn header: what the daemon measured once

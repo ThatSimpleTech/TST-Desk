@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from ..git_safe import git_command
 from ..logging import get_logger, redact_secrets
 from ..protocol import AutonomySummary
+from ..steering_proposals import pending_paths
 from .checkpoint import auto_branch
 from .ledger import DecisionLedger, format_entry
 
@@ -71,6 +72,7 @@ async def build_wakeup_summary(session: Session) -> AutonomySummary:
         changed=changed,
         refusals=_refusals(session),
         ledger_excerpt=redact_secrets(excerpt),
+        steering_proposals=pending_paths(session),
         seq=1,
     )
 
@@ -98,6 +100,11 @@ def format_notify_text(summary: AutonomySummary) -> str:
         lines.extend(f"- {item}" for item in summary.refusals)
     else:
         lines.append("- (none)")
+    if summary.steering_proposals:
+        # TD-5140: parked for the user; the run never accepts one.
+        lines.append("")
+        lines.append("Steering edits waiting for you:")
+        lines.extend(f"- {item}" for item in summary.steering_proposals)
     lines.append("")
     lines.append("Ledger excerpt:")
     lines.append(summary.ledger_excerpt or "(none)")

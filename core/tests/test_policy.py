@@ -300,10 +300,12 @@ class TestAlwaysAllow:
         assert config.rules == [_rule("shell", "npm test", "auto")]
 
     def test_add_rule_replaces_same_tool_args(self) -> None:
-        config = PolicyConfig(rules=[_rule("shell", "npm test", "ask")])
-        add_rule(config, _rule("shell", "npm test", "auto"))
+        # Only ever tightening: an ask or never rule is not replaced by auto
+        # (TD-5149, tests/test_always_allow_stricter.py).
+        config = PolicyConfig(rules=[_rule("shell", "npm test", "auto")])
+        add_rule(config, _rule("shell", "npm test", "ask"))
         assert len(config.rules) == 1
-        assert config.rules[0].effect == "auto"
+        assert config.rules[0].effect == "ask"
 
     def test_remove_rule_by_tool_args(self) -> None:
         config = PolicyConfig(rules=[_rule("shell", "npm test"), _rule("fs_*", "src/**")])

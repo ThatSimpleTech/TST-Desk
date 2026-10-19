@@ -602,7 +602,9 @@ class TestAlwaysAllow:
             # It is listed and individually revocable.
             await ws.send(json.dumps({"type": "list_policy_rules", "session_id": session.id}))
             listed = await _recv_until(ws, "policy_rules")
-            assert listed["rules"] == [{"tool": "shell", "args": "npm test", "effect": "auto"}]
+            assert listed["rules"] == [
+                {"tool": "shell", "args": "npm test", "effect": "auto", "exact": "npm test"}
+            ]
 
             await ws.send(
                 json.dumps(

@@ -54,7 +54,8 @@ ELIDE_TARGET_FRACTION = 0.7
 
 @dataclass(frozen=True)
 class InTurnFit:
-    """What one in-turn elision did — carried on ContextCompacted.
+    """What one in-turn elision did — carried on ContextCompacted with
+    ``trigger="inflight_trim"`` (TD-5150).
 
     ``elided_results`` counts tool results whose middle was replaced.
     The messages themselves stay, so this is not compaction's

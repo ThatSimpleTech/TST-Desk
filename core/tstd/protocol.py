@@ -247,9 +247,12 @@ class AlwaysAllow(ClientMessage):
 
     Writes the narrowest policy rule for the call, then resolves the pending
     approval as approved.  Rejected with ``class_c_not_always_allowable``
-    when the call is a class-C decision.  While the workspace config is not
-    trusted (TD-5113) nothing is saved: the call is approved once and the
-    reply is ``workspace_config_untrusted``.
+    when the call is a class-C decision, and with ``not_always_allowable``
+    when it is a shell command chained from several commands or one policy
+    cannot split with confidence (TD-5101): one rule cannot cover it, so
+    the approval stays pending.  While the workspace config is not trusted
+    (TD-5113) nothing is saved: the call is approved once and the reply is
+    ``workspace_config_untrusted``.
     """
 
     type: Literal["always_allow"] = "always_allow"
@@ -705,6 +708,34 @@ class MemoryReject(ClientMessage):
     """Reject a distill proposal. Writes nothing (TD-2401)."""
 
     type: Literal["memory_reject"] = "memory_reject"
+    session_id: str
+    proposal_id: str
+
+
+class SteeringAccept(ClientMessage):
+    """Write a parked steering proposal as proposed (TD-5140).
+
+    The daemon writes the file, never ``fs_write``. Loopback only.
+    """
+
+    type: Literal["steering_accept"] = "steering_accept"
+    session_id: str
+    proposal_id: str
+
+
+class SteeringEdit(ClientMessage):
+    """Write a parked steering proposal with the user's edited text (TD-5140)."""
+
+    type: Literal["steering_edit"] = "steering_edit"
+    session_id: str
+    proposal_id: str
+    content: str
+
+
+class SteeringReject(ClientMessage):
+    """Reject a steering proposal. Writes nothing; logged (TD-5140)."""
+
+    type: Literal["steering_reject"] = "steering_reject"
     session_id: str
     proposal_id: str
 
@@ -1663,12 +1694,16 @@ class PolicyRuleSummary(BaseModel):
     """A saved policy rule, surfaced to clients (TD-803).
 
     ``(tool, args)`` is the identity used for individual revocation in
-    settings.
+    settings.  ``exact`` (TD-5149) is the one text ``args`` matches when it
+    has no wildcard, with Always allow's escapes read back
+    (``app/[[]id]/page.tsx`` → ``app/[id]/page.tsx``), so the window can
+    show the path a rule is for; ``None`` for a glob.
     """
 
     tool: str
     args: str
     effect: Literal["auto", "ask", "never"]
+    exact: str | None = None
 
 
 class ApprovalRequest(DaemonEvent):
@@ -1681,8 +1716,10 @@ class ApprovalRequest(DaemonEvent):
     ``proposed_always_allow`` (TD-803) is the rule that "always allow in
     this workspace" would write, or ``None`` when the call is a class-C
     decision that can never be always-allowed, or when the workspace config
-    is not trusted and no rule could be saved into it (TD-5113).  The client
-    shows it before the user commits to saving it.
+    is not trusted and no rule could be saved into it (TD-5113), or when an
+    ``ask`` or ``never`` rule with the same ``(tool, args)`` is saved and
+    Always allow would replace it (TD-5149).  The client shows it before
+    the user commits to saving it.
     """
 
     type: Literal["approval_request"] = "approval_request"
@@ -1863,7 +1900,13 @@ class TurnComplete(DaemonEvent):
 class ContextCompacted(DaemonEvent):
     """Emitted when older conversation turns are compacted to stay inside
     the tier's context window (TD-405). Never silent: the timeline shows
-    exactly what compaction did."""
+    exactly what compaction did.
+
+    ``trigger: "inflight_trim"`` (TD-5150) is not compaction: the loop
+    shortened the middles of this turn's tool results (TD-5010) and no
+    message left the conversation.  ``dropped_messages`` then counts the
+    tool results trimmed, and ``kept_messages`` is every message.  The
+    window shows it as a quieter "Trimmed tool output" row."""
 
     type: Literal["context_compacted"] = "context_compacted"
     session_id: str
@@ -1873,7 +1916,8 @@ class ContextCompacted(DaemonEvent):
     tokens_after: int = Field(ge=0)
     #: What compacted (TD-5109): the budget (``auto``), ``/compact`` or
     #: the gauge (``manual``), or "Summarize from here" (``from_here``).
-    trigger: Literal["auto", "manual", "from_here"] = "auto"
+    #: ``inflight_trim`` is the in-turn tool-result trim (TD-5150).
+    trigger: Literal["auto", "manual", "from_here", "inflight_trim"] = "auto"
     guidance: str | None = None
 
 
@@ -2003,6 +2047,54 @@ class MemoryProposal(DaemonEvent):
     files: list[MemoryFileDiff]
 
 
+class SteeringFileDiff(BaseModel):
+    """One file in a ``steering_proposal`` or ``steering_decision`` (TD-5140).
+
+    ``path`` is workspace-relative. ``before`` is null when the file does
+    not exist yet (``create``).
+    """
+
+    action: Literal["create", "replace"]
+    path: str
+    diff: str
+    before: str | None = None
+    after: str | None = None
+
+
+class SteeringProposal(DaemonEvent):
+    """The agent proposed a steering edit; nothing is written yet (TD-5140).
+
+    Shaped like ``memory_proposal``. ``replaces`` names a stale proposal
+    this fresh diff supersedes (the file changed before Accept).
+    ``autonomy`` marks one an unattended run parked for its summary.
+    """
+
+    type: Literal["steering_proposal"] = "steering_proposal"
+    session_id: str
+    proposal_id: str
+    files: list[SteeringFileDiff]
+    tool_call_id: str = ""
+    replaces: str | None = None
+    autonomy: bool = False
+
+
+class SteeringDecision(DaemonEvent):
+    """The user's decision on a steering proposal, with its diff (TD-5140).
+
+    ``accepted`` wrote the proposed text, ``edited`` wrote the user's own
+    text (the diff is what was written), ``rejected`` wrote nothing.
+    ``expired`` is the daemon's, not the user's: a restart dropped the open
+    proposal, so it was closed when the session was restored and nothing
+    was written.
+    """
+
+    type: Literal["steering_decision"] = "steering_decision"
+    session_id: str
+    proposal_id: str
+    decision: Literal["accepted", "edited", "rejected", "expired"]
+    files: list[SteeringFileDiff]
+
+
 class MemoryFileEntry(BaseModel):
     """One ``.tst/memory/`` file the Memory pane lists (TD-2601)."""
 
@@ -2068,6 +2160,9 @@ class AutonomySummary(DaemonEvent):
     changed: list[str] = Field(default_factory=list)
     refusals: list[str] = Field(default_factory=list)
     ledger_excerpt: str = ""
+    # TD-5140: steering edits the run proposed, waiting for the user's
+    # decision on the card. A run never accepts one by itself.
+    steering_proposals: list[str] = Field(default_factory=list)
 
 
 class ContextPinEntry(BaseModel):
@@ -3301,6 +3396,9 @@ ClientMessageT = Annotated[
     | MemoryAccept
     | MemoryEdit
     | MemoryReject
+    | SteeringAccept
+    | SteeringEdit
+    | SteeringReject
     | EndSession
     | Shutdown
     | Drain
@@ -3405,6 +3503,8 @@ DaemonEventT = Annotated[
     | AutonomyStart
     | AutonomySummary
     | MemoryProposal
+    | SteeringProposal
+    | SteeringDecision
     | SessionList
     | PolicyRules
     | SetupState
@@ -3499,6 +3599,9 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "memory_accept",
         "memory_edit",
         "memory_reject",
+        "steering_accept",
+        "steering_edit",
+        "steering_reject",
         "end_session",
         "shutdown",
         "drain",
@@ -3603,6 +3706,8 @@ _KNOWN_EVENT_TYPES = frozenset(
         "autonomy_start",
         "autonomy_summary",
         "memory_proposal",
+        "steering_proposal",
+        "steering_decision",
         "session_list",
         "policy_rules",
         "setup_state",
