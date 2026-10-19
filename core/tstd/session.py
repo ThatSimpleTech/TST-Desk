@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import uuid
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Iterator
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -306,6 +306,9 @@ class Session:
         # alive and spans the session's whole life (TD-1714) — so the count
         # is tracked here, off the one event that proves a turn ended.
         self._open_turns = 0
+        # After-write reviews running now (TD-5151). A review starts after
+        # ``turn_complete``, when no turn is open, so Stop counts these too.
+        self._open_reviews = 0
         self.event_log.subscribe(self._observe_turn_end)  # type: ignore[arg-type]
         # Set by the daemon when a persist backend is attached. The loop
         # calls conversation_changed after it mutates ``conversation``.
@@ -540,11 +543,12 @@ class Session:
         ``cancel`` ends the session. This does not. An idle session ignores
         it, so a click that lands as the turn finishes cannot kill the next
         one. A paused turn returns to ``running``; the loop then seals the
-        turn instead of continuing it.
+        turn instead of continuing it. A running after-write review is not
+        idle: Stop ends it (TD-5151).
         """
         if self.cancel_requested:
             return
-        if self._state == "running" and not self.turn_in_flight:
+        if self._state == "running" and not (self.turn_in_flight or self.review_in_flight):
             return
         if self._state not in ("running", "awaiting_approval", "paused"):
             return
@@ -584,6 +588,26 @@ class Session:
             for task in (cancel_wait, stop_wait):
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
+
+    # ── After-write review (TD-5151) ────────────────────────────────
+
+    @property
+    def review_in_flight(self) -> bool:
+        """True while an after-write review runs, so Stop reaches it."""
+        return self._open_reviews > 0
+
+    @contextlib.contextmanager
+    def review_open(self) -> Iterator[None]:
+        """Mark an after-write review as running for the ``with`` block."""
+        self._open_reviews += 1
+        try:
+            yield
+        finally:
+            self._open_reviews -= 1
+
+    async def wait_for_stop_turn(self) -> None:
+        """Block until Stop lands. Cancel does not end this wait."""
+        await self._stop_turn_event.wait()
 
     # ── Approvals (TD-802) ──────────────────────────────────────────
 

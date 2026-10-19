@@ -6,7 +6,9 @@ This is not the autonomy supervisor (TD-4201). No charter, no auto-revert.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AbstractContextManager
 from typing import Any, Literal, Protocol
 
 from ..config import ModelConfig, TierConfig
@@ -16,6 +18,7 @@ from ..logging import get_logger
 from ..protocol import VerifyResult
 from ..provider import (
     ChatCompletionRequest,
+    ChatCompletionResponse,
     ChatMessage,
     ProviderError,
     StreamChunk,
@@ -45,6 +48,9 @@ class CompletionClient(Protocol):
 
 ClientFor = Callable[[TierConfig], Awaitable[CompletionClient]]
 
+#: What the timeline says when Stop ended a running review (TD-5151).
+STOPPED_SUMMARY = "Verify stopped."
+
 _REVIEW_USER = (
     "Review the workspace diff and any test output. "
     "Reply with a first line of `verdict: pass` or `verdict: fail`, "
@@ -59,6 +65,18 @@ class VerifySession(Protocol):
     autonomy: bool
     workspace_path: str
     event_log: Any
+
+    @property
+    def turn_in_flight(self) -> bool: ...
+
+    @property
+    def stop_turn_requested(self) -> bool: ...
+
+    def acknowledge_stop_turn(self) -> None: ...
+
+    def review_open(self) -> AbstractContextManager[None]: ...
+
+    async def wait_for_stop_turn(self) -> None: ...
 
 
 def clear_turn_writes(session: object) -> None:
@@ -222,19 +240,25 @@ async def _park_ask(
         setattr(session, _ATTR_PENDING, False)
         setattr(session, _ATTR_RESUME, None)
         setattr(session, _ATTR_DENY, None)
-        await session.event_log.add(
-            VerifyResult(
-                session_id=session.id,
-                verdict="error",
-                summary="Verify skipped.",
-                cost=0.0,
-                pending=False,
-                seq=1,
-            )
-        )
+        await _report(session, "error", "Verify skipped.")
         clear_turn_writes(session)
 
     bind_ask_handlers(session, resume, deny)
+
+
+async def _report(
+    session: VerifySession, verdict: VerifyVerdict, summary: str, cost: float = 0.0
+) -> None:
+    await session.event_log.add(
+        VerifyResult(
+            session_id=session.id,
+            verdict=verdict,
+            summary=summary,
+            cost=cost,
+            pending=False,
+            seq=1,
+        )
+    )
 
 
 async def _run_validator(
@@ -250,9 +274,61 @@ async def _run_validator(
     task is cancelled (session cancel, quit) the hang-up ends the server's
     work too, and the tier's ``extra_body`` (low thinking on a local model)
     keeps a long diff review from running for minutes. A timed-out attempt
-    is reported, not resent. Stop does not reach this call: it runs after
-    ``turn_complete``.
+    is reported, not resent.
+
+    The review is open on the session for its whole span, so Stop reaches
+    it although it runs after ``turn_complete`` (TD-5151). Stop cancels
+    the call, which hangs up the stream, and the review is reported as
+    stopped with no verdict from the partial text.
     """
+    with session.review_open():
+        finished = await _review(session, config, tracker, client_for, assembler)
+    if finished:
+        return
+    await _report(session, "error", STOPPED_SUMMARY)
+    # A stop that also belongs to a turn (one running beside an ask-mode
+    # review, or queued behind this one) is the loop's to acknowledge.
+    if not session.turn_in_flight:
+        session.acknowledge_stop_turn()
+
+
+async def _call_unless_stopped(
+    session: VerifySession,
+    provider: CompletionClient,
+    request: ChatCompletionRequest,
+) -> ChatCompletionResponse | ProviderError | None:
+    """The validator call, or ``None`` when Stop ended it (TD-5151).
+
+    The call runs in a task of its own, so cancelling it closes the stream
+    in the task that opened it and the hang-up reaches the server. A stop
+    that landed as the turn ended skips the call.
+    """
+    if session.stop_turn_requested:
+        return None
+    call = asyncio.create_task(complete_streamed(provider, request))
+    stop = asyncio.create_task(session.wait_for_stop_turn())
+    try:
+        await asyncio.wait({call, stop}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        # Also on a session cancel or quit, which cancels this task.
+        pending = {task for task in (call, stop) if not task.done()}
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.wait(pending)
+    if call.cancelled():
+        return None
+    return call.result()
+
+
+async def _review(
+    session: VerifySession,
+    config: ModelConfig,
+    tracker: CostTracker,
+    client_for: ClientFor,
+    assembler: PromptAssembler,
+) -> bool:
+    """Assemble, call and report the review. False when Stop ended it."""
     diff = turn_diff(session) or "(no diff)"
     test_output = turn_test_output(session) or "(no test output)"
     try:
@@ -266,17 +342,8 @@ async def _run_validator(
             "verify assemble failed",
             extra={"extra_fields": {"session_id": session.id}},
         )
-        await session.event_log.add(
-            VerifyResult(
-                session_id=session.id,
-                verdict="error",
-                summary="Could not assemble the validator prompt.",
-                cost=0.0,
-                pending=False,
-                seq=1,
-            )
-        )
-        return
+        await _report(session, "error", "Could not assemble the validator prompt.")
+        return True
 
     validator_cfg = config.tier("validator")
     try:
@@ -286,17 +353,8 @@ async def _run_validator(
             "verify client failed",
             extra={"extra_fields": {"session_id": session.id, "error": str(e)}},
         )
-        await session.event_log.add(
-            VerifyResult(
-                session_id=session.id,
-                verdict="error",
-                summary=f"Validator client failed: {e}",
-                cost=0.0,
-                pending=False,
-                seq=1,
-            )
-        )
-        return
+        await _report(session, "error", f"Validator client failed: {e}")
+        return True
 
     request = ChatCompletionRequest(
         model=validator_cfg.require_slug(),
@@ -311,23 +369,16 @@ async def _run_validator(
         retry_on_timeout=False,
     )
     try:
-        response = await complete_streamed(provider, request)
+        response = await _call_unless_stopped(session, provider, request)
     except Exception as e:
         log.warning(
             "verify call raised",
             extra={"extra_fields": {"session_id": session.id, "error": str(e)}},
         )
-        await session.event_log.add(
-            VerifyResult(
-                session_id=session.id,
-                verdict="error",
-                summary=f"Validator call failed: {e}",
-                cost=0.0,
-                pending=False,
-                seq=1,
-            )
-        )
-        return
+        await _report(session, "error", f"Validator call failed: {e}")
+        return True
+    if response is None:
+        return False
 
     cost = 0.0
     if isinstance(response, ProviderError):
@@ -339,13 +390,5 @@ async def _run_validator(
             cost = tracker.record_off_turn("validator", response.usage, validator_cfg)
             await session.event_log.add(tracker.emit_cost_update(session.id))
 
-    await session.event_log.add(
-        VerifyResult(
-            session_id=session.id,
-            verdict=verdict,
-            summary=summary,
-            cost=cost,
-            pending=False,
-            seq=1,
-        )
-    )
+    await _report(session, verdict, summary, cost=cost)
+    return True

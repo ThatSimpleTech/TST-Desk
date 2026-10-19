@@ -217,7 +217,7 @@ class TestWorkCheck:
     async def test_cancelling_the_check_hangs_up(self, tmp_path: Path) -> None:
         """Ending the session or quitting closes the response: the server's hang-up.
 
-        Stop does not reach the check, which starts after ``turn_complete``.
+        Stop reaches the check too (TD-5151, tests/test_verify_stop.py).
         """
         opened = asyncio.Event()
         closed = asyncio.Event()
