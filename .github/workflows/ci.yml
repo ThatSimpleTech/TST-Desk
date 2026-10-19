@@ -159,3 +159,36 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # ── UI walk ─────────────────────────────────────────────────────────
+  # Clicks through the desktop window against a mock daemon. A new
+  # control fails until e2e/census.json is updated.
+
+  ui-walk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ui
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Walk the window
+        run: npm run test:e2e

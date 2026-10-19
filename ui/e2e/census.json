@@ -1,0 +1,205 @@
+{
+	"attach-menu": [
+		"Take a photo",
+		"Upload files"
+	],
+	"chat": [
+		"Attach a file or take a photo",
+		"Message composer",
+		"Send message"
+	],
+	"chat:session": [
+		"Attach a file or take a photo",
+		"Copy message as markdown",
+		"Edit message",
+		"Message composer",
+		"Model tier",
+		"Plan",
+		"Retry: resend your last message",
+		"Send message",
+		"Session preset",
+		"Summarize from here"
+	],
+	"decisions": [
+		"A",
+		"All",
+		"B",
+		"C",
+		"Close",
+		"Open the full ledger"
+	],
+	"doctor": [
+		"Close",
+		"Copy report",
+		"Re-run"
+	],
+	"more-views": [
+		"Plan",
+		"Preview",
+		"Stack",
+		"Usage"
+	],
+	"palette": [
+		"Attach to <session>",
+		"Check for updates Look for a newer TST Desk release",
+		"End session Distill this session into memory",
+		"New session Start a fresh session in this workspace",
+		"New window Open another window on the same daemon",
+		"Open decisions This session's decision ledger",
+		"Open in Terminal Resume this Grok session in the real TUI",
+		"Open plan Grok plan mode review and approve",
+		"Open preview Images, video, HTML, and loopback servers Grok produced",
+		"Open settings Appearance, model, policy, API key",
+		"Open stack The resolved instruction stack",
+		"Open work Session diffs as a reviewable stack",
+		"Quit TST Desk Shut down the daemon and leave no listener",
+		"Resume computer use Allow desktop actuation again",
+		"Run doctor Check the daemon, the key, and the provider",
+		"Search sessions and actions",
+		"Stop computer use Halt all desktop actuation immediately. Capture still works.",
+		"Toggle Design mode Point at the Screen frame instead of describing it (⌘⇧D)",
+		"Toggle theme Switch between light and dark"
+	],
+	"scheduled-form": [
+		"/Users/me/holidays.ics",
+		"Always run Skip if more than 30 min late Skip if more than 1 h late Skip if more than 2 h late Skip if more than 6 h late",
+		"Browse…",
+		"Create",
+		"Default 5 min 10 min 15 min 30 min 60 min",
+		"None",
+		"None 1 2 3",
+		"Parse",
+		"Save as template",
+		"Start from template",
+		"Use current Native Grok",
+		"Use current budget local tst-default vllm",
+		"every 2 hours in /home/me/proj summarize the inbox deliver to slack",
+		"holiday|PTO|OOO",
+		"weekdays at 7:45",
+		"window slack ntfy email",
+		"~/Documents/project"
+	],
+	"scheduled-list": [
+		"/Users/me/holidays.ics",
+		"Always run Skip if more than 30 min late Skip if more than 1 h late Skip if more than 2 h late Skip if more than 6 h late",
+		"Browse…",
+		"Create",
+		"Default 5 min 10 min 15 min 30 min 60 min",
+		"None",
+		"None 1 2 3",
+		"Parse",
+		"Save as template",
+		"Start from template",
+		"Use current Native Grok",
+		"Use current budget local tst-default vllm",
+		"every 2 hours in /home/me/proj summarize the inbox deliver to slack",
+		"holiday|PTO|OOO",
+		"weekdays at 7:45",
+		"window slack ntfy email",
+		"~/Documents/project"
+	],
+	"settings-nav": [
+		"API keys",
+		"About",
+		"Appearance",
+		"Budget",
+		"Computer use",
+		"Computers",
+		"Email",
+		"Engine",
+		"GitHub",
+		"MCP servers",
+		"Model",
+		"Phones and devices",
+		"Policy"
+	],
+	"settings:API keys": [
+		"Add source",
+		"OpenRouter, EZER, …",
+		"Paste API key",
+		"Remove",
+		"Test",
+		"http://127.0.0.1:8000/v1",
+		"preset URL"
+	],
+	"settings:About": [
+		"Check for updates",
+		"toggle"
+	],
+	"settings:Appearance": [
+		"Dark",
+		"Light",
+		"System",
+		"toggle"
+	],
+	"settings:Budget": [
+		"Clear",
+		"No budget",
+		"Save"
+	],
+	"settings:Computer use": [
+		"Add app",
+		"Background",
+		"Confidence threshold",
+		"Denied app name",
+		"Full control",
+		"Show explanation",
+		"TypeSafe Jev",
+		"Worker model",
+		"toggle"
+	],
+	"settings:Computers": [
+		"Add",
+		"Address and code",
+		"Paste link",
+		"tstdesk://pair?…"
+	],
+	"settings:Email": [
+		"Keychain only",
+		"SMTP",
+		"STARTTLS TLS",
+		"Save",
+		"Send test email",
+		"desk@example.com",
+		"owner@example.com",
+		"smtp.example.com",
+		"toggle"
+	],
+	"settings:Engine": [
+		"Grok Build Spawns your installed grok CLI over ACP. The CLI stays the engine — this window is a viewer. Auth stays in ~/.grok.",
+		"TST native The built-in three-tier loop. Uses your OpenAI-compatible presets and keys."
+	],
+	"settings:GitHub": [],
+	"settings:MCP servers": [
+		"Add argument",
+		"Add server",
+		"Remove",
+		"example",
+		"http",
+		"npx",
+		"stdio"
+	],
+	"settings:Model": [
+		"OpenRouter"
+	],
+	"settings:Phones and devices": [
+		"Older way: token",
+		"Pair A Phone",
+		"toggle"
+	],
+	"settings:Policy": [
+		"toggle"
+	],
+	"surfaces": [
+		"Artifacts",
+		"Home — you are here",
+		"Projects",
+		"Scheduled"
+	],
+	"tabs": [
+		"Activity",
+		"Files",
+		"More",
+		"Work"
+	]
+}

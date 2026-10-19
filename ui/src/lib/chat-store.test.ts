@@ -336,6 +336,16 @@ describe("retry (TD-1606)", () => {
     });
   });
 
+  it("still forks when called detached, as chat-store.svelte.ts exports it", () => {
+    const { store, sent } = boundStore();
+    store.sendUserMessage("first prompt");
+    store.applyEvent(delta("s1", "answer one"));
+    store.applyEvent(turnComplete("s1"));
+    const { retryLastUserMessage } = store;
+    expect(retryLastUserMessage()).toBe(true);
+    expect(sent[sent.length - 1]).toMatchObject({ type: "fork_from", user_index: 0 });
+  });
+
   it("refuses while a turn is running or awaiting approval", () => {
     const { store, state, sent } = boundStore();
     store.sendUserMessage("do the thing");
@@ -1482,6 +1492,28 @@ describe("fork (TD-1708)", () => {
     expect(state.messages).toHaveLength(1);
     expect(state.messages[0].text).toBe("first, edited");
     expect(state.messages[0].siblingCount).toBe(2);
+  });
+
+  it("the fork's user_turn takes the reset row instead of adding a second", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("first");
+    store.applyEvent(userTurn("s1", "t1", "first"));
+    store.applyEvent(delta("s1", "one"));
+    store.applyEvent(turnComplete("s1"));
+    expect(store.forkFrom(0, "first, again")).toBe(true);
+    store.applyEvent({
+      type: "conversation_reset",
+      session_id: "s1",
+      seq: 9,
+      user_index: 0,
+      sibling_index: 1,
+      sibling_count: 2,
+      content: "first, again",
+    });
+    store.applyEvent(userTurn("s1", "t2", "first, again"));
+    const users = state.messages.filter((m) => m.role === "user");
+    expect(users).toHaveLength(1);
+    expect(users[0]).toMatchObject({ turnId: "t2", siblingCount: 2 });
   });
 
   it("compactContext sends compact_context (TD-5109)", () => {

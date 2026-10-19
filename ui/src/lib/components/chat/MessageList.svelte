@@ -124,7 +124,10 @@
 <div class="list-wrap">
 	<div class="scroll" bind:this={scrollEl}>
 		<div class="sizer" style="height: {$virtualizer.getTotalSize()}px;">
-			{#each $virtualizer.getVirtualItems() as row (row.key)}
+			<!-- A fork or a branch switch shortens the list before the effect
+			     above re-counts the virtualizer, so for one render it can still
+			     hand back rows past the end, and a bubble with no message threw. -->
+			{#each $virtualizer.getVirtualItems().filter((row) => row.index < messages.length) as row (row.key)}
 				<div
 					class="row"
 					class:row--target={row.key === targetId}
