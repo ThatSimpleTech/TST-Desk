@@ -82,10 +82,23 @@ class HttpMcpClient:
         *,
         wait_seconds: float | None = None,
     ) -> Any:
-        if self._http is None:
-            self._http = httpx.AsyncClient(timeout=self._timeout + 5.0)
+        return await self._request(self._take_id(), method, params, wait_seconds=wait_seconds)
+
+    def _take_id(self) -> int:
         req_id = self._next_id
         self._next_id += 1
+        return req_id
+
+    async def _request(
+        self,
+        req_id: int,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        wait_seconds: float | None = None,
+    ) -> Any:
+        if self._http is None:
+            self._http = httpx.AsyncClient(timeout=self._timeout + 5.0)
         payload: dict[str, Any] = {"jsonrpc": "2.0", "id": req_id, "method": method}
         if params is not None:
             payload["params"] = params
@@ -132,10 +145,14 @@ class HttpMcpClient:
         timeout or a stopped turn sends ``notifications/cancelled``.
         """
         del on_progress
-        req_id = self._next_id  # request() takes this id before it awaits
+        # Taken here and passed in, so the cancel notice names this call's
+        # request. On 3.11 ``wait_for`` starts the request in a new task, and
+        # a call that read ``_next_id`` and trusted ``request()`` to take the
+        # same number shared it with a concurrent call (TD-5154).
+        req_id = self._take_id()
         try:
             return await asyncio.wait_for(
-                self.request("tools/call", {"name": name, "arguments": arguments or {}}),
+                self._request(req_id, "tools/call", {"name": name, "arguments": arguments or {}}),
                 timeout=self._timeout,
             )
         except TimeoutError:
