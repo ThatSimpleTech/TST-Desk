@@ -1509,6 +1509,19 @@ call is downgraded to `class_c_default` — you can loosen approvals for ordinar
 riskiest calls always come back to you (or are refused). "Always allow this in this workspace"
 in the approval card writes a rule here for you, and keeps the file trusted (§4.8).
 
+**Always allow saves a rule for that one call (TD-5149).** The rule names the exact path, or
+the one command, with any `*`, `?` or `[` in it made literal. A read of `app/[id]/page.tsx`
+saves `args: "app/[[]id]/page.tsx"`, which matches that file and no other, and a file literally
+named `*.env*` saves `"[*].env[*]"`, not a glob over every env file. Settings → Policy shows such
+a rule as `exactly app/[id]/page.tsx`, with the saved pattern on hover; a glob shows as written.
+
+- Always allow never replaces a rule you wrote. When an `ask` or `never` rule with the same
+  `tool` and `args` is saved, the card doesn't offer it. A click sent anyway (a card shown
+  before the rule was added) saves nothing: it runs the call once for `ask`, refuses it for
+  `never`, and says so. Revoke the rule first if you want the call to run without asking.
+- A wider `ask` or `never` rule, such as `*.env*`, still applies to the file Always allow saved
+  a rule for, because rules are deny first (below).
+
 **Reads inside the workspace never ask (TD-5141).** `fs_read`, `fs_list` and `fs_grep` on a
 path inside the workspace are Class A by a fixed rule, so they run without asking and without
 a model call to judge them. That includes `.env` and other secret files. A rule still wins, so

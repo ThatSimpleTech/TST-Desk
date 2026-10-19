@@ -518,7 +518,9 @@ FIXTURES = {
         decision_class="B",
         summary="Run `npm test`",
         reason="decision class B requires approval",
-        proposed_always_allow=PolicyRuleSummary(tool="shell", args="npm test", effect="auto"),
+        proposed_always_allow=PolicyRuleSummary(
+            tool="shell", args="npm test", effect="auto", exact="npm test"
+        ),
         seq=9,
     ),
     "decision_logged": DecisionLogged(
@@ -852,8 +854,15 @@ FIXTURES = {
     ),
     "policy_rules": PolicyRules(
         rules=[
-            PolicyRuleSummary(tool="shell", args="npm test", effect="auto"),
+            PolicyRuleSummary(tool="shell", args="npm test", effect="auto", exact="npm test"),
             PolicyRuleSummary(tool="fs_*", args="src/**", effect="ask"),
+            # TD-5149: Always allow escapes glob characters; `exact` reads them back.
+            PolicyRuleSummary(
+                tool="fs_write",
+                args="app/[[]id]/page.tsx",
+                effect="auto",
+                exact="app/[id]/page.tsx",
+            ),
         ]
     ),
     # Onboarding (TD-1101): connection-scoped, seq=1 like session_list/policy_rules.

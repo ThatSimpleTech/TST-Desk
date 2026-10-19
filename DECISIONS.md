@@ -14192,3 +14192,50 @@ longer record the call as it was asked.
 said A or B (a hardlink, a Windows-unsafe form) still shows the
 classifier's class on the event, because the event is written before the
 guard runs. Recorded as a follow-up on TD-5148.
+
+---
+
+## 2026-10-19 — TD-5149: Always allow never replaces a stricter rule; rules carry their exact text (Class B)
+
+**Decision:** `add_rule` raises `StricterRuleError` instead of replacing a
+saved rule with the same `(tool, args)` and a stricter effect (`never` >
+`ask` > `auto`), and leaves the config as it was. `stricter_rule` is the
+shared check: the session drops `proposed_always_allow` from the card when
+it finds one, and the daemon's `always_allow` handler checks it before the
+trust gate. A click that races the rule (the card was shown before the rule
+was added) saves nothing and is answered the way the rule says: an `ask`
+rule approves the call once, a `never` rule denies it. The reply is the new
+error code `policy_rule_stricter`, shown as a "Rule not saved" toast.
+`PolicyRuleSummary` gains `exact: str | None`, the one text `args` matches
+when it has no wildcard, with `[*]`, `[?]` and `[[]` read back
+(`policy.exact_text`). Settings → Policy and the card's tooltip show it as
+`exactly app/[id]/page.tsx`, with the raw pattern on hover; Revoke still
+sends the raw `(tool, args)`.
+
+**Rationale:** Found in the TD-5141 review. Always allow saved the call's
+raw summary, and `add_rule` deleted any rule with the same identity first,
+so a read of a file literally named `*.env*` wrote `fs_read: *.env* -> auto`
+over the documented guard rule. TD-5101 already escapes the summary, which
+closes that collision, but a plain path such as `src/app.py` still has the
+same text as a hand-written `ask` rule for it, and an `auto` rule beside it
+would do nothing (deny first). Refusing keeps the user's guard and tells
+them. Approving once on `ask` honours the yes that rule was asking for and
+matches TD-5113's race handling (the card has already left the window, so a
+parked call would have nothing to answer it); denying on `never` keeps a
+`never` rule absolute. `exact` is computed by the daemon because the window
+never derives truth it wasn't given (AGENTS §6); the "exactly" prefix keeps
+an escaped `app/[[]id]/page.tsx` from reading the same as a hand-written
+glob `app/[id]/page.tsx`, which matches `app/i/page.tsx` and not itself.
+
+**Alternatives rejected:** Asking in the card whether to replace the rule:
+the story allows refuse or ask, and refusing is the conservative choice that
+changes no rule the user wrote. Showing the escaped pattern unchanged: it is
+what the file holds, but `app/[[]id]/page.tsx` reads as noise. Stripping the
+escapes in the UI: the window would be parsing patterns it was not given.
+
+**Not changed:** A wider `ask` or `never` rule (such as `*.env*`) still
+wins over the exact `auto` rule Always allow saves for a file it matches,
+because rules are deny first (TD-5101). The card still offers Always allow
+there, and the saved rule has no effect while the wider rule stands.
+Recorded as a follow-up on TD-5149. The trust prompt (TD-5113) still lists a
+repo's rules as written in the file.

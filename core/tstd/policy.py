@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field, ValidationError
 from .autonomy.classifier import DecisionClass
 from .config import ConfigError
 from .policy_shell import split_command
+from .protocol import PolicyRuleSummary
 
 if TYPE_CHECKING:
     # Type hints only.  A runtime import would cycle: tools/__init__ →
@@ -614,13 +615,86 @@ def _literal(text: str) -> str:
     return "".join(f"[{c}]" if c in "*?[" else c for c in text)
 
 
+_ESCAPED = {f"[{c}]": c for c in "*?["}
+
+
+def exact_text(pattern: str) -> str | None:
+    """The one text *pattern* matches, or ``None`` when it is a real glob (TD-5149).
+
+    Reads :func:`_literal`'s escapes back, so a rule Always allow saved as
+    ``app/[[]id]/page.tsx`` shows as the path it was for, ``app/[id]/page.tsx``.
+    Any other ``*``, ``?`` or ``[`` makes it a glob.  ``ask`` and ``never``
+    rules also match the text in another case (TD-5141).
+    """
+    out: list[str] = []
+    i = 0
+    while i < len(pattern):
+        escaped = _ESCAPED.get(pattern[i : i + 3])
+        if escaped is not None:
+            out.append(escaped)
+            i += 3
+        elif pattern[i] in "*?[":
+            return None
+        else:
+            out.append(pattern[i])
+            i += 1
+    return "".join(out)
+
+
+def rule_summary(rule: PolicyRule) -> PolicyRuleSummary:
+    """A rule as clients see it, with its exact text when it has one (TD-5149)."""
+    return PolicyRuleSummary(
+        tool=rule.tool, args=rule.args, effect=rule.effect, exact=exact_text(rule.args)
+    )
+
+
+_STRICTNESS: dict[PolicyEffect, int] = {"auto": 0, "ask": 1, "never": 2}
+
+
+class StricterRuleError(ValueError):
+    """:func:`add_rule` refused to replace a stricter rule (TD-5149).
+
+    ``existing`` is the saved ``ask`` or ``never`` rule with the same
+    ``(tool, args)`` as the rule that was being added.
+    """
+
+    def __init__(self, existing: PolicyRule) -> None:
+        super().__init__(
+            f"policy rule {_named(existing)} → {existing.effect} is stricter, "
+            "and saving would replace it"
+        )
+        self.existing = existing
+
+
+def stricter_rule(config: PolicyConfig, rule: PolicyRule) -> PolicyRule | None:
+    """The saved rule with *rule*'s ``(tool, args)`` and a stricter effect (TD-5149).
+
+    ``never`` is stricter than ``ask``, which is stricter than ``auto``.
+    The strictest such rule, or ``None`` when adding *rule* loosens nothing.
+    """
+    same = [r for r in config.rules if (r.tool, r.args) == (rule.tool, rule.args)]
+    strictest = max(same, key=lambda r: _STRICTNESS[r.effect], default=None)
+    if strictest is None or _STRICTNESS[strictest.effect] <= _STRICTNESS[rule.effect]:
+        return None
+    return strictest
+
+
 def add_rule(config: PolicyConfig, rule: PolicyRule) -> PolicyConfig:
     """Add a rule, replacing any existing rule with the same ``(tool, args)``.
 
     Idempotent so re-affirming "always allow" for the same call doesn't pile
     up duplicate rules (they would shadow each other and make the settings
-    list noisy).
+    list noisy).  It never loosens one (TD-5149): replacing the user's
+    ``ask`` or ``never`` rule with an ``auto`` one would drop a guard they
+    wrote without telling them.
+
+    Raises:
+        StricterRuleError: A rule with the same ``(tool, args)`` has a
+            stricter effect.  *config* is left as it was.
     """
+    existing = stricter_rule(config, rule)
+    if existing is not None:
+        raise StricterRuleError(existing)
     config.rules = [r for r in config.rules if (r.tool, r.args) != (rule.tool, rule.args)]
     config.rules.append(rule)
     return config

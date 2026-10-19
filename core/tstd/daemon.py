@@ -174,8 +174,10 @@ from .policy import (
     load_skip_all,
     propose_always_allow,
     remove_rule,
+    rule_summary,
     save_policy,
     save_skip_all,
+    stricter_rule,
 )
 from .port_file import release_port_file
 from .protocol import (
@@ -287,7 +289,6 @@ from .protocol import (
     PairingCompleted,
     ParseJob,
     PolicyRules,
-    PolicyRuleSummary,
     ReadArtifactChunk,
     RemoteDeviceSummary,
     RemovePin,
@@ -2793,6 +2794,26 @@ class Daemon:
                     "A chained shell command can't be always-allowed: "
                     "each command needs its own rule in .tst/config.yaml",
                 )
+            # TD-5149: an ask or never rule saved for this same call is the
+            # user's guard, and Always allow never replaces it. The card is
+            # gone once the click lands, so the call is answered here: the
+            # ask rule was asking for this yes, a never rule refuses. Checked
+            # before the trust gate, so a never rule refuses there too.
+            stricter = stricter_rule(found.policy, rule)
+            if stricter is not None:
+                named = f"`{stricter.tool}: {stricter.args}` → {stricter.effect}"
+                allowed = stricter.effect == "ask"
+                found.resolve_approval(
+                    msg.tool_call_id, allowed, None if allowed else f"policy rule {named}"
+                )
+                return build_error(
+                    "policy_rule_stricter",
+                    f"{'Approved once' if allowed else 'Denied'}. The rule {named} in "
+                    f"{workspace_config_path(found.workspace_path)} covers this call, so "
+                    "Always allow did not replace it. Revoke that rule in Settings → Policy "
+                    "if you want this call to run without asking.",
+                    session_id=found.id,
+                )
             # TD-5113: never merge a rule into a config that is not in
             # force. Checked before add_rule, which edits the live policy.
             # The card offers no Always allow then; a click that races a
@@ -2837,10 +2858,7 @@ class Daemon:
                 )
             return PolicyRules(
                 seq=1,
-                rules=[
-                    PolicyRuleSummary(tool=r.tool, args=r.args, effect=r.effect)
-                    for r in found.policy.rules
-                ],
+                rules=[rule_summary(r) for r in found.policy.rules],
             ).model_dump_json()
 
         if isinstance(msg, RevokePolicyRule):
@@ -2872,10 +2890,7 @@ class Daemon:
                 await self._reapply_workspace_config(found.workspace_path)
             return PolicyRules(
                 seq=1,
-                rules=[
-                    PolicyRuleSummary(tool=r.tool, args=r.args, effect=r.effect)
-                    for r in found.policy.rules
-                ],
+                rules=[rule_summary(r) for r in found.policy.rules],
             ).model_dump_json()
 
         if isinstance(msg, SetSkipAllApprovals):

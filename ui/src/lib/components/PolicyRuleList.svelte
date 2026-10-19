@@ -8,6 +8,7 @@
 	// Three states, not two: rules live in a workspace, so "no session yet" is
 	// a different claim from "no rules saved" and reads differently.
 	import EmptyState from './EmptyState.svelte';
+	import { ruleArgsText } from '../approval';
 	import { staysOnCopy } from '../machines';
 	import { machineNameFor } from '../machines.svelte.js';
 	import { settings, revokeRule, setLoadGlobalMemory, setSkipAllApprovals } from '../settings.svelte.js';
@@ -74,13 +75,13 @@
 			<li class="rule">
 				<span class="rule-text">
 					<span class="rule-tool">{rule.tool}</span>
-					<span class="rule-args">{rule.args}</span>
+					<span class="rule-args" title={rule.args}>{ruleArgsText(rule)}</span>
 				</span>
 				<span class="rule-effect">{rule.effect}</span>
 				<button
 					class="revoke"
 					type="button"
-					aria-label="Revoke {rule.tool} {rule.args}"
+					aria-label="Revoke {rule.tool} {ruleArgsText(rule)}"
 					onclick={() => revokeRule(rule.tool, rule.args)}>Revoke</button
 				>
 			</li>
