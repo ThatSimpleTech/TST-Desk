@@ -1297,7 +1297,7 @@ autonomous session the container's `/workspace` counts as the workspace.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `spend_usd` | float ≥ 0 | `25.0` | Session spend, in dollars, that pauses the run. |
+| `spend_usd` | float ≥ 0 | `25.0` | Session spend, in dollars, that pauses the run. Settings → Budget writes this for the open workspace. Until it is set, the built-in $25 pause still applies and the title bar does not show a budget. |
 | `wall_clock_hours` | float ≥ 0 | `8.0` | Session runtime, in hours, that pauses the run. |
 | `max_iterations` | int ≥ 1 | `200` | Loop iterations that pause the run. |
 
@@ -1325,14 +1325,14 @@ charter breakers and do not take this check.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `max_file_bytes` | int ≥ 1 | `256000` | Size of one attached file. Measured on the file's real bytes, after decoding. |
-| `max_total_bytes` | int ≥ 1 | `512000` | Size of all the attachments on one message, added together. |
+| `max_file_bytes` | int ≥ 1 | `4000000` | Size of one attached file. Measured on the file's real bytes, after decoding. |
+| `max_total_bytes` | int ≥ 1 | `8000000` | Size of all the attachments on one message, added together. |
 | `max_count` | int ≥ 1 | `10` | Files on one message. |
 
-**Text files only.** Anything that is not valid UTF-8, or that contains a NUL byte, is refused
-as binary — a PNG, a PDF, a compiled binary, and a UTF-16 text file all land here. Images are
-deliberately out: vision support depends on which models you have chosen and needs capability
-detection first.
+**Text files, and images when the active tier has vision.** A file that is not valid UTF-8, or
+that contains a NUL byte, is refused as binary. A PDF, a compiled binary, and a UTF-16 text
+file land here. PNG, JPEG, GIF, and WebP are accepted when the active tier sets `vision: true`.
+The bytes are kept as they are. A file over `max_file_bytes` is refused whole.
 
 **These are enforced by the daemon, not by the composer.** The message-box refuses an oversize
 or binary file early, with copy that names the file, but that is a convenience. The same
@@ -1345,9 +1345,9 @@ half-sent, and the error says so. Attachments are also all-or-nothing within one
 bad file refuses the send rather than quietly delivering the rest.
 
 **There is a ceiling above these numbers.** The daemon's local websocket accepts frames up to
-1 MiB, and base64 adds a third to whatever you attach — so a `max_total_bytes` much above
-`700000` gives you a message the transport drops before the daemon can refuse it politely.
-Keep the total under that and the failure modes stay legible.
+16 MiB. Base64 adds about a third, so a `max_total_bytes` much above `12000000` is a message
+the transport drops before the daemon can refuse it with the copy above. The defaults sit
+under that ceiling: 8 MB of files is about 10.7 MB on the wire.
 
 ### 4.8 `memory` — how long a memory file may grow
 

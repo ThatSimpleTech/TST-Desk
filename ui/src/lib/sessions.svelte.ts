@@ -507,14 +507,11 @@ export function recencyLabel(iso: string, nowMs: number = Date.now()): string {
 	return new Date(then).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-/** Row subtitle: workspace, preset, recency — the "where and which model". */
-export function rowSubtitle(row: SessionRow, nowMs: number = Date.now()): string {
-	const when = recencyLabel(row.updatedAt, nowMs);
+/** Row subtitle: workspace and preset. Recency stays in the day groups. */
+export function rowSubtitle(row: SessionRow): string {
 	const where = workspaceName(row.workspacePath);
-	const parts = [where];
-	if (row.preset) parts.push(row.preset);
-	if (when) parts.push(when);
-	return parts.join(" · ");
+	if (!row.preset) return where;
+	return `${where} · ${row.preset}`;
 }
 
 // ── Persistence (localStorage; guarded for node-env tests) ──────────────

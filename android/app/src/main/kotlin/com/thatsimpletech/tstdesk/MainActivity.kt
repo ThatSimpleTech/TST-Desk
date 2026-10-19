@@ -1,6 +1,7 @@
 package com.thatsimpletech.tstdesk
 
 import android.annotation.SuppressLint
+import android.Manifest
 import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
@@ -11,6 +12,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.view.View
 import android.view.WindowInsets
+import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -35,6 +37,8 @@ class MainActivity : Activity(), PairingHost {
     private var fileWork: ExecutorService? = null
     /** The page's file input waiting for a picker result (TD-5026). One at a time. */
     private var pendingChooser: ValueCallback<Array<Uri>>? = null
+    /** The getUserMedia request waiting on an OS runtime-permission answer. One at a time. */
+    private var pendingWebPermission: PermissionRequest? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -99,6 +103,38 @@ class MainActivity : Activity(), PairingHost {
                 params: FileChooserParams,
             ): Boolean {
                 return openChooser(callback, params)
+            }
+
+            /**
+             * The WebView grants no `getUserMedia` by default; without this the
+             * composer's camera tap fails silently with NotAllowedError. Grant
+             * capture for the loopback shell only, and only once the matching OS
+             * runtime permission is held — asking here is what makes the grant
+             * stick, the same way ScanActivity asks for itself.
+             */
+            override fun onPermissionRequest(request: PermissionRequest) {
+                if (!isShellPage(request.origin.toString(), shellPort)) {
+                    request.deny()
+                    return
+                }
+                val missing = mutableListOf<String>()
+                if (PermissionRequest.RESOURCE_VIDEO_CAPTURE in request.resources &&
+                    checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    missing += Manifest.permission.CAMERA
+                }
+                if (PermissionRequest.RESOURCE_AUDIO_CAPTURE in request.resources &&
+                    checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    missing += Manifest.permission.RECORD_AUDIO
+                }
+                if (missing.isEmpty()) {
+                    request.grant(request.resources)
+                    return
+                }
+                // One request at a time; a second grant while asking replaces it.
+                pendingWebPermission = request
+                requestPermissions(missing.toTypedArray(), WEB_PERMISSION_REQUEST)
             }
         }
         val ink = getColor(R.color.ink)
@@ -192,6 +228,26 @@ class MainActivity : Activity(), PairingHost {
         callback.onReceiveValue(usable.toTypedArray().ifEmpty { null })
     }
 
+    /**
+     * The OS answered a runtime-permission ask raised from
+     * [WebChromeClient.onPermissionRequest]. Whatever the user chose, the page's
+     * `getUserMedia` promise is settled from it — grant only if every resource's
+     * permission was granted, otherwise deny, so the page shows its own copy.
+     */
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != WEB_PERMISSION_REQUEST) return
+        val request = pendingWebPermission
+        pendingWebPermission = null
+        if (request == null) return
+        val allGranted = grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }
+        if (allGranted) request.grant(request.resources) else request.deny()
+    }
+
     override fun onDestroy() {
         webView?.destroy()
         webView = null
@@ -199,6 +255,9 @@ class MainActivity : Activity(), PairingHost {
         fileWork = null
         server?.stop()
         server = null
+        // A destroyed activity can no longer answer for a pending grant.
+        pendingWebPermission?.deny()
+        pendingWebPermission = null
         super.onDestroy()
     }
 
@@ -291,6 +350,7 @@ class MainActivity : Activity(), PairingHost {
     private companion object {
         const val SCAN_REQUEST = 5014
         const val CHOOSER_REQUEST = 5026
+        const val WEB_PERMISSION_REQUEST = 5027
     }
 }
 

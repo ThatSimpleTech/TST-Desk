@@ -21,6 +21,7 @@ from tstd.attachments import (
     DEFAULT_MAX_COUNT,
     DEFAULT_MAX_FILE_BYTES,
     DEFAULT_MAX_TOTAL_BYTES,
+    WS_MAX_FRAME_BYTES,
     AttachmentError,
     AttachmentLimits,
     DecodedAttachment,
@@ -105,6 +106,23 @@ class TestDecodeAttachments:
         assert decoded[0].media_type == "image/png"
         assert decoded[0].data == PNG_BYTES
         assert decoded[0].text == ""
+
+    def test_a_phone_screenshot_fits_the_default_cap(self) -> None:
+        """483.6 KB is a normal phone PNG. The default takes it whole."""
+        raw = b"\x89PNG\r\n\x1a\n" + b"\x00" * (484_000 - 8)
+        decoded = decode_attachments(
+            [
+                Attachment(
+                    name="Screenshot_20261016-150729.png",
+                    content_b64=b64(raw),
+                )
+            ],
+            AttachmentLimits(),
+            allow_images=True,
+        )
+        assert decoded[0].size == 484_000
+        assert decoded[0].media_type == "image/png"
+        assert decoded[0].data == raw
 
     def test_binary_is_refused(self) -> None:
         with pytest.raises(AttachmentError) as excinfo:
@@ -304,6 +322,12 @@ class TestAttachmentLimitsConfig:
         assert limits.max_file_bytes == DEFAULT_MAX_FILE_BYTES
         assert limits.max_total_bytes == DEFAULT_MAX_TOTAL_BYTES
         assert limits.max_count == DEFAULT_MAX_COUNT
+
+    def test_the_default_total_fits_one_local_frame(self) -> None:
+        """Base64 of a full message has to fit, or the socket drops it."""
+        wire = (DEFAULT_MAX_TOTAL_BYTES * 4) // 3
+        assert wire + 65_536 < WS_MAX_FRAME_BYTES
+        assert DEFAULT_MAX_FILE_BYTES <= DEFAULT_MAX_TOTAL_BYTES
 
     def test_workspace_may_tighten_the_caps(self, tmp_path: Path) -> None:
         (tmp_path / ".tst").mkdir()

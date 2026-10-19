@@ -45,6 +45,9 @@ export const session = $state({
     BoundaryUpdate,
     "writable_paths" | "allowed_commands" | "network" | "spend_usd" | "wall_clock_hours" | "max_iterations" | "source"
   > | null,
+  /** True when this workspace's file sets a spend budget. The built-in
+   *  pause is not a budget the user assigned. */
+  spendConfigured: false,
   /** Attachment caps for the composer (TD-1709). Held separately from
    *  `boundary` because it is never null: the composer has to judge a
    *  dropped file before any session is bound, and the shipped defaults are
@@ -85,6 +88,7 @@ export function resetSession(): void {
   session.reason = null;
   session.cost = { turn: 0, session: 0, total: 0, classifier: 0, byTier: {} };
   session.boundary = null;
+  session.spendConfigured = false;
   session.attachmentLimits = { ...DEFAULT_ATTACHMENT_LIMITS };
   session.tier = "brain";
   session.tierOverride = null;
@@ -142,6 +146,7 @@ export function ingestEvent(event: DaemonEventUnion): void {
       // TD-1709: an older daemon omits these; keeping the last known caps
       // beats standing the composer's early refusal down to nothing.
       if (event.attachments !== undefined) session.attachmentLimits = event.attachments;
+      session.spendConfigured = event.spend_configured === true;
       break;
     case "tier_state":
       session.tier = event.tier;
@@ -202,6 +207,7 @@ export function focusSession(
   session.reason = null;
   session.cost = { turn: 0, session: 0, total: 0, classifier: 0, byTier: {} };
   session.boundary = null;
+  session.spendConfigured = false;
   session.attachmentLimits = { ...DEFAULT_ATTACHMENT_LIMITS };
   session.tier = "brain";
   session.tierOverride = null;
@@ -246,28 +252,16 @@ export function setTier(tier: "brain" | "worker" | "validator"): void {
   client?.setTier(session.sessionId, tier);
 }
 
-/** Turn plan mode on or off. The title bar reflects the next tier_state. */
+/** Turn plan mode on or off. The composer reflects the next tier_state. */
 export function setPlan(on: boolean): void {
   if (session.sessionId === null) return;
   client?.setPlan(session.sessionId, on);
 }
 
-/** Retarget this session at a catalog preset. The title bar follows tier_state. */
+/** Retarget this session at a catalog preset. The composer follows tier_state. */
 export function setSessionPreset(name: string): void {
   if (session.sessionId === null) return;
   client?.setSessionPreset(session.sessionId, name);
-}
-
-/** Active slug and host for the title-bar pill (TD-1720). */
-export function liveModelLabel(
-  tier: string,
-  slugs: Record<string, string>,
-  hosts: Record<string, string>,
-): string {
-  const slug = slugs[tier] ?? "";
-  const host = hosts[tier] ?? "";
-  if (slug && host) return `${slug} · ${host}`;
-  return slug || host;
 }
 
 /** Display name for the workspace row: basename of the path. */

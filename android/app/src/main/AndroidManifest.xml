@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- TD-5014: reading the pairing QR code. Asked for only when Scan is tapped. -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Composer dictation and getUserMedia audio. Asked for only when the page asks. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- A phone without a camera still installs and pairs by typed code. -->
     <uses-feature
         android:name="android.hardware.camera"

@@ -71,9 +71,10 @@
 	// A titled row reads as a sentence, so it is set in the sans; only the
 	// bare id fallback keeps the mono. The id itself lives in the tooltip.
 	let untitled = $derived(row.title === null || row.title.trim() === '');
-	// Idle and complete are the norm and the dot already says so; the
-	// subtitle only spells out a state worth a second look.
-	const QUIET_STATES: ReadonlySet<string> = new Set(['none', 'idle', 'complete']);
+	// Idle, complete, and the daemon's "running" (the loop is alive, not a
+	// turn in flight) are the norm. The activity word and the dot say that.
+	// The subtitle only spells out a state worth a second look.
+	const QUIET_STATES: ReadonlySet<string> = new Set(['none', 'idle', 'complete', 'running']);
 	let stateNote = $derived(QUIET_STATES.has(row.state) ? null : ROW_STATE_LABELS[row.state]);
 	let tooltip = $derived(
 		`${rowTitle(row)}\n${row.sessionId.slice(0, 8)} · ${rowSubtitle(row)} · ${ROW_STATE_LABELS[row.state]}`

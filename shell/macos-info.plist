@@ -4,6 +4,8 @@
 <dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Hold-to-talk dictation in the composer. The microphone is only on while you hold the button. Nothing is sent unless you have configured a speech endpoint.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Take a photo from the composer. The camera opens only while a shot is being taken; the photo becomes an attachment on your message.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Hold-to-talk dictation in the composer. Speech is not captured unless you hold the mic.</string>
 	<key>NSScreenCaptureUsageDescription</key>

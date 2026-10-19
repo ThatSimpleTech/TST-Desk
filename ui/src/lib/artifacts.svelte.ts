@@ -7,6 +7,7 @@
 
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
 import { artifactPreviewKind, isSentFile, isWorkspaceArtifact, type ArtifactPreviewKind } from "./artifacts";
+import { hostCommandError, readTextFileCommand } from "./host-read";
 import { isBridged } from "./bridged-id";
 import { isTauri } from "./open-file";
 import type { Artifact, ArtifactEntry, DaemonEventUnion } from "./protocol";
@@ -205,7 +206,7 @@ function beginPreview(event: Artifact): void {
 		(err: unknown) => {
 			if (token !== previewToken) return;
 			artifacts.loading = false;
-			artifacts.error = err instanceof Error ? err.message : "Could not read artifact.";
+			artifacts.error = hostCommandError(err, "Could not read artifact.");
 		},
 	);
 }
@@ -221,10 +222,9 @@ async function defaultSourceReader(args: {
 	}
 	const { invoke } = await import("@tauri-apps/api/core");
 	const workspace = isWorkspaceArtifact(args.path, args.artifactId) ? args.workspacePath : null;
-	const session_id = workspace === null ? args.sessionId : null;
-	return invoke<string>("read_text_file", {
-		path: args.path,
-		workspace,
-		session_id,
-	});
+	const sessionId = workspace === null ? args.sessionId : null;
+	return invoke<string>(
+		"read_text_file",
+		readTextFileCommand({ path: args.path, workspace, sessionId }),
+	);
 }

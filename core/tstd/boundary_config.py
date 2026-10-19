@@ -10,6 +10,8 @@ produces actionable errors naming the offending key.
 
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -164,8 +166,8 @@ DEFAULT_CONFIG_TEMPLATE = """\
 #   max_iterations: 200    # autonomy pauses past this many iterations
 
 # attachments:
-#   max_file_bytes: 256000   # per text file attached to a message
-#   max_total_bytes: 512000  # per message, across all its attachments
+#   max_file_bytes: 4000000  # per file attached to a message
+#   max_total_bytes: 8000000 # per message, across all its attachments
 #   max_count: 10            # files per message
 
 # memory:
@@ -225,6 +227,75 @@ def load_workspace_boundary(workspace: str | Path) -> BoundaryConfig:
         first = e.errors()[0]
         loc = ".".join(str(p) for p in first["loc"])
         raise ConfigError(f"Invalid boundary config in {path}: {loc}: {first['msg']}") from e
+
+
+def configured_spend(workspace: str | Path) -> float | None:
+    """The ``caps.spend_usd`` written in ``.tst/config.yaml``, or None.
+
+    A missing file, a comment-only scaffold, and a ``caps`` section that
+    omits ``spend_usd`` are unset. The built-in pause still uses
+    ``DEFAULT_SPEND_USD``; this only says whether the user assigned one.
+    """
+    path = _config_path(workspace)
+    if not path.exists():
+        return None
+    try:
+        data: Any = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    caps = data.get("caps")
+    if not isinstance(caps, dict) or "spend_usd" not in caps:
+        return None
+    amount = caps["spend_usd"]
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+        return None
+    return float(amount)
+
+
+def save_spend_cap(workspace: str | Path, amount: float | None) -> None:
+    """Write or clear ``caps.spend_usd``. ``None`` removes the key.
+
+    Other sections stay. An empty ``caps`` mapping is dropped. Atomic
+    write, same as ``save_policy``.
+    """
+    if amount is not None and amount < 0:
+        raise ConfigError("spend_usd must be >= 0")
+    path = _config_path(workspace)
+    existing: dict[str, Any] = {}
+    if path.exists():
+        try:
+            loaded: Any = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as e:
+            raise ConfigError(f"Invalid YAML in {path}: {e}") from e
+        if loaded is None:
+            loaded = {}
+        if not isinstance(loaded, dict):
+            raise ConfigError(f"{path} must contain a YAML mapping at the top level")
+        existing = loaded
+
+    caps = existing.get("caps")
+    if not isinstance(caps, dict):
+        caps = {}
+    if amount is None:
+        caps.pop("spend_usd", None)
+    else:
+        caps["spend_usd"] = amount
+    if caps:
+        existing["caps"] = caps
+    else:
+        existing.pop("caps", None)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".config.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            yaml.safe_dump(existing, f, sort_keys=False)
+        os.replace(tmp, path)
+    except BaseException:
+        os.unlink(tmp)
+        raise
 
 
 def boundary_source(workspace: str | Path) -> str:

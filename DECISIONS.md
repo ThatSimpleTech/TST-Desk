@@ -13566,6 +13566,47 @@ Also rejected: re-signing the downloaded app with the local `tst-desk-dev`
 identity (the installed bytes would no longer be the release that was
 hashed).
 
+---
+
+## 2026-10-15 — Spend budget is set in Settings, not implied by the title bar (Class B)
+
+**Decision:** `caps.spend_usd` stays the workspace spend pause, default
+$25 when the key is absent. `boundary_update.spend_configured` is true
+only when the workspace file sets that key (or a charter supplies the
+cap). The title bar prints "of $…" only then. Settings → Budget writes
+or clears the key for the open workspace via `set_spend_cap`.
+
+**Rationale:** The built-in pause was drawn as if the user had assigned
+a $25 budget, and Settings had no control for it.
+
+**Alternative rejected:** Dropping the built-in pause so an unset budget
+means unlimited spend. Also rejected: a user-global budget in
+`config.yaml`, which would not match the per-workspace wall.
+
+---
+
+## 2026-10-16 — Attachment caps fit a screenshot (Class B)
+
+**Decision:** The default attachment caps are 4,000,000 bytes per file and
+8,000,000 bytes per message (`DEFAULT_MAX_FILE_BYTES`,
+`DEFAULT_MAX_TOTAL_BYTES`). The local websocket server accepts frames up
+to 16 MiB (`WS_MAX_FRAME_BYTES` in `attachments.py`, passed as `max_size`
+from `WebSocketServer._listen`). Images stay full size (TD-4705). A file
+over the cap is refused whole.
+
+**Rationale:** A phone screenshot of about 484 KB was refused by the
+256 KB default, which had been sized to the websockets library's 1 MiB
+frame. Raising the cap without raising the frame would drop a
+multi-megabyte message before the daemon could refuse it with copy. 8 MB
+of files is about 10.7 MB of base64, which fits in 16 MiB with room for
+the JSON envelope. `send_file` chunks stay at `CHUNK_MAX` (TD-5143).
+
+**Alternative rejected:** Downscaling the PNG so it fits 256 KB. TD-4705
+already refused silent downscale. Also rejected: leaving the library's
+1 MiB frame and telling people to shrink screenshots.
+
+---
+
 ## 2026-10-15 — UI walk uses Playwright against a mock daemon (Class B)
 
 **Decision:** `ui/e2e` drives the real Svelte window in Chromium. A

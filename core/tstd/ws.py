@@ -39,6 +39,7 @@ from typing import Any, Literal
 import websockets.exceptions
 from websockets.asyncio.server import Server, ServerConnection, serve
 
+from .attachments import WS_MAX_FRAME_BYTES
 from .identity import load_or_mint_machine_id
 from .logging import get_logger
 from .peer_policy import LOOPBACK_PLAIN, PeerView, classify
@@ -327,12 +328,7 @@ class WebSocketServer:
 
         if extra is not None:
             try:
-                self._extra_server = await serve(
-                    self._on_connect,
-                    extra,
-                    self._port,
-                    process_request=self._auth_middleware,
-                )
+                self._extra_server = await self._listen(extra, self._port)
             except OSError:
                 loopback.close()
                 await loopback.wait_closed()
@@ -374,12 +370,7 @@ class WebSocketServer:
         if self._server is None or self._port == 0:
             raise RuntimeError("cannot apply a remote bind before the loopback server is up")
         validate_interface(extra, extra_allowed=extra)
-        self._extra_server = await serve(
-            self._on_connect,
-            extra,
-            self._port,
-            process_request=self._auth_middleware,
-        )
+        self._extra_server = await self._listen(extra, self._port)
         self._extra_host = extra
         if not is_loopback_host(extra) or self._is_remote_connection is not None:
             self._issue_remote_token()
@@ -505,27 +496,32 @@ class WebSocketServer:
 
         log.info("ws server stopped")
 
+    def _listen(self, host: str, port: int) -> Awaitable[Server]:
+        """Open one listener.
+
+        ``max_size`` is the frame an attachment message has to fit in.
+        Leaving the library default (1 MiB) drops a multi-megabyte
+        screenshot before the daemon can refuse it with copy.
+        """
+        return serve(
+            self._on_connect,
+            host,
+            port,
+            process_request=self._auth_middleware,
+            max_size=WS_MAX_FRAME_BYTES,
+        )
+
     async def _serve_loopback(self) -> Server:
         """Bind loopback on the preferred port, or a random one if it is busy."""
         if self._preferred_port:
             try:
-                return await serve(
-                    self._on_connect,
-                    "127.0.0.1",
-                    self._preferred_port,
-                    process_request=self._auth_middleware,
-                )
+                return await self._listen("127.0.0.1", self._preferred_port)
             except OSError:
                 log.warning(
                     "preferred port busy; using a random port",
                     extra={"extra_fields": {"port": self._preferred_port}},
                 )
-        return await serve(
-            self._on_connect,
-            "127.0.0.1",
-            0,  # ephemeral port
-            process_request=self._auth_middleware,
-        )
+        return await self._listen("127.0.0.1", 0)
 
     def _issue_remote_token(self) -> None:
         """Load the saved remote token, or mint one if there is none.
