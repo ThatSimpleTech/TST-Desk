@@ -280,6 +280,7 @@ class McpSupervisor:
                 spec.command,
                 timeout=spec.timeout_seconds or self._call_timeout,
                 max_call_seconds=spec.max_call_seconds or MAX_CALL_SECONDS,
+                startup_timeout=self._startup_timeout(spec),
             )
             return await self._handshake(server_id, client, spec)
         except Exception as e:
@@ -331,7 +332,11 @@ class McpSupervisor:
             )
         client: HttpMcpClient | None = None
         try:
-            client = HttpMcpClient(spec.url, timeout=spec.timeout_seconds or self._call_timeout)
+            client = HttpMcpClient(
+                spec.url,
+                timeout=spec.timeout_seconds or self._call_timeout,
+                startup_timeout=self._startup_timeout(spec),
+            )
             return await self._handshake(server_id, client, spec)
         except Exception as e:
             if client is not None:
@@ -351,10 +356,15 @@ class McpSupervisor:
                 None,
             )
 
+    def _startup_timeout(self, spec: McpServerConfig) -> float:
+        return spec.startup_timeout_seconds or self._handshake_timeout
+
     async def _handshake(
         self, server_id: str, client: McpClient, spec: McpServerConfig
     ) -> tuple[McpServerStatus, _LiveServer]:
-        startup = spec.startup_timeout_seconds or self._handshake_timeout
+        # The clients also give each handshake request this long, so a
+        # startup timeout above the call timeout is honoured (TD-5105).
+        startup = self._startup_timeout(spec)
         await asyncio.wait_for(client.start(), timeout=startup)
         listed = await asyncio.wait_for(client.list_tools(), timeout=startup)
         tools, excluded = sanitize_remote_tools(server_id, listed)

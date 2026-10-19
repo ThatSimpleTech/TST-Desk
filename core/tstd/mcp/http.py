@@ -51,10 +51,19 @@ class HttpMcpClient:
     one JSON object back. The URL is the only host this module dials.
     """
 
-    def __init__(self, url: str, *, timeout: float = CALL_TIMEOUT) -> None:
+    def __init__(
+        self,
+        url: str,
+        *,
+        timeout: float = CALL_TIMEOUT,
+        startup_timeout: float | None = None,
+    ) -> None:
         assert_loopback_http_url(url)
         self._url = url
         self._timeout = timeout
+        # The handshake (initialize, initialized, tools/list) answers in its
+        # own time, which may be longer than a call's (TD-5105).
+        self._startup_timeout = startup_timeout or timeout
         self._http: httpx.AsyncClient | None = None
         self._next_id = 1
         self._pending: set[asyncio.Task[None]] = set()
@@ -62,10 +71,17 @@ class HttpMcpClient:
     async def start(self) -> None:
         if self._http is None:
             self._http = httpx.AsyncClient(timeout=self._timeout + 5.0)
-        await self.request("initialize", initialize_params())
-        await self.notify("notifications/initialized")
+        startup = self._startup_timeout
+        await self.request("initialize", initialize_params(), wait_seconds=startup)
+        await self.notify("notifications/initialized", wait_seconds=startup)
 
-    async def request(self, method: str, params: dict[str, Any] | None = None) -> Any:
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        wait_seconds: float | None = None,
+    ) -> Any:
         if self._http is None:
             self._http = httpx.AsyncClient(timeout=self._timeout + 5.0)
         req_id = self._next_id
@@ -73,7 +89,7 @@ class HttpMcpClient:
         payload: dict[str, Any] = {"jsonrpc": "2.0", "id": req_id, "method": method}
         if params is not None:
             payload["params"] = params
-        data = await self._post(payload)
+        data = await self._post(payload, wait_seconds=wait_seconds)
         if not isinstance(data, dict):
             raise McpError("MCP HTTP response was not a JSON object")
         if data.get("id") not in (req_id, None):
@@ -82,16 +98,25 @@ class HttpMcpClient:
             raise McpError(jsonrpc_error_text(data["error"]))
         return data.get("result")
 
-    async def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
+    async def notify(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        wait_seconds: float | None = None,
+    ) -> None:
         if self._http is None:
             self._http = httpx.AsyncClient(timeout=self._timeout + 5.0)
         payload: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
         if params is not None:
             payload["params"] = params
-        await self._post(payload, require_json=False)
+        await self._post(payload, require_json=False, wait_seconds=wait_seconds)
 
     async def list_tools(self) -> list[McpRemoteTool]:
-        return parse_tools_list(await self.request("tools/list"))
+        """``tools/list``, part of the handshake, so it has the startup timeout."""
+        return parse_tools_list(
+            await self.request("tools/list", wait_seconds=self._startup_timeout)
+        )
 
     async def call_tool(
         self,
@@ -141,7 +166,15 @@ class HttpMcpClient:
         if client is not None:
             await client.aclose()
 
-    async def _post(self, payload: dict[str, Any], *, require_json: bool = True) -> Any:
+    async def _post(
+        self,
+        payload: dict[str, Any],
+        *,
+        require_json: bool = True,
+        wait_seconds: float | None = None,
+    ) -> Any:
+        """POST *payload*; *wait_seconds* (default: the call timeout) bounds
+        the request, plus a grace so an outer ``wait_for`` fires first."""
         if self._http is None:
             raise McpError("HTTP MCP client is not running")
         try:
@@ -149,6 +182,7 @@ class HttpMcpClient:
                 self._url,
                 json=payload,
                 headers={"Accept": "application/json"},
+                timeout=(wait_seconds or self._timeout) + 5.0,
             )
             response.raise_for_status()
         except httpx.HTTPError as e:

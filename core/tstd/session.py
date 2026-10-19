@@ -258,10 +258,6 @@ class Session:
         # TD-5109: how the loop last measured the prompt, so a compaction
         # asked for between turns counts tokens as the next request will.
         self.context_meter: ContextMeter | None = None
-        # User turns folded into summaries so far. The window numbers user
-        # turns from the start of the session; the conversation holds only
-        # those not yet summarized.
-        self.compacted_user_turns = 0
         # user_index -> sibling snapshots of conversation
         self._branches: dict[int, list[list[ChatMessage]]] = {}
         self._branch_cursor: dict[int, int] = {}
@@ -946,8 +942,12 @@ class Session:
 
         ``user_index`` (0-based among the session's user turns, as the
         window numbers them) summarizes from that turn on; None summarizes
-        everything before the last user turn.
+        everything before the last user turn.  The number is mapped through
+        the summaries already in the conversation, each of which says how
+        many user turns it stands for, so it holds after any compaction
+        and after a restart.
         """
+        from .compaction import window_user_turns
         from .protocol import ContextCompacted
 
         if self.turn_in_flight:
@@ -957,13 +957,12 @@ class Session:
             return "nothing_to_compact"
         position: int | None = None
         if user_index is not None:
-            local = user_index - self.compacted_user_turns
-            positions = self._user_positions()
-            if local < 0:
-                return "user_turn_compacted"
-            if local >= len(positions):
+            turns = window_user_turns(self.conversation)
+            if user_index < 0 or user_index >= len(turns):
                 return "user_turn_not_found"
-            position = positions[local]
+            position = turns[user_index]
+            if position is None:
+                return "user_turn_compacted"
         result = compact_on_request(
             self.conversation,
             meter.counter,
@@ -975,7 +974,6 @@ class Session:
             return "nothing_to_compact"
         compacted, stats = result
         self.conversation[:] = compacted
-        self.compacted_user_turns += stats.dropped_user_turns
         await self.event_log.add(
             ContextCompacted(
                 session_id=self.id,

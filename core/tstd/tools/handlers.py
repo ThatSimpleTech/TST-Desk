@@ -17,7 +17,9 @@ through the event loop's native subprocess support instead (see
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
+import threading
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
@@ -33,7 +35,7 @@ from .browser import register_browser_handlers
 from .delegate import register_delegate_handlers
 from .desktop import register_desktop_handlers
 from .dispatch import ToolDispatcher
-from .search import DEFAULT_MAX_RESULTS, glob_crosses_folders, glob_matcher, grep
+from .search import DEFAULT_MAX_RESULTS, STOPPED, glob_crosses_folders, glob_matcher, grep
 from .send_file import send_file
 from .shell import ShellPolicy, run_shell
 from .web_search import web_fetch, web_search
@@ -208,19 +210,43 @@ async def fs_grep(
     max_results: int = DEFAULT_MAX_RESULTS,
     tool_call_id: str = "",
 ) -> str:
-    """Search file contents under *path* with a regex (TD-5102)."""
-    return await asyncio.to_thread(
-        partial(
-            grep,
-            Path(path),
-            pattern,
-            glob=glob,
-            case_insensitive=case_insensitive,
-            context=context,
-            output_mode=output_mode,
-            max_results=max_results,
+    """Search file contents under *path* with a regex (TD-5102).
+
+    Stopping the turn ends the search, as it does a shell command: the
+    result comes back at once, and the search thread ends at its next
+    line (one line's match is bounded by ``LINE_MATCH_SECONDS``).
+    """
+    stop = threading.Event()
+    search = asyncio.ensure_future(
+        asyncio.to_thread(
+            partial(
+                grep,
+                Path(path),
+                pattern,
+                glob=glob,
+                case_insensitive=case_insensitive,
+                context=context,
+                output_mode=output_mode,
+                max_results=max_results,
+                stop=stop,
+            )
         )
     )
+    try:
+        wait_for_abort = getattr(session, "wait_for_turn_abort", None)
+        if wait_for_abort is None:
+            return await search
+        abort = asyncio.ensure_future(wait_for_abort())
+        try:
+            await asyncio.wait({search, abort}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            abort.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await abort
+        return search.result() if search.done() else STOPPED
+    finally:
+        # Also on cancellation: a thread cannot be cancelled, only told.
+        stop.set()
 
 
 async def _shell_under_live_allowlist(

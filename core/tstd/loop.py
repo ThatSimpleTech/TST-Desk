@@ -1659,7 +1659,6 @@ async def agent_loop(
             compacted, compaction = maybe_compact(messages, tier_cfg, counter, tool_definitions)
             if compaction is not None:
                 messages[:] = compacted
-                session.compacted_user_turns += compaction.dropped_user_turns
                 await session.event_log.add(
                     ContextCompacted(
                         session_id=session.id,

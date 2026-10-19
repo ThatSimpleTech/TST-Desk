@@ -711,7 +711,7 @@ reply per call), so `timeout_seconds` bounds the whole call.
 | `url` | string | *empty* | Loopback `http(s)` endpoint for an http server. Required when `transport` is `http`. Non-loopback is refused before any request. Empty skips the server with a doctor fail. |
 | `enabled` | bool | `true` | When false, the server is skipped (doctor `skip`). |
 | `timeout_seconds` | number > 0 | `30` | Longest silence in a tool call: no result and no progress for this long ends the call and sends `notifications/cancelled`. Over http it bounds the whole call. Settings keeps it when it toggles or edits the server. |
-| `startup_timeout_seconds` | number > 0 | `8` | Time allowed for the handshake (`initialize` plus `tools/list`). Raise it for a server that loads a model before it answers. |
+| `startup_timeout_seconds` | number > 0 | `8` | Time allowed for each step of the handshake (`initialize`, then `tools/list`), whatever `timeout_seconds` says. Raise it for a server that loads a model before it answers. |
 | `max_call_seconds` | number > 0 | `600` | Hard cap on one stdio tool call, progress or not. Never below `timeout_seconds`. |
 
 <!-- verify: model -->
@@ -942,7 +942,9 @@ would compact. Hover it for the exact figures, the point where compaction trigge
 
 None of these runs while a turn is in progress. Stop the turn first, or wait for it. They change
 what the model is sent, not the window: every message stays on screen. A message that is already
-inside a summary can't be the start of another one. The timeline records each compaction with
+inside a summary can't be the start of another one; a message before or after that summary still
+can, and that holds after the app restarts. Each summary opens with how many of your messages it
+stands for, which is how a message is found again. The timeline records each compaction with
 who asked for it, the token counts before and after, and the guidance. Grok sessions keep Grok's
 own slash commands and don't show the gauge.
 
@@ -1493,140 +1495,6 @@ policy:
   `fs_read: "*"` auto rule beats `*.env*`, so remove it (reads auto-run anyway). An exact tool
   name also beats a glob such as `fs_*`.
 
-Outside the workspace nothing changed: reads there are Class C and the path guard refuses them
-before any rule is read, symlinks included.
-
-**Dangerously skip permissions**
-promotes every ask to auto, including shell and Class C (TD-806) — that is skip
-everything; turning it on accepts that unparsed write forms and Class C steering
-redirects will run. "Always allow this in this workspace" still writes a rule for the
-exact command, not a blanket `shell: **`. A `never` rule still refuses.
-
-**File contents change through `fs_edit` and `fs_write`, not the shell.** Only those two
-tools name the files they touch, so only their changes get a diff in the Files and Work panes,
-a checkpoint commit, and credit with the progress guard (§4.2). A file the shell writes
-(`sed -i`, a `>` redirect, a heredoc, `tee`, `dd of=`, or a `python -c` / `node -e` write, also
-inside `bash -c`) gets none of the three. The base prompt every tier gets says so, and so do
-the three tools' descriptions (TD-5009). Deleting, moving or renaming files, formatters, code
-generators and package managers stay in the shell. When a shell command's text looks like it
-writes a workspace file, its result carries a one-line note, just under the exit code, that
-points the next change to `fs_edit` and `fs_write` and says the write it saw need not be
-redone. The note is read from the command text after the command has run, so it can appear on
-a command that failed. It never blocks, delays or changes the command, and it is not a rule you
-can set. Writes to `/dev`, `nul` or `$null`, `$TMPDIR` (also `${TMPDIR:-/tmp}`), a name set from
-`mktemp`, a captured `.log`, git's own `.git/` files, or any path outside the workspace
-(`/tmp/...`, `~/...`, `../...`) get no note. Input redirects (`< file`, `<<<`) are reads. In an
-autonomous session the container's `/workspace` counts as the workspace.
-
-### 4.2 `caps` — when the agent stops and asks
-
-| Key | Type | Default | Effect |
-|---|---|---|---|
-| `spend_usd` | float ≥ 0 | `25.0` | Session spend, in dollars, that pauses the run. |
-| `wall_clock_hours` | float ≥ 0 | `8.0` | Session runtime, in hours, that pauses the run. |
-| `max_iterations` | int ≥ 1 | `200` | Loop iterations that pause the run. |
-
-All three are checked **before every model call**, in that order, and all three trigger at or
-past the value rather than strictly past it. `spend_usd: 0` is legal and pauses before the first
-call.
-
-Hitting a cap **pauses**; it does not kill the session. The session moves to `paused` with the
-violation as its reason, the UI raises a card, and the run waits — indefinitely, on an event, not
-a poll. Resuming re-reads this file and re-checks the caps, so resuming without raising the cap
-pauses again immediately. That is the loop: raise the number here, then resume.
-
-**Interactive turns also pause when they stop making progress.** This is not a cap and it is
-not in this file. Skip-all still skips the three caps above. It does not skip the progress
-guard. An interactive turn pauses when the same tool call comes back three times, when 52
-model calls have passed since the last successful `fs_write` or `fs_edit`, or when 12 tool
-calls have passed with no reply and no file write. That twelfth stretch asks the model one
-question with the tools removed. `DONE` ends the turn with the answer. `CONTINUE` with a new
-next step allows another 12 calls, up to three times. Anything else pauses. Resume, on the
-banner, starts the counters over and continues the same turn. A reply resets the 12-call
-window only. A file write resets the 52-call budget too. Unattended autonomy runs keep the
-charter breakers and do not take this check.
-
-### 4.3 `attachments` — what a message may carry
-
-| Key | Type | Default | Effect |
-|---|---|---|---|
-| `max_file_bytes` | int ≥ 1 | `256000` | Size of one attached file. Measured on the file's real bytes, after decoding. |
-| `max_total_bytes` | int ≥ 1 | `512000` | Size of all the attachments on one message, added together. |
-| `max_count` | int ≥ 1 | `10` | Files on one message. |
-
-**Text files only.** Anything that is not valid UTF-8, or that contains a NUL byte, is refused
-as binary — a PNG, a PDF, a compiled binary, and a UTF-16 text file all land here. Images are
-deliberately out: vision support depends on which models you have chosen and needs capability
-detection first.
-
-**These are enforced by the daemon, not by the composer.** The message-box refuses an oversize
-or binary file early, with copy that names the file, but that is a convenience. The same
-refusal happens again on arrival, so a client that skips the check — an older build, or
-anything that is not the app — gets the same answer. Both sides read the numbers above; the
-daemon sends them to the UI on the `boundary_update` event when the workspace opens.
-
-**A refusal drops the whole message**, including the text you typed alongside it. Nothing is
-half-sent, and the error says so. Attachments are also all-or-nothing within one message: one
-bad file refuses the send rather than quietly delivering the rest.
-
-**There is a ceiling above these numbers.** The daemon's local websocket accepts frames up to
-1 MiB, and base64 adds a third to whatever you attach — so a `max_total_bytes` much above
-`700000` gives you a message the transport drops before the daemon can refuse it politely.
-Keep the total under that and the failure modes stay legible.
-
-### 4.8 `memory` — how long a memory file may grow
-
-| Key | Type | Default | Effect |
-|---|---|---|---|
-| `max_lines` | int ≥ 1 | `200` | A `fs_write` / `fs_edit` that would make a `.tst/memory/` file longer than this, or that would replace a file already at this cap, is refused. The copy says to distill, not to append. Distill is the path that may replace a file at cap. |
-
-This is a write refusal, not an autonomy pause. Raising the number does not resume anything; it only lets the next tool write land. The number lives here, never as a literal in the write handler.
-
-<!-- verify: workspace -->
-```yaml
-memory:
-  max_lines: 80
-```
-
-### 4.4 `policy` — what needs your approval
-
-| Key | Type | Default | Effect |
-|---|---|---|---|
-| `rules` | list of rules | `[]` | Per-tool overrides. The most specific match wins; an exact tie breaks toward the most restrictive effect. |
-| `class_c_default` | `ask` or `never` | `ask` | What happens to a Class C call that no rule matches. `never` refuses it outright instead of asking. |
-| `approval_timeout_seconds` | float ≥ 0, or null | `null` | How long an approval request waits before being treated as a denial. Null waits indefinitely. |
-
-A rule has three keys:
-
-| Key | Type | Default | Effect |
-|---|---|---|---|
-| `tool` | string or glob | *required* | Tool name, or a glob such as `fs_*`. |
-| `args` | glob | `"**"` | Matched against a summary of the call's arguments. The default matches every call of the tool. |
-| `effect` | `auto`, `ask`, or `never` | *required* | Run without asking, ask first, or refuse. |
-
-**No rule can make a Class C call run silently.** An `effect: auto` rule that matches a Class C
-call is downgraded to `class_c_default` — you can loosen approvals for ordinary work, but the
-riskiest calls always come back to you (or are refused). "Always allow this in this workspace"
-in the approval card writes a rule here for you.
-
-**Reads inside the workspace never ask (TD-5141).** `fs_read`, `fs_list` and `fs_grep` on a
-path inside the workspace are Class A by a fixed rule, so they run without asking and without
-a model call to judge them. That includes `.env` and other secret files. A rule still wins, so
-to keep a file asking, name it:
-
-<!-- verify: workspace -->
-```yaml
-policy:
-  rules:
-    - tool: fs_read
-      args: "*.env*"
-      effect: ask
-```
-
-Use the exact tool name: a rule for `fs_read` beats a glob such as `fs_*` for the same call,
-and `effect: never` refuses instead of asking. A rule matches the path the call names, so a
-`*.env*` rule does not catch `fs_grep` over a whole folder (`path: .`). In a git repo that
-search skips `.gitignore`d files, so keep `.env` ignored, as most templates already do.
 Outside the workspace nothing changed: reads there are Class C and the path guard refuses them
 before any rule is read, symlinks included.
 

@@ -6,8 +6,15 @@ the workspace wall, refused outside it by the dispatcher's path guard.
 
 Files come from ``git ls-files`` when the search root is in a git work
 tree, so ``.gitignore`` is honoured; otherwise from a walk that skips the
-same folders ``fs_list`` skips.  The search is pure Python, so it behaves
-the same on every machine whether or not ripgrep is installed.
+same folders ``fs_list`` skips.  The search runs in this process, so it
+behaves the same on every machine whether or not ripgrep is installed.
+
+Matching uses the ``regex`` package, not ``re``: the stdlib engine has no
+time limit and holds the GIL while it backtracks, so one model-written
+pattern with nested repeats could spin for hours on an ordinary line and
+freeze the whole daemon.  Here each line's match runs outside the GIL
+with a time limit, the search as a whole has one, and the handler stops
+it when the user stops the turn.
 
 The glob dialect is shared with ``fs_list``: ``*`` and ``?`` stay inside
 one path segment, ``**`` crosses segments, ``**/`` also matches no
@@ -21,8 +28,12 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import threading
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
+
+import regex
 
 from ..context.manifest import _FALLBACK_IGNORE
 
@@ -46,6 +57,13 @@ MAX_FILES_SCANNED = 20_000
 
 #: A matching line longer than this is cut, so minified files stay readable.
 MAX_LINE_CHARS = 300
+
+#: Longest one line may take to match.  A pattern that backtracks badly
+#: on a line stops the search there, with what it found so far.
+LINE_MATCH_SECONDS = 1.0
+
+#: Longest one search may run before it stops with what it found.
+MAX_SEARCH_SECONDS = 30.0
 
 _BINARY_SNIFF_BYTES = 8192
 
@@ -237,6 +255,51 @@ def _clip(line: str) -> str:
     return line[:MAX_LINE_CHARS] + " …"
 
 
+#: Search stopped because the user stopped the turn.
+STOPPED = "Search stopped: the user stopped the turn."
+
+
+def _matching_lines(
+    compiled: regex.Pattern[str],
+    rel: str,
+    lines: list[str],
+    deadline: float,
+    stop: threading.Event | None,
+) -> tuple[list[int], str | None]:
+    """Indexes of *lines* that match, and a note when the search must end.
+
+    The note is :data:`STOPPED` when *stop* was set.  Each match runs
+    outside the GIL (``concurrent``) with a time limit, so a pattern that
+    backtracks can neither freeze the daemon nor outlive Stop.
+    """
+    hits: list[int] = []
+    for i, line in enumerate(lines):
+        if stop is not None and stop.is_set():
+            return hits, STOPPED
+        now = time.monotonic()
+        if now >= deadline:
+            return hits, _over_time_note()
+        try:
+            found = compiled.search(
+                line, concurrent=True, timeout=min(LINE_MATCH_SECONDS, deadline - now)
+            )
+        except TimeoutError:
+            if time.monotonic() >= deadline:
+                return hits, _over_time_note()
+            return hits, (
+                f"[stopped: the pattern took over {LINE_MATCH_SECONDS:g} s on {rel}:{i + 1}. "
+                "It backtracks, most likely from nested repeats such as (a+)+ or (a|aa)+; "
+                "simplify it]"
+            )
+        if found:
+            hits.append(i)
+    return hits, None
+
+
+def _over_time_note() -> str:
+    return f"[stopped after {MAX_SEARCH_SECONDS:g} s; narrow the pattern, path or glob]"
+
+
 def grep(
     root: Path,
     pattern: str,
@@ -246,13 +309,18 @@ def grep(
     context: int = 0,
     output_mode: str = "files",
     max_results: int = DEFAULT_MAX_RESULTS,
+    stop: threading.Event | None = None,
 ) -> str:
-    """Search files under *root* (a directory or one file) for *pattern*."""
+    """Search files under *root* (a directory or one file) for *pattern*.
+
+    Setting *stop* ends the search at the next line; it then returns
+    :data:`STOPPED`.
+    """
     if output_mode not in OUTPUT_MODES:
         return f"Error: output_mode must be one of {', '.join(OUTPUT_MODES)}"
     try:
-        regex = re.compile(pattern, re.IGNORECASE if case_insensitive else 0)
-    except re.error as e:
+        compiled = regex.compile(pattern, regex.IGNORECASE if case_insensitive else 0)
+    except regex.error as e:
         return f"Error: invalid regex {pattern!r}: {e}"
     if not root.exists():
         return f"Error: path not found: {root}"
@@ -276,9 +344,17 @@ def grep(
     scanned = 0
     skipped = 0
     hit_scan_cap = False
+    halt: str | None = None
     walled = real_root if root.is_dir() else real_root.parent
+    deadline = time.monotonic() + MAX_SEARCH_SECONDS
 
     for rel in candidates:
+        if stop is not None and stop.is_set():
+            return STOPPED
+        if halt is None and time.monotonic() >= deadline:
+            halt = _over_time_note()
+        if halt is not None:
+            break
         if not matches_glob(rel):
             continue
         if scanned >= MAX_FILES_SCANNED:
@@ -297,7 +373,9 @@ def grep(
         if text is None:
             continue
         file_lines = text.splitlines()
-        hits = [i for i, line in enumerate(file_lines) if regex.search(line)]
+        hits, halt = _matching_lines(compiled, rel, file_lines, deadline, stop)
+        if halt == STOPPED:
+            return STOPPED
         if not hits:
             continue
 
@@ -337,6 +415,8 @@ def grep(
         )
     if hit_scan_cap:
         notes.append(f"[stopped after scanning {MAX_FILES_SCANNED} files; narrow the path or glob]")
+    if halt is not None:
+        notes.append(halt)
     if skipped:
         notes.append(f"[skipped {skipped} linked file(s) that point outside {root}]")
     if notes:

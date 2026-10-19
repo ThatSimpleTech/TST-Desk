@@ -41,12 +41,16 @@ class StdioMcpClient:
         *,
         timeout: float = CALL_TIMEOUT,
         max_call_seconds: float = MAX_CALL_SECONDS,
+        startup_timeout: float | None = None,
     ) -> None:
         if not command:
             raise McpError("stdio MCP command must be a non-empty argv")
         self._command = command
         self._timeout = timeout
         self._max_call = max(max_call_seconds, timeout)
+        # The handshake (initialize, initialized, tools/list) answers in its
+        # own time, which may be longer than a call's (TD-5105).
+        self._startup_timeout = startup_timeout or timeout
         self._proc: asyncio.subprocess.Process | None = None
         self._next_id = 1
         self._lock = asyncio.Lock()
@@ -67,27 +71,43 @@ class StdioMcpClient:
             raise McpError(f"failed to start stdio MCP: {e}") from e
         assert self._proc.stderr is not None
         self._stderr_task = asyncio.create_task(self._drain_stderr())
-        await self.request("initialize", initialize_params())
-        await self.notify("notifications/initialized")
+        startup = self._startup_timeout
+        await self.request("initialize", initialize_params(), wait_seconds=startup)
+        await self.notify("notifications/initialized", wait_seconds=startup)
 
-    async def request(self, method: str, params: dict[str, Any] | None = None) -> Any:
+    async def request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        wait_seconds: float | None = None,
+    ) -> Any:
         await self.start()
         async with self._lock:
             return await asyncio.wait_for(
                 self._exchange(method, params, with_id=True),
-                timeout=self._timeout,
+                timeout=wait_seconds or self._timeout,
             )
 
-    async def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
+    async def notify(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        wait_seconds: float | None = None,
+    ) -> None:
         await self.start()
         async with self._lock:
             await asyncio.wait_for(
                 self._exchange(method, params, with_id=False),
-                timeout=self._timeout,
+                timeout=wait_seconds or self._timeout,
             )
 
     async def list_tools(self) -> list[McpRemoteTool]:
-        return parse_tools_list(await self.request("tools/list"))
+        """``tools/list``, part of the handshake, so it has the startup timeout."""
+        return parse_tools_list(
+            await self.request("tools/list", wait_seconds=self._startup_timeout)
+        )
 
     async def call_tool(
         self,

@@ -9,9 +9,11 @@ stated truncation; and the base-prompt nudge toward the search tools.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -19,7 +21,7 @@ import pytest
 from tests.test_read_tools import make_dispatcher
 from tstd.autonomy import Boundary, DecisionClass, DecisionClassifier
 from tstd.context.prompt import BASE_SYSTEM_PROMPT
-from tstd.tools import build_decision_request, create_registry, fs_grep, fs_list
+from tstd.tools import build_decision_request, create_registry, fs_grep, fs_list, search
 from tstd.tools.delegate import WORKER_CHILD_TOOLS
 from tstd.tools.search import MAX_FILE_BYTES, glob_matcher, grep
 
@@ -199,6 +201,79 @@ class TestGrep:
         _tree(tmp_path, {"a.py": "Foo\n"})
         out = await fs_grep(None, "foo", str(tmp_path), case_insensitive=True, output_mode="count")
         assert out == "a.py:1"
+
+
+# ── a pattern that backtracks cannot hang the turn or the daemon ─────────
+
+# Exponential for a backtracking engine: every split of the a's into
+# "a" and "aa" is tried before the "!" fails the match.
+_BACKTRACKS = r"(a|aa)+$"
+_BAD_LINE = "a" * 60 + "!"
+
+
+class TestSlowPatterns:
+    def test_a_backtracking_pattern_stops_with_what_it_found(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(search, "LINE_MATCH_SECONDS", 0.2)
+        _tree(tmp_path, {"a.txt": "aaaa\n", "b.txt": f"{_BAD_LINE}\n", "c.txt": "aa\n"})
+        started = time.monotonic()
+        out = grep(tmp_path, _BACKTRACKS, output_mode="content")
+        assert time.monotonic() - started < 5.0
+        assert "a.txt:1: aaaa" in out
+        assert "c.txt" not in out  # the search stopped at b.txt
+        assert "took over 0.2 s on b.txt:1" in out
+        assert "simplify" in out
+
+    def test_a_search_has_an_overall_time_limit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(search, "MAX_SEARCH_SECONDS", 0.0)
+        _tree(tmp_path, {"a.txt": "hit\n"})
+        out = grep(tmp_path, "hit")
+        assert "stopped after 0 s" in out
+
+    async def test_the_event_loop_runs_while_a_line_is_matched(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(search, "LINE_MATCH_SECONDS", 1.0)
+        _tree(tmp_path, {"b.txt": f"{_BAD_LINE}\n"})
+        ticks = 0
+
+        async def tick() -> None:
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.01)
+                ticks += 1
+
+        ticker = asyncio.ensure_future(tick())
+        try:
+            out = await fs_grep(None, _BACKTRACKS, str(tmp_path))
+        finally:
+            ticker.cancel()
+        assert "took over 1 s" in out
+        # The match runs outside the GIL; the loop kept ticking meanwhile.
+        assert ticks >= 20
+
+    async def test_stopping_the_turn_ends_the_search(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(search, "LINE_MATCH_SECONDS", 1.5)
+        _tree(tmp_path, {f"b{n}.txt": f"{_BAD_LINE}\n" for n in range(5)})
+
+        class _Session:
+            def __init__(self) -> None:
+                self.stop = asyncio.Event()
+
+            async def wait_for_turn_abort(self) -> None:
+                await self.stop.wait()
+
+        session = _Session()
+        asyncio.get_running_loop().call_later(0.2, session.stop.set)
+        started = time.monotonic()
+        out = await fs_grep(session, _BACKTRACKS, str(tmp_path))
+        assert time.monotonic() - started < 1.0
+        assert out.startswith("Search stopped")
 
 
 # ── registry, classification, dispatch ───────────────────────────────────

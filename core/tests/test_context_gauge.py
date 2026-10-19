@@ -26,6 +26,7 @@ from tstd.mock import MockProvider, Script
 from tstd.protocol import ContextCompacted, ContextUsage
 from tstd.provider import ChatMessage, content_as_text
 from tstd.session import Session
+from tstd.session_persist import chat_message_from_dict, chat_message_to_dict
 
 _COUNTER = HeuristicTokenCounter()
 
@@ -103,7 +104,7 @@ class TestCompactOnRequest:
         assert result is not None
         summary = content_as_text(result[0][1].content)
         lines = summary.splitlines()
-        assert lines[0] == _SUMMARY_HEADER
+        assert lines[0] == f"{_SUMMARY_HEADER} (1 user turn)"
         assert lines[1] == "Kept in view, as asked: keep the parser work"
         on_topic = next(line for line in lines if line.startswith("User:"))
         off_topic = next(line for line in lines if line.startswith("Assistant:"))
@@ -139,7 +140,8 @@ class TestCompactNow:
         assert usage.tier == "brain"
         assert usage.context_window == 32768
         assert usage.compact_at == budget_threshold(_tier())
-        assert session.compacted_user_turns == 2
+        summary = content_as_text(session.conversation[1].content)
+        assert summary.splitlines()[0] == f"{_SUMMARY_HEADER} (2 user turns)"
 
     async def test_from_here_names_its_trigger(self, tmp_path: Path) -> None:
         session = _session(tmp_path)
@@ -152,13 +154,64 @@ class TestCompactNow:
     async def test_user_index_counts_turns_already_compacted(self, tmp_path: Path) -> None:
         session = _session(tmp_path, turns=4)
         assert await session.compact_now() is None  # turns 0-2 summarized
-        assert session.compacted_user_turns == 3
         assert await session.compact_now(user_index=1) == "user_turn_compacted"
         # The window still calls the surviving turn index 3.
         session.conversation.extend([_msg("user", "question 4"), _msg("assistant", "answer 4")])
         assert await session.compact_now(user_index=4) is None
         users = [m for m in session.conversation if m.role == "user"]
         assert _texts(users) == ["question 3"]
+
+    async def test_turns_before_a_from_here_summary_keep_their_numbers(
+        self, tmp_path: Path
+    ) -> None:
+        session = _session(tmp_path, turns=5)
+        assert await session.compact_now(user_index=2) is None  # turns 2-4 summarized
+        session.conversation.extend([_msg("user", "question 5"), _msg("assistant", "answer 5")])
+        # Turn 3 is inside the summary: refused, and nothing changes.
+        before = _texts(session.conversation)
+        assert await session.compact_now(user_index=3) == "user_turn_compacted"
+        assert _texts(session.conversation) == before
+        # Turn 1 is still word for word: it is the start of a new summary.
+        assert await session.compact_now(user_index=1) is None
+        users = [m for m in session.conversation if m.role == "user"]
+        assert _texts(users) == ["question 0"]
+        # Turns 1-5 are now one summary; turn 6 follows it.
+        session.conversation.extend([_msg("user", "question 6"), _msg("assistant", "answer 6")])
+        assert await session.compact_now(user_index=5) == "user_turn_compacted"
+        assert await session.compact_now(user_index=7) == "user_turn_not_found"
+        assert await session.compact_now(user_index=6) is None
+        assert _texts([m for m in session.conversation if m.role == "user"]) == ["question 0"]
+
+    async def test_numbering_survives_a_restart(self, tmp_path: Path) -> None:
+        session = _session(tmp_path, turns=5)
+        assert await session.compact_now() is None  # turns 0-3 summarized
+        session.conversation.extend([_msg("user", "question 5"), _msg("assistant", "answer 5")])
+        saved = [chat_message_to_dict(m) for m in session.conversation]
+
+        # A restart revives the saved conversation into a fresh session.
+        revived = Session(str(tmp_path))
+        revived.conversation[:] = [chat_message_from_dict(d) for d in json.loads(json.dumps(saved))]
+        revived.context_meter = _meter()
+        assert await revived.compact_now(user_index=2) == "user_turn_compacted"
+        assert await revived.compact_now(user_index=5) is None
+        assert _texts([m for m in revived.conversation if m.role == "user"]) == ["question 4"]
+
+    async def test_a_summary_written_before_the_turn_count_is_read_by_its_lines(
+        self, tmp_path: Path
+    ) -> None:
+        session = Session(str(tmp_path))
+        session.context_meter = _meter()
+        legacy = f"{_SUMMARY_HEADER}\nUser: question 0\nAssistant: answer 0\nUser: question 1"
+        session.conversation.extend(
+            [
+                _msg("system", "You are helpful."),
+                _msg("system", legacy),
+                *_conversation(4)[5:],  # turns 2 and 3
+            ]
+        )
+        assert await session.compact_now(user_index=1) == "user_turn_compacted"
+        assert await session.compact_now(user_index=3) is None
+        assert _texts([m for m in session.conversation if m.role == "user"]) == ["question 2"]
 
     async def test_refusals(self, tmp_path: Path) -> None:
         session = _session(tmp_path)

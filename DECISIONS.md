@@ -12884,6 +12884,26 @@ A link whose target leaves the search root is skipped and counted. The
 guard judged only the root, so following such a link would read past
 the wall.
 
+**Matching with a time limit: the `regex` package (new dependency).**
+Review found that a model-written pattern with nested repeats, such as
+`(a|aa)+$`, backtracks exponentially on an ordinary line. The stdlib
+`re` has no time limit and holds the GIL while it matches, so one such
+search froze the whole daemon, not just the turn, and Stop could not end
+it; with TD-5141 it also runs without asking. `regex` (Apache-2.0 and
+CNRI-Python, wheels for every platform the sidecar ships on) is a
+superset of `re` syntax and takes `timeout` and `concurrent` per call.
+Each line now matches outside the GIL with a 1 s limit; a line that
+needs more stops the search with what it found and a note to simplify
+the pattern. A search stops after 30 s, and the handler races it
+against the turn stop, as shell and MCP calls do, setting a flag the
+search checks between lines. The limit costs about 2 µs a line, so a
+search of this repo takes about a second instead of a tenth of one.
+Rejected: refusing nested repeats up front (it also refuses ordinary
+patterns like `(\w+\.)+com`, and backtracking has other shapes); running
+the match in a child process (the sidecar is a PyInstaller onefile
+binary that takes seconds to start); matching whole files at once (a
+lookbehind or `\A` reads differently than on one line).
+
 **Rejected:** Using ripgrep when present. That is two engines with two
 regex dialects and two sets of output edge cases, for speed nobody has
 measured as a problem at workspace scale. `fnmatch` for globs. Its `*`
@@ -12941,6 +12961,13 @@ or edits a server, since its form does not show them.
 has no progress; `timeout_seconds` bounds the whole call there, and a
 timeout or stop POSTs the cancel notice without holding up the caller.
 Progress over HTTP waits for the streamable transport (TD-5136).
+
+**Startup timeout reaches each request.** The supervisor bounds each
+handshake step with `startup_timeout_seconds`, and the clients give
+`initialize`, `notifications/initialized` and `tools/list` the same
+limit instead of the call timeout. Without that, the per-request call
+timeout fired first, so a startup timeout above `timeout_seconds` (a
+server that loads a model before it answers) never took effect.
 
 **Cancel notice:** written to the child's stdin without awaiting a
 drain, because the caller may itself be mid-cancellation. A late result
@@ -13016,13 +13043,22 @@ calibrated estimate (TD-5013) the budget uses, so the gauge and the
 trigger can never disagree. The window does no counting of its own.
 
 **User-turn numbering after compaction.** The window numbers user turns
-from the start of the session; a compaction removes some from the
-conversation. The session counts the user turns each compaction removed
-(`compacted_user_turns`), so "Summarize from here" maps the window's
-number back to the conversation, and refuses a turn that is already
-inside a summary. `fork_from` and `set_branch` don't use this offset
-yet. They predate it, and an edit after an auto-compaction can pick the
-wrong turn; that is a separate fix.
+from the start of the session; a compaction folds some of them into a
+summary. Each summary's first line says how many user turns it stands
+for (`[Earlier conversation compacted] (3 user turns)`, earlier
+summaries it folds in included), and `window_user_turns` walks the
+conversation to map the window's number to a message, or to "inside a
+summary", which "Summarize from here" refuses. A running counter was
+tried first and was wrong twice over: "Summarize from here" folds a
+suffix, not a prefix, so turns before it kept their numbers while the
+counter shifted them; and the counter was not saved, so a restart reset
+it. The count in the summary text is saved with the conversation and
+needs nothing kept in step. The model sees the count too, which costs a
+few tokens and does no harm. A summary written before the count was
+added is read by its `User:` lines, exact unless its cap cut some.
+`fork_from` and `set_branch` don't map through summaries yet. They
+predate this, and an edit after a compaction can pick the wrong turn;
+that is a separate fix.
 
 **Refused mid-turn.** The loop owns the conversation while a turn runs;
 compacting under it would race the next request. The window disables

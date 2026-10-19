@@ -36,6 +36,8 @@ import sys
 import time
 
 LOG = sys.argv[1]
+# Seconds to wait before answering initialize, like a server loading a model.
+START_DELAY = float(sys.argv[2]) if len(sys.argv) > 2 else 0.0
 
 
 def send(msg):
@@ -53,6 +55,7 @@ for line in sys.stdin:
         continue
     method = msg["method"]
     if method == "initialize":
+        time.sleep(START_DELAY)
         send({"jsonrpc": "2.0", "id": msg["id"], "result": {
             "protocolVersion": "2024-11-05", "capabilities": {"tools": {}},
             "serverInfo": {"name": "slow", "version": "1"}}})
@@ -243,6 +246,53 @@ class TestSupervisor:
         finally:
             await supervisor.aclose()
 
+    async def test_startup_timeout_can_outlast_the_call_timeout(
+        self, server: tuple[list[str], Path]
+    ) -> None:
+        command, _log = server
+        slow_start = [*command, "1.0"]  # initialize answers after 1 s
+        config = McpConfig(
+            servers={
+                "srv": McpServerConfig(
+                    transport="stdio",
+                    command=slow_start,
+                    timeout_seconds=0.3,
+                    startup_timeout_seconds=10.0,
+                )
+            }
+        )
+        supervisor = McpSupervisor(config)
+        try:
+            (row,) = await supervisor.ensure_loaded()
+        finally:
+            await supervisor.aclose()
+        assert row.status == "ok", row.detail
+
+    async def test_startup_timeout_bounds_the_handshake(
+        self, server: tuple[list[str], Path]
+    ) -> None:
+        command, _log = server
+        slow_start = [*command, "5.0"]
+        config = McpConfig(
+            servers={
+                "srv": McpServerConfig(
+                    transport="stdio",
+                    command=slow_start,
+                    timeout_seconds=30.0,
+                    startup_timeout_seconds=0.3,
+                )
+            }
+        )
+        supervisor = McpSupervisor(config)
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        try:
+            (row,) = await supervisor.ensure_loaded()
+        finally:
+            await supervisor.aclose()
+        assert row.status == "fail"
+        assert loop.time() - started < 4.0
+
     async def test_progress_becomes_thinned_tool_progress_events(
         self, server: tuple[list[str], Path]
     ) -> None:
@@ -300,6 +350,32 @@ class TestSupervisor:
 
 
 class TestHttp:
+    async def test_handshake_requests_wait_for_the_startup_timeout(self) -> None:
+        read_timeouts: dict[str, float] = {}
+
+        async def handle(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content)
+            read_timeouts[body["method"]] = request.extensions["timeout"]["read"]
+            if "id" not in body:
+                return httpx.Response(202)
+            result: dict[str, Any] = {"tools": []} if body["method"] == "tools/list" else {}
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
+
+        client = HttpMcpClient("http://127.0.0.1:9/mcp", timeout=0.3, startup_timeout=60.0)
+        client._http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+        try:
+            await client.start()
+            assert await client.list_tools() == []
+            await client.call_tool("echo")
+        finally:
+            await client.aclose()
+        # The handshake may take the whole startup timeout; a call keeps
+        # its own.
+        assert read_timeouts["initialize"] >= 60.0
+        assert read_timeouts["notifications/initialized"] >= 60.0
+        assert read_timeouts["tools/list"] >= 60.0
+        assert read_timeouts["tools/call"] < 60.0
+
     async def test_timeout_posts_the_cancel_notice(self) -> None:
         posted: list[dict[str, Any]] = []
 

@@ -19,6 +19,12 @@ here" summarizes one user turn and everything after it, keeping earlier
 turns verbatim.  Guidance stays deterministic: it heads the summary, and
 dropped messages that mention its words keep more of their text and are
 the last to go when the summary is over its cap.
+
+The window numbers user turns from the start of the session, so every
+summary's first line says how many user turns it stands for, and
+:func:`window_user_turns` maps the window's numbers back onto the
+conversation.  The count lives in the summary itself, so it survives a
+restart and a fork with no counter to keep in step.
 """
 
 from __future__ import annotations
@@ -49,6 +55,8 @@ _SUMMARY_CHARS_ON_TOPIC = 600
 # Guidance longer than this is cut; it is a focus, not a second prompt.
 MAX_GUIDANCE_CHARS = 500
 _SUMMARY_HEADER = "[Earlier conversation compacted]"
+# The header line with the user turns the summary stands for (TD-5109).
+_SUMMARY_TURNS = re.compile(re.escape(_SUMMARY_HEADER) + r" \((\d+) user turns?\)")
 
 
 @dataclass(frozen=True)
@@ -60,8 +68,8 @@ class CompactionStats:
     tokens_before: int
     tokens_after: int
     counter_method: str
-    #: User turns folded into the summary.  The session keeps a running
-    #: count so the window's user-turn numbers still find their message.
+    #: User turns the new summary stands for, counting those an earlier
+    #: summary in the dropped span already stood for.
     dropped_user_turns: int = 0
 
 
@@ -151,7 +159,7 @@ def guidance_terms(guidance: str) -> frozenset[str]:
     return frozenset(w.lower() for w in re.findall(r"[A-Za-z0-9_][\w.-]{3,}", guidance))
 
 
-def _render_summary(dropped: list[ChatMessage], guidance: str = "") -> str:
+def _render_summary(dropped: list[ChatMessage], guidance: str = "", turns: int = 0) -> str:
     """Deterministic extractive summary of the dropped span.
 
     A *prior* summary (from an earlier compaction) can fall inside the
@@ -162,6 +170,9 @@ def _render_summary(dropped: list[ChatMessage], guidance: str = "") -> str:
     mention its words keep up to ``_SUMMARY_CHARS_ON_TOPIC`` characters,
     and when the summary is over its cap the oldest off-topic lines go
     first.
+
+    The header says how many user *turns* the summary stands for, so the
+    window's user-turn numbers can be mapped back (TD-5109).
     """
     terms = guidance_terms(guidance)
 
@@ -169,7 +180,7 @@ def _render_summary(dropped: list[ChatMessage], guidance: str = "") -> str:
         lowered = text.lower()
         return any(term in lowered for term in terms)
 
-    header = [_SUMMARY_HEADER]
+    header = [f"{_SUMMARY_HEADER} ({turns} user turn{'' if turns == 1 else 's'})"]
     if guidance:
         header.append(f"Kept in view, as asked: {guidance}")
     lines: list[tuple[str, bool]] = []
@@ -208,8 +219,53 @@ def _render_summary(dropped: list[ChatMessage], guidance: str = "") -> str:
     return body
 
 
+def summary_user_turns(message: ChatMessage) -> int | None:
+    """How many user turns *message* stands for if it is a summary, else None.
+
+    A summary written before the header carried the count (TD-5109) is
+    read by its ``User:`` lines, which is exact unless its cap cut lines.
+    """
+    if message.role != "system":
+        return None
+    text = content_as_text(message.content)
+    if not text.startswith(_SUMMARY_HEADER):
+        return None
+    counted = _SUMMARY_TURNS.match(text)
+    if counted is not None:
+        return int(counted.group(1))
+    return sum(1 for line in text.splitlines() if line.startswith("User: "))
+
+
+def window_user_turns(messages: Sequence[ChatMessage]) -> list[int | None]:
+    """Where each of the window's user turns is in *messages* (TD-5109).
+
+    Entry *n* is the index of the window's user turn *n*, or None when
+    that turn is inside a summary.  The window numbers user turns from
+    the start of the session; a summary stands for as many of them as
+    its header says.
+    """
+    turns: list[int | None] = []
+    for index, message in enumerate(messages):
+        if index == 0:
+            continue  # the system prompt
+        if message.role == "user":
+            turns.append(index)
+            continue
+        folded = summary_user_turns(message)
+        if folded:
+            turns.extend([None] * folded)
+    return turns
+
+
 def _user_turns(messages: Sequence[ChatMessage]) -> int:
-    return sum(1 for m in messages if m.role == "user")
+    """User turns *messages* stand for, those inside summaries included."""
+    total = 0
+    for message in messages:
+        if message.role == "user":
+            total += 1
+        else:
+            total += summary_user_turns(message) or 0
+    return total
 
 
 def maybe_compact(
@@ -233,7 +289,8 @@ def maybe_compact(
         # Fewer than keep_user_turns + 1 user turns: the whole
         # conversation is recent. Nothing older exists to drop.
         return messages, None
-    summary = ChatMessage(role="system", content=_render_summary(messages[1:cut]))
+    turns = _user_turns(messages[1:cut])
+    summary = ChatMessage(role="system", content=_render_summary(messages[1:cut], turns=turns))
     compacted = [messages[0], summary, *messages[cut:]]
     tokens_after, _ = estimate_tokens(compacted, counter, tools)
     return compacted, CompactionStats(
@@ -242,7 +299,7 @@ def maybe_compact(
         tokens_before=tokens_before,
         tokens_after=tokens_after,
         counter_method=method,
-        dropped_user_turns=_user_turns(messages[1:cut]),
+        dropped_user_turns=turns,
     )
 
 
@@ -275,8 +332,9 @@ def compact_on_request(
             return None
         start, end = from_position, len(messages)
     dropped = messages[start:end]
+    turns = _user_turns(dropped)
     tokens_before, method = estimate_tokens(messages, counter, tools)
-    summary = ChatMessage(role="system", content=_render_summary(dropped, guidance))
+    summary = ChatMessage(role="system", content=_render_summary(dropped, guidance, turns))
     compacted = [*messages[:start], summary, *messages[end:]]
     tokens_after, _ = estimate_tokens(compacted, counter, tools)
     return compacted, CompactionStats(
@@ -285,5 +343,5 @@ def compact_on_request(
         tokens_before=tokens_before,
         tokens_after=tokens_after,
         counter_method=method,
-        dropped_user_turns=_user_turns(dropped),
+        dropped_user_turns=turns,
     )
