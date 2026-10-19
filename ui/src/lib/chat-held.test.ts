@@ -123,6 +123,30 @@ describe("held messages", () => {
     expect(state.held.map((r) => r.text)).toEqual(["also check b"]);
   });
 
+  it("an attachment send the daemon held loses its echo too", () => {
+    const { store, state } = boundStore();
+    store.applyEvent({ type: "session_state", session_id: "s1", state: "paused", seq: 2 });
+    store.sendUserMessage("read this", [{ name: "notes.txt", size: 5, content_b64: "aGVsbG8=" }]);
+    expect(state.messages.map((m) => m.text)).toEqual(["read this"]);
+    // The daemon's copy folds the file in after a blank line.
+    store.applyEvent(held([{ content: "read this\n\n--- attached file: notes.txt (5 bytes) ---\nhello" }]));
+    expect(state.messages).toEqual([]);
+  });
+
+  it("a list that still names a pending row frees it, and so does a reconnect", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(held([{ content: "also check b" }]));
+    store.sendHeldMessage("q1");
+    expect(state.held[0].pending).toBe(true);
+    store.reconnected();
+    expect(state.held[0].pending).toBe(false);
+    store.sendHeldMessage("q1");
+    // The daemon restarted before it took the Send: its revive lists the row again.
+    store.applyEvent(held([{ content: "also check b" }]));
+    expect(state.held[0].pending).toBe(false);
+    expect(store.sendHeldMessage("q1")).toBe(true);
+  });
+
   it("does nothing for an id that is not held", () => {
     const { store, sent } = boundStore();
     expect(store.sendHeldMessage("q9")).toBe(false);

@@ -14,7 +14,7 @@ import { isBridged } from "./bridged-id";
 import type { ChatMessage } from "./chat-message";
 import { applyChatEvent, type BindHold } from "./chat-events";
 import { createBranchSnaps } from "./chat-fork";
-import type { HeldMessage } from "./chat-held";
+import { clearHeldPending, type HeldMessage } from "./chat-held";
 import { createMessageQueue, type QueuedMessage } from "./chat-queue";
 import { createDraftStore, noteSent, type DraftStore } from "./draft-store";
 import { createFirstTokenWait } from "./first-token-wait";
@@ -404,6 +404,9 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
 
     reconnected(): void {
       if (isBridged(state.sessionId)) hold.sessionId = state.sessionId;
+      // A Send or Remove may have died with the old socket (TD-5155): the
+      // rows can be clicked again, and the daemon refuses one it settled.
+      clearHeldPending(state.held);
     },
 
     refreshSessions(): boolean {

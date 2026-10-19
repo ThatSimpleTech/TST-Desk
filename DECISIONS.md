@@ -14612,10 +14612,13 @@ dropping them, and the row says so before the person sends it.
 **Decision (window).** Held rows are the daemon's, not the pane's
 TD-1704 queue: a read-only strip above the queue, "Kept through a
 restart, not sent yet", with Send and Remove and a note for lost images.
-A row stays until the daemon's next list drops it (pending in between,
-so a second click cannot ask twice); a refusal names `in_reply_to`, so
-the reducer clears the pending flag and never hands an unrelated composer
-send back to the draft. A send of the pane's own that the daemon held
+A row stays until the daemon's next list drops it, pending in between so
+a second click cannot ask twice; any list or a reconnect frees it, so a
+Send lost in a restart can be clicked again. A refusal names
+`in_reply_to`, so the reducer clears the pending flag and never hands an
+unrelated composer send back to the draft. The Grok engine is sent the
+display text, so a held message that lost images gives it the model's
+text with the drop line instead. A send of the pane's own that the daemon held
 loses its echo row from the transcript: the held row is where it is now.
 The restart walk (`e2e/app-walk.spec.ts`) never restarts its daemon, so
 the strip is not in its census; vitest mounts the pane and clicks both.

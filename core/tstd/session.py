@@ -70,6 +70,17 @@ class QueuedUserMessage:
     def plain(cls, text: str) -> QueuedUserMessage:
         return cls(display=text, provider=text)
 
+    @property
+    def prompt_text(self) -> str:
+        """The text an engine that is sent ``display`` gets instead (TD-5155).
+
+        ``display`` names images a restart did not keep as attached; the
+        held message's ``provider`` text says they were dropped.
+        """
+        if self.images_dropped and isinstance(self.provider, str):
+            return self.provider
+        return self.display
+
 
 class SessionError(Exception):
     """Session-related error."""

@@ -162,10 +162,14 @@ export function noteSent(sending: string[], text: string): void {
  *  The daemon folds a text attachment into the message after a blank line,
  *  so that echo starts with what was sent rather than equalling it. */
 export function takeSent(sending: string[], content: string): boolean {
+  return takeSentText(sending, content) !== null;
+}
+
+/** `takeSent`, returning the text as it was sent (its echo row's text). */
+export function takeSentText(sending: string[], content: string): string | null {
   const index = sending.findIndex((text) => text !== "" && (content === text || content.startsWith(`${text}\n\n`)));
-  if (index < 0) return false;
-  sending.splice(index, 1);
-  return true;
+  if (index < 0) return null;
+  return sending.splice(index, 1)[0];
 }
 
 /** The daemon refused a send: the newest text still on its way. An accepted

@@ -7,7 +7,7 @@
 // the daemon, which answers with the next list. Nothing here sends by itself.
 
 import type { ChatMessage } from "./chat-message";
-import { takeSent } from "./draft-store";
+import { takeSentText } from "./draft-store";
 import type { QueuedMessages } from "./protocol";
 
 export interface HeldMessage {
@@ -27,26 +27,29 @@ export function droppedNote(imagesDropped: number): string | null {
     : `${imagesDropped} attached images were not kept and will not be sent`;
 }
 
-/** Take the daemon's list. A row that is still here keeps its pending
- *  flag; a send of ours that the daemon held loses its local echo from
- *  the transcript, since the held row is where it now is. */
+/** Take the daemon's list. Every list is the daemon's answer, so no row
+ *  stays pending past it: one it still names (a Send lost in a restart, say)
+ *  can be clicked again. A send of ours that the daemon held loses its local
+ *  echo from the transcript, since the held row is where it now is; the
+ *  echo is the text as typed, which an attachment's file block follows in
+ *  the daemon's copy. */
 export function applyHeldList(
   state: { held: HeldMessage[]; messages: ChatMessage[] },
   sending: string[],
   event: QueuedMessages,
 ): void {
-  const before = new Map(state.held.map((row) => [row.id, row]));
   state.held = event.messages.map((entry) => ({
     id: entry.queued_id,
     text: entry.content,
     imagesDropped: entry.images_dropped,
-    pending: before.get(entry.queued_id)?.pending ?? false,
+    pending: false,
   }));
   for (const entry of event.messages) {
-    if (!takeSent(sending, entry.content)) continue;
+    const sent = takeSentText(sending, entry.content);
+    if (sent === null) continue;
     for (let i = state.messages.length - 1; i >= 0; i--) {
       const row = state.messages[i];
-      if (row.role === "user" && row.turnId === undefined && row.text === entry.content) {
+      if (row.role === "user" && row.turnId === undefined && row.text === sent) {
         state.messages.splice(i, 1);
         break;
       }

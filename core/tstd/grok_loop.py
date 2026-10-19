@@ -525,7 +525,7 @@ async def grok_loop(
                 assert grok_id is not None
                 images = list(session.pending_images)
                 session.pending_images = []
-                prompt_text = user_content
+                prompt_text = queued.prompt_text
                 prompt_images: list[tuple[str, bytes, str]] | None = images
                 files: list[tuple[str, str, str]] | None = None
                 # Grok 1.0.13 drops ACP image blocks (image: false). Write

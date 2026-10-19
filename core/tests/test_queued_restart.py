@@ -263,6 +263,9 @@ def test_images_are_not_kept_and_the_model_is_told() -> None:
     assert row["provider"] == f"what is in this?\n\n{dropped_note(1)}"
     (back,) = messages_from_rows([row])
     assert (back.id, back.display, back.images_dropped) == (message.id, message.display, 1)
+    # An engine sent the display text (Grok) gets the note too.
+    assert message.prompt_text == message.display
+    assert back.prompt_text == row["provider"]
     # Written again (a second restart), the note is not doubled.
     assert queue_rows([back]) == [row]
 
