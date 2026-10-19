@@ -247,9 +247,12 @@ class AlwaysAllow(ClientMessage):
 
     Writes the narrowest policy rule for the call, then resolves the pending
     approval as approved.  Rejected with ``class_c_not_always_allowable``
-    when the call is a class-C decision.  While the workspace config is not
-    trusted (TD-5113) nothing is saved: the call is approved once and the
-    reply is ``workspace_config_untrusted``.
+    when the call is a class-C decision, and with ``not_always_allowable``
+    when it is a shell command chained from several commands or one policy
+    cannot split with confidence (TD-5101): one rule cannot cover it, so
+    the approval stays pending.  While the workspace config is not trusted
+    (TD-5113) nothing is saved: the call is approved once and the reply is
+    ``workspace_config_untrusted``.
     """
 
     type: Literal["always_allow"] = "always_allow"

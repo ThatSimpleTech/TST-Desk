@@ -9329,6 +9329,87 @@ allow" is not offered for a chained command. Tests:
 `core/tests/test_policy_shell.py`, plus loop and daemon cases in
 `core/tests/test_approval_flow.py`.
 
+Criteria 1 and 2 were unticked after the PR #14 review found lines bash
+splits differently from the scanner (a command on a later line missed
+both `auto` and `never`). They were ticked again on 2026-10-19 once
+TD-5156's differential test, which runs a corpus under bash, `bash
+--posix`, dash and busybox ash, passed: every command any shell ran is
+one of the splitter's segments or the split is incomplete, and a `never`
+rule naming any command that ran refuses the line. The PR #20 review then
+found bash-only words the first corpus left out (bash 5.3's `${ cmd; }`,
+`[[ x =~ ( #) ]]`, extglob); the corpus now covers them and the test
+passed again under bash 5.1, 5.2 and 5.3 (with and without `--posix`),
+dash and busybox ash before the ticks stayed.
+
+### TD-5156 — Shell rule scanner fails closed where shells split a command differently
+**Size:** 3 · **Depends on:** TD-5101
+
+Follow-up to TD-5101 (PR #14). Its review found that `split_command`
+reported some lines as completely split when bash, the `/bin/sh` of
+macOS, Fedora and Arch, reads their line breaks differently, so commands
+on later lines missed both `auto` and `never` rules. dash read them the
+way the scanner did.
+
+**Acceptance criteria:**
+- [x] A differential test builds a corpus of command texts from harmless
+      builtins only (`echo` with unique markers, `true`, `:`) and every
+      line-structure construct (newlines, `\`-newline, comments,
+      heredocs, quotes across lines, `&`, `|&`, `;;`, `()`, `{}`, `$(…)`,
+      backticks, carriage returns, odd whitespace, and the bash-only
+      words that hold `(`, `#`, `<<` or a command as text: `${ cmd; }`,
+      `${| cmd; }`, `[[ ]]`, extglob, arrays and subscripts, `$[ ]`,
+      brace expansion, `coproc NAME`), runs each under every
+      shell on the host (`bash -c`, `bash --posix -c`, `dash -c`, `sh -c`,
+      `busybox sh -c`; a missing one is skipped) and records which
+      markers ran
+- [x] Any text where a shell ran a command that is not one of the
+      splitter's segments comes back `complete=False`, so it never
+      auto-runs. The test stays in the suite
+- [x] A `never` rule naming any command that ran refuses the line,
+      complete or not
+- [x] `never` and `ask` rules match a program written as a full path
+      (`curl *` refuses `/usr/bin/curl x`); `auto` still needs the path
+      as written
+- [x] The `AlwaysAllow` docstring lists the `not_always_allowable`
+      refusal for chained shell commands
+- [x] On Windows, cmd's `for /f … in ('cmd')` and the usebackq
+      `` (`cmd`) `` form are incomplete, and `never` rules see the inner
+      command
+- [x] TD-5101's criteria 1 and 2 are re-verified by the differential test
+- [x] The test's oracle cannot let an expansion in one `echo` stand in
+      for an atom the splitter missed (an expansion matches anything but
+      a marker), and a test checks the oracle itself
+- [x] Tests fail on the old code (937 disagreements and 237 `never`
+      misses on the TD-5101 code with the first corpus; 634 and 295 on
+      this PR's first scanner with the widened one) and pass on the new
+
+Done (2026-10-19): `\`-newline is removed before words are read, and
+joins that would form an operator are incomplete. Heredoc ends are read
+the bash way and the dash way, and a difference is incomplete, as is a
+heredoc left open when its `$(…)` closes. An unquoted body's
+substitutions are read with and without its line continuations. `alias`
+values and `trap` actions are read as commands. After the PR #20 review:
+`${` must be followed by a parameter name (bash 5.3's `${ cmd; }` is
+incomplete) and ends at its first `}`; `[[`, a `(` glued to a word other
+than `name()`, a `name[…]` subscript holding structure, and `$[ ]` are
+incomplete; deny readings include bash's brace expansion and skip a
+`coproc` NAME, and a program word bash brace-expands is incomplete.
+Heredoc reading moved to `core/tstd/policy_shell_heredoc.py` and the
+bash-only checks to `core/tstd/policy_shell_bash.py`. Tests:
+`core/tests/test_policy_shell_differential.py` (corpus in
+`core/tests/shell_corpus.py`) and
+`core/tests/test_policy_shell_fail_closed.py`. See DECISIONS.md.
+
+**Not covered:** macOS `/bin/sh` (bash 3.2) is not on CI; the widened
+corpus was run by hand in containers against bash 5.1.16 (ubuntu 22.04),
+5.2.21 (ubuntu 24.04) and 5.3.9 (ubuntu 26.04 and this host), each with
+`--posix`, their dash, and busybox 1.36.1 ash (alpine 3.20): 0
+disagreements and 0 `never` misses. Brace expansion in arguments keeps a
+line complete, since it cannot change which program runs. Text bash
+evaluates later from inside quotes (an array subscript given to
+`[ -v ]`, `PS4` with `set -x`) is still data to the scanner, like a
+command spelled through a variable.
+
 ---
 
 ### TD-5140 — Agent-proposed steering edits, written only on approval

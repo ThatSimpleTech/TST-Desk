@@ -1,18 +1,25 @@
-"""Words of one shell command, as policy reads them (TD-5101).
+"""Words of one shell command, as policy reads them (TD-5101, TD-5156).
 
 The scanner in :mod:`tstd.policy_shell` finds the commands of a line; this
 module reads the words of one: which wrappers come off before an ``auto``
-rule is matched (only those that never change what runs), and the readings
+rule is matched (only those that never change what runs), the readings
 ``ask`` and ``never`` rules are checked against (every wrapper, keyword,
-assignment and redirect peeled off in turn).
+assignment and redirect peeled off in turn, and the program without its
+folder), and the strings the command runs as commands (``eval``, ``sh -c``,
+``cmd /c``, an ``alias`` value, a ``trap`` action).
 """
 
 from __future__ import annotations
 
+import itertools
 import re
 from dataclasses import dataclass
+from typing import Literal
+
+Dialect = Literal["posix", "cmd"]
 
 _MAX_PEELS = 16  # deny readings kept per command
+_MAX_BRACE_WORDS = 64  # words one brace expansion yields for a deny reading
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 # A redirect word: an optional fd, the operator, and maybe its target.
 _REDIRECT = re.compile(r"^[0-9]*(?:>>|>&|>\||<<-|<<<|<<|<&|<>|&>>|&>|>|<)(.*)$", re.S)
@@ -20,7 +27,19 @@ _KEYWORDS = frozenset(
     {"!", "{", "}", "if", "then", "else", "elif", "do", "while", "until", "fi", "done", "esac"}
     | {"coproc"}
 )
+# Compound commands `coproc NAME` can run, besides the keywords above.
+_COMPOUND = frozenset({"for", "case", "select", "[["})
+# bash's `{1..9}`, `{a..e..2}`; the digits are capped so int() stays cheap.
+_SEQUENCE = re.compile(
+    r"(-?[0-9]{1,18})\.\.(-?[0-9]{1,18})(?:\.\.(-?[0-9]{1,18}))?"
+    r"|([A-Za-z])\.\.([A-Za-z])(?:\.\.(-?[0-9]{1,18}))?"
+)
 SHELLS = frozenset({"sh", "bash", "dash", "zsh", "ksh", "mksh", "ash"})
+_RUNNABLE_EXTENSIONS = frozenset({"exe", "com", "bat", "cmd"})
+
+
+class Incomplete(Exception):
+    """The text cannot be split with confidence."""
 
 
 def unquote(word: str, posix: bool) -> str:
@@ -31,7 +50,8 @@ def unquote(word: str, posix: bool) -> str:
         c = word[i]
         if (posix and c == "\\") or (not posix and c == "^"):
             if not word.startswith("\\\n", i):
-                out.append(word[i + 1 : i + 2])
+                # A backslash that ends the text is itself.
+                out.append(word[i + 1 : i + 2] or ("\\" if posix else ""))
             i += 2
         elif posix and c == "'":
             end = word.find("'", i + 1)
@@ -41,6 +61,9 @@ def unquote(word: str, posix: bool) -> str:
         elif c == '"':
             j = i + 1
             while j < n and word[j] != '"':
+                if posix and word.startswith("\\\n", j):
+                    j += 2
+                    continue
                 if posix and word[j] == "\\" and word[j + 1 : j + 2] in ('"', "\\", "$", "`"):
                     j += 1
                 out.append(word[j])
@@ -70,6 +93,36 @@ def dash_c_script(args: list[str]) -> str | None:
     if j < len(args) and args[j] == "--":
         j += 1
     return args[j] if has_c and j < len(args) else None
+
+
+def run_strings(words: list[str], posix: bool) -> list[tuple[str, Dialect]]:
+    """The strings a command runs as commands, and the dialect they run in.
+
+    ``eval``, ``sh -c`` and ``cmd /c`` run theirs now, an ``alias`` value runs
+    where the alias is used on a later line, and a ``trap`` action at exit.
+    """
+    k = peel_all(words)
+    if k >= len(words):
+        return []
+    name, rest = basename(words[k]), words[k + 1 :]
+    if name.lower() in ("cmd", "cmd.exe") and rest and rest[0].lower() in ("/c", "/k"):
+        return [(" ".join(rest[1:]), "cmd")]
+    if not posix:
+        if name.lower() == "for" and any(w.lower().startswith("/f") for w in rest):
+            # `for /f … in ('cmd')`, or (`cmd`) with usebackq, runs the
+            # quoted command; read whole it is cut at the quotes.
+            raise Incomplete
+        return []
+    if name == "eval" and rest:
+        return [(" ".join(rest), "posix")]
+    script = dash_c_script(rest) if name in SHELLS else None
+    if script is not None:
+        return [(script, "posix")]
+    if name == "alias":
+        return [(w.partition("=")[2], "posix") for w in rest if "=" in w]
+    if name == "trap" and len(rest) > 1:
+        return [(rest[1] if rest[0] == "--" else rest[0], "posix")]
+    return []
 
 
 @dataclass(frozen=True)
@@ -168,6 +221,10 @@ def _skip_options(words: list[str], k: int, opts: _Opts, *, strict: bool) -> int
 def _peel_once(words: list[str], k: int) -> int | None:
     """Past one keyword, assignment, redirect or wrapper at *k*, or None."""
     word = words[k]
+    if word == "coproc" and k + 2 < len(words):
+        after = words[k + 2]
+        # `coproc NAME { cmd; }`: NAME names the job, cmd is the command.
+        return k + 2 if after in _KEYWORDS or after in _COMPOUND else k + 1
     if word in _KEYWORDS or _ASSIGNMENT.match(word):
         return k + 1
     if word == "function":
@@ -205,8 +262,10 @@ def allow_start(raw: list[str]) -> int:
     return k
 
 
-def deny_readings(words: list[str]) -> list[str]:
-    """The unquoted command, then again after each peel."""
+def deny_readings(words: list[str], *, braces: bool = True) -> list[str]:
+    """The unquoted command, then again after each peel; each also with
+    its program named without its folder (``/usr/bin/curl`` → ``curl``),
+    and all of it again after bash's brace expansion (``{curl,x}``)."""
     starts = [0]
     while starts[-1] < len(words):
         nxt = _peel_once(words, starts[-1])
@@ -216,4 +275,78 @@ def deny_readings(words: list[str]) -> list[str]:
     # A long run of assignments would cost a join per word; the first few
     # readings and the fully peeled one are what rules can name.
     starts = starts[:_MAX_PEELS] + starts[-1:]
-    return [" ".join(words[k:]) for k in starts]
+    readings: list[str] = []
+    for k in starts:
+        readings.append(" ".join(words[k:]))
+        if k < len(words) and (name := program_name(words[k])) != words[k]:
+            readings.append(" ".join([name, *words[k + 1 :]]))
+    if braces:
+        expanded = [x for w in words for x in (brace_words(w) or [w])]
+        if expanded != words:
+            readings.extend(deny_readings(expanded, braces=False))
+    return readings
+
+
+def brace_words(word: str) -> list[str] | None:
+    """The words bash's brace expansion makes of *word* (``{curl,x}`` →
+    ``curl``, ``x``), at most 64, or None when it has none. dash and ash
+    take the word as written, so a braced program name is read both ways."""
+    words = _expand_braces(word)
+    return None if words == [word] else words
+
+
+def _expand_braces(word: str) -> list[str]:
+    group = _brace_group(word)
+    if group is None:
+        return [word]
+    start, end, alternatives = group
+    out: list[str] = []
+    for alternative in alternatives:
+        # Each round removes a pair of braces, so this ends.
+        out.extend(_expand_braces(word[:start] + alternative + word[end:]))
+        if len(out) >= _MAX_BRACE_WORDS:
+            break
+    return out[:_MAX_BRACE_WORDS]
+
+
+def _brace_group(word: str) -> tuple[int, int, list[str]] | None:
+    """The first ``{a,b}`` or ``{1..3}`` in *word*: its span and its parts."""
+    for start, c in enumerate(word):
+        if c != "{" or word[start - 1 : start] == "$":
+            continue
+        depth, parts, last = 0, [], start + 1
+        for end in range(start + 1, len(word)):
+            ch = word[end]
+            if ch == "{":
+                depth += 1
+            elif ch == "}" and depth:
+                depth -= 1
+            elif ch == "}":
+                parts.append(word[last:end])
+                found = parts if len(parts) > 1 else _sequence(parts[0])
+                if found is not None:
+                    return start, end + 1, found
+                break
+            elif ch == "," and not depth:
+                parts.append(word[last:end])
+                last = end + 1
+    return None
+
+
+def _sequence(text: str) -> list[str] | None:
+    m = _SEQUENCE.fullmatch(text)
+    if m is None:
+        return None
+    numbers = m.group(1) is not None
+    first, last = (int(m[1]), int(m[2])) if numbers else (ord(m[4]), ord(m[5]))
+    step = abs(int((m[3] if numbers else m[6]) or 1)) or 1
+    span = range(first, last + 1, step) if first <= last else range(first, last - 1, -step)
+    return [str(x) if numbers else chr(x) for x in itertools.islice(span, _MAX_BRACE_WORDS)]
+
+
+def program_name(word: str) -> str:
+    """*word* as a rule names the program: no folder, and on Windows no
+    ``.exe``-style extension (``C:\\Tools\\curl.EXE`` → ``curl``)."""
+    name = basename(word)
+    stem, dot, ext = name.rpartition(".")
+    return stem if dot and stem and ext.lower() in _RUNNABLE_EXTENSIONS else name
