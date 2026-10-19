@@ -840,6 +840,17 @@ FIXTURES = {
         guidance="keep the parser work",
         seq=18,
     ),
+    # The in-turn tool-result trim (TD-5150): dropped_messages counts the
+    # results trimmed, and every message stays.
+    "context_compacted_inflight_trim": ContextCompacted(
+        session_id="sess-1",
+        dropped_messages=3,
+        kept_messages=14,
+        tokens_before=30500,
+        tokens_after=29300,
+        trigger="inflight_trim",
+        seq=18,
+    ),
     "context_usage": ContextUsage(
         session_id="sess-1",
         tier="brain",

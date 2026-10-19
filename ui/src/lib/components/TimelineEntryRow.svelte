@@ -6,7 +6,7 @@
 	import Icon from './Icon.svelte';
 	import DiffPreview from './DiffPreview.svelte';
 	import type { TimelineEntry } from '../timeline';
-	import { KIND_LABELS, entryIcon, entryTone, isScalarDetail } from '../entry-view';
+	import { KIND_LABELS, entryIcon, entryTone, isQuietEntry, isScalarDetail } from '../entry-view';
 
 	interface Props {
 		entry: TimelineEntry;
@@ -19,6 +19,7 @@
 	let tone = $derived(entryTone(entry));
 	let icon = $derived(entryIcon(entry));
 	let kindLabel = $derived(KIND_LABELS[entry.kind]);
+	let quiet = $derived(isQuietEntry(entry));
 
 	let diff = $derived(typeof entry.details.diff === 'string' ? (entry.details.diff as string) : null);
 
@@ -40,7 +41,7 @@
 	}
 </script>
 
-<div class="row row--{tone}" class:expanded>
+<div class="row row--{tone}" class:row--quiet={quiet} class:expanded>
 	<button class="row-main" type="button" onclick={ontoggle} aria-expanded={expanded}>
 		<span class="glyph" aria-hidden="true"><Icon name={icon} size={14} /></span>
 		<span class="kind">{kindLabel}</span>
@@ -118,6 +119,8 @@
 		font-size: var(--text-xs);
 		cursor: pointer;
 		text-align: left;
+		/* A quiet row's narrow layout asks how wide the row is (TD-5150). */
+		container-type: inline-size;
 	}
 
 	.row-main:hover {
@@ -166,6 +169,36 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		flex: 1;
+	}
+
+	/* Bookkeeping rows (a tool-output trim, TD-5150) step back: muted words,
+	   regular weight, so a compaction still stands out among them. Their
+	   title is the numbers ("3 results · 1.2k tokens freed"), set in the
+	   UI face, not mono, so it is short. It takes its full width before the
+	   preview gets any (the preview's basis is 0), and when the row cannot
+	   hold it the tail is cut, never the numbers at its start. Measured in
+	   e2e/trim-row.spec.ts at the phone's 200px pane and the desktop's 320px. */
+	.row--quiet .kind,
+	.row--quiet .title,
+	.row--quiet .preview {
+		color: var(--color-ink-muted);
+		font-weight: var(--weight-normal);
+	}
+
+	.row--quiet .title {
+		font-family: var(--font-sans);
+		max-width: none;
+		flex: 0 1 auto;
+		min-width: 0;
+	}
+
+	/* Below 360px (the phone's 200px pane, the desktop's default 320px)
+	   the preview would be a stub like "Trimm…": it goes, and its gap goes
+	   to the title. Wider panes show "Trimmed tool output · before → after". */
+	@container (max-width: 359px) {
+		.row--quiet .preview {
+			display: none;
+		}
 	}
 
 	.progress {

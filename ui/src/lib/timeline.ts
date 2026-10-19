@@ -19,7 +19,8 @@
 // the chat conversation, not an activity record. The AC enumerates exactly the
 // activity kinds shown here.
 
-import type { DaemonEventUnion, SessionState, TurnComplete, UserTurn } from "./protocol";
+import type { ContextCompacted, DaemonEventUnion, SessionState, TurnComplete, UserTurn } from "./protocol";
+import { formatTokens } from "./context-gauge";
 
 /** Presentation category driving visually distinct treatment (AC #6).
  *  `turn` is the group header the other kinds sit under: one per user
@@ -32,6 +33,7 @@ export type EntryKind =
   | "approval"
   | "tier_switch"
   | "compaction"
+  | "trim"
   | "steering_reload"
   | "error"
   | "verify";
@@ -82,12 +84,45 @@ export function summarizeArguments(args: Record<string, unknown>): string {
   return parts.map(([k, v]) => `${k}=${truncate(JSON.stringify(v))}`).join(" ");
 }
 
-/** Compaction rows name who asked for it (TD-5109). */
+/** Compaction rows name who asked for it (TD-5109). A trigger this build
+ *  does not know reads as the budget's, so a newer daemon still gets a title. */
 const COMPACTION_TITLES: Record<"auto" | "manual" | "from_here", string> = {
   auto: "Context compacted",
   manual: "Context compacted on request",
   from_here: "Summarized from a message",
 };
+
+function compactionTitle(trigger: string): string {
+  return Object.prototype.hasOwnProperty.call(COMPACTION_TITLES, trigger)
+    ? COMPACTION_TITLES[trigger as keyof typeof COMPACTION_TITLES]
+    : COMPACTION_TITLES.auto;
+}
+
+/** The in-turn trim (TD-5150) arrives as context_compacted but folds no
+ *  turn away: it shortened this turn's tool results, so it gets its own
+ *  quieter row and says how many results and how many tokens it freed.
+ *  The title is the two numbers and nothing else: the "Trim" label says
+ *  what happened, and a 200px activity pane (the phone) has room for the
+ *  label and the start of the title only, so the numbers go first. */
+function trimEntry(event: ContextCompacted): TimelineEntry {
+  const results = event.dropped_messages;
+  const freed = Math.max(0, event.tokens_before - event.tokens_after);
+  return {
+    id: `trim:${event.seq}`,
+    kind: "trim",
+    seq: event.seq,
+    title: `${results} ${results === 1 ? "result" : "results"} · ${formatTokens(freed)} tokens freed`,
+    preview: `Trimmed tool output · ${event.tokens_before} → ${event.tokens_after} tokens`,
+    details: {
+      trimmed_results: results,
+      tokens_freed: freed,
+      tokens_before: event.tokens_before,
+      tokens_after: event.tokens_after,
+      kept_messages: event.kept_messages,
+      trigger: "inflight_trim",
+    },
+  };
+}
 
 /** Map one daemon event to a timeline entry, or null when it isn't shown. */
 export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
@@ -186,13 +221,14 @@ export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
     case "context_compacted": {
       // TD-5109: say who asked, and what the summary was told to keep.
       const trigger = event.trigger ?? "auto";
+      if (trigger === "inflight_trim") return trimEntry(event);
       const guidance = event.guidance ?? null;
       const counts = `${event.tokens_before} → ${event.tokens_after} tokens (${event.dropped_messages} dropped)`;
       return {
         id: `compaction:${event.seq}`,
         kind: "compaction",
         seq: event.seq,
-        title: COMPACTION_TITLES[trigger],
+        title: compactionTitle(trigger),
         preview: guidance !== null ? `${counts} · keeping: ${truncate(guidance, 80)}` : counts,
         details: {
           dropped_messages: event.dropped_messages,

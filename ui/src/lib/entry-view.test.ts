@@ -6,6 +6,7 @@ import {
   KIND_LABELS,
   entryTone,
   entryIcon,
+  isQuietEntry,
   isScalarDetail,
   classifyDiffLine,
   diffLines,
@@ -27,6 +28,7 @@ describe("KIND_LABELS", () => {
       "approval",
       "tier_switch",
       "compaction",
+      "trim",
       "steering_reload",
       "error",
       "verify"
@@ -77,6 +79,22 @@ describe("entryTone", () => {
   });
 });
 
+describe("trimmed tool output (TD-5150)", () => {
+  it("reads quieter than a compaction: its own label, glyph and a neutral tone", () => {
+    expect(KIND_LABELS.trim).toBe("Trim");
+    expect(KIND_LABELS.trim).not.toBe(KIND_LABELS.compaction);
+    expect(entryIcon(entry("trim"))).not.toBe(entryIcon(entry("compaction")));
+    expect(entryTone(entry("trim"))).toBe("neutral");
+    expect(entryTone(entry("compaction"))).toBe("warning");
+  });
+
+  it("draws muted, and a compaction does not", () => {
+    expect(isQuietEntry(entry("trim"))).toBe(true);
+    expect(isQuietEntry(entry("compaction"))).toBe(false);
+    expect(isQuietEntry(entry("tool_call"))).toBe(false);
+  });
+});
+
 describe("turnMetrics", () => {
   it("says running until the daemon closes the turn", () => {
     expect(turnMetrics(entry("turn", { status: "running", duration: null, cost: null }))).toBe("running…");
@@ -104,6 +122,7 @@ describe("entryIcon", () => {
       "approval",
       "tier_switch",
       "compaction",
+      "trim",
       "steering_reload",
       "error"
     ];
