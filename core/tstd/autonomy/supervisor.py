@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..git_safe import git_command
 from ..logging import get_logger
 from ..proc_lifecycle import finish_subprocess
 from ..provider import ChatCompletionRequest, ChatMessage, ProviderError
@@ -348,7 +349,9 @@ async def _diff_since(session: Session) -> tuple[str, str | None]:
     tip = await _resolve_sha(workspace, branch)
     if since is None:
         return "", tip
-    rc, out = await _git(workspace, "diff", since)
+    # A plain patch: diff.external and textconv drivers are commands a
+    # config file names, and their output is not a patch anyway (TD-5108).
+    rc, out = await _git(workspace, "diff", "--no-ext-diff", "--no-textconv", since)
     return (out if rc == 0 else ""), tip
 
 
@@ -366,10 +369,7 @@ async def _git(workspace: Path, *args: str) -> tuple[int, str]:
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            "git",
-            "-C",
-            str(workspace),
-            *args,
+            *git_command("-C", str(workspace), *args),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=sanitized_env(),

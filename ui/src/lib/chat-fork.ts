@@ -88,6 +88,10 @@ export function createBranchSnaps(): BranchSnaps {
       row.text = event.content;
       row.siblingIndex = event.sibling_index;
       row.siblingCount = event.sibling_count;
+      // The row now stands for the fork's turn, not the one it was stamped
+      // with. Unstamped, the fork's user_turn adopts it instead of adding
+      // a second copy of the same message.
+      row.turnId = undefined;
       state.messages.splice(cut + 1);
       save(event.user_index, event.sibling_index, state.messages);
       return true;

@@ -407,15 +407,16 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `pair` | — | First frame from a phone redeeming a pairing code, instead of `hello`: code, device name, protocol version. Remote peers only (loopback gets `bad_request`). Optional `replaces`: the phone's current key, whose entry is retired. Success is a bare `pair_ok` with the device's own key, then close 1000; failure is `pair_failed` or `pair_locked`, then close 1008 (TD-5014). |
 | `open_workspace` | — | Open a workspace directory as a new session. |
 | `user_message` | yes | Queue a user turn for the session's loop. |
-| `fork_from` | yes | Replace a past user turn and fork a sibling from there. Refused mid-turn. |
-| `set_branch` | yes | Switch to another sibling at a forked user turn. |
+| `fork_from` | yes | Replace a past user turn and fork a sibling from there. `user_index` counts user turns from the start of the session and is mapped through compaction summaries; a turn inside one is refused with `user_turn_compacted` (TD-5147). Refused mid-turn. |
+| `set_branch` | yes | Switch to another sibling at a forked user turn, numbered and refused like `fork_from` (`user_turn_compacted` once that turn is inside a summary, TD-5147). Refused mid-turn. |
 | `compact_context` | yes | Compact now: everything before the latest user turn, or from a given user turn on, with optional guidance (TD-5109). Refused mid-turn. |
 | `approve` | yes | Approve a parked tool call. |
 | `deny` | yes | Deny a parked tool call, with an optional reason. |
-| `always_allow` | yes | Approve and save the narrowest policy rule that would have allowed it. Refused for class-C calls. |
+| `always_allow` | yes | Approve and save the narrowest policy rule that would have allowed it. Refused for class-C calls and for a chained shell command (TD-5101). While the workspace config is not trusted (TD-5113) it approves the call once, saves nothing and replies `workspace_config_untrusted`. |
 | `list_policy_rules` | yes | List the workspace's saved policy rules. |
 | `revoke_policy_rule` | yes | Remove one saved rule, identified by `(tool, args)`. |
 | `set_spend_cap` | yes | Set or clear the workspace's session spend budget (`caps.spend_usd` in `.tst/config.yaml`). Null removes it and the built-in $25 pause applies; a number replaces that pause. Acked with `boundary_update`. |
+| `trust_workspace_config` | yes | Trust or decline the workspace's `.tst/config.yaml` when it loosens anything, naming the `sha256` the card showed (TD-5113). A file that changed since is refused with `workspace_config_changed` and re-announced. The decision is stored per workspace in the data dir and applies to every live session there; acked with their `boundary_update`. Only this computer's own window may send it (`loopback_only` otherwise). |
 | `set_skip_all_approvals` | — | Turn skip-all (dangerously skip permissions) on or off. Machine-wide; every ask including shell and Class C runs as auto; caps do not pause; `never` still refuses. Acked with `setup_state`. |
 | `set_load_global_memory` | — | Turn global memory on or off. Machine-wide; off never reads `~/.tstdesk/memory/`. Acked with `setup_state` (TD-2603). |
 | `set_coworker` | — | Turn coworker mode on or off. Machine-wide; persists `{user_data_dir}/coworker.yaml`. Acked with `setup_state` (TD-2905). |
@@ -535,12 +536,12 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `tool_result` | session | The outcome of a tool call, with an error code and diff when applicable. |
 | `shell_output` | session | A streamed chunk of a shell command's stdout or stderr. |
 | `tool_progress` | session | Progress an MCP server reported for a running tool call: count, optional total and message (TD-5105). Thinned to two a second. |
-| `approval_request` | session | A tool call parked for approval, with the summary, the reason, and the rule "always allow" would write. |
+| `approval_request` | session | A tool call parked for approval, with the summary, the reason, and the rule "always allow" would write (none for class C or a chained shell command, or while the workspace config is not trusted). |
 | `decision_logged` | session | A decision appended to the autonomy ledger. |
 | `checkpoint_notice` | session | A one-time notice that checkpointing is degraded. |
 | `verify_result` | session | Interactive validator review of a write turn. Timeline only; not a chat bubble (TD-4204). |
 | `cost_update` | session | Accrued spend: this turn, this session, all time, by tier, and the classifier separately. |
-| `boundary_update` | session | The resolved workspace boundary and caps, and where they came from. |
+| `boundary_update` | session | The resolved workspace boundary and caps, and where they came from. Additive `config_trust` (TD-5113) is set when the workspace config loosens anything: `state` (`pending`, `trusted` or `declined`), its `sha256`, and each loosened setting with its default. Pending and declined run on packaged defaults. |
 | `turn_complete` | session | A finished turn: tokens, cost, tier, duration, and any failure code. A turn a restart cut is sealed once at revive with `failed`, zeros and `error_code: interrupted_by_restart` (TD-5018). |
 | `tier_state` | session | The active tier, any pinned override, slugs, preset, hosts (TD-1720), and plan-mode lock (TD-4603). Native-engine sessions only. |
 | `context_compacted` | session | Older turns were compacted to fit the context window. Never silent. Additive `trigger` (`auto` \| `manual` \| `from_here`) and `guidance` say who asked and what to keep (TD-5109). |
@@ -635,6 +636,7 @@ change; changing the same behaviour anywhere else usually is not.
 | `load_plugins` | `core/tstd/tools/plugins.py` | Discovers in-process plugin packages, refuses non-permissive licenses, and calls each `register(registry, dispatcher)`. A broken plugin is logged and skipped. Name collisions with builtins are skipped, not replaced. |
 | `register_builtin_handlers` | `core/tstd/tools/handlers.py` | Binds each registered tool name to the async callable that executes it. Registry and handler are separate on purpose: a tool with no handler is a configuration error the model is told about, not a crash. |
 | `RULE_TABLE` | `core/tstd/autonomy/classifier.py` | The static decision rules, in priority order, first match wins. Anything the table cannot decide falls to the worker-tier classifier and defaults to class B — fail toward asking, never toward acting. |
+| `git_command` | `core/tstd/git_safe.py` | The argv every git call the daemon makes starts with: `core.fsmonitor` off, `core.hooksPath` at nothing so no hook runs, and bare repos only when named, set with `-c` so no repo config can override them (TD-5108). A new git call in the daemon goes through here; a test fails on a raw `"git"` argv. |
 | `sandbox_start_error` | `core/tstd/autonomy/sandbox.py` | Why an autonomous run may not start: missing / down / rootful runtime. Interactive sessions do not import this module (TD-4301). |
 | `Precedence` | `core/tstd/context/discover.py` | The steering hierarchy: `user global` < `workspace` < `rules` < `nested`. Adding a scope means adding a level here, and `docs/steering.md` documents each one. |
 | `ToolDispatcher` | `core/tstd/tools/dispatch.py` | The single chokepoint every tool call passes through: schema validation, classifier, path guard, policy gate, handler, checkpoint, ledger. Prime directive §2.6 lives here, and reaching a handler unclassified raises rather than executing. |
@@ -768,9 +770,12 @@ Worth reading once, because it is the same path for every tool:
 4. **Guard.** Every `path_fields` argument is canonicalised and checked. Reads are checked
    against the workspace wall; writes additionally against `writable_paths`, the steering-file
    ban, and hardlinks.
-5. **Gate.** Policy resolves the class to `auto`, `ask`, or `never`. Class A is auto, class B
-   asks, class C takes the workspace's `class_c_default`. `ask` with no approval handler
-   attached raises — the approval gate is part of the chokepoint, not an optional add-on.
+5. **Gate.** Policy resolves the class to `auto`, `ask`, or `never`. Rules come first, deny
+   first: any matching `never` refuses, then any `ask` asks, and `auto` needs a rule for every
+   path or shell command in the call (TD-5101, `core/tstd/policy_shell.py`). With no rule,
+   class A is auto, class B asks, class C takes the workspace's `class_c_default`. `ask` with
+   no approval handler attached raises — the approval gate is part of the chokepoint, not an
+   optional add-on.
 6. **Execute.** Your handler runs. An exception becomes a `handler_error` result, not a dead turn.
 7. **Record.** Touched paths go on the session, so path-scoped steering rules can activate.
    Mutations get a diff and a checkpoint commit. Class A and B decisions append to the ledger.

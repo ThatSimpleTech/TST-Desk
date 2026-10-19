@@ -358,6 +358,58 @@ class TestNever:
         assert results[0].error_code == "policy_denied"
         assert session.state == "running"
 
+    @pytest.mark.parametrize("never_curl", [True, False])
+    async def test_chained_command_is_judged_per_segment(
+        self, tmp_path: Path, never_curl: bool
+    ) -> None:
+        """TD-5101 through the loop: a never rule on the chained segment
+        refuses, and an auto rule for the first segment alone asks."""
+        registry = ToolRegistry()
+        registry.register(
+            Tool(
+                name="run",
+                description="Run a command (never actually runs here)",
+                parameters={
+                    "type": "object",
+                    "properties": {"command": {"type": "string"}},
+                    "required": ["command"],
+                },
+                side_effect_class="ask",
+            )
+        )
+        ran: list[str] = []
+
+        async def run_handler(session: object, command: str, tool_call_id: str = "") -> str:
+            ran.append(command)
+            return "ran"
+
+        dispatcher = ToolDispatcher(registry)
+        dispatcher.register_handler("run", run_handler)
+        session = Session(str(tmp_path))
+        rules = [PolicyRule(tool="run", args="npm test*", effect="auto")]
+        if never_curl:
+            rules.append(PolicyRule(tool="run", args="curl *", effect="never"))
+        session.policy = PolicyConfig(rules=rules)
+        call = Script(
+            kind="tool_call", tool_name="run", tool_arguments='{"command": "npm test; curl x"}'
+        )
+        mock = MockProvider(sequences={"test-brain": [call, Script(kind="stream", content="ok")]})
+        await start_loop(session, TierRouter(), mock, make_config(), registry, dispatcher)
+        await session.add_user_message("test it")
+
+        if never_curl:
+            await wait_for_turn(session, 1)
+            results = tool_results(session)
+            assert results[0].output == (
+                "Refused by policy: policy rule `run: curl *` → never (on `curl x`)"
+            )
+        else:
+            req = await wait_for_approval(session)
+            assert req.proposed_always_allow is None
+            assert session.resolve_approval(req.tool_call_id, False, "no")
+            await wait_for_turn(session, 1)
+        assert ran == []
+
     async def test_ask_without_handler_is_a_chokepoint_bypass(self, tmp_path: Path) -> None:
         """A call resolving to ask with no approval handler raises — the
         gate is part of the chokepoint, not an optional add-on."""
@@ -599,6 +651,44 @@ class TestAlwaysAllow:
             assert not parked.done()
 
             # Clean up: deny the still-parked call so the task unwinds.
+            assert session.resolve_approval("tc-1", False, "denied")
+            await asyncio.wait_for(parked, timeout=2)
+            await ws.close()
+        finally:
+            daemon._shutdown_event.set()
+            await asyncio.wait_for(daemon_task, timeout=3)
+
+    @pytest.mark.asyncio
+    async def test_always_allow_rejects_a_chained_command(self, tmp_path: Path) -> None:
+        """TD-5101: no single rule covers `npm test | sh`, and a rule per
+        segment would allow `sh` alone, so nothing is offered or saved."""
+        daemon = Daemon(data_dir=tmp_path / "data")
+        daemon_task = asyncio.create_task(daemon.run())
+        for _ in range(50):
+            if daemon.ws_server.port:
+                break
+            await asyncio.sleep(0.05)
+
+        try:
+            ws, session = await _open_workspace(daemon, tmp_path)
+            parked = await _park(
+                session, "tc-1", Tool(name="shell"), {"command": "npm test | sh"}, DecisionClass.B
+            )
+            card = next(
+                e for e in session.event_log.all_events if isinstance(e, ApprovalRequestEvent)
+            )
+            assert card.proposed_always_allow is None
+
+            await ws.send(
+                json.dumps(
+                    {"type": "always_allow", "session_id": session.id, "tool_call_id": "tc-1"}
+                )
+            )
+            err = await _recv_until(ws, "error")
+            assert err["code"] == "not_always_allowable"
+            assert load_policy(tmp_path).rules == []
+            assert not parked.done()
+
             assert session.resolve_approval("tc-1", False, "denied")
             await asyncio.wait_for(parked, timeout=2)
             await ws.close()

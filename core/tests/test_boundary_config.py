@@ -17,7 +17,7 @@ from tests.test_dispatch import make_config, start_loop, wait_for_turn
 from tstd.boundary_config import (
     BoundaryConfig,
     BoundarySection,
-    configured_spend,
+    configured_spend_from_mapping,
     load_workspace_boundary,
     save_spend_cap,
     scaffold_workspace_config,
@@ -31,6 +31,7 @@ from tstd.protocol import ToolResult as ToolResultEvent
 from tstd.router import TierRouter
 from tstd.session import Session
 from tstd.tools import Tool, ToolDispatcher, ToolRegistry
+from tstd.workspace_trust import read_view
 
 # ── Defaults ────────────────────────────────────────────────────────────
 
@@ -359,6 +360,11 @@ class TestDaemonOpenWorkspaceValidation:
         if runner is not None:
             await runner.cancel()
         await daemon._shutdown()
+
+
+def configured_spend(workspace: Path) -> float | None:
+    """The written ``caps.spend_usd``, read as the daemon reads it (ungated here)."""
+    return configured_spend_from_mapping(read_view(workspace, None).data)
 
 
 class TestSpendCap:

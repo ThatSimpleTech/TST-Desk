@@ -13,6 +13,7 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ..git_safe import git_command
 from ..logging import get_logger, redact_secrets
 from ..protocol import AutonomySummary
 from .checkpoint import auto_branch
@@ -177,7 +178,7 @@ def _default_branch(workspace: Path, env: dict[str, str]) -> str | None:
 def _git(workspace: Path, env: dict[str, str], *args: str) -> tuple[int, str]:
     try:
         proc = subprocess.run(
-            ["git", "-C", str(workspace), *args],
+            git_command("-C", str(workspace), *args),
             capture_output=True,
             text=True,
             env=env,

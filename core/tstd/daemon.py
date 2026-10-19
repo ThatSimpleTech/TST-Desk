@@ -40,10 +40,10 @@ from .autonomy.charter_io import read_charter_document, write_charter_document
 from .autonomy.runner import first_prompt, notify_autonomy_stop
 from .autonomy.start import run_autonomy_start
 from .boundary_config import (
-    boundary_source,
-    load_workspace_boundary,
+    boundary_from_mapping,
     save_spend_cap,
     scaffold_workspace_config,
+    workspace_config_path,
 )
 from .browser import BrowserDriver, BrowserError, browser_driver_from_config, normalize_hit
 from .config import (
@@ -171,8 +171,6 @@ from .notify.slack import send as send_slack_notify
 from .notify.telegram import schedule as schedule_telegram_notify
 from .policy import (
     add_rule,
-    load_approved_imports,
-    load_policy,
     load_skip_all,
     propose_always_allow,
     remove_rule,
@@ -344,6 +342,7 @@ from .protocol import (
     TierState,
     Transcribe,
     Transcript,
+    TrustWorkspaceConfig,
     TurnComplete,
     UsageExported,
     UsageReport,
@@ -436,11 +435,14 @@ from .session import (
     SessionRunner,
 )
 from .session_lifecycle import (
+    apply_workspace_config,
     archive_session,
     boundary_update_event,
+    config_source,
     delete_session,
     move_session,
     reload_session_boundary,
+    reload_session_policy,
     rename_session,
 )
 from .session_persist import LoadedSession, SessionPersist
@@ -470,6 +472,13 @@ from .voice import (
     voice_has_endpoint,
 )
 from .workspace_pins import load_workspace_pins, save_workspace_pins
+from .workspace_trust import (
+    TrustStore,
+    UntrustedConfigError,
+    read_view,
+    same_workspace,
+    trusted_imports,
+)
 from .ws import WebSocketServer
 
 log = get_logger("tstd.daemon")
@@ -490,8 +499,22 @@ _USAGE_LIMITS: dict[UsageBucket, int] = {"session": 25, "day": 30, "week": 12}
 _COMPACT_REFUSALS: dict[str, str] = {
     "turn_in_progress": "A turn is running. Compact when it finishes, or stop it first.",
     "nothing_to_compact": "Nothing to compact yet. Only the latest turn is in the conversation.",
-    "user_turn_compacted": "That message is already inside a summary.",
+    "user_turn_compacted": "That message is already inside a summary. Summarize from a later one.",
     "user_turn_not_found": "That message is not in this conversation.",
+}
+
+# Why an edit (``fork_from``) or a branch switch (``set_branch``) was refused
+# (TD-5147). A message folded into a summary is gone from the model's
+# context, so it can no longer be edited or switched to another version.
+_BRANCH_REFUSALS: dict[str, str] = {
+    "turn_in_progress": "A turn is running. Edit or switch when it finishes, or stop it first.",
+    "empty_content": "An edited message can't be empty.",
+    "user_turn_compacted": (
+        "That message was folded into a summary to free up context, so it can't be "
+        "edited or switched any more. Edit a message after the summary instead."
+    ),
+    "user_turn_not_found": "That message is not in this conversation.",
+    "branch_not_found": "That version of the message is no longer available.",
 }
 
 
@@ -743,16 +766,16 @@ def _relativize_paths(text: str, workspace: Path) -> str:
     return text.replace(f"{root}{os.sep}", "").replace(f"{home}{os.sep}", f"~{os.sep}")
 
 
-def _approved_import_allowlist(workspace: str | Path) -> frozenset[Path]:
+def _approved_import_allowlist(workspace: str | Path, trust: TrustStore) -> frozenset[Path]:
     """Durable external-import allowlist for read-only inspectors (TD-505).
 
     Denied imports are session-scoped by design, so inspectors forward only
     the persisted set — a denied path correctly reads as "would prompt on a
     new session".  A malformed config yields an empty allowlist rather than
-    failing the inspection.
+    failing the inspection, and so does an untrusted one (TD-5113).
     """
     try:
-        return frozenset(load_approved_imports(workspace))
+        return trusted_imports(workspace, trust)
     except ConfigError:
         return frozenset()
 
@@ -951,6 +974,9 @@ class Daemon:
         # TD-804: machine-wide skip-all.  Loaded from the user data dir so
         # a workspace file cannot carry it into someone else's clone.
         self.skip_all_approvals = load_skip_all(self.data_dir)
+        # TD-5113: per-workspace trust in repo-supplied config. Same rule:
+        # the decisions live here, never in the workspace.
+        self.workspace_trust = TrustStore(self.data_dir)
         self.load_global_memory = load_global_memory(self.data_dir)
         self.coworker_enabled = load_coworker(self.data_dir)
         self.voice_enabled = load_voice(self.data_dir)
@@ -1773,7 +1799,10 @@ class Daemon:
                 resolver=SteeringFileResolver(
                     claude_global_fallback=self.config.steering.claude_global_fallback,
                 )
-            ).assemble(workspace, approved_imports=_approved_import_allowlist(workspace))
+            ).assemble(
+                workspace,
+                approved_imports=_approved_import_allowlist(workspace, self.workspace_trust),
+            )
         except Exception as e:  # resolution is designed not to raise; report if it does
             return DiagnosticCheck(
                 name="steering",
@@ -2518,7 +2547,9 @@ class Daemon:
                 )
             result = await found.fork_from(msg.user_index, msg.content)
             if isinstance(result, str):
-                return build_error(result, result.replace("_", " "), session_id=msg.session_id)
+                return build_error(
+                    result, _BRANCH_REFUSALS.get(result, result), session_id=msg.session_id
+                )
             await found.event_log.add(result)
             return None
 
@@ -2545,7 +2576,9 @@ class Daemon:
                 )
             result = await found.set_branch(msg.user_index, msg.sibling_index)
             if isinstance(result, str):
-                return build_error(result, result.replace("_", " "), session_id=msg.session_id)
+                return build_error(
+                    result, _BRANCH_REFUSALS.get(result, result), session_id=msg.session_id
+                )
             await found.event_log.add(result)
             return None
 
@@ -2621,6 +2654,9 @@ class Daemon:
         if isinstance(msg, SetSessionPreset):
             return await self._handle_set_session_preset(msg)
 
+        if isinstance(msg, TrustWorkspaceConfig):
+            return await self._handle_trust_workspace_config(msg)
+
         if isinstance(msg, SetSpendCap):
             found = self.session_registry.get(msg.session_id)
             if found is None:
@@ -2628,16 +2664,25 @@ class Daemon:
                     "session_not_found",
                     f"Session {msg.session_id!r} not found",
                 )
+            ws = found.workspace_path
             try:
-                save_spend_cap(found.workspace_path, msg.spend_usd)
+                after = self.workspace_trust.write_through(
+                    ws, lambda: save_spend_cap(ws, msg.spend_usd), owns=("caps.spend_usd",)
+                )
+            except UntrustedConfigError as e:
+                return build_error("workspace_config_untrusted", str(e), session_id=found.id)
             except ConfigError as e:
                 return build_error("bad_request", str(e), session_id=found.id)
-            error = reload_session_boundary(found, found.workspace_path)
+            if not after.applies:
+                # The budget made a refused section valid and exposed
+                # loosening the card never showed (TD-5113): the file now
+                # waits on the card, so its sessions drop to the defaults.
+                await self._reapply_workspace_config(ws)
+                return None
+            error = reload_session_boundary(found, ws)
             if error is not None:
                 return build_error("bad_request", str(error), session_id=found.id)
-            await found.event_log.add(
-                boundary_update_event(found, boundary_source(found.workspace_path))
-            )
+            await found.event_log.add(boundary_update_event(found, config_source(found)))
             return None
 
         if isinstance(msg, SetTier):
@@ -2729,25 +2774,58 @@ class Daemon:
                     "External imports can never be always-allowed",
                 )
             # The narrowest rule, never a blanket grant; None when the
-            # call is a class-C decision (TD-803 criterion 4).
+            # call is a class-C decision (TD-803 criterion 4), or a shell
+            # command chained from several commands (TD-5101).
             rule = propose_always_allow(
                 pending.tool,
                 pending.arguments,
                 pending.decision_class,
                 Path(found.workspace_path),
             )
-            if rule is None:
+            if rule is None and pending.decision_class.value == "C":
                 return build_error(
                     "class_c_not_always_allowable",
                     "Class C actions can never be always-allowed",
                 )
+            if rule is None:
+                return build_error(
+                    "not_always_allowable",
+                    "A chained shell command can't be always-allowed: "
+                    "each command needs its own rule in .tst/config.yaml",
+                )
+            # TD-5113: never merge a rule into a config that is not in
+            # force. Checked before add_rule, which edits the live policy.
+            # The card offers no Always allow then; a click that races a
+            # trust change still approves this one call, so it is never
+            # left parked with no card to answer it.
+            try:
+                before = self.workspace_trust.before_write(found.workspace_path)
+            except UntrustedConfigError:
+                found.resolve_approval(msg.tool_call_id, True)
+                return build_error(
+                    "workspace_config_untrusted",
+                    f"Approved once. {workspace_config_path(found.workspace_path)} loosens "
+                    "settings you have not trusted, so the rule was not saved. Trust the "
+                    "workspace config to save rules into it.",
+                    session_id=found.id,
+                )
+            except ConfigError as e:
+                found.resolve_approval(msg.tool_call_id, True)
+                return build_error(
+                    "policy_save_failed", f"Approved once; failed to save policy: {e}"
+                )
             found.policy = add_rule(found.policy, rule)
             try:
                 save_policy(found.workspace_path, found.policy)
+                after = self.workspace_trust.after_write(
+                    found.workspace_path, before, owns=("policy.rules",)
+                )
             except ConfigError as e:
                 return build_error("policy_save_failed", f"Failed to save policy: {e}")
             # Resolve the parked call as approved so the loop proceeds.
             found.resolve_approval(msg.tool_call_id, True)
+            if not after.applies:
+                await self._reapply_workspace_config(found.workspace_path)
             return None
 
         if isinstance(msg, ListPolicyRules):
@@ -2772,6 +2850,12 @@ class Daemon:
                     "session_not_found",
                     f"Session {msg.session_id!r} not found",
                 )
+            try:
+                before = self.workspace_trust.before_write(found.workspace_path)
+            except UntrustedConfigError as e:
+                return build_error("workspace_config_untrusted", str(e), session_id=found.id)
+            except ConfigError as e:
+                return build_error("policy_save_failed", f"Failed to save policy: {e}")
             if not remove_rule(found.policy, msg.tool, msg.args):
                 return build_error(
                     "policy_rule_not_found",
@@ -2779,8 +2863,13 @@ class Daemon:
                 )
             try:
                 save_policy(found.workspace_path, found.policy)
+                after = self.workspace_trust.after_write(
+                    found.workspace_path, before, owns=("policy.rules",)
+                )
             except ConfigError as e:
                 return build_error("policy_save_failed", f"Failed to save policy: {e}")
+            if not after.applies:
+                await self._reapply_workspace_config(found.workspace_path)
             return PolicyRules(
                 seq=1,
                 rules=[
@@ -3437,11 +3526,7 @@ class Daemon:
         await self._attach_session_runtime(sess)
         if cut:
             await self._seal_cut_turn(sess)
-        try:
-            source = boundary_source(workspace_path)
-        except ConfigError as e:
-            source = f"defaults — invalid config ({e})"
-        await self._emit_working_context(sess, source)
+        await self._emit_working_context(sess, config_source(sess))
         log.info(
             "revived session",
             extra={
@@ -3523,6 +3608,8 @@ class Daemon:
         router = sess.router if sess.router is not None else TierRouter()
         sess.router = router
 
+        # TD-5113: every config load below goes through the trust gate.
+        sess.trust_store = self.workspace_trust
         error = reload_session_boundary(sess, sess.workspace_path)
         if error is not None:
             log.warning(
@@ -3532,12 +3619,16 @@ class Daemon:
                 },
             )
 
-        try:
-            sess.policy = load_policy(sess.workspace_path)
-        except ConfigError as e:
+        policy_error = reload_session_policy(sess, sess.workspace_path)
+        if policy_error is not None:
             log.warning(
                 "workspace policy config invalid; using defaults",
-                extra={"extra_fields": {"workspace_path": sess.workspace_path, "error": str(e)}},
+                extra={
+                    "extra_fields": {
+                        "workspace_path": sess.workspace_path,
+                        "error": str(policy_error),
+                    }
+                },
             )
 
         async def get_provider(tier_cfg: TierConfig | None = None) -> ProviderLike:
@@ -3670,11 +3761,8 @@ class Daemon:
             sess.id, workspace_path, sess.state, engine=sess.engine, preset=sess.preset
         )
         self._session_persist.prepare(sess.id)
-        try:
-            source = boundary_source(workspace_path)
-        except ConfigError as e:
-            source = f"defaults — invalid config ({e})"
         await self._attach_session_runtime(sess)
+        source = config_source(sess)
         log.info(
             "session opened",
             extra={
@@ -3704,6 +3792,52 @@ class Daemon:
         sess.preset = chosen
         sess.config = self.config.model_copy(update={"active_preset": chosen})
         return chosen
+
+    async def _handle_trust_workspace_config(self, msg: TrustWorkspaceConfig) -> str | None:
+        """Trust or decline a workspace's loosening config (TD-5113).
+
+        The decision covers the hash the card showed. Every live session on
+        that workspace re-reads its config and re-announces its wall, which
+        is the ack.
+        """
+        found = self.session_registry.get(msg.session_id)
+        if found is None:
+            return build_error("session_not_found", f"Session {msg.session_id!r} not found")
+        workspace = found.workspace_path
+        try:
+            view = await asyncio.to_thread(read_view, workspace, self.workspace_trust)
+        except ConfigError as e:
+            return build_error("bad_request", str(e), session_id=found.id)
+        if view.sha256 is None or not view.loosened:
+            return build_error(
+                "nothing_to_trust",
+                "This workspace's config loosens nothing, so there is nothing to trust.",
+                session_id=found.id,
+            )
+        if view.sha256 != msg.sha256:
+            # The card no longer describes the file: show what is there now.
+            await apply_workspace_config(found)
+            return build_error(
+                "workspace_config_changed",
+                f"{view.path} changed since it was shown. Review it again.",
+                session_id=found.id,
+            )
+        decision: Literal["trusted", "declined"] = "trusted" if msg.trust else "declined"
+        self.workspace_trust.record(workspace, view.sha256, decision)
+        log.info(
+            "workspace config trust decided",
+            extra={"extra_fields": {"workspace_path": workspace, "decision": decision}},
+        )
+        await self._reapply_workspace_config(workspace)
+        return None
+
+    async def _reapply_workspace_config(self, workspace: str) -> None:
+        """Every live session on *workspace* re-reads its config and re-announces its wall."""
+        for sess in await self.session_registry.list_sessions():
+            if sess.trust_store is None or sess.state in TERMINAL_STATES:
+                continue
+            if same_workspace(sess.workspace_path, workspace):
+                await apply_workspace_config(sess)
 
     async def _handle_set_session_preset(self, msg: SetSessionPreset) -> str:
         """Retarget one session at a catalog preset (TD-1721)."""
@@ -4020,7 +4154,7 @@ class Daemon:
         ).assemble(
             tier,
             matched_paths=set(found.touched_paths),
-            approved_imports=_approved_import_allowlist(found.workspace_path),
+            approved_imports=_approved_import_allowlist(found.workspace_path, self.workspace_trust),
             loaded_skills=list(found.loaded_skills),
         )
         tracker = found.cost_tracker
@@ -4546,7 +4680,8 @@ class Daemon:
                 f"Workspace path is not a directory: {msg.workspace_path}",
             )
         try:
-            cfg = await asyncio.to_thread(load_workspace_boundary, root)
+            view = await asyncio.to_thread(read_view, root, self.workspace_trust)
+            cfg = boundary_from_mapping(view.path, view.effective)
             path = await asyncio.to_thread(
                 save_workspace_memory,
                 root,

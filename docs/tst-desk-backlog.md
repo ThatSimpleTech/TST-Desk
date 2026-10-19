@@ -9236,6 +9236,127 @@ minutes (2026-10-14).
 - [x] Tests fail on the old code (nine attempts, no `stream`) and pass
       on the new
 
+### TD-5113 — Trust prompt for repo-supplied config
+**Size:** 3 · **Depends on:** none
+
+A cloned repo's `.tst/config.yaml` applied on open, so it could grant itself shell `auto`
+rules, a network allowlist or raised caps (gap audit 2026-10-14, protects directive 6).
+
+**Acceptance criteria:**
+- [x] The first time a workspace opens with a `.tst/config.yaml` that loosens anything (auto
+      rules, writable paths, network, MCP servers), TST Desk shows the loosened rules and asks
+      before applying them
+- [x] The decision is stored per workspace and keyed to the config's hash. A changed config
+      asks again
+- [x] Until it is trusted, the workspace runs with packaged defaults
+
+**Notes:** Loosening is judged against the packaged defaults on the loaders' own models; caps,
+attachment caps, `memory.max_lines`, external imports and `hooks` count too. The decision is
+`trust_workspace_config` (loopback only), and the state rides on `boundary_update.config_trust`.
+TST Desk's own writes keep the trust they were made under, but only for settings that were
+in force or that the write itself set; a write that exposes anything else leaves the file
+pending. While the file is untrusted the approval card offers no Always allow. See
+DECISIONS.md and configuration.md §4.8.
+
+---
+
+### TD-5108 — Protect paths that execute later
+**Size:** 3 · **Depends on:** none · Gap audit 2026-10-14, safety batch
+
+One Class A `fs_write` to `.git/config` that set `core.fsmonitor` ran
+that command, with no approval and outside the wall, the next time the
+checkpointer ran `git add` after a write (found by the TD-5141 review,
+git 2.53).
+
+**Acceptance criteria:**
+- [x] Writes to any path with a `.git` segment (the workspace's own
+      `.git/**` and any nested one), `.envrc`, `.bashrc`/`.zshrc`/
+      `.profile`, `.vscode/**` and `.idea/**` are Class C through fs
+      tools and through the shell write-target table
+- [x] Every git call the daemon makes runs with
+      `-c core.fsmonitor=false` (checkpoint, memory commit, manifest,
+      supervisor, charter, plus revert, wakeup and the GitHub
+      connector), as `fs_grep` already does. A test plants a fsmonitor
+      command in `.git/config` and shows a checkpoint does not run it
+- [x] Whether skip-all mode still asks for these is decided and written
+      down in docs/configuration.md (it does not: skip-all is
+      skip-everything; the fsmonitor and hooks pins hold either way,
+      and the filter-driver residual is written down)
+- [x] Tests cover fs_write and a shell redirect to
+      `.git/hooks/pre-commit`
+
+Done (2026-10-19): rules `exec-later-write` and
+`shell-exec-later-write` sit ahead of every grant. The list also covers
+`.husky`, the other shell startup files, `.gitconfig` and git
+hook-manager configs (lefthook `-local` names too). Shared
+`git_command()` in `core/tstd/git_safe.py` pins fsmonitor off and
+`core.hooksPath` at nothing, so the daemon's own commits, checkpoints
+and pushes run no hook (PR #13 review: a `core.hooksPath` folder or a
+script a hook calls was a Class A edit the memory commit then ran). The
+validator's diff runs no external diff or textconv. A test fails on any
+raw `"git"` argv in `tstd`. Class B entry in DECISIONS.md, with the
+filter-driver and `gpg.program` residual risk.
+
+---
+
+### TD-5101 — Shell rules: judge every segment of a chained command, deny first
+**Size:** 5 · **Depends on:** none
+
+From the 2026-10-14 gap audit (docs/gap-audit-2026-10-14.md, Adam's
+decision 1). One `fnmatch` glob over the whole command line let
+`npm test*` auto-run `npm test; curl x`, and a narrow `auto` rule beat
+a broad `never`.
+
+**Acceptance criteria:**
+- [x] A shell command is split on `;`, `&&`, `||`, `|`, newlines, `$(…)`
+      and backticks, after stripping wrappers such as `timeout`, `nice`
+      and `env VAR=…`. An `auto` rule applies only when every segment
+      matches an `auto` rule.
+- [x] A `never` rule that matches any segment refuses the call, whatever
+      narrower `auto` rule exists. `never` beats `ask` beats `auto`, and
+      specificity only breaks ties within one effect.
+- [x] Tests cover `npm test; curl x`, `npm test && rm -rf y`,
+      `npm test | sh`, `$(curl x)` and a wrapped `timeout 60 npm test`.
+- [x] The example rules in docs/configuration.md are rewritten so they
+      are no longer exploitable, and the change is noted in DECISIONS.md.
+
+Done (2026-10-19): `core/tstd/policy_shell.py` splits the line and
+`policy._decide` checks `never`, then `ask`, then `auto` for every
+segment. `env VAR=…` and assignments are stripped for `never` and `ask`
+only; `auto` keeps them, since they change what runs (DECISIONS.md).
+A line that can't be split with confidence never auto-runs. "Always
+allow" is not offered for a chained command. Tests:
+`core/tests/test_policy_shell.py`, plus loop and daemon cases in
+`core/tests/test_approval_flow.py`.
+
+### TD-5147 — Edit and branch arrows pick the right turn after compaction
+**Size:** 2 · **Depends on:** TD-1708, TD-5109
+
+The window numbers user turns from the start of the session.
+`fork_from` and `set_branch` counted the user messages left in the
+conversation, so after a compaction (auto, `/compact` or "Summarize
+from here") Edit or the branch arrows picked a later turn, or answered
+`user_turn_not_found`. TD-5109 gave every summary a user-turn count and
+`compact_now` a mapping; these two did not use it.
+
+**Acceptance criteria:**
+- [x] `fork_from` maps the window's `user_index` through the summaries
+      in the conversation (`window_user_turns`) and cuts at that turn,
+      after an auto compaction and after a "Summarize from here"
+- [x] `set_branch` restores the sibling at the window's turn and its
+      reset carries that turn's text, after an auto compaction and after
+      a "Summarize from here"
+- [x] Branch snapshots stay keyed by the window's number; only the cut
+      and the reset text are looked up in the conversation
+- [x] A turn inside a summary is refused with `user_turn_compacted` by
+      both, and the conversation is left as it was
+- [x] The daemon sends words for each fork/branch refusal, and the
+      window shows `user_turn_compacted` as an "Already in a summary"
+      toast with them, not a raw code
+- [x] A conversation with no system prompt (Grok engine) still numbers
+      its first message as user turn 0
+- [x] Tests fail on the old code and pass on the new
+
 ### TD-5148 — The timeline and audit show the class a tool call actually ran with
 **Size:** 2 · **Depends on:** TD-608, TD-702, TD-5141
 

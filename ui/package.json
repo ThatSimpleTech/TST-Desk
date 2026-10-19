@@ -11,6 +11,7 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"test": "vitest run",
+		"test:e2e": "playwright test",
 		"test:watch": "vitest",
 		"tauri": "node scripts/run-tauri.mjs",
 		"tauri:dev": "node scripts/run-tauri.mjs dev",
@@ -29,6 +30,7 @@
 		"mermaid": "^11.17.2"
 	},
 	"devDependencies": {
+		"@playwright/test": "^1.64.1",
 		"@sveltejs/adapter-static": "^3.0.8",
 		"@sveltejs/kit": "^2.63.0",
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",

@@ -1313,6 +1313,10 @@ you raise a cap and continue without restarting.
 Six top-level sections live here, each read by a different part of the daemon: `boundary`,
 `caps`, `attachments`, `policy`, `approved_external_imports`, and `memory`.
 
+**A file that loosens anything waits for your trust (TD-5113).** This file usually arrives with
+a clone, so one that loosens the packaged defaults (an `auto` rule, a network host, a raised
+cap, an external import) is shown to you first and does not apply until you trust it. See §4.8.
+
 ### 4.1 `boundary` — where the agent may act
 
 | Key | Type | Default | Effect |
@@ -1339,6 +1343,44 @@ them is not stopped here.
 Steering files (`AGENTS.md`, `CLAUDE.md`, `.tst/rules/**`) and the approval policy itself
 (`.tst/config.yaml`) are refused for writing no matter what you put in this list. That is
 enforced in the tool, not by configuration.
+
+**Paths that run code later ask first (TD-5108).** Some files run nothing when written, but
+git, a login shell, direnv or an editor runs what they say the next time it starts. A write to
+one of them is Class C, so it asks even though it is inside the workspace and inside this
+list:
+
+- any path with a `.git`, `.vscode`, `.idea` or `.husky` folder in it, at any depth — a nested
+  `sub/.git/` with `HEAD` and `config` makes `sub` a repo, and a `.git` file is a pointer to one;
+- `.envrc`, `.gitconfig`, and shell startup files (`.profile`, `.bashrc`, `.bash_profile`,
+  `.bash_login`, `.bash_logout`, `.bash_aliases`, `.zshrc`, `.zshenv`, `.zprofile`, `.zlogin`,
+  `.zlogout`), by name at any depth;
+- git hook-manager configs: `.pre-commit-config.yaml`, and lefthook's `lefthook.yml` and
+  `lefthook-local.yml` in any of `.yml`, `.yaml`, `.toml`, `.json`, dotted or not. Your own
+  `git commit` runs what they name.
+
+Names match ignoring case. This covers `fs_write` and `fs_edit`, and shell redirects and `tee`
+into these paths (`echo … > .git/hooks/pre-commit`, `… >> ~/.bashrc`). Other shell write forms
+(`cp`, `mv`, `sed -i`) are not parsed; they ask through the shell floor below. Unlike a steering
+file, you can approve the write. An `auto` policy rule cannot pre-approve it (§4.4), and
+"Always allow" is not offered. Reads are unaffected. Skip-all runs these writes without asking,
+like every other Class C ask (§4.4); an autonomous run stops on them.
+
+Every git command the daemon runs itself (checkpoints, memory commits, the charter sign, the
+workspace manifest, `fs_grep`, the autonomy gate and summary, revert, the GitHub connector) is
+started with `-c core.fsmonitor=false -c core.hooksPath=/dev/null -c
+safe.bareRepository=explicit` (`nul` on Windows). Command-line settings beat every config file,
+so with or without skip-all the daemon never runs a repo's fsmonitor command or any hook: not
+`.git/hooks`, not a `core.hooksPath` folder, not a workspace script a hook calls. Your own `git
+commit` still runs your hooks; the daemon's memory and charter commits and the connector's push
+skip them, including a secret scanner. The validator's diff runs no external diff or textconv.
+
+Not pinned: a filter driver (`clean` on the daemon's `git add` and `git status`, `smudge` on
+revert), `gpg.program` when `commit.gpgSign` is set (memory and charter commits), and
+`core.askPass` (the connector). They run only when a config file names them, and `.git/config`,
+`.git/info/attributes` and `.gitconfig` are Class C to write, so planting one asks. Under
+skip-all it does not ask, and the daemon would then run the planted command. An in-tree
+`.gitattributes` (Class A) can also route a file to a filter you already configured. This is
+recorded in DECISIONS.md (TD-5108) as residual risk.
 
 **`allowed_commands` matching.** The command is split into top-level segments on pipes,
 semicolons, and the like; each segment's leading binary — after skipping `VAR=value` prefixes —
@@ -1450,7 +1492,7 @@ memory:
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `rules` | list of rules | `[]` | Per-tool overrides. The most specific match wins; an exact tie breaks toward the most restrictive effect. |
+| `rules` | list of rules | `[]` | Per-tool overrides. `never` beats `ask` beats `auto`, however specific the rules are. A shell command is checked one command at a time (below). |
 | `class_c_default` | `ask` or `never` | `ask` | What happens to a Class C call that no rule matches. `never` refuses it outright instead of asking. |
 | `approval_timeout_seconds` | float ≥ 0, or null | `null` | How long an approval request waits before being treated as a denial. Null waits indefinitely. |
 
@@ -1465,7 +1507,7 @@ A rule has three keys:
 **No rule can make a Class C call run silently.** An `effect: auto` rule that matches a Class C
 call is downgraded to `class_c_default` — you can loosen approvals for ordinary work, but the
 riskiest calls always come back to you (or are refused). "Always allow this in this workspace"
-in the approval card writes a rule here for you.
+in the approval card writes a rule here for you, and keeps the file trusted (§4.8).
 
 **Reads inside the workspace never ask (TD-5141).** `fs_read`, `fs_list` and `fs_grep` on a
 path inside the workspace are Class A by a fixed rule, so they run without asking and without
@@ -1491,18 +1533,67 @@ policy:
   ignored, as most templates already do. `fs_list` shows names only, never contents.
 - `ask` and `never` rules ignore case, so `.ENV` is caught on macOS and Windows, where it opens
   `.env`. `auto` rules match case exactly.
-- The most specific rule wins, and fewer wildcards counts as more specific. A broad
-  `fs_read: "*"` auto rule beats `*.env*`, so remove it (reads auto-run anyway). An exact tool
-  name also beats a glob such as `fs_*`.
+- A `never` rule wins over any `auto` rule (TD-5101), so a broad `fs_read: "*"` auto rule no
+  longer hides `*.env*`. Specificity only picks which rule a refusal names: fewer wildcards and
+  an exact tool name count as more specific.
 
 Outside the workspace nothing changed: reads there are Class C and the path guard refuses them
 before any rule is read, symlinks included.
 
+**Rules are deny first (TD-5101).** A call is refused when any `never` rule matches it. If none
+does, it asks when any `ask` rule matches. Only then can `auto` apply. A narrow `auto` rule never
+beats a broad `never` or `ask` rule. When several rules of the winning effect match, the most
+specific one is the one the refusal or approval card names. No matching rule leaves the
+decision class to decide, as before.
+
+**Shell rules judge every command in the line (TD-5101).** `args` for `shell` is matched against
+each command of a chained line, not the line as a whole. The line is split at `;`, `&&`, `||`,
+`|`, `&`, newlines and parentheses, and the commands inside `$(…)`, backticks, `<(…)`, the
+`$(…)` of an unquoted heredoc and the string given to `eval` or `sh -c` count as commands too.
+Quoted text is not split, so `git commit -m "fix; docs"` is one command.
+
+- An `auto` rule applies only when every command matches an `auto` rule. With `npm test*`
+  allowed, `npm test; curl x`, `npm test && rm -rf y`, `npm test | sh` and `npm test $(curl x)`
+  all ask, because `curl x`, `rm -rf y`, `sh` and the substitution have no rule.
+- A `never` or `ask` rule refuses or asks when it matches any one of the commands, or the whole
+  line. The refusal names the command: ``policy rule `shell: curl *` → never (on `curl x`)``.
+- `timeout`, `nice`, `nohup`, `time` and `stdbuf` are taken off the front before an `auto` rule
+  is matched, so `npm test*` covers `timeout 60 npm test`. An option these wrappers don't
+  usually take (`time -o file`) keeps the wrapper on, so the command asks.
+- Environment assignments stay on for `auto`: `FOO=1 npm test` and `env FOO=1 npm test` do not
+  match `npm test*`, because `LD_PRELOAD`, `NODE_OPTIONS` or `PATH` change what runs. Write
+  `FOO=1 npm test*` if you want that form allowed.
+- `never` and `ask` rules see through more: wrappers, `env`, assignments, `sudo`, `doas`,
+  `xargs`, `exec`, `command`, leading redirects, shell keywords such as `then`, and quoting, so
+  `rm *` also refuses `sudo rm -rf x`, `then rm -rf x` and `"rm" -rf x`.
+- A heredoc's body belongs to the command that opens it, so an `auto` rule must match the body
+  too. A trailing `*` matches any body.
+- A line that can't be split with confidence never auto-runs, whatever the rules say. That is
+  an unclosed quote or `$(`, `$'…'`, `$((…))`, `((…))`, `case` inside `$(…)`, or nesting more
+  than 16 levels deep. `never` and `ask` rules still apply to it.
+- "Always allow" is offered only for a single command, and saves exactly that command, with any
+  `*`, `?` or `[` in it made literal. It isn't offered for a chained line: one rule can't cover
+  it, and a rule per command would let `sh` run on its own after `npm test | sh` was approved.
+  Add a rule for each command here instead.
+- On Windows the line is read both as `cmd /c` reads it (single quotes don't quote there) and
+  as `sh -c` does, for autonomy runs, and a rule must hold under both.
+
+These rules match text, so they are a guard rail, not a sandbox. A command spelled through a
+variable (`$C x`), brace expansion, a script file or another program's arguments
+(`find -exec`, `ssh host …`) is not seen as the command it runs. An
+`auto` rule with a trailing `*` also covers redirects on that command (`git status > out.txt`),
+so prefer exact commands for `auto`, and use `never` for what must not run.
+
 **Dangerously skip permissions** (skip-all) is not a key in this file. Settings → Policy
 has a machine-wide toggle that lives in the user data dir as `approvals.yaml`, so a clone
 cannot carry it. While it is on, every `ask` runs as auto — including `shell` and Class C —
-and caps do not pause. A `never` rule still refuses. The fs-tool boundary still refuses
-steering-file writes. The classifier still runs. `effect: yolo` is not a valid rule.
+and caps do not pause. That includes writes to paths that run code later (§4.1, TD-5108):
+skip-all does not ask for them, as Claude Code's bypass mode does not. The daemon's own git
+still never runs a repo's fsmonitor command or a hook, but a filter driver or `gpg.program`
+planted in `.git/config` without asking does run on its next `git add` or commit (§4.1). A
+`never` rule still refuses. The fs-tool
+boundary still refuses steering-file writes. The classifier still runs. `effect: yolo` is not
+a valid rule.
 
 **Computer-use glow**, **Agent cursor**, and **Show indicators on the real display** are also
 not keys in this file. Settings → Appearance persists them as `cu-indicators.yaml` in the
@@ -1598,8 +1689,10 @@ attachments:
 ```
 
 **Loosening approvals on a workspace you trust.** Reads, listings and content searches inside
-the workspace never ask anyway (§4.4). Here `git status` never asks either, anything Class C
-still does, and an unanswered request denies after five minutes:
+the workspace never ask anyway (§4.4). Here `git status` and `git diff` never ask, alone or
+chained to each other, and `curl` and `rm` are refused wherever they appear in a line, even
+chained after an allowed command. Anything Class C still asks, and an unanswered request
+denies after five minutes:
 
 <!-- verify: workspace -->
 ```yaml
@@ -1608,11 +1701,24 @@ policy:
   approval_timeout_seconds: 300.0
   rules:
     - tool: shell
-      args: "git status*"
+      args: "git status"
       effect: auto
+    - tool: shell
+      args: "git diff"
+      effect: auto
+    - tool: shell
+      args: "curl *"
+      effect: never
+    - tool: shell
+      args: "rm *"
+      effect: never
 approved_external_imports:
   - ~/notes/house-style.md
 ```
+
+The rules are exact rather than `git status*`: a trailing `*` would also allow
+`git status > src/app.py`. Before TD-5101 the glob covered the whole line, so `git status*`
+also auto-ran `git status; curl x | sh`.
 
 **A whole file, sections combined.** Nothing stops you from setting all four at once:
 
@@ -1645,6 +1751,53 @@ network must be 'deny' or a list of allowed hosts
 ```
 
 An empty list, `network: []`, is legal and means the same thing as `deny`.
+
+### 4.8 Trusting a config that came with the workspace (TD-5113)
+
+A cloned repo could put shell `auto` rules, a network allowlist or a higher spend cap in this
+file and have them apply the moment you opened it. Now the daemon reads the file once, hashes
+those exact bytes, and compares every setting with the packaged defaults. A setting loosens
+them when:
+
+| Setting | Loosens when |
+|---|---|
+| `policy.rules` | A rule has `effect: auto`. |
+| `boundary.network` | It names any host. The default is `deny`. |
+| `boundary.writable_paths` | An entry is absolute, starts with `~`, or climbs out with `..`. Writes outside the workspace are refused whatever this says; the entry is shown because the file asked for it. |
+| `caps.*`, `attachments.*`, `memory.max_lines` | The value is above the default. |
+| `approved_external_imports` | It lists any path. |
+| `mcp_servers`, `hooks` | The key is set at all. TST Desk does not read either from a workspace yet; they are judged now so a later feature cannot run them untrusted. |
+
+Tightening never asks: `allowed_commands`, `ask` and `never` rules, `class_c_default: never`,
+an approval timeout, narrower `writable_paths` and lower caps apply as written. A section the
+loader would refuse (§6) loosens nothing, since it does not apply anyway.
+
+When the file loosens something:
+
+- **You see it before it applies.** A card above the composer lists each loosened setting next
+  to its default, with **Trust and apply** and **Keep defaults**. `tst run` cannot show the
+  card, so it prints one line on stderr saying the run is on the defaults.
+- **Until you trust it, the workspace runs on the packaged defaults.** The whole file is set
+  aside, not only the loosened keys. The title bar's source reads `defaults — workspace config
+  not trusted yet`.
+- **The decision is kept per workspace and tied to the file's SHA-256.** It lives in
+  `workspace_trust.yaml` in the user data dir, never in the workspace, so a repo cannot ship
+  its own trust. Any change to the file, your own hand edit included, asks again. Keep defaults
+  is remembered too: the card shrinks to one line with **Review**, which opens it again.
+- **TST Desk's own writes keep their trust, for what you have seen.** Always allow, Revoke,
+  Settings → Budget and approving an external import rewrite this file. When the file was in
+  force before the write, the new hash is stored as trusted, so your own rules never ask. That
+  covers only what was in force before the write plus the key the write sets. If the write
+  makes a refused section valid, so the file now loosens something the card never listed
+  (a budget saved over a bad `caps` value exposes the `boundary.network` beside it), the new
+  hash is not trusted: the file waits on the card and the workspace drops to the defaults.
+- **While the file is not trusted, nothing is saved into it.** Approval cards offer approve and
+  deny but not Always allow. An Always allow sent anyway (a card shown before the file changed)
+  approves that one call and replies `workspace_config_untrusted`: the rule is not saved.
+  Revoke and Settings → Budget are refused with `workspace_config_untrusted`, and an approved
+  import lasts for the session only.
+- **Only this computer decides.** A phone or another computer that sends the decision gets
+  `loopback_only`. A session on another computer shows the card without its buttons.
 
 ---
 

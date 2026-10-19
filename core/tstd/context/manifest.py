@@ -20,6 +20,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..git_safe import git_command
 from .tokens import CHARS_PER_TOKEN
 
 # Entries deeper than this are excluded from the manifest.
@@ -160,15 +161,14 @@ class WorkspaceManifest:
         """
         try:
             result = subprocess.run(
-                [
-                    "git",
+                git_command(
                     "-C",
                     str(workspace),
                     "ls-files",
                     "--cached",
                     "--others",
                     "--exclude-standard",
-                ],
+                ),
                 capture_output=True,
                 text=True,
                 timeout=30,

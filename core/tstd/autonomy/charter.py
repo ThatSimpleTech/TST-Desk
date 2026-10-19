@@ -35,6 +35,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from ..boundary_config import BoundarySection, CapsSection
 from ..config import ConfigError
+from ..git_safe import git_command
 from ..proc_lifecycle import finish_subprocess
 
 _GIT_TIMEOUT = 30.0
@@ -280,10 +281,7 @@ async def _git(
     charter gate runs before any session exists to own a checkpointer.
     """
     proc = await asyncio.create_subprocess_exec(
-        "git",
-        "-C",
-        str(workspace),
-        *args,
+        *git_command("-C", str(workspace), *args),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env=env,

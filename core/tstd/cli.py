@@ -258,6 +258,23 @@ def _visible_event_line(event: dict[str, Any]) -> str | None:
     return None
 
 
+def config_trust_notice(event: dict[str, Any]) -> str | None:
+    """A stderr line when the workspace config is not in force (TD-5113).
+
+    Headless runs cannot show the trust card, so they say why the repo's
+    settings are not applying instead of leaving the user to guess.
+    """
+    trust = event.get("config_trust")
+    if not isinstance(trust, dict) or trust.get("state") not in ("pending", "declined"):
+        return None
+    count = len(trust.get("loosened") or [])
+    why = "was declined" if trust.get("state") == "declined" else "is not trusted yet"
+    return (
+        f"note: .tst/config.yaml loosens {count} setting{'s' if count != 1 else ''} and {why}; "
+        "running on the packaged defaults. Review it in TST Desk."
+    )
+
+
 def _finish_assistant_line(printed: bool) -> None:
     if printed:
         sys.stdout.write("\n")
@@ -349,6 +366,13 @@ async def _stream_turn(
             _print_error(event)
             return 1
         if event.get("session_id") != session_id:
+            continue
+        if typ == "boundary_update":
+            notice = config_trust_notice(event)
+            if notice is not None:
+                _finish_assistant_line(printed)
+                printed = False
+                print(notice, file=sys.stderr)
             continue
         if typ == "approval_request":
             _finish_assistant_line(printed)

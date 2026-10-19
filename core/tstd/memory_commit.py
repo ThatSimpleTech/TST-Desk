@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Literal
 
 from .autonomy.checkpoint import Notice
+from .git_safe import git_command
 from .logging import get_logger
 from .memory_store import path_is_memory_file
 from .proc_lifecycle import finish_subprocess
@@ -151,10 +152,7 @@ class MemoryCommitter:
 
             env = sanitized_env()
         proc = await asyncio.create_subprocess_exec(
-            "git",
-            "-C",
-            str(self._workspace),
-            *args,
+            *git_command("-C", str(self._workspace), *args),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,

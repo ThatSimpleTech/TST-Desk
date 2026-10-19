@@ -13888,6 +13888,281 @@ already refused silent downscale. Also rejected: leaving the library's
 
 ---
 
+## 2026-10-15 — UI walk uses Playwright against a mock daemon (Class B)
+
+**Decision:** `ui/e2e` drives the real Svelte window in Chromium. A
+headless `tstd.e2e_ui` daemon serves it: mock model, in-memory keychain,
+loopback only. The page installs a small `__TAURI_INTERNALS__` stand-in
+so desktop-only commands (directory picker, updater status) resolve
+without the Tauri host. `e2e/census.json` lists the controls each region
+showed. A new button fails the walk until that file is regenerated and
+the spec clicks it or names why it does not.
+
+**Rationale:** The protocol harnesses never open the window, so a broken
+button can ship green. Playwright is Apache-2.0. The walk stays off the
+login keychain and off the network.
+
+**Rejected:** Clicking the installed `.app` through the macOS
+accessibility tree. That needs a display, a signed bundle, and a human
+in front of the permission prompts, so it cannot be the check CI runs.
+
+---
+
+## 2026-10-19 — Paths that run code later are Class C; daemon git pins fsmonitor and hooks off (TD-5108, Class B)
+
+**Decision:** A write is Class C (`exec-later-write` for the fs tools,
+`shell-exec-later-write` for shell redirects and `tee`) when its path
+has a `.git`, `.vscode`, `.idea` or `.husky` segment at any depth, or
+its basename is `.envrc`, `.gitconfig`, a shell startup file
+(`.profile`, `.bashrc`, `.bash_profile`, `.bash_login`, `.bash_logout`,
+`.bash_aliases`, `.zshrc`, `.zshenv`, `.zprofile`, `.zlogin`,
+`.zlogout`) or a git hook-manager config (`.pre-commit-config.yaml`,
+`lefthook.yml`/`.yaml` and dotted forms). Names case-fold. Inside the
+workspace only the relative segments count; outside it the whole
+canonical path does, so `>> ~/.bashrc` is caught. The rules sit ahead
+of `memory-file-write`, so a `.git` under `.tst/memory/` is caught.
+Class C asks; the user can approve, unlike a steering write.
+
+Every git call the daemon makes starts with `git_command()`
+(`core/tstd/git_safe.py`): `-c core.fsmonitor=false -c
+core.hooksPath=/dev/null -c safe.bareRepository=explicit` (`nul` on
+Windows). The first and last are the pair `fs_grep` already used
+(TD-5141). The hooks pin means the daemon's own git runs no hook at
+all: not the memory or charter commit's commit hooks, not the
+`reference-transaction` hook the checkpointer's `update-ref` fires, not
+the GitHub connector's `pre-push`. The validator's `git diff` also
+passes `--no-ext-diff --no-textconv`. A test fails on any raw `"git"`
+argv in `tstd` outside the developer harnesses.
+
+Skip-all still runs these writes without asking. It is skip-everything
+(TD-806), Claude Code's bypass mode allows protected-path writes, and
+the approvals are off on EZER by Adam's choice. An autonomous run stops
+on them (Class C never auto-runs there, TD-4101). With or without
+skip-all, the daemon's own git never runs a repo's fsmonitor command or
+a hook.
+
+**Residual risk (recorded, not closed):** git config can name other
+commands, and the daemon's git still runs them when a config file names
+them: a filter driver's `clean` on the checkpointer's and memory
+commit's `git add` and on `git status`, its `smudge` on revert's
+`checkout-index`, `gpg.program` on the memory and charter commits when
+`commit.gpgSign` is set, and `core.askPass` on the connector's fetch or
+push. The files that name them (`.git/config`, `.git/info/attributes`,
+`.gitconfig`) are Class C, so in a mode that asks, planting one needs an
+approval. Under skip-all that write runs without asking, and the
+daemon then runs the planted command outside the wall. One Class A
+path remains too: an in-tree `.gitattributes` can point a file at a
+filter the user configured, and a filter such as `python -m nbstripout`
+imports from the repo root first, so a workspace `nbstripout.py` would
+run. Closing these means staging blobs without filters
+(`hash-object --no-filters` plus `update-index --cacheinfo`) and
+restoring by writing blob bytes, which changes what checkpoints store
+for CRLF and LFS files. That is a follow-up story, not this one.
+
+**Rationale:** One Class A `fs_write` to `.git/config` setting
+`core.fsmonitor` ran that command on the checkpointer's next `git add`,
+outside the wall and with no approval (found by the TD-5141 review).
+The story names `.git`, `.envrc`, shell rc files, `.vscode` and
+`.idea`. The other shell startup files are the same thing. `.gitconfig`
+is git config like `.git/config`. The hook managers (`.husky`,
+`.pre-commit-config.yaml`, every lefthook base and `-local` name) are
+listed because the user's own `git commit` runs what they name. They
+do not protect the daemon: a name list cannot, because a user's
+`core.hooksPath` folder can have any name and an existing hook can call
+any workspace script, both ordinary Class A edits (PR #13 review). The
+daemon is protected by running no hooks.
+
+**Alternatives rejected:** Refusing these writes outright like steering
+(the story says Class C; editing `.vscode/settings.json` is legitimate).
+Making skip-all still ask for them (adds an approval to the mode that
+exists to have none). Keeping hooks on for the daemon's own commits
+so a user's secret scanner checks the memory commit: the first draft
+did this and relied on the hook-manager names, which do not close the
+path (above). The memory commit holds only `.tst/memory/` notes, and the
+user's own commits and CI still run their checks. `--no-verify` alone
+(it skips only `pre-commit` and `commit-msg`). Claude Code's whole list (`.npmrc`,
+`.bazelrc`, `.devcontainer` and others): nothing in TST Desk runs them,
+so they can be promoted later. Parsing `cp`/`mv`/`sed -i` targets: they
+still ask through the shell floor.
+
+---
+
+## 2026-10-19 — TD-5101: Shell rules judge every segment, deny first (Class B)
+
+**Decision:** Policy rules are deny first for every tool: any matching
+`never` refuses, then any matching `ask` asks, and only then can `auto`
+apply. Specificity only picks the rule a decision names. A shell command
+(any tool whose summary is its `command`) is split by a new scanner,
+`core/tstd/policy_shell.py`, at `;`, `&`, `&&`, `|`, `||`, newlines and
+parentheses, and into `$(…)`, backticks, `<(…)`/`>(…)`, unquoted heredoc
+substitutions and `eval`/`sh -c`/`cmd /c` strings. `auto` applies only
+when every segment matches an `auto` rule; `never` and `ask` are checked
+against every segment, several unwrapped readings of it, and the whole
+line. Lists of paths (TD-5143) use the same rule: `auto` needs every
+path.
+
+Choices the story left open, each the conservative one:
+
+1. **Two readings per segment.** `auto` sees the segment as written with
+   only `timeout`, `nice`, `nohup`, `time` and `stdbuf` taken off, and an
+   unknown wrapper option keeps the wrapper on. `env`, `NAME=value`,
+   `sudo` and `xargs` are not stripped for `auto`: `LD_PRELOAD=` or
+   `NODE_OPTIONS=` change what a command runs, and `xargs` adds
+   arguments. `never` and `ask` see through all of them, plus keywords,
+   leading redirects and quoting. Reading more can only make those
+   stricter.
+2. **Odd text never auto-runs.** `$'…'` (bash and dash end it at
+   different quotes), `$((…))` (bash falls back to a command
+   substitution), `((…))` (bash arithmetic, dash subshells), `case`
+   inside `$(…)`, unclosed quotes and nesting past the caps mark the
+   split incomplete. Then no `auto` rule applies, even `**`, and the whole
+   text is cut at every operator for `never` and `ask`.
+3. **Heredoc bodies belong to their command.** A body is data, so it is
+   not split, but it is part of the text an `auto` rule must match, so an
+   exact rule saved from one heredoc does not allow another body. An
+   unquoted body's substitutions are commands.
+4. **Comments are honoured.** Ignoring `#` would let an apostrophe in a
+   comment open a quote that hides the next line's commands.
+5. **Windows reads both ways.** Interactive shell runs through `cmd /c`,
+   where single quotes don't quote, and autonomy runs `sh -c` in a
+   container, so on Windows a rule must hold under both readings.
+6. **Always allow.** Offered only for a one-segment command, saving its
+   `auto` text with `*`, `?` and `[` made literal. A chained command gets
+   no proposal and the daemon refuses `always_allow` for it with
+   `not_always_allowable`: a rule per segment would allow `sh` alone after
+   `npm test | sh` was approved. Escaping also fixes a rule saved for
+   `src/[id].tsx` that never matched its own path.
+
+**Rationale:** Claude Code's permission docs say a prefix rule does not
+cover a command chained onto it and that deny rules are checked first.
+The old single `fnmatch` over the whole line auto-ran `npm test; curl x`
+under `npm test*`, and a narrow `auto` beat a broad `never`. The story
+pointed at the classifier's `shlex` lexer, but it drops quotes and
+positions, so it cannot tell `'$(x)'` from `"$(x)"` or keep the text a
+rule is written against; the new scanner keeps both.
+
+**Alternatives rejected:** Matching a wildcard-free `auto` rule against
+the whole line, so old exact always-allow rules for chains keep working:
+it contradicts "every segment". Stripping `env`/assignments for `auto`
+too, as the story's wrapper list could be read: it widens `auto`.
+Treating a redirect inside a segment as uncovered: out of scope here;
+TD-5103 handles redirects for its read-only list, and the docs steer
+`auto` rules to exact commands.
+
+**Compatibility:** A saved rule that covered a chain as one string, or a
+wrapped command as written (`timeout 60 npm test`), now asks again. That
+fails safe. The docs example `git status*` became exact `git status` and
+`git diff` rules plus `never` rules for `curl *` and `rm *`.
+
+---
+
+## 2026-10-19 — TD-5113: a repo's `.tst/config.yaml` waits for trust before it loosens anything (Class B)
+
+**Decision:** The daemon reads `.tst/config.yaml` once per load (open, revive, move, resume,
+spend cap, trust decision), hashes those bytes with SHA-256 and lists every setting looser than
+the packaged defaults. "Looser" is judged on the same validated models the loaders apply:
+`auto` policy rules, a network host list, `writable_paths` entries that are absolute, start
+with `~` or climb out with `..`, any cap, attachment cap or `memory.max_lines` above its default,
+any `approved_external_imports` entry, and the unread keys `mcp_servers` and `hooks`. A file
+that loosens nothing applies as written with no prompt. One that loosens anything applies only
+when the user has trusted that exact hash. Until then, and after a decline, the whole file is
+set aside and the session runs on `BoundaryConfig()` and `PolicyConfig()`.
+
+- **Store:** `<data dir>/workspace_trust.yaml`, one record per workspace (resolved path):
+  `sha256` and `decision` (`trusted` or `declined`). A mismatched hash is `pending`. An
+  unreadable or garbled store reads as empty, so it fails closed.
+- **Wire:** additive `boundary_update.config_trust` (`state`, `sha256`, `loosened[]`), so every
+  announcement of the wall carries its trust state, and the client message
+  `trust_workspace_config` (`session_id`, `sha256`, `trust`). A hash that no longer matches the
+  file is refused with `workspace_config_changed` and the wall is re-announced. The verb is in
+  `LOOPBACK_VERBS`.
+- **Applying a decision:** every live session on that workspace re-reads the file and calls the
+  loop's new `on_config_reloaded`, which rebinds the path guard, the classifier's wall, the
+  policy gate and the import approvals. It leaves the checkpointer, ledger and memory committer
+  alone (same root), so it is safe while a turn runs.
+- **TST Desk's own writes** (always allow, revoke, spend cap, external-import approval) go
+  through `TrustStore.before_write` and `after_write`: refused with `workspace_config_untrusted`
+  while the file is pending or declined. The new hash is stamped trusted only when every
+  setting it loosens was in force before the write or sits under the key the write sets
+  (`caps.spend_usd`, `policy.rules`, `approved_external_imports`). A write that makes a refused
+  section valid (a budget saved over a bad `caps` value exposes the `boundary.network` beside
+  it) leaves the new hash pending, and every live session on the workspace drops to the
+  defaults and shows the card. An import approved in an untrusted workspace lasts for the
+  session only.
+- **Always allow while untrusted:** the approval card carries no `proposed_always_allow` while
+  the file is pending, declined or unreadable, so it offers approve and deny only. An
+  `always_allow` that arrives anyway (a card from before the file changed) approves that one
+  call, saves nothing and replies `workspace_config_untrusted`. Leaving the call parked would
+  strand it: the window drops a card once its decision is sent, and approvals have no default
+  timeout.
+- **Gate in one place:** production code reads the file only through `workspace_trust.read_view`
+  and parses `view.effective`. The ungated `load_*` loaders stay for library use and tests, and
+  a test fails if anything else in `tstd/` calls them.
+
+**Rationale:** The story asks for the loosened rules to be shown and asked about, a decision
+keyed to the file's hash, and packaged defaults until trusted. Hashing the bytes that are then
+parsed means what applies is exactly what was shown. Carrying the state on `boundary_update`
+reuses the event every load path already emits, so no path can announce a wall without its
+trust state. Stamping TST Desk's own writes keeps "Always allow" from turning into a trust
+prompt on the next open.
+
+**Alternatives rejected:** Applying the tightening keys of an untrusted file (safer in a few
+cases, but not "packaged defaults", and harder to explain on the card). A separate
+`workspace_trust` event (a second thing every load path must remember to emit). Letting a
+paired phone or another computer decide (the decision widens the wall; it is made at the
+computer that holds the files). Keeping several trusted hashes per workspace (a branch switch
+between two configs asks each time; simpler and stricter). Ignoring `mcp_servers` and `hooks`
+because nothing reads them from a workspace yet (TD-5134 would then have to remember the gate).
+Refusing every write into a file with an invalid section (it would also refuse a budget or
+rule in a file whose only fault is unrelated, and the hidden settings stay hidden instead of
+reaching the card). Restoring the card in the window on `workspace_config_untrusted` (the CLI
+and every other client would each need the same fix, and the rule still could not be saved).
+
+---
+
+## 2026-10-19 — TD-5147: Edit and the branch arrows map the window's turn through summaries (Class B)
+
+**Decision:** `fork_from` and `set_branch` map the window's `user_index`
+through `window_user_turns`, the TD-5109 mapping `compact_now` already
+uses (one helper, `Session._find_user_turn`, serves all three). Branch
+snapshots (`_branches`, `_branch_cursor`) stay keyed by the window's
+number, which no compaction changes; only the cut in `fork_from` and the
+turn text a `set_branch` reset carries are looked up in the conversation.
+A turn inside a summary is refused with the existing
+`user_turn_compacted`. `set_branch` checks the live conversation: once the
+turn under the arrows is folded into a summary, its other versions are
+out of reach, the same as Edit. The daemon now sends words for each
+fork/branch refusal (`_BRANCH_REFUSALS`) instead of the code with its
+first underscore replaced, and the window's toast for
+`user_turn_compacted` is "Already in a summary" with the daemon's text.
+`window_user_turns` skips the first message only when it is the system
+prompt, because a Grok-engine conversation has none and its first
+message is user turn 0.
+
+**Rationale:** The window numbers user turns from the start of the
+session; the old code counted the user messages left in the
+conversation, so after any compaction Edit cut at a later turn or
+answered `user_turn_not_found`, and a branch switch carried the wrong
+text or none. Keying the snapshots by the window's number keeps them
+valid across compactions with no re-keying. Snapshots are whole
+conversations, so restoring one is right whatever compaction it has.
+Checking the live conversation, not the snapshot, is the conservative
+choice: every snapshot a switch can restore was frozen while its turn
+was still word for word, so a switch never lands on a version it cannot
+name, and the window is never asked to show a branch whose turn the
+model no longer sees.
+
+**Alternative rejected:** Re-keying `_branches` to conversation positions
+after every compaction, which would have to follow every summary and
+every restart. Also rejected: letting the arrows switch a summarized
+turn. Restoring the snapshot would work for the model, but the reset
+could not say what that turn's text is when the window has no copy of
+its own (after a reload), and Edit on the same row is refused anyway.
+A new refusal code: `user_turn_compacted` already means this and the
+window already knows it.
+
+---
+
 ## 2026-10-19 — TD-5148: the `tool_call` event is classified on workspace-joined paths (Class B)
 
 **Decision:** `canonicalize_path_fields(tool, arguments, guard)` in

@@ -19,7 +19,7 @@ from .autonomy.charter import Charter
 from .autonomy.classifier import DecisionClass
 from .autonomy.judgment import JudgmentBackend
 from .boundary_config import BoundaryConfig
-from .compaction import ContextMeter, compact_on_request
+from .compaction import ContextMeter, compact_on_request, window_user_turns
 from .logging import get_logger, redact_structure
 from .policy import ApprovalOutcome, PolicyConfig, propose_always_allow
 from .protocol import (
@@ -30,6 +30,7 @@ from .protocol import (
 )
 from .protocol import SessionState as SessionStateEvent
 from .provider import ChatMessage
+from .workspace_trust import TrustStore, WorkspaceConfigView
 
 if TYPE_CHECKING:
     from .config import ModelConfig
@@ -275,6 +276,11 @@ class Session:
         self.cost_tracker: CostTracker | None = None
         # Approval policy (TD-801), resolved by the daemon on open.
         self.policy = PolicyConfig()
+        # Workspace config trust (TD-5113). The daemon attaches its store
+        # before the first config load; None (library use) gates nothing.
+        # ``config_view`` is the read the boundary was last loaded from.
+        self.trust_store: TrustStore | None = None
+        self.config_view: WorkspaceConfigView | None = None
         # Pending approvals (TD-802), owned by the session — NOT by any
         # websocket — so a client disconnect leaves them parked and
         # resumable (prime directive §2.5).  Each record carries the call
@@ -289,6 +295,11 @@ class Session:
         # Set by the loop (TD-1715): rebinds what it built from the old root
         # (dispatcher, assembler, import approvals) after a live move.
         self.on_workspace_moved: Callable[[], None] | None = None
+        # Set by the loop (TD-5113): re-applies a reloaded boundary and
+        # policy (path guard, classifier wall, policy gate, import
+        # approvals) without touching root-bound pieces, so it is safe
+        # while a turn runs.
+        self.on_config_reloaded: Callable[[], None] | None = None
         # Turns owed to the user (TD-1715): raised when a message is queued,
         # lowered when the loop reports that turn finished. `session_state`
         # cannot answer "is a turn in flight" — "running" means the loop is
@@ -576,6 +587,13 @@ class Session:
 
     # ── Approvals (TD-802) ──────────────────────────────────────────
 
+    async def _config_writable(self) -> bool:
+        """True when TST Desk may save into the workspace config now (TD-5113)."""
+        store = self.trust_store
+        if store is None:
+            return True
+        return await asyncio.to_thread(store.writable, self.workspace_path)
+
     async def request_approval(
         self,
         tool_call_id: str,
@@ -602,8 +620,12 @@ class Session:
         )
         # The rule "always allow" would write (TD-803), surfaced on the
         # card so the user sees it before committing to save it.  None for
-        # a class-C call — the boundary can never be always-allowed.
+        # a class-C call — the boundary can never be always-allowed — and
+        # while the workspace config is not in force (TD-5113): the rule
+        # could not be saved, so the card offers approve once instead.
         proposed = propose_always_allow(tool, arguments, decision_class, Path(self.workspace_path))
+        if proposed is not None and not await self._config_writable():
+            proposed = None
         await self.event_log.add(
             ApprovalRequestEvent(
                 session_id=self.id,
@@ -890,8 +912,21 @@ class Session:
 
     # ── Conversation fork (TD-1708) ─────────────────────────────────
 
-    def _user_positions(self) -> list[int]:
-        return [i for i, msg in enumerate(self.conversation) if msg.role == "user"]
+    def _find_user_turn(self, user_index: int) -> int | str:
+        """Where the window's user turn *user_index* is in the conversation.
+
+        The window numbers user turns from the start of the session, and a
+        compaction folds some of them into a summary that says how many it
+        stands for (TD-5109), so the number is mapped through
+        :func:`window_user_turns`.  Returns the message index, or the
+        refusal code: ``user_turn_not_found`` or, for a turn inside a
+        summary, ``user_turn_compacted`` (TD-5147).
+        """
+        turns = window_user_turns(self.conversation)
+        if user_index < 0 or user_index >= len(turns):
+            return "user_turn_not_found"
+        position = turns[user_index]
+        return "user_turn_compacted" if position is None else position
 
     def _copy_conversation(self) -> list[ChatMessage]:
         return deepcopy(self.conversation)
@@ -915,8 +950,10 @@ class Session:
         )
 
     async def fork_from(self, user_index: int, content: str) -> ConversationReset | str:
-        """Replace the user_index-th user turn and drop everything after it.
+        """Replace the window's user turn *user_index* and drop everything after it.
 
+        Siblings stay keyed by the window's number, which no compaction
+        changes; only the cut is mapped onto the conversation (TD-5147).
         Returns the reset event, or an error code.
         """
         text = content.strip()
@@ -924,14 +961,13 @@ class Session:
             return "empty_content"
         if self.turn_in_flight:
             return "turn_in_progress"
-        positions = self._user_positions()
-        if user_index < 0 or user_index >= len(positions):
-            return "user_turn_not_found"
+        cut = self._find_user_turn(user_index)
+        if isinstance(cut, str):
+            return cut
         self._save_active_sibling(user_index)
         siblings = self._branches[user_index]
         siblings.append([])
         self._branch_cursor[user_index] = len(siblings) - 1
-        cut = positions[user_index]
         self.conversation[cut:] = []
         self._drain_user_queue()
         await self.add_user_message(text)
@@ -947,7 +983,6 @@ class Session:
         many user turns it stands for, so it holds after any compaction
         and after a restart.
         """
-        from .compaction import window_user_turns
         from .protocol import ContextCompacted
 
         if self.turn_in_flight:
@@ -957,12 +992,10 @@ class Session:
             return "nothing_to_compact"
         position: int | None = None
         if user_index is not None:
-            turns = window_user_turns(self.conversation)
-            if user_index < 0 or user_index >= len(turns):
-                return "user_turn_not_found"
-            position = turns[user_index]
-            if position is None:
-                return "user_turn_compacted"
+            found = self._find_user_turn(user_index)
+            if isinstance(found, str):
+                return found
+            position = found
         result = compact_on_request(
             self.conversation,
             meter.counter,
@@ -1034,21 +1067,33 @@ class Session:
             self._save_active_sibling(user_index)
 
     async def set_branch(self, user_index: int, sibling_index: int) -> ConversationReset | str:
-        """Restore a sibling snapshot at *user_index*."""
+        """Restore a sibling snapshot at the window's user turn *user_index*.
+
+        The arrows sit on a turn of the live conversation, so a turn that
+        has since been folded into a summary is refused like an edit of it
+        (TD-5147).  The reset carries that turn's text from the restored
+        snapshot, found by the same mapping.
+        """
+        from .provider import content_as_text
+
         if self.turn_in_flight:
             return "turn_in_progress"
         siblings = self._branches.get(user_index)
         if siblings is None or sibling_index < 0 or sibling_index >= len(siblings):
             return "branch_not_found"
+        found = self._find_user_turn(user_index)
+        if isinstance(found, str):
+            return found
         self._save_active_sibling(user_index)
         self._branch_cursor[user_index] = sibling_index
-        restored = deepcopy(siblings[sibling_index])
-        self.conversation[:] = restored
+        self.conversation[:] = deepcopy(siblings[sibling_index])
         self._drain_user_queue()
-        from .provider import content_as_text
-
-        users = [m for m in self.conversation if m.role == "user"]
-        text = content_as_text(users[user_index].content) if user_index < len(users) else ""
+        position = self._find_user_turn(user_index)
+        text = (
+            ""
+            if isinstance(position, str)
+            else content_as_text(self.conversation[position].content)
+        )
         return self._emit_reset(user_index, text)
 
     @property

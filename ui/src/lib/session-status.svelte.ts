@@ -16,8 +16,9 @@ import { isBridged } from "./bridged-id";
 import type { ProtocolClient } from "./client";
 import type { ContextReading } from "./context-gauge";
 import { persistLastWorkspace } from "./last-workspace";
-import type { AttachmentLimits, BoundaryUpdate, DaemonEventUnion } from "./protocol";
+import type { AttachmentLimits, BoundaryUpdate, ConfigTrust, DaemonEventUnion } from "./protocol";
 import { windowBindSessionId } from "./window-bind";
+import { trustMessage } from "./workspace-trust";
 
 export type SessionIndicator =
   | "none"
@@ -50,6 +51,10 @@ export const session = $state({
   /** True when this workspace's file sets a spend budget. The built-in
    *  pause is not a budget the user assigned. */
   spendConfigured: false,
+  /** Whether the workspace's loosening config is in force (TD-5113).
+   *  Null when there is nothing to ask. Pending and declined mean the
+   *  session runs on the packaged defaults. */
+  configTrust: null as ConfigTrust | null,
   /** Attachment caps for the composer (TD-1709). Held separately from
    *  `boundary` because it is never null: the composer has to judge a
    *  dropped file before any session is bound, and the shipped defaults are
@@ -93,6 +98,7 @@ export function resetSession(): void {
   session.cost = { turn: 0, session: 0, total: 0, classifier: 0, byTier: {} };
   session.boundary = null;
   session.spendConfigured = false;
+  session.configTrust = null;
   session.attachmentLimits = { ...DEFAULT_ATTACHMENT_LIMITS };
   session.tier = "brain";
   session.tierOverride = null;
@@ -152,6 +158,7 @@ export function ingestEvent(event: DaemonEventUnion): void {
       // beats standing the composer's early refusal down to nothing.
       if (event.attachments !== undefined) session.attachmentLimits = event.attachments;
       session.spendConfigured = event.spend_configured === true;
+      session.configTrust = event.config_trust ?? null;
       break;
     case "tier_state":
       session.tier = event.tier;
@@ -195,6 +202,15 @@ export function openWorkspace(path: string): void {
   void persistLastWorkspace(path);
 }
 
+/** Trust or decline the followed session's workspace config (TD-5113).
+ *  Only this computer decides: a session on another computer is refused
+ *  here, as the daemon would. False when nothing was sent. */
+export function decideWorkspaceTrust(accept: boolean): boolean {
+  const trust = session.configTrust;
+  if (session.sessionId === null || trust === null || isBridged(session.sessionId)) return false;
+  return client?.send(trustMessage(session.sessionId, trust, accept)) ?? false;
+}
+
 /** Re-target this store at another live session (TD-1701 rail selection).
  *
  *  The rail knows the session's id, workspace, and last-reported state from
@@ -221,6 +237,7 @@ export function focusSession(
   session.cost = { turn: 0, session: 0, total: 0, classifier: 0, byTier: {} };
   session.boundary = null;
   session.spendConfigured = false;
+  session.configTrust = null;
   session.attachmentLimits = { ...DEFAULT_ATTACHMENT_LIMITS };
   session.tier = "brain";
   session.tierOverride = null;

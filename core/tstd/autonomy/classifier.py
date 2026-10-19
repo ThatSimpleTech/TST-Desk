@@ -16,6 +16,10 @@ the *obvious* cases — the ones that must never reach the model:
   ``.claude/commands/**`` — TD-4501, any ``SKILL.md`` — TD-4502, and the
   signed charter at ``.tst/autonomy/CHARTER.md`` — TD-4001) → C, even
   inside the workspace
+- a write to a path that runs code later (any ``.git``, ``.vscode``,
+  ``.idea`` or ``.husky`` segment; ``.envrc``, ``.gitconfig``, shell
+  startup files and git hook-manager configs by basename) → C, through
+  the fs tools and the shell write-target table (TD-5108)
 - a write under ``.tst/memory/`` → A (spec §5; not steering)
 - a spent/spend/time/iteration cap that is already exceeded → C
 - an in-workspace edit inside ``writable_paths`` → A
@@ -91,6 +95,42 @@ _POLICY_FILE_PARTS = (".tst", "config.yaml")
 # the single file is protected, not the autonomy directory.  Folded from
 # charter.CHARTER_RELATIVE_PARTS: one source of truth for the path.
 _CHARTER_FILE_PARTS = tuple(p.casefold() for p in CHARTER_RELATIVE_PARTS)
+# Paths that run code later (TD-5108). Writing one runs nothing now, but
+# git, a login shell, direnv or an editor runs what it says the next time
+# it starts, outside the classifier and the wall. Matched at any depth: a
+# nested ``.git`` holding HEAD and config makes its folder a repo, direnv
+# loads the ``.envrc`` of any folder you cd into, and an editor opens a
+# nested project with its own ``.vscode``. The hook managers are here
+# because the user's own ``git commit`` runs what they name; the daemon's
+# own git runs no hooks (``git_safe``). Lefthook reads any of its base or
+# ``-local`` names, dotted or not, in four formats.
+# Stored case-folded; compared through ``_fold``.
+_EXEC_LATER_DIRS = frozenset({".git", ".vscode", ".idea", ".husky"})
+_LEFTHOOK_FILES = frozenset(
+    f"{dot}{stem}.{ext}"
+    for dot in ("", ".")
+    for stem in ("lefthook", "lefthook-local")
+    for ext in ("yml", "yaml", "toml", "json")
+)
+_EXEC_LATER_FILES = frozenset(
+    {
+        ".envrc",
+        ".gitconfig",
+        ".profile",
+        ".bashrc",
+        ".bash_profile",
+        ".bash_login",
+        ".bash_logout",
+        ".bash_aliases",
+        ".zshrc",
+        ".zshenv",
+        ".zprofile",
+        ".zlogin",
+        ".zlogout",
+        ".pre-commit-config.yaml",
+        *_LEFTHOOK_FILES,
+    }
+)
 
 
 def _fold(parts: Sequence[str]) -> tuple[str, ...]:
@@ -328,6 +368,29 @@ def is_steering_write(boundary: Boundary, path: Path) -> bool:
     return _fold(relative[:2]) == _STEERING_RULES_DIR_PARTS
 
 
+def is_exec_later_write(boundary: Boundary, path: Path) -> bool:
+    """Whether writing *path* can make code run later (TD-5108).
+
+    True for any path with a ``.git``, ``.vscode``, ``.idea`` or
+    ``.husky`` segment, and for shell startup files, ``.envrc``,
+    ``.gitconfig`` and git hook-manager configs by basename, at any
+    depth.  Inside the workspace only the workspace-relative segments
+    count, so a workspace that itself lives under such a folder is not
+    caught whole.  Outside it the whole canonical path counts: a shell
+    redirect to ``~/.bashrc`` has no workspace-relative form.  Segments
+    case-fold (TD-4804).
+    """
+    root = boundary.workspace_root
+    if root is not None and is_in_workspace(boundary, path):
+        parts = relative_parts(path, root)
+    else:
+        parts = list(canonical_path(path).parts)
+    folded = _fold(parts)
+    if not folded:
+        return False
+    return folded[-1] in _EXEC_LATER_FILES or any(p in _EXEC_LATER_DIRS for p in folded)
+
+
 def writes_match_writable(boundary: Boundary, request: DecisionRequest) -> bool:
     """Whether every write target falls within ``writable_patterns``."""
     if boundary.workspace_root is None:
@@ -381,14 +444,25 @@ def _rule_steering_write(req: DecisionRequest, boundary: Boundary) -> bool:
     return req.is_mutation and any(is_steering_write(boundary, p) for p in req.writes)
 
 
+def _rule_exec_later_write(req: DecisionRequest, boundary: Boundary) -> bool:
+    """The call writes a path that runs code later (TD-5108).
+
+    Class C, not a refusal: the user can approve it, unlike a steering
+    write.  It sits ahead of ``memory-file-write`` so a ``.git`` planted
+    under ``.tst/memory/`` is not waved through as memory.
+    """
+    return req.is_mutation and any(is_exec_later_write(boundary, p) for p in req.writes)
+
+
 # ── Shell command targets (TD-4805) ────────────────────────────────────
 #
 # The fs tools declare their paths; the shell's targets live inside an
 # opaque command string.  The static table extracts the common scripted
 # write forms — redirection and ``tee`` — and judges them against the
-# steering set.  Everything else about a shell command stays invisible to
-# the table, which is why the shell also gets a Class B floor: a model's
-# reading of an opaque string is never the sole gate on running it.
+# steering set and the paths that run code later (TD-5108).  Everything
+# else about a shell command stays invisible to the table, which is why
+# the shell also gets a Class B floor: a model's reading of an opaque
+# string is never the sole gate on running it.
 
 _REDIRECT_TOKENS = frozenset({">", ">>", "&>", "&>>", ">&", ">|"})
 _SEGMENT_SEPARATORS = frozenset({"|", "&", ";", "||", "&&"})
@@ -447,21 +521,29 @@ def _shell_write_targets(command: str) -> list[str]:
     return targets
 
 
-def _rule_shell_steering_write(req: DecisionRequest, boundary: Boundary) -> bool:
-    """A shell command redirects or tees into a steering path (TD-4805)."""
+def _shell_target_paths(req: DecisionRequest, boundary: Boundary) -> list[Path]:
+    """The shell call's redirect and ``tee`` targets, workspace-joined."""
     if req.tool_name != "shell" or boundary.workspace_root is None:
-        return False
+        return []
     command = req.arguments.get("command")
     if not isinstance(command, str):
-        return False
+        return []
     root = boundary.workspace_root
+    targets: list[Path] = []
     for token in _shell_write_targets(command):
         target = Path(token)
-        if not target.is_absolute():
-            target = root / target
-        if is_steering_write(boundary, target):
-            return True
-    return False
+        targets.append(target if target.is_absolute() else root / target)
+    return targets
+
+
+def _rule_shell_steering_write(req: DecisionRequest, boundary: Boundary) -> bool:
+    """A shell command redirects or tees into a steering path (TD-4805)."""
+    return any(is_steering_write(boundary, t) for t in _shell_target_paths(req, boundary))
+
+
+def _rule_shell_exec_later_write(req: DecisionRequest, boundary: Boundary) -> bool:
+    """A shell command redirects or tees into a path that runs code later (TD-5108)."""
+    return any(is_exec_later_write(boundary, t) for t in _shell_target_paths(req, boundary))
 
 
 def _rule_shell_floor(req: DecisionRequest, _boundary: Boundary) -> bool:
@@ -617,6 +699,18 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="shell command redirects or tees into a steering path",
         decision_class=DecisionClass.C,
         match=_rule_shell_steering_write,
+    ),
+    Rule(
+        id="exec-later-write",
+        description="action writes a path that runs code later (.git, shell rc, .envrc, editor)",
+        decision_class=DecisionClass.C,
+        match=_rule_exec_later_write,
+    ),
+    Rule(
+        id="shell-exec-later-write",
+        description="shell command redirects or tees into a path that runs code later",
+        decision_class=DecisionClass.C,
+        match=_rule_shell_exec_later_write,
     ),
     Rule(
         id="cap-exceeded",
