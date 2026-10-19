@@ -9329,6 +9329,66 @@ allow" is not offered for a chained command. Tests:
 `core/tests/test_policy_shell.py`, plus loop and daemon cases in
 `core/tests/test_approval_flow.py`.
 
+Criteria 1 and 2 were unticked after the PR #14 review found lines bash
+splits differently from the scanner (a command on a later line missed
+both `auto` and `never`). They were ticked again on 2026-10-19 once
+TD-5156's differential test, which runs a corpus under bash, `bash
+--posix`, dash and busybox ash, passed: every command any shell ran is
+one of the splitter's segments or the split is incomplete, and a `never`
+rule naming any command that ran refuses the line.
+
+### TD-5156 — Shell rule scanner fails closed where shells split a command differently
+**Size:** 3 · **Depends on:** TD-5101
+
+Follow-up to TD-5101 (PR #14). Its review found that `split_command`
+reported some lines as completely split when bash, the `/bin/sh` of
+macOS, Fedora and Arch, reads their line breaks differently, so commands
+on later lines missed both `auto` and `never` rules. dash read them the
+way the scanner did.
+
+**Acceptance criteria:**
+- [x] A differential test builds a corpus of command texts from harmless
+      builtins only (`echo` with unique markers, `true`, `:`) and every
+      line-structure construct (newlines, `\`-newline, comments,
+      heredocs, quotes across lines, `&`, `|&`, `;;`, `()`, `{}`, `$(…)`,
+      backticks, carriage returns, odd whitespace), runs each under every
+      shell on the host (`bash -c`, `bash --posix -c`, `dash -c`, `sh -c`,
+      `busybox sh -c`; a missing one is skipped) and records which
+      markers ran
+- [x] Any text where a shell ran a command that is not one of the
+      splitter's segments comes back `complete=False`, so it never
+      auto-runs. The test stays in the suite
+- [x] A `never` rule naming any command that ran refuses the line,
+      complete or not
+- [x] `never` and `ask` rules match a program written as a full path
+      (`curl *` refuses `/usr/bin/curl x`); `auto` still needs the path
+      as written
+- [x] The `AlwaysAllow` docstring lists the `not_always_allowable`
+      refusal for chained shell commands
+- [x] On Windows, cmd's `for /f … in ('cmd')` and the usebackq
+      `` (`cmd`) `` form are incomplete, and `never` rules see the inner
+      command
+- [x] TD-5101's criteria 1 and 2 are re-verified by the differential test
+- [x] Tests fail on the old code (937 disagreements and 237 `never`
+      misses in the corpus) and pass on the new
+
+Done (2026-10-19): `\`-newline is removed before words are read, and
+joins that would form an operator are incomplete. Heredoc ends are read
+the bash way and the dash way, and a difference is incomplete, as is a
+heredoc left open when its `$(…)` closes. An unquoted body's
+substitutions are read with and without its line continuations. `alias`
+values and `trap` actions are read as commands. Heredoc reading moved to
+`core/tstd/policy_shell_heredoc.py`. Tests:
+`core/tests/test_policy_shell_differential.py` (corpus in
+`core/tests/shell_corpus.py`) and
+`core/tests/test_policy_shell_fail_closed.py`. See DECISIONS.md.
+
+**Not covered:** macOS `/bin/sh` (bash 3.2) is not on CI; the corpus was
+run by hand against bash 5.1, 5.2 and 5.3 and busybox ash. Text bash
+evaluates later from inside quotes (an array subscript given to
+`[ -v ]`, `PS4` with `set -x`) is still data to the scanner, like a
+command spelled through a variable.
+
 ### TD-5147 — Edit and branch arrows pick the right turn after compaction
 **Size:** 2 · **Depends on:** TD-1708, TD-5109
 

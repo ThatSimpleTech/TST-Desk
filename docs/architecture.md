@@ -412,7 +412,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `compact_context` | yes | Compact now: everything before the latest user turn, or from a given user turn on, with optional guidance (TD-5109). Refused mid-turn. |
 | `approve` | yes | Approve a parked tool call. |
 | `deny` | yes | Deny a parked tool call, with an optional reason. |
-| `always_allow` | yes | Approve and save the narrowest policy rule that would have allowed it. Refused for class-C calls and for a chained shell command (TD-5101). While the workspace config is not trusted (TD-5113) it approves the call once, saves nothing and replies `workspace_config_untrusted`. |
+| `always_allow` | yes | Approve and save the narrowest policy rule that would have allowed it. Refused for class-C calls (`class_c_not_always_allowable`), and with `not_always_allowable` for a chained shell command or one policy cannot split with confidence (TD-5101). While the workspace config is not trusted (TD-5113) it approves the call once, saves nothing and replies `workspace_config_untrusted`. |
 | `list_policy_rules` | yes | List the workspace's saved policy rules. |
 | `revoke_policy_rule` | yes | Remove one saved rule, identified by `(tool, args)`. |
 | `set_spend_cap` | yes | Set or clear the workspace's session spend budget (`caps.spend_usd` in `.tst/config.yaml`). Null removes it and the built-in $25 pause applies; a number replaces that pause. Acked with `boundary_update`. |
@@ -772,7 +772,9 @@ Worth reading once, because it is the same path for every tool:
    ban, and hardlinks.
 5. **Gate.** Policy resolves the class to `auto`, `ask`, or `never`. Rules come first, deny
    first: any matching `never` refuses, then any `ask` asks, and `auto` needs a rule for every
-   path or shell command in the call (TD-5101, `core/tstd/policy_shell.py`). With no rule,
+   path or shell command in the call (TD-5101, `core/tstd/policy_shell.py`). A line the shells
+   split differently never auto-runs; a differential test holds the splitter to bash, dash and
+   busybox ash (TD-5156). With no rule,
    class A is auto, class B asks, class C takes the workspace's `class_c_default`. `ask` with
    no approval handler attached raises — the approval gate is part of the chokepoint, not an
    optional add-on.

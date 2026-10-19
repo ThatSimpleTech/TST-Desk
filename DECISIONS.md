@@ -14192,3 +14192,72 @@ longer record the call as it was asked.
 said A or B (a hardlink, a Windows-unsafe form) still shows the
 classifier's class on the event, because the event is written before the
 guard runs. Recorded as a follow-up on TD-5148.
+
+---
+
+## 2026-10-19 — TD-5156: the shell splitter fails closed where shells split a line differently (Class B)
+
+**Decision:** `split_command` is held to the shells themselves. A
+differential test (`core/tests/test_policy_shell_differential.py`, corpus
+in `core/tests/shell_corpus.py`) builds about 3,800 command texts from
+`:`, `true` and `echo m<k> >>o` only, joined by every line-structure
+construct (newlines, `\`-newline, comments, heredocs, quotes across lines,
+`&`, `|&`, `;;`, `()`, `{}`, `$(…)`, backticks, carriage returns, odd
+whitespace). It runs each under every shell on the host (`bash`,
+`bash --posix`, `dash`, `sh`, `busybox sh`; a missing one is skipped) and
+records which `echo`s ran and with what arguments. Any `echo` a shell ran
+that is not one of the splitter's commands must come with
+`complete=False`, and a `never` rule naming any command that ran must
+refuse the line. Fixes the test drove:
+
+1. **`\`-newline is removed before words are read**, as POSIX says, so
+   `\`-newline then `#` starts a comment and `<<\`-newline`EOF` is the
+   delimiter `EOF`. Where it would join two halves of an operator (`&`
+   and `&`, `<` and `<`, `$` and `(`), the line is incomplete.
+2. **Heredoc ends are read the bash way and the dash way.** bash joins a
+   body line ending in `\` to the next before it looks for the
+   delimiter; dash and ash do not. If the two readings end the body in
+   different places, the line is incomplete. So is a heredoc opened
+   inside `$(…)` whose body comes after the `)` (bash reads it from the
+   later lines, dash runs them), and a body line inside `$(…)` that starts
+   with the delimiter (`EOF)`). A heredoc opened before a `$(` keeps its
+   body after the line, not after a newline inside the substitution.
+3. **An unquoted body's substitutions are read with and without its
+   `\`-newlines** (bash drops them first, so a comment can swallow a
+   line; dash keeps them). Different commands either way: incomplete.
+4. **The rough reading of an incomplete line** also cuts the text with
+   `\`-newlines removed and unwraps `eval`/`sh -c` in each piece, so a
+   `never` rule still sees the commands.
+
+Review notes on the same code:
+
+5. **`never` and `ask` see the program without its folder.** Each deny
+   reading is added again with its program reduced to the basename, and
+   a Windows `.exe`/`.com`/`.bat`/`.cmd` extension removed. `auto` still
+   matches the path as written: a basename would let `npm test*` allow
+   `/tmp/npm test`.
+6. **cmd's `for /f`** (`in ('cmd')`, or `` (`cmd`) `` with usebackq) runs
+   the quoted command. The cmd reading marks any `for /f` incomplete; the
+   rough cut splits at the parentheses and quotes, so `never` rules see
+   the command. Unwrapping it into a complete split was the alternative;
+   failing closed is the conservative choice and `for /f` lines are rare
+   in agent shells.
+7. **`alias` values and `trap` actions are read as commands**, like an
+   `eval` string: dash and `bash --posix` run an alias defined on an
+   earlier line, and every shell runs a trap action at exit.
+
+**Rationale:** TD-5101's module docstring promised that text the shells
+read differently is marked incomplete, but nothing checked it, and the
+review found bash-only line readings that hid a later command from both
+`auto` and `never`. A test that runs the shells is the only way to keep
+that promise as the scanner changes. The corpus never names another
+program, a network host or a path outside a throwaway folder.
+
+**Alternatives rejected:** Failing closed on every `\`-newline (common in
+hand-written multi-line commands, so `auto` rules would stop working for
+them); comparing segments both ways (a command skipped by `||` or by a
+syntax error is read but never runs, and reading more is the safe side);
+a fixed list of known-bad texts (it would not find the next one). macOS
+`/bin/sh` is bash 3.2, which is not on CI or this host; the corpus was
+also run against bash 5.1 (ubuntu 22.04), 5.2 (ubuntu 24.04, debian 12),
+5.3 and busybox ash (alpine 3.20) by hand.

@@ -1,16 +1,21 @@
-"""Words of one shell command, as policy reads them (TD-5101).
+"""Words of one shell command, as policy reads them (TD-5101, TD-5156).
 
 The scanner in :mod:`tstd.policy_shell` finds the commands of a line; this
 module reads the words of one: which wrappers come off before an ``auto``
-rule is matched (only those that never change what runs), and the readings
+rule is matched (only those that never change what runs), the readings
 ``ask`` and ``never`` rules are checked against (every wrapper, keyword,
-assignment and redirect peeled off in turn).
+assignment and redirect peeled off in turn, and the program without its
+folder), and the strings the command runs as commands (``eval``, ``sh -c``,
+``cmd /c``, an ``alias`` value, a ``trap`` action).
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Literal
+
+Dialect = Literal["posix", "cmd"]
 
 _MAX_PEELS = 16  # deny readings kept per command
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
@@ -21,6 +26,11 @@ _KEYWORDS = frozenset(
     | {"coproc"}
 )
 SHELLS = frozenset({"sh", "bash", "dash", "zsh", "ksh", "mksh", "ash"})
+_RUNNABLE_EXTENSIONS = frozenset({"exe", "com", "bat", "cmd"})
+
+
+class Incomplete(Exception):
+    """The text cannot be split with confidence."""
 
 
 def unquote(word: str, posix: bool) -> str:
@@ -31,7 +41,8 @@ def unquote(word: str, posix: bool) -> str:
         c = word[i]
         if (posix and c == "\\") or (not posix and c == "^"):
             if not word.startswith("\\\n", i):
-                out.append(word[i + 1 : i + 2])
+                # A backslash that ends the text is itself.
+                out.append(word[i + 1 : i + 2] or ("\\" if posix else ""))
             i += 2
         elif posix and c == "'":
             end = word.find("'", i + 1)
@@ -41,6 +52,9 @@ def unquote(word: str, posix: bool) -> str:
         elif c == '"':
             j = i + 1
             while j < n and word[j] != '"':
+                if posix and word.startswith("\\\n", j):
+                    j += 2
+                    continue
                 if posix and word[j] == "\\" and word[j + 1 : j + 2] in ('"', "\\", "$", "`"):
                     j += 1
                 out.append(word[j])
@@ -70,6 +84,36 @@ def dash_c_script(args: list[str]) -> str | None:
     if j < len(args) and args[j] == "--":
         j += 1
     return args[j] if has_c and j < len(args) else None
+
+
+def run_strings(words: list[str], posix: bool) -> list[tuple[str, Dialect]]:
+    """The strings a command runs as commands, and the dialect they run in.
+
+    ``eval``, ``sh -c`` and ``cmd /c`` run theirs now, an ``alias`` value runs
+    where the alias is used on a later line, and a ``trap`` action at exit.
+    """
+    k = peel_all(words)
+    if k >= len(words):
+        return []
+    name, rest = basename(words[k]), words[k + 1 :]
+    if name.lower() in ("cmd", "cmd.exe") and rest and rest[0].lower() in ("/c", "/k"):
+        return [(" ".join(rest[1:]), "cmd")]
+    if not posix:
+        if name.lower() == "for" and any(w.lower().startswith("/f") for w in rest):
+            # `for /f … in ('cmd')`, or (`cmd`) with usebackq, runs the
+            # quoted command; read whole it is cut at the quotes.
+            raise Incomplete
+        return []
+    if name == "eval" and rest:
+        return [(" ".join(rest), "posix")]
+    script = dash_c_script(rest) if name in SHELLS else None
+    if script is not None:
+        return [(script, "posix")]
+    if name == "alias":
+        return [(w.partition("=")[2], "posix") for w in rest if "=" in w]
+    if name == "trap" and len(rest) > 1:
+        return [(rest[1] if rest[0] == "--" else rest[0], "posix")]
+    return []
 
 
 @dataclass(frozen=True)
@@ -206,7 +250,8 @@ def allow_start(raw: list[str]) -> int:
 
 
 def deny_readings(words: list[str]) -> list[str]:
-    """The unquoted command, then again after each peel."""
+    """The unquoted command, then again after each peel; each also with
+    its program named without its folder (``/usr/bin/curl`` → ``curl``)."""
     starts = [0]
     while starts[-1] < len(words):
         nxt = _peel_once(words, starts[-1])
@@ -216,4 +261,17 @@ def deny_readings(words: list[str]) -> list[str]:
     # A long run of assignments would cost a join per word; the first few
     # readings and the fully peeled one are what rules can name.
     starts = starts[:_MAX_PEELS] + starts[-1:]
-    return [" ".join(words[k:]) for k in starts]
+    readings: list[str] = []
+    for k in starts:
+        readings.append(" ".join(words[k:]))
+        if k < len(words) and (name := program_name(words[k])) != words[k]:
+            readings.append(" ".join([name, *words[k + 1 :]]))
+    return readings
+
+
+def program_name(word: str) -> str:
+    """*word* as a rule names the program: no folder, and on Windows no
+    ``.exe``-style extension (``C:\\Tools\\curl.EXE`` → ``curl``)."""
+    name = basename(word)
+    stem, dot, ext = name.rpartition(".")
+    return stem if dot and stem and ext.lower() in _RUNNABLE_EXTENSIONS else name
