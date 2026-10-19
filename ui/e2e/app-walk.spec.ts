@@ -29,7 +29,11 @@ let page: Page;
 
 test.beforeAll(async ({ browser }) => {
 	info = runtime();
-	page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+	// Clipboard access so "Copy message as markdown" can be read back.
+	page = await browser.newPage({
+		viewport: { width: 1280, height: 800 },
+		permissions: ["clipboard-read", "clipboard-write"],
+	});
 	page.on("pageerror", (err) => pageErrors.push(err.message));
 	await installShell(page, info);
 	await expect(page.getByRole("textbox", { name: "Filter sessions" })).toBeVisible();
@@ -67,7 +71,82 @@ test("opens a workspace and gets a mock reply", async () => {
 	// leave this window, so the walk only checks they are offered.
 	await attach.click();
 	await expect(attachMenu).toHaveCount(0);
+
+	await walkModelBar();
+	await walkMessageActions();
 });
+
+/**
+ * Plan, Model tier and Session preset each go to the daemon, and the bar
+ * only moves when its tier_state comes back. A select keeps whatever was
+ * picked even if nothing is sent, so each step checks something only the
+ * daemon's answer can change: the pin hint, aria-pressed, the disabled
+ * tiers, the model names in the tier labels.
+ */
+async function walkModelBar(): Promise<void> {
+	const bar = page.getByRole("group", { name: "Model" });
+	const tier = bar.getByRole("combobox", { name: "Model tier" });
+	const preset = bar.getByRole("combobox", { name: "Session preset" });
+	const plan = bar.getByRole("button", { name: "Plan", exact: true });
+
+	await expect(tier).toHaveAttribute("title", /^Choosing a tier pins it/);
+	await tier.selectOption("worker");
+	await expect(tier).toHaveAttribute("title", /^Pinned for this session/);
+	await expect(tier).toHaveValue("worker");
+
+	await expect(plan).toHaveAttribute("aria-pressed", "false");
+	await plan.click();
+	await expect(plan).toHaveAttribute("aria-pressed", "true");
+	await expect(tier).toHaveValue("brain");
+	for (const locked of ["worker", "validator"]) {
+		await expect(tier.locator(`option[value='${locked}']`)).toBeDisabled();
+	}
+	await plan.click();
+	await expect(plan).toHaveAttribute("aria-pressed", "false");
+	await expect(tier.locator("option[value='worker']")).toBeEnabled();
+
+	const start = await preset.inputValue();
+	const other = (await preset.locator("option").allInnerTexts()).find((p) => p !== start);
+	if (other === undefined) throw new Error("the walk needs a second preset to switch to");
+	const brain = tier.locator("option[value='brain']");
+	const startLabel = await brain.innerText();
+	await preset.selectOption(other);
+	await expect(brain).not.toHaveText(startLabel);
+	await expect(preset).toHaveValue(other);
+	await preset.selectOption(start);
+	await expect(brain).toHaveText(startLabel);
+}
+
+/** Copy, Retry and Edit on the first exchange; Retry and Edit fork it. */
+async function walkMessageActions(): Promise<void> {
+	const chat = page.getByRole("region", { name: "Chat pane" });
+
+	const copy = chat.getByRole("button", { name: "Copy message as markdown" });
+	await copy.click();
+	await expect(copy).toHaveAttribute("title", "Copied");
+	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(info.reply);
+
+	// One Edit button per user row: a fork must replace the row, not add one.
+	const edit = chat.getByRole("button", { name: "Edit message" });
+	await chat.getByRole("button", { name: "Retry: resend your last message" }).click();
+	await expect(chat.getByText("2/2", { exact: true })).toBeVisible();
+	await expect(chat.getByText(info.reply)).toBeVisible();
+	await expect(edit).toHaveCount(1);
+
+	await edit.click();
+	await chat.locator("textarea.edit").fill("Say hello again");
+	await chat.getByRole("button", { name: "Save", exact: true }).click();
+	await expect(chat.getByText("3/3", { exact: true })).toBeVisible();
+	await expect(chat.getByText("Say hello again")).toBeVisible();
+	await expect(chat.getByText(info.reply)).toBeVisible();
+	await expect(edit).toHaveCount(1);
+
+	await chat.getByRole("button", { name: "Previous branch" }).click();
+	await expect(chat.getByText("2/3", { exact: true })).toBeVisible();
+	await expect(chat.getByText("Say hello", { exact: true })).toBeVisible();
+	await chat.getByRole("button", { name: "Next branch" }).click();
+	await expect(chat.getByText("3/3", { exact: true })).toBeVisible();
+}
 
 test("visits every right-pane view", async () => {
 	for (const tab of ["Activity", "Files", "Work"]) {
