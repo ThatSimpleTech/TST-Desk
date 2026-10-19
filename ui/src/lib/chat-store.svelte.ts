@@ -91,6 +91,9 @@ export const cancelTurn: () => boolean = store.cancelTurn;
 export const sendQueuedNow: (id: string) => boolean = store.sendQueuedNow;
 export const editQueuedMessage: (id: string, text: string) => void = store.editQueuedMessage;
 export const removeQueuedMessage: (id: string) => void = store.removeQueuedMessage;
+/** Held-message actions (TD-5155): the daemon sends or drops the row. */
+export const sendHeldMessage: (id: string) => boolean = store.sendHeldMessage;
+export const removeHeldMessage: (id: string) => boolean = store.removeHeldMessage;
 /** Rail click target (TD-1701): attach the pane to a session from the list. */
 export const selectSession: (
   sessionId: string,

@@ -9627,6 +9627,38 @@ each freed about 1k tokens and the session looked like it was thrashing.
       `context_compacted_inflight_trim`
 - [x] Tests in core and ui fail on the old code and pass on the new
 
+### TD-5155 — Queued messages survive a restart, and drain names a paused turn
+**Size:** 5 · **Depends on:** TD-1704, TD-5002, TD-5018, TD-5019, TD-5023
+
+On 2026-10-19 a user message was lost on a restart. The progress guard
+(TD-5002) had paused the turn, the window sent the next message straight
+to the daemon, and the daemon kept it only on the session's in-memory
+queue. `tst drain` also called that paused session `running`, so a
+deploy waited on a turn that never ends without the person.
+
+**Acceptance criteria:**
+- [x] Every message the daemon accepts is written to the session's
+      `queued.json` (display text and the model's text) before the
+      `user_message` handler returns, and leaves it once its `user_turn`
+      and the conversation are saved; the turn is logged under the
+      message's id, so a message whose turn is in the log is not held again
+- [x] After a restart the queued messages come back held, not sent: logged
+      as `queued_messages`, sent only by `send_queued` (refused during a
+      drain hold, like `user_message`), dropped by `remove_queued`
+- [x] Image bytes are never written; a held message keeps its text, counts
+      the images it lost (`images_dropped`), and the model is told
+- [x] The window shows held messages above the composer with Send and
+      Remove and a note for lost images; a send of its own the daemon held
+      leaves the transcript for the held row; nothing is sent by itself
+- [x] `drain_result` lists `running`, `paused` and `awaiting_approval`
+      apart; `tst drain` exits 0 when only paused or approval turns are
+      left (printed under "Waiting on the user") and 2 for them with
+      `--strict`; an older daemon's paused turn still reads as running
+- [x] docs/linux.md "Restarting for a deploy", docs/architecture.md
+      message and event tables, DECISIONS.md
+- [x] Tests fail on the old code: a restart with a message queued behind a
+      guard pause loses it, and drain exits 2 on a guard-paused session
+
 ---
 
 # Epic E52 — Files to the user

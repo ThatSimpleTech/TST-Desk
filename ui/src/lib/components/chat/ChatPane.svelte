@@ -17,8 +17,10 @@
 		editQueuedMessage,
 		initChat,
 		keepDraft,
+		removeHeldMessage,
 		removeQueuedMessage,
 		retryLastUserMessage,
+		sendHeldMessage,
 		sendQueuedNow,
 		sendUserMessage,
 		teardownChat,
@@ -39,6 +41,7 @@
 	import Composer from "./Composer.svelte";
 	import MessageList from "./MessageList.svelte";
 	import PlayfulBackground from "../PlayfulBackground.svelte";
+	import HeldMessages from "./HeldMessages.svelte";
 	import QueuedMessages from "./QueuedMessages.svelte";
 	import WakeupCard from "../WakeupCard.svelte";
 	import { bindWakeup, startWakeup } from "../../wakeup.svelte.js";
@@ -197,6 +200,14 @@
 				<span class="duration">Worked for {formatTurnDuration(chat.lastTurnDuration)}</span>
 			{/if}
 		</div>
+		<!-- TD-5155: what a restart left held, above the pane's own queue.
+		     Renders nothing while nothing is held. -->
+		<HeldMessages
+			held={chat.held}
+			disabled={!sendable}
+			onsend={sendHeldMessage}
+			onremove={removeHeldMessage}
+		/>
 		<!-- TD-1704: sits directly above the composer, between the turn status
 		     and the card, so the rows read as "these go next". Renders nothing
 		     at all while the queue is empty. -->

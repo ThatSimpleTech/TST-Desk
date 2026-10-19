@@ -5,6 +5,7 @@
 // message list; it does not own the socket.
 
 import type { BranchSnaps } from "./chat-fork";
+import { applyHeldList, clearHeldPending } from "./chat-held";
 import type { ChatMessage, ChatState, ToolBlock } from "./chat-store";
 import type { MessageQueue } from "./chat-queue";
 import { refusedSend, returnToDraft, takeSent } from "./draft-store";
@@ -197,6 +198,11 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       });
       return;
     }
+    case "queued_messages": {
+      if (event.session_id !== state.sessionId) return;
+      applyHeldList(state, ctx.sending, event);
+      return;
+    }
     case "assistant_reasoning": {
       if (event.session_id !== state.sessionId) return;
       // Reasoning is a turn in flight on exactly the terms a content
@@ -320,6 +326,14 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       // while it drains for a restart (TD-5023): the turn will never start,
       // so drop the waiting shimmer immediately — the toast (notifications,
       // TD-1008) carries the actionable copy.
+      if (event.in_reply_to === "send_queued" || event.in_reply_to === "remove_queued") {
+        // A held row's verb was refused (TD-5155): the row stays held, and
+        // no composer text is involved. The toast says why.
+        if (event.session_id != null && event.session_id !== state.sessionId) return;
+        clearHeldPending(state.held);
+        if (event.in_reply_to === "send_queued") wait.end();
+        return;
+      }
       if (event.code !== "session_not_running" && event.code !== "daemon_draining") return;
       if (event.session_id != null && event.session_id !== state.sessionId) return;
       wait.end();

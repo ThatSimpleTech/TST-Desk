@@ -42,6 +42,8 @@ export const BRIDGED_VERBS: ReadonlySet<string> = new Set([
   "attach",
   "detach",
   "user_message",
+  "send_queued", // TD-5155: send or drop a message a restart left held
+  "remove_queued",
   "stop_turn",
   "cancel",
   "resume",

@@ -14,6 +14,7 @@ import { isBridged } from "./bridged-id";
 import type { ChatMessage } from "./chat-message";
 import { applyChatEvent, type BindHold } from "./chat-events";
 import { createBranchSnaps } from "./chat-fork";
+import type { HeldMessage } from "./chat-held";
 import { createMessageQueue, type QueuedMessage } from "./chat-queue";
 import { createDraftStore, noteSent, type DraftStore } from "./draft-store";
 import { createFirstTokenWait } from "./first-token-wait";
@@ -36,6 +37,9 @@ export interface ChatState {
    *  end so the tail stays editable. See chat-queue.ts for why they wait
    *  here instead of going straight to the daemon's own queue. */
   queued: QueuedMessage[];
+  /** Messages a restart left held (TD-5155): the daemon's latest
+   *  `queued_messages` list. They wait for Send or Remove; see chat-held.ts. */
+  held: HeldMessage[];
   /** Set between a user send and the first assistant_delta — the "Working…"
    *  shimmer's window (TD-1607). Only a local send arms it (TD-1714): the
    *  daemon's "running" means the session loop is alive, not that a turn is
@@ -115,6 +119,11 @@ export interface ChatStore {
   editQueuedMessage(id: string, text: string): void;
   /** Drop a queued row without ever sending it. */
   removeQueuedMessage(id: string): void;
+  /** Ask the daemon to send a held message (TD-5155). The row stays until
+   *  the daemon's next list drops it. */
+  sendHeldMessage(id: string): boolean;
+  /** Ask the daemon to drop a held message unsent (TD-5155). */
+  removeHeldMessage(id: string): boolean;
   dispose(): void;
 }
 
@@ -124,6 +133,7 @@ export function createChatState(): ChatState {
     turnState: null,
     messages: [],
     queued: [],
+    held: [],
     awaitingFirstToken: false,
     turnStalled: false,
     awaitingSince: null,
@@ -231,6 +241,24 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
   const queue = createMessageQueue(state, sendUserMessageToWire, () =>
     showCancel(state.turnState),
   );
+
+  /** One verb on one held row. Marked pending until the daemon's next list,
+   *  so a second click cannot ask twice. */
+  function actOnHeld(type: "send_queued" | "remove_queued", id: string): boolean {
+    const row = state.held.find((r) => r.id === id);
+    if (state.sessionId === null || row === undefined || row.pending) return false;
+    const sent = deps.send({ type, session_id: state.sessionId, queued_id: id });
+    if (!sent) return false;
+    row.pending = true;
+    if (type === "send_queued" && !showCancel(state.turnState)) {
+      // It starts a turn now, like a send from the composer (TD-1714).
+      wait.end();
+      wait.begin();
+      state.lastTurnDuration = null;
+      state.lastTurnError = null;
+    }
+    return true;
+  }
 
   /** Queue or send, depending on whether a turn owns the loop (TD-1704). */
   function sendUserMessage(text: string, attachments: readonly NewAttachment[] = []): boolean {
@@ -386,6 +414,9 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     editQueuedMessage: queue.edit,
     removeQueuedMessage: queue.remove,
 
+    sendHeldMessage: (id: string) => actOnHeld("send_queued", id),
+    removeHeldMessage: (id: string) => actOnHeld("remove_queued", id),
+
     dispose(): void {
       flushDraft();
       if (state.sessionId !== null) deps.detach(state.sessionId);
@@ -394,6 +425,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       hold.sessionId = null;
       state.turnState = null;
       state.messages = [];
+      state.held = [];
       resetDisclosures();
       queue.clear();
       wait.end();
