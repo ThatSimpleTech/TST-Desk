@@ -17,8 +17,9 @@ through the event loop's native subprocess support instead (see
 from __future__ import annotations
 
 import asyncio
-import fnmatch
+import contextlib
 import os
+import threading
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
@@ -34,6 +35,7 @@ from .browser import register_browser_handlers
 from .delegate import register_delegate_handlers
 from .desktop import register_desktop_handlers
 from .dispatch import ToolDispatcher
+from .search import DEFAULT_MAX_RESULTS, STOPPED, glob_crosses_folders, glob_matcher, grep
 from .send_file import send_file
 from .shell import ShellPolicy, run_shell
 from .web_search import web_fetch, web_search
@@ -113,17 +115,39 @@ def _read_file(target: Path, limit: int, offset: int) -> str:
     return rendered
 
 
-def _list_dir(root: Path, pattern: str, recursive: bool) -> str:
+#: Entries fs_list returns before it says it truncated (TD-5102).
+FS_LIST_MAX_ENTRIES = 1000
+
+
+def _list_dir(
+    root: Path,
+    pattern: str,
+    recursive: bool,
+    sort: str = "name",
+    limit: int = FS_LIST_MAX_ENTRIES,
+) -> str:
     """List entries under *root*, filtered by a glob *pattern*.
 
     Respects the manifest's ignore rules (``node_modules``,
     ``__pycache__``, ``.venv``, ``.git``, ``.tst``).  Output is one
-    relative path per line, sorted; "(no matches)" when nothing matches.
+    relative path per line; "(no matches)" when nothing matches.
+
+    *pattern* uses the shared glob dialect (TD-5102): a pattern with a
+    ``/`` or ``**`` such as ``src/**/*.ts`` matches the path from *root*
+    and implies *recursive*.  *sort* is ``name`` or ``modified`` (newest
+    first).  More than *limit* entries are cut, and the cut is stated.
     """
     if not root.exists():
         return f"Error: directory not found: {root}"
     if not root.is_dir():
         return f"Error: '{root}' is not a directory; use fs_read to read a file"
+    if sort not in ("name", "modified"):
+        return "Error: sort must be 'name' or 'modified'"
+
+    pattern = pattern or "*"
+    matches = glob_matcher(pattern)
+    if glob_crosses_folders(pattern):
+        recursive = True
 
     results: list[str] = []
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
@@ -131,13 +155,29 @@ def _list_dir(root: Path, pattern: str, recursive: bool) -> str:
         if not recursive:
             dirnames.clear()  # root-level entries only
         for name in sorted(filenames):
-            if not fnmatch.fnmatchcase(name, pattern):
-                continue
-            results.append((Path(dirpath) / name).relative_to(root).as_posix())
+            rel = (Path(dirpath) / name).relative_to(root).as_posix()
+            if matches(rel):
+                results.append(rel)
 
     if not results:
         return "(no matches)"
-    return "\n".join(results)
+    if sort == "modified":
+
+        def _mtime(rel: str) -> float:
+            try:
+                return (root / rel).stat().st_mtime
+            except OSError:
+                return 0.0
+
+        results.sort(key=lambda rel: (-_mtime(rel), rel))
+    else:
+        results.sort()
+    cap = max(1, int(limit or FS_LIST_MAX_ENTRIES))
+    if len(results) <= cap:
+        return "\n".join(results)
+    return "\n".join(results[:cap]) + (
+        f"\n… [truncated: showing {cap} of {len(results)} entries; narrow the path or pattern]"
+    )
 
 
 async def fs_read(
@@ -152,10 +192,61 @@ async def fs_list(
     path: str,
     pattern: str = "*",
     recursive: bool = False,
+    sort: str = "name",
     tool_call_id: str = "",
 ) -> str:
-    """List entries under *path*, filtered by a glob *pattern* (TD-603)."""
-    return await asyncio.to_thread(_list_dir, Path(path), pattern, recursive)
+    """List entries under *path*, filtered by a glob *pattern* (TD-603, TD-5102)."""
+    return await asyncio.to_thread(_list_dir, Path(path), pattern, recursive, sort)
+
+
+async def fs_grep(
+    session: object,
+    pattern: str,
+    path: str,
+    glob: str = "",
+    case_insensitive: bool = False,
+    context: int = 0,
+    output_mode: str = "files",
+    max_results: int = DEFAULT_MAX_RESULTS,
+    tool_call_id: str = "",
+) -> str:
+    """Search file contents under *path* with a regex (TD-5102).
+
+    Stopping the turn ends the search, as it does a shell command: the
+    result comes back at once, and the search thread ends at its next
+    line (one line's match is bounded by ``LINE_MATCH_SECONDS``).
+    """
+    stop = threading.Event()
+    search = asyncio.ensure_future(
+        asyncio.to_thread(
+            partial(
+                grep,
+                Path(path),
+                pattern,
+                glob=glob,
+                case_insensitive=case_insensitive,
+                context=context,
+                output_mode=output_mode,
+                max_results=max_results,
+                stop=stop,
+            )
+        )
+    )
+    try:
+        wait_for_abort = getattr(session, "wait_for_turn_abort", None)
+        if wait_for_abort is None:
+            return await search
+        abort = asyncio.ensure_future(wait_for_abort())
+        try:
+            await asyncio.wait({search, abort}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            abort.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await abort
+        return search.result() if search.done() else STOPPED
+    finally:
+        # Also on cancellation: a thread cannot be cancelled, only told.
+        stop.set()
 
 
 async def _shell_under_live_allowlist(
@@ -197,6 +288,7 @@ def register_builtin_handlers(
     """
     dispatcher.register_handler("fs_read", fs_read)
     dispatcher.register_handler("fs_list", fs_list)
+    dispatcher.register_handler("fs_grep", fs_grep)
     dispatcher.register_handler("web_search", web_search)
     dispatcher.register_handler("web_fetch", web_fetch)
     dispatcher.register_handler("fs_write", fs_write)

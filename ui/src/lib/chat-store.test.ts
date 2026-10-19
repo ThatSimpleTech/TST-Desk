@@ -1484,6 +1484,33 @@ describe("fork (TD-1708)", () => {
     expect(state.messages[0].siblingCount).toBe(2);
   });
 
+  it("compactContext sends compact_context (TD-5109)", () => {
+    const { store, sent } = boundStore();
+    expect(store.compactContext()).toBe(true);
+    expect(sent[sent.length - 1]).toEqual({ type: "compact_context", session_id: "s1" });
+    expect(store.compactContext("  keep the tests  ")).toBe(true);
+    expect(sent[sent.length - 1]).toEqual({
+      type: "compact_context",
+      session_id: "s1",
+      guidance: "keep the tests",
+    });
+    expect(store.compactContext("", 2)).toBe(true);
+    expect(sent[sent.length - 1]).toEqual({
+      type: "compact_context",
+      session_id: "s1",
+      user_index: 2,
+    });
+  });
+
+  it("compactContext stands down while a turn is live", () => {
+    const { store, sent } = boundStore();
+    store.sendUserMessage("go");
+    store.applyEvent(delta("s1", "working"));
+    const before = sent.length;
+    expect(store.compactContext()).toBe(false);
+    expect(sent.length).toBe(before);
+  });
+
   it("forkFrom sends fork_from", () => {
     const { store, sent } = boundStore();
     store.sendUserMessage("first");

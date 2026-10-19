@@ -409,6 +409,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `user_message` | yes | Queue a user turn for the session's loop. |
 | `fork_from` | yes | Replace a past user turn and fork a sibling from there. Refused mid-turn. |
 | `set_branch` | yes | Switch to another sibling at a forked user turn. |
+| `compact_context` | yes | Compact now: everything before the latest user turn, or from a given user turn on, with optional guidance (TD-5109). Refused mid-turn. |
 | `approve` | yes | Approve a parked tool call. |
 | `deny` | yes | Deny a parked tool call, with an optional reason. |
 | `always_allow` | yes | Approve and save the narrowest policy rule that would have allowed it. Refused for class-C calls. |
@@ -533,6 +534,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `tool_call` | session | A tool call about to execute, with its decision class. |
 | `tool_result` | session | The outcome of a tool call, with an error code and diff when applicable. |
 | `shell_output` | session | A streamed chunk of a shell command's stdout or stderr. |
+| `tool_progress` | session | Progress an MCP server reported for a running tool call: count, optional total and message (TD-5105). Thinned to two a second. |
 | `approval_request` | session | A tool call parked for approval, with the summary, the reason, and the rule "always allow" would write. |
 | `decision_logged` | session | A decision appended to the autonomy ledger. |
 | `checkpoint_notice` | session | A one-time notice that checkpointing is degraded. |
@@ -541,7 +543,8 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `boundary_update` | session | The resolved workspace boundary and caps, and where they came from. |
 | `turn_complete` | session | A finished turn: tokens, cost, tier, duration, and any failure code. A turn a restart cut is sealed once at revive with `failed`, zeros and `error_code: interrupted_by_restart` (TD-5018). |
 | `tier_state` | session | The active tier, any pinned override, slugs, preset, hosts (TD-1720), and plan-mode lock (TD-4603). Native-engine sessions only. |
-| `context_compacted` | session | Older turns were compacted to fit the context window. Never silent. |
+| `context_compacted` | session | Older turns were compacted to fit the context window. Never silent. Additive `trigger` (`auto` \| `manual` \| `from_here`) and `guidance` say who asked and what to keep (TD-5109). |
+| `context_usage` | session | The next request's estimated tokens against the tier's window and its compaction point, for the title-bar gauge. Sent before each model call and after a compaction (TD-5109). |
 | `steering_reloaded` | session | Steering files were re-resolved after a detected change. |
 | `rule_activated` | session | A path-scoped rule entered the prompt because a matching file was touched. |
 | `tier_switched` | session | The active tier was overridden, naming the previous tier. |

@@ -29,10 +29,17 @@
 	import { commands, loadCommands } from "../../commands.svelte.js";
 	import { acceptPickDrafts } from "../../design";
 	import { clearPicks, design, removePick } from "../../design.svelte.js";
-	import type { AttachmentLimits, CommandEntry } from "../../protocol";
+	import type { AttachmentLimits } from "../../protocol";
 	import { grok, matchingGrokCommands, runGrokCommand } from "../../grok.svelte.js";
 	import { localWorkspacePath, session } from "../../session-status.svelte.js";
-	import { filterCommands, insertCommandBody, mergeSlashItems, slashQuery } from "../../slash-commands";
+	import {
+		BUILTIN_SLASH_ITEMS,
+		filterCommands,
+		insertCommandBody,
+		mergeSlashItems,
+		slashQuery,
+		type SlashItem,
+	} from "../../slash-commands";
 	import { stack } from "../../stack-store.svelte.js";
 	import Icon from "../Icon.svelte";
 	import AttachmentChips from "./AttachmentChips.svelte";
@@ -79,11 +86,18 @@
 	const query = $derived(slashQuery(value));
 	const paletteOpen = $derived(query !== null && !slashDismissed);
 	// Workspace commands are read from this computer's disk: they belong to
-	// the session only when its workspace is local (TD-5015).
+	// the session only when its workspace is local (TD-5015). Built-ins
+	// (TD-5109) belong to the native loop; Grok has its own.
 	const workspaceCommands = $derived(
 		localWorkspacePath() !== null && commands.workspacePath === localWorkspacePath() ? commands.items : [],
 	);
-	const slashItems = $derived(mergeSlashItems(workspaceCommands, stack.skills));
+	const slashItems = $derived(
+		mergeSlashItems(
+			workspaceCommands,
+			stack.skills,
+			session.engine === "grok" ? [] : BUILTIN_SLASH_ITEMS,
+		),
+	);
 	const visibleCommands = $derived(query === null ? [] : filterCommands(slashItems, query));
 
 	$effect(() => {
@@ -256,7 +270,7 @@
 		refusal = null;
 	}
 
-	function applyCommand(command: CommandEntry, send: boolean): void {
+	function applyCommand(command: SlashItem, send: boolean): void {
 		if (command.too_large) return;
 		value = insertCommandBody(value, command.body);
 		if (send) submit();

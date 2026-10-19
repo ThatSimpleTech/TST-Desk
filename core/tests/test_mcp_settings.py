@@ -195,6 +195,7 @@ class TestDaemonAck:
                 "command": ["true"],
                 "url": "",
                 "enabled": True,
+                "excluded_tools": [],
             }
         ]
         row = _servers(path)["example"]

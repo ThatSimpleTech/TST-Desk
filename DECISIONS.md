@@ -12849,6 +12849,287 @@ through more than one hop (loops, and a peer's peers were never paired by
 this user). Keeping links up with no viewer (an outbound call nobody is
 looking at).
 
+---
+
+## TD-5102 — Content search without the shell, and path globs for fs_list (Class B)
+
+2026-10-14. From the gap audit (docs/gap-audit-2026-10-14.md). There was
+no content search tool, so every search was a `shell` call. Shell sits
+under the `shell-floor` rule and can never be model-granted A, so on
+EZER every grep asked. `fs_grep` is a read tool: regex, path, glob, a
+case flag, context lines, and `files` / `content` / `count` modes. Results
+are capped at 200 lines by default (2000 at most), and the cut is stated.
+It shares one glob dialect with `fs_list`: `*` stays in one folder, `**`
+crosses folders, `{a,b}` picks. A glob with a `/` or `**` matches the path
+and makes `fs_list` recursive. `fs_list` also sorts by modified time and
+states a cut at 1000 entries. The base prompt now points at both tools.
+
+**Classification:** `fs_grep` declares the same metadata as `fs_read`
+(`auto` floor, parallel-safe, `path` field). An in-workspace read fires no
+static rule, so the worker tier judges it or a policy rule such as
+`tool: fs_grep, effect: auto` lets it run. Outside the wall it is Class C
+and the path guard refuses it. The audit story said "Class A". That was
+wrong about `fs_read` too: in-workspace reads have never been static A.
+A static A rule for built-in reads would save a worker call per read on
+local models. It is left to Adam, because it would also let a read of
+`.env` run without judgment.
+
+**Search engine:** Pure Python. Files come from `git ls-files --cached
+--others --exclude-standard` when the root is in a work tree, so
+`.gitignore` holds; otherwise from a walk that skips the `fs_list`
+folders. ripgrep is not on EZER's PATH. One engine gives the same output
+everywhere, and the caps keep a scan bounded: 20,000 files, 2 MB per
+file, binary files skipped by a NUL sniff, and lines cut at 300 characters.
+A link whose target leaves the search root is skipped and counted. The
+guard judged only the root, so following such a link would read past
+the wall.
+
+**Matching with a time limit: the `regex` package (new dependency).**
+Review found that a model-written pattern with nested repeats, such as
+`(a|aa)+$`, backtracks exponentially on an ordinary line. The stdlib
+`re` has no time limit and holds the GIL while it matches, so one such
+search froze the whole daemon, not just the turn, and Stop could not end
+it; with TD-5141 it also runs without asking. `regex` (Apache-2.0 and
+CNRI-Python, wheels for every platform the sidecar ships on) is a
+superset of `re` syntax and takes `timeout` and `concurrent` per call.
+Each line now matches outside the GIL with a 1 s limit; a line that
+needs more stops the search with what it found and a note to simplify
+the pattern. A search stops after 30 s, and the handler races it
+against the turn stop, as shell and MCP calls do, setting a flag the
+search checks between lines. The limit costs about 2 µs a line, so a
+search of this repo takes about a second instead of a tenth of one.
+Rejected: refusing nested repeats up front (it also refuses ordinary
+patterns like `(\w+\.)+com`, and backtracking has other shapes); running
+the match in a child process (the sidecar is a PyInstaller onefile
+binary that takes seconds to start); matching whole files at once (a
+lookbehind or `\A` reads differently than on one line).
+
+**Rejected:** Using ripgrep when present. That is two engines with two
+regex dialects and two sets of output edge cases, for speed nobody has
+measured as a problem at workspace scale. `fnmatch` for globs. Its `*`
+crosses `/`, so `src/*.ts` would match `src/a/b.ts`.
+
+## TD-5104 — MCP tool schemas checked at load; a bad tool is left out, not fatal
+
+2026-10-14. From the gap audit. Strict OpenAI-compatible servers (vLLM,
+llama.cpp, LM Studio) answer 400 to the whole chat request when one tool
+has a bad name or schema, so one sloppy MCP server could stop every turn.
+Each listed tool is now checked when the server loads. A root `anyOf` /
+`oneOf` / `allOf` of object branches is flattened into one object:
+properties merge, `allOf` requires the union of `required`, and
+`anyOf` / `oneOf` require only what every branch requires. Then the
+schema is normalized and validated with the JSON Schema validator for its
+own draft. A tool is left out when its prefixed name is over 64
+characters or uses anything but `[A-Za-z0-9_-]`, when the root cannot be
+flattened (a non-object branch, nested combinators), or when the schema
+still fails validation. The doctor row says "N tool(s) listed; K
+excluded: name (reason)", and Settings shows each one under its server.
+The server's other tools load as before.
+
+**Proof:** a scripted server lists two good tools (one a root `anyOf`) and
+two bad ones; the supervisor loads it and a chat request carrying the
+registry's tools goes to a mock strict endpoint that answers 400 to
+anything a strict server rejects. The request succeeds.
+
+**Rejected:** Renaming bad names (dots to underscores). The model would
+call a name the server never advertised, and two remote names could map
+to one. Passing `oneOf` through and letting the endpoint decide. Some
+endpoints accept it and some 400, so the same config would work on one
+machine and not another. Dropping the whole server on one bad tool.
+That hides the good tools for no reason.
+
+## TD-5105 — MCP calls: per-server timeouts, progress, cancellation
+
+2026-10-14. From the gap audit. Every MCP call had a fixed 30 s timeout
+and an 8 s handshake, so a long EZER tool (a render, a build, a local
+model call) died at 30 s. Three keys per server now:
+`timeout_seconds` (idle limit, default 30), `startup_timeout_seconds`
+(handshake, default 8) and `max_call_seconds` (hard cap, default 600,
+never below the idle limit). Every stdio `tools/call` carries
+`_meta.progressToken`. Progress for that token resets the idle timer and
+becomes a `tool_progress` event, thinned to two a second per call, which
+the timeline shows on the tool's row (the phone runs the same UI).
+Silence for `timeout_seconds`, or reaching `max_call_seconds`, ends the
+call and sends `notifications/cancelled` with the reason. Before this,
+stopping a turn only interrupted shell commands; an MCP call ran on until
+it ended. The MCP handler now races the call against the turn stop, as
+the shell tool does, and a stop cancels the call, which sends the same
+notice with "the user stopped the turn". Settings carries the three keys over when it toggles
+or edits a server, since its form does not show them.
+
+**HTTP:** the plain-POST transport gets one JSON reply per call, so it
+has no progress; `timeout_seconds` bounds the whole call there, and a
+timeout or stop POSTs the cancel notice without holding up the caller.
+Progress over HTTP waits for the streamable transport (TD-5136).
+
+**Startup timeout reaches each request.** The supervisor bounds each
+handshake step with `startup_timeout_seconds`, and the clients give
+`initialize`, `notifications/initialized` and `tools/list` the same
+limit instead of the call timeout. Without that, the per-request call
+timeout fired first, so a startup timeout above `timeout_seconds` (a
+server that loads a model before it answers) never took effect.
+
+**Cancel notice:** written to the child's stdin without awaiting a
+drain, because the caller may itself be mid-cancellation. A late result
+for a cancelled id is skipped by id matching, so the next call on the
+same server still gets its own reply.
+
+**Rejected:** One global timeout raised to minutes. A hung server would
+then hold a turn for minutes with no sign of life. Treating any line
+from the server as a sign of life. Progress for another token, or log
+noise, would keep a dead call open.
+
+## TD-5106 — Provider timeouts per tier, and a stream-idle watchdog
+
+2026-10-14. From the gap audit. Every provider call used one fixed
+`TimeoutConfig`: 30 s connect, 120 s read, and a field named `total`
+(180 s) that httpx received as `pool`, the wait for a free pooled
+connection. Nothing bounded a whole request, and nothing caught a stream
+that stayed open on keep-alive comments while sending no tokens. Each
+tier now takes `connect_timeout`, `read_timeout`, `total_timeout` and
+`stream_idle_timeout`. Connect and read keep the old values as defaults.
+
+**"total" fixed, not just documented.** The dataclass field is renamed
+`pool` (still 180 s, not a config key), and `total` is now a real
+wall-clock cap on one attempt, streaming included, enforced with
+`asyncio.timeout` because httpx has no total. Its default is `null`,
+which is what the old code did in practice. `e2e_live` passed
+`total=900` meaning a budget; it now gets one.
+
+**Watchdog.** `stream_idle_timeout` (default 300 s) restarts on every
+parsed chunk. SSE comments never become events, so a server that only
+pings trips it. 300 is above the 120 s read timeout on purpose: a server
+that sends nothing at all still hits the read timeout first, as before,
+so the default changes nothing for it and only bounds the pinging case.
+A socket read timeout mid-stream used to end the turn as an unretryable
+`stream_interrupted`; it is now the same stall.
+
+**Retry.** A stall before any chunk is retryable, so `retry_stream`
+retries it under `provider_retry`. A stall after output began is
+`stream_stalled`, not retryable: the loop has already sent those deltas
+to the window, and a second attempt would append a second reply to the
+first. The audit asked for "retried". This is the part of that which is
+safe. Retrying mid-reply would need the loop to withdraw shown text.
+
+**With TD-5146.** Ported onto main after TD-5146, which has the work
+check and memory distill stream and never resend a `timeout`. A stall is
+the same wait by another name, so `_retry_filter` treats
+`stream_stalled` as a timeout too: those calls return it after one wait.
+Turn streams still retry a stall before output, as above.
+
+**Rejected:** A global key under `provider_retry`. Hosted and local tiers
+need opposite values in the same preset. Counting keep-alive comments as
+life. That is the hang the watchdog exists to catch.
+
+## TD-5109 — Context gauge and compaction on request
+
+2026-10-14. From the gap audit. Compaction only ran when the budget said
+so, and nothing in the window showed how close it was. The loop now
+sends `context_usage` (tier, estimated tokens, window, trigger point)
+before every model call and after a compaction, and a `compact_context`
+message compacts on request: everything before the latest user turn, or
+from a chosen user turn on. The title bar shows the gauge; `/compact
+[guidance]` and "Summarize from here" ask for it.
+
+**Guidance without a model call.** The summary stays extractive. The
+guidance heads it, messages that mention its longer words keep 600
+characters instead of 200, and when the summary is over its cap the
+oldest off-topic lines go first. It is free, gives the same result every
+time, and works on a local model that would summarize badly. The cost is
+that guidance only matches words, not meaning.
+
+**The gauge reads the daemon's estimate.** `used_tokens` is the same
+calibrated estimate (TD-5013) the budget uses, so the gauge and the
+trigger can never disagree. The window does no counting of its own.
+
+**User-turn numbering after compaction.** The window numbers user turns
+from the start of the session; a compaction folds some of them into a
+summary. Each summary's first line says how many user turns it stands
+for (`[Earlier conversation compacted] (3 user turns)`, earlier
+summaries it folds in included), and `window_user_turns` walks the
+conversation to map the window's number to a message, or to "inside a
+summary", which "Summarize from here" refuses. A running counter was
+tried first and was wrong twice over: "Summarize from here" folds a
+suffix, not a prefix, so turns before it kept their numbers while the
+counter shifted them; and the counter was not saved, so a restart reset
+it. The count in the summary text is saved with the conversation and
+needs nothing kept in step. The model sees the count too, which costs a
+few tokens and does no harm. A summary written before the count was
+added is read by its `User:` lines, exact unless its cap cut some.
+`fork_from` and `set_branch` don't map through summaries yet. They
+predate this, and an edit after a compaction can pick the wrong turn;
+that is a separate fix.
+
+**Refused mid-turn.** The loop owns the conversation while a turn runs;
+compacting under it would race the next request. The window disables
+the controls and the daemon refuses with a reason.
+
+**Rejected:** A model-written summary. Better prose, but it costs a call
+on the tier that is already short of room, and a small local model can
+drop the very thing the guidance named. It could come later as an
+opt-in. Counting tokens in the window. Two estimates would drift apart.
+
+## TD-5141 — Built-in reads inside the workspace are static Class A (Class B)
+
+Adam, 2026-10-14: "built in files should be preapproved." This answers
+the question TD-5102 left open. `fs_read`, `fs_list` and `fs_grep` on a
+path inside the workspace are Class A by a rule in the static table
+(`builtin-read`), so they run without asking and without a worker call.
+Before this, no rule fired for an in-workspace read, so the worker tier
+judged every one: a model call per file for an answer that was almost
+always A, and a B (an approval card) whenever the worker was unsure or
+down.
+
+**`.env` included, on purpose.** The table does not special-case secret
+files. Adam accepted that; a user who wants a file to keep asking writes
+a policy rule (`fs_read: "*.env*" → ask` or `never`). Policy only falls
+back to the class default when no rule matches, so a rule still wins.
+`docs/configuration.md` §4.4 says how, and that a rule matches the path
+the call names, so `fs_grep` over a whole folder is not caught by it
+(in a git repo that search skips `.gitignore`d files).
+
+**Narrow match.** The rule needs all of these: one of the three names,
+no provenance (so a plugin or MCP tool that borrows a name is not
+covered), still declared `auto` (a tool re-declared `ask` or `never`
+falls to its floor), no writes, no hosts, at least one read path, and
+every read path canonically inside the workspace with symlinks resolved.
+It sits after every Class C rule, so the wall, caps, unsafe Windows
+paths and new hosts still stop a read. The security suite's ordering
+test now checks every A rule against every C rule, not only the first A.
+
+**No new audit channel.** The classification names the rule
+(`[builtin-read]`), and because the worker is never called, no judgment
+record is written. The decisions ledger already skips Class A calls that
+make no commit, so reads add nothing there either.
+
+**What the security review changed.** An adversarial review of the
+grant found three things, fixed here:
+
+- `fs_grep` lists files with `git ls-files`, and git runs any
+  `core.fsmonitor` command in the repo's config. A planted nested `.git`
+  or a committed bare-repo folder would turn an auto-run search into a
+  command nobody approved. `search.py` now runs git with
+  `-c core.fsmonitor=false -c safe.bareRepository=explicit`; an embedded
+  bare repo makes git fail and the search falls back to the walk.
+- `ask` and `never` rules now match ignoring case, so `.ENV` (which
+  opens `.env` on macOS and Windows) cannot slip past a `*.env*` rule.
+  `auto` rules stay exact, so case never widens what auto-runs.
+- The documented guard names `fs_grep` as well as `fs_read` (a search of
+  one file reads it whatever `.gitignore` says) and recommends `never`,
+  since an autonomy run treats `ask` as `auto`.
+
+The same review found an older hole of the same kind: one Class A
+`fs_write` to `.git/config` runs a fsmonitor command through the
+checkpointer's `git add`. That is TD-5108's ground (paths that execute
+later), now first in the safety batch, with hardening of every daemon
+git call added to its criteria.
+
+**Rejected:** Excluding `.env` and similar names by default. Adam chose
+the simpler rule, and a name list would still miss secrets in other
+files. Making it a default policy rule instead of a table rule: the
+worker would still be asked before policy runs, which is the cost this
+removes.
+
 ## TD-5142 — A compacted session goes out with one system message (Class B)
 
 Found 2026-10-14 from Adam's phone: "I encountered an error: The provider

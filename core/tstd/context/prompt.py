@@ -49,7 +49,9 @@ BASE_SYSTEM_PROMPT = (
     "fs_write (a new or whole file), not with shell redirects, heredocs, "
     "tee, sed -i or inline scripts, which skip the diff view and review. "
     "The shell is fine for deleting, moving or renaming files, formatters, "
-    "code generators and package managers."
+    "code generators and package managers. "
+    "Search file contents with fs_grep and find files with fs_list globs "
+    "(src/**/*.ts), not shell grep, rg, find or ls: they run without asking."
 )
 
 #: Block [3] placeholder until the memory story lands (spec §5).  Keeps

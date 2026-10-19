@@ -194,7 +194,7 @@ describe("error copy", () => {
   });
 
   it("transport and parse failures get tailored toasts, not the fallback", () => {
-    for (const code of ["timeout", "connection_error", "request_error", "parse_error", "stream_interrupted"]) {
+    for (const code of ["timeout", "connection_error", "request_error", "parse_error", "stream_interrupted", "stream_stalled"]) {
       const spec = turnFailureCopy(code);
       expect(spec?.severity).toBe("toast");
       expect(spec?.title).not.toBe("Turn failed");

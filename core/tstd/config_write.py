@@ -451,6 +451,11 @@ def _mcp_server_lines(server_id: str, spec: McpServerConfig) -> list[str]:
     else:
         block.append(f"      url: {json.dumps(spec.url)}")
     block.append(f"      enabled: {'true' if spec.enabled else 'false'}")
+    # TD-5105: timeouts are hand-set keys; keep them when Settings rewrites.
+    for key in ("timeout_seconds", "startup_timeout_seconds", "max_call_seconds"):
+        value = getattr(spec, key)
+        if value is not None:
+            block.append(f"      {key}: {value:g}")
     return block
 
 

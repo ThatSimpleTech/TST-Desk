@@ -46,6 +46,7 @@
 		<span class="kind">{kindLabel}</span>
 		<span class="title">{entry.title}</span>
 		<span class="preview">{entry.preview}</span>
+		{#if entry.progress}<span class="progress" aria-live="polite">{entry.progress}</span>{/if}
 		<span class="chevron" class:chevron--open={expanded} aria-hidden="true">
 			<Icon name="chevron-right" size={14} />
 		</span>
@@ -165,6 +166,13 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		flex: 1;
+	}
+
+	.progress {
+		color: var(--color-ink-secondary);
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+		flex: none;
 	}
 
 	.chevron {

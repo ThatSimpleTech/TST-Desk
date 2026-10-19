@@ -320,10 +320,13 @@ def _register_builtins(registry: ToolRegistry, *, search: SearchConfig | None = 
     registry.register(
         Tool(
             name="fs_list",
-            description="List files and directories under the given path, "
-            "optionally filtered by a glob pattern. "
+            description="List files under the given path, optionally filtered by a glob "
+            "pattern. A pattern with / or ** (src/**/*.ts) matches the path from "
+            "the given directory and lists the whole subtree; *.py matches file "
+            "names. sort='modified' puts the newest first. "
             "Respects ignore rules (node_modules, __pycache__, .venv, .git, .tst). "
-            "Use recursive=True for a full subtree listing.",
+            "Use recursive=True for a full subtree listing. Use this, not shell "
+            "ls or find, to find files.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -333,7 +336,10 @@ def _register_builtins(registry: ToolRegistry, *, search: SearchConfig | None = 
                     },
                     "pattern": {
                         "type": "string",
-                        "description": "Glob pattern to filter entries (default: * = all)",
+                        "description": (
+                            "Glob filter (default * = all). ** crosses folders, "
+                            "{a,b} picks alternatives: src/**/*.{ts,svelte}"
+                        ),
                         "default": "*",
                     },
                     "recursive": {
@@ -341,8 +347,75 @@ def _register_builtins(registry: ToolRegistry, *, search: SearchConfig | None = 
                         "description": "List subdirectories recursively (default: false)",
                         "default": False,
                     },
+                    "sort": {
+                        "type": "string",
+                        "enum": ["name", "modified"],
+                        "description": "name (default) or modified, newest first",
+                        "default": "name",
+                    },
                 },
                 "required": ["path"],
+            },
+            side_effect_class="auto",
+            parallel_safe=True,
+            path_fields=("path",),
+        )
+    )
+
+    registry.register(
+        Tool(
+            name="fs_grep",
+            description=(
+                "Search file contents with a regular expression (Python syntax). "
+                "Use this, not shell grep or rg, to find code or text. Skips "
+                ".gitignore'd, binary and very large files. output_mode: files "
+                "(default) lists matching files; content shows path:line: text "
+                "with optional context lines; count gives matches per file. "
+                "Narrow with path and glob ('*.py', 'src/**/*.ts'). Results are "
+                "capped; a truncation note says how many were left out."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Regular expression to search for",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": (
+                            "Workspace-relative or absolute directory or file. "
+                            "Use . for the whole workspace."
+                        ),
+                    },
+                    "glob": {
+                        "type": "string",
+                        "description": "Only search files matching this glob, e.g. *.py",
+                        "default": "",
+                    },
+                    "case_insensitive": {
+                        "type": "boolean",
+                        "description": "Ignore case (default: false)",
+                        "default": False,
+                    },
+                    "context": {
+                        "type": "integer",
+                        "description": "Lines of context around each match in content mode (0-10)",
+                        "default": 0,
+                    },
+                    "output_mode": {
+                        "type": "string",
+                        "enum": ["files", "content", "count"],
+                        "description": "files (default), content or count",
+                        "default": "files",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Cap on result lines (default 200, max 2000)",
+                        "default": 200,
+                    },
+                },
+                "required": ["pattern", "path"],
             },
             side_effect_class="auto",
             parallel_safe=True,

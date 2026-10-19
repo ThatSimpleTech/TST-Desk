@@ -1000,10 +1000,13 @@ def test_class_c_rules_precede_class_a_rules() -> None:
     """Every C rule must evaluate before the A rule; an A that fires first is
     an auto-approval bypass."""
     positions = {rule.id: i for i, rule in enumerate(RULE_TABLE)}
-    first_a = positions["in-workspace-edit"]
+    # Every A grant, not just the first one written: builtin-read
+    # (TD-5141) and memory-file-write are A rules too.
+    a_rules = [r.id for r in RULE_TABLE if r.decision_class is DecisionClass.A]
+    first_a = min(positions[r] for r in a_rules)
     for rule in RULE_TABLE:
         if rule.decision_class is DecisionClass.C:
-            assert positions[rule.id] < first_a, f"{rule.id} must precede 'in-workspace-edit'"
+            assert positions[rule.id] < first_a, f"{rule.id} must precede every A rule"
 
 
 def test_dispatch_call_sites_confined() -> None:

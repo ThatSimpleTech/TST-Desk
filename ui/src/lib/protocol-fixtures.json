@@ -761,9 +761,10 @@
     "wall_clock_hours": 8.0,
     "max_iterations": 200,
     "source": "defaults",
+    "spend_configured": false,
     "attachments": {
-      "max_file_bytes": 256000,
-      "max_total_bytes": 512000,
+      "max_file_bytes": 4000000,
+      "max_total_bytes": 8000000,
       "max_count": 10
     }
   },
@@ -877,6 +878,15 @@
     "tool_call_id": "tc-1",
     "stream": "stdout",
     "chunk": "hello\n"
+  },
+  "tool_progress": {
+    "type": "tool_progress",
+    "seq": 16,
+    "session_id": "sess-1",
+    "tool_call_id": "tc-1",
+    "progress": 3.0,
+    "total": 10.0,
+    "message": "rendering frames"
   },
   "steering_reloaded": {
     "type": "steering_reloaded",
@@ -1054,7 +1064,29 @@
     "dropped_messages": 12,
     "kept_messages": 8,
     "tokens_before": 12000,
-    "tokens_after": 4000
+    "tokens_after": 4000,
+    "trigger": "auto",
+    "guidance": null
+  },
+  "context_compacted_manual": {
+    "type": "context_compacted",
+    "seq": 18,
+    "session_id": "sess-1",
+    "dropped_messages": 6,
+    "kept_messages": 4,
+    "tokens_before": 30000,
+    "tokens_after": 9000,
+    "trigger": "manual",
+    "guidance": "keep the parser work"
+  },
+  "context_usage": {
+    "type": "context_usage",
+    "seq": 18,
+    "session_id": "sess-1",
+    "tier": "brain",
+    "used_tokens": 12345,
+    "context_window": 65536,
+    "compact_at": 49152
   },
   "tier_switched": {
     "type": "tier_switched",
@@ -1181,7 +1213,8 @@
           "some_mcp"
         ],
         "url": "",
-        "enabled": true
+        "enabled": true,
+        "excluded_tools": []
       }
     ],
     "speech_enabled": false,

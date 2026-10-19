@@ -9,6 +9,9 @@ dependencies = [
     "jsonschema>=4.26.0",
     "pydantic>=2",
     "pyyaml>=6.0",
+    # fs_grep matching with a time limit, outside the GIL (TD-5102): the
+    # stdlib re can backtrack for hours on one line while holding the GIL.
+    "regex>=2024.11.6",
     # Pure-Python QR for the phone pairing code (TD-5014). No hidden import:
     # it is imported at module level, so PyInstaller's analysis sees it.
     "segno>=1.6",
@@ -35,6 +38,7 @@ dev = [
     "ruff>=0.6",
     "types-jsonschema>=4.26.0",
     "types-pyyaml>=6.0.12.20260724",
+    "types-regex>=2024.11.6",
 ]
 # Frozen into the tstd sidecar so ``tstd --cu-mcp`` works without a checkout.
 # The pyobjc frameworks are macOS-only and match tst_cu_mcp's pins: the CU

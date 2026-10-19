@@ -550,8 +550,14 @@ def _retry_filter(request: ChatCompletionRequest) -> Callable[[ProviderError], b
     return _not_a_timeout
 
 
+# A stall (TD-5106) is a timeout too: the socket's read timeout, the
+# stream-idle watchdog or total_timeout ran out, and resending would make
+# an off-turn call wait that long again (TD-5146).
+_TIMEOUT_CODES = frozenset({"timeout", "stream_stalled"})
+
+
 def _not_a_timeout(error: ProviderError) -> bool:
-    return error.code != "timeout"
+    return error.code not in _TIMEOUT_CODES
 
 
 async def retry_call(
@@ -896,29 +902,40 @@ def _parse_retry_after(value: str | None) -> float | None:
 
 @dataclass
 class TimeoutConfig:
-    """Timeout configuration for API requests.
+    """Timeout configuration for API requests (per tier since TD-5106).
 
-    All values are in seconds.
+    All values are in seconds.  ``connect``, ``read``, ``write`` and
+    ``pool`` go to httpx.  ``total`` and ``stream_idle`` are enforced here,
+    because httpx has neither.
     """
 
     connect: float = 30.0
     """Timeout for establishing the connection."""
 
     read: float = 120.0
-    """Timeout for reading the response body."""
+    """Longest wait for any bytes from the socket, headers included."""
 
     write: float = 30.0
     """Timeout for writing the request body."""
 
-    total: float = 180.0
-    """Total timeout for the entire request."""
+    pool: float = 180.0
+    """Longest wait for a free pooled connection.  Before TD-5106 this was
+    the field named ``total``, which never bounded the whole request."""
+
+    total: float | None = None
+    """Wall-clock cap on one attempt, streaming included.  None: no cap."""
+
+    stream_idle: float | None = 300.0
+    """Longest a stream may go without a usable chunk.  SSE keep-alive
+    comments do not count, so a server that only pings is caught.  None:
+    no watchdog (the socket ``read`` timeout still applies)."""
 
     def to_httpx_timeout(self) -> httpx.Timeout:
         return httpx.Timeout(
             connect=self.connect,
             read=self.read,
             write=self.write,
-            pool=self.total,
+            pool=self.pool,
         )
 
 
@@ -1006,10 +1023,18 @@ class ProviderClient:
 
         async def _attempt() -> ChatCompletionResponse | ProviderError:
             try:
-                response = await self._client.post(
-                    f"{self.base_url}/chat/completions",
-                    json=body,
-                    headers=self._headers(),
+                async with asyncio.timeout(self.timeout.total):
+                    response = await self._client.post(
+                        f"{self.base_url}/chat/completions",
+                        json=body,
+                        headers=self._headers(),
+                    )
+            except TimeoutError:
+                log.warning("provider request passed total_timeout")
+                return ProviderError(
+                    code="timeout",
+                    message=f"The reply took longer than total_timeout ({self.timeout.total:g} s).",
+                    retryable=True,
                 )
             except httpx.TimeoutException as e:
                 log.warning(
@@ -1096,6 +1121,7 @@ class ProviderClient:
         body["stream_options"] = {"include_usage": True}
 
         async def _stream_once() -> AsyncIterator[StreamChunk | ProviderError]:
+            started = asyncio.get_running_loop().time()
             try:
                 async with aconnect_sse(
                     self._client,
@@ -1135,8 +1161,32 @@ class ProviderClient:
                     in_tool_call = False
                     saw_finish = False
                     yielded_any = False
+                    events = sse.aiter_sse()
+                    loop = asyncio.get_running_loop()
+                    total_deadline = (
+                        None if self.timeout.total is None else started + self.timeout.total
+                    )
+                    idle_deadline = (
+                        None
+                        if self.timeout.stream_idle is None
+                        else loop.time() + self.timeout.stream_idle
+                    )
                     try:
-                        async for event in sse.aiter_sse():
+                        while True:
+                            deadlines = [
+                                d for d in (idle_deadline, total_deadline) if d is not None
+                            ]
+                            try:
+                                async with asyncio.timeout_at(min(deadlines, default=None)):
+                                    event = await anext(events)
+                            except StopAsyncIteration:
+                                break
+                            except TimeoutError:
+                                yield self._stall_error(
+                                    total_deadline is not None and loop.time() >= total_deadline,
+                                    yielded_any,
+                                )
+                                return
                             try:
                                 chunk = self._parse_stream_chunk(event.data)
                             except ValueError as e:
@@ -1170,7 +1220,14 @@ class ProviderClient:
                             if chunk.finish_reason:
                                 saw_finish = True
                             yielded_any = True
+                            if idle_deadline is not None and self.timeout.stream_idle:
+                                idle_deadline = loop.time() + self.timeout.stream_idle
                             yield chunk
+                    except httpx.ReadTimeout:
+                        # The socket went quiet for ``read`` seconds: the
+                        # same stall the watchdog catches, one layer down.
+                        yield self._stall_error(False, yielded_any, socket=True)
+                        return
                     except httpx.HTTPError as e:
                         # Mid-stream connection drop
                         word = "tool call" if in_tool_call and not saw_finish else "response"
@@ -1242,6 +1299,40 @@ class ProviderClient:
 
         async for chunk in retry_stream(_stream_once, self.retry_config, _retry_filter(request)):
             yield chunk
+
+    def _stall_error(
+        self, past_total: bool, yielded_any: bool, *, socket: bool = False
+    ) -> ProviderError:
+        """The error for a stream that went quiet or ran too long (TD-5106).
+
+        Nothing shown yet: retryable, so ``retry_stream`` tries again under
+        ``provider_retry``.  Part of a reply shown: not retryable, because
+        a second attempt would repeat text the window already has.
+        """
+        if past_total:
+            what = f"The reply took longer than total_timeout ({self.timeout.total:g} s)."
+            code = "timeout"
+        else:
+            quiet = self.timeout.read if socket else self.timeout.stream_idle
+            key = "read_timeout" if socket else "stream_idle_timeout"
+            where = "partway through the reply" if yielded_any else "after accepting the request"
+            what = f"The provider sent nothing for {quiet:g} s {where} ({key})."
+            code = "stream_stalled"
+        log.warning(
+            "provider stream stalled",
+            extra={"extra_fields": {"code": code, "after_output": yielded_any}},
+        )
+        if yielded_any:
+            return ProviderError(
+                code=code,
+                message=f"{what} The partial reply was discarded. Resend to retry.",
+                retryable=False,
+            )
+        return ProviderError(
+            code=code,
+            message=f"{what} Raise it for a slow local model, or resend.",
+            retryable=True,
+        )
 
     def _headers(self) -> dict[str, str]:
         """Build the request headers.

@@ -12,7 +12,7 @@ from .dispatch import (
     ValidationError,
     build_decision_request,
 )
-from .handlers import fs_list, fs_read, register_builtin_handlers
+from .handlers import fs_grep, fs_list, fs_read, register_builtin_handlers
 from .registry import Tool, ToolRegistry, UnknownToolError, create_registry
 from .shell import ShellPolicy, run_shell
 from .write import fs_edit, fs_write
@@ -29,6 +29,7 @@ __all__ = [
     "build_decision_request",
     "create_registry",
     "fs_edit",
+    "fs_grep",
     "fs_list",
     "fs_read",
     "fs_write",
