@@ -14192,3 +14192,124 @@ longer record the call as it was asked.
 said A or B (a hardlink, a Windows-unsafe form) still shows the
 classifier's class on the event, because the event is written before the
 guard runs. Recorded as a follow-up on TD-5148.
+
+---
+
+## 2026-10-19 — TD-5156: the shell splitter fails closed where shells split a line differently (Class B)
+
+**Decision:** `split_command` is held to the shells themselves. A
+differential test (`core/tests/test_policy_shell_differential.py`, corpus
+in `core/tests/shell_corpus.py`) builds about 4,250 command texts from
+`:`, `true` and `echo m<k> >>o` only, joined by every line-structure
+construct (newlines, `\`-newline, comments, heredocs, quotes across lines,
+`&`, `|&`, `;;`, `()`, `{}`, `$(…)`, backticks, carriage returns, odd
+whitespace). It runs each under every shell on the host (`bash`,
+`bash --posix`, `dash`, `sh`, `busybox sh`; a missing one is skipped) and
+records which `echo`s ran and with what arguments. Any `echo` a shell ran
+that is not one of the splitter's commands must come with
+`complete=False`, and a `never` rule naming any command that ran must
+refuse the line. Fixes the test drove:
+
+1. **`\`-newline is removed before words are read**, as POSIX says, so
+   `\`-newline then `#` starts a comment and `<<\`-newline`EOF` is the
+   delimiter `EOF`. Where it would join two halves of an operator (`&`
+   and `&`, `<` and `<`, `$` and `(`), the line is incomplete.
+2. **Heredoc ends are read the bash way and the dash way.** bash joins a
+   body line ending in `\` to the next before it looks for the
+   delimiter; dash and ash do not. If the two readings end the body in
+   different places, the line is incomplete. So is a heredoc opened
+   inside `$(…)` whose body comes after the `)` (bash reads it from the
+   later lines, dash runs them), and a body line inside `$(…)` that starts
+   with the delimiter (`EOF)`). A heredoc opened before a `$(` keeps its
+   body after the line, not after a newline inside the substitution.
+3. **An unquoted body's substitutions are read with and without its
+   `\`-newlines** (bash drops them first, so a comment can swallow a
+   line; dash keeps them). Different commands either way: incomplete.
+4. **The rough reading of an incomplete line** also cuts the text with
+   `\`-newlines removed and unwraps `eval`/`sh -c` in each piece, so a
+   `never` rule still sees the commands.
+
+Review notes on the same code:
+
+5. **`never` and `ask` see the program without its folder.** Each deny
+   reading is added again with its program reduced to the basename, and
+   a Windows `.exe`/`.com`/`.bat`/`.cmd` extension removed. `auto` still
+   matches the path as written: a basename would let `npm test*` allow
+   `/tmp/npm test`.
+6. **cmd's `for /f`** (`in ('cmd')`, or `` (`cmd`) `` with usebackq) runs
+   the quoted command. The cmd reading marks any `for /f` incomplete; the
+   rough cut splits at the parentheses and quotes, so `never` rules see
+   the command. Unwrapping it into a complete split was the alternative;
+   failing closed is the conservative choice and `for /f` lines are rare
+   in agent shells.
+7. **`alias` values and `trap` actions are read as commands**, like an
+   `eval` string: dash and `bash --posix` run an alias defined on an
+   earlier line, and every shell runs a trap action at exit.
+
+**Rationale:** TD-5101's module docstring promised that text the shells
+read differently is marked incomplete, but nothing checked it, and the
+review found bash-only line readings that hid a later command from both
+`auto` and `never`. A test that runs the shells is the only way to keep
+that promise as the scanner changes. The corpus never names another
+program, a network host or a path outside a throwaway folder.
+
+**Alternatives rejected:** Failing closed on every `\`-newline (common in
+hand-written multi-line commands, so `auto` rules would stop working for
+them); comparing segments both ways (a command skipped by `||` or by a
+syntax error is read but never runs, and reading more is the safe side);
+a fixed list of known-bad texts (it would not find the next one). macOS
+`/bin/sh` is bash 3.2, which is not on CI or this host; the corpus was
+also run against bash 5.1 (ubuntu 22.04), 5.2 (ubuntu 24.04, debian 12),
+5.3 and busybox ash (alpine 3.20) by hand.
+
+**Review of PR #20 (2026-10-19).** The first corpus left out bash-only
+words that hold `(`, `#` or `<<` as text, and the review found texts in
+them that bash split differently while the scanner said complete. The
+corpus now covers them, and each is held to the shells like the rest:
+
+8. **`${` must be followed by a name, a digit or a special parameter.**
+   bash 5.3 runs `${ cmd; }` and `${| cmd; }` as commands (dash rejects
+   them), so anything else after `${` is incomplete. A `${…}` ends at its
+   first `}`, as in every shell; the scanner had counted a bare `{` as
+   nesting, which hid `${x:-{}; cmd; : }`'s `cmd`.
+9. **Any `[[` word is incomplete.** bash reads `( #)` after `=~` and
+   `@( #)` after `==` as one word; dash runs `[[` as a command. Reading
+   `[[ ]]` the bash way was the alternative, but its grammar (regex
+   words, implicit extglob, `<` as a comparison) is wide, and failing
+   closed costs only `auto` on lines that use it. Conservative choice.
+10. **A `(` glued to a word is incomplete, except `name()`.** bash reads
+    `a=(…)` (an array, with `[i<<2]` subscripts in it), and `@(…)`, `!(…)`
+    and the other extglob forms once extglob is on (it can be set on an
+    earlier line or from the environment), as one word. Outside bash such
+    a `(` is a syntax error, so no working line loses `auto` but arrays.
+11. **A `name[…]` subscript must be plain.** bash reads `a[1<<2]=x` and
+    `a[x #]=y` whole; the scanner saw a heredoc and a comment. A subscript
+    holding a space, an operator, a quote, a backslash or `$(` is
+    incomplete; `a[i]`, `a[$i]` and globs like `x[0-9]` stay complete.
+12. **`$[…]`** (bash's old arithmetic, where `<<` is a shift) is
+    incomplete.
+13. **bash's brace expansion is read for `never` and `ask`.** `{curl,x}`
+    runs `curl x` in bash and `{curl,x}` in dash; deny readings now
+    include every word brace-expanded (at most 64 words from one), and a
+    program word bash would expand makes the line incomplete. Brace
+    expansion in arguments (`cp a{,.bak}`) keeps the line complete: it
+    cannot change which program runs.
+14. **`coproc NAME { cmd; }`**: deny readings skip NAME, so `never` sees
+    `cmd`.
+15. **The rough cut of an incomplete line** cuts at braces as well, in a
+    second pass, so `${ cmd; }` leaves `cmd` at the start of a piece while
+    `curl {a,b}` keeps its arguments in the first.
+16. **The test's oracle is tighter.** An expansion in an `echo`'s
+    arguments used to match any output line (`.*`), so one `echo $(…)`
+    could stand in for an atom the splitter missed. It now matches
+    anything but a marker (no atom prints its marker to stdout), reads
+    `$name` whole, and reads an argument bash brace-expands as an
+    expansion. A test checks the oracle itself.
+
+The widened corpus fails on this PR's first scanner (634 disagreements,
+295 `never` misses) and passes on the new one under bash 5.3,
+`bash --posix`, dash and busybox ash on this host, and by hand in
+offline containers under bash 5.1.16 (ubuntu 22.04), 5.2.21 (ubuntu
+24.04) and 5.3.9 (ubuntu 26.04), each with `--posix`, their dash, and
+busybox 1.36.1 ash (alpine 3.20). The bash-only checks live in
+`core/tstd/policy_shell_bash.py`, which keeps the scanner at 400 lines.
