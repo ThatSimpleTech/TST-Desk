@@ -54,11 +54,25 @@ export interface TimelineEntry {
   stdout?: string;
   /** Live stderr buffer for shell-tool entries (AC #4). */
   stderr?: string;
+  /** Latest progress a long tool reported (TD-5105), e.g. "3 of 10 · rendering". */
+  progress?: string;
 }
 
 function truncate(s: string, max = 140): string {
   if (s.length <= max) return s;
   return s.slice(0, max - 1) + "…";
+}
+
+/** One line for a tool's reported progress: "3 of 10 · rendering", "40%", "12". */
+export function formatProgress(event: { progress: number; total?: number | null; message?: string | null }): string {
+  const { progress, total, message } = event;
+  let amount: string;
+  if (typeof total === "number" && total > 0) {
+    amount = total === 100 || total === 1 ? `${Math.round((progress / total) * 100)}%` : `${progress} of ${total}`;
+  } else {
+    amount = String(progress);
+  }
+  return message ? `${amount} · ${truncate(message, 80)}` : amount;
 }
 
 /** Collapse an arguments object into a scannable one-liner. */
@@ -67,6 +81,13 @@ export function summarizeArguments(args: Record<string, unknown>): string {
   if (parts.length === 0) return "(no arguments)";
   return parts.map(([k, v]) => `${k}=${truncate(JSON.stringify(v))}`).join(" ");
 }
+
+/** Compaction rows name who asked for it (TD-5109). */
+const COMPACTION_TITLES: Record<"auto" | "manual" | "from_here", string> = {
+  auto: "Context compacted",
+  manual: "Context compacted on request",
+  from_here: "Summarized from a message",
+};
 
 /** Map one daemon event to a timeline entry, or null when it isn't shown. */
 export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
@@ -162,20 +183,27 @@ export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
         preview: `Routing switched to ${event.tier}`,
         details: { tier: event.tier, previous: event.previous ?? null },
       };
-    case "context_compacted":
+    case "context_compacted": {
+      // TD-5109: say who asked, and what the summary was told to keep.
+      const trigger = event.trigger ?? "auto";
+      const guidance = event.guidance ?? null;
+      const counts = `${event.tokens_before} → ${event.tokens_after} tokens (${event.dropped_messages} dropped)`;
       return {
         id: `compaction:${event.seq}`,
         kind: "compaction",
         seq: event.seq,
-        title: "Context compacted",
-        preview: `${event.tokens_before} → ${event.tokens_after} tokens (${event.dropped_messages} dropped)`,
+        title: COMPACTION_TITLES[trigger],
+        preview: guidance !== null ? `${counts} · keeping: ${truncate(guidance, 80)}` : counts,
         details: {
           dropped_messages: event.dropped_messages,
           kept_messages: event.kept_messages,
           tokens_before: event.tokens_before,
           tokens_after: event.tokens_after,
+          trigger,
+          guidance,
         },
       };
+    }
     case "steering_reloaded":
       return {
         id: `steering_reload:${event.seq}`,
@@ -214,7 +242,8 @@ export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
     default:
       // assistant_delta, cost_update, boundary_update, checkpoint_notice,
       // ready, instruction_stack, session_list — not activity entries.
-      // shell_output is merged into its parent tool_call, not shown alone.
+      // shell_output and tool_progress merge into their parent tool_call,
+      // not shown alone.
       // user_turn, turn_complete and session_state are turn boundaries the
       // Timeline folds itself (see `turnEntry`), since numbering a turn
       // needs the count so far.
@@ -337,6 +366,11 @@ export class Timeline {
     }
     if (event.type === "shell_output") {
       this._mergeShellOutput(event);
+      return;
+    }
+    if (event.type === "tool_progress") {
+      const target = this._findToolCall(event.tool_call_id);
+      if (target !== null) target.progress = formatProgress(event);
       return;
     }
     // Turn boundaries: the user's message opens a group, turn_complete

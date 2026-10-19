@@ -90,6 +90,10 @@ export interface ChatStore {
   forkFrom(userIndex: number, content: string): boolean;
   /** Switch to another sibling at a forked user turn (TD-1708). */
   setBranch(userIndex: number, siblingIndex: number): boolean;
+  /** Compact now (TD-5109): everything before the latest user turn, or
+   *  from `userIndex` on. Refused locally while a turn is live; the daemon
+   *  refuses too and says why. */
+  compactContext(guidance?: string, userIndex?: number): boolean;
   cancelTurn(): boolean;
   /** Attach the pane to a session chosen in the rail (TD-1701): detach the
    *  current one, clear the pane, attach — the replay rebuilds history
@@ -332,6 +336,17 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
         session_id: state.sessionId,
         user_index: userIndex,
         sibling_index: siblingIndex,
+      });
+    },
+
+    compactContext(guidance = "", userIndex?: number): boolean {
+      if (state.sessionId === null || showCancel(state.turnState)) return false;
+      const text = guidance.trim();
+      return deps.send({
+        type: "compact_context",
+        session_id: state.sessionId,
+        ...(text !== "" ? { guidance: text } : {}),
+        ...(userIndex !== undefined ? { user_index: userIndex } : {}),
       });
     },
 

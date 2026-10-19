@@ -106,7 +106,9 @@ class LiveProvider:
         self._client = ProviderClient(
             base_url=endpoint,
             api_key=None,  # loopback endpoints take no credential (TD-1801)
-            timeout=TimeoutConfig(read=_LIVE_READ_TIMEOUT, total=_LIVE_BUDGET),
+            timeout=TimeoutConfig(
+                read=_LIVE_READ_TIMEOUT, total=_LIVE_BUDGET, stream_idle=_LIVE_READ_TIMEOUT
+            ),
             retry_config=RetryConfig(max_retries=_LIVE_RETRIES),
         )
         self.calls: list[ChatCompletionRequest] = []

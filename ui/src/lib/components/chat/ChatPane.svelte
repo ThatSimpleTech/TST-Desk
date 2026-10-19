@@ -13,6 +13,7 @@
 		cancelTurn,
 		chat,
 		continueTurn,
+		compactContext,
 		editQueuedMessage,
 		initChat,
 		keepDraft,
@@ -30,6 +31,9 @@
 	import { settings } from "../../settings.svelte.js";
 	import { grok } from "../../grok.svelte.js";
 	import { canSend, formatTurnDuration, showCancel } from "../../chat-store";
+	import type { AttachmentDraft } from "../../attachments";
+	import { parseCompactCommand } from "../../context-gauge";
+	import { notify } from "../../notifications.svelte.js";
 	import { greetingContext, greetingForHour, SUGGESTIONS } from "../../greeting";
 	import { workingVerb } from "../../working-flavor";
 	import Composer from "./Composer.svelte";
@@ -89,6 +93,24 @@
 		return () => clearInterval(tick);
 	});
 	const waitElapsedMs = $derived(chat.awaitingSince === null ? 0 : Math.max(0, now - chat.awaitingSince));
+
+	// `/compact [what to keep]` compacts instead of reaching the model
+	// (TD-5109). Grok sessions keep their own slash commands.
+	function submitDraft(text: string, attachments: readonly AttachmentDraft[]): void {
+		const compact =
+			session.engine === "grok" || attachments.length > 0 ? null : parseCompactCommand(text);
+		if (compact === null) {
+			sendUserMessage(text, attachments);
+			return;
+		}
+		if (!compactContext(compact.guidance)) {
+			notify("compact", {
+				severity: "toast",
+				title: "Not compacted",
+				body: "A turn is running. Compact when it finishes, or stop it first.",
+			});
+		}
+	}
 
 	// Engine this chat started with, falling back to Settings only when an
 	// older daemon never named it. Grok fields are ignored unless they
@@ -193,9 +215,7 @@
 			bind:value={chat.draft}
 			limits={session.attachmentLimits}
 			allowImages={session.vision}
-			onsubmit={(text, attachments) => {
-				sendUserMessage(text, attachments);
-			}}
+			onsubmit={submitDraft}
 			oncancel={cancelTurn}
 		/>
 	</div>

@@ -199,6 +199,23 @@ class ForkFrom(ClientMessage):
     content: str
 
 
+class CompactContext(ClientMessage):
+    """Compact the conversation now (TD-5109).
+
+    Without ``user_index``: everything before the last user turn becomes
+    a summary (``/compact`` and the gauge's button).  With it ("Summarize
+    from here"): that user turn and everything after it become a summary,
+    and earlier turns stay verbatim.  ``user_index`` counts user turns
+    from 0, as ``fork_from`` does.  ``guidance`` heads the summary and
+    decides what it keeps.  Refused while a turn is in flight.
+    """
+
+    type: Literal["compact_context"] = "compact_context"
+    session_id: str
+    guidance: str = Field(default="", max_length=2000)
+    user_index: int | None = Field(default=None, ge=0)
+
+
 class SetBranch(ClientMessage):
     """Switch to another sibling at a forked user turn (TD-1708)."""
 
@@ -1607,6 +1624,22 @@ class ShellOutput(DaemonEvent):
     chunk: str
 
 
+class ToolProgress(DaemonEvent):
+    """Progress a long tool reported while it runs (TD-5105).
+
+    MCP servers send ``notifications/progress`` against the call's token.
+    ``total`` is absent when the server does not know it.  Events are
+    thinned to two a second per call.
+    """
+
+    type: Literal["tool_progress"] = "tool_progress"
+    session_id: str
+    tool_call_id: str
+    progress: float
+    total: float | None = None
+    message: str | None = None
+
+
 class PolicyRuleSummary(BaseModel):
     """A saved policy rule, surfaced to clients (TD-803).
 
@@ -1794,6 +1827,26 @@ class ContextCompacted(DaemonEvent):
     kept_messages: int = Field(ge=0)
     tokens_before: int = Field(ge=0)
     tokens_after: int = Field(ge=0)
+    #: What compacted (TD-5109): the budget (``auto``), ``/compact`` or
+    #: the gauge (``manual``), or "Summarize from here" (``from_here``).
+    trigger: Literal["auto", "manual", "from_here"] = "auto"
+    guidance: str | None = None
+
+
+class ContextUsage(DaemonEvent):
+    """The prompt the next model call sends, against the tier's window
+    (TD-5109).  ``used_tokens`` is the daemon's calibrated estimate
+    (TD-5013), tool definitions included.  ``compact_at`` is where
+    compaction triggers.  ``tier`` is the role (brain, worker,
+    validator), as ``TierState`` names it.  Sent before each model call
+    and after a compaction."""
+
+    type: Literal["context_usage"] = "context_usage"
+    session_id: str
+    tier: str
+    used_tokens: int = Field(ge=0)
+    context_window: int = Field(gt=0)
+    compact_at: int = Field(ge=0)
 
 
 class SteeringReloaded(DaemonEvent):
@@ -2154,6 +2207,13 @@ class CredentialSummary(BaseModel):
     base_url: str | None = None
 
 
+class McpExcludedToolSummary(BaseModel):
+    """An advertised tool the client left out, and why (TD-5104)."""
+
+    name: str
+    reason: str
+
+
 class McpServerSummary(BaseModel):
     """One listed MCP server as shown in settings (TD-4403). Never a secret."""
 
@@ -2162,6 +2222,8 @@ class McpServerSummary(BaseModel):
     command: list[str] = Field(default_factory=list)
     url: str = ""
     enabled: bool = True
+    #: Tools left out at the last load (TD-5104). Empty until the server loads.
+    excluded_tools: list[McpExcludedToolSummary] = Field(default_factory=list)
 
 
 class RemoteDeviceSummary(BaseModel):
@@ -3160,6 +3222,7 @@ ClientMessageT = Annotated[
     | ListPolicyRules
     | RevokePolicyRule
     | ForkFrom
+    | CompactContext
     | SetBranch
     | SetSkipAllApprovals
     | SetLoadGlobalMemory
@@ -3274,6 +3337,7 @@ DaemonEventT = Annotated[
     | ToolCall
     | ToolResult
     | ShellOutput
+    | ToolProgress
     | ApprovalRequest
     | DecisionLogged
     | CheckpointNotice
@@ -3283,6 +3347,7 @@ DaemonEventT = Annotated[
     | TurnComplete
     | TierState
     | ContextCompacted
+    | ContextUsage
     | SteeringReloaded
     | RuleActivated
     | TierSwitched
@@ -3354,6 +3419,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "list_policy_rules",
         "revoke_policy_rule",
         "fork_from",
+        "compact_context",
         "set_branch",
         "set_skip_all_approvals",
         "set_load_global_memory",
@@ -3468,6 +3534,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "tool_call",
         "tool_result",
         "shell_output",
+        "tool_progress",
         "approval_request",
         "decision_logged",
         "checkpoint_notice",
@@ -3477,6 +3544,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "turn_complete",
         "tier_state",
         "context_compacted",
+        "context_usage",
         "steering_reloaded",
         "rule_activated",
         "tier_switched",

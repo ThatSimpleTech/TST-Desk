@@ -859,7 +859,7 @@ class TestErrorHandling:
         client = ProviderClient(
             base_url=f"http://127.0.0.1:{port}",
             api_key="sk-test-key",
-            timeout=TimeoutConfig(connect=2.0, read=2.0, total=5.0),
+            timeout=TimeoutConfig(connect=2.0, read=2.0, pool=5.0),
             retry_config=RetryConfig(max_retries=0),
         )
         request = ChatCompletionRequest(
@@ -942,7 +942,9 @@ class TestRequestBuilding:
         assert tc.connect == 30.0
         assert tc.read == 120.0
         assert tc.write == 30.0
-        assert tc.total == 180.0
+        assert tc.pool == 180.0
+        assert tc.total is None
+        assert tc.stream_idle == 300.0
 
         timeout = tc.to_httpx_timeout()
         assert timeout.connect == 30.0
@@ -967,7 +969,7 @@ class TestRequestBuilding:
 
     async def test_timeout_config(self) -> None:
         """Test that timeout config is passed to httpx."""
-        tc = TimeoutConfig(connect=5.0, read=30.0, write=10.0, total=60.0)
+        tc = TimeoutConfig(connect=5.0, read=30.0, write=10.0, pool=60.0, total=90.0)
         c = ProviderClient(
             base_url="http://localhost:8080",
             api_key="sk-test",
@@ -975,7 +977,9 @@ class TestRequestBuilding:
         )
         assert c.timeout.connect == 5.0
         assert c.timeout.read == 30.0
-        assert c.timeout.total == 60.0
+        assert c.timeout.pool == 60.0
+        assert c.timeout.total == 90.0
+        assert c._client.timeout.pool == 60.0
         await c.close()
 
     async def test_custom_client(self) -> None:

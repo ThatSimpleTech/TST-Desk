@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 from typing import Any
 from urllib.parse import urlsplit
@@ -13,6 +15,8 @@ from .errors import McpError
 from .jsonrpc import (
     CALL_TIMEOUT,
     McpRemoteTool,
+    ProgressCallback,
+    cancelled_notification,
     initialize_params,
     jsonrpc_error_text,
     parse_tools_list,
@@ -53,16 +57,17 @@ class HttpMcpClient:
         self._timeout = timeout
         self._http: httpx.AsyncClient | None = None
         self._next_id = 1
+        self._pending: set[asyncio.Task[None]] = set()
 
     async def start(self) -> None:
         if self._http is None:
-            self._http = httpx.AsyncClient(timeout=self._timeout)
+            self._http = httpx.AsyncClient(timeout=self._timeout + 5.0)
         await self.request("initialize", initialize_params())
         await self.notify("notifications/initialized")
 
     async def request(self, method: str, params: dict[str, Any] | None = None) -> Any:
         if self._http is None:
-            self._http = httpx.AsyncClient(timeout=self._timeout)
+            self._http = httpx.AsyncClient(timeout=self._timeout + 5.0)
         req_id = self._next_id
         self._next_id += 1
         payload: dict[str, Any] = {"jsonrpc": "2.0", "id": req_id, "method": method}
@@ -79,7 +84,7 @@ class HttpMcpClient:
 
     async def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
         if self._http is None:
-            self._http = httpx.AsyncClient(timeout=self._timeout)
+            self._http = httpx.AsyncClient(timeout=self._timeout + 5.0)
         payload: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
         if params is not None:
             payload["params"] = params
@@ -88,8 +93,47 @@ class HttpMcpClient:
     async def list_tools(self) -> list[McpRemoteTool]:
         return parse_tools_list(await self.request("tools/list"))
 
-    async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
-        return await self.request("tools/call", {"name": name, "arguments": arguments or {}})
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any] | None = None,
+        *,
+        on_progress: ProgressCallback | None = None,
+    ) -> Any:
+        """``tools/call`` bounded by the call timeout (TD-5105).
+
+        One JSON object back carries no progress, so the timeout bounds the
+        whole call here; progress needs the SSE transport (TD-5136).  A
+        timeout or a stopped turn sends ``notifications/cancelled``.
+        """
+        del on_progress
+        req_id = self._next_id  # request() takes this id before it awaits
+        try:
+            return await asyncio.wait_for(
+                self.request("tools/call", {"name": name, "arguments": arguments or {}}),
+                timeout=self._timeout,
+            )
+        except TimeoutError:
+            reason = f"no result for {self._timeout:g} s (timeout_seconds)"
+            self._cancel_later(req_id, reason)
+            raise McpError(f"MCP tool {name!r} cancelled: {reason}") from None
+        except asyncio.CancelledError:
+            self._cancel_later(req_id, "the user stopped the turn")
+            raise
+
+    def _cancel_later(self, req_id: int, reason: str) -> None:
+        """Post ``notifications/cancelled`` without holding up the caller."""
+
+        async def post() -> None:
+            with contextlib.suppress(McpError, TimeoutError):
+                await asyncio.wait_for(
+                    self._post(cancelled_notification(req_id, reason), require_json=False),
+                    timeout=5.0,
+                )
+
+        task = asyncio.get_running_loop().create_task(post())
+        self._pending.add(task)
+        task.add_done_callback(self._pending.discard)
 
     async def aclose(self) -> None:
         client = self._http

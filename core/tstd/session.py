@@ -19,6 +19,7 @@ from .autonomy.charter import Charter
 from .autonomy.classifier import DecisionClass
 from .autonomy.judgment import JudgmentBackend
 from .boundary_config import BoundaryConfig
+from .compaction import ContextMeter, compact_on_request
 from .logging import get_logger, redact_structure
 from .policy import ApprovalOutcome, PolicyConfig, propose_always_allow
 from .protocol import (
@@ -254,6 +255,13 @@ class Session:
         # The loop's conversation lives here so a fork can truncate it
         # (TD-1708).  The loop aliases this list; it must not rebind.
         self.conversation: list[ChatMessage] = []
+        # TD-5109: how the loop last measured the prompt, so a compaction
+        # asked for between turns counts tokens as the next request will.
+        self.context_meter: ContextMeter | None = None
+        # User turns folded into summaries so far. The window numbers user
+        # turns from the start of the session; the conversation holds only
+        # those not yet summarized.
+        self.compacted_user_turns = 0
         # user_index -> sibling snapshots of conversation
         self._branches: dict[int, list[list[ChatMessage]]] = {}
         self._branch_cursor: dict[int, int] = {}
@@ -932,6 +940,87 @@ class Session:
         self._drain_user_queue()
         await self.add_user_message(text)
         return self._emit_reset(user_index, text)
+
+    async def compact_now(self, guidance: str = "", user_index: int | None = None) -> str | None:
+        """Compact on request (TD-5109).  Returns an error code, or None.
+
+        ``user_index`` (0-based among the session's user turns, as the
+        window numbers them) summarizes from that turn on; None summarizes
+        everything before the last user turn.
+        """
+        from .protocol import ContextCompacted
+
+        if self.turn_in_flight:
+            return "turn_in_progress"
+        meter = self.context_meter
+        if meter is None:
+            return "nothing_to_compact"
+        position: int | None = None
+        if user_index is not None:
+            local = user_index - self.compacted_user_turns
+            positions = self._user_positions()
+            if local < 0:
+                return "user_turn_compacted"
+            if local >= len(positions):
+                return "user_turn_not_found"
+            position = positions[local]
+        result = compact_on_request(
+            self.conversation,
+            meter.counter,
+            meter.tools,
+            guidance=guidance,
+            from_position=position,
+        )
+        if result is None:
+            return "nothing_to_compact"
+        compacted, stats = result
+        self.conversation[:] = compacted
+        self.compacted_user_turns += stats.dropped_user_turns
+        await self.event_log.add(
+            ContextCompacted(
+                session_id=self.id,
+                dropped_messages=stats.dropped_messages,
+                kept_messages=stats.kept_messages,
+                tokens_before=stats.tokens_before,
+                tokens_after=stats.tokens_after,
+                trigger="manual" if user_index is None else "from_here",
+                guidance=guidance.strip() or None,
+                seq=1,
+            )
+        )
+        await self.report_context_usage(stats.tokens_after)
+        log.info(
+            "context compacted on request",
+            extra={
+                "extra_fields": {
+                    "session_id": self.id,
+                    "from_user_index": user_index,
+                    "dropped_messages": stats.dropped_messages,
+                    "tokens_before": stats.tokens_before,
+                    "tokens_after": stats.tokens_after,
+                }
+            },
+        )
+        return None
+
+    async def report_context_usage(self, used_tokens: int) -> None:
+        """Send the gauge its figure for the next request (TD-5109)."""
+        from .compaction import budget_threshold
+        from .protocol import ContextUsage
+
+        meter = self.context_meter
+        if meter is None:
+            return
+        await self.event_log.add(
+            ContextUsage(
+                session_id=self.id,
+                tier=meter.tier,
+                used_tokens=used_tokens,
+                context_window=meter.tier_cfg.context_window,
+                compact_at=budget_threshold(meter.tier_cfg),
+                seq=1,
+            )
+        )
 
     def _drain_user_queue(self) -> None:
         while True:

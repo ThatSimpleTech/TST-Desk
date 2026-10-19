@@ -10,14 +10,22 @@ from ..logging import get_logger
 from .errors import McpError
 from .jsonrpc import (
     CALL_TIMEOUT,
+    MAX_CALL_SECONDS,
     STREAM_LIMIT,
     McpRemoteTool,
+    ProgressCallback,
+    cancelled_notification,
     initialize_params,
     jsonrpc_error_text,
     parse_tools_list,
+    progress_update,
 )
 
 log = get_logger("tstd.mcp.stdio")
+
+
+class _CallTimedOut(Exception):
+    """A tools/call outlived its idle timeout or hard cap."""
 
 
 class StdioMcpClient:
@@ -27,11 +35,18 @@ class StdioMcpClient:
     No extra ``env`` map — the child inherits the daemon environment.
     """
 
-    def __init__(self, command: list[str], *, timeout: float = CALL_TIMEOUT) -> None:
+    def __init__(
+        self,
+        command: list[str],
+        *,
+        timeout: float = CALL_TIMEOUT,
+        max_call_seconds: float = MAX_CALL_SECONDS,
+    ) -> None:
         if not command:
             raise McpError("stdio MCP command must be a non-empty argv")
         self._command = command
         self._timeout = timeout
+        self._max_call = max(max_call_seconds, timeout)
         self._proc: asyncio.subprocess.Process | None = None
         self._next_id = 1
         self._lock = asyncio.Lock()
@@ -74,8 +89,98 @@ class StdioMcpClient:
     async def list_tools(self) -> list[McpRemoteTool]:
         return parse_tools_list(await self.request("tools/list"))
 
-    async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
-        return await self.request("tools/call", {"name": name, "arguments": arguments or {}})
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any] | None = None,
+        *,
+        on_progress: ProgressCallback | None = None,
+    ) -> Any:
+        """``tools/call`` with a progress token (TD-5105).
+
+        The call may run as long as the server keeps reporting progress, up
+        to the hard cap; silence for ``timeout`` seconds ends it.  A call
+        that times out, or whose task is cancelled (the user stopped the
+        turn), sends ``notifications/cancelled`` so the server can stop too.
+        """
+        await self.start()
+        async with self._lock:
+            return await self._call(name, arguments or {}, on_progress)
+
+    async def _call(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        on_progress: ProgressCallback | None,
+    ) -> Any:
+        proc = self._proc
+        if proc is None or proc.stdin is None or proc.stdout is None:
+            raise McpError("stdio MCP server is not running")
+        req_id = self._next_id
+        self._next_id += 1
+        token = f"tstd-{req_id}"
+        message = {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments, "_meta": {"progressToken": token}},
+        }
+        proc.stdin.write((json.dumps(message) + "\n").encode("utf-8"))
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        hard_deadline = started + self._max_call
+        idle_deadline = started + self._timeout
+        try:
+            await proc.stdin.drain()
+            while True:
+                now = loop.time()
+                if now >= hard_deadline:
+                    reason = f"no result after {self._max_call:g} s (max_call_seconds)"
+                    raise _CallTimedOut(reason)
+                if now >= idle_deadline:
+                    reason = f"no result or progress for {self._timeout:g} s (timeout_seconds)"
+                    raise _CallTimedOut(reason)
+                try:
+                    raw = await asyncio.wait_for(
+                        proc.stdout.readline(), timeout=min(idle_deadline, hard_deadline) - now
+                    )
+                except TimeoutError:
+                    continue  # the deadline checks above raise
+                if not raw:
+                    raise McpError("stdio MCP server closed stdout")
+                try:
+                    parsed: Any = json.loads(raw.decode("utf-8"))
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(parsed, dict):
+                    continue
+                update = progress_update(parsed, token)
+                if update is not None:
+                    idle_deadline = loop.time() + self._timeout
+                    if on_progress is not None:
+                        await on_progress(*update)
+                    continue
+                if parsed.get("id") != req_id:
+                    continue
+                if "error" in parsed:
+                    raise McpError(jsonrpc_error_text(parsed["error"]))
+                return parsed.get("result")
+        except _CallTimedOut as e:
+            self._send_cancelled(req_id, str(e))
+            raise McpError(f"MCP tool {name!r} cancelled: {e}") from None
+        except asyncio.CancelledError:
+            self._send_cancelled(req_id, "the user stopped the turn")
+            raise
+
+    def _send_cancelled(self, req_id: int, reason: str) -> None:
+        """Best effort, without awaiting: the caller may be cancelled."""
+        proc = self._proc
+        if proc is None or proc.stdin is None or proc.stdin.is_closing():
+            return
+        try:
+            proc.stdin.write((json.dumps(cancelled_notification(req_id, reason)) + "\n").encode())
+        except (OSError, RuntimeError):
+            log.debug("could not send notifications/cancelled", exc_info=True)
 
     async def aclose(self) -> None:
         proc = self._proc

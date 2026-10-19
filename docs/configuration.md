@@ -509,9 +509,11 @@ Two calls outside the turn never resend a timed-out attempt: the
 after-write review (`autonomy.verify`) and memory distillation (TD-5146).
 Each attempt has already waited a full read timeout, the session stays
 busy while it waits, and a slow local model is not faster the second
-time. Other retryable failures (429, 5xx, a refused connection) are
-retried as above. Both calls stream, so the read timeout is the longest
-gap between chunks rather than a cap on the whole answer.
+time. A stall (`stream_idle_timeout`, or `read_timeout` mid-stream,
+TD-5106) counts as a timeout here too. Other retryable failures (429,
+5xx, a refused connection) are retried as above. Both calls stream, so
+the read timeout is the longest gap between chunks rather than a cap on
+the whole answer.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
@@ -678,6 +680,24 @@ Settings persist add / disable / remove through `set_mcp_server` and
 There is no `env` field on those messages. Live sessions keep the tool
 set they attached with until a new session.
 
+Strict OpenAI-compatible servers (vLLM, llama.cpp, LM Studio) reject the
+whole request when one tool is malformed, so each listed tool is checked
+at load (TD-5104). A root `anyOf` / `oneOf` / `allOf` is flattened into
+one object schema where that is possible. A tool whose prefixed name is
+over 64 characters or uses anything but letters, digits, `_` and `-`, or
+whose input schema still fails JSON Schema validation, is left out. The
+doctor row and the Settings row name each one with its reason; the
+server's other tools still load.
+
+Every tool call carries a progress token (TD-5105). Progress the server
+reports resets the call's idle timer, so a render or a build can run past
+`timeout_seconds` as long as it keeps reporting, up to
+`max_call_seconds`. Progress shows on the tool's row in the step
+timeline, on the desktop and the phone. A call that times out, or whose
+turn the user stops, sends `notifications/cancelled` to the server so it
+can stop its work too. Over `http` there is no progress yet (one JSON
+reply per call), so `timeout_seconds` bounds the whole call.
+
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `servers` | mapping of id → server | `{}` | Listed servers. Ids are lowercase slugs `[a-z][a-z0-9-]{0,31}`, same as credentials. Empty or omitted means none — no extra doctor rows. |
@@ -690,6 +710,9 @@ set they attached with until a new session.
 | `command` | list of strings | `[]` | Argv for a stdio server. Required when `transport` is `stdio`. A string is a load error (not split). Empty skips the server with a doctor fail. |
 | `url` | string | *empty* | Loopback `http(s)` endpoint for an http server. Required when `transport` is `http`. Non-loopback is refused before any request. Empty skips the server with a doctor fail. |
 | `enabled` | bool | `true` | When false, the server is skipped (doctor `skip`). |
+| `timeout_seconds` | number > 0 | `30` | Longest silence in a tool call: no result and no progress for this long ends the call and sends `notifications/cancelled`. Over http it bounds the whole call. Settings keeps it when it toggles or edits the server. |
+| `startup_timeout_seconds` | number > 0 | `8` | Time allowed for the handshake (`initialize` plus `tools/list`). Raise it for a server that loads a model before it answers. |
+| `max_call_seconds` | number > 0 | `600` | Hard cap on one stdio tool call, progress or not. Never below `timeout_seconds`. |
 
 <!-- verify: model -->
 ```yaml
@@ -794,6 +817,12 @@ mcp:
       transport: stdio
       command: ["python", "-m", "some_mcp"]
       enabled: true
+    render:
+      transport: stdio
+      command: ["python", "-m", "render_mcp"]
+      timeout_seconds: 120
+      startup_timeout_seconds: 30
+      max_call_seconds: 1800
     loop:
       transport: http
       url: http://127.0.0.1:9
@@ -856,6 +885,10 @@ three tier definitions. You can pin a tier for a session from the title bar.
 | `vision` | bool | `false` | When `true`, PNG/JPEG/GIF/WebP attachments are accepted on user turns routed to this tier (TD-4705). Capability is config — never inferred from the slug in code. |
 | `extra_body` | map | none | Extra JSON fields added to every chat request the tier makes: the turn, the progress check, a delegated worker, the after-write review (validator tier), memory distillation (worker tier), and (on the worker tier) the tool-call classifier, DoD polls and judgment calls that run on the worker. They fill in only fields the request did not set itself. For provider-specific settings such as a llama.cpp server's `chat_template_kwargs` — see §3.6. It cannot set `model`, `messages`, `tools`, `tool_choice`, `stream`, `stream_options`, `max_tokens` or `max_completion_tokens`, and its values must be plain JSON; a load error names the problem. Sent as written: never put a key or token here. |
 | `verdict_extra_body` | map | none | Merged over `extra_body` on the worker tier's one-word verdict calls only: the tool-call classifier, DoD polls and judgment calls that run on the worker. Nested maps merge and this map wins a clash. The turn, a delegated worker and memory distillation never send it. Same rules as `extra_body`; it does nothing on the brain and validator tiers. Use it to turn a reasoning model's thinking off for an 8-token answer — see §3.6. |
+| `connect_timeout` | float > 0 | `30` | Seconds to open the connection to `base_url`. |
+| `read_timeout` | float > 0 | `120` | Longest wait for any bytes from the server, the response headers included. A local model reading a long prompt sends nothing until its first token, so this is the knob for slow prefill — see §3.5. |
+| `total_timeout` | float > 0 or `null` | `null` | Wall-clock cap on one attempt, streaming included. `null` means no cap. A stream cut by it after output began is not retried. Before TD-5106 the client had a field named "total" set to 180; it was only the wait for a free pooled connection and never bounded a request. That wait stays 180 s and is not a key. |
+| `stream_idle_timeout` | float > 0 or `null` | `300` | Aborts a stream that sends no usable chunk for this long. SSE keep-alive comments (`: ping`) do not count, so a server that only pings is caught; `read_timeout` alone never catches it. A stall before any output is retried under `provider_retry`; a stall partway through a reply ends the turn as `stream_stalled`, because a retry would repeat text the window already shows. `null` turns the watchdog off. |
 
 **Prices are per million tokens, and they are yours to keep accurate.** They drive the live
 cost meter, the audit trail, and the spend cap. Nothing verifies them against your provider, so
@@ -889,6 +922,29 @@ fail the same way. So:
   compaction budget, so on a small window it is a trade. The tool-call classifier, DoD polls
   and judgment calls that run on the worker tier keep their own 8-token cap; on a reasoning
   model, turn their thinking off with `verdict_extra_body` (§3.6).
+
+**Seeing and steering compaction (TD-5109).** The title bar shows how full the window is, such
+as `12k / 64k`, from the daemon's own estimate of the next request (measured as described
+below). The bar turns amber in the last quarter before compaction and red once the next request
+would compact. Hover it for the exact figures, the point where compaction triggers, and a
+**Compact now** button. Three ways to compact without waiting for the budget:
+
+- **Compact now**, or `/compact` alone in the composer: everything between the system message
+  and the latest user turn becomes the summary. The latest turn stays word for word.
+- `/compact keep the parser work` (any words after the command): the same, and the summary
+  opens with those words. A message that mentions any of their longer words (four letters or
+  more) keeps up to 600 characters instead of 200, and when the summary is over its cap, older
+  messages that don't mention them are dropped first. This is plain text matching, not a model
+  call, so it costs nothing and gives the same result every time. Guidance past 500 characters
+  is cut.
+- **Summarize from here**, beside **Edit** on a user message: that message and everything after
+  it become the summary; everything before it stays word for word.
+
+None of these runs while a turn is in progress. Stop the turn first, or wait for it. They change
+what the model is sent, not the window: every message stays on screen. A message that is already
+inside a summary can't be the start of another one. The timeline records each compaction with
+who asked for it, the token counts before and after, and the guidance. Grok sessions keep Grok's
+own slash commands and don't show the gauge.
 
 **How the prompt is measured (TD-5007).** The estimate counts the message text, the tool-call
 arguments, every tool definition the request sends (as the request serializes it — a few
@@ -1120,6 +1176,31 @@ endpoint:
 
 The doctor's `provider` row always names the endpoint (`reachable at …` or the discovery
 failure's `fix`). It does not print the developer's model list.
+
+**Timeouts for a slow local model (TD-5106).** The tier defaults suit a hosted API. A local
+model on EZER can spend minutes reading a long prompt before its first token, and a server
+that hangs mid-load may keep the socket open with keep-alive pings. Give each local tier room
+to read and a ceiling on the whole reply:
+
+<!-- verify: tier -->
+```yaml
+# slug omitted: resolved from the endpoint's /v1/models
+base_url: http://127.0.0.1:8000/v1
+input_price: 0.0
+output_price: 0.0
+cache_read_price: 0.0
+context_window: 65536
+max_output_tokens: 4096
+connect_timeout: 10        # loopback: a refusal is instant, a hang is not
+read_timeout: 600          # first token after a long prefill
+stream_idle_timeout: 600   # silence mid-reply that still counts as alive
+total_timeout: 3600        # no single reply runs past an hour
+```
+
+A stall before any output is retried under `provider_retry`, so with the default three retries
+a dead server costs up to four waits of `read_timeout` (or `stream_idle_timeout` when the
+server pings). Lower `provider_retry.max_retries` with long timeouts. The after-write review
+and memory distillation never resend a stall (TD-5146), so they wait once.
 
 To ground computer-use clicks on the same loopback server, set
 `computer_use.grounding.base_url` to that `/v1` URL (or a dedicated
@@ -1384,6 +1465,171 @@ call is downgraded to `class_c_default` — you can loosen approvals for ordinar
 riskiest calls always come back to you (or are refused). "Always allow this in this workspace"
 in the approval card writes a rule here for you.
 
+**Reads inside the workspace never ask (TD-5141).** `fs_read`, `fs_list` and `fs_grep` on a
+path inside the workspace are Class A by a fixed rule, so they run without asking and without
+a model call to judge them. That includes `.env` and other secret files. A rule still wins, so
+to guard a file, name it for both tools that read contents:
+
+<!-- verify: workspace -->
+```yaml
+policy:
+  rules:
+    - tool: fs_read
+      args: "*.env*"
+      effect: never
+    - tool: fs_grep
+      args: "*.env*"
+      effect: never
+```
+
+- `effect: ask` asks instead, but an unattended (autonomy) run treats `ask` as `auto`, so only
+  `never` holds there.
+- A rule matches the path the call names. `fs_grep` over a whole folder (`path: .`) isn't caught
+  by a `*.env*` rule. In a git repo that search skips `.gitignore`d files, so keep `.env`
+  ignored, as most templates already do. `fs_list` shows names only, never contents.
+- `ask` and `never` rules ignore case, so `.ENV` is caught on macOS and Windows, where it opens
+  `.env`. `auto` rules match case exactly.
+- The most specific rule wins, and fewer wildcards counts as more specific. A broad
+  `fs_read: "*"` auto rule beats `*.env*`, so remove it (reads auto-run anyway). An exact tool
+  name also beats a glob such as `fs_*`.
+
+Outside the workspace nothing changed: reads there are Class C and the path guard refuses them
+before any rule is read, symlinks included.
+
+**Dangerously skip permissions**
+promotes every ask to auto, including shell and Class C (TD-806) — that is skip
+everything; turning it on accepts that unparsed write forms and Class C steering
+redirects will run. "Always allow this in this workspace" still writes a rule for the
+exact command, not a blanket `shell: **`. A `never` rule still refuses.
+
+**File contents change through `fs_edit` and `fs_write`, not the shell.** Only those two
+tools name the files they touch, so only their changes get a diff in the Files and Work panes,
+a checkpoint commit, and credit with the progress guard (§4.2). A file the shell writes
+(`sed -i`, a `>` redirect, a heredoc, `tee`, `dd of=`, or a `python -c` / `node -e` write, also
+inside `bash -c`) gets none of the three. The base prompt every tier gets says so, and so do
+the three tools' descriptions (TD-5009). Deleting, moving or renaming files, formatters, code
+generators and package managers stay in the shell. When a shell command's text looks like it
+writes a workspace file, its result carries a one-line note, just under the exit code, that
+points the next change to `fs_edit` and `fs_write` and says the write it saw need not be
+redone. The note is read from the command text after the command has run, so it can appear on
+a command that failed. It never blocks, delays or changes the command, and it is not a rule you
+can set. Writes to `/dev`, `nul` or `$null`, `$TMPDIR` (also `${TMPDIR:-/tmp}`), a name set from
+`mktemp`, a captured `.log`, git's own `.git/` files, or any path outside the workspace
+(`/tmp/...`, `~/...`, `../...`) get no note. Input redirects (`< file`, `<<<`) are reads. In an
+autonomous session the container's `/workspace` counts as the workspace.
+
+### 4.2 `caps` — when the agent stops and asks
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `spend_usd` | float ≥ 0 | `25.0` | Session spend, in dollars, that pauses the run. |
+| `wall_clock_hours` | float ≥ 0 | `8.0` | Session runtime, in hours, that pauses the run. |
+| `max_iterations` | int ≥ 1 | `200` | Loop iterations that pause the run. |
+
+All three are checked **before every model call**, in that order, and all three trigger at or
+past the value rather than strictly past it. `spend_usd: 0` is legal and pauses before the first
+call.
+
+Hitting a cap **pauses**; it does not kill the session. The session moves to `paused` with the
+violation as its reason, the UI raises a card, and the run waits — indefinitely, on an event, not
+a poll. Resuming re-reads this file and re-checks the caps, so resuming without raising the cap
+pauses again immediately. That is the loop: raise the number here, then resume.
+
+**Interactive turns also pause when they stop making progress.** This is not a cap and it is
+not in this file. Skip-all still skips the three caps above. It does not skip the progress
+guard. An interactive turn pauses when the same tool call comes back three times, when 52
+model calls have passed since the last successful `fs_write` or `fs_edit`, or when 12 tool
+calls have passed with no reply and no file write. That twelfth stretch asks the model one
+question with the tools removed. `DONE` ends the turn with the answer. `CONTINUE` with a new
+next step allows another 12 calls, up to three times. Anything else pauses. Resume, on the
+banner, starts the counters over and continues the same turn. A reply resets the 12-call
+window only. A file write resets the 52-call budget too. Unattended autonomy runs keep the
+charter breakers and do not take this check.
+
+### 4.3 `attachments` — what a message may carry
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `max_file_bytes` | int ≥ 1 | `256000` | Size of one attached file. Measured on the file's real bytes, after decoding. |
+| `max_total_bytes` | int ≥ 1 | `512000` | Size of all the attachments on one message, added together. |
+| `max_count` | int ≥ 1 | `10` | Files on one message. |
+
+**Text files only.** Anything that is not valid UTF-8, or that contains a NUL byte, is refused
+as binary — a PNG, a PDF, a compiled binary, and a UTF-16 text file all land here. Images are
+deliberately out: vision support depends on which models you have chosen and needs capability
+detection first.
+
+**These are enforced by the daemon, not by the composer.** The message-box refuses an oversize
+or binary file early, with copy that names the file, but that is a convenience. The same
+refusal happens again on arrival, so a client that skips the check — an older build, or
+anything that is not the app — gets the same answer. Both sides read the numbers above; the
+daemon sends them to the UI on the `boundary_update` event when the workspace opens.
+
+**A refusal drops the whole message**, including the text you typed alongside it. Nothing is
+half-sent, and the error says so. Attachments are also all-or-nothing within one message: one
+bad file refuses the send rather than quietly delivering the rest.
+
+**There is a ceiling above these numbers.** The daemon's local websocket accepts frames up to
+1 MiB, and base64 adds a third to whatever you attach — so a `max_total_bytes` much above
+`700000` gives you a message the transport drops before the daemon can refuse it politely.
+Keep the total under that and the failure modes stay legible.
+
+### 4.8 `memory` — how long a memory file may grow
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `max_lines` | int ≥ 1 | `200` | A `fs_write` / `fs_edit` that would make a `.tst/memory/` file longer than this, or that would replace a file already at this cap, is refused. The copy says to distill, not to append. Distill is the path that may replace a file at cap. |
+
+This is a write refusal, not an autonomy pause. Raising the number does not resume anything; it only lets the next tool write land. The number lives here, never as a literal in the write handler.
+
+<!-- verify: workspace -->
+```yaml
+memory:
+  max_lines: 80
+```
+
+### 4.4 `policy` — what needs your approval
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `rules` | list of rules | `[]` | Per-tool overrides. The most specific match wins; an exact tie breaks toward the most restrictive effect. |
+| `class_c_default` | `ask` or `never` | `ask` | What happens to a Class C call that no rule matches. `never` refuses it outright instead of asking. |
+| `approval_timeout_seconds` | float ≥ 0, or null | `null` | How long an approval request waits before being treated as a denial. Null waits indefinitely. |
+
+A rule has three keys:
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `tool` | string or glob | *required* | Tool name, or a glob such as `fs_*`. |
+| `args` | glob | `"**"` | Matched against a summary of the call's arguments. The default matches every call of the tool. |
+| `effect` | `auto`, `ask`, or `never` | *required* | Run without asking, ask first, or refuse. |
+
+**No rule can make a Class C call run silently.** An `effect: auto` rule that matches a Class C
+call is downgraded to `class_c_default` — you can loosen approvals for ordinary work, but the
+riskiest calls always come back to you (or are refused). "Always allow this in this workspace"
+in the approval card writes a rule here for you.
+
+**Reads inside the workspace never ask (TD-5141).** `fs_read`, `fs_list` and `fs_grep` on a
+path inside the workspace are Class A by a fixed rule, so they run without asking and without
+a model call to judge them. That includes `.env` and other secret files. A rule still wins, so
+to keep a file asking, name it:
+
+<!-- verify: workspace -->
+```yaml
+policy:
+  rules:
+    - tool: fs_read
+      args: "*.env*"
+      effect: ask
+```
+
+Use the exact tool name: a rule for `fs_read` beats a glob such as `fs_*` for the same call,
+and `effect: never` refuses instead of asking. A rule matches the path the call names, so a
+`*.env*` rule does not catch `fs_grep` over a whole folder (`path: .`). In a git repo that
+search skips `.gitignore`d files, so keep `.env` ignored, as most templates already do.
+Outside the workspace nothing changed: reads there are Class C and the path guard refuses them
+before any rule is read, symlinks included.
+
 **Dangerously skip permissions** (skip-all) is not a key in this file. Settings → Policy
 has a machine-wide toggle that lives in the user data dir as `approvals.yaml`, so a clone
 cannot carry it. While it is on, every `ask` runs as auto — including `shell` and Class C —
@@ -1483,8 +1729,9 @@ attachments:
   max_count: 1
 ```
 
-**Loosening approvals on a workspace you trust.** Reads never ask, `git status` never asks,
-anything else Class C still does, and an unanswered request denies after five minutes:
+**Loosening approvals on a workspace you trust.** Reads, listings and content searches inside
+the workspace never ask anyway (§4.4). Here `git status` never asks either, anything Class C
+still does, and an unanswered request denies after five minutes:
 
 <!-- verify: workspace -->
 ```yaml
@@ -1492,9 +1739,6 @@ policy:
   class_c_default: ask
   approval_timeout_seconds: 300.0
   rules:
-    - tool: fs_read
-      args: "**"
-      effect: auto
     - tool: shell
       args: "git status*"
       effect: auto

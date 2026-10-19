@@ -11,6 +11,7 @@
 	import { settings } from '../settings.svelte.js';
 	import { grok } from '../grok.svelte.js';
 	import { formatUsd } from '../cost-format.js';
+	import ContextGauge from './ContextGauge.svelte';
 	import CostMeter from './CostMeter.svelte';
 	import CuKillSwitch from './CuKillSwitch.svelte';
 	import WorkspacePicker from './WorkspacePicker.svelte';
@@ -75,6 +76,7 @@
 			{/if}
 		{/if}
 
+		<ContextGauge />
 		<CostMeter />
 
 		<!-- Spend against the boundary's cap (the "wall") -->

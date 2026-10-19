@@ -12,11 +12,19 @@ message and its ``tool`` results can never be split, and the in-flight
 turn's user message is always kept. In-flight tool results that still
 overflow the budget are fit separately (see :mod:`tstd.context_fit`);
 compaction will not drop them.
+
+The user can also compact on request (TD-5109): ``/compact [guidance]``
+summarizes everything before the last user turn, and "Summarize from
+here" summarizes one user turn and everything after it, keeping earlier
+turns verbatim.  Guidance stays deterministic: it heads the summary, and
+dropped messages that mention its words keep more of their text and are
+the last to go when the summary is over its cap.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -36,6 +44,11 @@ KEEP_USER_TURNS = 2
 # chars; the whole summary is capped at _SUMMARY_MAX_CHARS.
 _SUMMARY_CHARS_PER_MESSAGE = 200
 _SUMMARY_MAX_CHARS = 2_000
+# A dropped message that mentions the guidance keeps this much (TD-5109).
+_SUMMARY_CHARS_ON_TOPIC = 600
+# Guidance longer than this is cut; it is a focus, not a second prompt.
+MAX_GUIDANCE_CHARS = 500
+_SUMMARY_HEADER = "[Earlier conversation compacted]"
 
 
 @dataclass(frozen=True)
@@ -47,6 +60,27 @@ class CompactionStats:
     tokens_before: int
     tokens_after: int
     counter_method: str
+    #: User turns folded into the summary.  The session keeps a running
+    #: count so the window's user-turn numbers still find their message.
+    dropped_user_turns: int = 0
+
+
+@dataclass(frozen=True)
+class ContextMeter:
+    """How the loop last measured the prompt (TD-5109).
+
+    Kept on the session so a compaction asked for between turns, and the
+    gauge it updates, count tokens exactly as the next request will: same
+    calibrated counter, same tool definitions.
+    """
+
+    tier: str
+    tier_cfg: TierConfig
+    counter: TokenCounter
+    tools: Sequence[ToolDefinition] | None
+
+    def measure(self, messages: list[ChatMessage]) -> int:
+        return estimate_tokens(messages, self.counter, self.tools)[0]
 
 
 def budget_threshold(tier: TierConfig) -> int:
@@ -106,39 +140,76 @@ def find_compaction_point(
     return user_idxs[-keep_user_turns]
 
 
-def _truncate(text: str) -> str:
-    if len(text) <= _SUMMARY_CHARS_PER_MESSAGE:
+def _truncate(text: str, limit: int = _SUMMARY_CHARS_PER_MESSAGE) -> str:
+    if len(text) <= limit:
         return text
-    return text[:_SUMMARY_CHARS_PER_MESSAGE] + "…"
+    return text[:limit] + "…"
 
 
-def _render_summary(dropped: list[ChatMessage]) -> str:
+def guidance_terms(guidance: str) -> frozenset[str]:
+    """Words of four or more letters in *guidance*, lowercased."""
+    return frozenset(w.lower() for w in re.findall(r"[A-Za-z0-9_][\w.-]{3,}", guidance))
+
+
+def _render_summary(dropped: list[ChatMessage], guidance: str = "") -> str:
     """Deterministic extractive summary of the dropped span.
 
     A *prior* summary (from an earlier compaction) can fall inside the
     span — its lines fold into the new one so the oldest context degrades
     gradually instead of vanishing on the second compaction.
+
+    With *guidance* (TD-5109) the summary opens with it, messages that
+    mention its words keep up to ``_SUMMARY_CHARS_ON_TOPIC`` characters,
+    and when the summary is over its cap the oldest off-topic lines go
+    first.
     """
-    lines = ["[Earlier conversation compacted]"]
+    terms = guidance_terms(guidance)
+
+    def on_topic(text: str) -> bool:
+        lowered = text.lower()
+        return any(term in lowered for term in terms)
+
+    header = [_SUMMARY_HEADER]
+    if guidance:
+        header.append(f"Kept in view, as asked: {guidance}")
+    lines: list[tuple[str, bool]] = []
     for message in dropped:
+        text = content_as_text(message.content)
+        hit = bool(terms) and on_topic(text)
+        limit = _SUMMARY_CHARS_ON_TOPIC if hit else _SUMMARY_CHARS_PER_MESSAGE
         if message.role == "user":
-            lines.append(f"User: {_truncate(content_as_text(message.content))}")
+            lines.append((f"User: {_truncate(text, limit)}", hit))
         elif message.role == "assistant":
             if message.tool_calls:
                 names = ", ".join(
                     tc.function.name for tc in message.tool_calls if tc.function is not None
                 )
-                lines.append(f"Assistant called tools: {names}")
+                lines.append((f"Assistant called tools: {names}", hit))
             else:
-                lines.append(f"Assistant: {_truncate(content_as_text(message.content))}")
+                lines.append((f"Assistant: {_truncate(text, limit)}", hit))
         elif message.role == "tool":
-            lines.append(f"Tool result: {_truncate(content_as_text(message.content))}")
+            lines.append((f"Tool result: {_truncate(text, limit)}", hit))
         else:  # system: only a prior summary can land here — fold it in
-            lines.append(content_as_text(message.content))
-    body = "\n".join(lines)
+            lines.append((text, True))
+
+    def render(kept: list[tuple[str, bool]]) -> str:
+        return "\n".join([*header, *(line for line, _ in kept)])
+
+    if terms:
+        # Over the cap: drop the oldest off-topic lines before cutting.
+        while len(render(lines)) > _SUMMARY_MAX_CHARS:
+            idx = next((i for i, (_, hit) in enumerate(lines) if not hit), None)
+            if idx is None:
+                break
+            del lines[idx]
+    body = render(lines)
     if len(body) > _SUMMARY_MAX_CHARS:
         body = body[:_SUMMARY_MAX_CHARS] + "…"
     return body
+
+
+def _user_turns(messages: Sequence[ChatMessage]) -> int:
+    return sum(1 for m in messages if m.role == "user")
 
 
 def maybe_compact(
@@ -171,4 +242,48 @@ def maybe_compact(
         tokens_before=tokens_before,
         tokens_after=tokens_after,
         counter_method=method,
+        dropped_user_turns=_user_turns(messages[1:cut]),
+    )
+
+
+def compact_on_request(
+    messages: list[ChatMessage],
+    counter: TokenCounter,
+    tools: Sequence[ToolDefinition] | None = None,
+    *,
+    guidance: str = "",
+    from_position: int | None = None,
+) -> tuple[list[ChatMessage], CompactionStats] | None:
+    """Compact now, whatever the budget says (TD-5109).
+
+    Without *from_position*: summarize everything between the system
+    message and the last user turn, which stays verbatim.  With it (the
+    index of a user message): summarize that turn and everything after
+    it, and keep everything before it verbatim.  Returns None when there
+    is nothing to summarize.
+    """
+    if not messages or messages[0].role != "system":
+        return None
+    guidance = guidance.strip()[:MAX_GUIDANCE_CHARS]
+    if from_position is None:
+        cut = find_compaction_point(messages, keep_user_turns=1)
+        if cut <= 1:
+            return None
+        start, end = 1, cut
+    else:
+        if not 1 <= from_position < len(messages) or messages[from_position].role != "user":
+            return None
+        start, end = from_position, len(messages)
+    dropped = messages[start:end]
+    tokens_before, method = estimate_tokens(messages, counter, tools)
+    summary = ChatMessage(role="system", content=_render_summary(dropped, guidance))
+    compacted = [*messages[:start], summary, *messages[end:]]
+    tokens_after, _ = estimate_tokens(compacted, counter, tools)
+    return compacted, CompactionStats(
+        dropped_messages=len(dropped),
+        kept_messages=len(compacted),
+        tokens_before=tokens_before,
+        tokens_after=tokens_after,
+        counter_method=method,
+        dropped_user_turns=_user_turns(dropped),
     )

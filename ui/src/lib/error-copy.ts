@@ -190,6 +190,13 @@ const TURN_ERROR_COPY: Record<string, NoticeSpec> = {
 		title: "Turn cut off by a restart",
 		body: "TST Desk restarted before this reply finished. Click Continue to pick it up; the conversation is preserved.",
 	},
+	// TD-5106: the stream went quiet for stream_idle_timeout (or read_timeout).
+	// Before any output it was already retried under provider_retry.
+	stream_stalled: {
+		severity: "toast",
+		title: "Provider went quiet",
+		body: "The provider stopped sending for longer than the tier's stream_idle_timeout. Resend to retry. For a slow local model, raise stream_idle_timeout or read_timeout on the tier in config.yaml.",
+	},
 };
 
 /** Copy for a failed turn's typed error code, or null to stay silent.
@@ -312,6 +319,11 @@ export function daemonErrorCopy(code: string, message: string): NoticeSpec {
 			title: "That session is mid-turn",
 			body: message,
 		};
+	}
+	if (code === "nothing_to_compact" || code === "user_turn_compacted") {
+		// TD-5109: /compact or "Summarize from here" had nothing to do. The
+		// daemon's message says why; nothing changed, so a toast is enough.
+		return { severity: "toast", title: "Nothing compacted", body: message };
 	}
 	if (code.startsWith("attachment_")) {
 		// TD-1709: the daemon refused an attachment on arrival — the case a
