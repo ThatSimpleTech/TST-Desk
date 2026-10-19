@@ -117,7 +117,7 @@ async function walkModelBar(): Promise<void> {
 	await expect(brain).toHaveText(startLabel);
 }
 
-/** Copy, Retry and Edit on the first exchange; Retry and Edit fork it. */
+/** Copy, Retry, Edit and Summarize from here on the first exchange; Retry and Edit fork it. */
 async function walkMessageActions(): Promise<void> {
 	const chat = page.getByRole("region", { name: "Chat pane" });
 
@@ -146,6 +146,11 @@ async function walkMessageActions(): Promise<void> {
 	await expect(chat.getByText("Say hello", { exact: true })).toBeVisible();
 	await chat.getByRole("button", { name: "Next branch" }).click();
 	await expect(chat.getByText("3/3", { exact: true })).toBeVisible();
+
+	// TD-5109: the model's copy becomes a summary; this window keeps every row.
+	await chat.getByRole("button", { name: "Summarize from here" }).first().click();
+	await expect(page.getByText("Summarized from a message").first()).toBeAttached();
+	await expect(chat.getByText("Say hello again")).toBeVisible();
 }
 
 test("visits every right-pane view", async () => {

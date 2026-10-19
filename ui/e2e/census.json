@@ -17,7 +17,8 @@
 		"Plan",
 		"Retry: resend your last message",
 		"Send message",
-		"Session preset"
+		"Session preset",
+		"Summarize from here"
 	],
 	"decisions": [
 		"A",
