@@ -1382,7 +1382,10 @@ list:
   read like `~/.gitconfig` and can include other files, `attributes` can route any file through
   a filter, and `ignore` sits beside them. Any path with `.config/git` in it counts, and so does
   one written as `$XDG_CONFIG_HOME/git/…`, `${XDG_CONFIG_HOME:-…}/git/…` or
-  `%XDG_CONFIG_HOME%\git\…`, and the folder `XDG_CONFIG_HOME` names when it is set;
+  `%XDG_CONFIG_HOME%\git\…`. So does anything that is in `~/.config/git/` or in the folder
+  `XDG_CONFIG_HOME` names when it is set, judged by where it is, so a workspace that is
+  `~/.config` itself (where the path reads `git/config`) is covered too. `~/.config/git/` counts
+  even when `XDG_CONFIG_HOME` points elsewhere;
 - git hook-manager configs: `.pre-commit-config.yaml`, and lefthook's `lefthook.yml` and
   `lefthook-local.yml` in any of `.yml`, `.yaml`, `.toml`, `.json`, dotted or not. Your own
   `git commit` runs what they name.
@@ -1417,7 +1420,11 @@ revert writes blob bytes itself instead of `git checkout-index`. Git's own end-o
 redone around that, so line endings come out as before. The calls that must read the
 working tree or write your index (`git status` for the dirty-tree notice, the validator's
 `git diff`, and updating your index after a memory or charter commit) set every configured
-driver's `clean`, `smudge` and `process` to nothing for that call. What changes:
+driver's `clean`, `smudge` and `process` to nothing for that call. Those switches cover the
+drivers the workspace repo's config names, not ones only a submodule's own config names, so
+`git status` and the validator's `git diff` do not look inside submodules: a submodule shows
+only when its commit moved, as a `Subproject commit` line, never as an inline diff (which
+would run the submodule's own external diff). What changes:
 
 - **Line endings: unchanged.** The daemon applies git's own rules (`text`, `eol` and `crlf`
   attributes, `core.autocrlf`, `core.eol`, and git's "safer autocrlf" checks): a CRLF file is
@@ -1429,6 +1436,11 @@ driver's `clean`, `smudge` and `process` to nothing for that call. What changes:
   (`.git/lfs/objects`) when the object is there and its size and SHA-256 match; nothing is
   fetched. Otherwise it writes the pointer text, logs the path (`lfs_pointers`), and
   `git lfs checkout` fills it in.
+- **A revert where a file and a folder swapped places** removes what the drifted checkpoints
+  added first, then writes the good version, so either direction comes back. Unlike
+  `git checkout-index -f`, it never removes content no checkpoint holds: a folder still in the
+  way after that (say it holds a file you made) or a file where a folder must go stops the
+  revert with an error and leaves both, and the auto-branch is not moved.
 - **Memory and charter commits** are built with `commit-tree` and land on HEAD with a
   `commit: …` reflog line, as before. They are signed when `commit.gpgSign` is set. A memory
   commit whose note did not change is skipped, and one during a merge, cherry-pick or revert is

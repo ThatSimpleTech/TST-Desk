@@ -18,7 +18,10 @@ dirty-tree notice, the validator's ``git diff``, and writing the user's
 own index after a memory or charter commit (git hashes a "racily clean"
 entry through its filter whenever it writes an index). Those run with
 :func:`filter_pins`, which sets every configured filter driver to nothing
-with ``-c`` for that one call.
+with ``-c`` for that one call. The pins name only the drivers this repo's
+config can see, so ``status`` and ``diff`` also pass
+``--ignore-submodules=dirty``: git would otherwise run inside each
+submodule, under the submodule's own config.
 """
 
 from __future__ import annotations

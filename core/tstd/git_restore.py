@@ -14,6 +14,12 @@ itself instead, after the parts of a checkout that run no command:
   pointer text is written and the path is reported; ``git lfs checkout``
   fills it in.
 - ``ident`` and ``working-tree-encoding`` are not applied.
+
+Paths the commit does not have are removed first, so a file and a folder
+can swap places either way. Unlike ``checkout-index -f``, nothing that
+is not the caller's to remove goes: a folder in the way is removed only
+once it is empty, and a file where a folder must go is an error. Both
+are content no checkpoint holds.
 """
 
 from __future__ import annotations
@@ -40,10 +46,11 @@ _LFS_OID = re.compile(rb"^sha256:([0-9a-f]{64})$")
 
 @dataclass(frozen=True)
 class RestoreResult:
-    """Paths written, and those left as an LFS pointer (object not stored locally)."""
+    """Paths written, those left as an LFS pointer (object not stored locally), and removed."""
 
     restored: tuple[str, ...]
     pointers: tuple[str, ...]
+    removed: tuple[str, ...] = ()
 
 
 def lfs_pointer(data: bytes) -> tuple[str, int] | None:
@@ -91,8 +98,7 @@ async def _lfs_store(top: Path, env: Mapping[str, str]) -> Path:
 _NT = os.name == "nt"
 
 
-def _parent(top: Path, rel: str) -> Path:
-    """The folder *rel* goes in, made as needed; never through a symlink."""
+def _checked_parts(rel: str) -> tuple[str, ...]:
     parts = PurePosixPath(rel).parts
     if not parts or rel.startswith("/") or any(p in (".", "..") for p in parts):
         raise GitRawError(f"refusing to restore '{rel}'")
@@ -100,6 +106,45 @@ def _parent(top: Path, rel: str) -> Path:
         raise GitRawError(f"invalid path '{rel}'")
     if any(p.casefold() == ".git" for p in parts):
         raise GitRawError(f"refusing to restore '{rel}' inside a .git folder")
+    return parts
+
+
+def _remove(top: Path, rel: str) -> bool:
+    """Remove the file or link at *rel*, then the folders that left empty.
+
+    Only real folders are walked, so a link in the way never leads out
+    of the tree; a folder at *rel* itself is left (a submodule, say).
+    """
+    parts = _checked_parts(rel)
+    folders = [top]
+    for part in parts[:-1]:
+        folder = folders[-1] / part
+        try:
+            st = os.lstat(folder)
+        except FileNotFoundError:
+            return False
+        if not stat.S_ISDIR(st.st_mode):
+            return False
+        folders.append(folder)
+    target = folders[-1] / parts[-1]
+    try:
+        st = os.lstat(target)
+    except FileNotFoundError:
+        return False
+    if stat.S_ISDIR(st.st_mode):
+        return False
+    os.unlink(target)
+    for folder in reversed(folders[1:]):
+        try:
+            os.rmdir(folder)
+        except OSError:
+            break  # not empty: it holds something else
+    return True
+
+
+def _parent(top: Path, rel: str) -> Path:
+    """The folder *rel* goes in, made as needed; never through a symlink."""
+    parts = _checked_parts(rel)
     folder = top
     for part in parts[:-1]:
         folder = folder / part
@@ -116,7 +161,12 @@ def _parent(top: Path, rel: str) -> Path:
 def _replace(target: Path, fill: Callable[[Path], None]) -> None:
     """Fill a fresh sibling, then rename it over *target* (a link is replaced, not followed)."""
     if target.is_dir() and not target.is_symlink():
-        raise GitRawError(f"cannot restore '{target}': a folder is in the way")
+        try:
+            os.rmdir(target)  # an empty folder holds nothing to lose
+        except OSError:
+            raise GitRawError(
+                f"cannot restore '{target}': a folder that is not empty is in the way"
+            ) from None
     tmp = target.with_name(f".{target.name}.tstd-{secrets.token_hex(4)}")
     try:
         fill(tmp)
@@ -183,18 +233,39 @@ def _write_link(target: Path, text: bytes, symlinks: bool) -> None:
 
 
 async def restore_blobs(
-    cwd: Path, treeish: str, paths: Sequence[str], *, env: Mapping[str, str]
+    cwd: Path,
+    treeish: str,
+    paths: Sequence[str],
+    *,
+    remove: Sequence[str] = (),
+    env: Mapping[str, str],
 ) -> RestoreResult:
-    """Write each of *paths* (repository-relative) as *treeish* has it."""
-    if not paths:
+    """Write each of *paths* (repository-relative) as *treeish* has it.
+
+    Each of *remove* (paths *treeish* does not have) is removed first, as
+    :func:`_remove` does. A path in *paths* that *treeish* does not have
+    is an error, raised before anything on disk changes.
+    """
+    if not paths and not remove:
         return RestoreResult((), ())
-    top = await repo_top(cwd, env)
     rels = list(dict.fromkeys(paths))
-    with temp_index("tstd-restore-index-") as index:
-        index_env = {**env, "GIT_INDEX_FILE": index}
-        await checked_git(top, "read-tree", treeish, env=index_env)
-        entries = await _entries(top, rels, index_env)
-        attrs = await path_attributes(top, list(entries), index_env, cached=True)
+    gone = list(dict.fromkeys(remove))
+    for rel in (*rels, *gone):
+        _checked_parts(rel)  # every name is checked before anything is written
+    top = await repo_top(cwd, env)
+    entries: dict[str, tuple[str, str]] = {}
+    attrs: dict[str, dict[str, str]] = {}
+    if rels:
+        with temp_index("tstd-restore-index-") as index:
+            index_env = {**env, "GIT_INDEX_FILE": index}
+            await checked_git(top, "read-tree", treeish, env=index_env)
+            entries = await _entries(top, rels, index_env)
+            attrs = await path_attributes(top, list(entries), index_env, cached=True)
+    missing = [rel for rel in rels if rel not in entries]
+    if missing:
+        shown = ", ".join(repr(rel) for rel in missing[:5])
+        more = f" and {len(missing) - 5} more" if len(missing) > 5 else ""
+        raise GitRawError(f"cannot restore {shown}{more}: not in {treeish}")
     cfg, symlinks = await eol_config(top, env)
     blobs = await read_blobs(top, [oid for mode, oid in entries.values() if mode != "160000"], env)
     lfs = any(a.get("filter") == "lfs" for a in attrs.values())
@@ -203,6 +274,7 @@ async def restore_blobs(
     def write_all() -> RestoreResult:
         restored: list[str] = []
         pointers: list[str] = []
+        removed = [rel for rel in gone if _remove(top, rel)]
         for rel, (mode, oid) in entries.items():
             if mode == "160000":
                 continue  # a submodule commit; checkout-index skips it too
@@ -223,6 +295,6 @@ async def restore_blobs(
             else:
                 _write_bytes(target, checkout_eol(data, attrs.get(rel, {}), cfg), executable)
             restored.append(rel)
-        return RestoreResult(tuple(restored), tuple(pointers))
+        return RestoreResult(tuple(restored), tuple(pointers), tuple(removed))
 
     return await asyncio.to_thread(write_all)

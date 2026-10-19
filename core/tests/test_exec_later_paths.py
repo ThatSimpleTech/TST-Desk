@@ -94,6 +94,10 @@ def _write(rel: str) -> DecisionRequest:
     return DecisionRequest(tool_name="fs_write", writes=(WS / rel,), is_mutation=True)
 
 
+def _write_at(path: Path) -> DecisionRequest:
+    return DecisionRequest(tool_name="fs_write", writes=(path,), is_mutation=True)
+
+
 def _shell(command: str) -> DecisionRequest:
     return DecisionRequest(tool_name="shell", arguments={"command": command}, is_mutation=True)
 
@@ -154,6 +158,35 @@ class TestFsWrites:
         assert is_exec_later_write(boundary, xdg / "git" / "config")
         assert is_exec_later_write(boundary, xdg / "git" / "ignore")
         assert not is_exec_later_write(boundary, xdg / "nvim" / "init.lua")
+
+    @pytest.mark.parametrize("xdg", [None, "elsewhere"])
+    @pytest.mark.parametrize("workspace", [".config", ".config/git"])
+    def test_a_workspace_at_the_default_folder_is_judged_by_where_it_is(
+        self,
+        workspace: str,
+        xdg: str | None,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """XDG_CONFIG_HOME unset is the usual case; git then reads ~/.config/git (PR #25)."""
+        home = tmp_path / "home"
+        (home / ".config" / "git").mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        if xdg is None:
+            monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        else:
+            monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / xdg))
+        ws = home / workspace
+        boundary = Boundary(workspace_root=ws)
+        live = home / ".config" / "git" / "config"
+
+        assert _classify(_write_at(live), boundary) == ("C", "exec-later-write")
+        assert _classify(_write_at(live.with_name("attributes")), boundary)[0] == "C"
+        rel = live.relative_to(ws).as_posix()
+        assert _classify(_shell(f"echo x >> {rel}"), boundary)[0] == "C"
+        if workspace == ".config":
+            assert _classify(_write_at(ws / "nvim" / "init.lua"), boundary)[0] == "A"
 
     def test_a_dotfiles_symlink_is_judged_by_the_name_written_too(self, tmp_path: Path) -> None:
         """~/.config/git/config linked into a dotfiles workspace (TD-5157 review)."""

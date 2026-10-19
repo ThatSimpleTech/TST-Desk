@@ -353,7 +353,10 @@ async def _diff_since(session: Session) -> tuple[str, str | None]:
     # A plain patch: diff.external and textconv drivers are commands a
     # config file names, and their output is not a patch anyway (TD-5108).
     # Reading the working tree runs clean filters, so every configured
-    # filter driver is switched off for this call (TD-5157).
+    # filter driver is switched off for this call (TD-5157). A submodule
+    # shows only as its commit: a dirty check would run git inside it
+    # under its own config (filters the pins do not name), and an inline
+    # submodule diff would run its diff.external.
     from ..tools.shell import sanitized_env
 
     try:
@@ -361,7 +364,16 @@ async def _diff_since(session: Session) -> tuple[str, str | None]:
     except (GitRawError, OSError, TimeoutError):
         # No diff, and no new watermark: the next check covers these edits.
         return "", None
-    rc, out = await _git(workspace, *pins, "diff", "--no-ext-diff", "--no-textconv", since)
+    rc, out = await _git(
+        workspace,
+        *pins,
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--ignore-submodules=dirty",
+        "--submodule=short",
+        since,
+    )
     return (out if rc == 0 else ""), tip
 
 

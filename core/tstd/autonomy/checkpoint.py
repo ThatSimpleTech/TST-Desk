@@ -328,11 +328,14 @@ class Checkpointer:
         from ..tools.shell import sanitized_env
 
         # git status hashes stat-dirty files through their filter (TD-5157).
+        # It would also run status inside each submodule, under that
+        # submodule's own config, which the pins do not cover: a submodule
+        # counts only when its commit moved, which reads no work tree.
         try:
             pins = await filter_pins(self._workspace, sanitized_env())
         except GitRawError:
             return None  # a driver that cannot be switched off: no status run
-        rc, out, _ = await self._git(*pins, "status", "--porcelain")
+        rc, out, _ = await self._git(*pins, "status", "--porcelain", "--ignore-submodules=dirty")
         if rc != 0 or not out.strip():
             return None
         return self._notice_once(

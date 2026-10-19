@@ -14643,8 +14643,12 @@ user's filters: it is a clone the user asked for, like their own.
 with a `.config` segment followed by `git` (so `~/.config/git/config`,
 `attributes`, `ignore` and anything else there), a segment that names
 `XDG_CONFIG_HOME` followed by `git` (`$XDG_CONFIG_HOME`,
-`${XDG_CONFIG_HOME:-$HOME/.config}`, `%XDG_CONFIG_HOME%`), and the folder
-the daemon's own `XDG_CONFIG_HOME` names, plus `/git`. The whole folder,
+`${XDG_CONFIG_HOME:-$HOME/.config}`, `%XDG_CONFIG_HOME%`), and anything
+whose resolved path is in `~/.config/git` or in the folder the daemon's own
+`XDG_CONFIG_HOME` names, plus `/git`. `~/.config/git` counts whether or not
+`XDG_CONFIG_HOME` is set: git reads it when the variable is unset (the
+usual case), and the agent's shell or the user's own git may not share the
+daemon's environment. The whole folder,
 not three names: `ignore` cannot run anything, but it sits with the two
 that can, and nothing else belongs there for an agent to write.
 
@@ -14671,6 +14675,33 @@ is Class C. Declined: enforcing `core.safecrlf=true` (git add then
 refuses a conversion it cannot round-trip, which used to fail the
 checkpoint; the daemon now converts as under the default `warn`, so the
 write still gets its undo point).
+
+**PR #25 review, checked.** All four findings confirmed and fixed. (1)
+`git status` and `git diff` recurse into submodules, and the child git
+reads the submodule's own config, whose drivers the pins never named, so a
+`sub/.gitattributes` could run one. Both now pass
+`--ignore-submodules=dirty` (a submodule counts only when its commit
+moved, which reads no work tree) and the diff `--submodule=short` (an
+inline submodule diff, `diff.submodule=diff`, runs the submodule's
+`diff.external`). Chosen over `=all`, which would hide a moved submodule
+from the validator, and over pins built from every submodule's config,
+which nest and race. (2) A revert where the agent swapped a file and a
+folder failed: the restore met the folder or file in the way. The paths
+the drift added are now removed first (a file or link, never through a
+link, and the folders that leave empty), then the good blobs written. Not
+`checkout-index -f`'s behaviour in full: it deleted a whole folder in the
+way, and anything else in it is content no checkpoint holds, so a folder
+that is still not empty, or a file where a folder must go, stops the
+revert with an error and the auto-branch is not moved (the conservative
+option; the revert's rule is that user-only dirt is left). (3)
+`restore_blobs` dropped a path the commit did not have, and the revert's
+`git diff --name-status` ran without `-z`, so a name outside ASCII came
+back quoted and was dropped: a silent partial revert reported as
+`reverted`. The diff now runs with `-z`, a failed diff raises, and a path
+the commit lacks raises before anything on disk changes. (4) With
+`XDG_CONFIG_HOME` unset, a workspace that is `~/.config` or
+`~/.config/git` saw only `git/config` or `config`, so the live global
+config was a plain Class A edit; see "Git's global folder" above.
 
 **Residual risk (recorded).** The pins list the drivers config names just
 before each call; a driver added in that moment needs a write to a Class

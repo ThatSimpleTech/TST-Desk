@@ -632,3 +632,156 @@ def test_lfs_pointer_parsing() -> None:
     assert lfs_pointer(_pointer(PAYLOAD)) == (oid, len(PAYLOAD))
     assert lfs_pointer(PAYLOAD) is None
     assert lfs_pointer(b"version https://example.com/v1\noid sha256:" + b"0" * 64) is None
+
+
+# ── Review follow-ups (PR #25) ──────────────────────────────────────────
+
+
+def _with_submodule(tmp_path: Path, marker: Path) -> Path:
+    """A repo whose submodule ``sub`` has a filter only its own config names.
+
+    The agent wrote ``sub/.gitattributes`` (a Class A write) and
+    ``sub/a.txt`` is stat-dirty, so git must hash it to tell.
+    """
+    lib = make_repo(tmp_path, "lib")
+    repo = make_repo(tmp_path)
+    _git(repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(lib), "sub")
+    _git(repo, "commit", "-q", "-m", "add sub")
+    sub = repo / "sub"
+    _git(sub, "config", "filter.subonly.clean", f"sh -c 'touch {marker}; cat'")
+    (sub / ".gitattributes").write_text("* filter=subonly\n")
+    (sub / "a.txt").write_text("BASE\n")  # same size as "base\n"
+    return repo
+
+
+async def test_a_submodules_own_filter_runs_on_no_status_or_diff(tmp_path: Path) -> None:
+    marker = tmp_path / "filter-ran"
+    repo = _with_submodule(tmp_path, marker)
+    session = Session(str(repo))
+    session.autonomy_last_check_sha = _git(repo, "rev-parse", "HEAD")
+
+    await Checkpointer(repo, "s1")._dirty_baseline_notice()
+    assert not marker.exists(), "git status ran the submodule's filter"
+    await _diff_since(session)
+    assert not marker.exists(), "the validator diff ran the submodule's filter"
+    (repo / "b.txt").write_text("agent\n")
+    await _checkpoint(repo, repo / "b.txt")
+    assert not marker.exists(), "the first checkpoint ran the submodule's filter"
+
+
+async def test_a_moved_submodule_still_shows_and_runs_no_inline_diff(tmp_path: Path) -> None:
+    marker = tmp_path / "filter-ran"
+    repo = _with_submodule(tmp_path, marker)
+    sub = repo / "sub"
+    _git(sub, "config", "user.name", "Test User")
+    _git(sub, "config", "user.email", "test@example.com")
+    _git(sub, "-c", "filter.subonly.clean=", "commit", "-q", "-am", "moved")
+    marker.unlink(missing_ok=True)
+    external = tmp_path / "external-ran"
+    _git(repo, "config", "diff.submodule", "diff")  # the user's own choice
+    _git(sub, "config", "diff.external", f"sh -c 'touch {external}'")
+    session = Session(str(repo))
+    session.autonomy_last_check_sha = _git(repo, "rev-parse", "HEAD")
+
+    diff, _tip = await _diff_since(session)
+
+    assert "+Subproject commit " in diff
+    assert not marker.exists()
+    assert not external.exists()
+
+
+async def test_revert_swaps_a_folder_back_to_a_file(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path)
+    (repo / "thing").write_text("good\n")
+    good = await _checkpoint(repo, repo / "thing", call="good")
+    (repo / "thing").unlink()
+    (repo / "thing").mkdir()
+    (repo / "thing" / "b").write_text("drift\n")
+    await _checkpoint(repo, repo / "thing", repo / "thing" / "b", call="drift")
+
+    outcome = await restore_auto_branch(repo, good_sha=good, branch=BRANCH)
+
+    assert outcome.status == "reverted", outcome.reason
+    assert (repo / "thing").read_text() == "good\n"
+    assert outcome.deleted == ("thing/b",)
+    assert _git(repo, "rev-parse", f"refs/heads/{BRANCH}") == good
+
+
+async def test_revert_swaps_a_file_back_to_a_folder(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path)
+    (repo / "d").mkdir()
+    (repo / "d" / "x").write_text("good\n")
+    good = await _checkpoint(repo, repo / "d" / "x", call="good")
+    shutil.rmtree(repo / "d")
+    (repo / "d").write_text("drift\n")
+    await _checkpoint(repo, repo / "d" / "x", repo / "d", call="drift")
+
+    outcome = await restore_auto_branch(repo, good_sha=good, branch=BRANCH)
+
+    assert outcome.status == "reverted", outcome.reason
+    assert (repo / "d" / "x").read_text() == "good\n"
+    assert _git(repo, "rev-parse", f"refs/heads/{BRANCH}") == good
+
+
+async def test_revert_leaves_a_folder_holding_unsaved_work_and_says_so(tmp_path: Path) -> None:
+    """checkout-index -f removed the whole folder; content no checkpoint holds now stays."""
+    repo = make_repo(tmp_path)
+    (repo / "thing").write_text("good\n")
+    good = await _checkpoint(repo, repo / "thing", call="good")
+    (repo / "thing").unlink()
+    (repo / "thing").mkdir()
+    (repo / "thing" / "b").write_text("drift\n")
+    drift = await _checkpoint(repo, repo / "thing", repo / "thing" / "b", call="drift")
+    (repo / "thing" / "notes.txt").write_text("in no checkpoint\n")
+
+    with pytest.raises(GitRawError, match="not empty"):
+        await restore_auto_branch(repo, good_sha=good, branch=BRANCH)
+
+    assert (repo / "thing" / "notes.txt").read_text() == "in no checkpoint\n"
+    assert _git(repo, "rev-parse", f"refs/heads/{BRANCH}") == drift
+
+
+async def test_revert_restores_a_name_outside_ascii(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path)
+    name = "café.txt"
+    (repo / name).write_text("good\n")
+    good = await _checkpoint(repo, repo / name, call="good")
+    (repo / name).write_text("drift\n")
+    await _checkpoint(repo, repo / name, call="drift")
+
+    outcome = await restore_auto_branch(repo, good_sha=good, branch=BRANCH)
+
+    assert outcome.status == "reverted", outcome.reason
+    assert outcome.restored == (name,)
+    assert (repo / name).read_text() == "good\n"
+
+
+async def test_restoring_a_path_the_commit_lacks_fails_before_writing(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path)
+    head = _git(repo, "rev-parse", "HEAD")
+    (repo / "a.txt").write_text("the user's own edit\n")
+    (repo / "gone.txt").write_text("would be removed\n")
+
+    with pytest.raises(GitRawError, match=r"not-there\.txt"):
+        await git_restore.restore_blobs(
+            repo, head, ["a.txt", "not-there.txt"], remove=["gone.txt"], env=dict(os.environ)
+        )
+
+    assert (repo / "a.txt").read_text() == "the user's own edit\n"
+    assert (repo / "gone.txt").exists()
+
+
+def test_remove_never_walks_through_a_link(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "x").write_text("keep\n")
+    top = tmp_path / "top"
+    top.mkdir()
+    (top / "d").symlink_to(outside, target_is_directory=True)
+    (top / "link").symlink_to(outside / "x")
+
+    assert git_restore._remove(top, "d/x") is False
+    assert git_restore._remove(top, "link") is True
+
+    assert (outside / "x").read_text() == "keep\n"
+    assert not (top / "link").is_symlink()

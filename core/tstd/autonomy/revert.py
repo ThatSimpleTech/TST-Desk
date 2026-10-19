@@ -11,10 +11,12 @@ Interactive verify (TD-4204) does not import or call this module.
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from ..git_raw import checked_git
 from ..git_restore import restore_blobs
 from ..git_safe import git_command
 from ..logging import get_logger
@@ -132,15 +134,15 @@ async def restore_auto_branch(
 
     The blobs are written by ``git_restore`` rather than
     ``checkout-index``, so no smudge filter runs (TD-5157); HEAD, the
-    user's index, and ``refs/heads/main`` are never written.
+    user's index, and ``refs/heads/main`` are never written. Paths the
+    auto-branch added go first, so a file and a folder can swap back.
     """
     ref = auto_ref(branch)
     if ref in _PROTECTED_REFS:
         raise ValueError(f"refusing to write protected ref: {ref!r}")
     tip = await _rev_parse(workspace, ref)
     restore, delete = await _drifted_paths(workspace, good_sha, tip)
-    written = await restore_blobs(workspace, good_sha, restore, env=_git_env())
-    await _delete_paths(workspace, delete)
+    written = await restore_blobs(workspace, good_sha, restore, remove=delete, env=_git_env())
     rc, _, err = await _git(workspace, "update-ref", ref, good_sha)
     if rc != 0:
         return RevertOutcome(
@@ -149,7 +151,7 @@ async def restore_auto_branch(
             branch=branch,
             reason=err.strip() or "git update-ref failed",
             restored=written.restored,
-            deleted=tuple(delete),
+            deleted=written.removed,
             pointers=written.pointers,
         )
     return RevertOutcome(
@@ -158,7 +160,7 @@ async def restore_auto_branch(
         branch=branch,
         reason="reverted to last good checkpoint",
         restored=written.restored,
-        deleted=tuple(delete),
+        deleted=written.removed,
         pointers=written.pointers,
     )
 
@@ -214,17 +216,6 @@ async def _drifted_paths(
     return restore, delete
 
 
-async def _delete_paths(workspace: Path, paths: list[str]) -> None:
-    for rel in paths:
-        target = _safe_rel(workspace, rel)
-        if target is None or not target.is_file():
-            continue
-        try:
-            await asyncio.to_thread(target.unlink)
-        except OSError:
-            log.warning("drift revert could not delete %s", rel)
-
-
 def _safe_rel(workspace: Path, rel: str) -> Path | None:
     if not rel or rel.startswith("/") or ".." in Path(rel).parts:
         return None
@@ -238,20 +229,21 @@ def _safe_rel(workspace: Path, rel: str) -> Path | None:
 
 
 async def _name_status(workspace: Path, a: str, b: str | None = None) -> list[tuple[str, str]]:
-    args = ["diff", "--name-status", "--no-renames", a]
+    """``(status letter, path)`` rows; ``-z`` so a name comes back as git stores it.
+
+    Without ``-z`` git quotes a name with a byte outside ASCII
+    (``core.quotePath``), and the quoted form names no file. A failed
+    diff raises: the revert cannot tell what drifted.
+    """
+    args = ["diff", "-z", "--name-status", "--no-renames", a]
     if b is not None:
         args.append(b)
-    rc, out, _ = await _git(workspace, *args)
-    if rc != 0:
-        return []
+    out = await checked_git(workspace, *args, env=_git_env())
+    fields = out.split(b"\0")
     rows: list[tuple[str, str]] = []
-    for line in out.splitlines():
-        if not line.strip():
-            continue
-        parts = line.split("\t")
-        if len(parts) < 2:
-            continue
-        rows.append((parts[0][:1], parts[-1]))
+    for code, raw in zip(fields[0::2], fields[1::2], strict=False):
+        if code and raw:
+            rows.append((code.decode("ascii", errors="replace")[:1], os.fsdecode(raw)))
     return rows
 
 

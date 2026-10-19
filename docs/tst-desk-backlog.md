@@ -9371,6 +9371,17 @@ and `XDG_CONFIG_HOME` forms; `core/tstd/autonomy/cmd_targets.py` reads
 redirects as cmd.exe does when the host's dialects include `cmd`.
 Class B entry in DECISIONS.md.
 
+Review follow-ups (PR #25, 2026-10-19): `git status` and the validator's
+`git diff` no longer look inside submodules (`--ignore-submodules=dirty`,
+`--submodule=short`), whose own config can name a driver the pins do not
+cover; the revert removes what the drift added before writing, so a file
+and a folder can swap back, and stops with an error rather than delete
+content no checkpoint holds; a path the restore cannot find, or a name
+outside ASCII, fails loudly instead of reporting `reverted`; and
+`~/.config/git` counts by where it is with `XDG_CONFIG_HOME` unset. Tests
+in `core/tests/test_git_no_filters.py` and
+`core/tests/test_exec_later_paths.py`, each failing on the code before.
+
 ---
 
 ### TD-5101 — Shell rules: judge every segment of a chained command, deny first

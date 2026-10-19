@@ -38,6 +38,7 @@ asking, never toward acting.
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import os
 import shlex
@@ -152,15 +153,37 @@ def _names_config_home(segment: str) -> bool:
     return segment.strip("{}\"'") == ".config" or "xdg_config_home" in segment
 
 
+def _git_global_dirs() -> list[Path]:
+    """Where git looks for its global folder: ``~/.config/git`` always counts.
+
+    Git reads ``$XDG_CONFIG_HOME/git`` when the variable is set and
+    ``~/.config/git`` when it is not. The default is checked either way:
+    the shell or the user's own git may not see the daemon's environment.
+    """
+    dirs: list[Path] = []
+    with contextlib.suppress(RuntimeError, KeyError):  # no home folder to find
+        dirs.append(Path.home() / ".config" / _GIT_GLOBAL_DIR)
+    xdg = os.environ.get("XDG_CONFIG_HOME", "")
+    if xdg and os.path.isabs(xdg):
+        dirs.append(Path(xdg) / _GIT_GLOBAL_DIR)
+    return dirs
+
+
 def _in_git_global_dir(folded: Sequence[str], path: Path) -> bool:
-    """Whether *path* is in, or is, git's global config folder."""
+    """Whether *path* is in, or is, git's global config folder.
+
+    By name (a ``.config/git`` pair of segments, or ``XDG_CONFIG_HOME``
+    written out), else by where it is: a workspace that is ``~/.config``
+    itself only shows ``git/config`` by name.
+    """
     if any(_names_config_home(a) and b == _GIT_GLOBAL_DIR for a, b in pairwise(folded)):
         return True
-    xdg = os.environ.get("XDG_CONFIG_HOME", "")
-    if not xdg or not os.path.isabs(xdg):
-        return False
-    base = (*_fold(canonical_path(Path(xdg)).parts), _GIT_GLOBAL_DIR)
-    return _fold(canonical_path(path).parts)[: len(base)] == base
+    where = _fold(canonical_path(path).parts)
+    for folder in _git_global_dirs():
+        base = _fold(canonical_path(folder).parts)
+        if where[: len(base)] == base:
+            return True
+    return False
 
 
 def _fold(parts: Sequence[str]) -> tuple[str, ...]:
