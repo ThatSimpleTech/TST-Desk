@@ -1340,6 +1340,32 @@ Steering files (`AGENTS.md`, `CLAUDE.md`, `.tst/rules/**`) and the approval poli
 (`.tst/config.yaml`) are refused for writing no matter what you put in this list. That is
 enforced in the tool, not by configuration.
 
+**Paths that run code later ask first (TD-5108).** Some files run nothing when written, but
+git, a login shell, direnv or an editor runs what they say the next time it starts. A write to
+one of them is Class C, so it asks even though it is inside the workspace and inside this
+list:
+
+- any path with a `.git`, `.vscode`, `.idea` or `.husky` folder in it, at any depth — a nested
+  `sub/.git/` with `HEAD` and `config` makes `sub` a repo, and a `.git` file is a pointer to one;
+- `.envrc`, `.gitconfig`, and shell startup files (`.profile`, `.bashrc`, `.bash_profile`,
+  `.bash_login`, `.bash_logout`, `.bash_aliases`, `.zshrc`, `.zshenv`, `.zprofile`, `.zlogin`,
+  `.zlogout`), by name at any depth;
+- git hook-manager configs: `.pre-commit-config.yaml`, `lefthook.yml` / `.yaml` and their
+  dotted forms. The daemon's own memory commit runs the repo's commit hooks.
+
+Names match ignoring case. This covers `fs_write` and `fs_edit`, and shell redirects and `tee`
+into these paths (`echo … > .git/hooks/pre-commit`, `… >> ~/.bashrc`). Other shell write forms
+(`cp`, `mv`, `sed -i`) are not parsed; they ask through the shell floor below. Unlike a steering
+file, you can approve the write. An `auto` policy rule cannot pre-approve it (§4.4), and
+"Always allow" is not offered. Reads are unaffected. Skip-all runs these writes without asking,
+like every other Class C ask (§4.4); an autonomous run stops on them.
+
+Every git command the daemon runs itself (checkpoints, memory commits, the workspace manifest,
+`fs_grep`, the autonomy gate and summary, revert, the GitHub connector) is started with
+`-c core.fsmonitor=false -c safe.bareRepository=explicit`. Command-line settings beat every
+config file, so a planted `.git/config` cannot make the daemon run its fsmonitor command, with
+or without skip-all.
+
 **`allowed_commands` matching.** The command is split into top-level segments on pipes,
 semicolons, and the like; each segment's leading binary — after skipping `VAR=value` prefixes —
 is resolved with `which` and matched on the basename, so `git` and `/usr/bin/git` both match
@@ -1501,8 +1527,11 @@ before any rule is read, symlinks included.
 **Dangerously skip permissions** (skip-all) is not a key in this file. Settings → Policy
 has a machine-wide toggle that lives in the user data dir as `approvals.yaml`, so a clone
 cannot carry it. While it is on, every `ask` runs as auto — including `shell` and Class C —
-and caps do not pause. A `never` rule still refuses. The fs-tool boundary still refuses
-steering-file writes. The classifier still runs. `effect: yolo` is not a valid rule.
+and caps do not pause. That includes writes to paths that run code later (§4.1, TD-5108):
+skip-all does not ask for them, as Claude Code's bypass mode does not. The daemon's own git
+still never runs a repo's fsmonitor command. A `never` rule still refuses. The fs-tool
+boundary still refuses steering-file writes. The classifier still runs. `effect: yolo` is not
+a valid rule.
 
 **Computer-use glow**, **Agent cursor**, and **Show indicators on the real display** are also
 not keys in this file. Settings → Appearance persists them as `cu-indicators.yaml` in the

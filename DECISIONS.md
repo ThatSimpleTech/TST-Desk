@@ -13885,3 +13885,53 @@ the JSON envelope. `send_file` chunks stay at `CHUNK_MAX` (TD-5143).
 **Alternative rejected:** Downscaling the PNG so it fits 256 KB. TD-4705
 already refused silent downscale. Also rejected: leaving the library's
 1 MiB frame and telling people to shrink screenshots.
+
+---
+
+## 2026-10-19 — Paths that run code later are Class C; daemon git pins fsmonitor off (TD-5108, Class B)
+
+**Decision:** A write is Class C (`exec-later-write` for the fs tools,
+`shell-exec-later-write` for shell redirects and `tee`) when its path
+has a `.git`, `.vscode`, `.idea` or `.husky` segment at any depth, or
+its basename is `.envrc`, `.gitconfig`, a shell startup file
+(`.profile`, `.bashrc`, `.bash_profile`, `.bash_login`, `.bash_logout`,
+`.bash_aliases`, `.zshrc`, `.zshenv`, `.zprofile`, `.zlogin`,
+`.zlogout`) or a git hook-manager config (`.pre-commit-config.yaml`,
+`lefthook.yml`/`.yaml` and dotted forms). Names case-fold. Inside the
+workspace only the relative segments count; outside it the whole
+canonical path does, so `>> ~/.bashrc` is caught. The rules sit ahead
+of `memory-file-write`, so a `.git` under `.tst/memory/` is caught.
+Class C asks; the user can approve, unlike a steering write.
+
+Every git call the daemon makes starts with `git_command()`
+(`core/tstd/git_safe.py`): `-c core.fsmonitor=false -c
+safe.bareRepository=explicit`, the pair `fs_grep` already used
+(TD-5141). A test fails on any raw `"git"` argv in `tstd` outside the
+developer harnesses.
+
+Skip-all still runs these writes without asking. It is skip-everything
+(TD-806), Claude Code's bypass mode allows protected-path writes, and
+the approvals are off on EZER by Adam's choice. The fsmonitor pin holds
+with or without skip-all, so the daemon itself never runs a planted
+command. An autonomous run stops on them (Class C never auto-runs
+there, TD-4101).
+
+**Rationale:** One Class A `fs_write` to `.git/config` setting
+`core.fsmonitor` ran that command on the checkpointer's next `git add`,
+outside the wall and with no approval (found by the TD-5141 review).
+The story names `.git`, `.envrc`, shell rc files, `.vscode` and
+`.idea`. The other shell startup files are the same thing. `.gitconfig`
+is git config like `.git/config`. The hook managers are listed because
+the daemon's memory commit runs `git commit`, which runs the repo's
+hooks, so `.husky/pre-commit` or a local hook in
+`.pre-commit-config.yaml` was code the daemon itself would run.
+
+**Alternatives rejected:** Refusing these writes outright like steering
+(the story says Class C; editing `.vscode/settings.json` is legitimate).
+Making skip-all still ask for them (adds an approval to the mode that
+exists to have none). Turning hooks off for the daemon's own git with
+`core.hooksPath` (it would also skip checks users rely on, such as a
+secret scanner on the memory commit). Claude Code's whole list (`.npmrc`,
+`.bazelrc`, `.devcontainer` and others): nothing in TST Desk runs them,
+so they can be promoted later. Parsing `cp`/`mv`/`sed -i` targets: they
+still ask through the shell floor.
