@@ -416,6 +416,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `list_policy_rules` | yes | List the workspace's saved policy rules. |
 | `revoke_policy_rule` | yes | Remove one saved rule, identified by `(tool, args)`. |
 | `set_spend_cap` | yes | Set or clear the workspace's session spend budget (`caps.spend_usd` in `.tst/config.yaml`). Null removes it and the built-in $25 pause applies; a number replaces that pause. Acked with `boundary_update`. |
+| `trust_workspace_config` | yes | Trust or decline the workspace's `.tst/config.yaml` when it loosens anything, naming the `sha256` the card showed (TD-5113). A file that changed since is refused with `workspace_config_changed` and re-announced. The decision is stored per workspace in the data dir and applies to every live session there; acked with their `boundary_update`. Only this computer's own window may send it (`loopback_only` otherwise). |
 | `set_skip_all_approvals` | — | Turn skip-all (dangerously skip permissions) on or off. Machine-wide; every ask including shell and Class C runs as auto; caps do not pause; `never` still refuses. Acked with `setup_state`. |
 | `set_load_global_memory` | — | Turn global memory on or off. Machine-wide; off never reads `~/.tstdesk/memory/`. Acked with `setup_state` (TD-2603). |
 | `set_coworker` | — | Turn coworker mode on or off. Machine-wide; persists `{user_data_dir}/coworker.yaml`. Acked with `setup_state` (TD-2905). |
@@ -540,7 +541,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `checkpoint_notice` | session | A one-time notice that checkpointing is degraded. |
 | `verify_result` | session | Interactive validator review of a write turn. Timeline only; not a chat bubble (TD-4204). |
 | `cost_update` | session | Accrued spend: this turn, this session, all time, by tier, and the classifier separately. |
-| `boundary_update` | session | The resolved workspace boundary and caps, and where they came from. |
+| `boundary_update` | session | The resolved workspace boundary and caps, and where they came from. Additive `config_trust` (TD-5113) is set when the workspace config loosens anything: `state` (`pending`, `trusted` or `declined`), its `sha256`, and each loosened setting with its default. Pending and declined run on packaged defaults. |
 | `turn_complete` | session | A finished turn: tokens, cost, tier, duration, and any failure code. A turn a restart cut is sealed once at revive with `failed`, zeros and `error_code: interrupted_by_restart` (TD-5018). |
 | `tier_state` | session | The active tier, any pinned override, slugs, preset, hosts (TD-1720), and plan-mode lock (TD-4603). Native-engine sessions only. |
 | `context_compacted` | session | Older turns were compacted to fit the context window. Never silent. Additive `trigger` (`auto` \| `manual` \| `from_here`) and `guidance` say who asked and what to keep (TD-5109). |

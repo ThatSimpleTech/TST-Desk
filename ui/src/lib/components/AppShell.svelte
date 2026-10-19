@@ -24,6 +24,7 @@
 	import PlanPane from './PlanPane.svelte';
 	import ApprovalBar from './ApprovalBar.svelte';
 	import MemoryProposalBar from './MemoryProposalBar.svelte';
+	import WorkspaceTrustCard from './WorkspaceTrustCard.svelte';
 	import { onEvent } from '../connection-status.svelte.js';
 	import { entries, push } from '../timeline-store.svelte.js';
 	import { inspectorCounts, tabCount } from '../inspector';
@@ -527,6 +528,7 @@
 </div>
 
 <ApprovalBar />
+<WorkspaceTrustCard />
 {#if projects.surface === 'home'}
 	<MemoryProposalBar />
 {/if}

@@ -368,12 +368,21 @@ def load_policy(workspace: str | Path) -> PolicyConfig:
 
     # An empty or comment-only file (e.g. the scaffolded template, TD-1103)
     # means "no rules", not an error.
+    if data is not None and not isinstance(data, dict):
+        raise ConfigError(f"{path} must contain a YAML mapping at the top level")
+    return policy_from_mapping(path, data)
+
+
+def policy_from_mapping(path: Path, data: dict[str, Any] | None) -> PolicyConfig:
+    """The ``policy:`` section of an already-parsed config; ``None`` is the defaults.
+
+    Shared by :func:`load_policy` and the trust gate (TD-5113).
+
+    Raises:
+        ConfigError: Naming the offending key.
+    """
     if data is None:
         return PolicyConfig()
-
-    if not isinstance(data, dict):
-        raise ConfigError(f"{path} must contain a YAML mapping at the top level")
-
     section: Any = data.get("policy", {})
     try:
         return PolicyConfig.model_validate(section)
@@ -439,11 +448,19 @@ def load_approved_imports(workspace: str | Path) -> frozenset[Path]:
     except yaml.YAMLError as e:
         raise ConfigError(f"Invalid YAML in {path}: {e}") from e
     # An empty or comment-only file (the TD-1103 scaffold) means no approvals.
+    if data is not None and not isinstance(data, dict):
+        raise ConfigError(f"{path} must contain a YAML mapping at the top level")
+    return approved_imports_from_mapping(path, data)
+
+
+def approved_imports_from_mapping(path: Path, data: dict[str, Any] | None) -> frozenset[Path]:
+    """``approved_external_imports`` of an already-parsed config (TD-5113).
+
+    Raises:
+        ConfigError: If the key is not a list of non-empty strings.
+    """
     if data is None:
         return frozenset()
-    if not isinstance(data, dict):
-        raise ConfigError(f"{path} must contain a YAML mapping at the top level")
-
     raw: Any = data.get("approved_external_imports", [])
     if not isinstance(raw, list):
         raise ConfigError(f"Invalid approved_external_imports in {path}: expected a list")

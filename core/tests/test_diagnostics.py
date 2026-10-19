@@ -292,8 +292,12 @@ class TestWithWorkspace:
             external = (Path(outside) / "shared.md").resolve()
             external.write_text("shared rules\n")
             (Path(work) / "AGENTS.md").write_text(f"# Rules\n\n@{external}\n")
-            save_approved_imports(work, [external])
             daemon, task = await _start_daemon(Path(tmp))
+            # Approved through TST Desk, so the write keeps its trust (TD-5113);
+            # the same list arriving with a clone would wait for the trust card.
+            daemon.workspace_trust.write_through(
+                work, lambda: save_approved_imports(work, [external])
+            )
             try:
                 ws = await _connect_and_handshake(
                     f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token

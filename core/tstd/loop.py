@@ -95,7 +95,7 @@ from .output_cap import (
     log_output_cap,
     stub_call,
 )
-from .policy import load_approved_imports, save_approved_imports
+from .policy import save_approved_imports
 from .progress_guard import (
     PROGRESS_CHECK_INSTRUCTION,
     ProgressGuard,
@@ -142,6 +142,7 @@ from .session import Session, SessionEventLog
 from .tools import ToolDispatcher, ToolRegistry
 from .tools.boundary import PathGuard
 from .tools.dispatch import build_decision_request
+from .workspace_trust import trusted_imports
 
 
 class ProviderLike(Protocol):
@@ -973,21 +974,41 @@ def _assembler_for(
     )
 
 
-def _load_import_approvals(workspace_path: str) -> set[Path]:
-    """Durable external-import approvals for *workspace_path* (TD-505).
+def _load_import_approvals(session: Session) -> set[Path]:
+    """Durable external-import approvals for the session's workspace (TD-505).
 
     A malformed config falls back to an empty allowlist (same
     tolerate-with-warning pattern as the daemon's config loaders) rather
-    than crashing the session.
+    than crashing the session. An untrusted config approves nothing
+    (TD-5113).
     """
     try:
-        return set(load_approved_imports(workspace_path))
+        return set(trusted_imports(session.workspace_path, session.trust_store))
     except ConfigError as e:
         log.warning(
             "approved-imports config invalid; using empty allowlist",
-            extra={"extra_fields": {"workspace_path": str(workspace_path), "error": str(e)}},
+            extra={
+                "extra_fields": {"workspace_path": str(session.workspace_path), "error": str(e)}
+            },
         )
         return set()
+
+
+def _persist_import_approvals(session: Session, approved: set[Path]) -> None:
+    """Save import approvals into the workspace config, keeping its trust (TD-5113).
+
+    Raises:
+        ConfigError: The write failed, or the config is untrusted
+            (``UntrustedConfigError``): the approval then stays session-only.
+    """
+    store = session.trust_store
+    if store is None:
+        save_approved_imports(session.workspace_path, approved)
+        return
+    store.write_through(
+        session.workspace_path,
+        lambda: save_approved_imports(session.workspace_path, approved),
+    )
 
 
 def session_boundary(session: Session) -> Boundary:
@@ -1007,6 +1028,20 @@ def _checkpointer_for(session: Session) -> Checkpointer:
     return Checkpointer(Path(session.workspace_path), session.id, branch=branch)
 
 
+def rebind_config(session: Session, dispatcher: ToolDispatcher) -> None:
+    """Point *dispatcher* at the session's reloaded boundary and policy (TD-5113).
+
+    The root is unchanged, so the checkpointer, ledger and memory committer
+    stay: only the path guard, the classifier's wall and the policy gate
+    read the config.
+    """
+    boundary = session_boundary(session)
+    dispatcher.path_guard = PathGuard(boundary)
+    if dispatcher.classifier is not None:
+        dispatcher.classifier.rebind(boundary)
+    dispatcher.policy = session.policy
+
+
 def rebind_workspace(session: Session, dispatcher: ToolDispatcher) -> None:
     """Point every root-bound piece of *dispatcher* at the session's root (TD-1715).
 
@@ -1017,18 +1052,14 @@ def rebind_workspace(session: Session, dispatcher: ToolDispatcher) -> None:
     session's boundary config and policy are already reloaded by the time
     this runs. Pieces a caller left unset stay unset.
     """
-    boundary = session_boundary(session)
     workspace = Path(session.workspace_path)
-    dispatcher.path_guard = PathGuard(boundary)
-    if dispatcher.classifier is not None:
-        dispatcher.classifier.rebind(boundary)
+    rebind_config(session, dispatcher)
     if dispatcher.checkpointer is not None:
         dispatcher.checkpointer = _checkpointer_for(session)
     if dispatcher.memory_committer is not None:
         dispatcher.memory_committer = MemoryCommitter(workspace)
     if dispatcher.ledger is not None:
         dispatcher.ledger = DecisionLedger(session.workspace_path)
-    dispatcher.policy = session.policy
     dispatcher.workspace = workspace
 
 
@@ -1091,7 +1122,7 @@ async def agent_loop(
 
     # External-import approvals (TD-505): approved paths are durable per
     # workspace; denied paths are session-scoped and not re-prompted.
-    approved_imports = _load_import_approvals(session.workspace_path)
+    approved_imports = _load_import_approvals(session)
     denied_imports: set[Path] = set()
 
     # Conversation messages only; the system message is assembled per
@@ -1258,9 +1289,19 @@ async def agent_loop(
         if runtime is not None:
             runtime.assembler = assembler
         approved_imports.clear()
-        approved_imports.update(_load_import_approvals(session.workspace_path))
+        approved_imports.update(_load_import_approvals(session))
 
     session.on_workspace_moved = _on_workspace_moved
+
+    # TD-5113: a trust decision re-reads the config for the same root.
+    # Only what the config feeds is rebound, so this is safe mid-turn.
+    def _on_config_reloaded() -> None:
+        if tool_dispatcher is not None:
+            rebind_config(session, tool_dispatcher)
+        approved_imports.clear()
+        approved_imports.update(_load_import_approvals(session))
+
+    session.on_config_reloaded = _on_config_reloaded
 
     # TD-4103: unattended runs poll definition-of-done after each turn.
     # Interactive sessions never attach a poller.
@@ -1553,11 +1594,12 @@ async def agent_loop(
                         )
                 if approved_any:
                     try:
-                        save_approved_imports(session.workspace_path, approved_imports)
+                        _persist_import_approvals(session, approved_imports)
                     except ConfigError as e:
                         # The in-memory set still gates this session; only
                         # the durable write fails (e.g. the config file is
-                        # malformed and cannot be round-tripped).
+                        # malformed and cannot be round-tripped, or is not
+                        # trusted yet: TD-5113).
                         log.warning(
                             "approved imports not persisted; approval is session-only",
                             extra={

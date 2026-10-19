@@ -959,6 +959,23 @@ class SetSpendCap(ClientMessage):
         return value
 
 
+class TrustWorkspaceConfig(ClientMessage):
+    """Trust or decline the session's workspace config (TD-5113).
+
+    ``sha256`` is the hash the trust card showed (``boundary_update``
+    ``config_trust.sha256``). A file that changed since is refused with
+    ``workspace_config_changed`` and re-announced, so a decision only ever
+    covers the bytes the user read. The decision applies to every live
+    session on that workspace and is acked with their ``boundary_update``.
+    Only this computer's own window may send it.
+    """
+
+    type: Literal["trust_workspace_config"] = "trust_workspace_config"
+    session_id: str
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    trust: bool
+
+
 class SetTierSlug(ClientMessage):
     """Name the model one tier of one preset uses (TD-1703).
 
@@ -1766,6 +1783,27 @@ class TierState(DaemonEvent):
     vision: bool = False
 
 
+class LoosenedSetting(BaseModel):
+    """One setting a workspace config loosens, for the trust card (TD-5113)."""
+
+    key: str
+    value: str
+    default: str
+
+
+class ConfigTrust(BaseModel):
+    """Whether the workspace's ``.tst/config.yaml`` is in force (TD-5113).
+
+    ``pending``: it loosens something and the user has not decided on
+    this hash; ``declined``: they kept the defaults. Both run on packaged
+    defaults. ``trusted``: it applies.
+    """
+
+    state: Literal["pending", "trusted", "declined"]
+    sha256: str
+    loosened: list[LoosenedSetting]
+
+
 class BoundaryUpdate(DaemonEvent):
     """The workspace boundary, emitted when a session opens (TD-706).
 
@@ -1791,6 +1829,9 @@ class BoundaryUpdate(DaemonEvent):
     # against this workspace's real numbers instead of a hardcoded guess.
     # Additive with a default: a client that ignores it behaves as it did.
     attachments: AttachmentLimits = Field(default_factory=AttachmentLimits)
+    # TD-5113: set when the workspace config loosens anything, so the
+    # window can ask before it applies. None when there is nothing to ask.
+    config_trust: ConfigTrust | None = None
 
 
 class TurnComplete(DaemonEvent):
@@ -3279,6 +3320,7 @@ ClientMessageT = Annotated[
     | ApproveGrokPlan
     | ListGrokExtensions
     | SetSpendCap
+    | TrustWorkspaceConfig
     | SetTierSlug
     | SetCredential
     | DeleteCredential
@@ -3477,6 +3519,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "approve_grok_plan",
         "list_grok_extensions",
         "set_spend_cap",
+        "trust_workspace_config",
         "set_tier_slug",
         "set_credential",
         "delete_credential",

@@ -1313,6 +1313,10 @@ you raise a cap and continue without restarting.
 Six top-level sections live here, each read by a different part of the daemon: `boundary`,
 `caps`, `attachments`, `policy`, `approved_external_imports`, and `memory`.
 
+**A file that loosens anything waits for your trust (TD-5113).** This file usually arrives with
+a clone, so one that loosens the packaged defaults (an `auto` rule, a network host, a raised
+cap, an external import) is shown to you first and does not apply until you trust it. See §4.8.
+
 ### 4.1 `boundary` — where the agent may act
 
 | Key | Type | Default | Effect |
@@ -1465,7 +1469,7 @@ A rule has three keys:
 **No rule can make a Class C call run silently.** An `effect: auto` rule that matches a Class C
 call is downgraded to `class_c_default` — you can loosen approvals for ordinary work, but the
 riskiest calls always come back to you (or are refused). "Always allow this in this workspace"
-in the approval card writes a rule here for you.
+in the approval card writes a rule here for you, and keeps the file trusted (§4.8).
 
 **Reads inside the workspace never ask (TD-5141).** `fs_read`, `fs_list` and `fs_grep` on a
 path inside the workspace are Class A by a fixed rule, so they run without asking and without
@@ -1645,6 +1649,46 @@ network must be 'deny' or a list of allowed hosts
 ```
 
 An empty list, `network: []`, is legal and means the same thing as `deny`.
+
+### 4.8 Trusting a config that came with the workspace (TD-5113)
+
+A cloned repo could put shell `auto` rules, a network allowlist or a higher spend cap in this
+file and have them apply the moment you opened it. Now the daemon reads the file once, hashes
+those exact bytes, and compares every setting with the packaged defaults. A setting loosens
+them when:
+
+| Setting | Loosens when |
+|---|---|
+| `policy.rules` | A rule has `effect: auto`. |
+| `boundary.network` | It names any host. The default is `deny`. |
+| `boundary.writable_paths` | An entry is absolute, starts with `~`, or climbs out with `..`. Writes outside the workspace are refused whatever this says; the entry is shown because the file asked for it. |
+| `caps.*`, `attachments.*`, `memory.max_lines` | The value is above the default. |
+| `approved_external_imports` | It lists any path. |
+| `mcp_servers`, `hooks` | The key is set at all. TST Desk does not read either from a workspace yet; they are judged now so a later feature cannot run them untrusted. |
+
+Tightening never asks: `allowed_commands`, `ask` and `never` rules, `class_c_default: never`,
+an approval timeout, narrower `writable_paths` and lower caps apply as written. A section the
+loader would refuse (§6) loosens nothing, since it does not apply anyway.
+
+When the file loosens something:
+
+- **You see it before it applies.** A card above the composer lists each loosened setting next
+  to its default, with **Trust and apply** and **Keep defaults**. `tst run` cannot show the
+  card, so it prints one line on stderr saying the run is on the defaults.
+- **Until you trust it, the workspace runs on the packaged defaults.** The whole file is set
+  aside, not only the loosened keys. The title bar's source reads `defaults — workspace config
+  not trusted yet`.
+- **The decision is kept per workspace and tied to the file's SHA-256.** It lives in
+  `workspace_trust.yaml` in the user data dir, never in the workspace, so a repo cannot ship
+  its own trust. Any change to the file, your own hand edit included, asks again. Keep defaults
+  is remembered too: the card shrinks to one line with **Review**, which opens it again.
+- **TST Desk's own writes keep their trust.** Always allow, Revoke, Settings → Budget and
+  approving an external import rewrite this file. When the file was in force before the write,
+  the new hash is stored as trusted, so your own rules never ask. While it is not trusted those
+  writes are refused with `workspace_config_untrusted` (approve once instead), and an approved
+  import lasts for the session only.
+- **Only this computer decides.** A phone or another computer that sends the decision gets
+  `loopback_only`. A session on another computer shows the card without its buttons.
 
 ---
 

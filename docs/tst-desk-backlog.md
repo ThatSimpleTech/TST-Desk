@@ -9236,6 +9236,26 @@ minutes (2026-10-14).
 - [x] Tests fail on the old code (nine attempts, no `stream`) and pass
       on the new
 
+### TD-5113 — Trust prompt for repo-supplied config
+**Size:** 3 · **Depends on:** none
+
+A cloned repo's `.tst/config.yaml` applied on open, so it could grant itself shell `auto`
+rules, a network allowlist or raised caps (gap audit 2026-10-14, protects directive 6).
+
+**Acceptance criteria:**
+- [x] The first time a workspace opens with a `.tst/config.yaml` that loosens anything (auto
+      rules, writable paths, network, MCP servers), TST Desk shows the loosened rules and asks
+      before applying them
+- [x] The decision is stored per workspace and keyed to the config's hash. A changed config
+      asks again
+- [x] Until it is trusted, the workspace runs with packaged defaults
+
+**Notes:** Loosening is judged against the packaged defaults on the loaders' own models; caps,
+attachment caps, `memory.max_lines`, external imports and `hooks` count too. The decision is
+`trust_workspace_config` (loopback only), and the state rides on `boundary_update.config_trust`.
+TST Desk's own writes keep the trust they were made under. See DECISIONS.md and
+configuration.md §4.8.
+
 ---
 
 # Epic E52 — Files to the user

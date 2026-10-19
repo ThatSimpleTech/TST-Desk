@@ -134,7 +134,8 @@ class BoundaryConfig(BaseModel):
         return frozenset()
 
 
-def _config_path(workspace: str | Path) -> Path:
+def workspace_config_path(workspace: str | Path) -> Path:
+    """``<workspace>/.tst/config.yaml``."""
     return Path(workspace) / ".tst" / "config.yaml"
 
 
@@ -181,7 +182,7 @@ def scaffold_workspace_config(workspace: str | Path) -> Path | None:
     Returns the path written, or None when a config already exists —
     scaffolding never overwrites a user's file.
     """
-    path = _config_path(workspace)
+    path = workspace_config_path(workspace)
     if path.exists():
         return None
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -199,7 +200,7 @@ def load_workspace_boundary(workspace: str | Path) -> BoundaryConfig:
             validation.  The message names the offending key so the user
             can fix it directly.
     """
-    path = _config_path(workspace)
+    path = workspace_config_path(workspace)
     if not path.exists():
         return BoundaryConfig()
 
@@ -215,12 +216,22 @@ def load_workspace_boundary(workspace: str | Path) -> BoundaryConfig:
 
     # An empty or comment-only file (e.g. the scaffolded template) means
     # "all defaults", not an error.
+    if data is not None and not isinstance(data, dict):
+        raise ConfigError(f"{path} must contain a YAML mapping at the top level")
+    return boundary_from_mapping(path, data)
+
+
+def boundary_from_mapping(path: Path, data: dict[str, Any] | None) -> BoundaryConfig:
+    """Validate an already-parsed config mapping; ``None`` is the defaults.
+
+    Shared by :func:`load_workspace_boundary` and the trust gate (TD-5113),
+    which parses the same bytes it hashed.
+
+    Raises:
+        ConfigError: Naming the offending key.
+    """
     if data is None:
         return BoundaryConfig()
-
-    if not isinstance(data, dict):
-        raise ConfigError(f"{path} must contain a YAML mapping at the top level")
-
     try:
         return BoundaryConfig.model_validate(data)
     except ValidationError as e:
@@ -229,20 +240,14 @@ def load_workspace_boundary(workspace: str | Path) -> BoundaryConfig:
         raise ConfigError(f"Invalid boundary config in {path}: {loc}: {first['msg']}") from e
 
 
-def configured_spend(workspace: str | Path) -> float | None:
-    """The ``caps.spend_usd`` written in ``.tst/config.yaml``, or None.
+def configured_spend_from_mapping(data: Any) -> float | None:
+    """The ``caps.spend_usd`` in a parsed ``.tst/config.yaml``, or None.
 
-    A missing file, a comment-only scaffold, and a ``caps`` section that
-    omits ``spend_usd`` are unset. The built-in pause still uses
-    ``DEFAULT_SPEND_USD``; this only says whether the user assigned one.
+    A missing file (``None``), a comment-only scaffold, and a ``caps``
+    section that omits ``spend_usd`` are unset. The built-in pause still
+    uses ``DEFAULT_SPEND_USD``; this only says whether the user assigned
+    one. Callers pass the trust gate's ``view.effective`` (TD-5113).
     """
-    path = _config_path(workspace)
-    if not path.exists():
-        return None
-    try:
-        data: Any = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
-        return None
     if not isinstance(data, dict):
         return None
     caps = data.get("caps")
@@ -262,7 +267,7 @@ def save_spend_cap(workspace: str | Path, amount: float | None) -> None:
     """
     if amount is not None and amount < 0:
         raise ConfigError("spend_usd must be >= 0")
-    path = _config_path(workspace)
+    path = workspace_config_path(workspace)
     existing: dict[str, Any] = {}
     if path.exists():
         try:
@@ -300,5 +305,5 @@ def save_spend_cap(workspace: str | Path, amount: float | None) -> None:
 
 def boundary_source(workspace: str | Path) -> str:
     """Describe where the boundary came from (for the UI/event)."""
-    path = _config_path(workspace)
+    path = workspace_config_path(workspace)
     return str(path) if path.exists() else "defaults"

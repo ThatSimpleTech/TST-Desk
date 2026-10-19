@@ -597,6 +597,16 @@ export interface SetSpendCap extends ClientMessage {
   spend_usd: number | null;
 }
 
+/** Trust or decline the workspace's loosening `.tst/config.yaml` (TD-5113).
+ *  `sha256` is the hash the card showed; a changed file is refused with
+ *  `workspace_config_changed`. Acked with `boundary_update`. Loopback only. */
+export interface TrustWorkspaceConfig extends ClientMessage {
+  type: "trust_workspace_config";
+  session_id: string;
+  sha256: string;
+  trust: boolean;
+}
+
 export interface SetTierSlug extends ClientMessage {
   type: "set_tier_slug";
   preset: string;
@@ -977,6 +987,7 @@ export type ClientMessageUnion =
   | ApproveGrokPlan
   | ListGrokExtensions
   | SetSpendCap
+  | TrustWorkspaceConfig
   | SetTierSlug
   | SetCredential
   | DeleteCredential
@@ -1222,6 +1233,21 @@ export interface TierState extends DaemonEvent {
   vision?: boolean;
 }
 
+/** One setting a workspace config loosens (TD-5113). */
+export interface LoosenedSetting {
+  key: string;
+  value: string;
+  default: string;
+}
+
+/** Whether the workspace's config is in force (TD-5113). Pending and
+ *  declined run on the packaged defaults. */
+export interface ConfigTrust {
+  state: "pending" | "trusted" | "declined";
+  sha256: string;
+  loosened: LoosenedSetting[];
+}
+
 export interface BoundaryUpdate extends DaemonEvent {
   type: "boundary_update";
   session_id: string;
@@ -1237,6 +1263,9 @@ export interface BoundaryUpdate extends DaemonEvent {
   // TD-1709: the workspace's attachment caps, so the composer refuses early
   // against real numbers. Optional because an older daemon does not send it.
   attachments?: AttachmentLimits;
+  /** TD-5113: set when the workspace config loosens anything. Omitted or
+   *  null when there is nothing to ask (and by older daemons). */
+  config_trust?: ConfigTrust | null;
 }
 
 export interface TurnComplete extends DaemonEvent {
