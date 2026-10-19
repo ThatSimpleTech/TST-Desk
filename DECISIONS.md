@@ -13432,7 +13432,8 @@ turn.
 **Stop does not reach the review.** It runs after `turn_complete`, so
 `stop_turn` finds no open turn, as before this change. Ending the
 session or quitting cancels it, and the stream's hang-up then reaches
-the server. Making Stop end the review is a follow-up.
+the server. Making Stop end the review is a follow-up. *Superseded by
+TD-5151 (2026-10-19): Stop now ends a running review.*
 
 **Unchanged.** The turn's own stream keeps the full retry policy. The
 classifier, DoD polls and judgment calls stay non-streamed: they ask for
@@ -14518,3 +14519,51 @@ which is far more than a label change needs.
 shows one row per event, as the daemon sent it (the UI never derives
 truth it was not given); the quieter row is what stops them reading as
 thrashing.
+
+---
+
+## 2026-10-19 — TD-5151: Stop ends a running after-write review (Class B)
+
+The after-write review (TD-4204, streamed since TD-5146) runs after
+`turn_complete`. `Session.stop_turn` returns early when no turn is open,
+so Stop did nothing to it, and the loop could not take the next message
+until the review finished, minutes on a local model.
+
+**Decision.** The session counts running reviews (`review_open()`, a
+context manager, and `review_in_flight`). `_run_validator` holds one open
+for its whole span, prompt assembly included, and `stop_turn` treats an
+open review like an open turn. The validator call runs in a task of its
+own, raced against the stop flag (`wait_for_stop_turn`). Stop cancels that
+task, so the stream is closed in the task that opened it and the hang-up
+ends the server's generation, as a session cancel already did. The review
+reports `verdict: "error"`, `summary: "Verify stopped."`, cost 0, the
+same shape as an ask-mode deny (`Verify skipped.`), so the protocol and
+the timeline are unchanged. Nothing is read from the partial text. The
+review then acknowledges the stop when no turn is open, so it cannot
+leak into the next one.
+
+**Where a stop lands.** One that lands as the turn ends, before the
+call starts, skips the call: the user said stop. One that also belongs to
+a turn is left for the loop to acknowledge: a turn running beside a
+confirmed ask-mode review (that review runs in the `run_verify` handler,
+not the loop) is stopped too, and a message queued behind the review
+still runs, because the dequeue drops a stop that landed before it
+(TD-5003). Stopping the queued message as well would discard text the
+user sent; the more conservative choice keeps it.
+
+**Unchanged.** Ending the session or quitting still cancels the review
+by cancelling its task, with no `verify_result`. Stop leaves an ask-mode
+review that is waiting for confirmation alone; Run or Skip still decide
+it. `busy` in the session list still means a turn is owed, not a review.
+The window shows Stop only while it waits on a turn, so during a review
+with nothing sent Stop is reached by sending a message or from another
+client; a visible "reviewing" state would need a new event and is left
+for a later story. A confirmed ask-mode review still runs inside the
+`run_verify` handler, so a Stop sent on that same socket waits behind it
+(the socket's messages are handled one at a time); no window sends
+`run_verify` yet, and moving it to a task of its own is a follow-up.
+
+**Rejected:** counting the review as an open turn (it would make `busy`,
+fork, compaction and the restart drain wait on an advisory call);
+cancelling the review from `stop_turn` directly (the session would have
+to own the review's task, and the loop's task already owns it).

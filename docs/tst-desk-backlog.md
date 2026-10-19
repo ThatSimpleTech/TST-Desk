@@ -9231,10 +9231,33 @@ minutes (2026-10-14).
 - [x] A stream that ends without a finish reason is an error, never a
       verdict
 - [x] Ending the session, or quitting during a distill, closes the
-      stream (Stop does not reach the review; follow-up)
+      stream (Stop does not reach the review; follow-up, done in TD-5151)
 - [x] The turn's own retry policy is unchanged
 - [x] Tests fail on the old code (nine attempts, no `stream`) and pass
       on the new
+
+### TD-5151 — Stop ends a running after-write review
+**Size:** 2 · **Depends on:** TD-4204, TD-5003, TD-5146
+
+The after-write review runs after `turn_complete`, so `stop_turn` found
+no open turn and returned early. Stop did nothing to a running review;
+only ending the session or quitting cancelled it, and the loop could not
+take the next message for the review's whole run (minutes on a local
+model).
+
+**Acceptance criteria:**
+- [x] Stop while the review runs cancels the review's call, and the
+      stream's hang-up reaches the server
+- [x] The review is reported as stopped (`Verify stopped.`) with no
+      verdict read from the partial text
+- [x] The session is idle right after: no review or turn open, no stop
+      left set, the loop waiting for the next message
+- [x] The ask-mode path keeps working: Stop leaves a pending review to
+      Run or Skip, and Stop also ends a review the user confirmed
+- [x] A turn sent after Stop works, and a message already queued behind
+      the review still runs
+- [x] Tests fail on the old code (Stop during a hanging validator stream
+      leaves it running) and pass on the new
 
 ### TD-5113 — Trust prompt for repo-supplied config
 **Size:** 3 · **Depends on:** none
