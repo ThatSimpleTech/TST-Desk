@@ -13885,3 +13885,46 @@ the JSON envelope. `send_file` chunks stay at `CHUNK_MAX` (TD-5143).
 **Alternative rejected:** Downscaling the PNG so it fits 256 KB. TD-4705
 already refused silent downscale. Also rejected: leaving the library's
 1 MiB frame and telling people to shrink screenshots.
+
+---
+
+## 2026-10-19 — TD-5147: Edit and the branch arrows map the window's turn through summaries (Class B)
+
+**Decision:** `fork_from` and `set_branch` map the window's `user_index`
+through `window_user_turns`, the TD-5109 mapping `compact_now` already
+uses (one helper, `Session._find_user_turn`, serves all three). Branch
+snapshots (`_branches`, `_branch_cursor`) stay keyed by the window's
+number, which no compaction changes; only the cut in `fork_from` and the
+turn text a `set_branch` reset carries are looked up in the conversation.
+A turn inside a summary is refused with the existing
+`user_turn_compacted`. `set_branch` checks the live conversation: once the
+turn under the arrows is folded into a summary, its other versions are
+out of reach, the same as Edit. The daemon now sends words for each
+fork/branch refusal (`_BRANCH_REFUSALS`) instead of the code with its
+first underscore replaced, and the window's toast for
+`user_turn_compacted` is "Already in a summary" with the daemon's text.
+`window_user_turns` skips the first message only when it is the system
+prompt, because a Grok-engine conversation has none and its first
+message is user turn 0.
+
+**Rationale:** The window numbers user turns from the start of the
+session; the old code counted the user messages left in the
+conversation, so after any compaction Edit cut at a later turn or
+answered `user_turn_not_found`, and a branch switch carried the wrong
+text or none. Keying the snapshots by the window's number keeps them
+valid across compactions with no re-keying. Snapshots are whole
+conversations, so restoring one is right whatever compaction it has.
+Checking the live conversation, not the snapshot, is the conservative
+choice: every snapshot a switch can restore was frozen while its turn
+was still word for word, so a switch never lands on a version it cannot
+name, and the window is never asked to show a branch whose turn the
+model no longer sees.
+
+**Alternative rejected:** Re-keying `_branches` to conversation positions
+after every compaction, which would have to follow every summary and
+every restart. Also rejected: letting the arrows switch a summarized
+turn. Restoring the snapshot would work for the model, but the reset
+could not say what that turn's text is when the window has no copy of
+its own (after a reload), and Edit on the same row is refused anyway.
+A new refusal code: `user_turn_compacted` already means this and the
+window already knows it.

@@ -9236,6 +9236,34 @@ minutes (2026-10-14).
 - [x] Tests fail on the old code (nine attempts, no `stream`) and pass
       on the new
 
+### TD-5147 — Edit and branch arrows pick the right turn after compaction
+**Size:** 2 · **Depends on:** TD-1708, TD-5109
+
+The window numbers user turns from the start of the session.
+`fork_from` and `set_branch` counted the user messages left in the
+conversation, so after a compaction (auto, `/compact` or "Summarize
+from here") Edit or the branch arrows picked a later turn, or answered
+`user_turn_not_found`. TD-5109 gave every summary a user-turn count and
+`compact_now` a mapping; these two did not use it.
+
+**Acceptance criteria:**
+- [x] `fork_from` maps the window's `user_index` through the summaries
+      in the conversation (`window_user_turns`) and cuts at that turn,
+      after an auto compaction and after a "Summarize from here"
+- [x] `set_branch` restores the sibling at the window's turn and its
+      reset carries that turn's text, after an auto compaction and after
+      a "Summarize from here"
+- [x] Branch snapshots stay keyed by the window's number; only the cut
+      and the reset text are looked up in the conversation
+- [x] A turn inside a summary is refused with `user_turn_compacted` by
+      both, and the conversation is left as it was
+- [x] The daemon sends words for each fork/branch refusal, and the
+      window shows `user_turn_compacted` as an "Already in a summary"
+      toast with them, not a raw code
+- [x] A conversation with no system prompt (Grok engine) still numbers
+      its first message as user turn 0
+- [x] Tests fail on the old code and pass on the new
+
 ---
 
 # Epic E52 — Files to the user

@@ -407,8 +407,8 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `pair` | — | First frame from a phone redeeming a pairing code, instead of `hello`: code, device name, protocol version. Remote peers only (loopback gets `bad_request`). Optional `replaces`: the phone's current key, whose entry is retired. Success is a bare `pair_ok` with the device's own key, then close 1000; failure is `pair_failed` or `pair_locked`, then close 1008 (TD-5014). |
 | `open_workspace` | — | Open a workspace directory as a new session. |
 | `user_message` | yes | Queue a user turn for the session's loop. |
-| `fork_from` | yes | Replace a past user turn and fork a sibling from there. Refused mid-turn. |
-| `set_branch` | yes | Switch to another sibling at a forked user turn. |
+| `fork_from` | yes | Replace a past user turn and fork a sibling from there. `user_index` counts user turns from the start of the session and is mapped through compaction summaries; a turn inside one is refused with `user_turn_compacted` (TD-5147). Refused mid-turn. |
+| `set_branch` | yes | Switch to another sibling at a forked user turn, numbered and refused like `fork_from` (`user_turn_compacted` once that turn is inside a summary, TD-5147). Refused mid-turn. |
 | `compact_context` | yes | Compact now: everything before the latest user turn, or from a given user turn on, with optional guidance (TD-5109). Refused mid-turn. |
 | `approve` | yes | Approve a parked tool call. |
 | `deny` | yes | Deny a parked tool call, with an optional reason. |
