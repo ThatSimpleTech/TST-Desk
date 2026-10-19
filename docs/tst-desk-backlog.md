@@ -9260,6 +9260,77 @@ DECISIONS.md and configuration.md §4.8.
 
 ---
 
+### TD-5108 — Protect paths that execute later
+**Size:** 3 · **Depends on:** none · Gap audit 2026-10-14, safety batch
+
+One Class A `fs_write` to `.git/config` that set `core.fsmonitor` ran
+that command, with no approval and outside the wall, the next time the
+checkpointer ran `git add` after a write (found by the TD-5141 review,
+git 2.53).
+
+**Acceptance criteria:**
+- [x] Writes to any path with a `.git` segment (the workspace's own
+      `.git/**` and any nested one), `.envrc`, `.bashrc`/`.zshrc`/
+      `.profile`, `.vscode/**` and `.idea/**` are Class C through fs
+      tools and through the shell write-target table
+- [x] Every git call the daemon makes runs with
+      `-c core.fsmonitor=false` (checkpoint, memory commit, manifest,
+      supervisor, charter, plus revert, wakeup and the GitHub
+      connector), as `fs_grep` already does. A test plants a fsmonitor
+      command in `.git/config` and shows a checkpoint does not run it
+- [x] Whether skip-all mode still asks for these is decided and written
+      down in docs/configuration.md (it does not: skip-all is
+      skip-everything; the fsmonitor and hooks pins hold either way,
+      and the filter-driver residual is written down)
+- [x] Tests cover fs_write and a shell redirect to
+      `.git/hooks/pre-commit`
+
+Done (2026-10-19): rules `exec-later-write` and
+`shell-exec-later-write` sit ahead of every grant. The list also covers
+`.husky`, the other shell startup files, `.gitconfig` and git
+hook-manager configs (lefthook `-local` names too). Shared
+`git_command()` in `core/tstd/git_safe.py` pins fsmonitor off and
+`core.hooksPath` at nothing, so the daemon's own commits, checkpoints
+and pushes run no hook (PR #13 review: a `core.hooksPath` folder or a
+script a hook calls was a Class A edit the memory commit then ran). The
+validator's diff runs no external diff or textconv. A test fails on any
+raw `"git"` argv in `tstd`. Class B entry in DECISIONS.md, with the
+filter-driver and `gpg.program` residual risk.
+
+---
+
+### TD-5101 — Shell rules: judge every segment of a chained command, deny first
+**Size:** 5 · **Depends on:** none
+
+From the 2026-10-14 gap audit (docs/gap-audit-2026-10-14.md, Adam's
+decision 1). One `fnmatch` glob over the whole command line let
+`npm test*` auto-run `npm test; curl x`, and a narrow `auto` rule beat
+a broad `never`.
+
+**Acceptance criteria:**
+- [x] A shell command is split on `;`, `&&`, `||`, `|`, newlines, `$(…)`
+      and backticks, after stripping wrappers such as `timeout`, `nice`
+      and `env VAR=…`. An `auto` rule applies only when every segment
+      matches an `auto` rule.
+- [x] A `never` rule that matches any segment refuses the call, whatever
+      narrower `auto` rule exists. `never` beats `ask` beats `auto`, and
+      specificity only breaks ties within one effect.
+- [x] Tests cover `npm test; curl x`, `npm test && rm -rf y`,
+      `npm test | sh`, `$(curl x)` and a wrapped `timeout 60 npm test`.
+- [x] The example rules in docs/configuration.md are rewritten so they
+      are no longer exploitable, and the change is noted in DECISIONS.md.
+
+Done (2026-10-19): `core/tstd/policy_shell.py` splits the line and
+`policy._decide` checks `never`, then `ask`, then `auto` for every
+segment. `env VAR=…` and assignments are stripped for `never` and `ask`
+only; `auto` keeps them, since they change what runs (DECISIONS.md).
+A line that can't be split with confidence never auto-runs. "Always
+allow" is not offered for a chained command. Tests:
+`core/tests/test_policy_shell.py`, plus loop and daemon cases in
+`core/tests/test_approval_flow.py`.
+
+---
+
 # Epic E52 — Files to the user
 
 Filed 2026-10-15. The agent built an APK for Adam and had no way to hand it over in the chat.

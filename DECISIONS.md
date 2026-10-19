@@ -13908,6 +13908,154 @@ in front of the permission prompts, so it cannot be the check CI runs.
 
 ---
 
+## 2026-10-19 — Paths that run code later are Class C; daemon git pins fsmonitor and hooks off (TD-5108, Class B)
+
+**Decision:** A write is Class C (`exec-later-write` for the fs tools,
+`shell-exec-later-write` for shell redirects and `tee`) when its path
+has a `.git`, `.vscode`, `.idea` or `.husky` segment at any depth, or
+its basename is `.envrc`, `.gitconfig`, a shell startup file
+(`.profile`, `.bashrc`, `.bash_profile`, `.bash_login`, `.bash_logout`,
+`.bash_aliases`, `.zshrc`, `.zshenv`, `.zprofile`, `.zlogin`,
+`.zlogout`) or a git hook-manager config (`.pre-commit-config.yaml`,
+`lefthook.yml`/`.yaml` and dotted forms). Names case-fold. Inside the
+workspace only the relative segments count; outside it the whole
+canonical path does, so `>> ~/.bashrc` is caught. The rules sit ahead
+of `memory-file-write`, so a `.git` under `.tst/memory/` is caught.
+Class C asks; the user can approve, unlike a steering write.
+
+Every git call the daemon makes starts with `git_command()`
+(`core/tstd/git_safe.py`): `-c core.fsmonitor=false -c
+core.hooksPath=/dev/null -c safe.bareRepository=explicit` (`nul` on
+Windows). The first and last are the pair `fs_grep` already used
+(TD-5141). The hooks pin means the daemon's own git runs no hook at
+all: not the memory or charter commit's commit hooks, not the
+`reference-transaction` hook the checkpointer's `update-ref` fires, not
+the GitHub connector's `pre-push`. The validator's `git diff` also
+passes `--no-ext-diff --no-textconv`. A test fails on any raw `"git"`
+argv in `tstd` outside the developer harnesses.
+
+Skip-all still runs these writes without asking. It is skip-everything
+(TD-806), Claude Code's bypass mode allows protected-path writes, and
+the approvals are off on EZER by Adam's choice. An autonomous run stops
+on them (Class C never auto-runs there, TD-4101). With or without
+skip-all, the daemon's own git never runs a repo's fsmonitor command or
+a hook.
+
+**Residual risk (recorded, not closed):** git config can name other
+commands, and the daemon's git still runs them when a config file names
+them: a filter driver's `clean` on the checkpointer's and memory
+commit's `git add` and on `git status`, its `smudge` on revert's
+`checkout-index`, `gpg.program` on the memory and charter commits when
+`commit.gpgSign` is set, and `core.askPass` on the connector's fetch or
+push. The files that name them (`.git/config`, `.git/info/attributes`,
+`.gitconfig`) are Class C, so in a mode that asks, planting one needs an
+approval. Under skip-all that write runs without asking, and the
+daemon then runs the planted command outside the wall. One Class A
+path remains too: an in-tree `.gitattributes` can point a file at a
+filter the user configured, and a filter such as `python -m nbstripout`
+imports from the repo root first, so a workspace `nbstripout.py` would
+run. Closing these means staging blobs without filters
+(`hash-object --no-filters` plus `update-index --cacheinfo`) and
+restoring by writing blob bytes, which changes what checkpoints store
+for CRLF and LFS files. That is a follow-up story, not this one.
+
+**Rationale:** One Class A `fs_write` to `.git/config` setting
+`core.fsmonitor` ran that command on the checkpointer's next `git add`,
+outside the wall and with no approval (found by the TD-5141 review).
+The story names `.git`, `.envrc`, shell rc files, `.vscode` and
+`.idea`. The other shell startup files are the same thing. `.gitconfig`
+is git config like `.git/config`. The hook managers (`.husky`,
+`.pre-commit-config.yaml`, every lefthook base and `-local` name) are
+listed because the user's own `git commit` runs what they name. They
+do not protect the daemon: a name list cannot, because a user's
+`core.hooksPath` folder can have any name and an existing hook can call
+any workspace script, both ordinary Class A edits (PR #13 review). The
+daemon is protected by running no hooks.
+
+**Alternatives rejected:** Refusing these writes outright like steering
+(the story says Class C; editing `.vscode/settings.json` is legitimate).
+Making skip-all still ask for them (adds an approval to the mode that
+exists to have none). Keeping hooks on for the daemon's own commits
+so a user's secret scanner checks the memory commit: the first draft
+did this and relied on the hook-manager names, which do not close the
+path (above). The memory commit holds only `.tst/memory/` notes, and the
+user's own commits and CI still run their checks. `--no-verify` alone
+(it skips only `pre-commit` and `commit-msg`). Claude Code's whole list (`.npmrc`,
+`.bazelrc`, `.devcontainer` and others): nothing in TST Desk runs them,
+so they can be promoted later. Parsing `cp`/`mv`/`sed -i` targets: they
+still ask through the shell floor.
+
+---
+
+## 2026-10-19 — TD-5101: Shell rules judge every segment, deny first (Class B)
+
+**Decision:** Policy rules are deny first for every tool: any matching
+`never` refuses, then any matching `ask` asks, and only then can `auto`
+apply. Specificity only picks the rule a decision names. A shell command
+(any tool whose summary is its `command`) is split by a new scanner,
+`core/tstd/policy_shell.py`, at `;`, `&`, `&&`, `|`, `||`, newlines and
+parentheses, and into `$(…)`, backticks, `<(…)`/`>(…)`, unquoted heredoc
+substitutions and `eval`/`sh -c`/`cmd /c` strings. `auto` applies only
+when every segment matches an `auto` rule; `never` and `ask` are checked
+against every segment, several unwrapped readings of it, and the whole
+line. Lists of paths (TD-5143) use the same rule: `auto` needs every
+path.
+
+Choices the story left open, each the conservative one:
+
+1. **Two readings per segment.** `auto` sees the segment as written with
+   only `timeout`, `nice`, `nohup`, `time` and `stdbuf` taken off, and an
+   unknown wrapper option keeps the wrapper on. `env`, `NAME=value`,
+   `sudo` and `xargs` are not stripped for `auto`: `LD_PRELOAD=` or
+   `NODE_OPTIONS=` change what a command runs, and `xargs` adds
+   arguments. `never` and `ask` see through all of them, plus keywords,
+   leading redirects and quoting. Reading more can only make those
+   stricter.
+2. **Odd text never auto-runs.** `$'…'` (bash and dash end it at
+   different quotes), `$((…))` (bash falls back to a command
+   substitution), `((…))` (bash arithmetic, dash subshells), `case`
+   inside `$(…)`, unclosed quotes and nesting past the caps mark the
+   split incomplete. Then no `auto` rule applies, even `**`, and the whole
+   text is cut at every operator for `never` and `ask`.
+3. **Heredoc bodies belong to their command.** A body is data, so it is
+   not split, but it is part of the text an `auto` rule must match, so an
+   exact rule saved from one heredoc does not allow another body. An
+   unquoted body's substitutions are commands.
+4. **Comments are honoured.** Ignoring `#` would let an apostrophe in a
+   comment open a quote that hides the next line's commands.
+5. **Windows reads both ways.** Interactive shell runs through `cmd /c`,
+   where single quotes don't quote, and autonomy runs `sh -c` in a
+   container, so on Windows a rule must hold under both readings.
+6. **Always allow.** Offered only for a one-segment command, saving its
+   `auto` text with `*`, `?` and `[` made literal. A chained command gets
+   no proposal and the daemon refuses `always_allow` for it with
+   `not_always_allowable`: a rule per segment would allow `sh` alone after
+   `npm test | sh` was approved. Escaping also fixes a rule saved for
+   `src/[id].tsx` that never matched its own path.
+
+**Rationale:** Claude Code's permission docs say a prefix rule does not
+cover a command chained onto it and that deny rules are checked first.
+The old single `fnmatch` over the whole line auto-ran `npm test; curl x`
+under `npm test*`, and a narrow `auto` beat a broad `never`. The story
+pointed at the classifier's `shlex` lexer, but it drops quotes and
+positions, so it cannot tell `'$(x)'` from `"$(x)"` or keep the text a
+rule is written against; the new scanner keeps both.
+
+**Alternatives rejected:** Matching a wildcard-free `auto` rule against
+the whole line, so old exact always-allow rules for chains keep working:
+it contradicts "every segment". Stripping `env`/assignments for `auto`
+too, as the story's wrapper list could be read: it widens `auto`.
+Treating a redirect inside a segment as uncovered: out of scope here;
+TD-5103 handles redirects for its read-only list, and the docs steer
+`auto` rules to exact commands.
+
+**Compatibility:** A saved rule that covered a chain as one string, or a
+wrapped command as written (`timeout 60 npm test`), now asks again. That
+fails safe. The docs example `git status*` became exact `git status` and
+`git diff` rules plus `never` rules for `curl *` and `rm *`.
+
+---
+
 ## 2026-10-19 — TD-5113: a repo's `.tst/config.yaml` waits for trust before it loosens anything (Class B)
 
 **Decision:** The daemon reads `.tst/config.yaml` once per load (open, revive, move, resume,

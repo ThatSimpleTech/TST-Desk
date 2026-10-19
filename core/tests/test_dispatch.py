@@ -473,19 +473,28 @@ class TestDispatchManyOrdering:
     async def test_mixed_batch_still_parallelises_the_safe_tools(self) -> None:
         """Restoring input order must not serialise the parallel batch."""
         import asyncio
+        import gc
 
         dispatcher = make_mixed_dispatcher()
 
-        start = asyncio.get_running_loop().time()
-        results = await dispatcher.dispatch_many(
-            [
-                ("c1", "par_tool", {"delay": 0.05}),
-                ("c2", "seq_tool", {"delay": 0.05}),
-                ("c3", "par_tool", {"delay": 0.05}),
-                ("c4", "par_tool", {"delay": 0.05}),
-            ]
-        )
-        elapsed = asyncio.get_running_loop().time() - start
+        # A full collection of the suite's heap takes about 0.1 s on a CI
+        # runner. When one lands inside the window it reads as serialised
+        # tools, so collect first and hold the collector off while timing.
+        gc.collect()
+        gc.disable()
+        try:
+            start = asyncio.get_running_loop().time()
+            results = await dispatcher.dispatch_many(
+                [
+                    ("c1", "par_tool", {"delay": 0.05}),
+                    ("c2", "seq_tool", {"delay": 0.05}),
+                    ("c3", "par_tool", {"delay": 0.05}),
+                    ("c4", "par_tool", {"delay": 0.05}),
+                ]
+            )
+            elapsed = asyncio.get_running_loop().time() - start
+        finally:
+            gc.enable()
 
         # 3 parallel (~0.05s together) + 1 sequential (0.05s) ≈ 0.10s.
         # Fully serialised would be ~0.20s.
