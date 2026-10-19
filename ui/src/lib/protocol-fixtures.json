@@ -2087,6 +2087,7 @@
     "archive_session",
     "attach",
     "cancel",
+    "compact_context",
     "delete_session",
     "deny",
     "deny_verify",
