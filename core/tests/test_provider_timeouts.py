@@ -180,6 +180,93 @@ class TestStreamIdleWatchdog:
         assert _text(items) == "late"
 
 
+# ── a failed attempt hangs up at once ───────────────────────────────────
+
+
+class _Body(httpx.AsyncByteStream):
+    """A response body that logs when the client hangs up on it."""
+
+    def __init__(self, chunks: AsyncIterator[bytes], log: list[str], attempt: int) -> None:
+        self._chunks = chunks
+        self._log = log
+        self._attempt = attempt
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        async for chunk in self._chunks:
+            yield chunk
+
+    async def aclose(self) -> None:
+        self._log.append(f"hang up {self._attempt}")
+
+
+def _logged_endpoint(script: Script, log: list[str]) -> httpx.MockTransport:
+    async def handle(request: httpx.Request) -> httpx.Response:
+        attempt = sum(entry.startswith("request") for entry in log) + 1
+        log.append(f"request {attempt}")
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=_Body(script(attempt), log, attempt),
+        )
+
+    return httpx.MockTransport(handle)
+
+
+class TestFailedAttemptsHangUp:
+    """TD-5154: an attempt that ends in an error is closed when its error is
+    handed on, not later when the garbage collector reaches it.
+
+    The stall error is yielded from inside the response's ``async with``,
+    so an attempt nobody closed kept its connection open, and the server
+    kept generating, until the asyncgen finalizer ran. That cleanup closes
+    the nested generators in no fixed order, which is what made
+    ``test_an_off_turn_stall_is_returned_not_resent`` fail once.
+    """
+
+    async def test_a_returned_stall_is_hung_up_before_the_caller_resumes(self) -> None:
+        async def script(attempt: int) -> AsyncIterator[bytes]:
+            await asyncio.sleep(5)
+            yield _chunk("never")
+
+        log: list[str] = []
+        client = _client(_logged_endpoint(script, log), TimeoutConfig(stream_idle=0.2))
+        result = await complete_streamed(client, replace(_request(), retry_on_timeout=False))
+        assert log == ["request 1", "hang up 1"]
+        await client.close()
+        assert isinstance(result, ProviderError) and result.code == "stream_stalled"
+
+    async def test_a_stalled_attempt_is_hung_up_before_the_retry(self) -> None:
+        async def script(attempt: int) -> AsyncIterator[bytes]:
+            if attempt == 1:
+                await asyncio.sleep(5)
+            yield _chunk("hello")
+            yield _chunk("", finish="stop")
+
+        log: list[str] = []
+        client = _client(_logged_endpoint(script, log), TimeoutConfig(stream_idle=0.2))
+        items = await _collect(client)
+        assert log == ["request 1", "hang up 1", "request 2", "hang up 2"]
+        await client.close()
+        assert _text(items) == "hello"
+
+    async def test_a_consumer_that_stops_early_hangs_up(self) -> None:
+        """The loop ends a turn mid-stream (Stop, a tool call it refuses)."""
+
+        async def script(attempt: int) -> AsyncIterator[bytes]:
+            for i in range(100):
+                yield _chunk(str(i % 10))
+                await asyncio.sleep(0.01)
+
+        log: list[str] = []
+        client = _client(_logged_endpoint(script, log), TimeoutConfig(stream_idle=1.0))
+        stream = client.chat_completion_stream(_request())
+        first = await anext(stream)
+        assert isinstance(first, StreamChunk)
+        await stream.aclose()  # type: ignore[attr-defined]
+        assert log == ["request 1", "hang up 1"]
+        await client.close()
+
+
 # ── total_timeout ────────────────────────────────────────────────────────
 
 

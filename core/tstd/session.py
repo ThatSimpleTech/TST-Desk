@@ -1139,6 +1139,10 @@ class Session:
             return "nothing_to_compact"
         compacted, stats = result
         self.conversation[:] = compacted
+        # Saved now, not when the next turn ends (TD-5154): a restart before
+        # then would bring back every turn the user just folded. Saved
+        # before the event, so a window that hears of it can rely on it.
+        await self.conversation_changed()
         await self.event_log.add(
             ContextCompacted(
                 session_id=self.id,

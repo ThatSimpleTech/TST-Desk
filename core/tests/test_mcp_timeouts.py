@@ -403,6 +403,44 @@ class TestHttp:
         notice = next(p for p in posted if p.get("method") == "notifications/cancelled")
         assert notice["params"]["requestId"] == call["id"]
 
+    async def test_concurrent_timeouts_cancel_their_own_requests(self) -> None:
+        """TD-5154: ``call_tool`` read ``_next_id`` and trusted ``request()``
+        to take that id. On Python 3.11 ``wait_for`` starts the request in a
+        new task, so a second call read the same id first, and its cancel
+        notice named the other call's request."""
+        posted: list[dict[str, Any]] = []
+
+        async def handle(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content)
+            posted.append(body)
+            if body.get("method") == "tools/call":
+                await asyncio.sleep(5.0)
+            if "id" not in body:
+                return httpx.Response(202)
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": {}})
+
+        client = HttpMcpClient("http://127.0.0.1:9/mcp", timeout=0.3)
+        client._http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+        try:
+            outcomes = await asyncio.gather(
+                client.call_tool("slow_a"),
+                client.call_tool("slow_b"),
+                return_exceptions=True,
+            )
+            assert all(isinstance(o, McpError) for o in outcomes), outcomes
+            for _ in range(100):
+                if sum(p.get("method") == "notifications/cancelled" for p in posted) == 2:
+                    break
+                await asyncio.sleep(0.02)
+        finally:
+            await client.aclose()
+        calls = {p["params"]["name"]: p["id"] for p in posted if p.get("method") == "tools/call"}
+        assert len(set(calls.values())) == 2
+        cancelled = sorted(
+            p["params"]["requestId"] for p in posted if p.get("method") == "notifications/cancelled"
+        )
+        assert cancelled == sorted(calls.values())
+
 
 # ── config: keys load, write and survive a Settings toggle ───────────────
 

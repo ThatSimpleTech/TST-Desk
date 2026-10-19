@@ -513,7 +513,25 @@ time. A stall (`stream_idle_timeout`, or `read_timeout` mid-stream,
 TD-5106) counts as a timeout here too. Other retryable failures (429,
 5xx, a refused connection) are retried as above. Both calls stream, so
 the read timeout is the longest gap between chunks rather than a cap on
-the whole answer.
+the whole answer. The first gap is the whole prompt being read, so the
+after-write review's prompt is capped by `autonomy.verify_max_prompt_tokens`
+(TD-5153).
+
+A gateway can also fail inside a `200` stream. LiteLLM reports an
+upstream failure partway through a reply as an in-band
+`data: {"error": {...}}` event and then ends the body without
+`data: [DONE]`; OpenRouter sends the same `error` object beside a choice
+whose `finish_reason` is `"error"`. Either shape, and a `finish_reason`
+of `"error"` on its own, counts as the failure. Before anything has streamed, that event is treated as
+the HTTP error its `code` names: a 429 or 5xx is retried as above, and a
+400, 401 or 404 is not. An event without a usable status counts as a
+502. Once part of the reply has streamed, it ends the turn as
+`stream_interrupted` and is not retried, because a second attempt would
+repeat text the window already shows. A stream that ends with neither a
+`finish_reason` nor `[DONE]` is `stream_interrupted` too. The window
+shows "Response interrupted", the partial text is not kept as the
+model's answer, and Retry on the message resends it (TD-5152). The
+after-write review and memory distillation get the same errors.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
@@ -658,7 +676,8 @@ turns never verify. There is no charter and no auto-revert.
 | `runtime` | string | `podman` | Argv0 probed on PATH, or an absolute path to an executable. Empty is a load error. |
 | `image` | string | `docker.io/library/alpine:3.21` | Image the container execs. Empty is a load error. Pre-pull it; the argv passes `--pull=never` so a start check cannot phone a registry. |
 | `check_every` | int ≥ 1 | `5` | Autonomy turns between validator drift checks (TD-4201, spec §12.6). A Class B decision this turn also checks, even if N is not reached. Interactive sessions ignore this. |
-| `verify` | `off` \| `after_write` \| `ask` | `after_write` | Interactive: after a filesystem write turn, call the validator once (`after_write`), ask first (`ask`), or never (`off`). Autonomy sessions ignore this. The call streams and sends the validator tier's `extra_body`, so ending the session or quitting also ends the server's work; a timed-out attempt is reported as a verify error, not resent (TD-5146). Stop ends a running review although it starts after the turn has ended: the call is cancelled, which hangs up the stream, the timeline shows `Verify stopped.` with no verdict, and the session is free for the next message. A message already queued behind the review still runs. Stop leaves an `ask` review that is waiting for confirmation alone (TD-5151). |
+| `verify` | `off` \| `after_write` \| `ask` | `after_write` | Interactive: after a filesystem write turn, call the validator once (`after_write`), ask first (`ask`), or never (`off`). Autonomy sessions ignore this. The call streams and sends the validator tier's `extra_body`, so ending the session or quitting also ends the server's work; a timed-out attempt is reported as a verify error, not resent (TD-5146). Stop ends a running review although it starts after the turn has ended: the call is cancelled, which hangs up the stream, the timeline shows `Verify stopped.` with no verdict, and the session is free for the next message. A message already queued behind the review still runs. Stop leaves an `ask` review that is waiting for confirmation alone (TD-5151). The review prompt is cut to fit `verify_max_prompt_tokens` first: shell output loses its head (each output keeps its tail), then the oldest diffs go, with `(N earlier lines omitted)` / `(N earlier diffs omitted)` markers where the cuts are, and the verdict's summary ends with what was left out. A prompt that still does not fit, or has no room for any of the diff, is not sent and is reported as a verify error (TD-5153). |
+| `verify_max_prompt_tokens` | int ≥ 1024 \| null | `null` | Most estimated tokens the after-write review's prompt may take: the validator steering, the diffs, the shell output and the instructions together. `null` is 60% of the validator tier's `context_window` (about 39k tokens on a 65,536-token slot, which a local server reading ~390 tokens/s finishes inside the default 120 s `read_timeout`). Never more than `context_window` less `max_output_tokens`, whatever is set. Estimated with the token counter the turn uses, scaled by the ratio learned from the validator endpoint's usage (TD-5007); each review's own usage teaches that ratio too. Lower it when a slow local validator times out; the first chunk arrives only after the whole prompt is read (TD-5153). |
 
 ### `mcp`
 
@@ -811,6 +830,7 @@ autonomy:
   image: docker.io/library/alpine:3.21
   check_every: 5
   verify: after_write
+  verify_max_prompt_tokens: null
 mcp:
   servers:
     example:
@@ -888,7 +908,7 @@ three tier definitions. You can pin a tier for a session from the title bar.
 | `connect_timeout` | float > 0 | `30` | Seconds to open the connection to `base_url`. |
 | `read_timeout` | float > 0 | `120` | Longest wait for any bytes from the server, the response headers included. A local model reading a long prompt sends nothing until its first token, so this is the knob for slow prefill — see §3.5. |
 | `total_timeout` | float > 0 or `null` | `null` | Wall-clock cap on one attempt, streaming included. `null` means no cap. A stream cut by it after output began is not retried. Before TD-5106 the client had a field named "total" set to 180; it was only the wait for a free pooled connection and never bounded a request. That wait stays 180 s and is not a key. |
-| `stream_idle_timeout` | float > 0 or `null` | `300` | Aborts a stream that sends no usable chunk for this long. SSE keep-alive comments (`: ping`) do not count, so a server that only pings is caught; `read_timeout` alone never catches it. A stall before any output is retried under `provider_retry`; a stall partway through a reply ends the turn as `stream_stalled`, because a retry would repeat text the window already shows. `null` turns the watchdog off. |
+| `stream_idle_timeout` | float > 0 or `null` | `300` | Aborts a stream that sends no usable chunk for this long. SSE keep-alive comments (`: ping`) do not count, so a server that only pings is caught; `read_timeout` alone never catches it. A stall before any output is retried under `provider_retry`; a stall partway through a reply ends the turn as `stream_stalled`, because a retry would repeat text the window already shows. Reading stops at `data: [DONE]`, so a server that holds the body open after a finished reply is not a stall (TD-5152). `null` turns the watchdog off. |
 
 **Prices are per million tokens, and they are yours to keep accurate.** They drive the live
 cost meter, the audit trail, and the spend cap. Nothing verifies them against your provider, so
@@ -1205,7 +1225,9 @@ total_timeout: 3600        # no single reply runs past an hour
 A stall before any output is retried under `provider_retry`, so with the default three retries
 a dead server costs up to four waits of `read_timeout` (or `stream_idle_timeout` when the
 server pings). Lower `provider_retry.max_retries` with long timeouts. The after-write review
-and memory distillation never resend a stall (TD-5146), so they wait once.
+and memory distillation never resend a stall (TD-5146), so they wait once. A scheduled job
+whose turn ends as `stream_stalled` failed for a transient reason, like a timeout, so a job
+with `retries` tries again after its `retry_delay` (TD-5154).
 
 To ground computer-use clicks on the same loopback server, set
 `computer_use.grounding.base_url` to that `/v1` URL (or a dedicated

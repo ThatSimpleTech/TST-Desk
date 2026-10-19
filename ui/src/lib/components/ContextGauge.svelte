@@ -6,7 +6,7 @@
 	// context_usage. Hidden until the loop has measured a request, so a
 	// Grok session (which never sends one) shows nothing.
 	import { session } from '../session-status.svelte.js';
-	import { chat, compactContext } from '../chat-store.svelte.js';
+	import { chat, requestCompact } from '../chat-store.svelte.js';
 	import { showCancel } from '../chat-store';
 	import { formatTokens, gaugeLabel, gaugeLevel, gaugePercent } from '../context-gauge';
 
@@ -59,7 +59,7 @@
 				type="button"
 				disabled={busy}
 				title={busy ? 'Wait for the turn to finish, or stop it' : undefined}
-				onclick={() => compactContext()}
+				onclick={() => requestCompact()}
 			>
 				Compact now
 			</button>

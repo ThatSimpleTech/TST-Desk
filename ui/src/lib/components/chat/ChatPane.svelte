@@ -13,12 +13,12 @@
 		cancelTurn,
 		chat,
 		continueTurn,
-		compactContext,
 		editQueuedMessage,
 		initChat,
 		keepDraft,
 		removeHeldMessage,
 		removeQueuedMessage,
+		requestCompact,
 		retryLastUserMessage,
 		sendHeldMessage,
 		sendQueuedNow,
@@ -35,7 +35,6 @@
 	import { canSend, formatTurnDuration, showCancel } from "../../chat-store";
 	import type { AttachmentDraft } from "../../attachments";
 	import { parseCompactCommand } from "../../context-gauge";
-	import { notify } from "../../notifications.svelte.js";
 	import { greetingContext, greetingForHour, SUGGESTIONS } from "../../greeting";
 	import { workingVerb } from "../../working-flavor";
 	import Composer from "./Composer.svelte";
@@ -106,13 +105,7 @@
 			sendUserMessage(text, attachments);
 			return;
 		}
-		if (!compactContext(compact.guidance)) {
-			notify("compact", {
-				severity: "toast",
-				title: "Not compacted",
-				body: "A turn is running. Compact when it finishes, or stop it first.",
-			});
-		}
+		requestCompact(compact.guidance);
 	}
 
 	// Engine this chat started with, falling back to Settings only when an

@@ -3,6 +3,7 @@
 import { describe, it, expect } from "vitest";
 import {
 	COMPACT_GUIDANCE_MAX,
+	compactNotSentCopy,
 	formatTokens,
 	gaugeLabel,
 	gaugeLevel,
@@ -80,5 +81,19 @@ describe("gauge", () => {
 		expect(gaugeLevel(reading(37_000))).toBe("near");
 		expect(gaugeLevel(reading(49_152))).toBe("over");
 		expect(gaugeLevel(reading(5, 100, 0))).toBe("ok");
+	});
+});
+
+describe("compactNotSentCopy (TD-5154)", () => {
+	it("blames a running turn only when there is one", () => {
+		expect(compactNotSentCopy(true)).toEqual({
+			severity: "toast",
+			title: "Not compacted",
+			body: "A turn is running. Compact when it finishes, or stop it first.",
+		});
+		const idle = compactNotSentCopy(false);
+		expect(idle.severity).toBe("toast");
+		expect(idle.body).toContain("isn't connected");
+		expect(idle.body).not.toContain("turn");
 	});
 });

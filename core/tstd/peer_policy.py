@@ -58,6 +58,9 @@ MACHINE_PEER_VERBS: frozenset[str] = frozenset(
         "new_session",
         "fork_from",
         "set_branch",
+        # TD-5154: /compact, "Summarize from here" and the gauge's button.
+        # Like fork_from it rewrites only that session's model context.
+        "compact_context",
         "set_tier",
         "set_plan",
         "set_session_preset",

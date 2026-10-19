@@ -9259,6 +9259,252 @@ model).
 - [x] Tests fail on the old code (Stop during a hanging validator stream
       leaves it running) and pass on the new
 
+### TD-5152 — A cut-off reply is an error, not a finished answer
+**Size:** 3 · **Depends on:** TD-5106, TD-5146
+
+LiteLLM reports a failure partway through a streamed chat completion as
+an in-band `data: {"error": {...}}` event and then ends the body without
+`data: [DONE]`. The chunk parser dropped that event, so the main turn
+treated whatever partial text had arrived as a complete answer. TD-5146
+fixed this only for the off-turn calls.
+
+**Acceptance criteria:**
+- [x] In the turn stream, an in-band error event becomes a
+      `ProviderError` whose code and retry flag are mapped from its status
+      the way an HTTP error's are: before the first chunk a 429 or 5xx is
+      retried under `provider_retry` and a 4xx is not; after it the error
+      is `stream_interrupted` and is not retried. This covers LiteLLM's
+      bare `{"error": ...}`, OpenRouter's `error` beside a choice with
+      `finish_reason: "error"`, and `finish_reason: "error"` alone
+- [x] A stream that ends with no `finish_reason` and no `[DONE]` is
+      `stream_interrupted`, not a finished answer
+- [x] The turn ends failed with `error_code: stream_interrupted`; the
+      partial text is not kept as the model's answer, the window shows the
+      existing "Response interrupted" copy, and Retry on the message
+      resends the turn
+- [x] TD-5106's stream-idle watchdog: reading stops at `[DONE]`, so a
+      server that holds the body open after a finished reply is not a
+      stall; an error event ends the stream at once; a stall partway is
+      still `stream_stalled`
+- [x] docs/configuration.md describes in-band errors and cut-off streams
+- [x] Tests (httpx.MockTransport SSE bodies) fail on the old code and pass
+      on the new
+
+Done (2026-10-19): `ProviderClient.chat_completion_stream` checks each
+event for an error envelope before parsing it as a chunk and tracks
+`[DONE]`. Tests: `core/tests/test_turn_stream_errors.py` (24 of its 32
+fail on the old code). Class B entry in DECISIONS.md.
+
+### TD-5153 — The after-write review prompt fits the validator's window
+**Size:** 3 · **Depends on:** TD-4204, TD-5007, TD-5106, TD-5146
+
+The after-write review sent every diff and every shell output of the turn,
+with no cap. On EZER the validator is a local llama.cpp model (65,536-token
+slots, ~390-830 tokens/s uncached) behind LiteLLM with a 120 s read
+timeout. The call streams, but the first chunk arrives only after the whole
+prompt is read: about 45k tokens fit in 120 s at the slow rate, a bigger
+turn timed out as a verify error, and one past the slot failed outright.
+
+**Acceptance criteria:**
+- [x] The review prompt is bounded by the validator tier's window and
+      `autonomy.verify_max_prompt_tokens` (null is 60% of
+      `context_window`), never past the window less `max_output_tokens`
+- [x] Over the budget, shell output is cut first and each output keeps its
+      tail; then the oldest diffs go; the newest diff stays
+- [x] Each cut leaves a `(N earlier lines omitted)` / `(N earlier diffs
+      omitted)` marker, the reviewer is told parts were left out, and the
+      verdict's summary says what was
+- [x] The prompt is estimated with the existing estimator and the
+      validator endpoint's calibrated ratio; the review's usage teaches it
+- [x] A prompt that cannot be cut to fit is reported as a verify error,
+      not sent
+- [x] A turn that fits is sent as before
+- [x] The cap is documented in `docs/configuration.md` (the `verify` row
+      and the new key) and `DECISIONS.md`
+- [x] Tests fail on the old code (an 11k-token review sent against a
+      4,800-token budget) and pass on the new
+
+### TD-5102 — `fs_grep` content search and path globs
+**Size:** 3 · **Depends on:** none · Gap audit 2026-10-14, local-model batch (PR #10)
+
+There was no content search tool, so every search was a `shell` call,
+and shell can never be model-granted A: on EZER every grep asked.
+Choices (pure-Python search, the `regex` package with a time limit) are
+in DECISIONS.md.
+
+**Acceptance criteria:**
+- [x] New built-in `fs_grep` with regex pattern, path, glob filter, case
+      flag, context lines, and modes for files only, matching lines or
+      counts. Results are capped, with a truncation flag. It honors
+      .gitignore
+- [x] `fs_grep` is Class A inside the workspace wall, so it auto-runs, and
+      it refuses paths outside the wall (the static `builtin-read` rule
+      came with TD-5141; outside the wall it is Class C and the path
+      guard refuses it)
+- [x] `fs_list` accepts path globs like `src/**/*.ts`, can sort by
+      modification time, and reports when it truncates
+- [x] The steering nudge that points the model at fs_edit/fs_write
+      (TD-5009) also points it at fs_grep instead of shell grep
+- [x] Tests in core/tests/test_fs_grep.py, including a backtracking
+      pattern that stops with what it found and a Stop that ends a search
+
+Note: the audit suggested ripgrep when present. One pure-Python engine
+was built instead (DECISIONS.md), so results are the same everywhere.
+
+### TD-5104 — Sanitize MCP tool schemas for strict endpoints
+**Size:** 2 · **Depends on:** none · Gap audit 2026-10-14, local-model batch (PR #10)
+
+Strict OpenAI-compatible servers answer 400 to the whole request when one
+tool has a bad name or schema, so one sloppy MCP server could stop every
+turn.
+
+**Acceptance criteria:**
+- [x] At load, each MCP tool's input schema is checked. Root
+      `anyOf`/`oneOf`/`allOf` are flattened where possible. A schema that
+      still fails validation, or a name longer than 64 characters or
+      containing characters outside `[A-Za-z0-9_-]`, is excluded with a
+      visible warning in Settings and the doctor
+- [x] One bad tool never fails a whole request. A test registers a bad
+      tool next to a good one and sends the request a turn sends (the
+      registry's whole tool list) to a strict mock endpoint, which
+      succeeds (core/tests/test_mcp_schema_sanitize.py; the request, not a
+      full loop turn)
+- [x] Excluded tools are listed with the reason (the doctor row, and
+      "Left out <name>: <reason>" under the server in Settings)
+
+### TD-5105 — MCP timeouts per server, progress, cancellation
+**Size:** 3 · **Depends on:** none · Gap audit 2026-10-14, local-model batch (PR #10)
+
+Every MCP call had a fixed 30 s timeout and an 8 s handshake, so a long
+EZER tool (a render, a build, a local-model call) died at 30 s.
+
+**Acceptance criteria:**
+- [x] `mcp.servers.<id>.timeout_seconds` and `startup_timeout_seconds`
+      override the 8 s handshake and 30 s call defaults, with
+      `max_call_seconds` as the hard cap
+- [x] Each stdio call sends a `progressToken`. Progress notifications
+      reset an idle timer, and up to the hard cap they extend the call.
+      Progress shows in the step timeline (the phone runs the same UI) as
+      thinned `tool_progress` events
+- [ ] An HTTP server gets no `progressToken`: the plain-POST transport
+      returns one JSON reply, so `timeout_seconds` bounds the whole call.
+      Follow-up: TD-5136 (streamable HTTP)
+- [x] When a call times out or the user stops the turn, the client sends
+      `notifications/cancelled` to the server (stdio and HTTP; since
+      TD-5154 each HTTP notice names its own call's request id)
+- [x] Tests cover a slow tool that sends progress and outlives the idle
+      timeout (scaled to fractions of a second), and a stopped call that
+      sends the cancel notice (core/tests/test_mcp_timeouts.py)
+
+### TD-5106 — Provider timeouts and stream-idle watchdog in config
+**Size:** 2 · **Depends on:** none · Gap audit 2026-10-14, local-model batch (PR #10)
+
+Every provider call used one fixed timeout set (30 s connect, 120 s
+read), and nothing caught a stream that stayed open on keep-alive
+comments while sending no tokens.
+
+**Acceptance criteria:**
+- [x] Per-tier `connect_timeout`, `read_timeout`, `total_timeout` and
+      `stream_idle_timeout` keys, with today's values as defaults
+      (`total_timeout` defaults to `null`, which is what the old code did
+      in practice)
+- [x] A stream that sends nothing for `stream_idle_timeout` is aborted;
+      before any output it is retried under the existing `provider_retry`
+      policy
+- [ ] A stall after output began is not retried: it ends the turn as
+      `stream_stalled`, because a second attempt would append a second
+      reply to text the window already shows (DECISIONS.md). A retry
+      there needs the loop to withdraw shown text; not planned. A
+      scheduled job does try again later (TD-5154)
+- [x] The misnamed "total" is fixed: the old field is `pool` (not a key),
+      and `total_timeout` is a real wall-clock cap on one attempt
+- [x] docs/configuration.md documents the keys and shows an EZER
+      local-model example
+- [x] Tests in core/tests/test_provider_timeouts.py
+
+### TD-5109 — Context gauge and compact-on-demand
+**Size:** 3 · **Depends on:** none · Gap audit 2026-10-14, local-model batch (PR #10)
+
+On 32k-65k local windows compaction ran often and Adam learned of it
+after the fact.
+
+**Acceptance criteria:**
+- [x] The title bar shows used against budget for the active tier's
+      `context_window`, using the daemon's calibrated estimate (TD-5013),
+      from the `context_usage` event. It also shows on the phone (the
+      same app; the header stays visible below 640px). Not checked on a
+      device in this story
+- [x] `/compact [guidance]` and a button compact now. Guidance is passed
+      to the summary (it heads it and keeps more of what it names; no
+      model call, DECISIONS.md)
+- [x] "Summarize from here" on a past message compacts everything after
+      that point. Earlier turns stay verbatim
+- [x] The compaction entry shows the tokens before and after
+- [x] Refused mid-turn, with a reason
+- [x] Tests in core/tests/test_context_gauge.py and the ui gauge, slash
+      command and timeline tests
+- [x] Follow-ups found in review are TD-5154 (bridged sessions, saving
+      the compaction, the toasts)
+
+### TD-5141 — Built-in reads inside the workspace are static Class A
+**Size:** 1 · **Depends on:** TD-5102 · Adam 2026-10-14: "built in files should be preapproved"
+
+**Acceptance criteria:**
+- [x] `fs_read`, `fs_list` and `fs_grep` on a path inside the workspace
+      are Class A by a static rule (`builtin-read`), with no worker call.
+      `.env` is included
+- [x] A user policy rule (`ask` or `never`) still decides.
+      docs/configuration.md §4.4 shows how to keep `.env` asking
+- [x] Outside the wall nothing changes: Class C, refused by the path
+      guard, symlinks resolved. A plugin or MCP tool that borrows a name,
+      or a tool re-declared `ask` or `never`, gets no grant
+- [x] `fs_grep` runs git with `-c core.fsmonitor=false -c
+      safe.bareRepository=explicit`, so an auto-run search can't run a
+      command from a planted or committed git config
+- [x] `ask` and `never` policy rules ignore case; `auto` rules stay exact
+- [x] Tests in core/tests/test_builtin_reads_class_a.py and
+      core/tests/test_fs_grep.py; the security suite checks every A rule
+      against every C rule
+
+### TD-5154 — Local-model batch follow-ups
+**Size:** 3 · **Depends on:** TD-5015, TD-5102, TD-5105, TD-5106, TD-5109
+
+Found in the review of PR #10. The batch's stories were missing from
+this backlog; `/compact` on a session on another computer said "A turn
+is running" when none was, and "Summarize from here" and the gauge's
+button did nothing there; a compaction on request was not saved until
+the next turn ended; a scheduled job that stalled waited for its next
+regular slot; a stalled stream attempt was closed only when the garbage
+collector reached it; concurrent HTTP MCP calls could cancel each
+other's request.
+
+**Acceptance criteria:**
+- [x] TD-5102, TD-5104, TD-5105, TD-5106, TD-5109 and TD-5141 are in this
+      backlog with their criteria, ticked only where the code and tests
+      show them met
+- [x] `compact_context` is a forwarded session verb (core
+      `MACHINE_PEER_VERBS`/`FORWARDED_VERBS`, the window's
+      `BRIDGED_VERBS`, the protocol fixtures): a hub compacts a session
+      on another computer, and that computer saves it
+- [x] `/compact`, "Summarize from here" and the gauge's Compact now all
+      go through one call that toasts the real reason when the request
+      never left: a running turn, or no connection
+- [x] `Session.compact_now` saves the conversation before it sends
+      `context_compacted`, so a compaction survives a daemon restart and
+      the window's numbering still maps through the saved summary
+- [x] An end-to-end test runs real `compact_on_request(...,
+      from_position=...)` output, and a real "Summarize from here" turn
+      through the loop, through `wire_messages` and the strict template:
+      one system message, first
+- [x] `stream_stalled` is a transient failure for the scheduler, like
+      `timeout`
+- [x] A stream attempt that fails is closed at once: a returned stall
+      before the caller resumes, a retried one before the retry starts,
+      and a consumer that stops early closes the whole chain
+- [x] `HttpMcpClient.call_tool` takes its request id itself and passes
+      it to the request, so each cancel notice names its own call
+- [x] Tests in core and ui fail on the old code and pass on the new
+
 ### TD-5113 — Trust prompt for repo-supplied config
 **Size:** 3 · **Depends on:** none
 

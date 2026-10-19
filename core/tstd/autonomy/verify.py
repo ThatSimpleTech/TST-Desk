@@ -11,19 +11,26 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractContextManager
 from typing import Any, Literal, Protocol
 
-from ..config import ModelConfig, TierConfig
+from ..config import ModelConfig, TierConfig, apply_credential_host
 from ..context import PromptAssembler
+from ..context.calibration import CalibrationStore, process_calibration_store
 from ..cost import CostTracker
 from ..logging import get_logger
 from ..protocol import VerifyResult
 from ..provider import (
     ChatCompletionRequest,
     ChatCompletionResponse,
-    ChatMessage,
     ProviderError,
     StreamChunk,
     complete_streamed,
     content_as_text,
+)
+from .review_fit import (
+    fit_review_prompt,
+    log_review_fit,
+    observe_review_usage,
+    review_budget,
+    review_counter,
 )
 
 log = get_logger(__name__)
@@ -50,12 +57,6 @@ ClientFor = Callable[[TierConfig], Awaitable[CompletionClient]]
 
 #: What the timeline says when Stop ended a running review (TD-5151).
 STOPPED_SUMMARY = "Verify stopped."
-
-_REVIEW_USER = (
-    "Review the workspace diff and any test output. "
-    "Reply with a first line of `verdict: pass` or `verdict: fail`, "
-    "then a short summary. Do not propose a revert."
-)
 
 
 class VerifySession(Protocol):
@@ -120,14 +121,14 @@ def wrote_this_turn(session: object) -> bool:
     return bool(getattr(session, _ATTR_WROTE, False))
 
 
-def turn_diff(session: object) -> str:
-    """Unified diffs collected from successful writes this turn."""
-    return "\n\n".join(getattr(session, _ATTR_DIFFS, []))
+def turn_diffs(session: object) -> list[str]:
+    """Unified diffs collected from successful writes this turn, oldest first."""
+    return list(getattr(session, _ATTR_DIFFS, []))
 
 
-def turn_test_output(session: object) -> str:
-    """Shell output collected this turn, used as validator test text."""
-    return "\n\n".join(getattr(session, _ATTR_TESTS, []))
+def turn_test_outputs(session: object) -> list[str]:
+    """Shell outputs collected this turn, oldest first: the validator's test text."""
+    return list(getattr(session, _ATTR_TESTS, []))
 
 
 def parse_verdict(text: str) -> tuple[VerifyVerdict, str]:
@@ -177,13 +178,17 @@ async def maybe_verify_after_turn(
     tracker: CostTracker,
     client_for: ClientFor,
     assembler: PromptAssembler,
+    calibration: CalibrationStore | None = None,
 ) -> None:
     """After ``turn_complete`` on an interactive turn that wrote.
 
     ``off`` never verifies. ``after_write`` runs one validator call.
     ``ask`` emits ``verify_result`` with ``pending=true`` and waits for
     :func:`confirm_pending_verify`. Autonomy sessions are skipped.
+    *calibration* holds the learned token ratios the review is measured
+    with and teaches (TD-5153); the daemon-wide store when omitted.
     """
+    store = calibration if calibration is not None else process_calibration_store()
     if session.autonomy:
         clear_turn_writes(session)
         return
@@ -194,9 +199,9 @@ async def maybe_verify_after_turn(
         clear_turn_writes(session)
         return
     if mode == "ask":
-        await _park_ask(session, config, tracker, client_for, assembler)
+        await _park_ask(session, config, tracker, client_for, assembler, store)
         return
-    await _run_validator(session, config, tracker, client_for, assembler)
+    await _run_validator(session, config, tracker, client_for, assembler, store)
     clear_turn_writes(session)
 
 
@@ -206,6 +211,7 @@ async def _park_ask(
     tracker: CostTracker,
     client_for: ClientFor,
     assembler: PromptAssembler,
+    store: CalibrationStore,
 ) -> None:
     setattr(session, _ATTR_PENDING, True)
     await session.event_log.add(
@@ -229,7 +235,7 @@ async def _park_ask(
         setattr(session, _ATTR_PENDING, False)
         setattr(session, _ATTR_RESUME, None)
         setattr(session, _ATTR_DENY, None)
-        await _run_validator(session, config, tracker, client_for, assembler)
+        await _run_validator(session, config, tracker, client_for, assembler, store)
         clear_turn_writes(session)
 
     async def deny() -> None:
@@ -267,6 +273,7 @@ async def _run_validator(
     tracker: CostTracker,
     client_for: ClientFor,
     assembler: PromptAssembler,
+    store: CalibrationStore,
 ) -> None:
     """One validator-tier completion. Never streams into the chat transcript.
 
@@ -282,7 +289,7 @@ async def _run_validator(
     stopped with no verdict from the partial text.
     """
     with session.review_open():
-        finished = await _review(session, config, tracker, client_for, assembler)
+        finished = await _review(session, config, tracker, client_for, assembler, store)
     if finished:
         return
     await _report(session, "error", STOPPED_SUMMARY)
@@ -327,15 +334,24 @@ async def _review(
     tracker: CostTracker,
     client_for: ClientFor,
     assembler: PromptAssembler,
+    store: CalibrationStore,
 ) -> bool:
-    """Assemble, call and report the review. False when Stop ended it."""
-    diff = turn_diff(session) or "(no diff)"
-    test_output = turn_test_output(session) or "(no test output)"
+    """Assemble, call and report the review. False when Stop ended it.
+
+    The prompt is cut to the validator's budget first (TD-5153); one that
+    cannot be cut to fit is reported, not sent.
+    """
+    validator_cfg = config.tier("validator")
+    counter = review_counter(store, apply_credential_host(config, validator_cfg))
+    budget = review_budget(validator_cfg, config.autonomy.verify_max_prompt_tokens)
+
+    async def assemble(diff: str, test_output: str) -> str:
+        assembled = await assembler.assemble("validator", diff=diff, test_output=test_output)
+        return assembled.text
+
     try:
-        assembled = await assembler.assemble(
-            "validator",
-            diff=diff,
-            test_output=test_output,
+        prompt = await fit_review_prompt(
+            assemble, turn_diffs(session), turn_test_outputs(session), counter, budget
         )
     except Exception:
         log.exception(
@@ -344,8 +360,12 @@ async def _review(
         )
         await _report(session, "error", "Could not assemble the validator prompt.")
         return True
+    material = prompt.material
+    log_review_fit(session.id, prompt)
+    if not prompt.sendable:
+        await _report(session, "error", prompt.refusal())
+        return True
 
-    validator_cfg = config.tier("validator")
     try:
         provider = await client_for(validator_cfg)
     except Exception as e:
@@ -358,10 +378,7 @@ async def _review(
 
     request = ChatCompletionRequest(
         model=validator_cfg.require_slug(),
-        messages=[
-            ChatMessage(role="system", content=assembled.text),
-            ChatMessage(role="user", content=_REVIEW_USER),
-        ],
+        messages=prompt.messages,
         tools=None,
         max_tokens=validator_cfg.max_output_tokens,
         temperature=0.0,
@@ -386,6 +403,9 @@ async def _review(
         summary = f"Validator error: {response.message}"
     else:
         verdict, summary = parse_verdict(content_as_text(response.message.content))
+        if material.trimmed:
+            summary = f"{summary}\n\n{material.note()}"
+        observe_review_usage(counter, prompt.messages, response.usage)
         if response.usage is not None:
             cost = tracker.record_off_turn("validator", response.usage, validator_cfg)
             await session.event_log.add(tracker.emit_cost_update(session.id))

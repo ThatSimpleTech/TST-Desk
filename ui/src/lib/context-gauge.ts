@@ -4,6 +4,7 @@
 // anything. Every figure comes from the daemon's `context_usage` event: the
 // UI never estimates tokens itself.
 
+import type { NoticeSpec } from "./error-copy";
 import type { ContextUsage } from "./protocol";
 
 /** What the gauge shows: the last `context_usage`, without the envelope. */
@@ -20,6 +21,21 @@ export function parseCompactCommand(text: string): { guidance: string } | null {
 	const match = text.match(/^\s*\/compact(?:\s+([\s\S]*))?$/i);
 	if (match === null) return null;
 	return { guidance: (match[1] ?? "").trim().slice(0, COMPACT_GUIDANCE_MAX) };
+}
+
+/**
+ * The toast when a compact request never left the window (TD-5154). Either a
+ * turn is running, or no live connection took it. The daemon's own refusals
+ * come back as error frames with their own copy.
+ */
+export function compactNotSentCopy(turnRunning: boolean): NoticeSpec {
+	return {
+		severity: "toast",
+		title: "Not compacted",
+		body: turnRunning
+			? "A turn is running. Compact when it finishes, or stop it first."
+			: "TST Desk isn't connected to its background service. Compact again once it reconnects.",
+	};
 }
 
 /**
