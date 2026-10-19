@@ -41,6 +41,7 @@ _REASONS: list[tuple[str | None, bool]] = [
     ("connection_error", True),
     ("timeout", True),
     ("timed_out", True),
+    ("stream_stalled", True),  # TD-5154: a quiet provider is a timeout
     ("rate_limited", True),
     ("rate_limit", True),
     ("server_error", True),
@@ -632,6 +633,35 @@ async def test_the_provider_code_retries_then_delivers_once(tmp_path: Path) -> N
         runs = list_runs(data, "inbox")
         assert [run.attempt for run in runs] == [2, 1]
         assert runs[0].summary == "digest ready"
+    finally:
+        await daemon._shutdown()
+
+
+async def test_a_stalled_stream_retries_at_the_next_slot(tmp_path: Path) -> None:
+    """TD-5154: a provider that went quiet (TD-5106's ``stream_stalled``) is
+    tried again after the delay, like a timeout, instead of waiting for the
+    next regular slot."""
+    provider = MockProvider(
+        default=Script(
+            kind="stream",
+            content="digest ready",
+            fail_times=1,
+            error_code="stream_stalled",
+        )
+    )
+    daemon, data, workspace = _daemon(tmp_path, provider)
+    save_job(data, _job(workspace, retries=1))
+    try:
+        assert await daemon.run_due_jobs(_NOW) == ["inbox"]
+        waiting = get_job(data, "inbox")
+        assert waiting is not None
+        assert waiting.last_status == "failed"
+        assert (waiting.attempt, waiting.next_run) == (1, _RETRY)
+        assert await daemon.run_due_jobs(datetime(2026, 8, 21, 18, 10, tzinfo=UTC)) == ["inbox"]
+        done = get_job(data, "inbox")
+        assert done is not None
+        assert done.last_status == "ok"
+        assert done.last_summary == "attempt 2 of 2: digest ready"
     finally:
         await daemon._shutdown()
 
