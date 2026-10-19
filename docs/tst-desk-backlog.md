@@ -9277,6 +9277,38 @@ filter-driver and `gpg.program` residual risk.
 
 ---
 
+### TD-5101 — Shell rules: judge every segment of a chained command, deny first
+**Size:** 5 · **Depends on:** none
+
+From the 2026-10-14 gap audit (docs/gap-audit-2026-10-14.md, Adam's
+decision 1). One `fnmatch` glob over the whole command line let
+`npm test*` auto-run `npm test; curl x`, and a narrow `auto` rule beat
+a broad `never`.
+
+**Acceptance criteria:**
+- [x] A shell command is split on `;`, `&&`, `||`, `|`, newlines, `$(…)`
+      and backticks, after stripping wrappers such as `timeout`, `nice`
+      and `env VAR=…`. An `auto` rule applies only when every segment
+      matches an `auto` rule.
+- [x] A `never` rule that matches any segment refuses the call, whatever
+      narrower `auto` rule exists. `never` beats `ask` beats `auto`, and
+      specificity only breaks ties within one effect.
+- [x] Tests cover `npm test; curl x`, `npm test && rm -rf y`,
+      `npm test | sh`, `$(curl x)` and a wrapped `timeout 60 npm test`.
+- [x] The example rules in docs/configuration.md are rewritten so they
+      are no longer exploitable, and the change is noted in DECISIONS.md.
+
+Done (2026-10-19): `core/tstd/policy_shell.py` splits the line and
+`policy._decide` checks `never`, then `ask`, then `auto` for every
+segment. `env VAR=…` and assignments are stripped for `never` and `ask`
+only; `auto` keeps them, since they change what runs (DECISIONS.md).
+A line that can't be split with confidence never auto-runs. "Always
+allow" is not offered for a chained command. Tests:
+`core/tests/test_policy_shell.py`, plus loop and daemon cases in
+`core/tests/test_approval_flow.py`.
+
+---
+
 # Epic E52 — Files to the user
 
 Filed 2026-10-15. The agent built an APK for Adam and had no way to hand it over in the chat.
