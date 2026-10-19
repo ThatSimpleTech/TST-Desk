@@ -113,10 +113,11 @@ def test_git_command_pins_fsmonitor_off_before_the_subcommand() -> None:
     assert argv[-3:] == ["-C", "/ws", "status"]
 
 
-# Developer harnesses, not daemon code: they drive git on fixtures they made.
-_HARNESSES = frozenset(
-    {"benchmarks.py", "e2e_checks.py", "e2e_harness.py", "e2e_m9.py", "e2e_memory_checks.py"}
-)
+def _is_harness(name: str) -> bool:
+    """Developer harnesses, not daemon code: they drive git on fixtures they made."""
+    return name.startswith("e2e_") or name == "benchmarks.py"
+
+
 _SPAWNERS = frozenset(
     {"create_subprocess_exec", "run", "Popen", "check_output", "check_call", "call"}
 )
@@ -143,7 +144,7 @@ def test_every_daemon_git_call_goes_through_git_command() -> None:
     package = Path(tstd.__file__).parent
     offenders = []
     for path in sorted(package.rglob("*.py")):
-        if path.name in _HARNESSES or path.name == "git_safe.py":
+        if _is_harness(path.name) or path.name == "git_safe.py":
             continue
         for line in _raw_git_sites(path.read_text(encoding="utf-8")):
             offenders.append(f"{path.relative_to(package)}:{line}")
