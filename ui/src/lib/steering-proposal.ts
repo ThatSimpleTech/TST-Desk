@@ -34,6 +34,9 @@ export interface PendingSteeringProposal {
   autonomy: boolean;
   /** The daemon's last word on this card (a refusal, or a fresh diff). */
   notice: string | null;
+  /** False once the daemon says it no longer holds the proposal: the card
+   *  then only says so, and Dismiss is its one control. */
+  open: boolean;
 }
 
 /** Map a steering_proposal event to the card's pending shape. Null if it has no file. */
@@ -46,6 +49,7 @@ export function proposalFromEvent(event: SteeringProposal): PendingSteeringPropo
     file,
     autonomy: event.autonomy === true,
     notice: event.replaces ? FRESH_DIFF_NOTICE : null,
+    open: true,
   };
 }
 
@@ -77,4 +81,12 @@ export function rejectMessage(proposal: PendingSteeringProposal): SteeringReject
 /** The card's title for one file: "Create AGENTS.md" or "Change .tst/rules/x.md". */
 export function actionTitle(file: SteeringFileDiff): string {
   return `${file.action === "create" ? "Create" : "Change"} ${file.path}`;
+}
+
+/** The wake-up card's line for the steering edits a run proposed. A restart
+ *  closes open proposals, so "waiting" is only said while a card is open. */
+export function runProposalsLine(openFromRun: number): string {
+  return openFromRun > 0
+    ? "Waiting for you on the proposal cards; the run never accepts one."
+    : "None is open now: each was decided, or closed when TST Desk restarted. The run never accepts one.";
 }

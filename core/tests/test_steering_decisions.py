@@ -172,6 +172,32 @@ async def test_reject_writes_nothing_and_logs_the_diff(proposed: Run) -> None:
     assert _read(run) == "# Project\n\n- Use uv.\n"
 
 
+async def test_save_of_text_the_log_would_blank_is_refused_and_the_proposal_stays(
+    proposed: Run,
+) -> None:
+    """The logged decision must show what was written, so Save refuses it."""
+    run = proposed
+    [event] = run.events(SteeringProposal)
+    mine = "# Project\n\n- Use uv.\n- Check task-tool-availability first.\n"
+    reply = await run.send("steering_edit", event.proposal_id, content=mine)
+    assert reply is not None and reply["code"] == "steering_secret_shaped"
+    assert "change the file by hand" in reply["message"]
+    assert _read(run) == "# Project\n\n- Use uv.\n"
+    assert run.events(SteeringDecision) == []
+    assert event.proposal_id in run.session.steering_proposals
+
+
+async def test_the_edit_box_text_saves_back_exactly(proposed: Run) -> None:
+    """Edit starts from the card's ``after``; saving it unchanged is an Accept."""
+    run = proposed
+    [event] = run.events(SteeringProposal)
+    shown = event.files[0].after
+    assert shown == run.session.steering_proposals[event.proposal_id].after
+    assert await run.send("steering_edit", event.proposal_id, content=shown) is None
+    assert _read(run) == shown
+    assert run.events(SteeringDecision)[0].decision == "accepted"
+
+
 # ── A file that changed is refused with a fresh diff ───────────────────
 
 
@@ -208,6 +234,24 @@ async def test_a_stale_edit_keeps_the_users_text_in_the_fresh_diff(proposed: Run
     assert not (run.ws / "AGENTS.md").exists()
     fresh = run.events(SteeringProposal)[-1]
     assert (fresh.files[0].action, fresh.files[0].after) == ("create", mine)
+
+
+async def test_a_file_changed_to_what_the_card_would_blank_gets_no_fresh_diff(
+    proposed: Run,
+) -> None:
+    run = proposed
+    [stale] = run.events(SteeringProposal)
+    theirs = "# Project\n\nSee docs/tst-desk-gap-audit-2026-10-14.md first.\n"
+    (run.ws / "AGENTS.md").write_text(theirs, encoding="utf-8")
+    reply = await run.send("steering_accept", stale.proposal_id)
+    assert reply is not None and reply["code"] == "steering_secret_shaped"
+    assert "Reject this proposal" in reply["message"]
+    assert _read(run) == theirs
+    assert run.events(SteeringProposal) == [stale]
+    assert list(run.session.steering_proposals) == [stale.proposal_id]
+    assert await run.send("steering_reject", stale.proposal_id) is None
+    assert run.events(SteeringDecision)[0].decision == "rejected"
+    assert _read(run) == theirs
 
 
 @pytest.mark.skipif(not POSIX, reason="symlinks need privileges on Windows")
@@ -366,3 +410,64 @@ async def test_the_session_log_keeps_proposals_and_decisions_across_a_restart(
         assert not (run.ws / "CLAUDE.md").exists()
     finally:
         await _shutdown(revived, run.sid)
+
+
+async def _restart(run: Run, tmp_path: Path, *, keep_conversation: bool = True) -> Daemon:
+    await _shutdown(run.daemon, run.sid)
+    if not keep_conversation:
+        (run.daemon._session_persist.dir_for(run.sid) / "conversation.json").unlink()
+    revived = Daemon(data_dir=tmp_path / "data", provider=_Steps([]))
+    await revived._restore_sessions()
+    return revived
+
+
+@pytest.mark.parametrize("keep_conversation", [True, False], ids=["revived", "replay-only"])
+async def test_a_restart_closes_open_proposals_in_the_log(
+    tmp_path: Path, keep_conversation: bool
+) -> None:
+    """A card the old process held must not come back with Accept live."""
+    steps = [
+        _call("propose_steering_edit", path="AGENTS.md", text="# Mine\n- Run ruff.\n"),
+        _call("propose_steering_edit", path="CLAUDE.md", text="# Rules\n"),
+        Script(kind="stream", content="Proposed."),
+    ]
+    run = await _run(tmp_path, steps, {"AGENTS.md": "# Mine\n"})
+    await run.turn()
+    first, second = run.events(SteeringProposal)
+    assert await run.send("steering_reject", second.proposal_id) is None
+    revived = await _restart(run, tmp_path, keep_conversation=keep_conversation)
+    try:
+        session = revived.session_registry.get(run.sid)
+        assert session is not None
+        decisions = {
+            e.proposal_id: e
+            for e in session.event_log.all_events
+            if isinstance(e, SteeringDecision)
+        }
+        assert decisions[second.proposal_id].decision == "rejected"
+        expired = decisions[first.proposal_id]
+        assert (expired.decision, expired.files) == ("expired", first.files)
+        frame = {"type": "steering_accept", "session_id": run.sid, "proposal_id": first.proposal_id}
+        raw = await revived._handle_message(json.dumps(frame), None)
+        assert raw is not None
+        reply = json.loads(raw)
+        assert reply["code"] == "no_steering_proposal"
+        assert "nothing was written" in reply["message"]
+        assert (run.ws / "AGENTS.md").read_text(encoding="utf-8") == "# Mine\n"
+    finally:
+        await _shutdown(revived, run.sid)
+    if not keep_conversation:
+        return
+    again = Daemon(data_dir=tmp_path / "data", provider=_Steps([]))
+    try:
+        await again._restore_sessions()
+        session = again.session_registry.get(run.sid)
+        assert session is not None
+        closing = [
+            e.proposal_id
+            for e in session.event_log.all_events
+            if isinstance(e, SteeringDecision) and e.decision == "expired"
+        ]
+        assert closing == [first.proposal_id]
+    finally:
+        await _shutdown(again, run.sid)

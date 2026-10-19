@@ -22,11 +22,12 @@ vi.mock("./connection-status.svelte.js", () => ({
 import {
   accept,
   bindSteeringProposal,
+  dismiss,
   pending,
   reject,
   saveEdit,
 } from "./steering-proposal-store.svelte.js";
-import { FRESH_DIFF_NOTICE } from "./steering-proposal";
+import { FRESH_DIFF_NOTICE, runProposalsLine } from "./steering-proposal";
 
 function proposal(overrides: Partial<SteeringProposal> = {}): SteeringProposal {
   return {
@@ -165,10 +166,31 @@ describe("decisions", () => {
     expect(pending[0]?.notice).toBe("Only the computer itself can do that.");
   });
 
-  it("a proposal the daemon no longer holds is dropped", () => {
+  it("a proposal the daemon no longer holds says so, and only Dismiss closes it", () => {
+    const gone = "That steering proposal is no longer open, and nothing was written.";
     emit(proposal());
     accept(pending[0]!);
-    emit(refusal("no_steering_proposal", "That steering proposal is no longer open."));
+    emit(refusal("no_steering_proposal", gone));
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.open).toBe(false);
+    expect(pending[0]?.notice).toBe(gone);
+    accept(pending[0]!);
+    saveEdit(pending[0]!, "# Mine\n");
+    expect(connection.send).toHaveBeenCalledTimes(1);
+    dismiss(pending[0]!);
+    expect(pending).toHaveLength(0);
+    emit(proposal());
+    expect(pending).toHaveLength(0);
+  });
+
+  it("a proposal a restart closed (expired) does not come back on replay", () => {
+    emit(proposal());
+    emit(decision({ decision: "expired" }));
+    expect(pending).toHaveLength(0);
+    bindSteeringProposal("s2");
+    bindSteeringProposal("s1");
+    emit(proposal());
+    emit(decision({ decision: "expired", seq: 40 }));
     expect(pending).toHaveLength(0);
   });
 
@@ -200,5 +222,13 @@ describe("session bind (TD-1014)", () => {
     emit(proposal());
     bindSteeringProposal("s1");
     expect(pending).toHaveLength(1);
+  });
+});
+
+describe("the wake-up card's line (TD-5140)", () => {
+  it("says waiting only while a card from the run is open", () => {
+    expect(runProposalsLine(1)).toContain("Waiting for you on the proposal cards");
+    expect(runProposalsLine(0)).not.toContain("Waiting");
+    expect(runProposalsLine(0)).toContain("closed when TST Desk restarted");
   });
 });

@@ -464,6 +464,7 @@ from .shutdown_phases import (
 )
 from .speech import transcribe as transcribe_speech
 from .steering_proposals import decide as decide_steering
+from .steering_proposals import expire_restored as expire_restored_steering
 from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
 from .turn_seal import INTERRUPTED_BY_RESTART, open_turn, repair_cut_conversation
@@ -2155,6 +2156,8 @@ class Daemon:
             sess.preset = chosen
             if loaded is not None and loaded.events:
                 sess.event_log.replace(loaded.events)
+                # TD-5140: a replay-only session holds no proposal either.
+                await expire_restored_steering(sess, loaded.events)
             if final_state != record.state:
                 await self._session_store.update_state(record.session_id, final_state)
             log.info(
@@ -3522,6 +3525,9 @@ class Daemon:
         the window stops showing it as running and the next request is
         one a provider accepts. Once sealed the log has its
         ``turn_complete``, so a second restore finds nothing to seal.
+        The same goes for a steering proposal still open in the log: the
+        old process held it in memory, so it is closed as ``expired``
+        (TD-5140) rather than replayed as a card nothing can act on.
         """
         sess = await self.session_registry.restore(session_id, workspace_path, "idle")
         record = self._session_store.get(session_id)
@@ -3541,6 +3547,8 @@ class Daemon:
         await self._attach_session_runtime(sess)
         if cut:
             await self._seal_cut_turn(sess)
+        # TD-5140: open steering proposals lived in the old process's memory.
+        await expire_restored_steering(sess, loaded.events)
         await self._emit_working_context(sess, config_source(sess))
         log.info(
             "revived session",

@@ -22,12 +22,12 @@ vi.mock("./connection-status.svelte.js", () => ({
 
 import SteeringProposalBar from "./components/SteeringProposalBar.svelte";
 import fixtures from "./protocol-fixtures.json";
-import type { SteeringDecision, SteeringProposal } from "./protocol";
+import type { Error as DaemonError, SteeringDecision, SteeringProposal } from "./protocol";
 import { bindSteeringProposal } from "./steering-proposal-store.svelte.js";
 
 const PROPOSAL = { ...(fixtures.steering_proposal as SteeringProposal), session_id: "s1" };
 
-function emit(event: SteeringProposal | SteeringDecision): void {
+function emit(event: SteeringProposal | SteeringDecision | DaemonError): void {
   for (const handler of connection.handlers) handler(event);
   flushSync();
 }
@@ -118,6 +118,24 @@ describe("SteeringProposalCard", () => {
     expect(connection.sent).toEqual([
       { type: "steering_reject", session_id: "s1", proposal_id: "sp-1" },
     ]);
+  });
+
+  it("a card the daemon no longer holds says nothing was written and offers only Dismiss", () => {
+    emit(PROPOSAL);
+    click("Accept");
+    emit({
+      type: "error",
+      seq: 1,
+      session_id: "s1",
+      code: "no_steering_proposal",
+      message: "That steering proposal is no longer open, and nothing was written.",
+      in_reply_to: "steering_accept",
+    });
+    expect(target.textContent).toContain("nothing was written");
+    expect(buttons()).toEqual(["Dismiss"]);
+    click("Dismiss");
+    expect(target.querySelector("article")).toBeNull();
+    expect(connection.sent).toHaveLength(1);
   });
 
   it("a fresh diff says the file changed, and a run's proposal says where it came from", () => {

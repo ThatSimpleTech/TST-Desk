@@ -4,8 +4,12 @@
 	import { localWorkspacePath } from "../session-status.svelte.js";
 	import { wakeup } from "../wakeup.svelte.js";
 	import { openBranchAndLedger } from "../wakeup";
+	import { pending as steeringPending } from "../steering-proposal-store.svelte.js";
+	import { runProposalsLine } from "../steering-proposal";
 
 	let copied = $state(false);
+	// TD-5140: a restart closes open proposals, so "waiting" needs a card.
+	const openFromRun = $derived(steeringPending.filter((p) => p.autonomy && p.open).length);
 
 	async function openBoth(): Promise<void> {
 		if (wakeup.summary === null) return;
@@ -61,7 +65,7 @@
 				<div class="row">
 					<dt>Steering edits</dt>
 					<dd>
-						Waiting for you on the proposal cards; the run never accepts one.
+						{runProposalsLine(openFromRun)}
 						<ul>
 							{#each wakeup.summary.steering_proposals ?? [] as item, i (`${i}:${item}`)}
 								<li><code>{item}</code></li>

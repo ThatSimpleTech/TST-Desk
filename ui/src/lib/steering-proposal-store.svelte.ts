@@ -6,7 +6,9 @@
 // an event in the log (`steering_decision`), so a card leaves when the
 // daemon says it was decided, not when the click is sent: a stale file
 // swaps the card for a fresh diff (`replaces`), and a refusal stays on the
-// card as a notice.
+// card as a notice. A restart closes open proposals in the log (`expired`),
+// so a replay does not bring them back; a card the daemon still says it
+// does not hold keeps the daemon's words and only offers Dismiss.
 
 import {
   acceptMessage,
@@ -50,7 +52,12 @@ onDaemonEvent((event) => {
     lastSent = null;
     if (target === null) return;
     if (event.code === "no_steering_proposal") {
-      close(target);
+      // Say so on the card: closing it silently reads as "written".
+      const card = pending.find((p) => p.proposalId === target);
+      if (card !== undefined) {
+        card.open = false;
+        card.notice = event.message;
+      }
       return;
     }
     // A stale file already swapped the card for a fresh one.
@@ -83,7 +90,8 @@ function setNotice(proposalId: string, notice: string | null): void {
 }
 
 function send(proposal: PendingSteeringProposal, msg: Parameters<typeof sendToDaemon>[0]): void {
-  if (indexOf(proposal.proposalId) === -1) return;
+  const card = pending.find((p) => p.proposalId === proposal.proposalId);
+  if (card === undefined || !card.open) return;
   setNotice(proposal.proposalId, null);
   if (sendToDaemon(msg)) {
     lastSent = proposal.proposalId;
@@ -105,4 +113,9 @@ export function saveEdit(proposal: PendingSteeringProposal, content: string): vo
 /** Reject: writes nothing; the daemon logs the decision. */
 export function reject(proposal: PendingSteeringProposal): void {
   send(proposal, rejectMessage(proposal));
+}
+
+/** Dismiss a card the daemon no longer holds. Sends nothing. */
+export function dismiss(proposal: PendingSteeringProposal): void {
+  close(proposal.proposalId);
 }

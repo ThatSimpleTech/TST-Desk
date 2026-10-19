@@ -14,10 +14,18 @@ with a fresh diff in place of the stale one. Every decision goes in the
 session log with its diff. Nothing here runs without a user message:
 skip-all and autonomy runs never accept a proposal.
 
-Parked proposals live in memory on the session, holding the exact text
-(the logged events are scrubbed of secret-shaped strings, so they are
-not a source to write from). A restart drops them; the card then says
-the proposal is no longer open.
+What the card shows is what gets written. Every logged event is scrubbed
+of secret-shaped strings (TD-4802), so a proposal whose path, file or
+text the scrub would change is refused: the card would show blanks,
+Accept would write text the user never saw, and Edit would start from
+the blanks and save them over the real text. Save refuses such a string
+in the user's own text for the same reason (the logged diff must show
+what was written).
+
+Parked proposals live in memory on the session. A restart drops them,
+and the daemon then logs each one the log still shows open as
+``expired`` when it restores the session, so the attach replay does not
+bring back a card nothing can act on.
 """
 
 from __future__ import annotations
@@ -29,6 +37,7 @@ import os
 import stat
 import tempfile
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -41,8 +50,9 @@ from .autonomy.classifier import (
     is_steering_write,
     relative_parts,
 )
-from .logging import get_logger
+from .logging import get_logger, redact_secrets
 from .protocol import (
+    DaemonEvent,
     SteeringAccept,
     SteeringDecision,
     SteeringEdit,
@@ -78,6 +88,44 @@ _NOT_PROPOSABLE = (
 _PROTECTED_MESSAGE = (
     "The signed charter (.tst/autonomy/CHARTER.md) and the approval policy "
     "(.tst/config.yaml) can't be proposed. Only the user edits them."
+)
+
+#: Refused because the session log's scrub would blank part of the card.
+SECRET_SHAPED = "steering_secret_shaped"
+_SHAPES = (
+    "a long run of letters, digits, '-' or '_' after a token prefix such as sk-, ghp_ or "
+    "github_pat_, an AWS key id, or a private-key header; ordinary words such as "
+    "task-tool-availability can match too"
+)
+_HIDDEN_MESSAGES = {
+    "path": (
+        "The file name has a string shaped like a secret, which the card would blank, so the "
+        "user couldn't see which file Accept writes. Pick another name."
+    ),
+    "before": (
+        f"The file already holds a string shaped like a secret ({_SHAPES}). The card would "
+        "blank it, so the user couldn't check this edit. Ask the user to change the file by "
+        "hand."
+    ),
+    "after": (
+        f"The proposed text has a string shaped like a secret ({_SHAPES}). The card would "
+        "blank it, so the user couldn't see what Accept writes. Keep secrets out of steering "
+        "files: reword it and propose again."
+    ),
+}
+_HIDDEN_IN_EDIT = (
+    f"Your text has a string shaped like a secret ({_SHAPES}). The session log would blank "
+    "it, so the logged diff couldn't show what was written. Reword it, or change the file "
+    "by hand."
+)
+_HIDDEN_AFTER_CHANGE = (
+    "The file changed since this was proposed, and it now holds a string shaped like a "
+    "secret, which the card would blank, so no fresh diff can be shown. Reject this "
+    "proposal and change the file by hand."
+)
+NOT_OPEN_MESSAGE = (
+    "That steering proposal is no longer open, and nothing was written. Ask the agent to "
+    "propose it again."
 )
 
 
@@ -206,6 +254,24 @@ def file_diff(parked: ParkedSteering, after: str | None = None) -> SteeringFileD
     )
 
 
+def hidden_part(diff: SteeringFileDiff) -> Literal["path", "before", "after"] | None:
+    """Which part of *diff* the session log's secret scrub would change, if any.
+
+    The card is drawn from the logged event, so a part the scrub changes
+    is a part the user can't see as it is. ``after`` also covers the diff
+    text itself (its lines come from ``before`` and ``after``).
+    """
+    if redact_secrets(diff.path) != diff.path:
+        return "path"
+    if diff.before is not None and redact_secrets(diff.before) != diff.before:
+        return "before"
+    if diff.after is not None and redact_secrets(diff.after) != diff.after:
+        return "after"
+    if redact_secrets(diff.diff) != diff.diff:
+        return "after"
+    return None
+
+
 def write_steering_file(target: Path, text: str) -> None:
     """Write *text* atomically: a temp file beside the target, then rename.
 
@@ -271,6 +337,9 @@ async def propose(session: Session, path: str, text: str, tool_call_id: str = ""
         tool_call_id=tool_call_id,
         autonomy=bool(getattr(session, "autonomy", False)),
     )
+    hidden = hidden_part(file_diff(parked))
+    if hidden is not None:
+        raise SteeringRefusal(SECRET_SHAPED, _HIDDEN_MESSAGES[hidden])
     session.steering_proposals[parked.proposal_id] = parked
     await session.event_log.add(proposal_event(session.id, parked))
     log.info(
@@ -299,12 +368,7 @@ async def decide(
     """
     parked = session.steering_proposals.pop(msg.proposal_id, None)
     if parked is None:
-        return _error(
-            session,
-            msg,
-            "no_steering_proposal",
-            "That steering proposal is no longer open. Ask the agent to propose it again.",
-        )
+        return _error(session, msg, "no_steering_proposal", NOT_OPEN_MESSAGE)
     if isinstance(msg, SteeringReject):
         await _log_decision(session, parked, "rejected", file_diff(parked))
         return None
@@ -317,6 +381,10 @@ async def decide(
             )
         if len(text) > STEERING_TEXT_CAP:
             raise SteeringRefusal("too_large", f"The text is over {STEERING_TEXT_CAP} chars")
+        if hidden_part(file_diff(parked, after=text)) is not None:
+            # Accept: never, since propose() refused it. Save: the user's own
+            # text, which the logged decision could not show as written.
+            raise SteeringRefusal(SECRET_SHAPED, _HIDDEN_IN_EDIT)
         await asyncio.to_thread(_write_if_unchanged, session, parked, text)
     except _Stale as stale:
         return await _offer_fresh(session, parked, text, stale.current, msg)
@@ -372,6 +440,11 @@ async def _offer_fresh(
     the stale card is not lost.
     """
     fresh = replace(parked, proposal_id=f"sp-{uuid.uuid4()}", before=current, after=text)
+    if hidden_part(file_diff(fresh)) is not None:
+        # The card could not show the file as it is now. Keep the stale one
+        # so Reject still logs a decision; Accept stays refused as stale.
+        session.steering_proposals[parked.proposal_id] = parked
+        return _error(session, msg, SECRET_SHAPED, _HIDDEN_AFTER_CHANGE)
     session.steering_proposals[fresh.proposal_id] = fresh
     await session.event_log.add(proposal_event(session.id, fresh, replaces=parked.proposal_id))
     return _error(session, msg, "steering_proposal_stale", STALE_MESSAGE)
@@ -393,3 +466,49 @@ async def _log_decision(
     await session.event_log.add(event)
     fields = {"session_id": session.id, "path": parked.relative, "decision": decision}
     log.info("steering proposal decided", extra={"extra_fields": fields})
+
+
+# ── After a restart ────────────────────────────────────────────────────
+
+
+def open_in_log(events: Sequence[DaemonEvent]) -> list[SteeringProposal]:
+    """Proposals the log shows open: no decision, and no fresh diff replaced them."""
+    closed: set[str] = set()
+    for event in events:
+        if isinstance(event, SteeringDecision):
+            closed.add(event.proposal_id)
+        elif isinstance(event, SteeringProposal) and event.replaces:
+            closed.add(event.replaces)
+    found: dict[str, SteeringProposal] = {}
+    for event in events:
+        if isinstance(event, SteeringProposal) and event.proposal_id not in closed:
+            found.setdefault(event.proposal_id, event)
+    return list(found.values())
+
+
+async def expire_restored(session: Session, events: Sequence[DaemonEvent]) -> int:
+    """Log ``expired`` for every proposal a restart dropped. Returns how many.
+
+    Parked proposals live in memory, so a restored session holds none. Left
+    open in the log, the attach replay would bring their cards back with
+    Accept live, and every click would find nothing to write. The decision
+    carries the logged diff and writes nothing. Once logged, a second
+    restore finds nothing to close.
+    """
+    expired = [p for p in open_in_log(events) if p.proposal_id not in session.steering_proposals]
+    for proposal in expired:
+        await session.event_log.add(
+            SteeringDecision(
+                session_id=session.id,
+                proposal_id=proposal.proposal_id,
+                decision="expired",
+                files=proposal.files,
+                seq=1,
+            )
+        )
+    if expired:
+        log.info(
+            "steering proposals closed by a restart",
+            extra={"extra_fields": {"session_id": session.id, "count": len(expired)}},
+        )
+    return len(expired)

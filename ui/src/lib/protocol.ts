@@ -1474,12 +1474,14 @@ export interface SteeringProposal extends DaemonEvent {
   autonomy?: boolean;
 }
 
-/** The user's decision on a steering proposal, with its diff (TD-5140). */
+/** The user's decision on a steering proposal, with its diff (TD-5140).
+ *  `expired` is the daemon's: a restart dropped the open proposal and it was
+ *  closed when the session was restored, writing nothing. */
 export interface SteeringDecision extends DaemonEvent {
   type: "steering_decision";
   session_id: string;
   proposal_id: string;
-  decision: "accepted" | "edited" | "rejected";
+  decision: "accepted" | "edited" | "rejected" | "expired";
   files: SteeringFileDiff[];
 }
 

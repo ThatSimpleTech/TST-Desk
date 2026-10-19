@@ -14220,9 +14220,9 @@ refused in the tool, in every mode.
   policy rule for the tool still refuses it.
 - **Wire:** `steering_proposal` mirrors `memory_proposal` (proposal id, then action, path,
   diff, before and after per file) plus `tool_call_id`, `replaces` (a stale proposal this one
-  supersedes) and `autonomy`. `steering_decision` (`accepted`, `edited` or `rejected`, with the
-  diff) is a session event, so a decision is in the log and survives restarts; the window drops
-  a card on the decision, not on the click. `autonomy_summary.steering_proposals` lists what an
+  supersedes) and `autonomy`. `steering_decision` (`accepted`, `edited` or `rejected`, or the
+  daemon's `expired` after a restart, with the diff) is a session event, so a decision is in
+  the log and survives restarts; the window drops a card on the decision, not on the click. `autonomy_summary.steering_proposals` lists what an
   unattended run left waiting.
 - **Stale check:** at Accept or Save the daemon re-resolves the path (it must still be the
   same proposable path, so a symlink swapped in since is refused) and compares the file with the
@@ -14232,15 +14232,28 @@ refused in the tool, in every mode.
   saving, so an edit made on the stale card is not lost. A session moved to another folder
   since the proposal (TD-1715) is refused with `steering_workspace_moved`: the diff was of a
   file in the old root.
-- **Where proposals live:** in memory on the session, with the exact text. Logged events are
-  scrubbed of secret-shaped strings (TD-4802), so they are not a source to write from, and
-  writing the text to the data dir would put whatever the agent proposed on disk outside the
-  workspace. A restart closes open proposals; Accept then answers `no_steering_proposal` and
-  the card goes away. The proposal is taken off the session before the write, so a second
-  click cannot write twice; a refused write puts it back.
-  A secret-shaped string in the proposed text shows scrubbed on the card, as every logged
-  event is; Accept writes the agent's exact text, and Edit then Save writes what the editor
-  holds.
+- **What the card shows is what is written:** the card is drawn from the logged event, and
+  every logged event is scrubbed of secret-shaped strings (TD-4802). That scrub has no word
+  boundary, so ordinary text matches too (`task-tool-availability` shows as
+  `ta[REDACTED]`). A proposal whose path, current file or new text the scrub would change is
+  refused with `steering_secret_shaped`: otherwise Accept would write text the user never
+  saw (an agent could hide an instruction behind the placeholder), Edit would open the
+  placeholders and Save would write them over real content, and the logged decision would
+  not show what was written. Save refuses such a string in the user's own text for the last
+  reason, and a stale Accept whose file now holds one gets no fresh diff (Reject still
+  works). Most conservative option, chosen in review: the scrub stays as it is for every
+  other event, and a file that trips it is changed by hand (none of 87 steering files on
+  EZER does).
+- **Where proposals live:** in memory on the session, with the exact text; writing it to the
+  data dir would put whatever the agent proposed on disk outside the workspace. A restart
+  drops them, so when the daemon restores a session it logs `steering_decision` `expired`
+  (the daemon's decision, with the logged diff, writing nothing) for every proposal the log
+  still shows open, in both the revived and the replay-only path, the way TD-5018 seals a cut
+  turn. The attach replay then does not bring back a card nothing can act on, and the wake-up
+  card only says proposals are waiting while one of the run's cards is open. If the daemon
+  still answers `no_steering_proposal`, the card says nothing was written and offers only
+  Dismiss instead of closing silently. The proposal is taken off the session before the
+  write, so a second click cannot write twice; a refused write puts it back.
 
 **Rationale:** The story asks for the memory flow's shape (proposal event, card, accept, edit,
 reject) with the daemon as the only writer and directive 4 still enforced in the tool. Keeping

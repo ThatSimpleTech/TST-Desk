@@ -2067,12 +2067,15 @@ class SteeringDecision(DaemonEvent):
 
     ``accepted`` wrote the proposed text, ``edited`` wrote the user's own
     text (the diff is what was written), ``rejected`` wrote nothing.
+    ``expired`` is the daemon's, not the user's: a restart dropped the open
+    proposal, so it was closed when the session was restored and nothing
+    was written.
     """
 
     type: Literal["steering_decision"] = "steering_decision"
     session_id: str
     proposal_id: str
-    decision: Literal["accepted", "edited", "rejected"]
+    decision: Literal["accepted", "edited", "rejected", "expired"]
     files: list[SteeringFileDiff]
 
 

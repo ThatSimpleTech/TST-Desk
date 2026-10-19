@@ -973,14 +973,18 @@ and test commands, CI config and layout) and proposes the whole new file.
   any path under `.git`, `.vscode` or another folder that runs code later can't be proposed.
 - **What you see:** a card with the diff and **Accept**, **Edit** and **Reject**. Edit opens the
   proposed text; **Save** writes what you typed. The tool itself writes nothing and asks
-  nothing, so the card is the one approval.
+  nothing, so the card is the one approval. The card shows exactly what Accept writes: the
+  session log blanks secret-shaped strings (`sk-…`, `ghp_…`, and ordinary words such as
+  `task-tool-availability` that happen to match), so a proposal whose file name, file or text
+  holds one is refused, and so is a Save of one. Change such a file by hand.
 - **Who writes:** the daemon, on your Accept or Save, never the filesystem tool. If the file
   changed after the proposal (you edited it, or another proposal was accepted), Accept is
   refused with "the file changed since this was proposed" and a fresh diff replaces the card.
   Accept and Save come only from this computer's own window; a paired phone can reject.
 - **What is kept:** every proposal and every decision (accepted, edited or rejected) goes in
   the session log with its diff. Open proposals are held by the daemon in memory, so a restart
-  closes them; ask the agent again.
+  closes them: the log records each as `expired`, the card does not come back, and you ask the
+  agent again. A card the daemon no longer holds says nothing was written and offers Dismiss.
 - **Nothing accepts for you.** Skip-all doesn't, and an unattended run parks its proposals in
   the run summary ("Steering edits") until you decide.
 

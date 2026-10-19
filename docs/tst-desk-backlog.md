@@ -9368,7 +9368,11 @@ and `steering_reject`, logged as `steering_decision`; a stale file gets
 `steering_proposal_stale` and a fresh `steering_proposal` that `replaces` the old one. The
 window's card is `SteeringProposalCard.svelte` in a footer bar; the wake-up card lists what an
 unattended run left waiting (`autonomy_summary.steering_proposals`). Open proposals live in
-daemon memory and a restart closes them. Tests: `core/tests/test_steering_proposals.py`,
+daemon memory; a restart closes them, logged as `steering_decision` `expired` when the
+session is restored, so no dead card comes back. Review fixes (PR #18): a proposal or Save
+the session log's secret scrub would change is refused (`steering_secret_shaped`), so the
+card shows exactly what Accept writes and Edit never saves `[REDACTED]` over real text; a
+card the daemon no longer holds says nothing was written and offers only Dismiss. Tests: `core/tests/test_steering_proposals.py`,
 `core/tests/test_steering_decisions.py`, `ui/src/lib/steering-proposal-store.test.ts`,
 `ui/src/lib/steering-proposal-component.test.ts`. Class B entry and the conservative Class C
 choices (loopback-only accept, no deletes, workspace files only) in DECISIONS.md; see

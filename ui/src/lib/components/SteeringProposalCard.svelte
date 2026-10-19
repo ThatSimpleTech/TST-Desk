@@ -4,7 +4,7 @@
 	// that writes it, and the daemon does the write; Reject writes nothing.
 	import { onMount } from 'svelte';
 	import { classifyDiffLine, diffLines } from '../entry-view';
-	import { accept, reject, saveEdit } from '../steering-proposal-store.svelte.js';
+	import { accept, dismiss, reject, saveEdit } from '../steering-proposal-store.svelte.js';
 	import { actionTitle, type PendingSteeringProposal } from '../steering-proposal';
 
 	interface Props {
@@ -18,7 +18,10 @@
 	// The draft belongs to the proposal it was opened on: a fresh diff after
 	// a stale Accept is a different proposal and starts from its own text.
 	let editing = $state<{ id: string; text: string } | null>(null);
-	const draft = $derived(editing !== null && editing.id === proposal.proposalId ? editing : null);
+	// A card the daemon no longer holds shows the diff, never the editor.
+	const draft = $derived(
+		proposal.open && editing !== null && editing.id === proposal.proposalId ? editing : null
+	);
 
 	onMount(() => cardEl?.focus());
 
@@ -62,7 +65,9 @@
 	{/if}
 
 	<footer class="card-actions">
-		{#if draft === null}
+		{#if !proposal.open}
+			<button class="btn btn--quiet" type="button" onclick={() => dismiss(proposal)}>Dismiss</button>
+		{:else if draft === null}
 			<button class="btn btn--accept" type="button" onclick={() => accept(proposal)}>Accept</button>
 			<button class="btn btn--quiet" type="button" onclick={startEdit}>Edit</button>
 			<button class="btn btn--reject" type="button" onclick={() => reject(proposal)}>Reject</button>

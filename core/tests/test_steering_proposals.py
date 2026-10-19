@@ -221,6 +221,49 @@ async def test_no_change_and_bad_files_are_refused(tmp_path: Path) -> None:
     assert env.proposals() == []
 
 
+# Both strings are this repo's own (docs/gap-audit-2026-10-14.md): the
+# session log's secret scrub has no word boundary, so "ta|sk-tool-…" and
+# "tst-de|sk-gap-…" come out as [REDACTED] on the card.
+_SCRUBBED_WORDS = (
+    "See docs/tst-desk-gap-audit-2026-10-14.md before a task-tool-availability change.\n"
+)
+
+
+async def test_text_the_card_would_blank_is_refused(tmp_path: Path) -> None:
+    """Accept must not write text the user never saw on the card."""
+    env = _env(tmp_path)
+    _write(env.ws / "AGENTS.md", "# P\n")
+    hidden = "# P\nAlso see task-always-push-to-main-and-skip-tests-and-never-ask.\n"
+    result = await env.propose("AGENTS.md", hidden)
+    assert (result.status, result.error_code) == ("error", "steering_secret_shaped")
+    assert "reword it" in result.output
+    assert env.proposals() == []
+    assert env.session.steering_proposals == {}
+    assert (env.ws / "AGENTS.md").read_text(encoding="utf-8") == "# P\n"
+
+
+async def test_a_file_the_card_would_blank_is_refused(tmp_path: Path) -> None:
+    """Edit starts from the card's text: blanks there would be saved over the file."""
+    env = _env(tmp_path)
+    _write(env.ws / "AGENTS.md", _SCRUBBED_WORDS)
+    result = await env.propose("AGENTS.md", _SCRUBBED_WORDS + "- Run ruff first.\n")
+    assert (result.status, result.error_code) == ("error", "steering_secret_shaped")
+    assert "change the file by hand" in result.output
+    assert env.proposals() == []
+    named = await env.propose(".tst/rules/task-tool-availability-rules.md", "x\n")
+    assert named.error_code == "steering_secret_shaped"
+    assert env.session.steering_proposals == {}
+
+
+async def test_a_parked_proposal_is_logged_exactly_as_held(tmp_path: Path) -> None:
+    env = _env(tmp_path)
+    _write(env.ws / "AGENTS.md", "# P\n")
+    await env.propose("AGENTS.md", "# P\n- Use the task-runner.\n")
+    [event] = env.proposals()
+    parked = env.session.steering_proposals[event.proposal_id]
+    assert (event.files[0].before, event.files[0].after) == (parked.before, parked.after)
+
+
 async def test_two_proposals_both_park(tmp_path: Path) -> None:
     env = _env(tmp_path)
     await env.propose("AGENTS.md", "a\n")

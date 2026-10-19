@@ -1356,8 +1356,14 @@ fresh diff replaces the card. The signed charter (`.tst/autonomy/CHARTER.md`) an
 `.tst/config.yaml` can't be proposed, and neither can a path that runs code later (below).
 Accept and Save are only taken from this computer's own window (`loopback_only` from a phone
 or another computer); Reject works from a phone. Every accepted, edited or rejected proposal
-goes in the session log as `steering_decision` with its diff. Open proposals live in the
-daemon's memory: a restart closes them, and the card then says so.
+goes in the session log as `steering_decision` with its diff. The card shows exactly what
+Accept writes. The session log blanks secret-shaped strings (a long run of letters, digits,
+`-` or `_` after `sk-`, `ghp_` and the like; ordinary words such as `task-tool-availability`
+can match too), so a proposal whose file name, current file or new text holds one is refused
+(`steering_secret_shaped`), and so is a Save of one; change that file by hand. Open proposals live in the daemon's memory, so a restart closes them: the daemon logs
+each one as `steering_decision` `expired` when it restores the session, its card does not
+come back, and the agent has to propose it again. A card the daemon no longer holds says
+that nothing was written and offers only Dismiss.
 
 **Paths that run code later ask first (TD-5108).** Some files run nothing when written, but
 git, a login shell, direnv or an editor runs what they say the next time it starts. A write to
