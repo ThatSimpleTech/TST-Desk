@@ -13934,8 +13934,19 @@ set aside and the session runs on `BoundaryConfig()` and `PolicyConfig()`.
   alone (same root), so it is safe while a turn runs.
 - **TST Desk's own writes** (always allow, revoke, spend cap, external-import approval) go
   through `TrustStore.before_write` and `after_write`: refused with `workspace_config_untrusted`
-  while the file is pending or declined, and the new hash stamped trusted when it was in force.
-  An import approved in an untrusted workspace lasts for the session only.
+  while the file is pending or declined. The new hash is stamped trusted only when every
+  setting it loosens was in force before the write or sits under the key the write sets
+  (`caps.spend_usd`, `policy.rules`, `approved_external_imports`). A write that makes a refused
+  section valid (a budget saved over a bad `caps` value exposes the `boundary.network` beside
+  it) leaves the new hash pending, and every live session on the workspace drops to the
+  defaults and shows the card. An import approved in an untrusted workspace lasts for the
+  session only.
+- **Always allow while untrusted:** the approval card carries no `proposed_always_allow` while
+  the file is pending, declined or unreadable, so it offers approve and deny only. An
+  `always_allow` that arrives anyway (a card from before the file changed) approves that one
+  call, saves nothing and replies `workspace_config_untrusted`. Leaving the call parked would
+  strand it: the window drops a card once its decision is sent, and approvals have no default
+  timeout.
 - **Gate in one place:** production code reads the file only through `workspace_trust.read_view`
   and parses `view.effective`. The ungated `load_*` loaders stay for library use and tests, and
   a test fails if anything else in `tstd/` calls them.
@@ -13954,3 +13965,7 @@ paired phone or another computer decide (the decision widens the wall; it is mad
 computer that holds the files). Keeping several trusted hashes per workspace (a branch switch
 between two configs asks each time; simpler and stricter). Ignoring `mcp_servers` and `hooks`
 because nothing reads them from a workspace yet (TD-5134 would then have to remember the gate).
+Refusing every write into a file with an invalid section (it would also refuse a budget or
+rule in a file whose only fault is unrelated, and the hidden settings stay hidden instead of
+reaching the card). Restoring the card in the window on `workspace_config_untrusted` (the CLI
+and every other client would each need the same fix, and the rule still could not be saved).

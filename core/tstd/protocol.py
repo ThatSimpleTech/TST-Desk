@@ -247,7 +247,9 @@ class AlwaysAllow(ClientMessage):
 
     Writes the narrowest policy rule for the call, then resolves the pending
     approval as approved.  Rejected with ``class_c_not_always_allowable``
-    when the call is a class-C decision.
+    when the call is a class-C decision.  While the workspace config is not
+    trusted (TD-5113) nothing is saved: the call is approved once and the
+    reply is ``workspace_config_untrusted``.
     """
 
     type: Literal["always_allow"] = "always_allow"
@@ -1678,8 +1680,9 @@ class ApprovalRequest(DaemonEvent):
 
     ``proposed_always_allow`` (TD-803) is the rule that "always allow in
     this workspace" would write, or ``None`` when the call is a class-C
-    decision that can never be always-allowed.  The client shows it before
-    the user commits to saving it.
+    decision that can never be always-allowed, or when the workspace config
+    is not trusted and no rule could be saved into it (TD-5113).  The client
+    shows it before the user commits to saving it.
     """
 
     type: Literal["approval_request"] = "approval_request"

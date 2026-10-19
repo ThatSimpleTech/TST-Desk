@@ -1682,10 +1682,17 @@ When the file loosens something:
   `workspace_trust.yaml` in the user data dir, never in the workspace, so a repo cannot ship
   its own trust. Any change to the file, your own hand edit included, asks again. Keep defaults
   is remembered too: the card shrinks to one line with **Review**, which opens it again.
-- **TST Desk's own writes keep their trust.** Always allow, Revoke, Settings → Budget and
-  approving an external import rewrite this file. When the file was in force before the write,
-  the new hash is stored as trusted, so your own rules never ask. While it is not trusted those
-  writes are refused with `workspace_config_untrusted` (approve once instead), and an approved
+- **TST Desk's own writes keep their trust, for what you have seen.** Always allow, Revoke,
+  Settings → Budget and approving an external import rewrite this file. When the file was in
+  force before the write, the new hash is stored as trusted, so your own rules never ask. That
+  covers only what was in force before the write plus the key the write sets. If the write
+  makes a refused section valid, so the file now loosens something the card never listed
+  (a budget saved over a bad `caps` value exposes the `boundary.network` beside it), the new
+  hash is not trusted: the file waits on the card and the workspace drops to the defaults.
+- **While the file is not trusted, nothing is saved into it.** Approval cards offer approve and
+  deny but not Always allow. An Always allow sent anyway (a card shown before the file changed)
+  approves that one call and replies `workspace_config_untrusted`: the rule is not saved.
+  Revoke and Settings → Budget are refused with `workspace_config_untrusted`, and an approved
   import lasts for the session only.
 - **Only this computer decides.** A phone or another computer that sends the decision gets
   `loopback_only`. A session on another computer shows the card without its buttons.

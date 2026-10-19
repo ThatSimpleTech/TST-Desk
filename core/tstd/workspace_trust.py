@@ -19,6 +19,8 @@ hash differs asks again. TST Desk's own writes to the file (always-allow,
 spend cap, import approvals) go through :meth:`TrustStore.before_write`
 and :meth:`TrustStore.after_write`, so the user's own changes keep the
 trust they were made under and are refused while the file is untrusted.
+A write keeps that trust only for settings the user has seen or just set;
+one that exposes anything else leaves the file pending.
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ import re
 import tempfile
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -321,12 +323,15 @@ class TrustStore:
 
     # ── TST Desk's own writes ──────────────────────────────────────────
 
-    def before_write(self, workspace: str | Path) -> None:
+    def before_write(self, workspace: str | Path) -> WorkspaceConfigView:
         """Refuse a write into a config whose settings are not in force.
 
         Merging the user's rule into a file they have not trusted would
         either bury it under settings that do not apply or, once stamped,
         trust the repo's settings along with it.
+
+        Returns:
+            The read the write starts from, for :meth:`after_write`.
 
         Raises:
             UntrustedConfigError: The file is pending or declined.
@@ -339,15 +344,46 @@ class TrustStore:
                 "will not save into it. Trust the workspace config first, or "
                 "approve this once."
             )
+        return view
 
-    def after_write(self, workspace: str | Path) -> None:
-        """Keep the trust a write was made under: stamp the new hash trusted."""
-        view = self.view(workspace)
-        if view.sha256 is not None and view.loosened:
-            self.record(workspace, view.sha256, "trusted")
+    def after_write(
+        self, workspace: str | Path, before: WorkspaceConfigView, owns: tuple[str, ...]
+    ) -> WorkspaceConfigView:
+        """Keep the trust a write was made under, for what the user has seen.
 
-    def write_through(self, workspace: str | Path, write: Callable[[], None]) -> None:
+        The new hash is stamped trusted only when every setting it loosens
+        was already in force before the write (*before*), or sits under a
+        key this write sets (*owns*, e.g. ``caps.spend_usd``). Anything else
+        came from a section the loader refused before the write, which the
+        write made valid (a budget saved over a bad ``caps`` value exposes
+        the ``boundary.network`` beside it). The card never listed it, so
+        the new hash stays pending and the card asks.
+
+        Returns:
+            The read after the write: in force (``applies``) or pending.
+        """
+        after = self.view(workspace)
+        if after.sha256 is None or after.state != "pending":
+            return after
+        seen = set(before.loosened) if before.applies else set()
+        unseen = [item for item in after.loosened if item not in seen and item.key not in owns]
+        if unseen:
+            return after
+        self.record(workspace, after.sha256, "trusted")
+        return replace(after, state="trusted")
+
+    def write_through(
+        self, workspace: str | Path, write: Callable[[], None], owns: tuple[str, ...]
+    ) -> WorkspaceConfigView:
         """:meth:`before_write`, *write*, :meth:`after_write`."""
-        self.before_write(workspace)
+        before = self.before_write(workspace)
         write()
-        self.after_write(workspace)
+        return self.after_write(workspace, before, owns)
+
+    def writable(self, workspace: str | Path) -> bool:
+        """True when :meth:`before_write` would accept a write now."""
+        try:
+            self.before_write(workspace)
+        except ConfigError:
+            return False
+        return True

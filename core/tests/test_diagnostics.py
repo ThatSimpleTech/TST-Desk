@@ -296,7 +296,9 @@ class TestWithWorkspace:
             # Approved through TST Desk, so the write keeps its trust (TD-5113);
             # the same list arriving with a clone would wait for the trust card.
             daemon.workspace_trust.write_through(
-                work, lambda: save_approved_imports(work, [external])
+                work,
+                lambda: save_approved_imports(work, [external]),
+                owns=("approved_external_imports",),
             )
             try:
                 ws = await _connect_and_handshake(

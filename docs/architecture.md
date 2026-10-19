@@ -412,7 +412,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `compact_context` | yes | Compact now: everything before the latest user turn, or from a given user turn on, with optional guidance (TD-5109). Refused mid-turn. |
 | `approve` | yes | Approve a parked tool call. |
 | `deny` | yes | Deny a parked tool call, with an optional reason. |
-| `always_allow` | yes | Approve and save the narrowest policy rule that would have allowed it. Refused for class-C calls. |
+| `always_allow` | yes | Approve and save the narrowest policy rule that would have allowed it. Refused for class-C calls. While the workspace config is not trusted (TD-5113) it approves the call once, saves nothing and replies `workspace_config_untrusted`. |
 | `list_policy_rules` | yes | List the workspace's saved policy rules. |
 | `revoke_policy_rule` | yes | Remove one saved rule, identified by `(tool, args)`. |
 | `set_spend_cap` | yes | Set or clear the workspace's session spend budget (`caps.spend_usd` in `.tst/config.yaml`). Null removes it and the built-in $25 pause applies; a number replaces that pause. Acked with `boundary_update`. |
@@ -536,7 +536,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `tool_result` | session | The outcome of a tool call, with an error code and diff when applicable. |
 | `shell_output` | session | A streamed chunk of a shell command's stdout or stderr. |
 | `tool_progress` | session | Progress an MCP server reported for a running tool call: count, optional total and message (TD-5105). Thinned to two a second. |
-| `approval_request` | session | A tool call parked for approval, with the summary, the reason, and the rule "always allow" would write. |
+| `approval_request` | session | A tool call parked for approval, with the summary, the reason, and the rule "always allow" would write (none for class C, or while the workspace config is not trusted). |
 | `decision_logged` | session | A decision appended to the autonomy ledger. |
 | `checkpoint_notice` | session | A one-time notice that checkpointing is degraded. |
 | `verify_result` | session | Interactive validator review of a write turn. Timeline only; not a chat bubble (TD-4204). |

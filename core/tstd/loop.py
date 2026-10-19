@@ -1005,9 +1005,12 @@ def _persist_import_approvals(session: Session, approved: set[Path]) -> None:
     if store is None:
         save_approved_imports(session.workspace_path, approved)
         return
+    # The key is rewritten whole and nothing else moves, so the write can
+    # only add what it owns; it never exposes another section.
     store.write_through(
         session.workspace_path,
         lambda: save_approved_imports(session.workspace_path, approved),
+        owns=("approved_external_imports",),
     )
 
 

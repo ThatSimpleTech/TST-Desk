@@ -587,6 +587,13 @@ class Session:
 
     # ── Approvals (TD-802) ──────────────────────────────────────────
 
+    async def _config_writable(self) -> bool:
+        """True when TST Desk may save into the workspace config now (TD-5113)."""
+        store = self.trust_store
+        if store is None:
+            return True
+        return await asyncio.to_thread(store.writable, self.workspace_path)
+
     async def request_approval(
         self,
         tool_call_id: str,
@@ -613,8 +620,12 @@ class Session:
         )
         # The rule "always allow" would write (TD-803), surfaced on the
         # card so the user sees it before committing to save it.  None for
-        # a class-C call — the boundary can never be always-allowed.
+        # a class-C call — the boundary can never be always-allowed — and
+        # while the workspace config is not in force (TD-5113): the rule
+        # could not be saved, so the card offers approve once instead.
         proposed = propose_always_allow(tool, arguments, decision_class, Path(self.workspace_path))
+        if proposed is not None and not await self._config_writable():
+            proposed = None
         await self.event_log.add(
             ApprovalRequestEvent(
                 session_id=self.id,

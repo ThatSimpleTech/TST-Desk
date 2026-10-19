@@ -206,14 +206,14 @@ def test_tst_desk_writes_keep_their_trust_and_refuse_an_untrusted_file(
     config = ws / ".tst" / "config.yaml"
 
     # No config yet: the user's own loosening write is trusted as written.
-    store.write_through(ws, lambda: _write(ws, SHELL_AUTO))
+    store.write_through(ws, lambda: _write(ws, SHELL_AUTO), owns=("policy.rules",))
     assert read_view(ws, store).state == "trusted"
 
     # A repo change on top is not.
     _write(ws, LOOSE)
     before = config.read_bytes()
     with pytest.raises(UntrustedConfigError):
-        store.write_through(ws, lambda: _write(ws, SHELL_AUTO))
+        store.write_through(ws, lambda: _write(ws, SHELL_AUTO), owns=("policy.rules",))
     assert config.read_bytes() == before
 
 

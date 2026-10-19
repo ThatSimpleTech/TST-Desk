@@ -9253,8 +9253,10 @@ rules, a network allowlist or raised caps (gap audit 2026-10-14, protects direct
 **Notes:** Loosening is judged against the packaged defaults on the loaders' own models; caps,
 attachment caps, `memory.max_lines`, external imports and `hooks` count too. The decision is
 `trust_workspace_config` (loopback only), and the state rides on `boundary_update.config_trust`.
-TST Desk's own writes keep the trust they were made under. See DECISIONS.md and
-configuration.md §4.8.
+TST Desk's own writes keep the trust they were made under, but only for settings that were
+in force or that the write itself set; a write that exposes anything else leaves the file
+pending. While the file is untrusted the approval card offers no Always allow. See
+DECISIONS.md and configuration.md §4.8.
 
 ---
 

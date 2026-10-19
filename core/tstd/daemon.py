@@ -43,6 +43,7 @@ from .boundary_config import (
     boundary_from_mapping,
     save_spend_cap,
     scaffold_workspace_config,
+    workspace_config_path,
 )
 from .browser import BrowserDriver, BrowserError, browser_driver_from_config, normalize_hit
 from .config import (
@@ -2647,11 +2648,19 @@ class Daemon:
                 )
             ws = found.workspace_path
             try:
-                self.workspace_trust.write_through(ws, lambda: save_spend_cap(ws, msg.spend_usd))
+                after = self.workspace_trust.write_through(
+                    ws, lambda: save_spend_cap(ws, msg.spend_usd), owns=("caps.spend_usd",)
+                )
             except UntrustedConfigError as e:
                 return build_error("workspace_config_untrusted", str(e), session_id=found.id)
             except ConfigError as e:
                 return build_error("bad_request", str(e), session_id=found.id)
+            if not after.applies:
+                # The budget made a refused section valid and exposed
+                # loosening the card never showed (TD-5113): the file now
+                # waits on the card, so its sessions drop to the defaults.
+                await self._reapply_workspace_config(ws)
+                return None
             error = reload_session_boundary(found, ws)
             if error is not None:
                 return build_error("bad_request", str(error), session_id=found.id)
@@ -2761,20 +2770,37 @@ class Daemon:
                 )
             # TD-5113: never merge a rule into a config that is not in
             # force. Checked before add_rule, which edits the live policy.
+            # The card offers no Always allow then; a click that races a
+            # trust change still approves this one call, so it is never
+            # left parked with no card to answer it.
             try:
-                self.workspace_trust.before_write(found.workspace_path)
-            except UntrustedConfigError as e:
-                return build_error("workspace_config_untrusted", str(e), session_id=found.id)
+                before = self.workspace_trust.before_write(found.workspace_path)
+            except UntrustedConfigError:
+                found.resolve_approval(msg.tool_call_id, True)
+                return build_error(
+                    "workspace_config_untrusted",
+                    f"Approved once. {workspace_config_path(found.workspace_path)} loosens "
+                    "settings you have not trusted, so the rule was not saved. Trust the "
+                    "workspace config to save rules into it.",
+                    session_id=found.id,
+                )
             except ConfigError as e:
-                return build_error("policy_save_failed", f"Failed to save policy: {e}")
+                found.resolve_approval(msg.tool_call_id, True)
+                return build_error(
+                    "policy_save_failed", f"Approved once; failed to save policy: {e}"
+                )
             found.policy = add_rule(found.policy, rule)
             try:
                 save_policy(found.workspace_path, found.policy)
-                self.workspace_trust.after_write(found.workspace_path)
+                after = self.workspace_trust.after_write(
+                    found.workspace_path, before, owns=("policy.rules",)
+                )
             except ConfigError as e:
                 return build_error("policy_save_failed", f"Failed to save policy: {e}")
             # Resolve the parked call as approved so the loop proceeds.
             found.resolve_approval(msg.tool_call_id, True)
+            if not after.applies:
+                await self._reapply_workspace_config(found.workspace_path)
             return None
 
         if isinstance(msg, ListPolicyRules):
@@ -2800,7 +2826,7 @@ class Daemon:
                     f"Session {msg.session_id!r} not found",
                 )
             try:
-                self.workspace_trust.before_write(found.workspace_path)
+                before = self.workspace_trust.before_write(found.workspace_path)
             except UntrustedConfigError as e:
                 return build_error("workspace_config_untrusted", str(e), session_id=found.id)
             except ConfigError as e:
@@ -2812,9 +2838,13 @@ class Daemon:
                 )
             try:
                 save_policy(found.workspace_path, found.policy)
-                self.workspace_trust.after_write(found.workspace_path)
+                after = self.workspace_trust.after_write(
+                    found.workspace_path, before, owns=("policy.rules",)
+                )
             except ConfigError as e:
                 return build_error("policy_save_failed", f"Failed to save policy: {e}")
+            if not after.applies:
+                await self._reapply_workspace_config(found.workspace_path)
             return PolicyRules(
                 seq=1,
                 rules=[
@@ -3773,12 +3803,16 @@ class Daemon:
             "workspace config trust decided",
             extra={"extra_fields": {"workspace_path": workspace, "decision": decision}},
         )
+        await self._reapply_workspace_config(workspace)
+        return None
+
+    async def _reapply_workspace_config(self, workspace: str) -> None:
+        """Every live session on *workspace* re-reads its config and re-announces its wall."""
         for sess in await self.session_registry.list_sessions():
             if sess.trust_store is None or sess.state in TERMINAL_STATES:
                 continue
             if same_workspace(sess.workspace_path, workspace):
                 await apply_workspace_config(sess)
-        return None
 
     async def _handle_set_session_preset(self, msg: SetSessionPreset) -> str:
         """Retarget one session at a catalog preset (TD-1721)."""
