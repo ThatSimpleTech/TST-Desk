@@ -1045,6 +1045,8 @@ class AutonomyConfig(BaseModel):
     ``check_every`` is the autonomy drift-check cadence (TD-4201).
     ``verify`` is the interactive validator review after writes (TD-4204,
     spec §12.6 first sentence). It is not the autonomy supervisor.
+    ``verify_max_prompt_tokens`` caps that review's estimated prompt;
+    null is 60% of the validator tier's window (TD-5153).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -1053,6 +1055,7 @@ class AutonomyConfig(BaseModel):
     image: str = Field(default="docker.io/library/alpine:3.21", min_length=1)
     check_every: int = Field(default=5, ge=1)
     verify: Literal["off", "after_write", "ask"] = "after_write"
+    verify_max_prompt_tokens: int | None = Field(default=None, ge=1024)
 
     @field_validator("runtime", "image")
     @classmethod

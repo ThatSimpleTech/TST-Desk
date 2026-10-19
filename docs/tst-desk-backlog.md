@@ -9259,6 +9259,35 @@ model).
 - [x] Tests fail on the old code (Stop during a hanging validator stream
       leaves it running) and pass on the new
 
+### TD-5153 — The after-write review prompt fits the validator's window
+**Size:** 3 · **Depends on:** TD-4204, TD-5007, TD-5106, TD-5146
+
+The after-write review sent every diff and every shell output of the turn,
+with no cap. On EZER the validator is a local llama.cpp model (65,536-token
+slots, ~390-830 tokens/s uncached) behind LiteLLM with a 120 s read
+timeout. The call streams, but the first chunk arrives only after the whole
+prompt is read: about 45k tokens fit in 120 s at the slow rate, a bigger
+turn timed out as a verify error, and one past the slot failed outright.
+
+**Acceptance criteria:**
+- [x] The review prompt is bounded by the validator tier's window and
+      `autonomy.verify_max_prompt_tokens` (null is 60% of
+      `context_window`), never past the window less `max_output_tokens`
+- [x] Over the budget, shell output is cut first and each output keeps its
+      tail; then the oldest diffs go; the newest diff stays
+- [x] Each cut leaves a `(N earlier lines omitted)` / `(N earlier diffs
+      omitted)` marker, the reviewer is told parts were left out, and the
+      verdict's summary says what was
+- [x] The prompt is estimated with the existing estimator and the
+      validator endpoint's calibrated ratio; the review's usage teaches it
+- [x] A prompt that cannot be cut to fit is reported as a verify error,
+      not sent
+- [x] A turn that fits is sent as before
+- [x] The cap is documented in `docs/configuration.md` (the `verify` row
+      and the new key) and `DECISIONS.md`
+- [x] Tests fail on the old code (an 11k-token review sent against a
+      4,800-token budget) and pass on the new
+
 ### TD-5113 — Trust prompt for repo-supplied config
 **Size:** 3 · **Depends on:** none
 
