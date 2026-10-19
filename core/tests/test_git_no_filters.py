@@ -27,7 +27,7 @@ import pytest
 
 from tests.test_charter import VALID_YAML_ONLY
 from tests.test_checkpoint import _git, make_repo
-from tstd import git_stage
+from tstd import git_restore, git_stage
 from tstd.autonomy import Checkpointer
 from tstd.autonomy.charter import charter_path, charter_start_error, sign_charter
 from tstd.autonomy.checkpoint import DecisionClass, auto_branch
@@ -574,6 +574,57 @@ async def test_lfs_pointer_without_a_local_object_is_written_and_reported(
     assert (repo / "big.bin").read_bytes() == _pointer(PAYLOAD)
     assert outcome.pointers == ("big.bin",)
     assert not marker.exists()
+
+
+async def test_lfs_object_behind_a_symlink_is_not_followed(tmp_path: Path) -> None:
+    """A link planted in the store (or one to /dev/zero) is not read."""
+    repo, _marker = _lfs_repo(tmp_path, stored=False)
+    oid = hashlib.sha256(PAYLOAD).hexdigest()
+    elsewhere = tmp_path / "elsewhere.bin"
+    elsewhere.write_bytes(PAYLOAD)
+    obj = repo / ".git" / "lfs" / "objects" / oid[:2] / oid[2:4] / oid
+    obj.parent.mkdir(parents=True)
+    obj.symlink_to(elsewhere)
+    (repo / "other.txt").write_text("x\n")
+    good = await _checkpoint(repo, repo / "other.txt", call="good")
+    (repo / "big.bin").write_bytes(b"drifted")
+    await _checkpoint(repo, repo / "big.bin", call="drift")
+
+    outcome = await restore_auto_branch(repo, good_sha=good, branch=BRANCH)
+
+    assert (repo / "big.bin").read_bytes() == _pointer(PAYLOAD)
+    assert outcome.pointers == ("big.bin",)
+
+
+@pytest.mark.parametrize("rel", ["a/..\\..\\evil.txt", "C:evil.txt", "a/b:stream"])
+def test_restore_refuses_names_windows_would_reparse(
+    rel: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(git_restore, "_NT", True)
+    with pytest.raises(GitRawError):
+        git_restore._parent(tmp_path, rel)
+
+
+@pytest.mark.parametrize(
+    "rel", ["../evil.txt", "a/../../evil.txt", ".git/config", "sub/.GIT/hooks/x"]
+)
+def test_restore_refuses_names_that_leave_the_tree(rel: str, tmp_path: Path) -> None:
+    with pytest.raises(GitRawError):
+        git_restore._parent(tmp_path, rel)
+
+
+async def test_validator_keeps_its_watermark_when_drivers_cannot_be_switched_off(
+    tmp_path: Path,
+) -> None:
+    repo = make_repo(tmp_path)
+    _git(repo, "config", "filter.a=b.clean", "cat")
+    (repo / "a.txt").write_text("changed by the agent\n")
+    session = Session(str(repo))
+    session.autonomy_last_check_sha = _git(repo, "rev-parse", "HEAD")
+
+    diff, tip = await _diff_since(session)
+
+    assert (diff, tip) == ("", None)
 
 
 def test_lfs_pointer_parsing() -> None:

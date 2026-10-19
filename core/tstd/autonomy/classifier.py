@@ -416,7 +416,20 @@ def is_exec_later_write(boundary: Boundary, path: Path) -> bool:
         parts = relative_parts(path, root)
     else:
         parts = list(canonical_path(path).parts)
-    folded = _fold(parts)
+    # The path as written counts too (TD-5157): a shell redirect to
+    # ~/.config/git/config that is a symlink into a dotfiles workspace
+    # resolves to a name that says nothing.
+    lexical = Path(os.path.abspath(path))
+    written = list(lexical.parts)
+    roots = () if root is None else (Path(os.path.abspath(root)), canonical_path(root))
+    for base in roots:
+        if lexical.is_relative_to(base):
+            written = list(lexical.relative_to(base).parts)
+            break
+    return any(_names_exec_later(_fold(view), path) for view in (parts, written))
+
+
+def _names_exec_later(folded: tuple[str, ...], path: Path) -> bool:
     if not folded:
         return False
     if folded[-1] in _EXEC_LATER_FILES or any(p in _EXEC_LATER_DIRS for p in folded):

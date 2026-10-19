@@ -359,7 +359,8 @@ async def _diff_since(session: Session) -> tuple[str, str | None]:
     try:
         pins = await filter_pins(workspace, sanitized_env())
     except (GitRawError, OSError, TimeoutError):
-        return "", tip
+        # No diff, and no new watermark: the next check covers these edits.
+        return "", None
     rc, out = await _git(workspace, *pins, "diff", "--no-ext-diff", "--no-textconv", since)
     return (out if rc == 0 else ""), tip
 

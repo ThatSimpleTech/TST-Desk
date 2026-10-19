@@ -14658,10 +14658,28 @@ every reading is kept; an extra target can only make a write Class C.
 POSIX hosts are unchanged: there `sh` turns `.git\hooks\x` into a plain
 file named `.githooksx`.
 
+**Second-opinion review (Grok), checked.** Confirmed and fixed: a
+restored name holding `\` or `:` is refused on Windows, where it would be
+read again as a separator, drive or stream (git for Windows refuses it
+too); the LFS object is opened without following links, must be a regular
+file, and is read only up to the pointer's size; when the filter pins
+cannot be built the validator's diff is empty and the watermark does not
+move, so the next check covers those edits; and an exec-later name is
+judged on the path as written as well as the path it resolves to, so a
+redirect to `~/.config/git/config` that links into a dotfiles workspace
+is Class C. Declined: enforcing `core.safecrlf=true` (git add then
+refuses a conversion it cannot round-trip, which used to fail the
+checkpoint; the daemon now converts as under the default `warn`, so the
+write still gets its undo point).
+
 **Residual risk (recorded).** The pins list the drivers config names just
 before each call; a driver added in that moment needs a write to a Class
 C config file (or to a workspace file the user's config already
 includes). `gpg.program` and `core.askPass` are unchanged from TD-5108.
+The fs tools are classified on the resolved path (TD-608, TD-5148), so an
+`fs_write` through a symlink named like a protected path into an ordinary
+workspace file is judged by that file; carrying the written path to the
+classifier is a follow-up.
 
 **Rejected:** pinning drivers for `git add` and `checkout-index` instead
 of plumbing (the story names plumbing, and the pins race where plumbing

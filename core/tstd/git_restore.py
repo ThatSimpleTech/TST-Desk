@@ -86,11 +86,18 @@ async def _lfs_store(top: Path, env: Mapping[str, str]) -> Path:
     return (common if common.is_absolute() else top / common) / "lfs" / "objects"
 
 
+# On Windows ``\`` and ``:`` would be read again as a separator or a drive or
+# stream; git for Windows refuses such a name too ("invalid path").
+_NT = os.name == "nt"
+
+
 def _parent(top: Path, rel: str) -> Path:
     """The folder *rel* goes in, made as needed; never through a symlink."""
     parts = PurePosixPath(rel).parts
-    if not parts or rel.startswith("/") or ".." in parts:
+    if not parts or rel.startswith("/") or any(p in (".", "..") for p in parts):
         raise GitRawError(f"refusing to restore '{rel}'")
+    if _NT and ("\\" in rel or ":" in rel):
+        raise GitRawError(f"invalid path '{rel}'")
     if any(p.casefold() == ".git" for p in parts):
         raise GitRawError(f"refusing to restore '{rel}' inside a .git folder")
     folder = top
@@ -132,35 +139,40 @@ def _write_bytes(target: Path, data: bytes, executable: bool) -> None:
 
 
 def _copy_verified(target: Path, source: Path, oid: str, size: int, executable: bool) -> bool:
-    """Copy an LFS object if its size and SHA-256 match the pointer."""
+    """Copy an LFS object if it is a plain file whose size and SHA-256 match the pointer."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
     try:
-        if os.stat(source).st_size != size:
-            return False
+        src_fd = os.open(source, flags)
     except OSError:
         return False
-    digest = hashlib.sha256()
-    ok = True
+    with os.fdopen(src_fd, "rb") as src:
+        st = os.fstat(src.fileno())
+        if not stat.S_ISREG(st.st_mode) or st.st_size != size:
+            return False
+        digest = hashlib.sha256()
 
-    def fill(tmp: Path) -> None:
-        nonlocal ok
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-        flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
-        fd = os.open(tmp, flags, 0o777 if executable else 0o666)
-        with os.fdopen(fd, "wb") as out, open(source, "rb") as src:
-            while chunk := src.read(1 << 20):
-                digest.update(chunk)
-                out.write(chunk)
-        if digest.hexdigest() != oid:
-            ok = False
-            raise GitRawError("lfs object does not match its pointer")
+        def fill(tmp: Path) -> None:
+            out_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            out_flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+            fd = os.open(tmp, out_flags, 0o777 if executable else 0o666)
+            left = size
+            with os.fdopen(fd, "wb") as out:
+                while left > 0 and (chunk := src.read(min(left, 1 << 20))):
+                    digest.update(chunk)
+                    out.write(chunk)
+                    left -= len(chunk)
+            if left or digest.hexdigest() != oid:
+                raise _Mismatch
 
-    try:
-        _replace(target, fill)
-    except GitRawError:
-        if ok:
-            raise
-        return False
+        try:
+            _replace(target, fill)
+        except _Mismatch:
+            return False
     return True
+
+
+class _Mismatch(Exception):
+    """The local LFS object is not the one the pointer names."""
 
 
 def _write_link(target: Path, text: bytes, symlinks: bool) -> None:

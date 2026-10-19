@@ -155,6 +155,19 @@ class TestFsWrites:
         assert is_exec_later_write(boundary, xdg / "git" / "ignore")
         assert not is_exec_later_write(boundary, xdg / "nvim" / "init.lua")
 
+    def test_a_dotfiles_symlink_is_judged_by_the_name_written_too(self, tmp_path: Path) -> None:
+        """~/.config/git/config linked into a dotfiles workspace (TD-5157 review)."""
+        ws = tmp_path / "dotfiles"
+        (ws / "git").mkdir(parents=True)
+        (ws / "git" / "config").write_text("[user]\n")
+        link = tmp_path / "home" / ".config" / "git" / "config"
+        link.parent.mkdir(parents=True)
+        link.symlink_to(ws / "git" / "config")
+        boundary = Boundary(workspace_root=ws)
+        assert is_exec_later_write(boundary, link)
+        request = _shell(f"echo '[include] path = x' >> {link}")
+        assert DecisionClassifier(boundary).classify(request).decision_class is DecisionClass.C
+
     @pytest.mark.skipif(not hasattr(Path, "symlink_to"), reason="no symlinks")
     def test_symlink_into_dot_git_is_judged_by_its_target(self, tmp_path: Path) -> None:
         hooks = tmp_path / ".git" / "hooks"

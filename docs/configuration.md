@@ -1389,7 +1389,8 @@ list:
 
 Names match ignoring case. This covers `fs_write` and `fs_edit`, and shell redirects and `tee`
 into these paths (`echo … > .git/hooks/pre-commit`, `… >> ~/.bashrc`,
-`… >> ~/.config/git/config`). On Windows, where a command runs through `cmd /c`, the line is
+`… >> ~/.config/git/config`); for a redirect, both the path as written and the file it links to
+count. On Windows, where a command runs through `cmd /c`, the line is
 also read the way cmd reads it (TD-5157): `\` separates folders, `^` escapes the next character,
 and `>`, `>>`, `1>` and `>&` redirect with or without a space, so `echo x > .git\hooks\pre-commit`
 and `type nul > "%USERPROFILE%\.gitconfig"` ask too. Other shell write forms (`cp`, `mv`,
