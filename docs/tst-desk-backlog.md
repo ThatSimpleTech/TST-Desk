@@ -9414,6 +9414,12 @@ itself. TD-5101 escaped the summary; this story closes the rest.
       a rule; a click sent anyway saves nothing, approves the call once for
       `ask`, denies it for `never`, and replies `policy_rule_stricter`,
       which the window shows as a "Rule not saved" toast
+- [x] The check and the save use `.tst/config.yaml` as it is at the click
+      (review of PR #17): a rule written to the file by hand while the
+      session is open is never written over by Always allow or Revoke, an
+      `ask` or `never` rule added that way answers the click as above, and
+      the session then runs under the file as saved; a `policy:` section
+      that does not parse is left as it is
 - [x] An escaped rule reads clearly: `policy_rules` and the card's proposal
       carry `exact`, and Settings → Policy and the card's tooltip show
       `exactly app/[id]/page.tsx` (raw pattern on hover); a glob shows as

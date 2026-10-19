@@ -14202,10 +14202,20 @@ saved rule with the same `(tool, args)` and a stricter effect (`never` >
 `ask` > `auto`), and leaves the config as it was. `stricter_rule` is the
 shared check: the session drops `proposed_always_allow` from the card when
 it finds one, and the daemon's `always_allow` handler checks it before the
-trust gate. A click that races the rule (the card was shown before the rule
-was added) saves nothing and is answered the way the rule says: an `ask`
-rule approves the call once, a `never` rule denies it. The reply is the new
-error code `policy_rule_stricter`, shown as a "Rule not saved" toast.
+trust gate's answer, against the rules the session loaded and the
+`policy:` section as it is in the file at the click (review of PR #17:
+nothing reloads the session's copy when the user edits `.tst/config.yaml`
+by hand, and saving that stale copy wrote over the edit). A click that
+races the rule (the card was shown before the rule was added, in the
+session or in the file) saves nothing and is answered the way the rule
+says: an `ask` rule approves the call once, a `never` rule denies it. The
+reply is the new error code `policy_rule_stricter`, shown as a "Rule not
+saved" toast. Always allow and Revoke merge into the file as read at the
+click, then copy what they saved into the session's live `PolicyConfig`
+(`adopt_policy`, in place, because the dispatcher holds that object), so
+rules added or removed by hand meanwhile are kept. A `policy:` section that
+does not parse is not written over: Always allow approves the call once
+with `policy_save_failed`, Revoke fails with it.
 `PolicyRuleSummary` gains `exact: str | None`, the one text `args` matches
 when it has no wildcard, with `[*]`, `[?]` and `[[]` read back
 (`policy.exact_text`). Settings → Policy and the card's tooltip show it as
@@ -14238,4 +14248,10 @@ wins over the exact `auto` rule Always allow saves for a file it matches,
 because rules are deny first (TD-5101). The card still offers Always allow
 there, and the saved rule has no effect while the wider rule stands.
 Recorded as a follow-up on TD-5149. The trust prompt (TD-5113) still lists a
-repo's rules as written in the file.
+repo's rules as written in the file. A file that is pending or declined is
+not read for the check: the trust gate's rule is that only a file in force
+is parsed (`WorkspaceConfigView.effective`), and nothing is saved into it,
+so a hand edit there is never written over; the click approves once as
+TD-5113 already does. The session still does not watch the file between
+clicks, so a rule added by hand applies to the card from the next save,
+trust decision or session open.

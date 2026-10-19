@@ -1519,6 +1519,13 @@ a rule as `exactly app/[id]/page.tsx`, with the saved pattern on hover; a glob s
   `tool` and `args` is saved, the card doesn't offer it. A click sent anyway (a card shown
   before the rule was added) saves nothing: it runs the call once for `ask`, refuses it for
   `never`, and says so. Revoke the rule first if you want the call to run without asking.
+- Always allow and Revoke read this file when you click, so a rule you add or remove by hand
+  while a session is open is checked and kept, not written over with the rules the session
+  opened with. After the save the session runs under the file as saved. A hand edit to a file
+  that loosens anything waits on the trust card first (§4.8), and nothing is saved into it
+  until then, so your edit is kept that way too. If the `policy:`
+  section can't be read (bad YAML or a bad value), nothing is written: Always allow runs the
+  call once and Revoke fails, both saying why, until you fix the file.
 - A wider `ask` or `never` rule, such as `*.env*`, still applies to the file Always allow saved
   a rule for, because rules are deny first (below).
 

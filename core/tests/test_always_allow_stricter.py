@@ -6,8 +6,10 @@ summary, and ``add_rule`` first deleted any rule with the same
 ``fs_read: *.env* -> auto`` over the user's documented guard rule.  The
 summary is escaped since TD-5101; these tests pin the rest: the guard is
 never replaced, the card does not offer what it cannot save, a click that
-races the rule is answered the way the rule says, and an escaped rule
-reads as the path it was for.
+races the rule is answered the way the rule says (the rule may be in the
+session or only in the file, edited by hand while the session is open), the
+save merges into the file instead of writing the session's copy over it, and
+an escaped rule reads as the path it was for.
 """
 
 from __future__ import annotations
@@ -226,6 +228,128 @@ class TestDaemon:
             assert "`shell: npm test` → never" in outcome.message
             assert session.policy.rules == [guard]
             assert load_policy(tmp_path).rules == []
+            await ws.close()
+
+    @pytest.mark.parametrize(("effect", "approved"), [("never", False), ("ask", True)])
+    @pytest.mark.asyncio
+    async def test_a_rule_written_to_the_file_while_the_card_waits_is_kept(
+        self, tmp_path: Path, effect: str, approved: bool
+    ) -> None:
+        """The realistic race: the user edits .tst/config.yaml by hand while
+        the session is open. Nothing reloads the session's policy, so the
+        check must read the file, or the save writes the stale copy over it."""
+        async with _daemon(tmp_path) as daemon:
+            ws, session = await _open_workspace(daemon, tmp_path)
+            parked = await _park(session, "tc-1", SHELL, {"command": "npm test"}, B)
+            assert _card(session).proposed_always_allow is not None
+
+            guard = _rule("shell", "npm test", effect)
+            save_policy(tmp_path, PolicyConfig(rules=[guard]))  # the hand edit
+            err = await _always_allow(ws, session)
+            assert err["code"] == "policy_rule_stricter"
+            assert err["message"].startswith("Approved once." if approved else "Denied.")
+            assert f"`shell: npm test` → {effect}" in err["message"]
+            outcome = await asyncio.wait_for(parked, timeout=2)
+            assert outcome.approved is approved
+            assert load_policy(tmp_path).rules == [guard]
+            await ws.close()
+
+    @pytest.mark.asyncio
+    async def test_always_allow_keeps_rules_written_to_the_file_since_the_session_opened(
+        self, tmp_path: Path
+    ) -> None:
+        """A rule for another call added by hand is merged, not overwritten,
+        and the session runs under what was saved from then on."""
+        async with _daemon(tmp_path) as daemon:
+            ws, session = await _open_workspace(daemon, tmp_path)
+            live = session.policy  # the object the dispatcher holds
+            parked = await _park(session, "tc-1", SHELL, {"command": "npm test"}, B)
+
+            other = _rule("shell", "git push*", "never")
+            save_policy(tmp_path, PolicyConfig(rules=[other]))  # the hand edit
+            await ws.send(
+                json.dumps(
+                    {"type": "always_allow", "session_id": session.id, "tool_call_id": "tc-1"}
+                )
+            )
+            assert (await asyncio.wait_for(parked, timeout=2)).approved
+            saved = [other, _rule("shell", "npm test", "auto")]
+            assert load_policy(tmp_path).rules == saved
+            assert session.policy is live
+            assert session.policy.rules == saved
+            await ws.close()
+
+    @pytest.mark.asyncio
+    async def test_revoke_keeps_rules_written_to_the_file_since_the_session_opened(
+        self, tmp_path: Path
+    ) -> None:
+        """The same for Revoke in Settings → Policy: it removes one rule from
+        the file as it is now, not from the copy the session opened with."""
+        mine = _rule("shell", "npm test", "ask")
+        save_policy(tmp_path, PolicyConfig(rules=[mine]))
+        async with _daemon(tmp_path) as daemon:
+            ws, session = await _open_workspace(daemon, tmp_path)
+            assert session.policy.rules == [mine]
+            other = _rule("shell", "git push*", "never")
+            save_policy(tmp_path, PolicyConfig(rules=[mine, other]))  # the hand edit
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "revoke_policy_rule",
+                        "session_id": session.id,
+                        "tool": "shell",
+                        "args": "npm test",
+                    }
+                )
+            )
+            listed = await _recv_until(ws, "policy_rules")
+            assert load_policy(tmp_path).rules == [other]
+            assert [(r["tool"], r["args"]) for r in listed["rules"]] == [("shell", "git push*")]
+            await ws.close()
+
+    @pytest.mark.asyncio
+    async def test_revoking_a_rule_already_removed_by_hand_writes_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        mine = _rule("shell", "npm test", "ask")
+        save_policy(tmp_path, PolicyConfig(rules=[mine]))
+        async with _daemon(tmp_path) as daemon:
+            ws, session = await _open_workspace(daemon, tmp_path)
+            config = tmp_path / ".tst" / "config.yaml"
+            config.write_text("# emptied by hand\n", encoding="utf-8")
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "revoke_policy_rule",
+                        "session_id": session.id,
+                        "tool": "shell",
+                        "args": "npm test",
+                    }
+                )
+            )
+            listed = await _recv_until(ws, "policy_rules")
+            assert listed["rules"] == []
+            assert session.policy.rules == []
+            assert config.read_text(encoding="utf-8") == "# emptied by hand\n"
+            await ws.close()
+
+    @pytest.mark.asyncio
+    async def test_a_policy_section_it_cannot_read_is_not_written_over(
+        self, tmp_path: Path
+    ) -> None:
+        """Merging needs the file's rules; one it cannot parse is left for the
+        user to fix, and the call runs once, as for any failed save."""
+        config = tmp_path / ".tst" / "config.yaml"
+        config.parent.mkdir()
+        config.write_text("policy:\n  rules: not-a-list\n", encoding="utf-8")
+        async with _daemon(tmp_path) as daemon:
+            ws, session = await _open_workspace(daemon, tmp_path)
+            parked = await _park(session, "tc-1", SHELL, {"command": "npm test"}, B)
+            err = await _always_allow(ws, session)
+            assert err["code"] == "policy_save_failed"
+            assert err["message"].startswith("Approved once;")
+            assert (await asyncio.wait_for(parked, timeout=2)).approved
+            assert config.read_text(encoding="utf-8") == "policy:\n  rules: not-a-list\n"
             await ws.close()
 
     @pytest.mark.asyncio

@@ -700,6 +700,17 @@ def add_rule(config: PolicyConfig, rule: PolicyRule) -> PolicyConfig:
     return config
 
 
+def adopt_policy(live: PolicyConfig, saved: PolicyConfig) -> None:
+    """Make *live* hold every setting of *saved*, in place (TD-5149).
+
+    The dispatcher holds the session's ``PolicyConfig`` object, so a policy
+    just written to ``.tst/config.yaml`` is copied into that object rather
+    than swapped for a new one the dispatcher would never see.
+    """
+    for name in PolicyConfig.model_fields:
+        setattr(live, name, getattr(saved, name))
+
+
 def remove_rule(config: PolicyConfig, tool: str, args: str) -> bool:
     """Remove every rule matching ``(tool, args)``; return whether any changed.
 
