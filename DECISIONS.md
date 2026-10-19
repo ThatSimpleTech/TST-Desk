@@ -14567,3 +14567,51 @@ for a later story. A confirmed ask-mode review still runs inside the
 fork, compaction and the restart drain wait on an advisory call);
 cancelling the review from `stop_turn` directly (the session would have
 to own the review's task, and the loop's task already owns it).
+
+## 2026-10-19 — TD-5152: a cut-off turn stream is an error, not a finished answer (Class B)
+
+LiteLLM reports an upstream failure partway through a streamed completion
+as an in-band `data: {"error": {...}}` event and then ends the body
+without `data: [DONE]`. `_parse_stream_chunk` returned `None` for an
+event with no `choices`, so the turn stream ended cleanly and the loop
+kept the partial text as the answer. TD-5146 caught this only in
+`collect_stream`, for the off-turn calls.
+
+**Decision.** `ProviderClient.chat_completion_stream` handles both cases
+itself, so every consumer (the turn, the progress check, the off-turn
+calls) gets the same typed error.
+
+- An event whose JSON has a non-empty `error` and no `choices` is an
+  error. Its status comes from `error.code` the way a 2xx error envelope's
+  does (`_error_envelope_status`; no usable status is a 502), and it goes
+  through `_parse_error`, so the code and retry flag match an HTTP reply
+  with that status (429 `rate_limited`, 5xx retryable, 400/401/404 not,
+  a window refusal `context_overflow`). Before any chunk has been
+  yielded, that error is what the stream yields, and `retry_stream`
+  applies `provider_retry` to it as it does to an HTTP error. After a
+  chunk, it becomes `stream_interrupted`, not retryable, carrying the
+  upstream status, the provider's message when it is prose, and the raw
+  event as `detail` for the log.
+- A stream that ends with neither a `finish_reason` nor `[DONE]` is
+  `stream_interrupted`, not retryable. `[DONE]` without a finish reason,
+  and a finish reason without `[DONE]`, still count as a finished reply:
+  the story names the pair, and servers that omit one of them exist.
+- Reading stops at `[DONE]` (TD-5106 interplay). Reading on let the
+  stream-idle watchdog or `total_timeout` fail a finished reply as
+  `stream_stalled` when a server held the body open after it. An error
+  event ends the stream at once, so it never feeds or waits on the
+  watchdog; a stall partway through is still `stream_stalled`.
+
+**Conservative choices** (the story does not say): an error event that
+arrives after the finish reason still fails the turn rather than keeping
+a reply the gateway disowned; the partial text stays out of the model's
+conversation, as for every failed turn; the window uses the existing
+`stream_interrupted` copy ("Response interrupted") and the existing
+Retry action on the message. No new control is added. The Continue chip
+stays specific to a restart (TD-5019), since Continue after an upstream
+failure would ask the model to extend text it never sees.
+
+**Rejected:** detecting the cut-off in the loop (only the client sees
+`[DONE]`); making `_parse_stream_chunk` return errors (its callers expect
+a chunk or nothing, and an exception for control flow is harder to
+follow than a separate check on the few events that contain `"error"`).

@@ -11,6 +11,7 @@ environment files) — see :mod:`tstd.keychain`.
 from __future__ import annotations
 
 import asyncio
+import json
 import random
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
@@ -1108,7 +1109,11 @@ class ProviderClient:
 
         If the stream ends while a tool call is in flight, a
         ``stream_interrupted`` error is yielded so the consumer never sees
-        a half-parsed tool call.
+        a half-parsed tool call.  So does a stream that ends with neither
+        a finish reason nor ``[DONE]`` (TD-5152): a gateway that gave up
+        partway, whose text so far is not an answer.  An in-band
+        ``{"error": ...}`` event is mapped as an HTTP error with its status
+        before any chunk, and is ``stream_interrupted`` after one.
 
         Args:
             request: The chat completion request.
@@ -1160,6 +1165,7 @@ class ProviderClient:
 
                     in_tool_call = False
                     saw_finish = False
+                    saw_done = False
                     yielded_any = False
                     events = sse.aiter_sse()
                     loop = asyncio.get_running_loop()
@@ -1185,6 +1191,18 @@ class ProviderClient:
                                 yield self._stall_error(
                                     total_deadline is not None and loop.time() >= total_deadline,
                                     yielded_any,
+                                )
+                                return
+                            if event.data.strip() == "[DONE]":
+                                # The reply is over. Reading on would let the
+                                # idle watchdog or total_timeout fail a finished
+                                # reply if the server holds the body open.
+                                saw_done = True
+                                break
+                            inband = self._inband_error(event.data)
+                            if inband is not None:
+                                yield self._inband_stream_error(
+                                    sse.response, inband[0], inband[1], yielded_any
                                 )
                                 return
                             try:
@@ -1265,6 +1283,17 @@ class ProviderClient:
                             "was generated. Resend to retry.",
                             retryable=True,
                         )
+                    elif not saw_finish and not saw_done:
+                        # TD-5152: the body ended with neither a finish
+                        # reason nor ``[DONE]``. The server or a gateway gave
+                        # up partway; the text so far is not an answer.
+                        log.warning("provider stream ended without a finish")
+                        yield ProviderError(
+                            code="stream_interrupted",
+                            message="The provider's stream ended before the reply "
+                            "finished; the partial reply was discarded. Resend to retry.",
+                            retryable=False,
+                        )
 
             except httpx.TimeoutException as e:
                 log.warning(
@@ -1332,6 +1361,63 @@ class ProviderClient:
             code=code,
             message=f"{what} Raise it for a slow local model, or resend.",
             retryable=True,
+        )
+
+    @classmethod
+    def _inband_error(cls, raw: str) -> tuple[str, int] | None:
+        """An SSE event that is an error, as ``(event JSON, status)`` (TD-5152).
+
+        LiteLLM reports an upstream failure partway through a stream as
+        ``data: {"error": {...}}`` and then ends the body. The event has no
+        ``choices``, so the chunk parser reads it as nothing at all.
+        """
+        if '"error"' not in raw:
+            return None
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            return None
+        if not isinstance(data, dict) or data.get("choices") or not data.get("error"):
+            return None
+        status = cls._error_envelope_status({"error": data["error"]})
+        return raw.strip(), 502 if status is None else status
+
+    def _inband_stream_error(
+        self, response: httpx.Response, raw: str, status: int, yielded_any: bool
+    ) -> ProviderError:
+        """The error an in-band event stands for, mapped as its status would be.
+
+        Nothing shown yet: the same error an HTTP reply with that status
+        gives, so a 429 or 5xx is retried under ``provider_retry``. Part of
+        a reply shown: ``stream_interrupted``, never retried, because a
+        second attempt would repeat text the window already has.
+        """
+        error = self._parse_error(response, raw, status_override=status)
+        log.warning(
+            "provider stream carried an error event",
+            extra={
+                "extra_fields": {
+                    "code": error.code,
+                    "status_code": error.status_code,
+                    "after_output": yielded_any,
+                }
+            },
+        )
+        if not yielded_any:
+            return error
+        reason = error.message.strip()
+        # An event with no message of its own leaves the raw JSON here; the
+        # chat would then show a generic rejection instead of this sentence.
+        if reason.startswith(("{", "[")) or '{"' in reason:
+            reason = ""
+        reason = f" ({reason.rstrip('.')})" if reason else ""
+        return ProviderError(
+            code="stream_interrupted",
+            message=f"The provider reported an error partway through the reply{reason}. "
+            "The partial reply was discarded. Resend to retry.",
+            status_code=error.status_code,
+            retryable=False,
+            detail=error.detail,
         )
 
     def _headers(self) -> dict[str, str]:
