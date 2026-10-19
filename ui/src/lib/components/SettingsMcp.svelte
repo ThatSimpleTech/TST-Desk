@@ -77,6 +77,9 @@
 				· {server.url || "(no url)"}
 			{/if}
 		</p>
+		{#each server.excludedTools ?? [] as tool (tool.name)}
+			<p class="excluded">Left out {tool.name}: {tool.reason}</p>
+		{/each}
 		<div class="actions">
 			<button
 				class="btn"
@@ -182,6 +185,13 @@
 		font-size: var(--text-sm);
 		font-family: var(--font-mono);
 		color: var(--color-ink-secondary);
+		margin: var(--space-1) 0 0;
+		overflow-wrap: anywhere;
+	}
+
+	.excluded {
+		font-size: var(--text-sm);
+		color: var(--color-warn);
 		margin: var(--space-1) 0 0;
 		overflow-wrap: anywhere;
 	}

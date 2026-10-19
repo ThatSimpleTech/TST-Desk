@@ -51,7 +51,7 @@ from .autonomy.verify import (
 )
 from .autonomy.wakeup import deliver_wakeup
 from .autonomy.worker import JudgmentAudit
-from .compaction import budget_threshold, estimate_tokens, maybe_compact
+from .compaction import ContextMeter, budget_threshold, estimate_tokens, maybe_compact
 from .config import (
     ConfigError,
     JudgmentsConfig,
@@ -1655,6 +1655,7 @@ async def agent_loop(
                     make_token_counter(model_slug), calibration, counter_key
                 )
                 _token_counters[counter_key] = counter
+            session.context_meter = ContextMeter(tier, tier_cfg, counter, tool_definitions)
             compacted, compaction = maybe_compact(messages, tier_cfg, counter, tool_definitions)
             if compaction is not None:
                 messages[:] = compacted
@@ -1717,6 +1718,10 @@ async def agent_loop(
                         }
                     },
                 )
+            # The title-bar gauge (TD-5109): what this request sends.
+            await session.report_context_usage(
+                estimate_tokens(messages, counter, tool_definitions)[0]
+            )
 
             dropped_images = cap_prompt_images(messages, config.computer_use.max_prompt_images)
             if dropped_images:

@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import type { CommandEntry, SkillStackEntry } from "./protocol";
 import {
+	BUILTIN_SLASH_ITEMS,
 	filterCommands,
 	insertCommandBody,
 	mergeSlashItems,
@@ -93,5 +94,27 @@ describe("mergeSlashItems", () => {
 		expect(merged.map((c) => c.name)).toEqual(["review", "ship", "draft"]);
 		expect(merged[0]!.body).toBe(list[0]!.body);
 		expect(merged[2]!.body).toBe(skillLoadMarker("draft"));
+	});
+});
+
+describe("built-in slash items (TD-5109)", () => {
+	it("lists /compact after commands and skills", () => {
+		const items = mergeSlashItems(list, [], BUILTIN_SLASH_ITEMS);
+		expect(items.map((c) => c.name)).toEqual(["review", "ship", "compact"]);
+		expect(items[2]!.source).toBe("built-in");
+		expect(filterCommands(items, "comp").map((c) => c.name)).toEqual(["compact"]);
+	});
+
+	it("inserts /compact with room for guidance, closing the picker", () => {
+		const draft = insertCommandBody("/comp", BUILTIN_SLASH_ITEMS[0]!.body);
+		expect(draft).toBe("/compact ");
+		expect(slashQuery(draft)).toBeNull();
+	});
+
+	it("gives way to a workspace command of the same name", () => {
+		const own = [{ ...list[0]!, name: "compact", body: "Squash my commits." }];
+		const items = mergeSlashItems(own, [], BUILTIN_SLASH_ITEMS);
+		expect(items).toHaveLength(1);
+		expect(items[0]!.body).toBe("Squash my commits.");
 	});
 });

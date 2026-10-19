@@ -82,6 +82,18 @@ export interface ForkFrom extends ClientMessage {
   content: string;
 }
 
+/**
+ * Compact the conversation now (TD-5109). Without `user_index`, everything
+ * before the latest user turn is summarized; with it, that turn and all
+ * after it. `guidance` says what the summary should keep in view.
+ */
+export interface CompactContext extends ClientMessage {
+  type: "compact_context";
+  session_id: string;
+  guidance?: string;
+  user_index?: number;
+}
+
 /** Switch to another sibling at a forked user turn (TD-1708). */
 export interface SetBranch extends ClientMessage {
   type: "set_branch";
@@ -901,6 +913,7 @@ export type ClientMessageUnion =
   | OpenWorkspace
   | UserMessage
   | ForkFrom
+  | CompactContext
   | SetBranch
   | Approve
   | Deny
@@ -1126,6 +1139,16 @@ export interface ShellOutput extends DaemonEvent {
   tool_call_id: string;
   stream: "stdout" | "stderr";
   chunk: string;
+}
+
+/** Progress a long tool reported while it runs (TD-5105). Thinned to two a second per call. */
+export interface ToolProgress extends DaemonEvent {
+  type: "tool_progress";
+  session_id: string;
+  tool_call_id: string;
+  progress: number;
+  total?: number | null;
+  message?: string | null;
 }
 
 export interface PolicyRuleSummary {
@@ -1671,6 +1694,8 @@ export interface McpServerSummary {
   command: string[];
   url: string;
   enabled: boolean;
+  /** TD-5104: tools left out at the last load, with reasons. Additive. */
+  excluded_tools?: { name: string; reason: string }[];
 }
 
 export interface CredentialSummary {
@@ -1931,6 +1956,22 @@ export interface ContextCompacted extends DaemonEvent {
   kept_messages: number;
   tokens_before: number;
   tokens_after: number;
+  /** What asked for it (TD-5109); older daemons omit it, meaning "auto". */
+  trigger?: "auto" | "manual" | "from_here";
+  guidance?: string | null;
+}
+
+/**
+ * How full the context window is for the next model call (TD-5109).
+ * `tier` is the role; `compact_at` is where auto-compaction triggers.
+ */
+export interface ContextUsage extends DaemonEvent {
+  type: "context_usage";
+  session_id: string;
+  tier: string;
+  used_tokens: number;
+  context_window: number;
+  compact_at: number;
 }
 
 export interface TierSwitched extends DaemonEvent {
@@ -2200,6 +2241,7 @@ export type DaemonEventUnion =
   | ToolCall
   | ToolResult
   | ShellOutput
+  | ToolProgress
   | ApprovalRequest
   | DecisionLogged
   | CheckpointNotice
@@ -2209,6 +2251,7 @@ export type DaemonEventUnion =
   | TurnComplete
   | TierState
   | ContextCompacted
+  | ContextUsage
   | SteeringReloaded
   | RuleActivated
   | TierSwitched

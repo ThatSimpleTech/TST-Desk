@@ -35,6 +35,7 @@ from pydantic import (
 )
 
 from .logging import get_logger, user_data_dir
+from .provider import TimeoutConfig
 
 TierName = Literal["brain", "worker", "validator"]
 TIER_NAMES: tuple[TierName, ...] = ("brain", "worker", "validator")
@@ -242,6 +243,25 @@ class TierConfig(BaseModel):
     # thinking, so this is where ``enable_thinking: false`` goes without
     # turning it off for the turn or a delegated worker.
     verdict_extra_body: dict[str, Any] | None = None
+    # Provider timeouts in seconds (TD-5106). The defaults are the values
+    # every tier used before they were configurable. ``total_timeout``
+    # caps one attempt including streaming; ``stream_idle_timeout`` aborts
+    # a stream that sends no usable chunk for that long (keep-alive pings
+    # do not count). A stall before any output is retried under
+    # ``provider_retry``. null turns either off.
+    connect_timeout: float = Field(default=30.0, gt=0)
+    read_timeout: float = Field(default=120.0, gt=0)
+    total_timeout: float | None = Field(default=None, gt=0)
+    stream_idle_timeout: float | None = Field(default=300.0, gt=0)
+
+    def timeouts(self) -> TimeoutConfig:
+        """This tier's timeouts for :class:`~tstd.provider.ProviderClient`."""
+        return TimeoutConfig(
+            connect=self.connect_timeout,
+            read=self.read_timeout,
+            total=self.total_timeout,
+            stream_idle=self.stream_idle_timeout,
+        )
 
     @field_validator("credential")
     @classmethod
@@ -1058,6 +1078,14 @@ class McpServerConfig(BaseModel):
     command: list[str] = Field(default_factory=list)
     url: str = ""
     enabled: bool = True
+    #: Seconds a tool call may go without a result or a progress
+    #: notification (TD-5105).  None keeps the 30 s default.
+    timeout_seconds: float | None = Field(default=None, gt=0)
+    #: Seconds for the handshake and ``tools/list``.  None keeps 8 s.
+    startup_timeout_seconds: float | None = Field(default=None, gt=0)
+    #: Hard cap on one call, however much progress it reports.  None
+    #: keeps 600 s.
+    max_call_seconds: float | None = Field(default=None, gt=0)
 
     @field_validator("command", mode="before")
     @classmethod

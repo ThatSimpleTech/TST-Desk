@@ -60,6 +60,8 @@ export type McpServerRow = {
 	command: string[];
 	url: string;
 	enabled: boolean;
+	/** Tools left out at the last load (TD-5104). */
+	excludedTools?: { name: string; reason: string }[];
 };
 
 export type Theme = "light" | "system" | "dark";
@@ -409,6 +411,7 @@ function reduce(event: DaemonEventUnion): void {
 			command: row.command ?? [],
 			url: row.url ?? "",
 			enabled: row.enabled ?? true,
+			excludedTools: row.excluded_tools ?? [],
 		}));
 		settings.speechEnabled = event.speech_enabled ?? false;
 		settings.speechReady = event.speech_ready ?? false;

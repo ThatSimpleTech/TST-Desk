@@ -199,6 +199,7 @@ from .protocol import (
     ClientMessageT,
     CommandEntry,
     CommandList,
+    CompactContext,
     ContextPinEntry,
     ContextPins,
     CreateRule,
@@ -269,6 +270,7 @@ from .protocol import (
     ListPolicyRules,
     ListSessions,
     LogTrimmed,
+    McpExcludedToolSummary,
     McpServerSummary,
     MemoryAccept,
     MemoryEdit,
@@ -483,6 +485,14 @@ _KEYLESS_KEY_ROW = DiagnosticCheck(
 # history to see a trend, bounded so a year-old audit database does not
 # put thousands of rows on the socket for a panel showing a dozen.
 _USAGE_LIMITS: dict[UsageBucket, int] = {"session": 25, "day": 30, "week": 12}
+
+# Why a compaction on request was refused (TD-5109), in the window's words.
+_COMPACT_REFUSALS: dict[str, str] = {
+    "turn_in_progress": "A turn is running. Compact when it finishes, or stop it first.",
+    "nothing_to_compact": "Nothing to compact yet. Only the latest turn is in the conversation.",
+    "user_turn_compacted": "That message is already inside a summary.",
+    "user_turn_not_found": "That message is not in this conversation.",
+}
 
 
 def _snapshot_slugs(config: ModelConfig) -> dict[str, dict[str, str | None]]:
@@ -1038,10 +1048,13 @@ class Daemon:
         )
         cred_id = resolve_credential_id(tier_cfg)
         base_url = resolve_base_url(self.config, tier_cfg)
+        timeouts = tier_cfg.timeouts()
         if cred_id is None:
-            return ProviderClient(base_url=base_url, api_key=None, retry_config=retry_cfg)
+            return ProviderClient(
+                base_url=base_url, api_key=None, timeout=timeouts, retry_config=retry_cfg
+            )
         return await ProviderClient.from_keychain(
-            base_url, provider_name=cred_id, retry_config=retry_cfg
+            base_url, provider_name=cred_id, timeout_config=timeouts, retry_config=retry_cfg
         )
 
     async def _brain_client(self) -> ProviderClient:
@@ -1134,6 +1147,7 @@ class Daemon:
         grok_path, grok_ok = _probe_grok(self.config.engine.binary)
         engine_kind = self.config.engine.kind
         key_required = self.config.requires_api_key() and engine_kind != "grok"
+        excluded_by_server = {row.server_id: row.excluded for row in self._mcp.doctor_rows()}
         return SetupState(
             seq=1,
             has_api_key=has_api_key,
@@ -1181,6 +1195,10 @@ class Daemon:
                     command=list(spec.command),
                     url=spec.url,
                     enabled=spec.enabled,
+                    excluded_tools=[
+                        McpExcludedToolSummary(name=item.name, reason=item.reason)
+                        for item in excluded_by_server.get(sid, ())
+                    ],
                 )
                 for sid, spec in sorted(self.config.mcp.servers.items())
             ],
@@ -1473,9 +1491,13 @@ class Daemon:
                     break
         tier_cfg = apply_credential_host(self.config, tier_cfg)
         if api_key is not None:
-            client = ProviderClient(base_url=tier_cfg.base_url, api_key=api_key)
+            client = ProviderClient(
+                base_url=tier_cfg.base_url, api_key=api_key, timeout=tier_cfg.timeouts()
+            )
         elif credential:
-            client = await ProviderClient.from_keychain(tier_cfg.base_url, provider_name=credential)
+            client = await ProviderClient.from_keychain(
+                tier_cfg.base_url, provider_name=credential, timeout_config=tier_cfg.timeouts()
+            )
         else:
             client = await self._build_client(tier_cfg)
         response = await client.chat_completion(
@@ -2500,6 +2522,20 @@ class Daemon:
             await found.event_log.add(result)
             return None
 
+        if isinstance(msg, CompactContext):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                )
+            code = await found.compact_now(msg.guidance, msg.user_index)
+            if code is not None:
+                return build_error(
+                    code, _COMPACT_REFUSALS.get(code, code), session_id=msg.session_id
+                )
+            return None
+
         if isinstance(msg, SetBranch):
             found = self.session_registry.get(msg.session_id)
             if found is None:
@@ -3259,11 +3295,16 @@ class Daemon:
 
         if isinstance(msg, SetMcpServer):
             try:
+                # Settings sends no timeouts; keep the ones already set (TD-5105).
+                prior = self.config.mcp.servers.get(msg.id)
                 spec = McpServerConfig(
                     transport=msg.transport,
                     command=msg.command,
                     url=msg.url,
                     enabled=msg.enabled,
+                    timeout_seconds=prior.timeout_seconds if prior else None,
+                    startup_timeout_seconds=prior.startup_timeout_seconds if prior else None,
+                    max_call_seconds=prior.max_call_seconds if prior else None,
                 )
                 save_mcp_server(msg.id, spec, self.config_path)
             except (ConfigError, ValidationError) as e:

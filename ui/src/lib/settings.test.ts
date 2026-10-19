@@ -786,7 +786,29 @@ describe("mcp section", () => {
 				command: ["python", "-m", "some_mcp"],
 				url: "",
 				enabled: true,
+				excludedTools: [],
 			},
+		]);
+	});
+
+	it("carries tools the daemon left out, with reasons (TD-5104)", () => {
+		startSettings();
+		emit(
+			setupState({
+				mcp_servers: [
+					{
+						id: "example",
+						transport: "stdio",
+						command: ["true"],
+						url: "",
+						enabled: true,
+						excluded_tools: [{ name: "files.read", reason: "name may only use letters, digits, _ and -" }],
+					},
+				],
+			}),
+		);
+		expect(settings.mcpServers[0].excludedTools).toEqual([
+			{ name: "files.read", reason: "name may only use letters, digits, _ and -" },
 		]);
 	});
 

@@ -59,6 +59,8 @@ import type {
   ToolCall,
   ToolResult,
   ShellOutput,
+  ToolProgress,
+  ContextUsage,
   ApprovalRequest,
   DecisionLogged,
   CheckpointNotice,
@@ -616,6 +618,15 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(m4.error_code).toBe("approval_denied");
   });
 
+  it("tool_progress", () => {
+    const m = fixtures.tool_progress as ToolProgress;
+    expect(m.type).toBe("tool_progress");
+    expect(m.tool_call_id).toBe("tc-1");
+    expect(m.progress).toBe(3);
+    expect(m.total).toBe(10);
+    expect(m.message).toBe("rendering frames");
+  });
+
   it("shell_output", () => {
     const m = fixtures.shell_output as ShellOutput;
     expect(m.type).toBe("shell_output");
@@ -786,6 +797,23 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.tokens_before)).toBe(true);
     expect(isNumber(m.tokens_after)).toBe(true);
     expect(isNumber(m.seq)).toBe(true);
+  });
+
+  it("context_compacted_manual carries its trigger and guidance (TD-5109)", () => {
+    const m = fixtures.context_compacted_manual as ContextCompacted;
+    expect(m.type).toBe("context_compacted");
+    expect(m.trigger).toBe("manual");
+    expect(m.guidance).toBe("keep the parser work");
+    // The daemon names every trigger; an older one omitted it, which reads as auto.
+    expect((fixtures.context_compacted as ContextCompacted).trigger ?? "auto").toBe("auto");
+  });
+
+  it("context_usage (TD-5109)", () => {
+    const m = fixtures.context_usage as ContextUsage;
+    expect(m.type).toBe("context_usage");
+    expect(m.tier).toBe("brain");
+    expect(m.used_tokens).toBeLessThan(m.compact_at);
+    expect(m.compact_at).toBeLessThan(m.context_window);
   });
 
   it("steering_reloaded", () => {
@@ -1008,9 +1036,9 @@ describe("All fixtures have required shape", () => {
     const eventTypes = [
       "ready", "session_state", "conversation_reset", "user_turn", "assistant_delta", "assistant_reasoning", "tool_call", "tool_result",
       "tool_result_truncated", "tool_result_diff", "tool_result_denied",
-      "shell_output", "approval_request", "approval_request_always_allow", "decision_logged",
+      "shell_output", "tool_progress", "approval_request", "approval_request_always_allow", "decision_logged",
       "checkpoint_notice", "verify_result", "cost_update", "boundary_update", "turn_complete",
-      "tier_state", "tier_state_plan", "context_compacted", "steering_reloaded", "rule_activated", "tier_switched",
+      "tier_state", "tier_state_plan", "context_compacted", "context_compacted_manual", "context_usage", "steering_reloaded", "rule_activated", "tier_switched",
       "instruction_stack", "instruction_files", "command_list", "context_pins", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",

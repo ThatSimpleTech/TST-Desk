@@ -2,7 +2,7 @@
 	// Slash-command picker (TD-4501). Presentational — the list comes from
 	// the last command_list the daemon sent. Click / Enter inserts; a
 	// secondary Send action ships immediately.
-	import type { CommandEntry } from "../../protocol";
+	import type { SlashItem } from "../../slash-commands";
 
 	let {
 		items,
@@ -11,10 +11,10 @@
 		onsend,
 		onhover,
 	}: {
-		items: CommandEntry[];
+		items: SlashItem[];
 		selectedIndex?: number;
-		oninsert: (command: CommandEntry) => void;
-		onsend: (command: CommandEntry) => void;
+		oninsert: (command: SlashItem) => void;
+		onsend: (command: SlashItem) => void;
 		onhover?: (index: number) => void;
 	} = $props();
 

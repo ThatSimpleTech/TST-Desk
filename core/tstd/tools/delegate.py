@@ -41,6 +41,7 @@ SUMMARY_TRUNCATION = "\n… [truncated: worker summary capped at 2000 characters
 WORKER_CHILD_TOOLS: tuple[str, ...] = (
     "fs_read",
     "fs_list",
+    "fs_grep",
     "fs_write",
     "fs_edit",
     "shell",

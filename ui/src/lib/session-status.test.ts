@@ -411,3 +411,41 @@ describe("attachment limits", () => {
     expect(session.attachmentLimits).toEqual(DEFAULT_ATTACHMENT_LIMITS);
   });
 });
+
+describe("context gauge (TD-5109)", () => {
+  const usage = (sessionId: string, used: number): DaemonEventUnion =>
+    ({
+      type: "context_usage",
+      session_id: sessionId,
+      tier: "brain",
+      used_tokens: used,
+      context_window: 65536,
+      compact_at: 49152,
+      seq: 4,
+    }) as DaemonEventUnion;
+
+  it("is empty until the loop has measured a request", () => {
+    ingestEvent(sessionState("s1"));
+    expect(session.context).toBeNull();
+  });
+
+  it("keeps the latest context_usage for its own session", () => {
+    ingestEvent(sessionState("s1"));
+    ingestEvent(usage("s1", 1000));
+    ingestEvent(usage("s1", 2000));
+    ingestEvent(usage("other", 9999));
+    expect(session.context).toEqual({
+      tier: "brain",
+      used_tokens: 2000,
+      context_window: 65536,
+      compact_at: 49152,
+    });
+  });
+
+  it("clears when the window follows another session", () => {
+    ingestEvent(sessionState("s1"));
+    ingestEvent(usage("s1", 1000));
+    focusSession("s2", "idle");
+    expect(session.context).toBeNull();
+  });
+});

@@ -14,7 +14,7 @@
 	// A send_file call's cards sit right after its fold, outside it, so they
 	// stay when the fold collapses (TD-5144).
 	import type { ChatMessage } from "../../chat-store";
-	import { forkFrom, setBranch } from "../../chat-store.svelte.js";
+	import { compactContext, forkFrom, setBranch } from "../../chat-store.svelte.js";
 	import { hasReasoning } from "../../reasoning-disclosure.svelte.js";
 	import Icon from "../Icon.svelte";
 	import AttachmentChips from "./AttachmentChips.svelte";
@@ -226,6 +226,15 @@
 						disabled={turnLive}
 						aria-label="Edit message"
 						onclick={startEdit}>Edit</button
+					>
+					<!-- TD-5109: the model's copy shrinks; this window keeps
+					     showing every message. -->
+					<button
+						class="action"
+						type="button"
+						disabled={turnLive}
+						title="Swap this message and everything after it for a short summary in the model's context. The chat here still shows them."
+						onclick={() => compactContext("", message.userIndex)}>Summarize from here</button
 					>
 				</div>
 			{/if}

@@ -1,7 +1,7 @@
 // Activity-timeline store tests (TD-1005).
 
 import { describe, it, expect } from "vitest";
-import { Timeline, eventToEntry, summarizeArguments, type TimelineEntry } from "./timeline";
+import { Timeline, eventToEntry, formatProgress, summarizeArguments, type TimelineEntry } from "./timeline";
 import type { DaemonEventUnion } from "./protocol";
 
 function evt(e: DaemonEventUnion): DaemonEventUnion {
@@ -176,6 +176,38 @@ describe("eventToEntry", () => {
       }),
     );
     expect(compact!.kind).toBe("compaction");
+    expect(compact!.title).toBe("Context compacted");
+    expect(compact!.details.trigger).toBe("auto");
+
+    const asked = eventToEntry(
+      evt({
+        type: "context_compacted",
+        session_id: "s1",
+        dropped_messages: 6,
+        kept_messages: 4,
+        tokens_before: 30000,
+        tokens_after: 9000,
+        trigger: "manual",
+        guidance: "keep the parser work",
+        seq: 12,
+      }),
+    );
+    expect(asked!.title).toBe("Context compacted on request");
+    expect(asked!.preview).toBe("30000 → 9000 tokens (6 dropped) · keeping: keep the parser work");
+
+    const fromHere = eventToEntry(
+      evt({
+        type: "context_compacted",
+        session_id: "s1",
+        dropped_messages: 2,
+        kept_messages: 5,
+        tokens_before: 9000,
+        tokens_after: 7000,
+        trigger: "from_here",
+        seq: 13,
+      }),
+    );
+    expect(fromHere!.title).toBe("Summarized from a message");
 
     const reload = eventToEntry(
       evt({
@@ -289,6 +321,35 @@ describe("Timeline", () => {
     expect(entry.stderr).toBe("warn\n");
     // Streaming chunks do not create new entries.
     expect(t.length).toBe(1);
+  });
+
+  it("shows the latest tool_progress on the parent tool_call (TD-5105)", () => {
+    const t = bound();
+    t.push(
+      evt({
+        type: "tool_call",
+        session_id: "s1",
+        tool_call_id: "tc1",
+        name: "media__video",
+        arguments: { prompt: "rain" },
+        seq: 2,
+      }),
+    );
+    t.push(evt({ type: "tool_progress", session_id: "s1", tool_call_id: "tc1", progress: 1, total: 10, seq: 3 }));
+    t.push(
+      evt({ type: "tool_progress", session_id: "s1", tool_call_id: "tc1", progress: 4, total: 10, message: "rendering", seq: 4 }),
+    );
+    t.push(evt({ type: "tool_progress", session_id: "s1", tool_call_id: "tc9", progress: 1, seq: 5 }));
+
+    expect(t.length).toBe(1);
+    expect((t.entries[0] as TimelineEntry).progress).toBe("4 of 10 · rendering");
+  });
+
+  it("formats progress as a fraction, a percent or a bare count", () => {
+    expect(formatProgress({ progress: 3, total: 10 })).toBe("3 of 10");
+    expect(formatProgress({ progress: 40, total: 100 })).toBe("40%");
+    expect(formatProgress({ progress: 0.25, total: 1, message: "loading" })).toBe("25% · loading");
+    expect(formatProgress({ progress: 12, total: null })).toBe("12");
   });
 
   it("drops an orphan shell_output chunk with no parent tool_call", () => {

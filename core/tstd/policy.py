@@ -171,6 +171,19 @@ def _specificity(rule: PolicyRule) -> tuple[int, int, int]:
     return (tool_exact, -arg_wildcards, len(rule.args))
 
 
+def _args_match(rule: PolicyRule, summary: str) -> bool:
+    """Whether *rule*'s args glob matches the call's argument summary.
+
+    ``ask`` and ``never`` rules also match ignoring case (TD-5141): on
+    macOS and Windows ``.ENV`` opens ``.env``, and with built-in reads
+    auto-running, a rule that guards a file must not miss it. ``auto``
+    stays exact, so case never widens what runs without asking.
+    """
+    if fnmatch.fnmatchcase(summary, rule.args):
+        return True
+    return rule.effect != "auto" and fnmatch.fnmatchcase(summary.casefold(), rule.args.casefold())
+
+
 def _class_default(decision_class: DecisionClass, config: PolicyConfig) -> PolicyEffect:
     if decision_class is DecisionClass.A:
         return "auto"
@@ -213,7 +226,7 @@ def _decide(
     matches = [
         rule
         for rule in config.rules
-        if fnmatch.fnmatchcase(tool.name, rule.tool) and fnmatch.fnmatchcase(summary, rule.args)
+        if fnmatch.fnmatchcase(tool.name, rule.tool) and _args_match(rule, summary)
     ]
     if matches:
         best = max(_specificity(rule) for rule in matches)

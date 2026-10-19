@@ -16,8 +16,26 @@ export function slashQuery(draft: string): string | null {
 	return match[2] ?? "";
 }
 
+/**
+ * A palette row: a daemon command, a skill, or one the window handles
+ * itself (TD-5109), which never reaches the model as text.
+ */
+export type SlashItem = Omit<CommandEntry, "source"> & {
+	source: CommandEntry["source"] | "built-in";
+};
+
+/** Built-ins, listed after commands and skills of the same name. */
+export const BUILTIN_SLASH_ITEMS: readonly SlashItem[] = [
+	{
+		name: "compact",
+		description: "Summarize earlier turns now. Add words to say what to keep.",
+		source: "built-in",
+		body: "/compact ",
+	},
+];
+
 /** Prefix-match command names. Case-insensitive. */
-export function filterCommands(commands: readonly CommandEntry[], query: string): CommandEntry[] {
+export function filterCommands<T extends SlashItem>(commands: readonly T[], query: string): T[] {
 	const q = query.toLowerCase();
 	return commands.filter((c) => c.name.toLowerCase().startsWith(q));
 }
@@ -29,12 +47,14 @@ export function skillLoadMarker(name: string): string {
 
 /**
  * Slash palette items: commands first, then skills whose names are not
- * already a command (TD-4501 wins on the same stem).
+ * already a command (TD-4501 wins on the same stem), then built-ins whose
+ * names are still free.
  */
 export function mergeSlashItems(
 	commands: readonly CommandEntry[],
 	skills: readonly SkillStackEntry[],
-): CommandEntry[] {
+	builtins: readonly SlashItem[] = [],
+): SlashItem[] {
 	const taken = new Set(commands.map((c) => c.name.toLowerCase()));
 	const extras: CommandEntry[] = skills
 		.filter((s) => !taken.has(s.name.toLowerCase()))
@@ -44,7 +64,9 @@ export function mergeSlashItems(
 			source: s.source,
 			body: skillLoadMarker(s.name),
 		}));
-	return [...commands, ...extras];
+	for (const extra of extras) taken.add(extra.name.toLowerCase());
+	const own = builtins.filter((b) => !taken.has(b.name.toLowerCase()));
+	return [...commands, ...extras, ...own];
 }
 
 /** Replace the `/name` token with the command body. Leading whitespace stays. */

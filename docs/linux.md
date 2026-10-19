@@ -103,6 +103,12 @@ Closing the window is not quitting the app (TD-2902).
 - **Quit** (menu / palette **Quit TST Desk**) sends `shutdown` and reaps the
   process group.
 
+The host signals that group (SIGTERM, then SIGKILL past the grace) with the
+`kill` system call, not the `kill` command. The procps `kill` in Ubuntu 24.04
+misreads `kill -KILL -1234`: the signal went to the wrong group, so `tstd`
+outlived Quit, or to every process the user owns when the pid started with 1.
+Builds before this fix (TD-1406) did that on 24.04; 26.04's procps is patched.
+
 A second launch never starts a second host (TD-5024): it hands over to the
 running one over the D-Bus session bus, which shows its window, and exits.
 With Keep running on, closing every window in any order leaves the host in

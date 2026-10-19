@@ -114,6 +114,12 @@ jobs:
       - name: Clippy
         run: cargo clippy -- -D warnings
 
+      # Unit tests only. The process tests spawn python3 fakes in their
+      # own process group and signal that group, the path that broke on
+      # this runner's procps `kill` (TD-1406).
+      - name: Test (lib)
+        run: cargo test --lib
+
   # ── TypeScript ──────────────────────────────────────────────────────
 
   typescript:

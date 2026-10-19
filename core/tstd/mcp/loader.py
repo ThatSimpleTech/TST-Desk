@@ -7,12 +7,14 @@ out of the daemon. Builtins stay registered either way.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 from ..config import McpConfig, McpServerConfig
 from ..logging import get_logger
+from ..protocol import ToolProgress
 from ..tools.dispatch import ToolDispatcher
 from ..tools.registry import Tool, ToolRegistry
 from .errors import McpError
@@ -20,9 +22,13 @@ from .http import HttpMcpClient, assert_loopback_http_url
 from .jsonrpc import (
     CALL_TIMEOUT,
     HANDSHAKE_TIMEOUT,
+    MAX_CALL_SECONDS,
+    ExcludedTool,
     McpRemoteTool,
+    ProgressCallback,
     format_call_result,
     local_tool_name,
+    sanitize_remote_tools,
     tool_provenance,
 )
 from .stdio import StdioMcpClient
@@ -35,7 +41,13 @@ DoctorStatus = Literal["ok", "fail", "skip"]
 class McpClient(Protocol):
     async def start(self) -> None: ...
     async def list_tools(self) -> list[McpRemoteTool]: ...
-    async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> Any: ...
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any] | None = None,
+        *,
+        on_progress: ProgressCallback | None = None,
+    ) -> Any: ...
     async def aclose(self) -> None: ...
 
 
@@ -47,6 +59,8 @@ class McpServerStatus:
     status: DoctorStatus
     detail: str
     fix: str | None = None
+    #: Advertised tools left out of the registry, with reasons (TD-5104).
+    excluded: tuple[ExcludedTool, ...] = ()
 
 
 @dataclass
@@ -70,11 +84,67 @@ def _http_fix(server_id: str) -> str:
     )
 
 
+#: Least time between two progress events for one call (TD-5105).  Every
+#: notification still resets the idle timer; only the events are thinned.
+PROGRESS_EVENT_INTERVAL = 0.5
+
+
+def _progress_events(session: object, tool_call_id: str) -> ProgressCallback | None:
+    """Turn ``notifications/progress`` into ``tool_progress`` events."""
+    event_log = getattr(session, "event_log", None)
+    session_id = getattr(session, "id", None)
+    if event_log is None or not isinstance(session_id, str) or not tool_call_id:
+        return None
+    last_sent = -PROGRESS_EVENT_INTERVAL
+
+    async def emit(progress: float, total: float | None, message: str | None) -> None:
+        nonlocal last_sent
+        now = asyncio.get_running_loop().time()
+        if now - last_sent < PROGRESS_EVENT_INTERVAL:
+            return
+        last_sent = now
+        await event_log.add(
+            ToolProgress(
+                session_id=session_id,
+                tool_call_id=tool_call_id,
+                progress=progress,
+                total=total,
+                message=message,
+                seq=1,  # overwritten by the event log
+            )
+        )
+
+    return emit
+
+
 def _handler(client: McpClient, remote_name: str) -> Callable[..., Awaitable[str]]:
     async def call(*, session: object = None, tool_call_id: str = "", **arguments: Any) -> str:
-        del session, tool_call_id
-        result = await client.call_tool(remote_name, arguments)
-        return format_call_result(result)
+        work = asyncio.ensure_future(
+            client.call_tool(
+                remote_name, arguments, on_progress=_progress_events(session, tool_call_id)
+            )
+        )
+        wait_for_abort = getattr(session, "wait_for_turn_abort", None)
+        if wait_for_abort is None:
+            return format_call_result(await work)
+        # Stopping the turn ends the call, as it does a shell command
+        # (TD-5105).  Cancelling the call sends the server
+        # notifications/cancelled.
+        abort = asyncio.ensure_future(wait_for_abort())
+        try:
+            await asyncio.wait({work, abort}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            abort.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await abort
+            stopped = not work.done()
+            if stopped:
+                work.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await work
+        if stopped:
+            raise McpError(f"MCP tool {remote_name!r} stopped: the user stopped the turn")
+        return format_call_result(work.result())
 
     return call
 
@@ -206,8 +276,13 @@ class McpSupervisor:
             )
         client: StdioMcpClient | None = None
         try:
-            client = StdioMcpClient(spec.command, timeout=self._call_timeout)
-            return await self._handshake(server_id, client)
+            client = StdioMcpClient(
+                spec.command,
+                timeout=spec.timeout_seconds or self._call_timeout,
+                max_call_seconds=spec.max_call_seconds or MAX_CALL_SECONDS,
+                startup_timeout=self._startup_timeout(spec),
+            )
+            return await self._handshake(server_id, client, spec)
         except Exception as e:
             if client is not None:
                 await client.aclose()
@@ -257,8 +332,12 @@ class McpSupervisor:
             )
         client: HttpMcpClient | None = None
         try:
-            client = HttpMcpClient(spec.url, timeout=self._call_timeout)
-            return await self._handshake(server_id, client)
+            client = HttpMcpClient(
+                spec.url,
+                timeout=spec.timeout_seconds or self._call_timeout,
+                startup_timeout=self._startup_timeout(spec),
+            )
+            return await self._handshake(server_id, client, spec)
         except Exception as e:
             if client is not None:
                 await client.aclose()
@@ -277,16 +356,45 @@ class McpSupervisor:
                 None,
             )
 
+    def _startup_timeout(self, spec: McpServerConfig) -> float:
+        return spec.startup_timeout_seconds or self._handshake_timeout
+
     async def _handshake(
-        self, server_id: str, client: McpClient
+        self, server_id: str, client: McpClient, spec: McpServerConfig
     ) -> tuple[McpServerStatus, _LiveServer]:
-        await asyncio.wait_for(client.start(), timeout=self._handshake_timeout)
-        tools = await asyncio.wait_for(client.list_tools(), timeout=self._handshake_timeout)
+        # The clients also give each handshake request this long, so a
+        # startup timeout above the call timeout is honoured (TD-5105).
+        startup = self._startup_timeout(spec)
+        await asyncio.wait_for(client.start(), timeout=startup)
+        listed = await asyncio.wait_for(client.list_tools(), timeout=startup)
+        tools, excluded = sanitize_remote_tools(server_id, listed)
+        detail = f"{len(tools)} tool(s) listed"
+        fix = None
+        if excluded:
+            for item in excluded:
+                log.warning(
+                    "mcp tool excluded",
+                    extra={
+                        "extra_fields": {
+                            "server_id": server_id,
+                            "tool": item.name,
+                            "reason": item.reason,
+                        }
+                    },
+                )
+            names = "; ".join(f"{item.name} ({item.reason})" for item in excluded)
+            detail += f"; {len(excluded)} excluded: {names}"
+            fix = (
+                "The other tools work. An excluded tool stays out until the server "
+                "advertises a usable name and input schema."
+            )
         return (
             McpServerStatus(
                 server_id=server_id,
                 status="ok",
-                detail=f"{len(tools)} tool(s) listed",
+                detail=detail,
+                fix=fix,
+                excluded=tuple(excluded),
             ),
             _LiveServer(server_id=server_id, client=client, remote_tools=tools),
         )

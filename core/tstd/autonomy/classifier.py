@@ -19,6 +19,9 @@ the *obvious* cases — the ones that must never reach the model:
 - a write under ``.tst/memory/`` → A (spec §5; not steering)
 - a spent/spend/time/iteration cap that is already exceeded → C
 - an in-workspace edit inside ``writable_paths`` → A
+- a built-in read (``fs_read`` / ``fs_list`` / ``fs_grep``) inside the
+  workspace → A, with no worker call (TD-5141); a user policy rule
+  (``ask`` / ``never``) still decides whether it runs
 - an MCP tool with no declared path or host metadata → B, never A
   (TD-4402; even if ``side_effect_class`` was reset to ``auto``)
 
@@ -75,6 +78,9 @@ _COMMAND_DIR_PAIRS = frozenset(
     }
 )
 _MEMORY_DIR_PARTS = (".tst", "memory")
+# The shipped read tools (TD-5141). The rule also requires no provenance,
+# so a plugin or MCP tool that borrows one of these names is not covered.
+_BUILTIN_READ_TOOLS = frozenset({"fs_read", "fs_list", "fs_grep"})
 # The approval policy lives here (spec §6). Not a steering file by name,
 # but a write to it rewrites the guardrails — the self-escalation the
 # steering refusal exists to prevent (TD-4803).
@@ -539,6 +545,32 @@ def _rule_in_workspace_edit(req: DecisionRequest, boundary: Boundary) -> bool:
     return all_in_workspace and writes_match_writable(boundary, req)
 
 
+def _rule_builtin_read(req: DecisionRequest, boundary: Boundary) -> bool:
+    """A built-in read inside the workspace is Class A (TD-5141).
+
+    Adam pre-approved the shipped read tools on 2026-10-14, ``.env``
+    included: a read changes nothing and the wall already refuses every
+    path outside the workspace (``path-outside-workspace`` fired above).
+    Before this rule the worker tier judged each read, a model call per
+    file for an answer that was always A.
+
+    Narrow on purpose: a builtin (no provenance), still declared
+    ``auto``, no writes, no hosts, and every read path canonically in the
+    workspace (symlinks resolved). A user policy rule still wins, since
+    policy only falls back to the class default when no rule matches.
+    """
+    return (
+        req.tool_name in _BUILTIN_READ_TOOLS
+        and req.provenance is None
+        and req.side_effect_class == "auto"
+        and not req.is_mutation
+        and not req.writes
+        and not req.hosts
+        and bool(req.reads)
+        and all(is_in_workspace(boundary, p) for p in req.reads)
+    )
+
+
 def _rule_outside_writable(req: DecisionRequest, boundary: Boundary) -> bool:
     """An in-workspace write outside the declared ``writable_paths``.
 
@@ -635,6 +667,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="in-workspace source edit within writable_paths",
         decision_class=DecisionClass.A,
         match=_rule_in_workspace_edit,
+    ),
+    Rule(
+        id="builtin-read",
+        description="built-in read (fs_read, fs_list, fs_grep) inside the workspace",
+        decision_class=DecisionClass.A,
+        match=_rule_builtin_read,
     ),
     Rule(
         id="desktop-capture",

@@ -2,7 +2,8 @@
 //
 // Reduces the daemon event stream into the fields the title bar shows:
 // session id + workspace path, state indicator, live cost with a per-tier
-// breakdown, the current tier + slugs, and the boundary ("wall").
+// breakdown, the current tier + slugs, the boundary ("wall"), and how full
+// the context window is (TD-5109).
 //
 // v0.1 is single-workspace per window: the first session_state event we see
 // adopts that session unless this webview is bound with ?bind_session= (TD-4703).
@@ -13,6 +14,7 @@
 import { DEFAULT_ATTACHMENT_LIMITS } from "./attachments";
 import { isBridged } from "./bridged-id";
 import type { ProtocolClient } from "./client";
+import type { ContextReading } from "./context-gauge";
 import { persistLastWorkspace } from "./last-workspace";
 import type { AttachmentLimits, BoundaryUpdate, DaemonEventUnion } from "./protocol";
 import { windowBindSessionId } from "./window-bind";
@@ -69,6 +71,8 @@ export const session = $state({
   vision: false,
   /** A turn is owed (TD-1721). The daemon refuses a preset switch then. */
   turnActive: false,
+  /** Last context_usage (TD-5109). Null until the loop has measured one. */
+  context: null as ContextReading | null,
 });
 
 let client: ProtocolClient | null = null;
@@ -99,6 +103,7 @@ export function resetSession(): void {
   session.planMode = false;
   session.vision = false;
   session.turnActive = false;
+  session.context = null;
   pendingPath = null;
 }
 
@@ -163,6 +168,14 @@ export function ingestEvent(event: DaemonEventUnion): void {
     case "turn_complete":
       session.turnActive = false;
       break;
+    case "context_usage":
+      session.context = {
+        tier: event.tier,
+        used_tokens: event.used_tokens,
+        context_window: event.context_window,
+        compact_at: event.compact_at,
+      };
+      break;
     case "cost_update":
       session.cost = {
         turn: event.turn_cost,
@@ -218,6 +231,7 @@ export function focusSession(
   session.planMode = false;
   session.vision = false;
   session.turnActive = false;
+  session.context = null;
   pendingPath = null;
 }
 

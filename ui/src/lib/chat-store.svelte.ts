@@ -82,6 +82,8 @@ export const continueTurn: () => boolean = store.continueTurn;
 export const keepDraft: () => void = store.keepDraft;
 export const forkFrom: (userIndex: number, content: string) => boolean = store.forkFrom;
 export const setBranch: (userIndex: number, siblingIndex: number) => boolean = store.setBranch;
+export const compactContext: (guidance?: string, userIndex?: number) => boolean =
+  store.compactContext;
 export const cancelTurn: () => boolean = store.cancelTurn;
 /** Queue actions (TD-1704), bound for the queued-row controls. */
 export const sendQueuedNow: (id: string) => boolean = store.sendQueuedNow;
