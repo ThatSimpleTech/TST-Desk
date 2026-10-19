@@ -2729,17 +2729,24 @@ class Daemon:
                     "External imports can never be always-allowed",
                 )
             # The narrowest rule, never a blanket grant; None when the
-            # call is a class-C decision (TD-803 criterion 4).
+            # call is a class-C decision (TD-803 criterion 4), or a shell
+            # command chained from several commands (TD-5101).
             rule = propose_always_allow(
                 pending.tool,
                 pending.arguments,
                 pending.decision_class,
                 Path(found.workspace_path),
             )
-            if rule is None:
+            if rule is None and pending.decision_class.value == "C":
                 return build_error(
                     "class_c_not_always_allowable",
                     "Class C actions can never be always-allowed",
+                )
+            if rule is None:
+                return build_error(
+                    "not_always_allowable",
+                    "A chained shell command can't be always-allowed: "
+                    "each command needs its own rule in .tst/config.yaml",
                 )
             found.policy = add_rule(found.policy, rule)
             try:

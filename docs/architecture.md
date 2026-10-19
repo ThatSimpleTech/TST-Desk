@@ -412,7 +412,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `compact_context` | yes | Compact now: everything before the latest user turn, or from a given user turn on, with optional guidance (TD-5109). Refused mid-turn. |
 | `approve` | yes | Approve a parked tool call. |
 | `deny` | yes | Deny a parked tool call, with an optional reason. |
-| `always_allow` | yes | Approve and save the narrowest policy rule that would have allowed it. Refused for class-C calls. |
+| `always_allow` | yes | Approve and save the narrowest policy rule that would have allowed it. Refused for class-C calls and for a chained shell command (TD-5101). |
 | `list_policy_rules` | yes | List the workspace's saved policy rules. |
 | `revoke_policy_rule` | yes | Remove one saved rule, identified by `(tool, args)`. |
 | `set_spend_cap` | yes | Set or clear the workspace's session spend budget (`caps.spend_usd` in `.tst/config.yaml`). Null removes it and the built-in $25 pause applies; a number replaces that pause. Acked with `boundary_update`. |
@@ -535,7 +535,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `tool_result` | session | The outcome of a tool call, with an error code and diff when applicable. |
 | `shell_output` | session | A streamed chunk of a shell command's stdout or stderr. |
 | `tool_progress` | session | Progress an MCP server reported for a running tool call: count, optional total and message (TD-5105). Thinned to two a second. |
-| `approval_request` | session | A tool call parked for approval, with the summary, the reason, and the rule "always allow" would write. |
+| `approval_request` | session | A tool call parked for approval, with the summary, the reason, and the rule "always allow" would write (none for class C or a chained shell command). |
 | `decision_logged` | session | A decision appended to the autonomy ledger. |
 | `checkpoint_notice` | session | A one-time notice that checkpointing is degraded. |
 | `verify_result` | session | Interactive validator review of a write turn. Timeline only; not a chat bubble (TD-4204). |
@@ -768,9 +768,12 @@ Worth reading once, because it is the same path for every tool:
 4. **Guard.** Every `path_fields` argument is canonicalised and checked. Reads are checked
    against the workspace wall; writes additionally against `writable_paths`, the steering-file
    ban, and hardlinks.
-5. **Gate.** Policy resolves the class to `auto`, `ask`, or `never`. Class A is auto, class B
-   asks, class C takes the workspace's `class_c_default`. `ask` with no approval handler
-   attached raises — the approval gate is part of the chokepoint, not an optional add-on.
+5. **Gate.** Policy resolves the class to `auto`, `ask`, or `never`. Rules come first, deny
+   first: any matching `never` refuses, then any `ask` asks, and `auto` needs a rule for every
+   path or shell command in the call (TD-5101, `core/tstd/policy_shell.py`). With no rule,
+   class A is auto, class B asks, class C takes the workspace's `class_c_default`. `ask` with
+   no approval handler attached raises — the approval gate is part of the chokepoint, not an
+   optional add-on.
 6. **Execute.** Your handler runs. An exception becomes a `handler_error` result, not a dead turn.
 7. **Record.** Touched paths go on the session, so path-scoped steering rules can activate.
    Mutations get a diff and a checkpoint commit. Class A and B decisions append to the ledger.
