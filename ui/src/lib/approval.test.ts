@@ -7,6 +7,7 @@ import {
   approvalFromEvent,
   isAlwaysAllowable,
   isDangerous,
+  ruleArgsText,
   approveMessage,
   denyMessage,
 } from "./approval";
@@ -111,5 +112,31 @@ describe("always allow (TD-803 proposal surfaced on the card)", () => {
       "fs_write({path: src/app.py}) → auto",
     );
     expect(alwaysAllowLabel(approvalFromEvent(request()))).toBe("");
+  });
+
+  it("shows an escaped rule as the path it was saved for (TD-5149)", () => {
+    const escaped: PolicyRuleSummary = {
+      tool: "fs_read",
+      args: "app/[[]id]/page.tsx",
+      effect: "auto",
+      exact: "app/[id]/page.tsx",
+    };
+    expect(alwaysAllowLabel(approvalFromEvent(request({ proposed_always_allow: escaped })))).toBe(
+      "fs_read(exactly app/[id]/page.tsx) → auto",
+    );
+  });
+});
+
+describe("ruleArgsText (TD-5149)", () => {
+  it("reads an exact rule back and marks it so it can't pass for a glob", () => {
+    expect(ruleArgsText({ tool: "fs_read", args: "[*].env[*]", effect: "auto", exact: "*.env*" })).toBe(
+      "exactly *.env*",
+    );
+  });
+
+  it("shows a glob as written", () => {
+    expect(ruleArgsText({ tool: "fs_read", args: "*.env*", effect: "never", exact: null })).toBe("*.env*");
+    // An older daemon sends no `exact`: the raw pattern, as before.
+    expect(ruleArgsText({ tool: "fs_*", args: "src/**", effect: "ask" })).toBe("src/**");
   });
 });

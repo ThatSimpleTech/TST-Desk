@@ -9520,6 +9520,56 @@ the classifier said A or B (a hardlink, a Windows-unsafe form) still
 shows the classifier's class on the event, which is written before the
 guard runs.
 
+### TD-5149 — Always allow saves a rule that matches only the file it was for
+**Size:** 2 · **Depends on:** TD-803, TD-5101, TD-5141
+
+Found 2026-10-14 in the TD-5141 review. `propose_always_allow` saved the
+call's raw argument summary as the rule's `args`, which is matched with
+`fnmatch`, and `add_rule` first deleted any rule with the same
+`(tool, args)`. So Always allow on a read of a file literally named
+`*.env*` wrote `fs_read: *.env* -> auto` over the user's documented guard
+rule (docs/configuration.md, TD-5141), and a Next.js path such as
+`app/[id]/page.tsx` saved a rule that matched `app/i/page.tsx` and not
+itself. TD-5101 escaped the summary; this story closes the rest.
+
+**Acceptance criteria:**
+- [x] Always allow escapes `*`, `?` and `[` (`[*]`, `[?]`, `[[]`), so the
+      rule matches the one path or command it was for: `app/[[]id]/page.tsx`
+      matches `app/[id]/page.tsx` and not `app/i/page.tsx`, and a file named
+      `*.env*` saves `[*].env[*]` beside the `*.env*` guard, which keeps
+      asking for `.env` and `.env.local`
+- [x] `add_rule` refuses (`StricterRuleError`) rather than replace a rule
+      with the same `(tool, args)` and a stricter effect (`ask` or `never`),
+      and leaves the config as it was; the same or a stricter effect still
+      replaces
+- [x] The card does not offer Always allow when saving would replace such
+      a rule; a click sent anyway saves nothing, approves the call once for
+      `ask`, denies it for `never`, and replies `policy_rule_stricter`,
+      which the window shows as a "Rule not saved" toast
+- [x] The check and the save use `.tst/config.yaml` as it is at the click
+      (review of PR #17): a rule written to the file by hand while the
+      session is open is never written over by Always allow or Revoke, an
+      `ask` or `never` rule added that way answers the click as above, and
+      the session then runs under the file as saved; a `policy:` section
+      that does not parse is left as it is
+- [x] An escaped rule reads clearly: `policy_rules` and the card's proposal
+      carry `exact`, and Settings → Policy and the card's tooltip show
+      `exactly app/[id]/page.tsx` (raw pattern on hover); a glob shows as
+      written, and Revoke still sends the raw `(tool, args)`
+- [x] Chained shell commands are still never always-allowable (TD-5101)
+- [x] docs/configuration.md and the docs/architecture.md message and event
+      tables describe the behaviour; Class B entry in DECISIONS.md
+- [x] Tests fail on the old code and pass on the new
+      (`core/tests/test_always_allow_stricter.py`,
+      `ui/src/lib/policy-rule-list-component.test.ts`, `approval.test.ts`,
+      `notifications.test.ts`)
+
+**Follow-up (not in this story):** a wider `ask` or `never` rule (such as
+`*.env*`) still wins over the exact `auto` rule Always allow saves for a
+file it matches, because rules are deny first. The card still offers
+Always allow there and the saved rule has no effect while the wider rule
+stands; the card could offer it only when the saved rule would apply.
+
 ---
 
 # Epic E52 — Files to the user

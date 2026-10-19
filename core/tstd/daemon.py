@@ -170,12 +170,17 @@ from .notify.slack import schedule as schedule_slack_notify
 from .notify.slack import send as send_slack_notify
 from .notify.telegram import schedule as schedule_telegram_notify
 from .policy import (
+    PolicyConfig,
     add_rule,
+    adopt_policy,
     load_skip_all,
+    policy_from_mapping,
     propose_always_allow,
     remove_rule,
+    rule_summary,
     save_policy,
     save_skip_all,
+    stricter_rule,
 )
 from .port_file import release_port_file
 from .protocol import (
@@ -287,7 +292,6 @@ from .protocol import (
     PairingCompleted,
     ParseJob,
     PolicyRules,
-    PolicyRuleSummary,
     ReadArtifactChunk,
     RemoteDeviceSummary,
     RemovePin,
@@ -2801,15 +2805,20 @@ class Daemon:
                     "each command needs its own rule in .tst/config.yaml",
                 )
             # TD-5113: never merge a rule into a config that is not in
-            # force. Checked before add_rule, which edits the live policy.
-            # The card offers no Always allow then; a click that races a
-            # trust change still approves this one call, so it is never
-            # left parked with no card to answer it.
+            # force. The card offers no Always allow then; a click that
+            # races a trust change still approves this one call (below), so
+            # it is never left parked with no card to answer it.
+            saved: PolicyConfig | None = None
+            gate_error: str | None = None
             try:
                 before = self.workspace_trust.before_write(found.workspace_path)
+                # TD-5149: the file as it is now, not the copy the session
+                # opened with. Nothing reloads that copy when the user edits
+                # .tst/config.yaml by hand, and saving it would write over
+                # every rule added since.
+                saved = policy_from_mapping(before.path, before.effective)
             except UntrustedConfigError:
-                found.resolve_approval(msg.tool_call_id, True)
-                return build_error(
+                gate_error = build_error(
                     "workspace_config_untrusted",
                     f"Approved once. {workspace_config_path(found.workspace_path)} loosens "
                     "settings you have not trusted, so the rule was not saved. Trust the "
@@ -2817,18 +2826,46 @@ class Daemon:
                     session_id=found.id,
                 )
             except ConfigError as e:
-                found.resolve_approval(msg.tool_call_id, True)
-                return build_error(
+                gate_error = build_error(
                     "policy_save_failed", f"Approved once; failed to save policy: {e}"
                 )
-            found.policy = add_rule(found.policy, rule)
+            # TD-5149: an ask or never rule for this same call is the user's
+            # guard, and Always allow never replaces it, whether the session
+            # loaded it or it was written to the file since. The card is gone
+            # once the click lands, so the call is answered here: the ask
+            # rule was asking for this yes, a never rule refuses. Checked
+            # before the trust gate's answer, so a never rule refuses there
+            # too.
+            in_force = [*found.policy.rules, *(saved.rules if saved is not None else [])]
+            stricter = stricter_rule(PolicyConfig(rules=in_force), rule)
+            if stricter is not None:
+                named = f"`{stricter.tool}: {stricter.args}` → {stricter.effect}"
+                allowed = stricter.effect == "ask"
+                found.resolve_approval(
+                    msg.tool_call_id, allowed, None if allowed else f"policy rule {named}"
+                )
+                return build_error(
+                    "policy_rule_stricter",
+                    f"{'Approved once' if allowed else 'Denied'}. The rule {named} in "
+                    f"{workspace_config_path(found.workspace_path)} covers this call, so "
+                    "Always allow did not replace it. Revoke that rule in Settings → Policy "
+                    "if you want this call to run without asking.",
+                    session_id=found.id,
+                )
+            if saved is None:
+                found.resolve_approval(msg.tool_call_id, True)
+                return gate_error
+            saved = add_rule(saved, rule)
             try:
-                save_policy(found.workspace_path, found.policy)
+                save_policy(found.workspace_path, saved)
                 after = self.workspace_trust.after_write(
                     found.workspace_path, before, owns=("policy.rules",)
                 )
             except ConfigError as e:
                 return build_error("policy_save_failed", f"Failed to save policy: {e}")
+            # The session runs under what was just saved, rules added by
+            # hand included, in the object the dispatcher already holds.
+            adopt_policy(found.policy, saved)
             # Resolve the parked call as approved so the loop proceeds.
             found.resolve_approval(msg.tool_call_id, True)
             if not after.applies:
@@ -2844,10 +2881,7 @@ class Daemon:
                 )
             return PolicyRules(
                 seq=1,
-                rules=[
-                    PolicyRuleSummary(tool=r.tool, args=r.args, effect=r.effect)
-                    for r in found.policy.rules
-                ],
+                rules=[rule_summary(r) for r in found.policy.rules],
             ).model_dump_json()
 
         if isinstance(msg, RevokePolicyRule):
@@ -2859,30 +2893,39 @@ class Daemon:
                 )
             try:
                 before = self.workspace_trust.before_write(found.workspace_path)
+                # TD-5149: revoke from the file as it is now, so rules added
+                # by hand since the session opened are kept.
+                saved = policy_from_mapping(before.path, before.effective)
             except UntrustedConfigError as e:
                 return build_error("workspace_config_untrusted", str(e), session_id=found.id)
             except ConfigError as e:
                 return build_error("policy_save_failed", f"Failed to save policy: {e}")
-            if not remove_rule(found.policy, msg.tool, msg.args):
-                return build_error(
-                    "policy_rule_not_found",
-                    f"No policy rule {msg.tool!r}: {msg.args!r} to revoke",
-                )
+            if not remove_rule(saved, msg.tool, msg.args):
+                if not any((r.tool, r.args) == (msg.tool, msg.args) for r in found.policy.rules):
+                    return build_error(
+                        "policy_rule_not_found",
+                        f"No policy rule {msg.tool!r}: {msg.args!r} to revoke",
+                    )
+                # Already gone from the file (removed by hand): the session
+                # catches up with it and there is nothing to write.
+                adopt_policy(found.policy, saved)
+                return PolicyRules(
+                    seq=1,
+                    rules=[rule_summary(r) for r in found.policy.rules],
+                ).model_dump_json()
             try:
-                save_policy(found.workspace_path, found.policy)
+                save_policy(found.workspace_path, saved)
                 after = self.workspace_trust.after_write(
                     found.workspace_path, before, owns=("policy.rules",)
                 )
             except ConfigError as e:
                 return build_error("policy_save_failed", f"Failed to save policy: {e}")
+            adopt_policy(found.policy, saved)
             if not after.applies:
                 await self._reapply_workspace_config(found.workspace_path)
             return PolicyRules(
                 seq=1,
-                rules=[
-                    PolicyRuleSummary(tool=r.tool, args=r.args, effect=r.effect)
-                    for r in found.policy.rules
-                ],
+                rules=[rule_summary(r) for r in found.policy.rules],
             ).model_dump_json()
 
         if isinstance(msg, SetSkipAllApprovals):

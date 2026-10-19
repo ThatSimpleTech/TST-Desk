@@ -85,5 +85,15 @@ export function alwaysAllowMessage(approval: PendingApproval): AlwaysAllow {
 export function alwaysAllowLabel(approval: PendingApproval): string {
   const rule = approval.proposedAlwaysAllow;
   if (!rule) return '';
-  return `${rule.tool}(${rule.args}) → ${rule.effect}`;
+  return `${rule.tool}(${ruleArgsText(rule)}) → ${rule.effect}`;
+}
+
+/**
+ * A rule's args as a person reads them (TD-5149). Always allow saves the
+ * exact path or command with `*`, `?` and `[` escaped (`app/[[]id]/page.tsx`);
+ * the daemon sends the text that matches as `exact`, and "exactly" keeps it
+ * from reading as a glob. A glob shows as written.
+ */
+export function ruleArgsText(rule: PolicyRuleSummary): string {
+  return rule.exact != null ? `exactly ${rule.exact}` : rule.args;
 }

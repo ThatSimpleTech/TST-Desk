@@ -1694,12 +1694,16 @@ class PolicyRuleSummary(BaseModel):
     """A saved policy rule, surfaced to clients (TD-803).
 
     ``(tool, args)`` is the identity used for individual revocation in
-    settings.
+    settings.  ``exact`` (TD-5149) is the one text ``args`` matches when it
+    has no wildcard, with Always allow's escapes read back
+    (``app/[[]id]/page.tsx`` → ``app/[id]/page.tsx``), so the window can
+    show the path a rule is for; ``None`` for a glob.
     """
 
     tool: str
     args: str
     effect: Literal["auto", "ask", "never"]
+    exact: str | None = None
 
 
 class ApprovalRequest(DaemonEvent):
@@ -1712,8 +1716,10 @@ class ApprovalRequest(DaemonEvent):
     ``proposed_always_allow`` (TD-803) is the rule that "always allow in
     this workspace" would write, or ``None`` when the call is a class-C
     decision that can never be always-allowed, or when the workspace config
-    is not trusted and no rule could be saved into it (TD-5113).  The client
-    shows it before the user commits to saving it.
+    is not trusted and no rule could be saved into it (TD-5113), or when an
+    ``ask`` or ``never`` rule with the same ``(tool, args)`` is saved and
+    Always allow would replace it (TD-5149).  The client shows it before
+    the user commits to saving it.
     """
 
     type: Literal["approval_request"] = "approval_request"

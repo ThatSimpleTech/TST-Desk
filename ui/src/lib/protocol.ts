@@ -1191,6 +1191,10 @@ export interface PolicyRuleSummary {
   tool: string;
   args: string;
   effect: "auto" | "ask" | "never";
+  /** The one text `args` matches when it has no wildcard, with Always
+   *  allow's escapes read back (`app/[[]id]/page.tsx` → `app/[id]/page.tsx`).
+   *  Null for a glob; absent from an older daemon (TD-5149). */
+  exact?: string | null;
 }
 
 export interface ApprovalRequest extends DaemonEvent {

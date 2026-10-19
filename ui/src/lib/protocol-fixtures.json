@@ -725,7 +725,8 @@
     "proposed_always_allow": {
       "tool": "shell",
       "args": "npm test",
-      "effect": "auto"
+      "effect": "auto",
+      "exact": "npm test"
     }
   },
   "decision_logged": {
@@ -1198,12 +1199,20 @@
       {
         "tool": "shell",
         "args": "npm test",
-        "effect": "auto"
+        "effect": "auto",
+        "exact": "npm test"
       },
       {
         "tool": "fs_*",
         "args": "src/**",
-        "effect": "ask"
+        "effect": "ask",
+        "exact": null
+      },
+      {
+        "tool": "fs_write",
+        "args": "app/[[]id]/page.tsx",
+        "effect": "auto",
+        "exact": "app/[id]/page.tsx"
       }
     ]
   },

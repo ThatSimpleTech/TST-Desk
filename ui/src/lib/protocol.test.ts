@@ -676,6 +676,7 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isString(proposal.tool)).toBe(true);
     expect(isString(proposal.args)).toBe(true);
     expect(proposal.effect).toBe("auto");
+    expect(proposal.exact).toBe("npm test");
   });
 
   it("policy_rules", () => {
@@ -687,7 +688,11 @@ describe("Daemon event fixtures match TypeScript types", () => {
       expect(isString(rule.tool)).toBe(true);
       expect(isString(rule.args)).toBe(true);
       expect(["auto", "ask", "never"]).toContain(rule.effect);
+      expect(rule.exact === null || isString(rule.exact)).toBe(true);
     }
+    // TD-5149: an escaped rule carries the one text it matches; a glob none.
+    expect(m.rules.find((r) => r.args === "app/[[]id]/page.tsx")?.exact).toBe("app/[id]/page.tsx");
+    expect(m.rules.find((r) => r.args === "src/**")?.exact).toBeNull();
   });
 
   it("decision_logged", () => {
