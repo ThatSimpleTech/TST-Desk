@@ -1154,7 +1154,10 @@ def _placeholder(annotation: Any) -> Any:
 
 
 # A string field with a ``pattern`` gets the value here, not "x".
-_PATTERN_SAMPLES = {r"^[0-9a-f]{32}$": "0" * 32}  # read_artifact_chunk (TD-5143)
+_PATTERN_SAMPLES = {
+    r"^[0-9a-f]{32}$": "0" * 32,  # read_artifact_chunk (TD-5143)
+    r"^[0-9a-f]{64}$": "0" * 64,  # trust_workspace_config (TD-5113)
+}
 
 
 def _field_placeholder(field: FieldInfo) -> Any:

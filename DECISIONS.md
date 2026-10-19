@@ -14053,3 +14053,67 @@ TD-5103 handles redirects for its read-only list, and the docs steer
 wrapped command as written (`timeout 60 npm test`), now asks again. That
 fails safe. The docs example `git status*` became exact `git status` and
 `git diff` rules plus `never` rules for `curl *` and `rm *`.
+
+---
+
+## 2026-10-19 — TD-5113: a repo's `.tst/config.yaml` waits for trust before it loosens anything (Class B)
+
+**Decision:** The daemon reads `.tst/config.yaml` once per load (open, revive, move, resume,
+spend cap, trust decision), hashes those bytes with SHA-256 and lists every setting looser than
+the packaged defaults. "Looser" is judged on the same validated models the loaders apply:
+`auto` policy rules, a network host list, `writable_paths` entries that are absolute, start
+with `~` or climb out with `..`, any cap, attachment cap or `memory.max_lines` above its default,
+any `approved_external_imports` entry, and the unread keys `mcp_servers` and `hooks`. A file
+that loosens nothing applies as written with no prompt. One that loosens anything applies only
+when the user has trusted that exact hash. Until then, and after a decline, the whole file is
+set aside and the session runs on `BoundaryConfig()` and `PolicyConfig()`.
+
+- **Store:** `<data dir>/workspace_trust.yaml`, one record per workspace (resolved path):
+  `sha256` and `decision` (`trusted` or `declined`). A mismatched hash is `pending`. An
+  unreadable or garbled store reads as empty, so it fails closed.
+- **Wire:** additive `boundary_update.config_trust` (`state`, `sha256`, `loosened[]`), so every
+  announcement of the wall carries its trust state, and the client message
+  `trust_workspace_config` (`session_id`, `sha256`, `trust`). A hash that no longer matches the
+  file is refused with `workspace_config_changed` and the wall is re-announced. The verb is in
+  `LOOPBACK_VERBS`.
+- **Applying a decision:** every live session on that workspace re-reads the file and calls the
+  loop's new `on_config_reloaded`, which rebinds the path guard, the classifier's wall, the
+  policy gate and the import approvals. It leaves the checkpointer, ledger and memory committer
+  alone (same root), so it is safe while a turn runs.
+- **TST Desk's own writes** (always allow, revoke, spend cap, external-import approval) go
+  through `TrustStore.before_write` and `after_write`: refused with `workspace_config_untrusted`
+  while the file is pending or declined. The new hash is stamped trusted only when every
+  setting it loosens was in force before the write or sits under the key the write sets
+  (`caps.spend_usd`, `policy.rules`, `approved_external_imports`). A write that makes a refused
+  section valid (a budget saved over a bad `caps` value exposes the `boundary.network` beside
+  it) leaves the new hash pending, and every live session on the workspace drops to the
+  defaults and shows the card. An import approved in an untrusted workspace lasts for the
+  session only.
+- **Always allow while untrusted:** the approval card carries no `proposed_always_allow` while
+  the file is pending, declined or unreadable, so it offers approve and deny only. An
+  `always_allow` that arrives anyway (a card from before the file changed) approves that one
+  call, saves nothing and replies `workspace_config_untrusted`. Leaving the call parked would
+  strand it: the window drops a card once its decision is sent, and approvals have no default
+  timeout.
+- **Gate in one place:** production code reads the file only through `workspace_trust.read_view`
+  and parses `view.effective`. The ungated `load_*` loaders stay for library use and tests, and
+  a test fails if anything else in `tstd/` calls them.
+
+**Rationale:** The story asks for the loosened rules to be shown and asked about, a decision
+keyed to the file's hash, and packaged defaults until trusted. Hashing the bytes that are then
+parsed means what applies is exactly what was shown. Carrying the state on `boundary_update`
+reuses the event every load path already emits, so no path can announce a wall without its
+trust state. Stamping TST Desk's own writes keeps "Always allow" from turning into a trust
+prompt on the next open.
+
+**Alternatives rejected:** Applying the tightening keys of an untrusted file (safer in a few
+cases, but not "packaged defaults", and harder to explain on the card). A separate
+`workspace_trust` event (a second thing every load path must remember to emit). Letting a
+paired phone or another computer decide (the decision widens the wall; it is made at the
+computer that holds the files). Keeping several trusted hashes per workspace (a branch switch
+between two configs asks each time; simpler and stricter). Ignoring `mcp_servers` and `hooks`
+because nothing reads them from a workspace yet (TD-5134 would then have to remember the gate).
+Refusing every write into a file with an invalid section (it would also refuse a budget or
+rule in a file whose only fault is unrelated, and the hidden settings stay hidden instead of
+reaching the card). Restoring the card in the window on `workspace_config_untrusted` (the CLI
+and every other client would each need the same fix, and the rule still could not be saved).

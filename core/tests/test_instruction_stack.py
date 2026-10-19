@@ -306,9 +306,14 @@ class TestGetInstructionStackHandler:
         external = (tmp_path / "shared.md").resolve()
         _write(workspace / "AGENTS.md", f"workspace rules\n@{external}\n")
         _write(external, "shared rules\n")
-        save_approved_imports(workspace, [external])
         with tempfile.TemporaryDirectory() as tmp:
             daemon, daemon_task = await _running_daemon(Path(tmp))
+            # Approved through TST Desk, so the write keeps its trust (TD-5113).
+            daemon.workspace_trust.write_through(
+                workspace,
+                lambda: save_approved_imports(workspace, [external]),
+                owns=("approved_external_imports",),
+            )
             try:
                 ws = await _connect(
                     f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token

@@ -76,6 +76,12 @@
     "tool": "shell",
     "args": "rm *"
   },
+  "trust_workspace_config": {
+    "type": "trust_workspace_config",
+    "session_id": "sess-1",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "trust": true
+  },
   "set_skip_all_approvals": {
     "type": "set_skip_all_approvals",
     "enabled": true
@@ -766,6 +772,43 @@
       "max_file_bytes": 4000000,
       "max_total_bytes": 8000000,
       "max_count": 10
+    },
+    "config_trust": null
+  },
+  "boundary_update_config_trust": {
+    "type": "boundary_update",
+    "seq": 12,
+    "session_id": "sess-1",
+    "writable_paths": [
+      "**"
+    ],
+    "allowed_commands": [],
+    "network": "deny",
+    "spend_usd": 25.0,
+    "wall_clock_hours": 8.0,
+    "max_iterations": 200,
+    "source": "defaults \u2014 workspace config not trusted yet",
+    "spend_configured": false,
+    "attachments": {
+      "max_file_bytes": 4000000,
+      "max_total_bytes": 8000000,
+      "max_count": 10
+    },
+    "config_trust": {
+      "state": "pending",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "loosened": [
+        {
+          "key": "policy.rules",
+          "value": "shell: npm * \u2192 auto",
+          "default": "ask (class B and C)"
+        },
+        {
+          "key": "boundary.network",
+          "value": "registry.npmjs.org",
+          "default": "deny"
+        }
+      ]
     }
   },
   "turn_complete": {

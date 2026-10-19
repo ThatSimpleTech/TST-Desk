@@ -93,7 +93,9 @@ VIEWER_MACHINE_VERBS: frozenset[str] = frozenset({"list_machines"})
 # Verbs only this computer may send, from any peer kind. ``drain`` holds
 # every local turn for a restart; a phone or another computer asking for
 # that is not the person at the keyboard deploying (TD-5023).
-LOOPBACK_VERBS: frozenset[str] = frozenset({"drain"})
+# ``trust_workspace_config`` lets a repo's own settings loosen the wall
+# (TD-5113); it is decided where the files can be read, at the computer.
+LOOPBACK_VERBS: frozenset[str] = frozenset({"drain", "trust_workspace_config"})
 
 
 @dataclass(frozen=True)
