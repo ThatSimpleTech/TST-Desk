@@ -70,6 +70,8 @@ const KNOWN_EVENT_TYPES = new Set([
   "autonomy_start",
   "autonomy_summary", // TD-4303
   "memory_proposal",
+  "steering_proposal", // TD-5140
+  "steering_decision", // TD-5140
   "session_list",
   "policy_rules", // TD-803: was missing; settings events arrived as unknown
   "setup_state", // TD-1101 first-run wizard

@@ -712,6 +712,34 @@ class MemoryReject(ClientMessage):
     proposal_id: str
 
 
+class SteeringAccept(ClientMessage):
+    """Write a parked steering proposal as proposed (TD-5140).
+
+    The daemon writes the file, never ``fs_write``. Loopback only.
+    """
+
+    type: Literal["steering_accept"] = "steering_accept"
+    session_id: str
+    proposal_id: str
+
+
+class SteeringEdit(ClientMessage):
+    """Write a parked steering proposal with the user's edited text (TD-5140)."""
+
+    type: Literal["steering_edit"] = "steering_edit"
+    session_id: str
+    proposal_id: str
+    content: str
+
+
+class SteeringReject(ClientMessage):
+    """Reject a steering proposal. Writes nothing; logged (TD-5140)."""
+
+    type: Literal["steering_reject"] = "steering_reject"
+    session_id: str
+    proposal_id: str
+
+
 class EndSession(ClientMessage):
     """Run distill for one session (TD-2302). Not a kill."""
 
@@ -2006,6 +2034,54 @@ class MemoryProposal(DaemonEvent):
     files: list[MemoryFileDiff]
 
 
+class SteeringFileDiff(BaseModel):
+    """One file in a ``steering_proposal`` or ``steering_decision`` (TD-5140).
+
+    ``path`` is workspace-relative. ``before`` is null when the file does
+    not exist yet (``create``).
+    """
+
+    action: Literal["create", "replace"]
+    path: str
+    diff: str
+    before: str | None = None
+    after: str | None = None
+
+
+class SteeringProposal(DaemonEvent):
+    """The agent proposed a steering edit; nothing is written yet (TD-5140).
+
+    Shaped like ``memory_proposal``. ``replaces`` names a stale proposal
+    this fresh diff supersedes (the file changed before Accept).
+    ``autonomy`` marks one an unattended run parked for its summary.
+    """
+
+    type: Literal["steering_proposal"] = "steering_proposal"
+    session_id: str
+    proposal_id: str
+    files: list[SteeringFileDiff]
+    tool_call_id: str = ""
+    replaces: str | None = None
+    autonomy: bool = False
+
+
+class SteeringDecision(DaemonEvent):
+    """The user's decision on a steering proposal, with its diff (TD-5140).
+
+    ``accepted`` wrote the proposed text, ``edited`` wrote the user's own
+    text (the diff is what was written), ``rejected`` wrote nothing.
+    ``expired`` is the daemon's, not the user's: a restart dropped the open
+    proposal, so it was closed when the session was restored and nothing
+    was written.
+    """
+
+    type: Literal["steering_decision"] = "steering_decision"
+    session_id: str
+    proposal_id: str
+    decision: Literal["accepted", "edited", "rejected", "expired"]
+    files: list[SteeringFileDiff]
+
+
 class MemoryFileEntry(BaseModel):
     """One ``.tst/memory/`` file the Memory pane lists (TD-2601)."""
 
@@ -2071,6 +2147,9 @@ class AutonomySummary(DaemonEvent):
     changed: list[str] = Field(default_factory=list)
     refusals: list[str] = Field(default_factory=list)
     ledger_excerpt: str = ""
+    # TD-5140: steering edits the run proposed, waiting for the user's
+    # decision on the card. A run never accepts one by itself.
+    steering_proposals: list[str] = Field(default_factory=list)
 
 
 class ContextPinEntry(BaseModel):
@@ -3304,6 +3383,9 @@ ClientMessageT = Annotated[
     | MemoryAccept
     | MemoryEdit
     | MemoryReject
+    | SteeringAccept
+    | SteeringEdit
+    | SteeringReject
     | EndSession
     | Shutdown
     | Drain
@@ -3408,6 +3490,8 @@ DaemonEventT = Annotated[
     | AutonomyStart
     | AutonomySummary
     | MemoryProposal
+    | SteeringProposal
+    | SteeringDecision
     | SessionList
     | PolicyRules
     | SetupState
@@ -3502,6 +3586,9 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "memory_accept",
         "memory_edit",
         "memory_reject",
+        "steering_accept",
+        "steering_edit",
+        "steering_reject",
         "end_session",
         "shutdown",
         "drain",
@@ -3606,6 +3693,8 @@ _KNOWN_EVENT_TYPES = frozenset(
         "autonomy_start",
         "autonomy_summary",
         "memory_proposal",
+        "steering_proposal",
+        "steering_decision",
         "session_list",
         "policy_rules",
         "setup_state",

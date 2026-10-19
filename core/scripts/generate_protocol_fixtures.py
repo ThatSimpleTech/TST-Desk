@@ -204,6 +204,12 @@ from tstd.protocol import (
     SkillStackEntry,
     StartAutonomy,
     StartPairing,
+    SteeringAccept,
+    SteeringDecision,
+    SteeringEdit,
+    SteeringFileDiff,
+    SteeringProposal,
+    SteeringReject,
     SteeringReloaded,
     TestEmail,
     TierState,
@@ -231,6 +237,22 @@ from tstd.protocol import (
 # Its bytes are "hi" (``data_b64`` "aGk=").
 _SENT_ID = "0" * 32
 _SENT_SHA256 = hashlib.sha256(b"hi").hexdigest()
+
+_STEERING_DIFF = SteeringFileDiff(
+    action="replace",
+    path="AGENTS.md",
+    diff=(
+        "--- a/AGENTS.md\n"
+        "+++ b/AGENTS.md\n"
+        "@@ -1,3 +1,4 @@\n"
+        " # Project\n"
+        " \n"
+        " - Use uv.\n"
+        "+- Run ruff first.\n"
+    ),
+    before="# Project\n\n- Use uv.\n",
+    after="# Project\n\n- Use uv.\n- Run ruff first.\n",
+)
 
 FIXTURES = {
     # Client messages
@@ -369,6 +391,12 @@ FIXTURES = {
         files=[MemoryFileEdit(path=".tst/memory/MEMORY.md", content="durable: ruff\n")],
     ),
     "memory_reject": MemoryReject(session_id="sess-1", proposal_id="mp-1"),
+    # TD-5140: the user's decision on an agent-proposed steering edit.
+    "steering_accept": SteeringAccept(session_id="sess-1", proposal_id="sp-1"),
+    "steering_edit": SteeringEdit(
+        session_id="sess-1", proposal_id="sp-1", content="# Project\n\n- Run ruff first.\n"
+    ),
+    "steering_reject": SteeringReject(session_id="sess-1", proposal_id="sp-1"),
     "end_session": EndSession(session_id="sess-1"),
     "shutdown": Shutdown(),
     # Before a deploy restart (TD-5023); 0/0 releases the hold.
@@ -747,6 +775,7 @@ FIXTURES = {
         ledger_path=".tst/autonomy/DECISIONS.md",
         changed=["src/importer.py"],
         refusals=[],
+        steering_proposals=["AGENTS.md (replace)"],
         ledger_excerpt=(
             "## 2026-08-26T12:00:00Z · Class A · commit abc123\n**Chose:** format\n**Why:** ruff"
         ),
@@ -1009,6 +1038,30 @@ FIXTURES = {
             )
         ],
         seq=21,
+    ),
+    # TD-5140: an agent-proposed steering edit, and the user's decision.
+    "steering_proposal": SteeringProposal(
+        session_id="sess-1",
+        proposal_id="sp-1",
+        files=[_STEERING_DIFF],
+        tool_call_id="call-1",
+        seq=22,
+    ),
+    "steering_proposal_fresh": SteeringProposal(
+        session_id="sess-1",
+        proposal_id="sp-2",
+        files=[_STEERING_DIFF],
+        tool_call_id="call-1",
+        replaces="sp-1",
+        autonomy=True,
+        seq=24,
+    ),
+    "steering_decision": SteeringDecision(
+        session_id="sess-1",
+        proposal_id="sp-2",
+        decision="accepted",
+        files=[_STEERING_DIFF],
+        seq=25,
     ),
     "usage_exported": UsageExported(
         format="csv",

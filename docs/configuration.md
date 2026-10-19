@@ -1344,6 +1344,27 @@ Steering files (`AGENTS.md`, `CLAUDE.md`, `.tst/rules/**`) and the approval poli
 (`.tst/config.yaml`) are refused for writing no matter what you put in this list. That is
 enforced in the tool, not by configuration.
 
+**Proposed steering edits (TD-5140).** The agent can still propose a change to a steering
+file with `propose_steering_edit`: `AGENTS.md`, `CLAUDE.md`, a `.tst/rules/*.md` rule, a
+`SKILL.md`, or a slash-command file (`.tst/commands/*.md`, `.claude/commands/*.md`) inside the
+workspace. The tool writes nothing and is Class A (static rule `steering-proposal`), so it
+never shows an approval card of its own; a `never` policy rule for it still refuses it. The
+window shows the diff on a card with Accept, Edit and Reject. Only Accept, or Edit then Save,
+writes the file, and the daemon writes it, never the filesystem tool. If the file changed
+after the proposal, Accept is refused ("the file changed since this was proposed") and a
+fresh diff replaces the card. The signed charter (`.tst/autonomy/CHARTER.md`) and
+`.tst/config.yaml` can't be proposed, and neither can a path that runs code later (below).
+Accept and Save are only taken from this computer's own window (`loopback_only` from a phone
+or another computer); Reject works from a phone. Every accepted, edited or rejected proposal
+goes in the session log as `steering_decision` with its diff. The card shows exactly what
+Accept writes. The session log blanks secret-shaped strings (a long run of letters, digits,
+`-` or `_` after `sk-`, `ghp_` and the like; ordinary words such as `task-tool-availability`
+can match too), so a proposal whose file name, current file or new text holds one is refused
+(`steering_secret_shaped`), and so is a Save of one; change that file by hand. Open proposals live in the daemon's memory, so a restart closes them: the daemon logs
+each one as `steering_decision` `expired` when it restores the session, its card does not
+come back, and the agent has to propose it again. A card the daemon no longer holds says
+that nothing was written and offers only Dismiss.
+
 **Paths that run code later ask first (TD-5108).** Some files run nothing when written, but
 git, a login shell, direnv or an editor runs what they say the next time it starts. A write to
 one of them is Class C, so it asks even though it is inside the workspace and inside this
@@ -1608,8 +1629,10 @@ skip-all does not ask for them, as Claude Code's bypass mode does not. The daemo
 still never runs a repo's fsmonitor command or a hook, but a filter driver or `gpg.program`
 planted in `.git/config` without asking does run on its next `git add` or commit (§4.1). A
 `never` rule still refuses. The fs-tool
-boundary still refuses steering-file writes. The classifier still runs. `effect: yolo` is not
-a valid rule.
+boundary still refuses steering-file writes, and skip-all never accepts a proposed steering
+edit (TD-5140): only your Accept on the card writes one. An unattended run parks its
+proposals for the run summary and never accepts them either. The classifier still runs.
+`effect: yolo` is not a valid rule.
 
 **Computer-use glow**, **Agent cursor**, and **Show indicators on the real display** are also
 not keys in this file. Settings → Appearance persists them as `cu-indicators.yaml` in the

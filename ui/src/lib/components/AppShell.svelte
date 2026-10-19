@@ -23,6 +23,7 @@
 	import PreviewPane from './PreviewPane.svelte';
 	import PlanPane from './PlanPane.svelte';
 	import ApprovalBar from './ApprovalBar.svelte';
+	import SteeringProposalBar from './SteeringProposalBar.svelte';
 	import MemoryProposalBar from './MemoryProposalBar.svelte';
 	import WorkspaceTrustCard from './WorkspaceTrustCard.svelte';
 	import { onEvent } from '../connection-status.svelte.js';
@@ -528,6 +529,7 @@
 </div>
 
 <ApprovalBar />
+<SteeringProposalBar />
 <WorkspaceTrustCard />
 {#if projects.surface === 'home'}
 	<MemoryProposalBar />
