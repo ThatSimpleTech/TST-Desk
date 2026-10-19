@@ -319,11 +319,14 @@ remote:
 # A missing or rootful runtime refuses start with install copy.
 # check_every: validator drift check every N autonomy turns (TD-4201).
 # verify: interactive post-write review (TD-4204): off | after_write | ask.
+# verify_max_prompt_tokens: cap on that review's estimated prompt; null is
+# 60% of the validator tier's context_window (TD-5153).
 autonomy:
   runtime: podman
   image: docker.io/library/alpine:3.21
   check_every: 5
   verify: after_write
+  verify_max_prompt_tokens: null
 
 # User-listed MCP servers (TD-4401). Empty is none — no doctor rows,
 # no dynamic discovery. HTTP urls must be loopback. No env: map

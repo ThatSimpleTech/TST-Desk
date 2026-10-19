@@ -513,7 +513,9 @@ time. A stall (`stream_idle_timeout`, or `read_timeout` mid-stream,
 TD-5106) counts as a timeout here too. Other retryable failures (429,
 5xx, a refused connection) are retried as above. Both calls stream, so
 the read timeout is the longest gap between chunks rather than a cap on
-the whole answer.
+the whole answer. The first gap is the whole prompt being read, so the
+after-write review's prompt is capped by `autonomy.verify_max_prompt_tokens`
+(TD-5153).
 
 A gateway can also fail inside a `200` stream. LiteLLM reports an
 upstream failure partway through a reply as an in-band
@@ -674,7 +676,8 @@ turns never verify. There is no charter and no auto-revert.
 | `runtime` | string | `podman` | Argv0 probed on PATH, or an absolute path to an executable. Empty is a load error. |
 | `image` | string | `docker.io/library/alpine:3.21` | Image the container execs. Empty is a load error. Pre-pull it; the argv passes `--pull=never` so a start check cannot phone a registry. |
 | `check_every` | int ≥ 1 | `5` | Autonomy turns between validator drift checks (TD-4201, spec §12.6). A Class B decision this turn also checks, even if N is not reached. Interactive sessions ignore this. |
-| `verify` | `off` \| `after_write` \| `ask` | `after_write` | Interactive: after a filesystem write turn, call the validator once (`after_write`), ask first (`ask`), or never (`off`). Autonomy sessions ignore this. The call streams and sends the validator tier's `extra_body`, so ending the session or quitting also ends the server's work; a timed-out attempt is reported as a verify error, not resent (TD-5146). Stop ends a running review although it starts after the turn has ended: the call is cancelled, which hangs up the stream, the timeline shows `Verify stopped.` with no verdict, and the session is free for the next message. A message already queued behind the review still runs. Stop leaves an `ask` review that is waiting for confirmation alone (TD-5151). |
+| `verify` | `off` \| `after_write` \| `ask` | `after_write` | Interactive: after a filesystem write turn, call the validator once (`after_write`), ask first (`ask`), or never (`off`). Autonomy sessions ignore this. The call streams and sends the validator tier's `extra_body`, so ending the session or quitting also ends the server's work; a timed-out attempt is reported as a verify error, not resent (TD-5146). Stop ends a running review although it starts after the turn has ended: the call is cancelled, which hangs up the stream, the timeline shows `Verify stopped.` with no verdict, and the session is free for the next message. A message already queued behind the review still runs. Stop leaves an `ask` review that is waiting for confirmation alone (TD-5151). The review prompt is cut to fit `verify_max_prompt_tokens` first: shell output loses its head (each output keeps its tail), then the oldest diffs go, with `(N earlier lines omitted)` / `(N earlier diffs omitted)` markers where the cuts are, and the verdict's summary ends with what was left out. A prompt that still does not fit, or has no room for any of the diff, is not sent and is reported as a verify error (TD-5153). |
+| `verify_max_prompt_tokens` | int ≥ 1024 \| null | `null` | Most estimated tokens the after-write review's prompt may take: the validator steering, the diffs, the shell output and the instructions together. `null` is 60% of the validator tier's `context_window` (about 39k tokens on a 65,536-token slot, which a local server reading ~390 tokens/s finishes inside the default 120 s `read_timeout`). Never more than `context_window` less `max_output_tokens`, whatever is set. Estimated with the token counter the turn uses, scaled by the ratio learned from the validator endpoint's usage (TD-5007); each review's own usage teaches that ratio too. Lower it when a slow local validator times out; the first chunk arrives only after the whole prompt is read (TD-5153). |
 
 ### `mcp`
 
@@ -827,6 +830,7 @@ autonomy:
   image: docker.io/library/alpine:3.21
   check_every: 5
   verify: after_write
+  verify_max_prompt_tokens: null
 mcp:
   servers:
     example:

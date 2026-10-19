@@ -11,7 +11,8 @@ turn call the loop takes the base (uncalibrated) estimate of exactly the
 messages and tools it sends. When the provider reports
 ``usage.prompt_tokens`` for that call, the ratio between the two is
 folded into a per-endpoint store. Every later estimate for that endpoint
-is scaled by it.
+is scaled by it. The after-write review observes its own call the same
+way (TD-5153), so a validator on an endpoint no turn calls learns too.
 
 The store is process-wide on purpose: sessions in one daemon talk to
 the same endpoints, and a ratio learned by one is true for all of them.
