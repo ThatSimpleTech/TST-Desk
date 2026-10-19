@@ -145,7 +145,8 @@ the differentiator.** Budget accordingly: this is bigger than the agent.
 
 **Design rule: steering is written by the human and read by the agent. Memory is written by
 the agent and read by the human. They never share a file, and the agent has no write access
-to steering.** When those mix, past decisions get read as current rules and constraints drift.
+to steering.** The agent may propose an exact diff to a steering file; only the user's
+approval writes it, and the daemon does the write, not a tool (TD-5140). When those mix, past decisions get read as current rules and constraints drift.
 
 ### 4.1 File resolution
 

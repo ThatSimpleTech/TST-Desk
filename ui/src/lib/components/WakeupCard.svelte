@@ -57,6 +57,19 @@
 					</dd>
 				</div>
 			{/if}
+			{#if (wakeup.summary.steering_proposals ?? []).length > 0}
+				<div class="row">
+					<dt>Steering edits</dt>
+					<dd>
+						Waiting for you on the proposal cards; the run never accepts one.
+						<ul>
+							{#each wakeup.summary.steering_proposals ?? [] as item, i (`${i}:${item}`)}
+								<li><code>{item}</code></li>
+							{/each}
+						</ul>
+					</dd>
+				</div>
+			{/if}
 			{#if wakeup.summary.ledger_excerpt}
 				<div class="row excerpt">
 					<dt>Ledger excerpt</dt>

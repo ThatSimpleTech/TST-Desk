@@ -3,7 +3,8 @@
 Steering is how you tell the agent what your project expects before it ever reads a line of
 code. You write it, the agent reads it, and the agent can never write it back — `AGENTS.md`,
 `CLAUDE.md` and `.tst/rules/**` are refused by the filesystem tool no matter what your boundary
-config says. Memory runs the other way: the agent writes it, you read it. Keeping those two
+config says. The agent can propose an exact diff, and only your approval writes it (see
+[Proposed edits](#proposed-edits)). Memory runs the other way: the agent writes it, you read it. Keeping those two
 apart is what stops last month's decisions from being read as this month's rules.
 
 This repository is its own example. The `AGENTS.md` at the root is a real steering file, read
@@ -955,6 +956,33 @@ The instruction stack never reads them. Invoking `/review` inserts the file
 body into the user message; until then the body is absent from the prompt.
 Agent writes to `.tst/commands/**` and `.claude/commands/**` are Class C, the
 same refusal as `AGENTS.md`.
+
+---
+
+## Proposed edits
+
+The agent never writes a steering file, but it can propose one with `propose_steering_edit`
+(TD-5140). Ask it to "add this to AGENTS.md", to remember a project rule, or to draft a starter
+`AGENTS.md` for a repo that has none; it reads what is there (for a starter, the README, build
+and test commands, CI config and layout) and proposes the whole new file.
+
+- **What can be proposed:** `AGENTS.md` and `CLAUDE.md` at any depth, a `.tst/rules/<name>.md`
+  rule, a `SKILL.md`, and a slash-command file directly under `.tst/commands/`,
+  `.claude/commands/` or `.tstdesk/commands/`, all inside the workspace. Names match exactly. The
+  signed charter (`.tst/autonomy/CHARTER.md`), the approval policy (`.tst/config.yaml`), and
+  any path under `.git`, `.vscode` or another folder that runs code later can't be proposed.
+- **What you see:** a card with the diff and **Accept**, **Edit** and **Reject**. Edit opens the
+  proposed text; **Save** writes what you typed. The tool itself writes nothing and asks
+  nothing, so the card is the one approval.
+- **Who writes:** the daemon, on your Accept or Save, never the filesystem tool. If the file
+  changed after the proposal (you edited it, or another proposal was accepted), Accept is
+  refused with "the file changed since this was proposed" and a fresh diff replaces the card.
+  Accept and Save come only from this computer's own window; a paired phone can reject.
+- **What is kept:** every proposal and every decision (accepted, edited or rejected) goes in
+  the session log with its diff. Open proposals are held by the daemon in memory, so a restart
+  closes them; ask the agent again.
+- **Nothing accepts for you.** Skip-all doesn't, and an unattended run parks its proposals in
+  the run summary ("Steering edits") until you decide.
 
 ---
 

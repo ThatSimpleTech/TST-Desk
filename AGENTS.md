@@ -36,8 +36,10 @@ These are non-negotiable. Violating one is a defect regardless of test results.
    in the OS keychain. Redact in all output paths.
 3. **No telemetry, no analytics, no phone-home, no crash reporting to any remote.** Zero
    network calls the user did not initiate.
-4. **The agent never writes to steering files.** `AGENTS.md`, `CLAUDE.md`, and `.tst/rules/**`
-   are read-only to the filesystem tool. This must be enforced in the tool, not by convention.
+4. **The agent never writes steering files; it may propose an exact diff, and only the user's
+   approval writes it.** `AGENTS.md`, `CLAUDE.md`, and `.tst/rules/**` are read-only to the
+   filesystem tool. This must be enforced in the tool, not by convention. A proposal writes
+   nothing; the daemon writes the file only on the user's Accept, or Edit then Save (TD-5140).
 5. **The daemon owns sessions; the window is only a viewer.** No code path may make the
    WebSocket connection the owner of a running loop.
 6. **Every tool call routes through the decision classifier.** No exceptions, no bypass path.

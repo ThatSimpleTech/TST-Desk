@@ -9329,6 +9329,53 @@ allow" is not offered for a chained command. Tests:
 `core/tests/test_policy_shell.py`, plus loop and daemon cases in
 `core/tests/test_approval_flow.py`.
 
+---
+
+### TD-5140 — Agent-proposed steering edits, written only on approval
+**Size:** 5 · **Depends on:** TD-5101, TD-5108, TD-5113 (Adam's order: after the safety batch)
+
+From the 2026-10-14 gap audit (docs/gap-audit-2026-10-14.md, Adam's decision 4: "agents may
+propose edits to steering files; only the user's approval writes them"). Directive 4 barred
+any agent path to a steering edit, even one the user would approve, so "add this to
+AGENTS.md" and "draft a starter AGENTS.md" had no hand-off like memory's.
+
+**Acceptance criteria:**
+- [x] A `propose_steering_edit` tool takes a steering path (`AGENTS.md`, `CLAUDE.md`,
+      `.tst/rules/**`, a `SKILL.md` or a slash-command file) and the full new text. It writes
+      nothing. The daemon builds the diff and emits `steering_proposal`, shaped like
+      `memory_proposal` (a proposal id, then action, path, diff, before and after per file)
+- [x] The window shows the diff on a card with Accept, Edit and Reject, like the memory card.
+      Only the user's Accept, or Edit then Save, writes the file, and the daemon writes it, not
+      the filesystem tool. The fs tools still refuse every steering write, so directive 4 stays
+      enforced in the tool
+- [x] If the file changed on disk after the proposal, Accept refuses with "the file changed
+      since this was proposed" and offers a fresh diff. The signed charter
+      (`.tst/autonomy/CHARTER.md`) and `.tst/config.yaml` can't be proposed
+- [x] Every accepted or rejected proposal goes in the session log with its diff and the
+      decision. In an autonomy run the proposal is parked for the run summary and never
+      accepted by itself. Skip-all doesn't accept proposals; today it doesn't open steering
+      files to writes either
+- [x] AGENTS.md directive 4 is reworded to "the agent never writes steering files; it may
+      propose an exact diff, and only the user's approval writes it". DECISIONS.md records why
+- [x] Covers two appendix gaps: "Generate a starter instruction file" (the agent proposes a
+      starter `AGENTS.md` from a scan of the repo) and "Remember this / add to instructions on
+      request"
+
+Done (2026-10-19): `core/tstd/tools/steering_edit.py` (the tool, Class A by the static rule
+`steering-proposal`) and `core/tstd/steering_proposals.py` (proposable paths, diff, parking,
+the daemon's checked write). Decisions are `steering_accept` / `steering_edit` (loopback only)
+and `steering_reject`, logged as `steering_decision`; a stale file gets
+`steering_proposal_stale` and a fresh `steering_proposal` that `replaces` the old one. The
+window's card is `SteeringProposalCard.svelte` in a footer bar; the wake-up card lists what an
+unattended run left waiting (`autonomy_summary.steering_proposals`). Open proposals live in
+daemon memory and a restart closes them. Tests: `core/tests/test_steering_proposals.py`,
+`core/tests/test_steering_decisions.py`, `ui/src/lib/steering-proposal-store.test.ts`,
+`ui/src/lib/steering-proposal-component.test.ts`. Class B entry and the conservative Class C
+choices (loopback-only accept, no deletes, workspace files only) in DECISIONS.md; see
+docs/steering.md "Proposed edits" and docs/configuration.md §4.1.
+
+---
+
 ### TD-5147 — Edit and branch arrows pick the right turn after compaction
 **Size:** 2 · **Depends on:** TD-1708, TD-5109
 

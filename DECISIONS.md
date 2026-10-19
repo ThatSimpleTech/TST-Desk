@@ -14192,3 +14192,74 @@ longer record the call as it was asked.
 said A or B (a hardlink, a Windows-unsafe form) still shows the
 classifier's class on the event, because the event is written before the
 guard runs. Recorded as a follow-up on TD-5148.
+
+---
+
+## 2026-10-19 — TD-5140: agent-proposed steering edits, written only on the user's approval (Class B)
+
+**Decision:** Directive 4 now reads "the agent never writes steering files; it may propose an
+exact diff, and only the user's approval writes it" (Adam, 2026-10-14, gap-audit decision 4).
+A new builtin tool, `propose_steering_edit` (`path`, full new `text`), reads the file, builds a
+unified diff, parks the proposal on the session and logs `steering_proposal`; it writes
+nothing. The window's card sends `steering_accept`, `steering_edit` (the user's own `content`)
+or `steering_reject`. Only those messages write, and `tstd/steering_proposals.py` does the
+write (temp file plus rename, mode kept), never `fs_write`. The fs tools and the classifier's
+`steering-file-write` rule are unchanged, so every agent write to a steering file is still
+refused in the tool, in every mode.
+
+- **What can be proposed:** `AGENTS.md`, `CLAUDE.md` and `SKILL.md` by exact name at any
+  depth, `.tst/rules/<name>.md`, and `<name>.md` directly under `.tst/commands/`,
+  `.claude/commands/` or `.tstdesk/commands/`, all inside the workspace after symlinks are
+  resolved. Refused: the charter and `.tst/config.yaml` (`steering_protected`), any other path
+  including case variants, deeper rule paths and paths that run code later (`not_steering`),
+  and anything outside the wall (the dispatcher's own read guard, Class C). Exact names
+  because the assembler only reads exact names: a case variant would land a file nothing reads.
+- **Class:** the static rule `steering-proposal` (Class A) for the builtin only (no
+  provenance, still `auto`, one in-workspace read path). The tool writes nothing, so the card
+  is the one approval; a second approval card for the same edit would be noise. A `never`
+  policy rule for the tool still refuses it.
+- **Wire:** `steering_proposal` mirrors `memory_proposal` (proposal id, then action, path,
+  diff, before and after per file) plus `tool_call_id`, `replaces` (a stale proposal this one
+  supersedes) and `autonomy`. `steering_decision` (`accepted`, `edited` or `rejected`, with the
+  diff) is a session event, so a decision is in the log and survives restarts; the window drops
+  a card on the decision, not on the click. `autonomy_summary.steering_proposals` lists what an
+  unattended run left waiting.
+- **Stale check:** at Accept or Save the daemon re-resolves the path (it must still be the
+  same proposable path, so a symlink swapped in since is refused) and compares the file with the
+  `before` the diff was built against. A difference is refused with
+  `steering_proposal_stale` ("The file changed since this was proposed. A fresh diff is on the
+  card.") and a fresh proposal (new id, `replaces` the old one) carries the text the user was
+  saving, so an edit made on the stale card is not lost. A session moved to another folder
+  since the proposal (TD-1715) is refused with `steering_workspace_moved`: the diff was of a
+  file in the old root.
+- **Where proposals live:** in memory on the session, with the exact text. Logged events are
+  scrubbed of secret-shaped strings (TD-4802), so they are not a source to write from, and
+  writing the text to the data dir would put whatever the agent proposed on disk outside the
+  workspace. A restart closes open proposals; Accept then answers `no_steering_proposal` and
+  the card goes away. The proposal is taken off the session before the write, so a second
+  click cannot write twice; a refused write puts it back.
+  A secret-shaped string in the proposed text shows scrubbed on the card, as every logged
+  event is; Accept writes the agent's exact text, and Edit then Save writes what the editor
+  holds.
+
+**Rationale:** The story asks for the memory flow's shape (proposal event, card, accept, edit,
+reject) with the daemon as the only writer and directive 4 still enforced in the tool. Keeping
+the tool path read-only and adding a separate human path is the same split as `create_rule`
+and `save_memory`, so no tool ever gets a write path to steering.
+
+**Class C questions decided conservatively (not answered by the story):**
+- Accept and Save are `LOOPBACK_VERBS`: only this computer's own window may write a steering
+  edit, as for `trust_workspace_config`. A phone may reject; another computer may do neither,
+  and none of the three is forwarded for a bridged session.
+- No deletes: an empty proposal or an empty Save is refused. Deleting a steering file stays the
+  user's job.
+- Only files inside the workspace; the user-global `~/.tstdesk/AGENTS.md` and global command
+  and skill trees can't be proposed.
+- No new palette command for "draft a starter AGENTS.md": the tool's description tells the
+  model how to scan the repo and propose one when asked.
+
+**Alternatives rejected:** Rebuilding proposals from the event log on Accept (survives a
+restart, but the log's copy may be redacted). Letting skip-all or an autonomy run accept
+(the story forbids both). Writing through `fs_write` with a one-shot exemption (a write path
+to steering inside the tool layer is exactly what directive 4 rules out). Classing the tool B
+(two approvals for one edit).
