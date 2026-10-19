@@ -260,6 +260,23 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     hold.sessionId = isBridged(sessionId) && !listed ? sessionId : null;
   }
 
+  // A plain function, not a method: the .svelte.ts wrapper exports the
+  // store's methods detached, so `this` is undefined when Retry calls it.
+  function forkFrom(userIndex: number, content: string): boolean {
+    if (state.sessionId === null) return false;
+    const text = content.trim();
+    if (text === "") return false;
+    if (!forks.has(userIndex)) forks.save(userIndex, 0, state.messages);
+    const sent = deps.send({
+      type: "fork_from",
+      session_id: state.sessionId,
+      user_index: userIndex,
+      content: text,
+    });
+    if (sent) noteSent(sending, text);
+    return sent;
+  }
+
   const eventCtx = {
     state,
     wait,
@@ -297,7 +314,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
         if (message.role !== "user") continue;
         if (message.attachments !== undefined) return false;
         if (message.userIndex === undefined) return sendUserMessageToWire(message.text);
-        return this.forkFrom(message.userIndex, message.text);
+        return forkFrom(message.userIndex, message.text);
       }
       return false;
     },
@@ -310,20 +327,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       if (state.sessionId !== null) drafts.schedule(state.sessionId, state.draft, state.queued);
     },
 
-    forkFrom(userIndex: number, content: string): boolean {
-      if (state.sessionId === null) return false;
-      const text = content.trim();
-      if (text === "") return false;
-      if (!forks.has(userIndex)) forks.save(userIndex, 0, state.messages);
-      const sent = deps.send({
-        type: "fork_from",
-        session_id: state.sessionId,
-        user_index: userIndex,
-        content: text,
-      });
-      if (sent) noteSent(sending, text);
-      return sent;
-    },
+    forkFrom,
 
     setBranch(userIndex: number, siblingIndex: number): boolean {
       if (state.sessionId === null) return false;
