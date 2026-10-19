@@ -141,7 +141,7 @@ from .router import TierName, TierRouter
 from .session import Session, SessionEventLog
 from .tools import ToolDispatcher, ToolRegistry
 from .tools.boundary import PathGuard
-from .tools.dispatch import build_decision_request
+from .tools.dispatch import build_decision_request, canonicalize_path_fields
 from .workspace_trust import trusted_imports
 
 
@@ -818,11 +818,16 @@ async def _build_assistant_tool_call(
                 parsed_args = {"_raw": tc_args}
 
         # Classify now (before execution) so the event carries the class.
+        # Paths are joined to the workspace exactly as dispatch joins them,
+        # or a relative path resolves against the daemon's cwd and the
+        # event says C for a call dispatch runs as A (TD-5148).  The event
+        # keeps the arguments the model sent.
         decision_class: Literal["A", "B", "C"] | None = None
         if dispatcher is not None:
             tool = dispatcher.registry.get(tc_name)
             if tool is not None and dispatcher.classifier is not None:
-                request = build_decision_request(tool, dict(parsed_args))
+                joined = canonicalize_path_fields(tool, parsed_args, dispatcher.path_guard)
+                request = build_decision_request(tool, joined)
                 cls = (await dispatcher.classifier.classify(request)).decision_class
                 decision_class = _to_literal(cls)
 

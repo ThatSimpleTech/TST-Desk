@@ -9357,6 +9357,37 @@ from here") Edit or the branch arrows picked a later turn, or answered
       its first message as user turn 0
 - [x] Tests fail on the old code and pass on the new
 
+### TD-5148 — The timeline and audit show the class a tool call actually ran with
+**Size:** 2 · **Depends on:** TD-608, TD-702, TD-5141
+
+Confirmed 2026-10-14 by three reviewers. The loop classified each
+`tool_call` event on the raw arguments, so a relative `fs_read
+{"path": "a.txt"}` resolved against the daemon's cwd (`/` in the packaged
+sidecar) and the event said Class C (`path-outside-workspace`). Dispatch
+joined the path to the workspace first, classified A (`builtin-read` or
+`in-workspace-edit`) and ran it with no approval. The audit row copies
+the event's class, so it said C, and a failed call was stored as
+`refused`. Same for `fs_write` and `fs_edit`.
+
+**Acceptance criteria:**
+- [x] One shared helper (`canonicalize_path_fields`) joins path fields to
+      the workspace; dispatch and the loop's `tool_call` event both
+      classify through it
+- [x] With the daemon cwd at `/`, a relative `fs_read`, `fs_write` and
+      `fs_edit` produce a `tool_call` event and an audit row with the
+      class dispatch ran them with (A)
+- [x] A relative call that runs as A and fails is stored as `error`,
+      not `refused`
+- [x] A `../` escape is still C on the event, refused by dispatch, and
+      `refused` in the audit
+- [x] The event and audit row keep the arguments the model sent
+- [x] Tests fail on the old code (event C, dispatch A) and pass on the new
+
+**Follow-up (not in this story):** a boundary refusal that forces C after
+the classifier said A or B (a hardlink, a Windows-unsafe form) still
+shows the classifier's class on the event, which is written before the
+guard runs.
+
 ---
 
 # Epic E52 — Files to the user

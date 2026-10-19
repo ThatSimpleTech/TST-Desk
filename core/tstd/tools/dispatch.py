@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from pathlib import Path
 from typing import Any, Literal, cast
 from urllib.parse import urlsplit
@@ -49,6 +49,7 @@ __all__ = [
     "UnclassifiedToolCall",
     "ValidationError",
     "build_decision_request",
+    "canonicalize_path_fields",
     "host_of",
     "truncate_output",
 ]
@@ -143,6 +144,34 @@ def build_decision_request(tool: Tool, arguments: dict[str, Any]) -> DecisionReq
         provenance=tool.provenance,
         has_path_host_metadata=bool(tool.path_fields or tool.host_fields or tool.host_resolver),
     )
+
+
+def canonicalize_path_fields(
+    tool: Tool, arguments: Mapping[str, Any], guard: PathGuard | None
+) -> dict[str, Any]:
+    """A copy of *arguments* with every path field joined to the workspace.
+
+    Classification has to see the target the guard will judge, not a
+    cwd-relative path that only works when the process happens to sit in
+    the workspace (TD-608; the packaged sidecar's cwd is ``/``).  Dispatch
+    and the loop's ``tool_call`` event both classify through this, so the
+    timeline and the audit show the class the call ran with (TD-5148).
+
+    Absent and malformed values are left alone: ``build_decision_request``
+    skips them and the guard refuses the call.  Without a guard nothing is
+    joined (dispatch then refuses a path-bearing tool outright).
+    """
+    out = dict(arguments)
+    if guard is None:
+        return out
+    for field in tool.path_fields:
+        raw = out.get(field)
+        values = path_values(out, field)
+        if isinstance(raw, str):
+            out[field] = str(guard.canonicalize(raw))
+        elif isinstance(raw, list) and values is not None:
+            out[field] = [str(guard.canonicalize(v)) for v in values]
+    return out
 
 
 def _check_path_field(
@@ -328,19 +357,10 @@ class ToolDispatcher:
         # point without a classifier attached is a bypass and raises.
         if self.classifier is None:
             raise UnclassifiedToolCall(name)
-        # Copy then join workspace-relative paths before classification.
-        # The classifier and the handler must see the same target the
-        # guard will judge — not a cwd-relative Path that only works when
-        # the process happens to be sitting in the workspace (TD-608).
-        arguments = dict(arguments)
-        if tool.path_fields and self.path_guard is not None:
-            for field in tool.path_fields:
-                raw = arguments.get(field)
-                values = path_values(arguments, field)
-                if isinstance(raw, str):
-                    arguments[field] = str(self.path_guard.canonicalize(raw))
-                elif isinstance(raw, list) and values is not None:
-                    arguments[field] = [str(self.path_guard.canonicalize(v)) for v in values]
+        # The classifier and the handler see the target the guard will
+        # judge (TD-608); the loop classifies its tool_call event the same
+        # way (TD-5148).
+        arguments = canonicalize_path_fields(tool, arguments, self.path_guard)
         request = build_decision_request(tool, arguments)
         classification = await self.classifier.classify(request)
         decision_class = classification.decision_class
