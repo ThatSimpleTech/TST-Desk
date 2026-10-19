@@ -14193,6 +14193,274 @@ said A or B (a hardlink, a Windows-unsafe form) still shows the
 classifier's class on the event, because the event is written before the
 guard runs. Recorded as a follow-up on TD-5148.
 
+---
+
+## 2026-10-19 — TD-5156: the shell splitter fails closed where shells split a line differently (Class B)
+
+**Decision:** `split_command` is held to the shells themselves. A
+differential test (`core/tests/test_policy_shell_differential.py`, corpus
+in `core/tests/shell_corpus.py`) builds about 4,250 command texts from
+`:`, `true` and `echo m<k> >>o` only, joined by every line-structure
+construct (newlines, `\`-newline, comments, heredocs, quotes across lines,
+`&`, `|&`, `;;`, `()`, `{}`, `$(…)`, backticks, carriage returns, odd
+whitespace). It runs each under every shell on the host (`bash`,
+`bash --posix`, `dash`, `sh`, `busybox sh`; a missing one is skipped) and
+records which `echo`s ran and with what arguments. Any `echo` a shell ran
+that is not one of the splitter's commands must come with
+`complete=False`, and a `never` rule naming any command that ran must
+refuse the line. Fixes the test drove:
+
+1. **`\`-newline is removed before words are read**, as POSIX says, so
+   `\`-newline then `#` starts a comment and `<<\`-newline`EOF` is the
+   delimiter `EOF`. Where it would join two halves of an operator (`&`
+   and `&`, `<` and `<`, `$` and `(`), the line is incomplete.
+2. **Heredoc ends are read the bash way and the dash way.** bash joins a
+   body line ending in `\` to the next before it looks for the
+   delimiter; dash and ash do not. If the two readings end the body in
+   different places, the line is incomplete. So is a heredoc opened
+   inside `$(…)` whose body comes after the `)` (bash reads it from the
+   later lines, dash runs them), and a body line inside `$(…)` that starts
+   with the delimiter (`EOF)`). A heredoc opened before a `$(` keeps its
+   body after the line, not after a newline inside the substitution.
+3. **An unquoted body's substitutions are read with and without its
+   `\`-newlines** (bash drops them first, so a comment can swallow a
+   line; dash keeps them). Different commands either way: incomplete.
+4. **The rough reading of an incomplete line** also cuts the text with
+   `\`-newlines removed and unwraps `eval`/`sh -c` in each piece, so a
+   `never` rule still sees the commands.
+
+Review notes on the same code:
+
+5. **`never` and `ask` see the program without its folder.** Each deny
+   reading is added again with its program reduced to the basename, and
+   a Windows `.exe`/`.com`/`.bat`/`.cmd` extension removed. `auto` still
+   matches the path as written: a basename would let `npm test*` allow
+   `/tmp/npm test`.
+6. **cmd's `for /f`** (`in ('cmd')`, or `` (`cmd`) `` with usebackq) runs
+   the quoted command. The cmd reading marks any `for /f` incomplete; the
+   rough cut splits at the parentheses and quotes, so `never` rules see
+   the command. Unwrapping it into a complete split was the alternative;
+   failing closed is the conservative choice and `for /f` lines are rare
+   in agent shells.
+7. **`alias` values and `trap` actions are read as commands**, like an
+   `eval` string: dash and `bash --posix` run an alias defined on an
+   earlier line, and every shell runs a trap action at exit.
+
+**Rationale:** TD-5101's module docstring promised that text the shells
+read differently is marked incomplete, but nothing checked it, and the
+review found bash-only line readings that hid a later command from both
+`auto` and `never`. A test that runs the shells is the only way to keep
+that promise as the scanner changes. The corpus never names another
+program, a network host or a path outside a throwaway folder.
+
+**Alternatives rejected:** Failing closed on every `\`-newline (common in
+hand-written multi-line commands, so `auto` rules would stop working for
+them); comparing segments both ways (a command skipped by `||` or by a
+syntax error is read but never runs, and reading more is the safe side);
+a fixed list of known-bad texts (it would not find the next one). macOS
+`/bin/sh` is bash 3.2, which is not on CI or this host; the corpus was
+also run against bash 5.1 (ubuntu 22.04), 5.2 (ubuntu 24.04, debian 12),
+5.3 and busybox ash (alpine 3.20) by hand.
+
+**Review of PR #20 (2026-10-19).** The first corpus left out bash-only
+words that hold `(`, `#` or `<<` as text, and the review found texts in
+them that bash split differently while the scanner said complete. The
+corpus now covers them, and each is held to the shells like the rest:
+
+8. **`${` must be followed by a name, a digit or a special parameter.**
+   bash 5.3 runs `${ cmd; }` and `${| cmd; }` as commands (dash rejects
+   them), so anything else after `${` is incomplete. A `${…}` ends at its
+   first `}`, as in every shell; the scanner had counted a bare `{` as
+   nesting, which hid `${x:-{}; cmd; : }`'s `cmd`.
+9. **Any `[[` word is incomplete.** bash reads `( #)` after `=~` and
+   `@( #)` after `==` as one word; dash runs `[[` as a command. Reading
+   `[[ ]]` the bash way was the alternative, but its grammar (regex
+   words, implicit extglob, `<` as a comparison) is wide, and failing
+   closed costs only `auto` on lines that use it. Conservative choice.
+10. **A `(` glued to a word is incomplete, except `name()`.** bash reads
+    `a=(…)` (an array, with `[i<<2]` subscripts in it), and `@(…)`, `!(…)`
+    and the other extglob forms once extglob is on (it can be set on an
+    earlier line or from the environment), as one word. Outside bash such
+    a `(` is a syntax error, so no working line loses `auto` but arrays.
+11. **A `name[…]` subscript must be plain.** bash reads `a[1<<2]=x` and
+    `a[x #]=y` whole; the scanner saw a heredoc and a comment. A subscript
+    holding a space, an operator, a quote, a backslash or `$(` is
+    incomplete; `a[i]`, `a[$i]` and globs like `x[0-9]` stay complete.
+12. **`$[…]`** (bash's old arithmetic, where `<<` is a shift) is
+    incomplete.
+13. **bash's brace expansion is read for `never` and `ask`.** `{curl,x}`
+    runs `curl x` in bash and `{curl,x}` in dash; deny readings now
+    include every word brace-expanded (at most 64 words from one), and a
+    program word bash would expand makes the line incomplete. Brace
+    expansion in arguments (`cp a{,.bak}`) keeps the line complete: it
+    cannot change which program runs.
+14. **`coproc NAME { cmd; }`**: deny readings skip NAME, so `never` sees
+    `cmd`.
+15. **The rough cut of an incomplete line** cuts at braces as well, in a
+    second pass, so `${ cmd; }` leaves `cmd` at the start of a piece while
+    `curl {a,b}` keeps its arguments in the first.
+16. **The test's oracle is tighter.** An expansion in an `echo`'s
+    arguments used to match any output line (`.*`), so one `echo $(…)`
+    could stand in for an atom the splitter missed. It now matches
+    anything but a marker (no atom prints its marker to stdout), reads
+    `$name` whole, and reads an argument bash brace-expands as an
+    expansion. A test checks the oracle itself.
+
+The widened corpus fails on this PR's first scanner (634 disagreements,
+295 `never` misses) and passes on the new one under bash 5.3,
+`bash --posix`, dash and busybox ash on this host, and by hand in
+offline containers under bash 5.1.16 (ubuntu 22.04), 5.2.21 (ubuntu
+24.04) and 5.3.9 (ubuntu 26.04), each with `--posix`, their dash, and
+busybox 1.36.1 ash (alpine 3.20). The bash-only checks live in
+`core/tstd/policy_shell_bash.py`, which keeps the scanner at 400 lines.
+
+---
+
+## 2026-10-19 — TD-5140: agent-proposed steering edits, written only on the user's approval (Class B)
+
+**Decision:** Directive 4 now reads "the agent never writes steering files; it may propose an
+exact diff, and only the user's approval writes it" (Adam, 2026-10-14, gap-audit decision 4).
+A new builtin tool, `propose_steering_edit` (`path`, full new `text`), reads the file, builds a
+unified diff, parks the proposal on the session and logs `steering_proposal`; it writes
+nothing. The window's card sends `steering_accept`, `steering_edit` (the user's own `content`)
+or `steering_reject`. Only those messages write, and `tstd/steering_proposals.py` does the
+write (temp file plus rename, mode kept), never `fs_write`. The fs tools and the classifier's
+`steering-file-write` rule are unchanged, so every agent write to a steering file is still
+refused in the tool, in every mode.
+
+- **What can be proposed:** `AGENTS.md`, `CLAUDE.md` and `SKILL.md` by exact name at any
+  depth, `.tst/rules/<name>.md`, and `<name>.md` directly under `.tst/commands/`,
+  `.claude/commands/` or `.tstdesk/commands/`, all inside the workspace after symlinks are
+  resolved. Refused: the charter and `.tst/config.yaml` (`steering_protected`), any other path
+  including case variants, deeper rule paths and paths that run code later (`not_steering`),
+  and anything outside the wall (the dispatcher's own read guard, Class C). Exact names
+  because the assembler only reads exact names: a case variant would land a file nothing reads.
+- **Class:** the static rule `steering-proposal` (Class A) for the builtin only (no
+  provenance, still `auto`, one in-workspace read path). The tool writes nothing, so the card
+  is the one approval; a second approval card for the same edit would be noise. A `never`
+  policy rule for the tool still refuses it.
+- **Wire:** `steering_proposal` mirrors `memory_proposal` (proposal id, then action, path,
+  diff, before and after per file) plus `tool_call_id`, `replaces` (a stale proposal this one
+  supersedes) and `autonomy`. `steering_decision` (`accepted`, `edited` or `rejected`, or the
+  daemon's `expired` after a restart, with the diff) is a session event, so a decision is in
+  the log and survives restarts; the window drops a card on the decision, not on the click. `autonomy_summary.steering_proposals` lists what an
+  unattended run left waiting.
+- **Stale check:** at Accept or Save the daemon re-resolves the path (it must still be the
+  same proposable path, so a symlink swapped in since is refused) and compares the file with the
+  `before` the diff was built against. A difference is refused with
+  `steering_proposal_stale` ("The file changed since this was proposed. A fresh diff is on the
+  card.") and a fresh proposal (new id, `replaces` the old one) carries the text the user was
+  saving, so an edit made on the stale card is not lost. A session moved to another folder
+  since the proposal (TD-1715) is refused with `steering_workspace_moved`: the diff was of a
+  file in the old root.
+- **What the card shows is what is written:** the card is drawn from the logged event, and
+  every logged event is scrubbed of secret-shaped strings (TD-4802). That scrub has no word
+  boundary, so ordinary text matches too (`task-tool-availability` shows as
+  `ta[REDACTED]`). A proposal whose path, current file or new text the scrub would change is
+  refused with `steering_secret_shaped`: otherwise Accept would write text the user never
+  saw (an agent could hide an instruction behind the placeholder), Edit would open the
+  placeholders and Save would write them over real content, and the logged decision would
+  not show what was written. Save refuses such a string in the user's own text for the last
+  reason, and a stale Accept whose file now holds one gets no fresh diff (Reject still
+  works). Most conservative option, chosen in review: the scrub stays as it is for every
+  other event, and a file that trips it is changed by hand (none of 87 steering files on
+  EZER does).
+- **Where proposals live:** in memory on the session, with the exact text; writing it to the
+  data dir would put whatever the agent proposed on disk outside the workspace. A restart
+  drops them, so when the daemon restores a session it logs `steering_decision` `expired`
+  (the daemon's decision, with the logged diff, writing nothing) for every proposal the log
+  still shows open, in both the revived and the replay-only path, the way TD-5018 seals a cut
+  turn. The attach replay then does not bring back a card nothing can act on, and the wake-up
+  card only says proposals are waiting while one of the run's cards is open. If the daemon
+  still answers `no_steering_proposal`, the card says nothing was written and offers only
+  Dismiss instead of closing silently. The proposal is taken off the session before the
+  write, so a second click cannot write twice; a refused write puts it back.
+
+**Rationale:** The story asks for the memory flow's shape (proposal event, card, accept, edit,
+reject) with the daemon as the only writer and directive 4 still enforced in the tool. Keeping
+the tool path read-only and adding a separate human path is the same split as `create_rule`
+and `save_memory`, so no tool ever gets a write path to steering.
+
+**Class C questions decided conservatively (not answered by the story):**
+- Accept and Save are `LOOPBACK_VERBS`: only this computer's own window may write a steering
+  edit, as for `trust_workspace_config`. A phone may reject; another computer may do neither,
+  and none of the three is forwarded for a bridged session.
+- No deletes: an empty proposal or an empty Save is refused. Deleting a steering file stays the
+  user's job.
+- Only files inside the workspace; the user-global `~/.tstdesk/AGENTS.md` and global command
+  and skill trees can't be proposed.
+- No new palette command for "draft a starter AGENTS.md": the tool's description tells the
+  model how to scan the repo and propose one when asked.
+
+**Alternatives rejected:** Rebuilding proposals from the event log on Accept (survives a
+restart, but the log's copy may be redacted). Letting skip-all or an autonomy run accept
+(the story forbids both). Writing through `fs_write` with a one-shot exemption (a write path
+to steering inside the tool layer is exactly what directive 4 rules out). Classing the tool B
+(two approvals for one edit).
+
+---
+
+## 2026-10-19 — TD-5149: Always allow never replaces a stricter rule; rules carry their exact text (Class B)
+
+**Decision:** `add_rule` raises `StricterRuleError` instead of replacing a
+saved rule with the same `(tool, args)` and a stricter effect (`never` >
+`ask` > `auto`), and leaves the config as it was. `stricter_rule` is the
+shared check: the session drops `proposed_always_allow` from the card when
+it finds one, and the daemon's `always_allow` handler checks it before the
+trust gate's answer, against the rules the session loaded and the
+`policy:` section as it is in the file at the click (review of PR #17:
+nothing reloads the session's copy when the user edits `.tst/config.yaml`
+by hand, and saving that stale copy wrote over the edit). A click that
+races the rule (the card was shown before the rule was added, in the
+session or in the file) saves nothing and is answered the way the rule
+says: an `ask` rule approves the call once, a `never` rule denies it. The
+reply is the new error code `policy_rule_stricter`, shown as a "Rule not
+saved" toast. Always allow and Revoke merge into the file as read at the
+click, then copy what they saved into the session's live `PolicyConfig`
+(`adopt_policy`, in place, because the dispatcher holds that object), so
+rules added or removed by hand meanwhile are kept. A `policy:` section that
+does not parse is not written over: Always allow approves the call once
+with `policy_save_failed`, Revoke fails with it.
+`PolicyRuleSummary` gains `exact: str | None`, the one text `args` matches
+when it has no wildcard, with `[*]`, `[?]` and `[[]` read back
+(`policy.exact_text`). Settings → Policy and the card's tooltip show it as
+`exactly app/[id]/page.tsx`, with the raw pattern on hover; Revoke still
+sends the raw `(tool, args)`.
+
+**Rationale:** Found in the TD-5141 review. Always allow saved the call's
+raw summary, and `add_rule` deleted any rule with the same identity first,
+so a read of a file literally named `*.env*` wrote `fs_read: *.env* -> auto`
+over the documented guard rule. TD-5101 already escapes the summary, which
+closes that collision, but a plain path such as `src/app.py` still has the
+same text as a hand-written `ask` rule for it, and an `auto` rule beside it
+would do nothing (deny first). Refusing keeps the user's guard and tells
+them. Approving once on `ask` honours the yes that rule was asking for and
+matches TD-5113's race handling (the card has already left the window, so a
+parked call would have nothing to answer it); denying on `never` keeps a
+`never` rule absolute. `exact` is computed by the daemon because the window
+never derives truth it wasn't given (AGENTS §6); the "exactly" prefix keeps
+an escaped `app/[[]id]/page.tsx` from reading the same as a hand-written
+glob `app/[id]/page.tsx`, which matches `app/i/page.tsx` and not itself.
+
+**Alternatives rejected:** Asking in the card whether to replace the rule:
+the story allows refuse or ask, and refusing is the conservative choice that
+changes no rule the user wrote. Showing the escaped pattern unchanged: it is
+what the file holds, but `app/[[]id]/page.tsx` reads as noise. Stripping the
+escapes in the UI: the window would be parsing patterns it was not given.
+
+**Not changed:** A wider `ask` or `never` rule (such as `*.env*`) still
+wins over the exact `auto` rule Always allow saves for a file it matches,
+because rules are deny first (TD-5101). The card still offers Always allow
+there, and the saved rule has no effect while the wider rule stands.
+Recorded as a follow-up on TD-5149. The trust prompt (TD-5113) still lists a
+repo's rules as written in the file. A file that is pending or declined is
+not read for the check: the trust gate's rule is that only a file in force
+is parsed (`WorkspaceConfigView.effective`), and nothing is saved into it,
+so a hand edit there is never written over; the click approves once as
+TD-5113 already does. The session still does not watch the file between
+clicks, so a rule added by hand applies to the card from the next save,
+trust decision or session open.
+
 ## 2026-10-19 — TD-5150: the in-turn trim is `context_compacted` with `trigger: inflight_trim` (Class B)
 
 **Decision:** The loop's in-turn tool-result elision (`fit_inflight_turn`,

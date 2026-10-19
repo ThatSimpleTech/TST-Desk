@@ -412,7 +412,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `compact_context` | yes | Compact now: everything before the latest user turn, or from a given user turn on, with optional guidance (TD-5109). Refused mid-turn. |
 | `approve` | yes | Approve a parked tool call. |
 | `deny` | yes | Deny a parked tool call, with an optional reason. |
-| `always_allow` | yes | Approve and save the narrowest policy rule that would have allowed it. Refused for class-C calls and for a chained shell command (TD-5101). While the workspace config is not trusted (TD-5113) it approves the call once, saves nothing and replies `workspace_config_untrusted`. |
+| `always_allow` | yes | Approve and save the narrowest policy rule that would have allowed it, with glob characters made literal. Refused for class-C calls (`class_c_not_always_allowable`), and with `not_always_allowable` for a chained shell command or one policy cannot split with confidence (TD-5101). While the workspace config is not trusted (TD-5113) it approves the call once, saves nothing and replies `workspace_config_untrusted`. When an `ask` or `never` rule with the same tool and args is saved, it saves nothing, approves the call once (`ask`) or denies it (`never`), and replies `policy_rule_stricter` (TD-5149). |
 | `list_policy_rules` | yes | List the workspace's saved policy rules. |
 | `revoke_policy_rule` | yes | Remove one saved rule, identified by `(tool, args)`. |
 | `set_spend_cap` | yes | Set or clear the workspace's session spend budget (`caps.spend_usd` in `.tst/config.yaml`). Null removes it and the built-in $25 pause applies; a number replaces that pause. Acked with `boundary_update`. |
@@ -457,6 +457,9 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `memory_accept` | yes | Accept a distill proposal as proposed (TD-2401). |
 | `memory_edit` | yes | Accept a distill proposal with edited file bytes (TD-2401). |
 | `memory_reject` | yes | Reject a distill proposal. Writes nothing. |
+| `steering_accept` | yes | Write an agent-proposed steering edit as proposed (TD-5140). The daemon writes it, never a tool, after checking the path is still a proposable steering file in the workspace and the file still holds what the diff was built against; a changed file is refused with `steering_proposal_stale` and a fresh `steering_proposal` replaces the card. A closed or unknown id is `no_steering_proposal`. Loopback only. |
+| `steering_edit` | yes | Write an agent-proposed steering edit with the user's own `content` (Edit, then Save). Same checks as `steering_accept`; empty content is refused (`steering_edit_empty`), and so is content the session log's secret scrub would change (`steering_secret_shaped`), since the logged diff must show what was written. Loopback only (TD-5140). |
+| `steering_reject` | yes | Reject an agent-proposed steering edit. Writes nothing; logged as a `steering_decision` (TD-5140). Not a machine-peer verb. |
 | `end_session` | yes | Run distill for this session (TD-2302). Not a kill. |
 | `shutdown` | — | Ask the daemon to shut down cleanly. Sent by the supervising host. |
 | `drain` | — | Before a restart: wait up to `timeout_s` for open turns, then refuse every verb that starts a turn (`user_message`, `fork_from`, `run_grok_command`, `approve_grok_plan`, `start_autonomy`, `run_job`) with `daemon_draining` for `hold_s` more. Due jobs wait too; approve, deny, stop and resume still pass. `0`/`0` releases, and a release, a later drain or shutdown ends a drain's wait early. Loopback only (`loopback_only` for a phone or a paired computer). Answered with `drain_result`. Sent by `tst drain` (TD-5023). |
@@ -536,7 +539,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `tool_result` | session | The outcome of a tool call, with an error code and diff when applicable. |
 | `shell_output` | session | A streamed chunk of a shell command's stdout or stderr. |
 | `tool_progress` | session | Progress an MCP server reported for a running tool call: count, optional total and message (TD-5105). Thinned to two a second. |
-| `approval_request` | session | A tool call parked for approval, with the summary, the reason, and the rule "always allow" would write (none for class C or a chained shell command, or while the workspace config is not trusted). |
+| `approval_request` | session | A tool call parked for approval, with the summary, the reason, and the rule "always allow" would write (none for class C or a chained shell command, while the workspace config is not trusted, or when it would replace a saved `ask` or `never` rule for the same call, TD-5149). |
 | `decision_logged` | session | A decision appended to the autonomy ledger. |
 | `checkpoint_notice` | session | A one-time notice that checkpointing is degraded. |
 | `verify_result` | session | Interactive validator review of a write turn. Timeline only; not a chat bubble (TD-4204). |
@@ -556,12 +559,14 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `memory_files` | connection | The workspace's Memory column: `.tst/memory/*.md` with contents (TD-2601). |
 | `charter` | connection | The workspace's Charter column: parsed §12.4 fields, or absent (TD-4002). |
 | `autonomy_start` | connection | Reply to `start_autonomy`: signed, ready, optional `session_id` of the daemon-owned run, or the refusal (TD-4003, TD-4101). |
-| `autonomy_summary` | session | Unattended-run wrap-up: stop reason, turns, spend, refusals (TD-4303). |
+| `autonomy_summary` | session | Unattended-run wrap-up: stop reason, turns, spend, refusals (TD-4303), and `steering_proposals`, the steering edits the run proposed that wait for the user (TD-5140). |
 | `memory_proposal` | session | Distill produced file diffs the user must accept, edit, or reject (TD-2401). |
+| `steering_proposal` | session | The agent proposed a steering edit with `propose_steering_edit`; nothing is written until the user decides (TD-5140). Shaped like `memory_proposal`: a proposal id, then action (`create` or `replace`), path, diff, before and after per file. `replaces` names a stale proposal this fresh diff supersedes; `autonomy` marks one an unattended run parked for its summary. Only emitted when the event's secret scrub leaves it unchanged, so the card shows exactly what Accept writes. |
+| `steering_decision` | session | The decision on a steering proposal, with its diff (TD-5140): the user's `accepted`, `edited` (the diff is what was written) or `rejected`, or the daemon's `expired`, logged when it restores a session whose proposal a restart dropped (nothing written). |
 | `session_list` | connection | The current session list. Each row carries the catalog `preset` (TD-1721). `busy` is a turn in flight; `state: running` is loop liveness (TD-1714, TD-1720). Each row carries `machine`: null for this computer, else the `mch_` id of the paired computer it lives on, whose rows use bridged ids. Only viewers get other computers' rows (TD-5015). |
 | `machine_list` | connection | The paired computers: id, name, host, port, `status` (`connected`, `connecting`, `unreachable`, `refused`, `locked`, `outdated`), last seen, paired at, `same_computer` for a self-pair, and a `detail` line. Never a key. The reply to the four machine verbs, and pushed to viewers when one changes; never sent to a machine peer (TD-5015). |
 | `drain_result` | connection | Reply to `drain`, to that connection only: `drained`, the session ids still `running` or in `awaiting_approval` (ids only), and `hold_until` (null once released) (TD-5023). |
-| `policy_rules` | connection | The workspace's saved policy rules. |
+| `policy_rules` | connection | The workspace's saved policy rules. Each carries `exact`, the one text its `args` matches when it has no wildcard (`app/[[]id]/page.tsx` → `app/[id]/page.tsx`), or null for a glob (TD-5149). |
 | `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_engine` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_voice` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach` / `rotate_remote_token` / `cancel_pairing` / `remove_remote_device` / `set_mcp_server` / `delete_mcp_server` / `set_judgments` / `set_email_notify`. `remote_bind` is the bound Tailscale address, never a token. `remote_devices` lists paired devices (id, name, paired_at, last_seen, connected), never a key or its hash (TD-5014). Carries `engine`, `grok_available`, `grok_binary`, `voice_enabled`, and `voice_has_endpoint`. `mcp_servers` is the listed MCP servers (id, transport, command, url, enabled) — never a secret. `speech_enabled` / `speech_ready` are hold-to-talk flags (TD-4701); the speech URL never appears. `judgments_*` echoes the judgment-seam toggles (TD-708 dev). A remote peer (a phone or another computer) gets it without `remote_devices`, `remote_bind` and `remote_port` (TD-5015). `email` is the mail form (enabled, method, host, port, security, username, from_address, password_stored) for TD-3820, TD-4853, and TD-4854; the password never appears. `github` is the connector snapshot (enabled, connected, phase, user code, verification URL, login, message) for TD-4852; tokens and the device code never appear. `microsoft` is the sign-in snapshot (enabled, connected, phase, account, message) for TD-4853; tokens and the authorization code never appear. `google` is the sign-in snapshot (enabled, connected, phase, account, message, client_secret_stored) for TD-4854; the secret, the tokens, and the authorization code never appear. |
 | `pairing_code` | connection | Reply to `start_pairing`: the code (and `ABCD-2345` display form), host, port, desktop name, the `tstdesk://pair` link, a QR of it as standalone SVG, and when it expires (TD-5014). |
 | `pairing_completed` | connection | A phone redeemed the code. Carries that device's summary (never its key). Sent to the computer's own loopback windows only (TD-5014). |
@@ -772,7 +777,9 @@ Worth reading once, because it is the same path for every tool:
    ban, and hardlinks.
 5. **Gate.** Policy resolves the class to `auto`, `ask`, or `never`. Rules come first, deny
    first: any matching `never` refuses, then any `ask` asks, and `auto` needs a rule for every
-   path or shell command in the call (TD-5101, `core/tstd/policy_shell.py`). With no rule,
+   path or shell command in the call (TD-5101, `core/tstd/policy_shell.py`). A line the shells
+   split differently never auto-runs; a differential test holds the splitter to bash, dash and
+   busybox ash (TD-5156). With no rule,
    class A is auto, class B asks, class C takes the workspace's `class_c_default`. `ask` with
    no approval handler attached raises — the approval gate is part of the chokepoint, not an
    optional add-on.

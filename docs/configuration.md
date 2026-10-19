@@ -1347,6 +1347,27 @@ Steering files (`AGENTS.md`, `CLAUDE.md`, `.tst/rules/**`) and the approval poli
 (`.tst/config.yaml`) are refused for writing no matter what you put in this list. That is
 enforced in the tool, not by configuration.
 
+**Proposed steering edits (TD-5140).** The agent can still propose a change to a steering
+file with `propose_steering_edit`: `AGENTS.md`, `CLAUDE.md`, a `.tst/rules/*.md` rule, a
+`SKILL.md`, or a slash-command file (`.tst/commands/*.md`, `.claude/commands/*.md`) inside the
+workspace. The tool writes nothing and is Class A (static rule `steering-proposal`), so it
+never shows an approval card of its own; a `never` policy rule for it still refuses it. The
+window shows the diff on a card with Accept, Edit and Reject. Only Accept, or Edit then Save,
+writes the file, and the daemon writes it, never the filesystem tool. If the file changed
+after the proposal, Accept is refused ("the file changed since this was proposed") and a
+fresh diff replaces the card. The signed charter (`.tst/autonomy/CHARTER.md`) and
+`.tst/config.yaml` can't be proposed, and neither can a path that runs code later (below).
+Accept and Save are only taken from this computer's own window (`loopback_only` from a phone
+or another computer); Reject works from a phone. Every accepted, edited or rejected proposal
+goes in the session log as `steering_decision` with its diff. The card shows exactly what
+Accept writes. The session log blanks secret-shaped strings (a long run of letters, digits,
+`-` or `_` after `sk-`, `ghp_` and the like; ordinary words such as `task-tool-availability`
+can match too), so a proposal whose file name, current file or new text holds one is refused
+(`steering_secret_shaped`), and so is a Save of one; change that file by hand. Open proposals live in the daemon's memory, so a restart closes them: the daemon logs
+each one as `steering_decision` `expired` when it restores the session, its card does not
+come back, and the agent has to propose it again. A card the daemon no longer holds says
+that nothing was written and offers only Dismiss.
+
 **Paths that run code later ask first (TD-5108).** Some files run nothing when written, but
 git, a login shell, direnv or an editor runs what they say the next time it starts. A write to
 one of them is Class C, so it asks even though it is inside the workspace and inside this
@@ -1512,6 +1533,26 @@ call is downgraded to `class_c_default` — you can loosen approvals for ordinar
 riskiest calls always come back to you (or are refused). "Always allow this in this workspace"
 in the approval card writes a rule here for you, and keeps the file trusted (§4.8).
 
+**Always allow saves a rule for that one call (TD-5149).** The rule names the exact path, or
+the one command, with any `*`, `?` or `[` in it made literal. A read of `app/[id]/page.tsx`
+saves `args: "app/[[]id]/page.tsx"`, which matches that file and no other, and a file literally
+named `*.env*` saves `"[*].env[*]"`, not a glob over every env file. Settings → Policy shows such
+a rule as `exactly app/[id]/page.tsx`, with the saved pattern on hover; a glob shows as written.
+
+- Always allow never replaces a rule you wrote. When an `ask` or `never` rule with the same
+  `tool` and `args` is saved, the card doesn't offer it. A click sent anyway (a card shown
+  before the rule was added) saves nothing: it runs the call once for `ask`, refuses it for
+  `never`, and says so. Revoke the rule first if you want the call to run without asking.
+- Always allow and Revoke read this file when you click, so a rule you add or remove by hand
+  while a session is open is checked and kept, not written over with the rules the session
+  opened with. After the save the session runs under the file as saved. A hand edit to a file
+  that loosens anything waits on the trust card first (§4.8), and nothing is saved into it
+  until then, so your edit is kept that way too. If the `policy:`
+  section can't be read (bad YAML or a bad value), nothing is written: Always allow runs the
+  call once and Revoke fails, both saying why, until you fix the file.
+- A wider `ask` or `never` rule, such as `*.env*`, still applies to the file Always allow saved
+  a rule for, because rules are deny first (below).
+
 **Reads inside the workspace never ask (TD-5141).** `fs_read`, `fs_list` and `fs_grep` on a
 path inside the workspace are Class A by a fixed rule, so they run without asking and without
 a model call to judge them. That includes `.env` and other secret files. A rule still wins, so
@@ -1551,9 +1592,10 @@ decision class to decide, as before.
 
 **Shell rules judge every command in the line (TD-5101).** `args` for `shell` is matched against
 each command of a chained line, not the line as a whole. The line is split at `;`, `&&`, `||`,
-`|`, `&`, newlines and parentheses, and the commands inside `$(…)`, backticks, `<(…)`, the
-`$(…)` of an unquoted heredoc and the string given to `eval` or `sh -c` count as commands too.
-Quoted text is not split, so `git commit -m "fix; docs"` is one command.
+`|`, `&`, newlines and parentheses, after each `\`-newline is removed as the shell removes it,
+and the commands inside `$(…)`, backticks, `<(…)`, the `$(…)` of an unquoted heredoc, the string
+given to `eval`, `sh -c` or `cmd /c`, an `alias` value and a `trap` action count as commands
+too (TD-5156). Quoted text is not split, so `git commit -m "fix; docs"` is one command.
 
 - An `auto` rule applies only when every command matches an `auto` rule. With `npm test*`
   allowed, `npm test; curl x`, `npm test && rm -rf y`, `npm test | sh` and `npm test $(curl x)`
@@ -1568,12 +1610,27 @@ Quoted text is not split, so `git commit -m "fix; docs"` is one command.
   `FOO=1 npm test*` if you want that form allowed.
 - `never` and `ask` rules see through more: wrappers, `env`, assignments, `sudo`, `doas`,
   `xargs`, `exec`, `command`, leading redirects, shell keywords such as `then`, and quoting, so
-  `rm *` also refuses `sudo rm -rf x`, `then rm -rf x` and `"rm" -rf x`.
+  `rm *` also refuses `sudo rm -rf x`, `then rm -rf x` and `"rm" -rf x`. They also see the
+  program without its folder (TD-5156): `curl *` refuses `/usr/bin/curl x`, and on Windows
+  `C:\Tools\curl.exe x` (an `.exe`, `.com`, `.bat` or `.cmd` extension comes off too). `auto`
+  rules still match the path as written. They read bash's brace expansion (`{curl,x}` and
+  `c{url,} x` are `curl`) and the command of `coproc NAME { …; }`.
 - A heredoc's body belongs to the command that opens it, so an `auto` rule must match the body
   too. A trailing `*` matches any body.
 - A line that can't be split with confidence never auto-runs, whatever the rules say. That is
   an unclosed quote or `$(`, `$'…'`, `$((…))`, `((…))`, `case` inside `$(…)`, or nesting more
-  than 16 levels deep. `never` and `ask` rules still apply to it.
+  than 16 levels deep. It is also any line the shells split differently (TD-5156): a heredoc
+  whose end bash and dash put in different places (a body line ending in `\` just before the
+  delimiter, a heredoc opened inside `$(…)` with its body after the `)`, or `EOF)` inside
+  `$(…)`), a `\`-newline that joins two halves of an operator (`&`, newline, `&`) or follows
+  `$`, and on Windows `for /f … in ('…')`, which runs the quoted command. bash reads some
+  words whole where other shells see structure, so these are incomplete too: `${ cmd; }` and
+  `${| cmd; }` (bash 5.3 runs `cmd`), any `[[ … ]]`, a `(` glued to a word (`a=(…)` arrays,
+  extglob `@(…)`, `!(…)`; `name()` is fine), a `name[…]` subscript with a space, an operator,
+  a quote or `$(` in it (`a[i]` and `a[$i]` are fine), the old arithmetic `$[…]`, and a
+  program name bash brace-expands (`{curl,x}`). `never` and `ask` rules still apply to it.
+  TST Desk's tests run a corpus of lines under bash, bash `--posix`, dash and busybox ash and
+  check the split against what each shell ran.
 - "Always allow" is offered only for a single command, and saves exactly that command, with any
   `*`, `?` or `[` in it made literal. It isn't offered for a chained line: one rule can't cover
   it, and a rule per command would let `sh` run on its own after `npm test | sh` was approved.
@@ -1595,8 +1652,10 @@ skip-all does not ask for them, as Claude Code's bypass mode does not. The daemo
 still never runs a repo's fsmonitor command or a hook, but a filter driver or `gpg.program`
 planted in `.git/config` without asking does run on its next `git add` or commit (§4.1). A
 `never` rule still refuses. The fs-tool
-boundary still refuses steering-file writes. The classifier still runs. `effect: yolo` is not
-a valid rule.
+boundary still refuses steering-file writes, and skip-all never accepts a proposed steering
+edit (TD-5140): only your Accept on the card writes one. An unattended run parks its
+proposals for the run summary and never accepts them either. The classifier still runs.
+`effect: yolo` is not a valid rule.
 
 **Computer-use glow**, **Agent cursor**, and **Show indicators on the real display** are also
 not keys in this file. Settings → Appearance persists them as `cu-indicators.yaml` in the

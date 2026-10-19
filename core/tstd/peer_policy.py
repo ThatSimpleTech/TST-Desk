@@ -95,7 +95,12 @@ VIEWER_MACHINE_VERBS: frozenset[str] = frozenset({"list_machines"})
 # that is not the person at the keyboard deploying (TD-5023).
 # ``trust_workspace_config`` lets a repo's own settings loosen the wall
 # (TD-5113); it is decided where the files can be read, at the computer.
-LOOPBACK_VERBS: frozenset[str] = frozenset({"drain", "trust_workspace_config"})
+# Accepting an agent-proposed steering edit writes the instructions every
+# later turn follows (TD-5140), so it is decided there too; rejecting is
+# open to a phone, and neither is a machine-peer verb.
+LOOPBACK_VERBS: frozenset[str] = frozenset(
+    {"drain", "trust_workspace_config", "steering_accept", "steering_edit"}
+)
 
 
 @dataclass(frozen=True)

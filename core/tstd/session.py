@@ -21,11 +21,16 @@ from .autonomy.judgment import JudgmentBackend
 from .boundary_config import BoundaryConfig
 from .compaction import ContextMeter, compact_on_request, window_user_turns
 from .logging import get_logger, redact_structure
-from .policy import ApprovalOutcome, PolicyConfig, propose_always_allow
+from .policy import (
+    ApprovalOutcome,
+    PolicyConfig,
+    propose_always_allow,
+    rule_summary,
+    stricter_rule,
+)
 from .protocol import (
     ConversationReset,
     DaemonEvent,
-    PolicyRuleSummary,
     ToolResult,
 )
 from .protocol import SessionState as SessionStateEvent
@@ -37,6 +42,7 @@ if TYPE_CHECKING:
     from .context.memory_loader import MemoryLoad
     from .cost import CostTracker
     from .router import TierRouter
+    from .steering_proposals import ParkedSteering
     from .tools.registry import Tool
 
 log = get_logger("tstd.session")
@@ -315,6 +321,10 @@ class Session:
         self.last_memory: MemoryLoad | None = None
         # TD-4502: skill names loaded this session via load_skill or slash.
         self.loaded_skills: list[str] = []
+        # TD-5140: steering edits the agent proposed, by proposal id, until
+        # the user decides on the card. In memory only; nothing accepts one
+        # but a user message (not skip-all, not an autonomy run).
+        self.steering_proposals: dict[str, ParkedSteering] = {}
         # TD-4602: 0 = user-visible parent; 1 = transient worker child.
         # Children are not registered, persisted, or revived.
         self.delegate_depth: int = 0
@@ -623,7 +633,11 @@ class Session:
         # a class-C call — the boundary can never be always-allowed — and
         # while the workspace config is not in force (TD-5113): the rule
         # could not be saved, so the card offers approve once instead.
+        # Nor when a stricter rule is saved for this same call (TD-5149):
+        # Always allow would have to replace the user's ask or never rule.
         proposed = propose_always_allow(tool, arguments, decision_class, Path(self.workspace_path))
+        if proposed is not None and stricter_rule(self.policy, proposed) is not None:
+            proposed = None
         if proposed is not None and not await self._config_writable():
             proposed = None
         await self.event_log.add(
@@ -635,13 +649,7 @@ class Session:
                 decision_class=cast(Any, decision_class.value),
                 summary=summary,
                 reason=reason,
-                proposed_always_allow=(
-                    PolicyRuleSummary(
-                        tool=proposed.tool, args=proposed.args, effect=proposed.effect
-                    )
-                    if proposed is not None
-                    else None
-                ),
+                proposed_always_allow=rule_summary(proposed) if proposed is not None else None,
                 seq=1,
             )
         )
