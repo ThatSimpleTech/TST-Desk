@@ -499,8 +499,22 @@ _USAGE_LIMITS: dict[UsageBucket, int] = {"session": 25, "day": 30, "week": 12}
 _COMPACT_REFUSALS: dict[str, str] = {
     "turn_in_progress": "A turn is running. Compact when it finishes, or stop it first.",
     "nothing_to_compact": "Nothing to compact yet. Only the latest turn is in the conversation.",
-    "user_turn_compacted": "That message is already inside a summary.",
+    "user_turn_compacted": "That message is already inside a summary. Summarize from a later one.",
     "user_turn_not_found": "That message is not in this conversation.",
+}
+
+# Why an edit (``fork_from``) or a branch switch (``set_branch``) was refused
+# (TD-5147). A message folded into a summary is gone from the model's
+# context, so it can no longer be edited or switched to another version.
+_BRANCH_REFUSALS: dict[str, str] = {
+    "turn_in_progress": "A turn is running. Edit or switch when it finishes, or stop it first.",
+    "empty_content": "An edited message can't be empty.",
+    "user_turn_compacted": (
+        "That message was folded into a summary to free up context, so it can't be "
+        "edited or switched any more. Edit a message after the summary instead."
+    ),
+    "user_turn_not_found": "That message is not in this conversation.",
+    "branch_not_found": "That version of the message is no longer available.",
 }
 
 
@@ -2533,7 +2547,9 @@ class Daemon:
                 )
             result = await found.fork_from(msg.user_index, msg.content)
             if isinstance(result, str):
-                return build_error(result, result.replace("_", " "), session_id=msg.session_id)
+                return build_error(
+                    result, _BRANCH_REFUSALS.get(result, result), session_id=msg.session_id
+                )
             await found.event_log.add(result)
             return None
 
@@ -2560,7 +2576,9 @@ class Daemon:
                 )
             result = await found.set_branch(msg.user_index, msg.sibling_index)
             if isinstance(result, str):
-                return build_error(result, result.replace("_", " "), session_id=msg.session_id)
+                return build_error(
+                    result, _BRANCH_REFUSALS.get(result, result), session_id=msg.session_id
+                )
             await found.event_log.add(result)
             return None
 

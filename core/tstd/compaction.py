@@ -242,11 +242,12 @@ def window_user_turns(messages: Sequence[ChatMessage]) -> list[int | None]:
     Entry *n* is the index of the window's user turn *n*, or None when
     that turn is inside a summary.  The window numbers user turns from
     the start of the session; a summary stands for as many of them as
-    its header says.
+    its header says.  A Grok-engine conversation has no system prompt,
+    so its first message can be user turn 0 (TD-5147).
     """
     turns: list[int | None] = []
     for index, message in enumerate(messages):
-        if index == 0:
+        if index == 0 and message.role == "system":
             continue  # the system prompt
         if message.role == "user":
             turns.append(index)

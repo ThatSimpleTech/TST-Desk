@@ -300,6 +300,18 @@ describe("notification routing", () => {
     expect(toasts[0].body).not.toContain("unrecognised");
   });
 
+  it("an edit or branch switch on a summarized message is a readable toast (TD-5147)", () => {
+    const message =
+      "That message was folded into a summary to free up context, so it can't be edited or switched any more. Edit a message after the summary instead.";
+    notifyEvent({ type: "error", code: "user_turn_compacted", message, session_id: "s1", seq: 3 } as DaemonEventUnion);
+    expect(banners).toHaveLength(0);
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].title).toBe("Already in a summary");
+    expect(toasts[0].title).not.toContain("user_turn_compacted");
+    expect(toasts[0].title).not.toBe("Nothing compacted");
+    expect(toasts[0].body).toBe(message);
+  });
+
   it("a refused Delete/Move becomes a toast, not a banner (TD-1715)", () => {
     // Nothing is broken and no other work is blocked — the session is simply
     // busy — so this must not raise a blocking banner.

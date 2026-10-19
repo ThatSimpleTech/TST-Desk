@@ -320,10 +320,16 @@ export function daemonErrorCopy(code: string, message: string): NoticeSpec {
 			body: message,
 		};
 	}
-	if (code === "nothing_to_compact" || code === "user_turn_compacted") {
+	if (code === "nothing_to_compact") {
 		// TD-5109: /compact or "Summarize from here" had nothing to do. The
 		// daemon's message says why; nothing changed, so a toast is enough.
 		return { severity: "toast", title: "Nothing compacted", body: message };
+	}
+	if (code === "user_turn_compacted") {
+		// TD-5109 / TD-5147: "Summarize from here", Edit or a branch arrow on a
+		// message a compaction already folded into a summary. The daemon's
+		// message says which and what to do instead; nothing changed.
+		return { severity: "toast", title: "Already in a summary", body: message };
 	}
 	if (code.startsWith("attachment_")) {
 		// TD-1709: the daemon refused an attachment on arrival — the case a
