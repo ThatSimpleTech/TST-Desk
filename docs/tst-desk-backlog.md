@@ -9259,6 +9259,71 @@ model).
 - [x] Tests fail on the old code (Stop during a hanging validator stream
       leaves it running) and pass on the new
 
+### TD-5152 — A cut-off reply is an error, not a finished answer
+**Size:** 3 · **Depends on:** TD-5106, TD-5146
+
+LiteLLM reports a failure partway through a streamed chat completion as
+an in-band `data: {"error": {...}}` event and then ends the body without
+`data: [DONE]`. The chunk parser dropped that event, so the main turn
+treated whatever partial text had arrived as a complete answer. TD-5146
+fixed this only for the off-turn calls.
+
+**Acceptance criteria:**
+- [x] In the turn stream, an in-band error event becomes a
+      `ProviderError` whose code and retry flag are mapped from its status
+      the way an HTTP error's are: before the first chunk a 429 or 5xx is
+      retried under `provider_retry` and a 4xx is not; after it the error
+      is `stream_interrupted` and is not retried. This covers LiteLLM's
+      bare `{"error": ...}`, OpenRouter's `error` beside a choice with
+      `finish_reason: "error"`, and `finish_reason: "error"` alone
+- [x] A stream that ends with no `finish_reason` and no `[DONE]` is
+      `stream_interrupted`, not a finished answer
+- [x] The turn ends failed with `error_code: stream_interrupted`; the
+      partial text is not kept as the model's answer, the window shows the
+      existing "Response interrupted" copy, and Retry on the message
+      resends the turn
+- [x] TD-5106's stream-idle watchdog: reading stops at `[DONE]`, so a
+      server that holds the body open after a finished reply is not a
+      stall; an error event ends the stream at once; a stall partway is
+      still `stream_stalled`
+- [x] docs/configuration.md describes in-band errors and cut-off streams
+- [x] Tests (httpx.MockTransport SSE bodies) fail on the old code and pass
+      on the new
+
+Done (2026-10-19): `ProviderClient.chat_completion_stream` checks each
+event for an error envelope before parsing it as a chunk and tracks
+`[DONE]`. Tests: `core/tests/test_turn_stream_errors.py` (24 of its 32
+fail on the old code). Class B entry in DECISIONS.md.
+
+### TD-5153 — The after-write review prompt fits the validator's window
+**Size:** 3 · **Depends on:** TD-4204, TD-5007, TD-5106, TD-5146
+
+The after-write review sent every diff and every shell output of the turn,
+with no cap. On EZER the validator is a local llama.cpp model (65,536-token
+slots, ~390-830 tokens/s uncached) behind LiteLLM with a 120 s read
+timeout. The call streams, but the first chunk arrives only after the whole
+prompt is read: about 45k tokens fit in 120 s at the slow rate, a bigger
+turn timed out as a verify error, and one past the slot failed outright.
+
+**Acceptance criteria:**
+- [x] The review prompt is bounded by the validator tier's window and
+      `autonomy.verify_max_prompt_tokens` (null is 60% of
+      `context_window`), never past the window less `max_output_tokens`
+- [x] Over the budget, shell output is cut first and each output keeps its
+      tail; then the oldest diffs go; the newest diff stays
+- [x] Each cut leaves a `(N earlier lines omitted)` / `(N earlier diffs
+      omitted)` marker, the reviewer is told parts were left out, and the
+      verdict's summary says what was
+- [x] The prompt is estimated with the existing estimator and the
+      validator endpoint's calibrated ratio; the review's usage teaches it
+- [x] A prompt that cannot be cut to fit is reported as a verify error,
+      not sent
+- [x] A turn that fits is sent as before
+- [x] The cap is documented in `docs/configuration.md` (the `verify` row
+      and the new key) and `DECISIONS.md`
+- [x] Tests fail on the old code (an 11k-token review sent against a
+      4,800-token budget) and pass on the new
+
 ### TD-5102 — `fs_grep` content search and path globs
 **Size:** 3 · **Depends on:** none · Gap audit 2026-10-14, local-model batch (PR #10)
 

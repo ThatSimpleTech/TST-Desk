@@ -14568,6 +14568,122 @@ fork, compaction and the restart drain wait on an advisory call);
 cancelling the review from `stop_turn` directly (the session would have
 to own the review's task, and the loop's task already owns it).
 
+## 2026-10-19 — TD-5152: a cut-off turn stream is an error, not a finished answer (Class B)
+
+LiteLLM reports an upstream failure partway through a streamed completion
+as an in-band `data: {"error": {...}}` event and then ends the body
+without `data: [DONE]`. `_parse_stream_chunk` returned `None` for an
+event with no `choices`, so the turn stream ended cleanly and the loop
+kept the partial text as the answer. TD-5146 caught this only in
+`collect_stream`, for the off-turn calls.
+
+**Decision.** `ProviderClient.chat_completion_stream` handles both cases
+itself, so every consumer (the turn, the progress check, the off-turn
+calls) gets the same typed error.
+
+- An event whose JSON has a non-empty top-level `error` is an error,
+  whether or not it also carries `choices`: LiteLLM sends the bare
+  `{"error": {...}}`, and OpenRouter (a shipped preset) sends the `error`
+  beside a choice with an empty delta and `finish_reason: "error"`, which
+  the chunk parser would otherwise read as a finished reply. A choice
+  that finishes with `"error"` and no `error` object counts too, as a
+  502 whose reason reads `finish_reason "error" with no message`. Its status comes from `error.code` the way a 2xx error envelope's
+  does (`_error_envelope_status`; no usable status is a 502), and it goes
+  through `_parse_error`, so the code and retry flag match an HTTP reply
+  with that status (429 `rate_limited`, 5xx retryable, 400/401/404 not,
+  a window refusal `context_overflow`). Before any chunk has been
+  yielded, that error is what the stream yields, and `retry_stream`
+  applies `provider_retry` to it as it does to an HTTP error. After a
+  chunk, it becomes `stream_interrupted`, not retryable, carrying the
+  upstream status, the provider's message when it is prose, and the raw
+  event as `detail` for the log.
+- A stream that ends with neither a `finish_reason` nor `[DONE]` is
+  `stream_interrupted`, not retryable. `[DONE]` without a finish reason,
+  and a finish reason without `[DONE]`, still count as a finished reply:
+  the story names the pair, and servers that omit one of them exist.
+- Reading stops at `[DONE]` (TD-5106 interplay). Reading on let the
+  stream-idle watchdog or `total_timeout` fail a finished reply as
+  `stream_stalled` when a server held the body open after it. An error
+  event ends the stream at once, so it never feeds or waits on the
+  watchdog; a stall partway through is still `stream_stalled`.
+
+**Conservative choices** (the story does not say): an error event that
+arrives after the finish reason still fails the turn rather than keeping
+a reply the gateway disowned; the partial text stays out of the model's
+conversation, as for every failed turn; the window uses the existing
+`stream_interrupted` copy ("Response interrupted") and the existing
+Retry action on the message. No new control is added. The Continue chip
+stays specific to a restart (TD-5019), since Continue after an upstream
+failure would ask the model to extend text it never sees.
+
+**Rejected:** detecting the cut-off in the loop (only the client sees
+`[DONE]`); making `_parse_stream_chunk` return errors (its callers expect
+a chunk or nothing, and an exception for control flow is harder to
+follow than a separate check on the few events that contain `"error"`).
+
+## 2026-10-19 — TD-5153: the after-write review is cut to a token budget (Class B)
+
+The after-write review (TD-4204) sent every diff and every shell output of
+the turn. EZER's validator is a local llama.cpp model (65,536-token slots,
+~390-830 tokens/s uncached) behind LiteLLM with a 120 s read timeout
+(TD-5106). Since TD-5146 the call streams and a timeout is not resent, but
+the first chunk arrives only after the whole prompt is read: a turn past
+about 45k tokens timed out as a verify error, and one past the slot failed
+outright.
+
+**Decision.** The review's whole request (validator steering, base prompt,
+diffs, shell output, instructions) gets a budget:
+`autonomy.verify_max_prompt_tokens`, or 60% of the validator tier's
+`context_window` when that is null (about 39k tokens on a 65,536 slot,
+~100 s at the slowest measured rate), never more than `context_window`
+less `max_output_tokens`. The key lives under `autonomy` beside `verify`
+because it only shapes that review; a tier field would also reach the
+autonomy supervisor, which this story does not touch. A set value below
+1,024 is a load error: it cannot hold the instructions. It is estimated
+with the turn's estimator (`estimate_tokens`) and a counter scaled by the
+ratio learned for the validator's endpoint (`calibration_key` on the tier
+with the credential host applied, TD-5007/TD-5013), not a new one. The
+loop passes its calibration store to the review. The review's own
+`usage.prompt_tokens` is folded into that ratio, measured on the base
+counter over exactly the messages sent, as the turn does: a validator on
+an endpoint the turn never calls would otherwise be estimated at the flat
+4 characters per token, about 1.55x low on code for EZER's model.
+
+**Order of cuts.** (1) Shell output loses its head: every output keeps its
+tail, where a test run prints its result, down to a floor of 2,000
+characters each, the floors together at most a quarter of the room, so
+many shell calls cannot crowd out the diffs. (2) The oldest diffs go
+whole; the newest always stays. (3) Shell output goes below its floor,
+down to its markers. (4) Shell output goes altogether, then the newest
+diff loses its end (a diff's head names the file and its first hunks).
+Each cut leaves a marker where it was made: `(N earlier lines omitted)`
+atop a cut output, `(N earlier diffs omitted)` atop the diff block,
+`(N later lines of this diff omitted)`, `(N shell outputs omitted)`. When
+anything was cut the review's instruction says so and asks the reviewer
+not to fail for what it cannot see, and the verdict's summary ends with
+one line naming what was left out, so a pass is never mistaken for a
+review of the whole turn. A turn that fits is sent exactly as before.
+
+**Fitting.** Characters are cut to the estimate's excess (plus 64 tokens
+of slack) converted at the counter's characters per token, then the
+prompt is re-assembled and re-measured, at most five rounds; the second
+round almost always fits. A cut that cannot shrink the material further
+ends the rounds.
+
+**Conservative choices** (the story leaves them open). A prompt still over
+the budget with everything cut, or one with no room for any of the diff,
+is not sent: the timeline shows a verify error starting `Not reviewed:`
+with the budget, rather than a call that is known to time out or a
+verdict on nothing. There is no new event or protocol field; the cut is
+reported in the existing `verify_result.summary` and in one log line
+(`verify prompt cut to the validator budget`) with the counts. Nothing is
+cut by the provider or resent smaller after a timeout.
+
+**Rejected:** a character cap (the prompt's cost is tokens, and code
+tokenizes denser than prose); dropping the newest diffs first (the newest
+write is what the turn ended on); summarizing the cut material with a
+model call (a second slow call to save the first); a new estimator.
+
 ## 2026-10-19 — TD-5154: local-model batch follow-ups (Class B)
 
 From the review of PR #10 (TD-5102, 5104, 5105, 5106, 5109, 5141).
