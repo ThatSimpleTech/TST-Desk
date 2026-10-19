@@ -349,7 +349,9 @@ async def _diff_since(session: Session) -> tuple[str, str | None]:
     tip = await _resolve_sha(workspace, branch)
     if since is None:
         return "", tip
-    rc, out = await _git(workspace, "diff", since)
+    # A plain patch: diff.external and textconv drivers are commands a
+    # config file names, and their output is not a patch anyway (TD-5108).
+    rc, out = await _git(workspace, "diff", "--no-ext-diff", "--no-textconv", since)
     return (out if rc == 0 else ""), tip
 
 

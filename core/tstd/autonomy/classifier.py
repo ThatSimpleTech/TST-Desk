@@ -101,9 +101,17 @@ _CHARTER_FILE_PARTS = tuple(p.casefold() for p in CHARTER_RELATIVE_PARTS)
 # nested ``.git`` holding HEAD and config makes its folder a repo, direnv
 # loads the ``.envrc`` of any folder you cd into, and an editor opens a
 # nested project with its own ``.vscode``. The hook managers are here
-# because the daemon's own memory commit runs the repo's commit hooks.
+# because the user's own ``git commit`` runs what they name; the daemon's
+# own git runs no hooks (``git_safe``). Lefthook reads any of its base or
+# ``-local`` names, dotted or not, in four formats.
 # Stored case-folded; compared through ``_fold``.
 _EXEC_LATER_DIRS = frozenset({".git", ".vscode", ".idea", ".husky"})
+_LEFTHOOK_FILES = frozenset(
+    f"{dot}{stem}.{ext}"
+    for dot in ("", ".")
+    for stem in ("lefthook", "lefthook-local")
+    for ext in ("yml", "yaml", "toml", "json")
+)
 _EXEC_LATER_FILES = frozenset(
     {
         ".envrc",
@@ -120,10 +128,7 @@ _EXEC_LATER_FILES = frozenset(
         ".zlogin",
         ".zlogout",
         ".pre-commit-config.yaml",
-        "lefthook.yml",
-        "lefthook.yaml",
-        ".lefthook.yml",
-        ".lefthook.yaml",
+        *_LEFTHOOK_FILES,
     }
 )
 

@@ -9258,16 +9258,22 @@ git 2.53).
       command in `.git/config` and shows a checkpoint does not run it
 - [x] Whether skip-all mode still asks for these is decided and written
       down in docs/configuration.md (it does not: skip-all is
-      skip-everything; the fsmonitor pin holds either way)
+      skip-everything; the fsmonitor and hooks pins hold either way,
+      and the filter-driver residual is written down)
 - [x] Tests cover fs_write and a shell redirect to
       `.git/hooks/pre-commit`
 
 Done (2026-10-19): rules `exec-later-write` and
 `shell-exec-later-write` sit ahead of every grant. The list also covers
 `.husky`, the other shell startup files, `.gitconfig` and git
-hook-manager configs. Shared `git_command()` in `core/tstd/git_safe.py`;
-a test fails on any raw `"git"` argv in `tstd`. Class B entry in
-DECISIONS.md.
+hook-manager configs (lefthook `-local` names too). Shared
+`git_command()` in `core/tstd/git_safe.py` pins fsmonitor off and
+`core.hooksPath` at nothing, so the daemon's own commits, checkpoints
+and pushes run no hook (PR #13 review: a `core.hooksPath` folder or a
+script a hook calls was a Class A edit the memory commit then ran). The
+validator's diff runs no external diff or textconv. A test fails on any
+raw `"git"` argv in `tstd`. Class B entry in DECISIONS.md, with the
+filter-driver and `gpg.program` residual risk.
 
 ---
 

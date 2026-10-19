@@ -1350,8 +1350,9 @@ list:
 - `.envrc`, `.gitconfig`, and shell startup files (`.profile`, `.bashrc`, `.bash_profile`,
   `.bash_login`, `.bash_logout`, `.bash_aliases`, `.zshrc`, `.zshenv`, `.zprofile`, `.zlogin`,
   `.zlogout`), by name at any depth;
-- git hook-manager configs: `.pre-commit-config.yaml`, `lefthook.yml` / `.yaml` and their
-  dotted forms. The daemon's own memory commit runs the repo's commit hooks.
+- git hook-manager configs: `.pre-commit-config.yaml`, and lefthook's `lefthook.yml` and
+  `lefthook-local.yml` in any of `.yml`, `.yaml`, `.toml`, `.json`, dotted or not. Your own
+  `git commit` runs what they name.
 
 Names match ignoring case. This covers `fs_write` and `fs_edit`, and shell redirects and `tee`
 into these paths (`echo … > .git/hooks/pre-commit`, `… >> ~/.bashrc`). Other shell write forms
@@ -1360,11 +1361,22 @@ file, you can approve the write. An `auto` policy rule cannot pre-approve it (§
 "Always allow" is not offered. Reads are unaffected. Skip-all runs these writes without asking,
 like every other Class C ask (§4.4); an autonomous run stops on them.
 
-Every git command the daemon runs itself (checkpoints, memory commits, the workspace manifest,
-`fs_grep`, the autonomy gate and summary, revert, the GitHub connector) is started with
-`-c core.fsmonitor=false -c safe.bareRepository=explicit`. Command-line settings beat every
-config file, so a planted `.git/config` cannot make the daemon run its fsmonitor command, with
-or without skip-all.
+Every git command the daemon runs itself (checkpoints, memory commits, the charter sign, the
+workspace manifest, `fs_grep`, the autonomy gate and summary, revert, the GitHub connector) is
+started with `-c core.fsmonitor=false -c core.hooksPath=/dev/null -c
+safe.bareRepository=explicit` (`nul` on Windows). Command-line settings beat every config file,
+so with or without skip-all the daemon never runs a repo's fsmonitor command or any hook: not
+`.git/hooks`, not a `core.hooksPath` folder, not a workspace script a hook calls. Your own `git
+commit` still runs your hooks; the daemon's memory and charter commits and the connector's push
+skip them, including a secret scanner. The validator's diff runs no external diff or textconv.
+
+Not pinned: a filter driver (`clean` on the daemon's `git add` and `git status`, `smudge` on
+revert), `gpg.program` when `commit.gpgSign` is set (memory and charter commits), and
+`core.askPass` (the connector). They run only when a config file names them, and `.git/config`,
+`.git/info/attributes` and `.gitconfig` are Class C to write, so planting one asks. Under
+skip-all it does not ask, and the daemon would then run the planted command. An in-tree
+`.gitattributes` (Class A) can also route a file to a filter you already configured. This is
+recorded in DECISIONS.md (TD-5108) as residual risk.
 
 **`allowed_commands` matching.** The command is split into top-level segments on pipes,
 semicolons, and the like; each segment's leading binary — after skipping `VAR=value` prefixes —
@@ -1529,7 +1541,9 @@ has a machine-wide toggle that lives in the user data dir as `approvals.yaml`, s
 cannot carry it. While it is on, every `ask` runs as auto — including `shell` and Class C —
 and caps do not pause. That includes writes to paths that run code later (§4.1, TD-5108):
 skip-all does not ask for them, as Claude Code's bypass mode does not. The daemon's own git
-still never runs a repo's fsmonitor command. A `never` rule still refuses. The fs-tool
+still never runs a repo's fsmonitor command or a hook, but a filter driver or `gpg.program`
+planted in `.git/config` without asking does run on its next `git add` or commit (§4.1). A
+`never` rule still refuses. The fs-tool
 boundary still refuses steering-file writes. The classifier still runs. `effect: yolo` is not
 a valid rule.
 

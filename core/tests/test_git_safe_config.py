@@ -1,9 +1,14 @@
-"""The daemon's own git never runs a repo's fsmonitor command (TD-5108).
+"""The daemon's own git never runs a repo's fsmonitor command or hooks (TD-5108).
 
 Found by the TD-5141 review: one Class A ``fs_write`` to ``.git/config``
 that set ``core.fsmonitor`` ran that command, with no approval and outside
 the wall, the next time the checkpointer ran ``git add`` after a write.
 Every git call the daemon makes now starts with ``git_command``.
+
+Found by the PR #13 review: the memory commit ran the repo's commit hooks.
+A hook in a ``core.hooksPath`` folder the user set, or a script an existing
+hook calls, is an ordinary Class A edit, so one more memory write made the
+daemon run it. ``git_command`` now points ``core.hooksPath`` at nothing.
 """
 
 from __future__ import annotations
@@ -18,10 +23,13 @@ import pytest
 
 import tstd
 from tstd.autonomy import Checkpointer
+from tstd.autonomy.charter import CHARTER_RELATIVE_PARTS, sign_charter
 from tstd.autonomy.checkpoint import DecisionClass
+from tstd.autonomy.supervisor import _diff_since
 from tstd.context.manifest import WorkspaceManifest
 from tstd.git_safe import GIT_SAFE_CONFIG, git_command
 from tstd.memory_commit import MemoryCommitter
+from tstd.session import Session
 
 needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
 needs_posix = pytest.mark.skipif(
@@ -110,7 +118,147 @@ def test_git_command_pins_fsmonitor_off_before_the_subcommand() -> None:
     assert argv[0] == "git"
     assert argv[1 : 1 + len(GIT_SAFE_CONFIG)] == list(GIT_SAFE_CONFIG)
     assert "core.fsmonitor=false" in GIT_SAFE_CONFIG
+    assert f"core.hooksPath={os.devnull}" in GIT_SAFE_CONFIG
     assert argv[-3:] == ["-C", "/ws", "status"]
+
+
+# --- hooks (PR #13 review) -------------------------------------------------
+
+
+def _hook(path: Path, body: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\n" + body + "\n")
+    path.chmod(0o755)
+
+
+def _plain_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "config", "user.name", "Test User")
+    _git(repo, "config", "user.email", "test@example.com")
+    (repo / "a.txt").write_text("base\n")
+    _git(repo, "add", "a.txt")
+    _git(repo, "commit", "-q", "-m", "baseline")
+    return repo
+
+
+def _memory_note(repo: Path) -> Path:
+    note = repo / ".tst" / "memory" / "gotchas.md"
+    note.parent.mkdir(parents=True, exist_ok=True)
+    note.write_text("- a gotcha\n")
+    return note
+
+
+def _repo_with_hooks_path(tmp_path: Path) -> tuple[Path, Path]:
+    """The user set ``core.hooksPath=.githooks``; the agent wrote the hook (Class A)."""
+    repo = _plain_repo(tmp_path)
+    _git(repo, "config", "core.hooksPath", ".githooks")
+    marker = tmp_path / "hook-ran"
+    for name in ("pre-commit", "commit-msg", "post-commit", "reference-transaction"):
+        _hook(repo / ".githooks" / name, f"touch {marker}")
+    return repo, marker
+
+
+@needs_git
+@needs_posix
+def test_hooks_path_hook_runs_for_plain_git_commit(tmp_path: Path) -> None:
+    """Control: the hooks folder is live, so the tests below mean something."""
+    repo, marker = _repo_with_hooks_path(tmp_path)
+    _memory_note(repo)
+    _git(repo, "add", ".tst")
+    _git(repo, "commit", "-q", "-m", "plain")
+    assert marker.exists()
+
+
+@needs_git
+@needs_posix
+async def test_memory_commit_does_not_run_a_hooks_path_hook(tmp_path: Path) -> None:
+    repo, marker = _repo_with_hooks_path(tmp_path)
+    note = _memory_note(repo)
+
+    outcome = await MemoryCommitter(repo).commit([note])
+
+    assert outcome.status == "committed"
+    assert not marker.exists()
+
+
+@needs_git
+@needs_posix
+async def test_memory_commit_does_not_run_a_script_an_existing_hook_calls(
+    tmp_path: Path,
+) -> None:
+    """The user's own ``.git/hooks/pre-commit`` calls a workspace script the agent wrote."""
+    repo = _plain_repo(tmp_path)
+    _hook(repo / ".git" / "hooks" / "pre-commit", "sh scripts/check.sh")
+    marker = tmp_path / "script-ran"
+    (repo / "scripts").mkdir()
+    (repo / "scripts" / "check.sh").write_text(f"touch {marker}\n")
+    note = _memory_note(repo)
+
+    outcome = await MemoryCommitter(repo).commit([note])
+
+    assert outcome.status == "committed"
+    assert not marker.exists()
+
+
+@needs_git
+@needs_posix
+async def test_checkpoint_does_not_run_a_hooks_path_hook(tmp_path: Path) -> None:
+    """``update-ref`` fires ``reference-transaction``; the checkpointer must not."""
+    repo, marker = _repo_with_hooks_path(tmp_path)
+    (repo / "b.txt").write_text("written by the agent\n")
+
+    outcome = await Checkpointer(repo, "s1").checkpoint(
+        [repo / "b.txt"],
+        tool_name="fs_write",
+        tool_call_id="tc-1",
+        decision_class=DecisionClass.A,
+        decision_rule="in-workspace-edit",
+    )
+
+    assert outcome.status == "committed"
+    assert not marker.exists()
+
+
+@needs_git
+@needs_posix
+async def test_charter_sign_does_not_run_a_hooks_path_hook(tmp_path: Path) -> None:
+    repo, marker = _repo_with_hooks_path(tmp_path)
+    charter = repo.joinpath(*CHARTER_RELATIVE_PARTS)
+    charter.parent.mkdir(parents=True, exist_ok=True)
+    charter.write_text("# Charter\n")
+
+    error = await sign_charter(repo)
+
+    assert error is None
+    assert _git(repo, "log", "-1", "--format=%s") != "baseline"
+    assert not marker.exists()
+
+
+# --- diff drivers (PR #13 review) ------------------------------------------
+
+
+@needs_git
+@needs_posix
+async def test_supervisor_diff_runs_no_external_diff_or_textconv(tmp_path: Path) -> None:
+    """The validator's diff is a plain patch: no ``diff.external``, no textconv."""
+    repo = _plain_repo(tmp_path)
+    base = _git(repo, "rev-parse", "HEAD")
+    ext_marker = tmp_path / "ext-diff-ran"
+    conv_marker = tmp_path / "textconv-ran"
+    _git(repo, "config", "diff.external", f"sh -c 'touch {ext_marker}' --")
+    _git(repo, "config", "diff.x.textconv", f"sh -c 'touch {conv_marker}; cat \"$0\"'")
+    (repo / ".gitattributes").write_text("*.txt diff=x\n")
+    (repo / "a.txt").write_text("changed by the agent\n")
+    session = Session(str(repo))
+    session.autonomy_last_check_sha = base
+
+    diff, _tip = await _diff_since(session)
+
+    assert "+changed by the agent" in diff
+    assert not ext_marker.exists()
+    assert not conv_marker.exists()
 
 
 def _is_harness(name: str) -> bool:

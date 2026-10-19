@@ -50,6 +50,10 @@ PROTECTED = [
     ".husky/pre-commit",
     ".pre-commit-config.yaml",
     "lefthook.yml",
+    "lefthook-local.yml",
+    ".lefthook-local.yaml",
+    "lefthook.toml",
+    "web/.lefthook.json",
     ".tst/memory/.git/config",
 ]
 
