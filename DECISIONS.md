@@ -16055,3 +16055,94 @@ gone before it could be read); reading `podman inspect` after dropping
   field (blank is unset), the YAML preview and the sign card show it. The
   Charter column is not in the UI walk's census, so the census is
   unchanged.
+
+## 2026-10-20 — TD-5160: low-severity review notes from waves 5-6 (Class B)
+
+The reviewers of TD-5103, 5107, 5110, 5111, 5158 (wave 5) and TD-5159,
+5112, 5114, 5115, 5116, 5117 (wave 6) left 32 low-severity notes. Each was
+checked against main; the choices below are the ones that are Class B, or
+Class C questions the notes left open (each the conservative option).
+
+- **Secret scrub boundary.** `sk-` no longer matches straight after a
+  lowercase letter, which is what made `task-tool-availability` and
+  `tst-desk-gap-audit` partly `[REDACTED]`. It still matches after
+  punctuation, a digit or capital, an escaped `\n`, or a `%XX`
+  percent-encoding, so a key glued into a repr or a URL query is still
+  caught. Rejected: a key-shape test on what follows `sk-` (real keys vary
+  too much to bound it without letting one through). The UI's diagnostics
+  belt stays wider on purpose.
+- **Stored MCP secrets.** A value's last whitespace-separated part must be
+  8+ characters too (the token in `Bearer <token>`), since the exact-text
+  scrub registers only parts that long. This refuses a passphrase whose
+  last word is short; MCP secrets are tokens, and a leak is worse.
+  Remove now deletes the keychain item first and the name second, so a
+  failure leaves the file, the daemon and the keychain agreeing and a retry
+  finishes the job; Save deletes the item it stored if the file write
+  fails.
+- **`user_message.only_if_idle`** (additive, protocol). The daemon checks
+  `turn_in_flight` in the same step that counts the turn, so of two
+  `tst run --continue` started together only one gets in. Only `tst run`
+  into an existing session sets it.
+- **Read-only shell list and git config.** Each git command is classified
+  after an async `git config -z --get-regexp` in the workspace (includes
+  followed, as the command's git will): `diff.external` (or
+  `GIT_EXTERNAL_DIFF`) makes `git diff` ask, and `log.showSignature` or a
+  `%G` format in `format.pretty`/`pretty.*` makes `git log`/`git show`
+  ask; a `%G` or `%(signature` format word asks too. The same read gives
+  the object format, so SHA-256 repositories get their own empty tree for
+  `GIT_ATTR_SOURCE`. A root whose config could not be read asks. The pins
+  now apply to any git command the built-in list reads, whatever
+  `shell.read_only` says, and a preset bind rebinds the loop's wall, so a
+  stale classifier list can never auto-run a command without them.
+  `shell` and `shell.read_only` refuse unknown keys. Residual: a write in
+  the same parallel batch as the git command can still land between the
+  read and the run.
+- **Staging after an atomic save.** On POSIX each folder on the path is
+  opened with `O_NOFOLLOW` from the one before it, which refuses a
+  swapped-in symlink anywhere on the path; the device/inode test (which
+  failed a file an editor saved by rename) is kept only on Windows, which
+  has no `dir_fd`.
+- **`message_not_saved` copy.** The daemon's text no longer says the text
+  is back in the composer (older windows and APKs do not do that); the
+  window from TD-5158 on adds it, with a note to add attachments again.
+- **`web_fetch`.** The shown URL is redacted and cut to 300 characters;
+  the raw window and the question-mode answer shrink until the whole
+  result fits the cap. The extract pass checks the session caps first, as
+  delegate does (skip-all never lifts them). A cached page cut at a smaller
+  `fetch_max_bytes` does not serve a larger one. The worker window counts
+  three ASCII characters a token and a whole token for any other
+  character (a script-aware estimate rather than the brain's calibrated
+  ratio, which describes the brain's endpoint and prose, not CJK pages).
+- **Delegate failures keep the transcript.** `HandlerRefusal` carries one,
+  and a crash in the child is re-raised as `HandlerFailed` (reported as
+  `handler_error` with the original message) carrying the steps. A
+  cancelled call still has none: cancel writes no tool result for any
+  tool.
+- **Cleared-result placeholders.** Only built-in reads (`fs_read`,
+  `fs_list`, `fs_grep`, `web_fetch`, `web_search`, `load_skill`) say "Run
+  the tool again if you need it"; every other tool's says it already ran
+  and not to run it again for the output. Rejected: excluding `delegate`
+  and `shell` by default (that would keep their full output and make the
+  window fill faster); the wording is what invited the re-run.
+- **A steer split by Send now.** `withdrawResponse` cuts every row holding
+  the response id and drops an earlier row the response alone filled. Only
+  an attachment-only Send now still echoes mid-stream since TD-5112.
+- **A steer that loads a skill** re-assembles the system prompt before the
+  model call that reads it.
+- **Shell memory cap.** The cap is certain only when the scope's own
+  `oom` counter shows it reached its limit; `Result=oom-kill` alone is
+  "likely"; a kill the counters show was not the cap gets no note. GPU
+  out-of-memory text is not the cap. A scope that fails to start resets
+  the probe and says the command did not run; a probe that found nothing
+  is retried after five minutes. Podman gets `--memory-swap` equal to
+  `--memory`. **Class C, conservative:** rootless Podman off cgroup v2 with
+  the systemd manager ignores or refuses limits, so the start check now
+  refuses an autonomous run there (naming the fix) rather than let an
+  unattended run go uncapped or fail at its first command. Not verified
+  against a real Podman (none on the build host); the decision rests on
+  Podman's documented behaviour and `podman info`'s fields.
+- **Docs only, behaviour unchanged:** `disable-model-invocation` values,
+  the ulimit fallback being per process, the stall retry bound
+  (`max_retries + 2` waits), the 70% clear exception and the gap not
+  being a promise, the summary counter not being calibrated, and the
+  TD-5158 and TD-5115 backlog ticks.
