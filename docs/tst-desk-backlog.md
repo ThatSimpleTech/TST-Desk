@@ -10506,12 +10506,16 @@ item; on a phone the chat is the one pane, so that is where it shows.
 The strip goes away once every item is done. Every compaction (budget,
 `/compact`, Summarize from here) ends its summary with the list under
 `[Kept across compaction]`, and a later one carries only the newest.
-A restart rebuilds the list from the log, and an attach logs it again if
-the log window lost it. Tests: `core/tests/test_task_list.py` (tool,
-replace, refusals, Class A with no card, policy override, the rule's
-shape and order, the summary carry in both compaction paths, a loop run
-whose request after compaction carries the list after the call that
-made it was dropped, revive, attach), `ui/src/lib/task-list.test.ts`
+A restart rebuilds the list from the log; when the log window rotates
+the last `task_list` event out (a long step's deltas or shell output),
+the daemon logs it again at once, attached window or not, and an attach
+also logs it again if the log window lost it. Tests:
+`core/tests/test_task_list.py` (tool, replace, refusals, Class A with no
+card, policy override, the rule's shape and order, the summary carry in
+both compaction paths, a loop run whose request after compaction carries
+the list after the call that made it was dropped, revive, attach, and a
+long step that rotates the list out of a 5-event window: it is back on
+disk, a restart finds it and the next compaction still carries it), `ui/src/lib/task-list.test.ts`
 (store, Plan pane, strip), `ui/src/lib/protocol.test.ts` (fixture), and
 the UI walk (the strip at 375 px and the Plan pane at 1280 px on the
 seeded held session; census gains `tasks`). See DECISIONS.md.

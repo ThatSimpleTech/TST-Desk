@@ -19,19 +19,21 @@ import pytest
 from tests.test_compaction import pad, tiny_config
 from tests.test_dispatch import make_classifier
 from tests.test_loop import mock_factory, wait_for_turn
-from tests.test_queued_restart import _restored, _stop
+from tests.test_queued_restart import _restored, _seed, _stop
 from tstd.autonomy import Boundary, DecisionClass, DecisionClassifier
 from tstd.autonomy.classifier import RULE_TABLE, DecisionRequest
 from tstd.compaction import ContextMeter, compact_on_request, maybe_compact
 from tstd.context import PromptAssembler
 from tstd.context.tokens import HeuristicTokenCounter
+from tstd.daemon import Daemon
 from tstd.loop import agent_loop
 from tstd.mock import MockProvider, Script
 from tstd.policy import ApprovalOutcome, PolicyConfig, PolicyRule
-from tstd.protocol import ContextCompacted, TaskList, TaskListItem, UserTurn
+from tstd.protocol import AssistantDelta, ContextCompacted, TaskList, TaskListItem, UserTurn
 from tstd.provider import ChatMessage, content_as_text, wire_messages
 from tstd.router import TierRouter
 from tstd.session import Session, SessionRunner
+from tstd.session_persist import SessionPersist
 from tstd.task_list import carry_text, keep_task_list_visible, restore_task_list
 from tstd.tools import ToolDispatcher
 from tstd.tools.delegate import RESEARCH_CHILD_TOOLS, WORKER_CHILD_TOOLS
@@ -390,3 +392,61 @@ async def test_a_list_the_log_window_lost_is_logged_again() -> None:
 
     await keep_task_list_visible(session)
     assert len(session.event_log.all_events) == 1  # still in the window
+
+
+async def _revive(data_dir: Path, cap: int) -> Daemon:
+    daemon = Daemon(data_dir=data_dir, provider=MockProvider(default=Script(kind="stream")))
+    daemon._session_persist = SessionPersist(data_dir, log_max_events=cap)
+    await daemon._restore_sessions()
+    return daemon
+
+
+async def test_a_list_rotated_out_by_a_long_step_survives_a_restart(tmp_path: Path) -> None:
+    """One long step streams past the log cap; the list still comes back.
+
+    No window attaches, so only rotation itself can put the list back.
+    After the restart the next compaction must still carry it: a summary
+    folded in drops its old copy, so a lost list would leave the model
+    with no plan at all.
+    """
+    from tests.test_queued_restart import SID
+
+    data_dir, workspace = tmp_path / "data", tmp_path / "ws"
+    data_dir.mkdir()
+    workspace.mkdir()
+    await _seed(data_dir, workspace, [], [TaskList(session_id=SID, items=_items(PLAN), seq=1)])
+
+    first = await _revive(data_dir, cap=5)
+    try:
+        session = first.session_registry.get(SID)
+        assert session is not None and session.task_list == _items(PLAN)
+        for n in range(12):
+            await session.event_log.add(AssistantDelta(session_id=SID, delta=f"chunk {n}", seq=1))
+        kept = [e for e in session.event_log.all_events if isinstance(e, TaskList)]
+        assert kept and kept[-1].items == _items(PLAN)
+        assert len(session.event_log.all_events) <= 5
+    finally:
+        await _stop(first)
+
+    loaded = SessionPersist(data_dir, log_max_events=5).load(SID)
+    assert loaded is not None
+    on_disk = [e for e in loaded.events if isinstance(e, TaskList)]
+    assert on_disk and on_disk[-1].items == _items(PLAN)
+
+    second = await _revive(data_dir, cap=5)
+    try:
+        revived = second.session_registry.get(SID)
+        assert revived is not None
+        assert revived.task_list == _items(PLAN)
+        # A summary that carried the list, then more turns: compacting
+        # again must carry it forward, not drop it with the old summary.
+        earlier = compact_on_request(_conversation(3), COUNTER, carry=carry_text(_items(PLAN)))
+        assert earlier is not None
+        revived.conversation[:] = [*earlier[0], *_conversation(2)[1:]]
+        revived.context_meter = ContextMeter("brain", tiny_config().tier("brain"), COUNTER, None)
+        assert await revived.compact_now() is None
+        text = "\n".join(content_as_text(m.content) for m in revived.conversation)
+        assert "2. [in progress] Fix the date parser" in text
+        assert text.count(CARRY) == 1
+    finally:
+        await _stop(second)

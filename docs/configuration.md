@@ -1252,7 +1252,10 @@ are summarized. A later compaction carries only the newest list. The Plan pane s
 and a strip above the composer shows how far along it is and the item in progress; tap it to see
 every item. On a phone the strip is where the list shows, since the chat is the one pane on
 screen. The strip goes away once every item is done; the Plan pane keeps the finished list. The
-list is saved with the session's events and comes back after a restart. A delegated worker or
+list is saved with the session's events and comes back after a restart: when a long step pushes
+its last copy out of the event log's window (`session.log_max_events`), the daemon logs it again
+at once. Lowering `log_max_events` while a session is stopped can window an old list away; the
+agent's next `task_list` call writes it again. A delegated worker or
 research child has no task list.
 
 **How the prompt is measured (TD-5007).** The estimate counts the message text, the tool-call

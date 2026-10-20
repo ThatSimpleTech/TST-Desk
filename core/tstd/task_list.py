@@ -6,6 +6,8 @@ with the whole list: the Plan pane and the chat's task strip (what the
 phone shows) read the newest one. A compaction carries the list into its
 summary (``carry_text``), so a model whose earlier turns were summarized
 still sees its plan; the tool call that made the list may be gone.
+The newest ``task_list`` event is also the copy a restart reads, so the
+daemon logs the list again whenever the log window rotates it out.
 """
 
 from __future__ import annotations
@@ -68,9 +70,11 @@ async def keep_task_list_visible(session: Session) -> None:
     """Log the list again when the log window no longer has it.
 
     The event log keeps the newest events only, so a long session can
-    trim its last ``task_list`` away while the list is still current. A
-    window attaching then would show no list. Logging it again also puts
-    it back on disk, so a restart after that still finds it.
+    trim its last ``task_list`` away while the list is still current.
+    That event is the list's only copy on disk, so the daemon calls this
+    as soon as a rotation drops it: a restart then still finds the list,
+    and the next compaction still carries it. An attach calls it too, so
+    a window attaching never shows an empty Plan pane.
     """
     if not session.task_list:
         return

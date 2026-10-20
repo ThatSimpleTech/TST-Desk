@@ -16101,10 +16101,18 @@ it is re-injected were left open. Adam approved the story as written
 - **Where the list lives.** On the session (`Session.task_list`), rebuilt
   on revive from the newest `task_list` event in the persisted log, and
   logged again on attach when the log window no longer has it (the
-  TD-5155 held-messages pattern), which also puts it back on disk. No
-  separate file. Known gap, accepted: a list whose last update rotated out
-  of a 10,000-event window, with no window attached before a restart, is
-  lost; the model's next `task_list` call restores it. A fork (edit a
+  TD-5155 held-messages pattern), which also puts it back on disk. That
+  newest event is the list's only copy on disk, and every streamed delta
+  and shell line is an event, so one long step can rotate it out of the
+  window whether a window is attached or not. The daemon therefore logs
+  the list again as soon as an append's rotation drops it (in the same
+  subscriber that writes the event), so the window always holds it. A
+  lost list would be worse than a stale Plan pane: the next compaction
+  strips the old summary's carry and has nothing to carry, so the model
+  loses its plan. No separate file. Known gaps, accepted: a crash between
+  the rotating write and the re-log, or lowering `log_max_events` while
+  the session is stopped (the load windows the file), can still drop it;
+  the agent's next `task_list` call writes it again. A fork (edit a
   message) keeps the session's list; the model rewrites it if the branch
   changes the plan.
 - **The phone's view is a strip above the composer.** On a narrow window

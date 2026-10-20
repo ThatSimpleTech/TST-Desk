@@ -2452,6 +2452,7 @@ class Daemon:
                 )
             if result.trimmed:
                 await event_log.drop_before(result.earliest_seq)
+                await self._keep_task_list_on_disk(session_id, event_log)
         if isinstance(event, SessionStateEvent):
             await self._session_store.update_state(event.session_id, event.state)
         elif isinstance(event, UserTurn):
@@ -2482,6 +2483,21 @@ class Daemon:
         # subscription, and replay reads from persist storage instead.
         if isinstance(event, CuSession) and not event.active:
             await self._maybe_broadcast_cu_focus(event.session_id)
+
+    async def _keep_task_list_on_disk(self, session_id: str, event_log: SessionEventLog) -> None:
+        """Log the task list again when rotation drops its last event (TD-5122).
+
+        The newest ``task_list`` event is the list's only copy on disk: a
+        revive rebuilds the list from it, and the next compaction carries
+        that list into the model's context. One long step (streamed
+        deltas, shell output) can rotate it out with a window attached or
+        not, so it goes back in as soon as it falls out. The re-logged
+        event lands in the window and stops here.
+        """
+        session = self.session_registry.get(session_id)
+        if session is None or session.event_log is not event_log:
+            return
+        await keep_task_list_visible(session)
 
     async def _maybe_broadcast_cu_focus(self, closed_session_id: str) -> None:
         """Broadcast ``focus_window`` when no session still actuates (TD-4832).
