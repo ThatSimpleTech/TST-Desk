@@ -10892,7 +10892,7 @@ the conversation already called is loaded too. The request stays a plain
 `tool-search`; a loaded MCP tool still asks. Tests:
 `core/tests/test_mcp_tool_search.py` (ranking, `select:` including a name
 two servers share, the catalog and its budget, below/above the threshold,
-`off`/`always`, the latched decision, load order and a byte-identical
+`off`/`always`, `mode: off` written unquoted in config.yaml (YAML's false) and a bare `on` refused, the latched decision, load order and a byte-identical
 prefix, called tools from history, the list surviving a daemon restart and
 an unreadable file, the handler and its refusal, the rule's shape and order, a real loop turn
 against a strict endpoint mock that searches, loads, calls the tool once

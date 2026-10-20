@@ -16645,7 +16645,14 @@ the approach in place of a sign-off.
   `ENABLE_TOOL_SEARCH` has the same three settings and the same 10%
   default. On by default because the story's first criterion is the
   default behaviour; `off` gives back the old request byte for byte.
-  Global config only, like the rest of `mcp`.
+  Global config only, like the rest of `mcp`. **A bare `off` means
+  `off`:** PyYAML reads YAML 1.1, where unquoted `off` (and `no`,
+  `false`) is the boolean false, and `off` is the only way to turn this
+  default-on change off (there is no Settings control), so the field maps
+  false to `off` before validation. A bare `on`/`yes`/`true` is refused
+  with "write auto or always" rather than guessed at (review finding on
+  PR #44). Rejected: only documenting the quoting, which leaves the
+  config's own comment form failing to load.
 - **"Tool tokens" are the MCP tool definitions only**, counted the way the
   request serializes them, with the tier's calibrated counter (TD-5007),
   against that tier's `context_window`. Builtins are always sent: they are

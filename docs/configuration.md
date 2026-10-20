@@ -1111,7 +1111,7 @@ loaded five tools.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `mode` | `auto`, `always` or `off` | `auto` | `auto` leaves MCP tool schemas out of a tier's requests once they would take more than `threshold_percent` of its `context_window`. `always` leaves them out whatever their size. `off` sends every schema on every call, as before TD-5127, and never offers `tool_search`. |
+| `mode` | `auto`, `always` or `off` | `auto` | `auto` leaves MCP tool schemas out of a tier's requests once they would take more than `threshold_percent` of its `context_window`. `always` leaves them out whatever their size. `off` sends every schema on every call, as before TD-5127, and never offers `tool_search`. An unquoted `off` works too (YAML reads it, like `no` or `false`, as false, which counts as `off`); an unquoted `on`, `yes` or `true` is refused, since it names neither `auto` nor `always`. |
 | `threshold_percent` | number > 0, ≤ 100 | `10` | The share of a tier's `context_window` the MCP tool definitions may take before `auto` leaves them out. Read when the tier makes its first call of the session. |
 
 #### `mcp.servers.<id>`

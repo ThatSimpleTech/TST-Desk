@@ -32,7 +32,16 @@ from tstd.autonomy.classifier import (
     DecisionClassifier,
     DecisionRequest,
 )
-from tstd.config import McpConfig, McpServerConfig, McpToolSearchConfig, ModelConfig, TierConfig
+from tstd.config import (
+    ConfigError,
+    McpConfig,
+    McpServerConfig,
+    McpToolSearchConfig,
+    ModelConfig,
+    TierConfig,
+    default_config_yaml,
+    load_config,
+)
 from tstd.context.prompt import PromptAssembler
 from tstd.context.tokens import HeuristicTokenCounter
 from tstd.loop import agent_loop
@@ -288,6 +297,41 @@ class TestOffer:
         names = _names(_offer(deferral, registry, session, window=100_000, messages=messages))
         assert names[-1] == "wx__get_alerts"
         assert session.loaded_mcp_tools == ["wx__get_alerts"]
+
+
+# ── The mode as written in config.yaml ──────────────────────────────────
+
+
+def _config_with_mode(tmp_path: Path, mode: str) -> Path:
+    """The shipped config with ``mcp.tool_search.mode`` written as given."""
+    shipped = default_config_yaml()
+    block = "mcp:\n  servers: {}\n"
+    assert block in shipped
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        shipped.replace(block, f"{block}  tool_search:\n    mode: {mode}\n", 1),
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.mark.parametrize("written", ["off", "'off'", "Off", "no", "false"])
+def test_a_bare_off_turns_tool_search_off(tmp_path: Path, written: str) -> None:
+    # PyYAML reads an unquoted ``off`` as false; the config's own comment
+    # writes it that way, and it is the only way to turn the feature off.
+    config = load_config(_config_with_mode(tmp_path, written))
+    assert config.mcp.tool_search.mode == "off"
+
+
+@pytest.mark.parametrize("written", ["auto", "always"])
+def test_the_other_modes_load_as_written(tmp_path: Path, written: str) -> None:
+    assert load_config(_config_with_mode(tmp_path, written)).mcp.tool_search.mode == written
+
+
+@pytest.mark.parametrize("written", ["on", "yes", "true"])
+def test_a_bare_on_is_refused_with_the_fix(tmp_path: Path, written: str) -> None:
+    with pytest.raises(ConfigError, match=r"mcp\.tool_search\.mode: .*write auto or always"):
+        load_config(_config_with_mode(tmp_path, written))
 
 
 # ── A restart keeps what was loaded ─────────────────────────────────────

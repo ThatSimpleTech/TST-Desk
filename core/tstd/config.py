@@ -1296,6 +1296,22 @@ class McpToolSearchConfig(BaseModel):
     mode: McpToolSearchMode = "auto"
     threshold_percent: float = Field(default=10.0, gt=0, le=100)
 
+    @field_validator("mode", mode="before")
+    @classmethod
+    def _yaml_bare_off(cls, value: object) -> object:
+        """Read a bare YAML ``off`` as ``off``.
+
+        PyYAML follows YAML 1.1, where an unquoted ``off`` (or ``no``,
+        ``false``) is the boolean false, and ``off`` is the one way to
+        turn tool search off.  A bare ``on``/``yes``/``true`` names
+        neither ``auto`` nor ``always``, so it is refused with the fix.
+        """
+        if value is False:
+            return "off"
+        if value is True:
+            raise ValueError("YAML reads a bare on, yes or true as true; write auto or always")
+        return value
+
 
 class McpConfig(BaseModel):
     """User-listed MCP servers. Empty means none — no doctor rows."""
