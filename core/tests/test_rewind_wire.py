@@ -21,6 +21,7 @@ from tests.test_dispatch import make_config, start_loop, wait_for_turn
 from tests.test_peer_policy import BRIDGED, MACHINE, PHONE_VIEWER, VIEWER, _msg
 from tests.test_two_daemons import VIEWER as VIEWER_FEATURES
 from tests.test_two_daemons import _for, _open, _pair, _Steps, _until, _writes
+from tstd.config import WorktreeConfig
 from tstd.mock import Script
 from tstd.peer_policy import FORWARDED_VERBS, MACHINE_PEER_VERBS, check
 from tstd.protocol import FilesRestored, PreviewRestoreFiles, RestoreFiles, UserTurn
@@ -187,6 +188,9 @@ async def test_restore_through_a_hub_like_a_phone_does(
     try:
         work = make_repo(tmp_path, "ws-b")
         b = await fleet.start(tmp_path / "b", provider=_writes(work, "one.txt"))
+        # The fake model writes into ``work`` itself; a TD-5126 worktree would
+        # put the session elsewhere. This test is about the hub, not worktrees.
+        b.config = b.config.model_copy(update={"worktree": WorktreeConfig(enabled=False)})
         a = await fleet.start(tmp_path / "a")
         async with window(b) as b_screen, window(a, VIEWER_FEATURES) as hub:
             sid = await _open(b_screen, work)
