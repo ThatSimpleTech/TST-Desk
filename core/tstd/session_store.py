@@ -16,6 +16,7 @@ import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from .logging import get_logger
 
@@ -75,6 +76,10 @@ class SessionRecord:
     # only — not a forked config tree. Defaulted so a store written
     # before this field loads unchanged instead of being dropped.
     preset: str = ""
+    # The session's git worktree (TD-5126), as ``SessionWorktree.to_record``;
+    # None in the folder itself. ``workspace_path`` stays the folder the
+    # user opened, so the rail groups a worktree session with its project.
+    worktree: dict[str, Any] | None = None
     # Read-only plan mode (TD-5123). Plan mode is a safety boundary, so a
     # restart must not end it: revive reads it back from here. None on a
     # row written before the field; revive then takes the newest
@@ -112,6 +117,7 @@ class SessionStore:
         created_at: str | None = None,
         engine: str | None = None,
         preset: str | None = None,
+        worktree: dict[str, Any] | None = None,
     ) -> None:
         """Insert or refresh a session record and persist the store.
 
@@ -145,6 +151,7 @@ class SessionStore:
             auto_title=existing.auto_title if existing else None,
             engine=chosen_engine,
             preset=chosen_preset,
+            worktree=worktree if worktree is not None or existing is None else existing.worktree,
             plan_mode=existing.plan_mode if existing else False,
         )
         self._records[session_id] = record
@@ -261,6 +268,16 @@ class SessionStore:
         if record is None:
             return False
         record.workspace_path = workspace_path
+        record.updated_at = _now_iso()
+        await self._persist()
+        return True
+
+    async def set_worktree(self, session_id: str, worktree: dict[str, Any] | None) -> bool:
+        """Record the session's worktree, or None once it is closed (TD-5126)."""
+        record = self._records.get(session_id)
+        if record is None:
+            return False
+        record.worktree = worktree
         record.updated_at = _now_iso()
         await self._persist()
         return True

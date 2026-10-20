@@ -29,7 +29,7 @@ from websockets.asyncio.client import connect
 from .config import EmbeddingsConfig, ModelConfig, Preset, TierConfig
 from .daemon import Daemon
 from .e2e_checks import HarnessResult
-from .e2e_harness import _send, _wait_for_port_file
+from .e2e_harness import _send, _wait_for_port_file, keep_in_checkout
 from .e2e_memory_checks import git, verify_memory, workspace_bytes
 from .e2e_plan import MemoryHarnessPlan, MemoryResolution
 from .memory_store import memory_dir, scaffold_workspace_memory
@@ -131,6 +131,7 @@ def _prepare_workspace(workspace: Path, plan: MemoryHarnessPlan) -> None:
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "AGENTS.md").write_text(plan.steering, encoding="utf-8")
     (workspace / ".gitignore").write_text(_GITIGNORE, encoding="utf-8")
+    keep_in_checkout(workspace)
     scaffold_workspace_memory(workspace)
     root = memory_dir(workspace)
     for name, text in plan.memory_files.items():

@@ -77,6 +77,7 @@ no effect.
 | `mcp` | mapping | empty servers | User-listed MCP servers (TD-4401). Omitted in an older user copy defaults to no servers. Empty `servers` adds no doctor rows. HTTP `url` must be loopback; off-box is refused before dial. A server's token is `keychain:<entry>` in its `env` or `headers`, never the value (TD-5110). |
 | `engine` | mapping | see below | Which agent loop new sessions use. `native` is the TST 3-tier OpenAI-compatible loop. `grok` spawns the installed Grok Build CLI over ACP. Omitted in an older user copy is filled from the shipped file at load. |
 | `steering` | mapping | see below | User-global steering (TD-4845). Omitted in an older user copy is filled from the shipped file at load. |
+| `worktree` | mapping | see below | A git worktree per session (TD-5126). On by default: a session or scheduled job in a git repository works in its own worktree. Omitted in an older user copy is the defaults, on. |
 
 ### `credentials`
 
@@ -873,6 +874,76 @@ How long one scheduled turn may run before the daemon cancels it (TD-3819). The 
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `max_run_seconds` | number > 0, at most 3600 | `900` | Seconds one turn may run when the job does not set its own limit. 900 is 15 minutes. The receipt rounds the budget up to whole minutes. |
+
+### `worktree`
+
+A git worktree per session (TD-5126). A session or scheduled job opened on a folder in a git
+repository gets its own worktree, on a new branch `tst/wt/<first 8 of the session id>` from
+the main checkout's `HEAD`, so two sessions in one repository never edit the same files. The
+session works in the worktree's copy of the folder; the rail still groups it under the folder
+and shows its branch. A folder outside git, or a repository with no commit yet, works as
+before, and so does a folder the last commit does not have (new, untracked or ignored): a
+worktree's copy of it would be empty. If git cannot make the worktree, the session works in
+the folder; its `worktree_state` note says why, and `tst run` prints it.
+
+- **Uncommitted changes stay behind.** The worktree starts from `HEAD`. When the main checkout
+  has uncommitted changes, the new chat says so and offers **Start in the main checkout
+  instead**. TST Desk's own untracked `.tst/` files (the memory templates, the copied config)
+  are not counted.
+- **What comes along.** `.tst/config.yaml` is copied when git does not track it, and a trust
+  decision made on the same bytes carries over (§4.8). Ignored files that
+  `.tst/worktree-include` names are copied: gitignore syntax, matched from the repository's
+  top like `.git/info/exclude`, and only files git ignores (a `.env`, say). A workspace's
+  `worktree.setup` command then runs once in the new worktree (§4.10).
+- **Trust covers the bytes, wherever they sit.** Trusting or declining the config on the card
+  in a worktree chat decides the project folder's file and every other worktree's copy too
+  when they hold the same bytes, and the other way round, so the next chat does not ask
+  again. A `worktree.setup` that was skipped for want of trust runs in that chat once you
+  trust it, unless a turn is running (then the next new chat runs it).
+- **Settings TST Desk saves.** When git does not track `.tst/config.yaml`, Always allow,
+  Revoke, a spend cap and import approvals are saved to the project folder's file, as without
+  worktrees, and the worktree's copy follows it: it is refreshed then, and when the session
+  starts or is revived. A tracked config is the branch's own file: a save there is a change
+  in the worktree, merged back or removed with the rest.
+- **Filters.** The checkout runs with git filter drivers off, as every other git call the
+  daemon makes (TD-5157). A file a filter would rewrite (git-lfs) is checked out as git
+  stores it; `worktree.setup: "git lfs pull"` fetches the real files.
+- **Closing.** A row's **Close worktree…** keeps it (its folder and branch stay on disk),
+  merges it back (its changes are committed on the branch and the branch is merged into the
+  main checkout; a merge that would conflict, or a main checkout in the middle of a merge or
+  rebase, is refused and nothing changes) or removes it with its changes. An unchanged
+  worktree is removed whichever you pick. The session then works in the main checkout.
+- **Removed on its own when unchanged:** when its session is deleted, and when a scheduled
+  run ends. A worktree with changes is never removed without your choice: deleting its
+  session leaves it on disk on its branch, and a scheduled run's stays with its session.
+- **`tst run` too.** It opens an ordinary session, so its changes land in that session's
+  worktree, and it says so on stderr in every output mode: the branch and the worktree's
+  path (`--output json` keeps its one object). Close it from the rail or `git merge` the
+  branch, or set `worktree.enabled: false` for a scripted folder.
+- **Delegated workers.** `delegate` with `worktree: true` gives the child its own worktree
+  from the parent's last commit. The child is told that worktree as its root, the one its
+  tools work in. Its changes come back committed on its branch, which the parent reviews and
+  merges through the shell; the folder is removed.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `enabled` | bool | `true` | Worktrees for sessions, scheduled jobs and delegated workers on this computer. A workspace can still turn them off for itself (§4.10). |
+| `folder` | string | `""` | Where worktrees go, one folder each named `<repository>-<id>`. Empty is `worktrees/` in the data dir, outside every repository. `~` is expanded. |
+| `setup_timeout_s` | int 10–3600 | `600` | Seconds a workspace's `worktree.setup` may run before it is stopped and reported as failed. |
+
+<!-- verify: model -->
+```yaml
+presets:
+  local:
+    brain: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    worker: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    validator: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+active_preset: local
+worktree:
+  enabled: true
+  folder: "~/worktrees"
+  setup_timeout_s: 900
+```
 
 ### `remote`
 
@@ -1835,8 +1906,8 @@ template whose values are the defaults, so a scaffolded file changes nothing unt
 file is read when a workspace opens and again when a paused session resumes, which is what lets
 you raise a cap and continue without restarting.
 
-Seven top-level sections live here, each read by a different part of the daemon: `boundary`,
-`caps`, `attachments`, `policy`, `approved_external_imports`, `memory`, and `stop_check`.
+Eight top-level sections live here, each read by a different part of the daemon: `boundary`,
+`caps`, `attachments`, `policy`, `approved_external_imports`, `memory`, `stop_check`, and `worktree`.
 
 **A file that loosens anything waits for your trust (TD-5113).** This file usually arrives with
 a clone, so one that loosens the packaged defaults (an `auto` rule, a network host, a raised
@@ -2566,6 +2637,7 @@ them when:
 | `boundary.writable_paths` | An entry is absolute, starts with `~`, or climbs out with `..`. Writes outside the workspace are refused whatever this says; the entry is shown because the file asked for it. |
 | `caps.*`, `attachments.*`, `memory.max_lines` | The value is above the default. For `caps.shell_memory_mb` the default is half of this machine's RAM, so the same file can loosen on a small laptop and not on a big box. |
 | `approved_external_imports` | It lists any path. |
+| `worktree.setup` | It names a command. The daemon runs it in each new worktree (TD-5126), so a repo-shipped one waits for your trust; until then the new chat says it was skipped. |
 | `mcp_servers`, `hooks` | The key is set at all. TST Desk does not read either from a workspace yet; they are judged now so a later feature cannot run them untrusted. |
 | `stop_check.checks` | It names any check (TD-5124). A check runs on its own whenever the model ends a turn: a command through the shell tool, or a statement that goes to the model as a message when it fails. |
 
@@ -2665,6 +2737,28 @@ charter, and it survives a restart.
 
 **A repo's `stop_check` waits for your trust (§4.8).** It runs on its own at every turn end, so it
 counts as loosening. Your own `/goal` needs no trust.
+
+### 4.10 `worktree` — a worktree per session (TD-5126)
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `enabled` | bool | `true` | `false` keeps every session and scheduled job in this folder, with no worktree. Read even from a file you have not trusted: turning worktrees off loosens nothing. Settings' `worktree.enabled` (§2) turns them off everywhere. |
+| `setup` | string | `""` | A shell command run once in each new worktree, in the folder's copy (`npm ci`, `uv sync`). It runs in the background with secrets stripped from its environment, for up to `worktree.setup_timeout_s`; the session's first turn waits for it. The new chat shows that it is running, and its output's tail if it fails. Applies only from a trusted file (§4.8); trusting the file on the card runs a skipped setup in that chat. |
+
+<!-- verify: workspace -->
+```yaml
+worktree:
+  enabled: true
+  setup: "npm ci"
+```
+
+`.tst/worktree-include` sits beside this file. It lists, in gitignore syntax, ignored files to
+copy from the main checkout into each new worktree:
+
+```text
+.env
+config/local.json
+```
 
 ---
 

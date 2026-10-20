@@ -591,6 +591,16 @@ export interface RenameSession extends ClientMessage {
   title: string;
 }
 
+/** Close a session's git worktree (TD-5126). No `action` asks: an unchanged
+ *  worktree is removed, a changed one is refused with `worktree_has_changes`
+ *  so the row can offer keep, merge back or remove. Answered with
+ *  session_list; the session then works in its folder. */
+export interface CloseWorktree extends ClientMessage {
+  type: "close_worktree";
+  session_id: string;
+  action?: "keep" | "merge" | "remove" | null;
+}
+
 // ── Onboarding (TD-1101 first-run wizard) ────────────────────────────
 
 export interface GetSetupState extends ClientMessage {
@@ -1080,6 +1090,7 @@ export type ClientMessageUnion =
   | DeleteSession
   | MoveSession
   | RenameSession
+  | CloseWorktree
   | GetSetupState
   | SetApiKey
   | DeleteApiKey
@@ -1762,6 +1773,17 @@ export interface InstructionStack extends DaemonEvent {
   skills?: SkillStackEntry[];
 }
 
+/** The git worktree a session works in (TD-5126). */
+export interface SessionWorktreeInfo {
+  branch: string;
+  /** Where the agent works: the worktree's copy of the folder. */
+  path: string;
+  /** Uncommitted paths the main checkout had when the worktree was made. */
+  main_dirty: number;
+  setup: "none" | "running" | "ok" | "failed" | "skipped";
+  setup_note: string;
+}
+
 export interface SessionSummary {
   session_id: string;
   workspace_path: string;
@@ -1795,6 +1817,9 @@ export interface SessionSummary {
    *  null/absent for the answering daemon's own. Its id is then bridged:
    *  `<raw>:<machine>`. */
   machine?: string | null;
+  /** TD-5126: the git worktree this session works in; `workspace_path`
+   *  stays the folder it was opened on. Null/absent in that folder. */
+  worktree?: SessionWorktreeInfo | null;
 }
 
 export interface SessionList extends DaemonEvent {
@@ -2352,6 +2377,14 @@ export interface TaskList extends DaemonEvent {
   items: TaskListItem[];
 }
 
+/** A session's worktree changed: made, set up, or closed (TD-5126). */
+export interface WorktreeState extends DaemonEvent {
+  type: "worktree_state";
+  session_id: string;
+  worktree: SessionWorktreeInfo | null;
+  note: string;
+}
+
 /** One item of a done-check after it ran (TD-5124). */
 export interface StopCheckItem {
   /** The check as configured (`$ ...` or a statement), or the goal. */
@@ -2689,6 +2722,7 @@ export type DaemonEventUnion =
   | ContextCompacted
   | ContextUsage
   | TaskList
+  | WorktreeState
   | StopCheck
   | SessionGoal
   | SteeringReloaded

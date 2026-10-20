@@ -413,6 +413,25 @@ test("shows a done-check on the reply and folds it", async () => {
 	await page.setViewportSize({ width: 1280, height: 800 });
 });
 
+/**
+ * TD-5126: the walk's workspace is a git repository, so the chat the first
+ * test opened works in its own worktree and its rail row shows the branch.
+ * The mock reply changed no file, so Close worktree removes it in one step
+ * and the row goes back to the main checkout.
+ */
+test("closes a chat's unchanged git worktree from the rail", async () => {
+	const row = page.locator("[data-rail-row]").filter({ hasText: "Say hello" });
+	const branch = row.getByText(/^tst\/wt\/[0-9a-f]{8}$/);
+	await expect(branch).toBeVisible();
+	await page.getByRole("button", { name: /^Actions for session Say hello/ }).click();
+	await page
+		.getByRole("group", { name: /^Actions for session Say hello/ })
+		.getByRole("button", { name: "Close worktree…" })
+		.click();
+	await expect(branch).toHaveCount(0);
+	await expect(row).toBeVisible();
+});
+
 test("runs the command palette actions that stay in this window", async () => {
 	await openPalette(page);
 	const palette = page.getByRole("dialog", { name: "Command palette" });

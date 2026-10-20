@@ -253,6 +253,21 @@ class AmbiguousClassifier:
         self._static.boundary = boundary
         self._cache.clear()
 
+    def for_boundary(self, boundary: Boundary) -> AmbiguousClassifier:
+        """A sibling that judges inside *boundary*, with this one's connector.
+
+        For a delegate child in its own worktree (TD-5126): its paths are
+        judged against its own root, and nothing it judged leaks back into
+        this cache, which belongs to the parent's wall.
+        """
+        return AmbiguousClassifier(
+            static=DecisionClassifier(boundary),
+            backend=self._backend,
+            min_confidence=self._min_confidence,
+            max_cache_entries=self._max_cache_entries,
+            on_audit=self._on_audit,
+        )
+
     def _cache_key(self, request: DecisionRequest) -> tuple[str, str]:
         return (request.tool_name, canonical_arguments(request.arguments))
 

@@ -161,6 +161,7 @@ from .tools.boundary import PathGuard
 from .tools.consult import offered_tools
 from .tools.dispatch import build_decision_request, canonicalize_path_fields
 from .workspace_trust import trusted_imports
+from .worktree_config import config_home, refresh_config
 
 
 class ProviderLike(Protocol):
@@ -1253,16 +1254,21 @@ def _persist_import_approvals(session: Session, approved: set[Path]) -> None:
             (``UntrustedConfigError``): the approval then stays session-only.
     """
     store = session.trust_store
+    # TD-5126: a worktree's untracked config is the project's file; its
+    # copy follows once the project's is saved.
+    home = config_home(session)
     if store is None:
-        save_approved_imports(session.workspace_path, approved)
-        return
-    # The key is rewritten whole and nothing else moves, so the write can
-    # only add what it owns; it never exposes another section.
-    store.write_through(
-        session.workspace_path,
-        lambda: save_approved_imports(session.workspace_path, approved),
-        owns=("approved_external_imports",),
-    )
+        save_approved_imports(home, approved)
+    else:
+        # The key is rewritten whole and nothing else moves, so the write can
+        # only add what it owns; it never exposes another section.
+        store.write_through(
+            home,
+            lambda: save_approved_imports(home, approved),
+            owns=("approved_external_imports",),
+        )
+    if session.worktree is not None and not session.worktree.config_tracked:
+        refresh_config(session.worktree, store)
 
 
 def session_boundary(session: Session) -> Boundary:

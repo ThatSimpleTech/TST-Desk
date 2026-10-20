@@ -41,6 +41,7 @@ from .protocol import SessionState as SessionStateEvent
 from .provider import ChatMessage
 from .questions import PendingQuestion, resolve_all
 from .workspace_trust import TrustStore, WorkspaceConfigView
+from .worktree import SessionWorktree
 
 if TYPE_CHECKING:
     from .config import ModelConfig
@@ -429,6 +430,15 @@ class Session:
         # TD-2603: machine-wide opt-in. The daemon stamps this on open
         # and when the Settings toggle flips.
         self.load_global_memory = False
+        # TD-5126: the git worktree this session works in, or None for the
+        # folder it was opened on. ``workspace_path`` is then the worktree's
+        # copy of that folder; ``project_path`` is still the folder.
+        self.worktree: SessionWorktree | None = None
+        # Set while ``worktree.setup`` runs; a turn waits for it.
+        self.worktree_ready: asyncio.Event | None = None
+        # Where worktrees go (``worktree.folder``), stamped by the daemon so
+        # a delegate child can have one too. None: no worktrees here.
+        self.worktree_folder: Path | None = None
         # TD-3903: this session has used a desktop_ / browser_ tool.
         # Live flag; revive also scans the event log (same signal as Screen).
         self.used_cu = False
@@ -536,6 +546,11 @@ class Session:
         if not self.VALID_TRANSITIONS.get(self._state, set()):
             return False
         return self._open_turns > 0
+
+    @property
+    def project_path(self) -> str:
+        """The folder the user opened; the worktree's is ``workspace_path`` (TD-5126)."""
+        return self.worktree.project if self.worktree is not None else self.workspace_path
 
     def reassign_workspace(self, workspace_path: str) -> None:
         """Point the session at another workspace (TD-1715 move to project).
@@ -1222,6 +1237,11 @@ class Session:
         while True:
             if self._cancel_event.is_set():
                 return None
+            ready = self.worktree_ready
+            if ready is not None and not ready.is_set():
+                # TD-5126: the worktree's setup command is still running.
+                await asyncio.sleep(0.05)
+                continue
             try:
                 return self._user_message_queue.get_nowait()
             except asyncio.QueueEmpty:

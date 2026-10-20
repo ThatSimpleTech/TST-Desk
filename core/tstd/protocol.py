@@ -990,6 +990,24 @@ class RenameSession(ClientMessage):
     title: str
 
 
+class CloseWorktree(ClientMessage):
+    """Close a session's git worktree (TD-5126).
+
+    ``action`` is what happens to a worktree with changes: ``keep`` leaves
+    its folder and branch on disk, ``merge`` commits its changes on the
+    branch and merges the branch into the main checkout, ``remove``
+    deletes both. An unchanged worktree is removed whatever ``action``
+    says, and with no ``action`` a changed one is refused with
+    ``worktree_has_changes`` so the window can ask. Either way the session
+    then works in the main checkout. Refused mid-turn. Answered with
+    ``session_list``.
+    """
+
+    type: Literal["close_worktree"] = "close_worktree"
+    session_id: str
+    action: Literal["keep", "merge", "remove"] | None = None
+
+
 class GetSetupState(ClientMessage):
     """Request the onboarding setup state (TD-1101 first-run wizard).
 
@@ -2362,6 +2380,20 @@ class TaskList(DaemonEvent):
     items: list[TaskListItem] = Field(default_factory=list, max_length=30)
 
 
+class WorktreeState(DaemonEvent):
+    """A session's worktree changed (TD-5126): made, set up, or closed.
+
+    ``worktree`` is the state now; None means the session works in the
+    folder it was opened on. ``note`` says what happened in a sentence:
+    the setup's result, a merge, or why no worktree could be made.
+    """
+
+    type: Literal["worktree_state"] = "worktree_state"
+    session_id: str
+    worktree: SessionWorktreeInfo | None = None
+    note: str = ""
+
+
 StopCheckOutcome = Literal["passed", "retry", "failed", "unchecked"]
 
 
@@ -2773,6 +2805,25 @@ class InstructionStack(DaemonEvent):
     skills: list[SkillStackEntry] = Field(default_factory=list)
 
 
+WorktreeSetup = Literal["none", "running", "ok", "failed", "skipped"]
+
+
+class SessionWorktreeInfo(BaseModel):
+    """The git worktree a session works in (TD-5126).
+
+    ``main_dirty`` counts the main checkout's uncommitted paths when the
+    worktree was made: the worktree does not have them. ``setup`` is the
+    state of the workspace's ``worktree.setup`` command; ``setup_note``
+    carries its output's tail or why it was skipped.
+    """
+
+    branch: str
+    path: str
+    main_dirty: int = Field(default=0, ge=0)
+    setup: WorktreeSetup = "none"
+    setup_note: str = ""
+
+
 class SessionSummary(BaseModel):
     """One entry in a ``session_list`` response."""
 
@@ -2816,6 +2867,9 @@ class SessionSummary(BaseModel):
     # (TD-1714). Additive with a default — a client that ignores it
     # still reads the list it always did.
     busy: bool = False
+    # The git worktree this session works in (TD-5126); ``workspace_path``
+    # stays the folder it was opened on. Additive: None in that folder.
+    worktree: SessionWorktreeInfo | None = None
 
 
 class SessionList(DaemonEvent):
@@ -3946,6 +4000,7 @@ ClientMessageT = Annotated[
     | DeleteSession
     | MoveSession
     | RenameSession
+    | CloseWorktree
     | GetSetupState
     | SetApiKey
     | ValidateApiKey
@@ -4039,6 +4094,7 @@ DaemonEventT = Annotated[
     | ContextCompacted
     | ContextUsage
     | TaskList
+    | WorktreeState
     | StopCheck
     | SessionGoal
     | SteeringReloaded
@@ -4167,6 +4223,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "delete_session",
         "move_session",
         "rename_session",
+        "close_worktree",
         "get_setup_state",
         "set_api_key",
         "validate_api_key",
@@ -4260,6 +4317,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "context_compacted",
         "context_usage",
         "task_list",
+        "worktree_state",
         "stop_check",
         "session_goal",
         "steering_reloaded",

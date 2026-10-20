@@ -152,6 +152,9 @@ def _boundary_loosened(path: Path, data: dict[str, Any]) -> list[Loosened]:
             f"attachments.{name}", getattr(cfg.attachments, name), getattr(base.attachments, name)
         )
     out += _raised("memory.max_lines", cfg.memory.max_lines, base.memory.max_lines)
+    if cfg.worktree.setup.strip():
+        # A command the daemon runs in each new worktree (TD-5126).
+        out.append(Loosened("worktree.setup", cfg.worktree.setup, "none"))
     # A done-check (TD-5124) runs on its own at every turn end: a command
     # through the shell tool, or a statement sent to the model as a user
     # message when it fails. Like ``hooks``, a repo's own counts as soon
