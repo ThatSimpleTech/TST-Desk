@@ -1146,7 +1146,8 @@
       "caps": {
         "spend_usd": 25.0,
         "wall_clock_hours": 8.0,
-        "max_iterations": 200
+        "max_iterations": 200,
+        "shell_memory_mb": null
       },
       "stop_conditions": [
         "any Class C decision"
