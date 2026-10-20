@@ -33,6 +33,10 @@
 		"Copy report",
 		"Re-run"
 	],
+	"held": [
+		"Remove held message",
+		"Send held message"
+	],
 	"more-views": [
 		"Plan",
 		"Preview",
