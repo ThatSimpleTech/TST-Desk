@@ -67,11 +67,9 @@ StepKind = Literal["task", "reply", "tool_call", "tool_result", "note"]
 def resolve_kind(kind: str | None, *, plan_mode: bool) -> DelegateKind:
     """The kind a call runs as: research by default in plan mode.
 
-    Only the default moves. Plan mode today is TD-4603's brain lock, under
-    which every tool still dispatches, so an explicit ``kind: worker`` runs
-    the writing worker as before; refusing it would add no safety while
-    the brain itself can still write. TD-5123's read-only plan mode is
-    what will refuse writes, the child's included.
+    In read-only plan mode (TD-5123) the classifier refuses an explicit
+    ``kind: worker`` before this runs, and the shared classifier refuses
+    any write a child makes, so only the default needs moving here.
     """
     if kind is None:
         return "research" if plan_mode else "worker"

@@ -162,6 +162,18 @@ export interface AnswerQuestion extends ClientMessage {
   declined?: boolean;
 }
 
+/** Review the plan an `exit_plan_mode` call parked (TD-5123). `approve`
+ *  ends plan mode and pins the plan; `plan`, when sent, is the person's
+ *  edit and replaces the model's. `reject` keeps plan mode on. */
+export interface ReviewPlan extends ClientMessage {
+  type: "review_plan";
+  session_id: string;
+  tool_call_id: string;
+  decision: "approve" | "reject";
+  plan?: string | null;
+  feedback?: string;
+}
+
 export interface ListPolicyRules extends ClientMessage {
   type: "list_policy_rules";
   session_id: string;
@@ -577,6 +589,16 @@ export interface RenameSession extends ClientMessage {
   type: "rename_session";
   session_id: string;
   title: string;
+}
+
+/** Close a session's git worktree (TD-5126). No `action` asks: an unchanged
+ *  worktree is removed, a changed one is refused with `worktree_has_changes`
+ *  so the row can offer keep, merge back or remove. Answered with
+ *  session_list; the session then works in its folder. */
+export interface CloseWorktree extends ClientMessage {
+  type: "close_worktree";
+  session_id: string;
+  action?: "keep" | "merge" | "remove" | null;
 }
 
 // ── Onboarding (TD-1101 first-run wizard) ────────────────────────────
@@ -1018,6 +1040,7 @@ export type ClientMessageUnion =
   | Deny
   | AlwaysAllow
   | AnswerQuestion
+  | ReviewPlan
   | ListPolicyRules
   | RevokePolicyRule
   | SetSkipAllApprovals
@@ -1067,6 +1090,7 @@ export type ClientMessageUnion =
   | DeleteSession
   | MoveSession
   | RenameSession
+  | CloseWorktree
   | GetSetupState
   | SetApiKey
   | DeleteApiKey
@@ -1388,6 +1412,35 @@ export interface QuestionAnswered extends DaemonEvent {
   tool_call_id: string;
   outcome: "answered" | "declined" | "stopped" | "timed_out" | "cancelled";
   answers: QuestionAnswer[];
+}
+
+/** An `exit_plan_mode` call parked its turn on the model's plan
+ *  (TD-5123). The call's `tool_result` clears the card. */
+export interface PlanReview extends DaemonEvent {
+  type: "plan_review";
+  session_id: string;
+  tool_call_id: string;
+  plan: string;
+}
+
+/** How a parked plan review ended (TD-5123). `plan` is the approved text,
+ *  the person's edit when `edited`; empty unless approved. */
+export interface PlanReviewed extends DaemonEvent {
+  type: "plan_reviewed";
+  session_id: string;
+  tool_call_id: string;
+  outcome: "approved" | "rejected" | "stopped" | "timed_out" | "cancelled";
+  plan: string;
+  edited: boolean;
+  feedback: string;
+}
+
+/** The plan the person approved, pinned to the session (TD-5123). The
+ *  newest one is the pinned plan the Plan pane shows. */
+export interface PlanPinned extends DaemonEvent {
+  type: "plan_pinned";
+  session_id: string;
+  plan: string;
 }
 
 export interface DecisionLogged extends DaemonEvent {
@@ -1720,6 +1773,17 @@ export interface InstructionStack extends DaemonEvent {
   skills?: SkillStackEntry[];
 }
 
+/** The git worktree a session works in (TD-5126). */
+export interface SessionWorktreeInfo {
+  branch: string;
+  /** Where the agent works: the worktree's copy of the folder. */
+  path: string;
+  /** Uncommitted paths the main checkout had when the worktree was made. */
+  main_dirty: number;
+  setup: "none" | "running" | "ok" | "failed" | "skipped";
+  setup_note: string;
+}
+
 export interface SessionSummary {
   session_id: string;
   workspace_path: string;
@@ -1753,6 +1817,9 @@ export interface SessionSummary {
    *  null/absent for the answering daemon's own. Its id is then bridged:
    *  `<raw>:<machine>`. */
   machine?: string | null;
+  /** TD-5126: the git worktree this session works in; `workspace_path`
+   *  stays the folder it was opened on. Null/absent in that folder. */
+  worktree?: SessionWorktreeInfo | null;
 }
 
 export interface SessionList extends DaemonEvent {
@@ -2310,6 +2377,49 @@ export interface TaskList extends DaemonEvent {
   items: TaskListItem[];
 }
 
+/** A session's worktree changed: made, set up, or closed (TD-5126). */
+export interface WorktreeState extends DaemonEvent {
+  type: "worktree_state";
+  session_id: string;
+  worktree: SessionWorktreeInfo | null;
+  note: string;
+}
+
+/** One item of a done-check after it ran (TD-5124). */
+export interface StopCheckItem {
+  /** The check as configured (`$ ...` or a statement), or the goal. */
+  item: string;
+  source: "workspace" | "goal";
+  via: "shell" | "worker";
+  passed: boolean;
+  /** False when it could not be judged (a declined command, no verdict). */
+  decided?: boolean;
+  /** The command output's start and tail, or the worker's reply. */
+  detail?: string;
+}
+
+/** The done-check ran because the model ended an interactive turn
+ *  (TD-5124). `retry`: the failure went back to the model and the turn goes
+ *  on. `failed`: still failing after `max_retries` tries, so the turn ends
+ *  with `stop_check_failed`. `unchecked`: no item failed, but one could not be judged. */
+export interface StopCheck extends DaemonEvent {
+  type: "stop_check";
+  session_id: string;
+  outcome: "passed" | "retry" | "failed" | "unchecked";
+  attempt: number;
+  max_retries: number;
+  items: StopCheckItem[];
+}
+
+/** The session's goal after `/goal` set or cleared it, or a done-check met
+ *  it (TD-5124). `goal` is null once cleared. The newest one is the goal. */
+export interface SessionGoal extends DaemonEvent {
+  type: "session_goal";
+  session_id: string;
+  goal: string | null;
+  change: "set" | "cleared" | "met";
+}
+
 export interface TierSwitched extends DaemonEvent {
   type: "tier_switched";
   session_id: string;
@@ -2598,6 +2708,9 @@ export type DaemonEventUnion =
   | ApprovalRequest
   | QuestionRequest
   | QuestionAnswered
+  | PlanReview
+  | PlanReviewed
+  | PlanPinned
   | DecisionLogged
   | CheckpointNotice
   | VerifyStarted
@@ -2609,6 +2722,9 @@ export type DaemonEventUnion =
   | ContextCompacted
   | ContextUsage
   | TaskList
+  | WorktreeState
+  | StopCheck
+  | SessionGoal
   | SteeringReloaded
   | RuleActivated
   | TierSwitched

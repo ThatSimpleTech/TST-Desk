@@ -207,6 +207,21 @@ class PromptAssembler:
         self._claude_global_fallback = claude_global_fallback
         self.last_assembled: AssembledPrompt | None = None
 
+    def for_workspace(self, workspace_path: str | Path) -> PromptAssembler:
+        """The same assembler bound to another root (TD-5126).
+
+        A delegate child in its own git worktree is told that root, and
+        reads its steering there: the root its tools are bound to.
+        """
+        twin = PromptAssembler(
+            workspace_path,
+            home_dir=self._home_dir,
+            tier_config=self._tier_config,
+            claude_global_fallback=self._claude_global_fallback,
+        )
+        twin._manifest = self._manifest
+        return twin
+
     async def assemble(
         self,
         tier: TierName,

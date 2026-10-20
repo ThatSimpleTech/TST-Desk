@@ -58,8 +58,9 @@ class TierRouter:
         self._override: TierName | None = None
         self._last_tier: TierName = "brain"
         self._escalated: bool = False
-        # TD-4603: in-memory only. Revive builds a fresh router; neither
-        # override nor plan is persisted.
+        # TD-4603: the override is in memory only; revive builds a fresh
+        # router. Plan mode is read-only since TD-5123, so the session row
+        # keeps it and revive sets it again (Daemon._revive_session).
         self._plan_mode: bool = False
 
     # ── Public API ─────────────────────────────────────────────────────

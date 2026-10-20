@@ -24,13 +24,14 @@
 	import PlanPane from './PlanPane.svelte';
 	import ApprovalBar from './ApprovalBar.svelte';
 	import QuestionBar from './QuestionBar.svelte';
+	import PlanReviewBar from './PlanReviewBar.svelte';
 	import SteeringProposalBar from './SteeringProposalBar.svelte';
 	import MemoryProposalBar from './MemoryProposalBar.svelte';
 	import WorkspaceTrustCard from './WorkspaceTrustCard.svelte';
 	import { onEvent } from '../connection-status.svelte.js';
 	import { entries, push } from '../timeline-store.svelte.js';
 	import { inspectorCounts, tabCount } from '../inspector';
-	import { selectRow, setPickForNewSession, visibleRows } from '../sessions.svelte.js';
+	import { selectRow, sessions, setPickForNewSession, visibleRows } from '../sessions.svelte.js';
 	import ChatPane from './chat/ChatPane.svelte';
 	import ProjectPane from './ProjectPane.svelte';
 	import ArtifactPane from './ArtifactPane.svelte';
@@ -77,6 +78,7 @@
 	import { startCuKill, setCuKill } from '../cu-kill.svelte.js';
 	import { startGrok } from '../grok.svelte.js';
 	import { startTaskLists } from '../task-list-store.svelte.js';
+	import { startGoals } from '../goal-store.svelte.js';
 	import { startVoice } from '../voice.svelte.js';
 	import { resolveShortcut, sessionSlot } from '../shortcuts';
 	import { sessionIdAtSlot, stepSessionId } from '../rail';
@@ -201,6 +203,7 @@
 		const offCuKill = startCuKill();
 		const offGrok = startGrok();
 		const offTaskLists = startTaskLists();
+		const offGoals = startGoals();
 		const offVoice = startVoice();
 		let offUpdates = () => {};
 		void startUpdates().then((off) => {
@@ -245,6 +248,7 @@
 			offCuKill();
 			offGrok();
 			offTaskLists();
+			offGoals();
 			offVoice();
 			offUpdates();
 			offCloseHint();
@@ -264,7 +268,9 @@
 
 	$effect(() => {
 		if (projects.surface !== 'artifacts') return;
-		bindArtifacts(session.sessionId, session.workspacePath);
+		// A worktree session's files are in its worktree (TD-5126).
+		const tree = sessions.rows.find((r) => r.sessionId === session.sessionId)?.worktree;
+		bindArtifacts(session.sessionId, tree?.path ?? session.workspacePath);
 	});
 
 	$effect(() => {
@@ -534,6 +540,7 @@
 
 <ApprovalBar />
 <QuestionBar />
+<PlanReviewBar />
 <SteeringProposalBar />
 <WorkspaceTrustCard />
 {#if projects.surface === 'home'}

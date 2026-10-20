@@ -9999,6 +9999,9 @@ the daemon's fixture). See DECISIONS.md. Later, TD-5119 adds `consult`
 to both kinds while it is on for the worker tier; it writes nothing and
 reaches no web host or MCP server, so the research child stays
 read-only, and with it off the research child has exactly these five.
+Since TD-5123 (2026-10-20) plan mode is read-only: an explicit
+`kind: worker` is refused there (`plan_mode`), and the default stays
+research.
 
 ---
 
@@ -10851,6 +10854,203 @@ disk, a restart finds it and the next compaction still carries it), `ui/src/lib/
 (store, Plan pane, strip), `ui/src/lib/protocol.test.ts` (fixture), and
 the UI walk (the strip at 375 px and the Plan pane at 1280 px on the
 seeded held session; census gains `tasks`). See DECISIONS.md.
+
+### TD-5124 — Done-check on interactive turns
+**Size:** 5 · **Depends on:** none · Gap audit 2026-10-14
+
+The definition-of-done poll ran only in unattended runs, so an interactive
+turn could stop early, or claim it was done, unchecked. Local models do
+both. Claude Code's hooks can block a stop, and its goal feature keeps
+working toward a condition.
+
+**Acceptance criteria:**
+- [x] A workspace can set a `stop_check` (a `$`-command or a worker-judged
+      statement, reusing the DoD code in core/tstd/autonomy/dod.py).
+- [x] When the model ends a turn, the check runs. On failure, its output
+      goes back as a user message, up to N times, and then the turn ends
+      with the failure shown.
+- [x] `/goal <statement>` sets a session goal checked the same way.
+- [x] It works without a signed charter.
+
+Done (2026-10-20): `core/tstd/stop_check.py` (the check),
+`core/tstd/session_goal.py` (`/goal`, the goal's restore), `stop_check` in `.tst/config.yaml` (`checks`, `max_retries` 3,
+`timeout_secs` 300; `core/tstd/boundary_config.py`), and the shared DoD
+pieces in `core/tstd/autonomy/dod.py` (`poll_definition_of_done` with
+runners that may answer "could not judge", `dod_worker_prompt`,
+`dispatch_check_command`). When the model ends a native interactive turn,
+on the normal path or the progress guard's DONE, each workspace check runs,
+then the session's goal: a `$` check through the classifier, policy and
+approval like any shell call, logged as its own `tool_call`/`tool_result`;
+a statement judged GREEN/RED by the worker. All green ends the turn (a goal
+in it is met and cleared). A red check goes back as a user message
+(`steer` and `check` on the stored message: no `user_turn`, not one of the
+window's numbered turns) and the turn continues; after `max_retries` the
+turn ends with `turn_complete` `failed`, `error_code: stop_check_failed`
+(`tst run` exits non-zero). A check that could not be judged ends the turn
+as `unchecked` with nothing sent back, unless another item is red: then
+the red one decides and only it goes back. Events: `stop_check` (outcome,
+attempt, items) and `session_goal` (`set`, `cleared`, `met`; restored on
+revive, logged again after rotation or on attach). `/goal` alone and `/goal
+clear` answer with no model call. A repo's `stop_check` waits for trust
+(TD-5113). The window shows the check as a fold on the reply (a failure the
+turn ended on opens on its own), a goal strip above the composer, `/goal`
+in the slash palette and copy for `stop_check_failed`; `tst run`/`tst
+attach` print a line on stderr. Not in unattended runs, delegate children,
+Grok sessions, or a turn that ends in read-only plan mode (TD-5123, merged
+from main: a planning turn is not a claim the work is done; the goal stays
+set). Tests: `core/tests/test_stop_check.py` (config, trust,
+`/goal` parsing, outcomes, the feedback's turn numbering and persistence, a
+shell check that fails then passes, `max_retries` 1 and 0, a declined
+command, a red command beside an unjudged statement or a declined command, a worker statement, `/goal` set/met/kept/status/clear, the
+progress guard's DONE, revive and rotation, a planning turn left unchecked), `ui/src/lib/stop-check.test.ts`,
+`ui/src/lib/slash-commands.test.ts`. See DECISIONS.md, docs/configuration.md
+§4.9 and docs/architecture.md.
+
+### TD-5123 — Read-only plan mode
+**Size:** 5 · **Depends on:** TD-5117 · Gap audit 2026-10-14
+
+TD-4603's plan mode only pinned routing to the brain; writes and shell
+still ran. Claude Code's plan mode analyzes without editing, then puts up
+a plan to approve.
+
+**Acceptance criteria:**
+- [x] In plan mode, the classifier refuses every mutating call (fs_write,
+      fs_edit, shell outside the TD-5103 list, MCP tools not marked
+      read-only). The refusal tells the model it is planning.
+- [x] Plan mode ends with a plan the user approves, rejects or edits.
+      Approving switches to normal mode with the plan pinned.
+- [x] Toggle from the composer, a slash command and the phone.
+
+Done (2026-10-20): the classifier's first rule, `plan-mode` (Class C,
+`refuses`), fires while the router is planning and the call is not
+plan-safe (`autonomy/classifier.plan_mode_allows`): a builtin on
+`PLAN_READ_ONLY_BUILTINS`, capture-only computer use, `shell` made only of
+the read-only list, `delegate` without `kind: worker`, or an MCP tool the
+user listed in the new `mcp.servers.<id>.read_only_tools`. Plugin tools,
+the GitHub writes (which declare no `mutates`) and `propose_steering_edit`
+are refused too. Dispatch returns the refusal (`plan_mode`) before the
+policy gate, so no `auto` rule, approval or skip-all runs it, and its text
+(`plan_mode.planning_refusal`) says the model is planning, why, and to call
+`exit_plan_mode`. A planning turn's message reaches the model with
+`PLAN_NOTE` after it. `exit_plan_mode` (`tools/exit_plan.py`, Class A by
+`exit-plan-mode`) parks the turn on `plan_review` (`plan_review.py`) until
+`review_plan`: approve (with an optional edited `plan`) turns plan mode off
+(`tier_state.plan` false), pins the plan (`plan_pinned`, carried into every
+compaction summary ahead of the task list, shown in the Plan pane, read
+back on revive) and hands the model the approved text; reject keeps plan
+mode on and returns the note. Stop, cancel and the approval timeout end the
+wait; skip-all never reviews; unattended runs refuse. The window and the
+phone show `PlanReviewCard.svelte` (Approve, Edit plan / Show plan, Reject,
+a note); `/plan`, `/plan on|off` and `/plan <task>` are handled by the
+window; the composer's Plan chip is TD-4603's. `tst run` exits
+`approval_needed` on a plan, and a `plan_mode` refusal counts as refused.
+Plan mode outlives a restart: the session row keeps `plan_mode` (written
+on every `tier_state` that changes it) and revive sets it again before the
+loop starts, so only approving or turning it off ends it. OS banners and the ntfy, Slack, Discord and Telegram channels say a plan
+is waiting. Tests: `core/tests/test_plan_mode.py` (every refusal and every
+read in plan mode, the allowlist pinned over all builtins, skip-all plus
+an `auto` rule cannot write, MCP marking from config, the note, approve,
+edit, reject, refusals, Stop, outside plan mode, `delegate kind: worker`,
+compaction carry, revive, plan mode kept across a restart with writes
+still refused, peers, channels, `tst run`),
+`ui/src/lib/plan-review.test.ts`, `ui/src/lib/plan-review-component.test.ts`,
+`ui/src/lib/task-list.test.ts` (pinned plan in the Plan pane),
+`ui/src/lib/os-notify.test.ts`, `ui/src/lib/protocol.test.ts`,
+`ui/src/lib/slash-commands.test.ts`, and the UI walk (at 375 px: the chip,
+`/plan`, `/plan <task>` and `/plan off`, the card's Edit, Show, note,
+Approve edited plan and Reject; then the pinned plan in the Plan pane at
+1280 px; census gains `plan-review` and `plan-review:editing`). The
+phone's APK is not rebuilt here; its WebView shows this UI once it is.
+See DECISIONS.md, docs/configuration.md §4.4 and docs/architecture.md.
+
+### TD-5126 — Worktree per session, on by default in git repos
+**Size:** 5 · **Depends on:** none · Gap audit 2026-10-14
+
+Sessions shared one working tree, so two sessions in one repository saw
+each other's half-made edits. Claude Code and its desktop app run
+parallel sessions in separate git worktrees; Adam did this by hand.
+On by default in git repos (Decisions, Adam, 2026-10-14).
+
+**Acceptance criteria:**
+- [x] Sessions and scheduled jobs in a git repo get their own worktree by
+      default (decided 2026-10-14). The daemon creates it under a
+      configured folder on a new branch from the current HEAD. One
+      workspace key turns it off.
+- [x] If the main checkout has uncommitted changes, the start screen says
+      the worktree won't have them and offers to start in the main
+      checkout instead.
+- [x] A `.tst/worktree-include` file (gitignore syntax) copies gitignored
+      files such as `.env` into each new worktree, and an optional setup
+      command runs once (for example `npm ci`).
+- [x] On close: keep, merge back or remove. Unchanged worktrees are
+      removed automatically.
+- [x] Delegate children can get their own worktree.
+- [x] The session rail shows the branch.
+
+Done (2026-10-20): `core/tstd/worktree.py` (git) and
+`core/tstd/worktree_session.py` (sessions). A session or scheduled job
+opened on a folder in a git repository with a commit works in a worktree
+on `tst/wt/<first 8 of the id>` from the main checkout's `HEAD`, in
+`worktree.folder` (Settings config; empty is `worktrees/` in the data
+dir). `Session.workspace_path` is the worktree's copy of the folder, so
+tools, wall, checkpoints and steering work there unchanged; the store
+row's `workspace_path` and `Session.project_path` stay the folder, so the
+rail groups the row with its project and New chat makes another worktree.
+`worktree.enabled: false` in Settings or in the workspace's
+`.tst/config.yaml` (read even untrusted: it loosens nothing) keeps
+sessions in the folder. `session_list` rows carry `worktree` (branch,
+path, `main_dirty`, setup state); `worktree_state` events say when one is
+made, set up or closed. The start screen shows the branch, the main
+checkout's uncommitted changes the worktree lacks with **Start in the
+main checkout instead**, and the setup's progress. An untracked
+`.tst/config.yaml` is copied with the trust decided on its bytes;
+`.tst/worktree-include` copies only files git ignores; `worktree.setup`
+runs once in the background from a trusted config only (a repo-shipped
+one is a loosened setting) and the first turn waits for it. The rail row
+shows the branch and offers **Close worktree…**: unchanged it is removed,
+otherwise Keep, Merge back (commit on the branch, conflict check with
+`git merge-tree`, merge into the main checkout; refused with nothing
+changed on a conflict or a checkout mid-merge) or Remove; the session then
+works in the folder. An unchanged worktree is also removed when its
+session is deleted and when a scheduled run ends; one with changes is
+never removed without a choice. `delegate` takes `worktree: true`: the
+child works in its own worktree from the parent's last commit with its
+tools rebound there, and its changes come back committed on its branch
+for the parent to merge. Moving a worktree session waits until its
+worktree is closed. Tests: `core/tests/test_worktree.py` (creation, a
+subfolder workspace, no repo or no commit, the workspace key even
+untrusted, dirty count, include copying only ignored files, config and
+trust carried, setup run and the first turn waiting, untrusted setup
+skipped, the loosened setting, close: unchanged, ask then keep, merge,
+conflict refused with both sides intact, remove, the stored record),
+`core/tests/test_worktree_daemon.py` (a turn writes in the worktree and
+the list groups by folder, two sessions two trees, Settings off, the
+dirty notice and start in the main checkout, close asks then merges,
+delete removes an unchanged one, restart keeps the root, scheduled runs
+with and without changes, delegate with and without changes and outside
+git, move refused until closed), `ui/src/lib/worktree.test.ts` (wire,
+row actions, the row's branch and close step, the start screen), the
+protocol fixtures, and the UI walk (the rail shows the branch of the
+walk's chat and Close worktree removes it). See DECISIONS.md.
+
+Review fixes (2026-10-20, PR #46): a trust decision on the card covers
+the same bytes in the project folder and its worktrees, so the next
+session does not ask again and `worktree.setup` runs (a skipped setup
+runs in the trusting session at once); a folder `HEAD` does not have gets
+no worktree (its copy would be empty), and a delegate child is refused
+one there; with an untracked config, Always allow, Revoke, a spend cap and
+import approvals are saved to the project's file and the worktree's copy
+follows it (`core/tstd/worktree_config.py`), while a tracked config's save
+is a change on the branch; a delegate child in its own worktree is told
+that root; `tst run` names the worktree's branch and path on stderr.
+Tests: `core/tests/test_worktree_config.py` (trust reaches the project
+and the setup runs, only the same bytes, revoke and spend cap stay with
+the project after the worktree goes, a spend cap with no config, import
+approvals, a tracked config is the branch's), `core/tests/test_worktree.py`
+(a folder the last commit lacks), `core/tests/test_worktree_daemon.py`
+(the child's stated root, an absolute path under it, a child refused in a
+folder the commit lacks), `core/tests/test_worktree_cli.py` (the stderr
+note on a new and a continued run; none outside git).
 
 ### TD-5127 — On-demand MCP tool search
 **Size:** 5 · **Depends on:** TD-5104 · Gap audit 2026-10-14

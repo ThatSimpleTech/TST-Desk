@@ -119,6 +119,22 @@
     "answers": [],
     "declined": true
   },
+  "review_plan": {
+    "type": "review_plan",
+    "session_id": "sess-1",
+    "tool_call_id": "tc-p",
+    "decision": "approve",
+    "plan": "1. Add greet().",
+    "feedback": "keep it small"
+  },
+  "review_plan_reject": {
+    "type": "review_plan",
+    "session_id": "sess-1",
+    "tool_call_id": "tc-p",
+    "decision": "reject",
+    "plan": null,
+    "feedback": "use the logger"
+  },
   "list_policy_rules": {
     "type": "list_policy_rules",
     "session_id": "sess-1"
@@ -464,6 +480,16 @@
     "type": "rename_session",
     "session_id": "sess-1",
     "title": ""
+  },
+  "close_worktree": {
+    "type": "close_worktree",
+    "session_id": "sess-1",
+    "action": null
+  },
+  "close_worktree_merge": {
+    "type": "close_worktree",
+    "session_id": "sess-1",
+    "action": "merge"
   },
   "get_setup_state": {
     "type": "get_setup_state"
@@ -973,6 +999,39 @@
     "tool_call_id": "tc-q",
     "outcome": "declined",
     "answers": []
+  },
+  "plan_review": {
+    "type": "plan_review",
+    "seq": 9,
+    "session_id": "sess-1",
+    "tool_call_id": "tc-p",
+    "plan": "## Plan\n1. Add greet() to src/app.py.\n2. Test it."
+  },
+  "plan_reviewed": {
+    "type": "plan_reviewed",
+    "seq": 11,
+    "session_id": "sess-1",
+    "tool_call_id": "tc-p",
+    "outcome": "approved",
+    "plan": "1. Add greet().",
+    "edited": true,
+    "feedback": "keep it small"
+  },
+  "plan_reviewed_rejected": {
+    "type": "plan_reviewed",
+    "seq": 11,
+    "session_id": "sess-1",
+    "tool_call_id": "tc-p",
+    "outcome": "rejected",
+    "plan": "",
+    "edited": false,
+    "feedback": "use the logger"
+  },
+  "plan_pinned": {
+    "type": "plan_pinned",
+    "seq": 10,
+    "session_id": "sess-1",
+    "plan": "1. Add greet()."
   },
   "approval_request": {
     "type": "approval_request",
@@ -1497,6 +1556,39 @@
       }
     ]
   },
+  "stop_check": {
+    "type": "stop_check",
+    "seq": 20,
+    "session_id": "sess-1",
+    "outcome": "retry",
+    "attempt": 1,
+    "max_retries": 3,
+    "items": [
+      {
+        "item": "$ uv run pytest -q",
+        "source": "workspace",
+        "via": "shell",
+        "passed": false,
+        "decided": true,
+        "detail": "exit code: 1\n\u2500\u2500 stdout \u2500\u2500\nFAILED tests/test_dates.py::test_leap_day"
+      },
+      {
+        "item": "The parser handles leap days",
+        "source": "goal",
+        "via": "worker",
+        "passed": true,
+        "decided": true,
+        "detail": "GREEN"
+      }
+    ]
+  },
+  "session_goal": {
+    "type": "session_goal",
+    "seq": 21,
+    "session_id": "sess-1",
+    "goal": "The parser handles leap days",
+    "change": "set"
+  },
   "tier_switched": {
     "type": "tier_switched",
     "seq": 19,
@@ -1550,6 +1642,53 @@
       "brain": 1
     }
   },
+  "session_list_worktree": {
+    "type": "session_list",
+    "seq": 1,
+    "sessions": [
+      {
+        "session_id": "sess-1",
+        "workspace_path": "/home/user/project",
+        "state": "running",
+        "created_at": "2026-10-20T10:00:00Z",
+        "updated_at": "2026-10-20T10:00:00Z",
+        "event_count": 3,
+        "archived": false,
+        "starred": false,
+        "machine": null,
+        "title": null,
+        "preset": "",
+        "busy": false,
+        "worktree": {
+          "branch": "tst/wt/sess-1ab",
+          "path": "/home/user/.local/share/tst-desk/worktrees/project-sess-1ab",
+          "main_dirty": 2,
+          "setup": "running",
+          "setup_note": ""
+        }
+      }
+    ]
+  },
+  "worktree_state": {
+    "type": "worktree_state",
+    "seq": 20,
+    "session_id": "sess-1",
+    "worktree": {
+      "branch": "tst/wt/sess-1ab",
+      "path": "/home/user/.local/share/tst-desk/worktrees/project-sess-1ab",
+      "main_dirty": 0,
+      "setup": "failed",
+      "setup_note": "Setup exited with 1: npm ci"
+    },
+    "note": "Setup exited with 1: npm ci"
+  },
+  "worktree_state_closed": {
+    "type": "worktree_state",
+    "seq": 21,
+    "session_id": "sess-1",
+    "worktree": null,
+    "note": "Merged tst/wt/sess-1ab into the main checkout."
+  },
   "session_list": {
     "type": "session_list",
     "seq": 1,
@@ -1566,7 +1705,8 @@
         "machine": null,
         "title": "hello world",
         "preset": "tst-default",
-        "busy": false
+        "busy": false,
+        "worktree": null
       },
       {
         "session_id": "sess-2",
@@ -1580,7 +1720,8 @@
         "machine": null,
         "title": null,
         "preset": "",
-        "busy": false
+        "busy": false,
+        "worktree": null
       }
     ]
   },
@@ -2510,6 +2651,7 @@
     "remove_queued",
     "rename_session",
     "resume",
+    "review_plan",
     "run_verify",
     "send_queued",
     "set_branch",

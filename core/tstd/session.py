@@ -21,6 +21,8 @@ from .autonomy.judgment import JudgmentBackend
 from .boundary_config import BoundaryConfig
 from .compaction import ContextMeter, compact_on_request, window_user_turns
 from .logging import get_logger, redact_structure
+from .plan_review import PendingPlan, carry_for
+from .plan_review import resolve_all as resolve_plans
 from .policy import (
     ApprovalOutcome,
     PolicyConfig,
@@ -38,8 +40,8 @@ from .protocol import (
 from .protocol import SessionState as SessionStateEvent
 from .provider import ChatMessage
 from .questions import PendingQuestion, resolve_all
-from .task_list import carry_text
 from .workspace_trust import TrustStore, WorkspaceConfigView
+from .worktree import SessionWorktree
 
 if TYPE_CHECKING:
     from .config import ModelConfig
@@ -329,6 +331,14 @@ class Session:
         # TD-5122: the model's task list (``task_list`` tool). Carried into
         # every compaction summary; rebuilt from the log on revive.
         self.task_list: list[TaskListItem] = []
+        # TD-5124: the goal ``/goal`` set, checked when the model ends a
+        # turn until a check passes; rebuilt from the log on revive. And
+        # how many checks have judged it, for ``/goal`` on its own.
+        self.goal: str | None = None
+        self.goal_checks = 0
+        # TD-5123: the plan the person approved to end plan mode. Carried
+        # into every compaction summary; rebuilt from the log on revive.
+        self.pinned_plan: str = ""
         # user_index -> sibling snapshots of conversation
         self._branches: dict[int, list[list[ChatMessage]]] = {}
         self._branch_cursor: dict[int, int] = {}
@@ -363,6 +373,8 @@ class Session:
         # TD-5121: ask_user questions parked the same way, by tool call id.
         # Skip-all never answers one; only answer_question, Stop or cancel.
         self.pending_questions: dict[str, PendingQuestion] = {}
+        # TD-5123: exit_plan_mode plans waiting for review, the same way.
+        self.pending_plans: dict[str, PendingPlan] = {}
         # Files the session has touched via successful path-bearing tool
         # calls (TD-503), as workspace-relative posix strings.  The loop
         # passes this set to the assembler so path-scoped steering rules
@@ -421,6 +433,15 @@ class Session:
         # TD-2603: machine-wide opt-in. The daemon stamps this on open
         # and when the Settings toggle flips.
         self.load_global_memory = False
+        # TD-5126: the git worktree this session works in, or None for the
+        # folder it was opened on. ``workspace_path`` is then the worktree's
+        # copy of that folder; ``project_path`` is still the folder.
+        self.worktree: SessionWorktree | None = None
+        # Set while ``worktree.setup`` runs; a turn waits for it.
+        self.worktree_ready: asyncio.Event | None = None
+        # Where worktrees go (``worktree.folder``), stamped by the daemon so
+        # a delegate child can have one too. None: no worktrees here.
+        self.worktree_folder: Path | None = None
         # TD-3903: this session has used a desktop_ / browser_ tool.
         # Live flag; revive also scans the event log (same signal as Screen).
         self.used_cu = False
@@ -529,6 +550,11 @@ class Session:
             return False
         return self._open_turns > 0
 
+    @property
+    def project_path(self) -> str:
+        """The folder the user opened; the worktree's is ``workspace_path`` (TD-5126)."""
+        return self.worktree.project if self.worktree is not None else self.workspace_path
+
     def reassign_workspace(self, workspace_path: str) -> None:
         """Point the session at another workspace (TD-1715 move to project).
 
@@ -623,6 +649,7 @@ class Session:
         for pending in self._pending_approvals.values():
             pending.future.cancel()
         resolve_all(self, "cancelled")
+        resolve_plans(self, "cancelled")
         if self._state in ("running", "awaiting_approval", "paused"):
             await self.set_state("cancelled", reason=reason)
         await self.close_cu_session()
@@ -649,6 +676,7 @@ class Session:
             if not pending.future.done():
                 pending.future.set_result((False, "stopped"))
         resolve_all(self, "stopped")
+        resolve_plans(self, "stopped")
         if self._state == "paused":
             await self.set_state("running", reason="turn stopped")
         # After the state change, so a loop parked on the pause wakes
@@ -789,8 +817,8 @@ class Session:
             await self.set_state("awaiting_approval", reason=reason)
 
     async def leave_awaiting(self, reason: str) -> None:
-        """Back to ``running`` once no approval or question is still parked."""
-        if self._pending_approvals or self.pending_questions:
+        """Back to ``running`` once no approval, question or plan is still parked."""
+        if self._pending_approvals or self.pending_questions or self.pending_plans:
             return
         if self._state == "awaiting_approval":
             await self.set_state("running", reason=reason)
@@ -1212,6 +1240,11 @@ class Session:
         while True:
             if self._cancel_event.is_set():
                 return None
+            ready = self.worktree_ready
+            if ready is not None and not ready.is_set():
+                # TD-5126: the worktree's setup command is still running.
+                await asyncio.sleep(0.05)
+                continue
             try:
                 return self._user_message_queue.get_nowait()
             except asyncio.QueueEmpty:
@@ -1309,7 +1342,7 @@ class Session:
             meter.tools,
             guidance=guidance,
             from_position=position,
-            carry=carry_text(self.task_list),
+            carry=carry_for(self),
         )
         if result is None:
             return "nothing_to_compact"

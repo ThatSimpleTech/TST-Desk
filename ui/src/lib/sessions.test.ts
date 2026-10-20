@@ -596,6 +596,7 @@ describe("presentation helpers", () => {
       preset: "",
       busy: false,
       machine: null,
+      worktree: null,
     };
     expect(rowTitle(row)).toBe("abc12345");
     expect(rowSubtitle(row)).toBe("api-server");
@@ -636,6 +637,7 @@ describe("presentation helpers", () => {
       preset: "budget",
       busy: false,
       machine: null,
+      worktree: null,
     };
     expect(rowSubtitle(row)).toBe("api-server · budget");
   });

@@ -30,6 +30,7 @@ import { resetRightPane, rightPane } from "./right-pane.svelte.js";
 import { ingestEvent, resetSession } from "./session-status.svelte.js";
 import { currentTask, progressLabel, showTaskStrip, statusLabel } from "./task-list";
 import {
+	pinnedPlanFor,
 	resetTaskLists,
 	startTaskLists,
 	taskListFor,
@@ -163,6 +164,38 @@ describe("Plan pane", () => {
 		emit(taskList("s1", [{ content: "Write the test", status: "in_progress" }]));
 		expect(target.textContent).toContain("Write the test");
 		expect(target.textContent).toContain("0 of 1 done");
+	});
+});
+
+describe("pinned plan (TD-5123)", () => {
+	function pinned(sessionId: string, plan: string): DaemonEventUnion {
+		return { type: "plan_pinned", session_id: sessionId, plan, seq: 9 } as DaemonEventUnion;
+	}
+
+	it("keeps the newest approved plan per session", () => {
+		emit(fixtures.plan_pinned as DaemonEventUnion);
+		expect(pinnedPlanFor("sess-1")).toBe("1. Add greet().");
+		emit(pinned("sess-1", "1. Add greet() and a test."));
+		expect(pinnedPlanFor("sess-1")).toBe("1. Add greet() and a test.");
+		expect(pinnedPlanFor("s2")).toBe("");
+	});
+
+	it("shows above the task list in the Plan pane, with nothing to approve", () => {
+		focus("s1");
+		emit(pinned("s1", "## Plan\n1. Add `greet()`."));
+		emit(taskList("s1", PLAN));
+		emit(pinned("s2", "another chat's plan"));
+		component = mount(PlanPane, { target });
+		flushSync();
+
+		const sections = [...target.querySelectorAll("section")].map((s) => s.getAttribute("aria-label"));
+		expect(sections).toEqual(["Approved plan", "Task list"]);
+		const plan = target.querySelector('section[aria-label="Approved plan"]');
+		expect(plan?.textContent).toContain("Approved plan · pinned");
+		expect(plan?.querySelector("h2")?.textContent).toBe("Plan");
+		expect(plan?.textContent).toContain("greet()");
+		expect(target.textContent).not.toContain("another chat's plan");
+		expect(target.querySelector("button")).toBeNull();
 	});
 });
 

@@ -18,7 +18,8 @@ import httpx
 
 from ..keychain import KeychainError, get_telegram_bot_url
 from ..logging import get_logger
-from ..protocol import ApprovalRequest, DaemonEvent, QuestionRequest, TurnComplete
+from ..plan_review import plan_review_text
+from ..protocol import ApprovalRequest, DaemonEvent, PlanReview, QuestionRequest, TurnComplete
 from ..questions import question_text
 
 if TYPE_CHECKING:
@@ -34,6 +35,8 @@ def message_for(event: DaemonEvent) -> str | None:
         return f"Approval needed: {body}"
     if isinstance(event, QuestionRequest):
         return f"Question: {question_text(event)}"
+    if isinstance(event, PlanReview):
+        return f"Plan ready for review: {plan_review_text(event)}"
     if isinstance(event, TurnComplete):
         if event.failed:
             detail = event.error_code or "The turn did not finish"

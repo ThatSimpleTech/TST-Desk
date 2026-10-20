@@ -142,8 +142,7 @@ from .local_worker import (
     effective_tier,
     last_cu_surface,
     session_is_cu_heavy,
-    titlebar_hosts,
-    titlebar_slugs,
+    tier_state_event,
 )
 from .logging import get_logger, log_directory, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop, brain_manifest_config
@@ -176,6 +175,8 @@ from .notify.ntfy import send as send_ntfy_notify
 from .notify.slack import schedule as schedule_slack_notify
 from .notify.slack import send as send_slack_notify
 from .notify.telegram import schedule as schedule_telegram_notify
+from .plan_review import answer as answer_plan
+from .plan_review import keep_pinned_plan_visible, restore_pinned_plan, restored_plan_mode
 from .policy import (
     PolicyConfig,
     add_rule,
@@ -208,6 +209,7 @@ from .protocol import (
     CharterDocument,
     CheckCuPermissions,
     ClientMessageT,
+    CloseWorktree,
     CommandEntry,
     CommandList,
     CompactContext,
@@ -309,6 +311,7 @@ from .protocol import (
     RenameSession,
     ResetCuPermissions,
     Resume,
+    ReviewPlan,
     RevokePolicyRule,
     RotateRemoteToken,
     RunDiagnostics,
@@ -457,6 +460,7 @@ from .session import (
     SessionRegistry,
     SessionRunner,
 )
+from .session_goal import keep_goal_visible, restore_goal
 from .session_lifecycle import (
     BUSY_CODE,
     apply_workspace_config,
@@ -512,6 +516,20 @@ from .workspace_trust import (
     same_workspace,
     trusted_imports,
 )
+from .worktree import SessionWorktree, WorktreeError
+from .worktree_config import config_home, refresh_config, same_config_folders
+from .worktree_session import (
+    WorktreeHasChanges,
+    open_worktree,
+    record_root,
+    settle,
+    start_setup,
+    state_event,
+    workspace_settings,
+    worktree_folder,
+)
+from .worktree_session import close as close_worktree
+from .worktree_session import info as worktree_info
 from .ws import WebSocketServer
 
 log = get_logger("tstd.daemon")
@@ -839,33 +857,6 @@ def _active_tier_vision(session: Session, config: ModelConfig) -> bool:
         cu_heavy=session_is_cu_heavy(session),
     )
     return tier_cfg.vision
-
-
-def _tier_state_event(session: Session, config: ModelConfig) -> TierState:
-    """Build the ``tier_state`` event for the title bar (TD-1006).
-
-    A tier whose slug is still unresolved is omitted rather than sent as a
-    placeholder (TD-1805): the daemon does not yet know its model, and the
-    UI must never be handed a truth it wasn't given.  The loop re-emits
-    ``tier_state`` once discovery lands on the first turn.
-
-    After a computer-use tool (TD-3903) the worker slug is the remapped
-    local-worker preset's worker, not the active preset's remote worker.
-    """
-    assert session.router is not None
-    cu_heavy = session_is_cu_heavy(session)
-    tier_cfg = effective_tier(config, session.router.active_tier, cu_heavy=cu_heavy)
-    return TierState(
-        session_id=session.id,
-        tier=session.router.active_tier,
-        override=session.router.override,
-        model_slugs=titlebar_slugs(config, cu_heavy=cu_heavy),
-        preset=config.active_preset,
-        hosts=titlebar_hosts(config, cu_heavy=cu_heavy),
-        plan=session.router.plan_mode,
-        vision=tier_cfg.vision,
-        seq=1,  # overwritten by the event log
-    )
 
 
 def _job_entry(job: Job, *, running: bool = False) -> JobEntry:
@@ -2245,8 +2236,9 @@ class Daemon:
             if record.preset != chosen:
                 await self._session_store.set_preset(record.session_id, chosen)
             loaded = await asyncio.to_thread(self._session_persist.load, record.session_id)
+            root, worktree = record_root(record.workspace_path, record.worktree)
             if loaded is not None and loaded.conversation is not None:
-                await self._revive_session(record.session_id, record.workspace_path, loaded)
+                await self._revive_session(record.session_id, root, loaded)
                 continue
             final_state = "interrupted"
             if record.state in {"complete", "failed", "cancelled"} and (
@@ -2254,9 +2246,8 @@ class Daemon:
             ):
                 # Terminal with no snapshot stays terminal. Same as before.
                 final_state = record.state
-            sess = await self.session_registry.restore(
-                record.session_id, record.workspace_path, final_state
-            )
+            sess = await self.session_registry.restore(record.session_id, root, final_state)
+            sess.worktree = worktree
             sess.preset = chosen
             # A tombstone never gets a runtime, but Resume, a spend cap and
             # a move still reload its wall: gated too, or a loosening file
@@ -2413,7 +2404,11 @@ class Daemon:
 
     async def _scheduled_run_turn(self, workspace: Path, message: str) -> TurnResult:
         """In-process ``tst run``: one session, one message, no nested daemon."""
-        return await run_turn_on_daemon(self, workspace, message)
+        result = await run_turn_on_daemon(self, workspace, message)
+        if result.session_id is not None and not result.waiting:
+            # TD-5126: a run that changed nothing leaves no worktree behind.
+            await self._settle_worktree(result.session_id)
+        return result
 
     async def _send_scheduled_notify(self, channel: DeliverTo, summary: str) -> None:
         """Deliver a scheduled summary to slack or ntfy (TD-3807).
@@ -2474,6 +2469,10 @@ class Daemon:
             # `tst run --continue` all read updated_at as "used last", and a
             # turn changes no state (TD-5111).
             await self._session_store.touch(event.session_id)
+        elif isinstance(event, TierState):
+            # Every plan-mode change logs tier_state, so this is the one place
+            # the row learns it; a restart reads it back (TD-5123).
+            await self._session_store.set_plan_mode(event.session_id, event.plan)
         announce = self._cu_permissions_session(event)
         if announce is not None:
             first_run = not load_shown(self.data_dir, driver_cu_platform(self.desktop_driver))
@@ -2499,7 +2498,7 @@ class Daemon:
             await self._maybe_broadcast_cu_focus(event.session_id)
 
     async def _keep_task_list_on_disk(self, session_id: str, event_log: SessionEventLog) -> None:
-        """Log the task list again when rotation drops its last event (TD-5122).
+        """Log the task list and pinned plan again when rotation drops them (TD-5122, TD-5123).
 
         The newest ``task_list`` event is the list's only copy on disk: a
         revive rebuilds the list from it, and the next compaction carries
@@ -2512,6 +2511,10 @@ class Daemon:
         if session is None or session.event_log is not event_log:
             return
         await keep_task_list_visible(session)
+        # TD-5124: the goal's newest event is its only copy on disk too.
+        await keep_goal_visible(session)
+        # TD-5123: the pinned plan's newest event is its only copy too.
+        await keep_pinned_plan_visible(session)
 
     async def _maybe_broadcast_cu_focus(self, closed_session_id: str) -> None:
         """Broadcast ``focus_window`` when no session still actuates (TD-4832).
@@ -2604,7 +2607,8 @@ class Daemon:
                     "session_not_found",
                     f"Session {msg.session_id!r} not found",
                 )
-            return await self._start_session(anchor.workspace_path)
+            # The folder, not the anchor's worktree (TD-5126).
+            return await self._start_session(anchor.project_path)
 
         if isinstance(msg, UserMessage):
             # Every refusal names in_reply_to, so the window can tell a
@@ -2873,19 +2877,22 @@ class Daemon:
                     f"Session {msg.session_id!r} not found",
                 )
             ws = found.workspace_path
+            # TD-5126: a worktree's untracked config is the project's file.
+            home = config_home(found)
             try:
                 after = self.workspace_trust.write_through(
-                    ws, lambda: save_spend_cap(ws, msg.spend_usd), owns=("caps.spend_usd",)
+                    home, lambda: save_spend_cap(home, msg.spend_usd), owns=("caps.spend_usd",)
                 )
             except UntrustedConfigError as e:
                 return build_error("workspace_config_untrusted", str(e), session_id=found.id)
             except ConfigError as e:
                 return build_error("bad_request", str(e), session_id=found.id)
+            await self._follow_project_config(found)
             if not after.applies:
                 # The budget made a refused section valid and exposed
                 # loosening the card never showed (TD-5113): the file now
                 # waits on the card, so its sessions drop to the defaults.
-                await self._reapply_workspace_config(ws)
+                await self._reapply_workspace_configs(home, ws)
                 return None
             error = reload_session_boundary(found, ws)
             if error is not None:
@@ -2929,7 +2936,7 @@ class Daemon:
             # ...then acknowledge with the new state so the title bar snaps
             # over even before the next turn starts (TD-1006).
             await found.event_log.add(
-                _tier_state_event(found, _session_model_config(found, self.config))
+                tier_state_event(found, _session_model_config(found, self.config))
             )
             log.info(
                 "tier override set",
@@ -2972,6 +2979,18 @@ class Daemon:
                     in_reply_to=msg.type,
                 )
             return answer_question(found, msg)
+
+        if isinstance(msg, ReviewPlan):
+            # TD-5123: like approve, any attached client may review; the
+            # session owns the parked plan, not the connection.
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                    in_reply_to=msg.type,
+                )
+            return answer_plan(found, msg)
 
         if isinstance(msg, AlwaysAllow):
             found = self.session_registry.get(msg.session_id)
@@ -3019,8 +3038,10 @@ class Daemon:
             # it is never left parked with no card to answer it.
             saved: PolicyConfig | None = None
             gate_error: str | None = None
+            # TD-5126: a worktree's untracked config is the project's file.
+            home = config_home(found)
             try:
-                before = self.workspace_trust.before_write(found.workspace_path)
+                before = self.workspace_trust.before_write(home)
                 # TD-5149: the file as it is now, not the copy the session
                 # opened with. Nothing reloads that copy when the user edits
                 # .tst/config.yaml by hand, and saving it would write over
@@ -3029,7 +3050,7 @@ class Daemon:
             except UntrustedConfigError:
                 gate_error = build_error(
                     "workspace_config_untrusted",
-                    f"Approved once. {workspace_config_path(found.workspace_path)} loosens "
+                    f"Approved once. {workspace_config_path(home)} loosens "
                     "settings you have not trusted, so the rule was not saved. Trust the "
                     "workspace config to save rules into it.",
                     session_id=found.id,
@@ -3056,7 +3077,7 @@ class Daemon:
                 return build_error(
                     "policy_rule_stricter",
                     f"{'Approved once' if allowed else 'Denied'}. The rule {named} in "
-                    f"{workspace_config_path(found.workspace_path)} covers this call, so "
+                    f"{workspace_config_path(home)} covers this call, so "
                     "Always allow did not replace it. Revoke that rule in Settings → Policy "
                     "if you want this call to run without asking.",
                     session_id=found.id,
@@ -3066,19 +3087,18 @@ class Daemon:
                 return gate_error
             saved = add_rule(saved, rule)
             try:
-                save_policy(found.workspace_path, saved)
-                after = self.workspace_trust.after_write(
-                    found.workspace_path, before, owns=("policy.rules",)
-                )
+                save_policy(home, saved)
+                after = self.workspace_trust.after_write(home, before, owns=("policy.rules",))
             except ConfigError as e:
                 return build_error("policy_save_failed", f"Failed to save policy: {e}")
+            await self._follow_project_config(found)
             # The session runs under what was just saved, rules added by
             # hand included, in the object the dispatcher already holds.
             adopt_policy(found.policy, saved)
             # Resolve the parked call as approved so the loop proceeds.
             found.resolve_approval(msg.tool_call_id, True)
             if not after.applies:
-                await self._reapply_workspace_config(found.workspace_path)
+                await self._reapply_workspace_configs(home, found.workspace_path)
             return None
 
         if isinstance(msg, ListPolicyRules):
@@ -3100,8 +3120,11 @@ class Daemon:
                     "session_not_found",
                     f"Session {msg.session_id!r} not found",
                 )
+            # TD-5126: a worktree's untracked config is the project's file,
+            # so a revoke reaches every later session, not only this copy.
+            home = config_home(found)
             try:
-                before = self.workspace_trust.before_write(found.workspace_path)
+                before = self.workspace_trust.before_write(home)
                 # TD-5149: revoke from the file as it is now, so rules added
                 # by hand since the session opened are kept.
                 saved = policy_from_mapping(before.path, before.effective)
@@ -3123,15 +3146,14 @@ class Daemon:
                     rules=[rule_summary(r) for r in found.policy.rules],
                 ).model_dump_json()
             try:
-                save_policy(found.workspace_path, saved)
-                after = self.workspace_trust.after_write(
-                    found.workspace_path, before, owns=("policy.rules",)
-                )
+                save_policy(home, saved)
+                after = self.workspace_trust.after_write(home, before, owns=("policy.rules",))
             except ConfigError as e:
                 return build_error("policy_save_failed", f"Failed to save policy: {e}")
+            await self._follow_project_config(found)
             adopt_policy(found.policy, saved)
             if not after.applies:
-                await self._reapply_workspace_config(found.workspace_path)
+                await self._reapply_workspace_configs(home, found.workspace_path)
             return PolicyRules(
                 seq=1,
                 rules=[rule_summary(r) for r in found.policy.rules],
@@ -3316,7 +3338,11 @@ class Daemon:
             save_session_stars(self.data_dir, stars)
             return await self._handle_list_sessions()
 
+        if isinstance(msg, CloseWorktree):
+            return await self._handle_close_worktree(msg)
+
         if isinstance(msg, DeleteSession):
+            doomed = self._session_worktree(msg.session_id)
             refusal = await delete_session(
                 self.session_registry,
                 self._session_store,
@@ -3327,9 +3353,20 @@ class Daemon:
             if refusal is None:
                 self.session_stars = [i for i in self.session_stars if i != msg.session_id]
                 save_session_stars(self.data_dir, self.session_stars)
+                # TD-5126: an unchanged worktree goes with its session; one
+                # with changes stays on disk, on its branch.
+                if doomed is not None and doomed.setup != "running":
+                    await settle(doomed)
             return refusal if refusal is not None else await self._handle_list_sessions()
 
         if isinstance(msg, MoveSession):
+            if self._session_worktree(msg.session_id) is not None:
+                # The worktree belongs to the folder it came from (TD-5126).
+                return build_error(
+                    "worktree_session",
+                    "This session works in a git worktree. Close the worktree, then move it.",
+                    session_id=msg.session_id,
+                )
             refusal = await move_session(
                 self.session_registry,
                 self._session_store,
@@ -3654,6 +3691,8 @@ class Daemon:
                     timeout_seconds=prior.timeout_seconds if prior else None,
                     startup_timeout_seconds=prior.startup_timeout_seconds if prior else None,
                     max_call_seconds=prior.max_call_seconds if prior else None,
+                    # Nor the plan-mode read-only list (TD-5123).
+                    read_only_tools=list(prior.read_only_tools) if prior else [],
                     # Nor env or headers (TD-5110): only set_mcp_secret edits
                     # those. A new transport cannot use the old ones.
                     env=dict(prior.env) if prior and kept else {},
@@ -3798,6 +3837,8 @@ class Daemon:
         """
         sess = await self.session_registry.restore(session_id, workspace_path, "idle")
         record = self._session_store.get(session_id)
+        if record is not None:
+            sess.worktree = SessionWorktree.from_record(record.worktree)
         if record is not None and record.engine == "grok":
             sess.engine = "grok"
         elif record is not None and record.engine == "native":
@@ -3811,6 +3852,11 @@ class Daemon:
         if loaded.conversation is not None:
             conversation = loaded.conversation
             sess.conversation[:] = repair_cut_conversation(conversation) if cut else conversation
+        # TD-5123: plan mode is read-only, so a restart keeps it. Set before
+        # the loop starts, so no turn and no tier_state sees it off.
+        if restored_plan_mode(record.plan_mode if record is not None else None, loaded.events):
+            sess.router = TierRouter()
+            sess.router.set_plan(True)
         sess.loaded_mcp_tools[:] = await asyncio.to_thread(
             self._session_persist.load_loaded_tools, session_id
         )
@@ -3822,6 +3868,10 @@ class Daemon:
         await restore_queue(sess, rows, loaded.events)
         # TD-5122: the task list is the newest one the log kept.
         restore_task_list(sess, loaded.events)
+        # TD-5124: so is the goal.
+        restore_goal(sess, loaded.events)
+        # TD-5123: so is the pinned plan.
+        restore_pinned_plan(sess, loaded.events)
         # TD-5140: open steering proposals lived in the old process's memory.
         await expire_restored_steering(sess, loaded.events)
         await self._seal_cut_review(sess, loaded.events)
@@ -3948,6 +3998,12 @@ class Daemon:
     async def _attach_session_runtime(self, sess: Session) -> None:
         """Boundary, tools, persist hooks, and a running loop for *sess*."""
         sess.load_global_memory = self.load_global_memory
+        # TD-5126: a delegate child's worktree goes here too.
+        sess.worktree_folder = (
+            worktree_folder(self.config.worktree, self.data_dir)
+            if self.config.worktree.enabled
+            else None
+        )
         sess.event_log.subscribe(self._on_session_event)  # type: ignore[arg-type]
 
         saved_tools = list(sess.loaded_mcp_tools)
@@ -3977,6 +4033,7 @@ class Daemon:
 
         # TD-5113: every config load below goes through the trust gate.
         sess.trust_store = self.workspace_trust
+        await self._follow_project_config(sess)
         error = reload_session_boundary(sess, sess.workspace_path)
         if error is not None:
             log.warning(
@@ -4093,7 +4150,7 @@ class Daemon:
             )
             return
         assert sess.router is not None
-        await sess.event_log.add(_tier_state_event(sess, _session_model_config(sess, self.config)))
+        await sess.event_log.add(tier_state_event(sess, _session_model_config(sess, self.config)))
 
     async def _start_session(
         self,
@@ -4118,15 +4175,43 @@ class Daemon:
         # Memory templates (TD-2101): plant .tst/memory/ on every session
         # start so an already-opened workspace still gets the files. Never
         # overwrites; config scaffold stays OpenWorkspace-only.
-        await asyncio.to_thread(scaffold_workspace_memory, workspace_path)
         sess = await self.session_registry.create(workspace_path)
+        # TD-5126: in a git repository the session works in its own
+        # worktree. ``workspace_path`` stays the folder on the record.
+        opened = None
+        if self.config.worktree.enabled:
+            opened = await open_worktree(
+                workspace_path,
+                sess.id[:8],
+                folder=worktree_folder(self.config.worktree, self.data_dir),
+                trust=self.workspace_trust,
+            )
+            if opened.worktree is not None:
+                sess.worktree = opened.worktree
+                sess.workspace_path = str(opened.worktree.root)
+        await asyncio.to_thread(scaffold_workspace_memory, sess.workspace_path)
         # A scheduled pin names the loop for this session only. The window's
         # active preset and engine stay where Settings left them.
         sess.engine = self.config.engine.kind if engine is None else engine
         self._bind_session_preset(sess, self.config.active_preset if preset is None else preset)
         await self._session_store.upsert(
-            sess.id, workspace_path, sess.state, engine=sess.engine, preset=sess.preset
+            sess.id,
+            workspace_path,
+            sess.state,
+            engine=sess.engine,
+            preset=sess.preset,
+            worktree=sess.worktree.to_record() if sess.worktree is not None else None,
         )
+        if opened is not None and opened.setup:
+            # Before the loop starts, so its first wait sees the gate.
+            self._tasks.append(
+                start_setup(
+                    sess,
+                    opened.setup,
+                    float(self.config.worktree.setup_timeout_s),
+                    self._worktree_setup_done,
+                )
+            )
         self._session_persist.prepare(sess.id)
         await self._attach_session_runtime(sess)
         source = config_source(sess)
@@ -4140,6 +4225,8 @@ class Daemon:
             },
         )
         await self._emit_working_context(sess, source)
+        if opened is not None and (opened.worktree is not None or opened.note):
+            await sess.event_log.add(state_event(sess, opened.note))
 
         # Return the session_state event (seq=1, "running")
         events = sess.event_log.events_from(1)
@@ -4198,12 +4285,40 @@ class Daemon:
             )
         decision: Literal["trusted", "declined"] = "trusted" if msg.trust else "declined"
         self.workspace_trust.record(workspace, view.sha256, decision)
+        # TD-5126: a worktree's config is the project's file or a checkout
+        # of it. The decision covers these bytes wherever they sit, so the
+        # next session, in the folder or a new worktree, does not ask again.
+        twins = await asyncio.to_thread(
+            same_config_folders,
+            found.project_path,
+            workspace,
+            view.sha256,
+            self._stored_worktrees(),
+        )
+        for folder in twins:
+            self.workspace_trust.record(folder, view.sha256, decision)
         log.info(
             "workspace config trust decided",
-            extra={"extra_fields": {"workspace_path": workspace, "decision": decision}},
+            extra={
+                "extra_fields": {
+                    "workspace_path": workspace,
+                    "decision": decision,
+                    "also": len(twins),
+                }
+            },
         )
-        await self._reapply_workspace_config(workspace)
+        await self._reapply_workspace_configs(workspace, *twins)
+        if decision == "trusted":
+            await self._run_held_setup(found)
         return None
+
+    async def _reapply_workspace_configs(self, *workspaces: str) -> None:
+        """:meth:`_reapply_workspace_config` once per distinct folder."""
+        done: list[str] = []
+        for workspace in workspaces:
+            if not any(same_workspace(workspace, d) for d in done):
+                done.append(workspace)
+                await self._reapply_workspace_config(workspace)
 
     async def _reapply_workspace_config(self, workspace: str) -> None:
         """Every live session on *workspace* re-reads its config and re-announces its wall."""
@@ -4241,7 +4356,7 @@ class Daemon:
         self._bind_session_preset(found, msg.name)
         await self._session_store.set_preset(found.id, found.preset)
         await found.event_log.add(
-            _tier_state_event(found, _session_model_config(found, self.config))
+            tier_state_event(found, _session_model_config(found, self.config))
         )
         log.info(
             "session preset set",
@@ -4255,7 +4370,11 @@ class Daemon:
         return await self._handle_list_sessions()
 
     async def _handle_set_plan(self, msg: SetPlan) -> str | None:
-        """Turn plan mode on or off and ack with ``tier_state`` (TD-4603)."""
+        """Turn plan mode on or off and ack with ``tier_state`` (TD-4603).
+
+        Since TD-5123 plan mode is also read-only: the classifier refuses
+        every call that could change something until it is off again.
+        """
         found = self.session_registry.get(msg.session_id)
         if found is None:
             return build_error(
@@ -4270,7 +4389,7 @@ class Daemon:
             )
         found.router.set_plan(msg.on)
         await found.event_log.add(
-            _tier_state_event(found, _session_model_config(found, self.config))
+            tier_state_event(found, _session_model_config(found, self.config))
         )
         log.info(
             "plan mode set",
@@ -4432,6 +4551,10 @@ class Daemon:
         await keep_held_visible(session)
         # TD-5122: so is the task list, which the Plan pane shows.
         await keep_task_list_visible(session)
+        # TD-5124: and the session's goal.
+        await keep_goal_visible(session)
+        # TD-5123: and the pinned plan, which it shows too.
+        await keep_pinned_plan_visible(session)
         # Replay from from_seq. A rotated prefix is a typed notice, then
         # the same gap/dup rules over whatever is still in the window.
         earliest = session.event_log.earliest_seq
@@ -4472,6 +4595,133 @@ class Daemon:
         self._streaming_tasks[conn_key] = task
         return None
 
+    def _session_worktree(self, session_id: str) -> SessionWorktree | None:
+        """The session's worktree, live or as stored (TD-5126)."""
+        live = self.session_registry.get(session_id)
+        if live is not None:
+            return live.worktree
+        record = self._session_store.get(session_id)
+        return SessionWorktree.from_record(record.worktree) if record is not None else None
+
+    def _stored_worktrees(self) -> list[SessionWorktree]:
+        """Every session's worktree, as the store keeps them (TD-5126)."""
+        found = (SessionWorktree.from_record(r.worktree) for r in self._session_store.records())
+        return [wt for wt in found if wt is not None]
+
+    async def _follow_project_config(self, sess: Session) -> None:
+        """Bring a worktree's copy of an untracked config up to the project's file."""
+        wt = sess.worktree
+        if wt is not None and not wt.config_tracked:
+            await asyncio.to_thread(refresh_config, wt, self.workspace_trust)
+
+    async def _run_held_setup(self, sess: Session) -> None:
+        """Run the ``worktree.setup`` that waited for the trust just given (TD-5126).
+
+        Not while a turn runs: the command would change files under the
+        turn's tools. The next new chat runs it then.
+        """
+        wt = sess.worktree
+        if wt is None or wt.setup != "skipped":
+            return
+        settings = await asyncio.to_thread(
+            workspace_settings, sess.workspace_path, self.workspace_trust
+        )
+        if not settings.setup:
+            return
+        if sess.turn_in_flight:
+            wt.setup_note = "worktree.setup is trusted now; it runs in the next new chat."
+            await self._session_store.set_worktree(sess.id, wt.to_record())
+            await sess.event_log.add(state_event(sess))
+            return
+        wt.setup, wt.setup_note = "running", ""
+        await self._session_store.set_worktree(sess.id, wt.to_record())
+        await sess.event_log.add(state_event(sess))
+        self._tasks.append(
+            start_setup(
+                sess,
+                settings.setup,
+                float(self.config.worktree.setup_timeout_s),
+                self._worktree_setup_done,
+            )
+        )
+
+    async def _worktree_setup_done(self, sess: Session) -> None:
+        """Persist and announce a finished ``worktree.setup`` (TD-5126)."""
+        wt = sess.worktree
+        if wt is None:
+            return
+        await self._session_store.set_worktree(sess.id, wt.to_record())
+        await sess.event_log.add(state_event(sess, wt.setup_note if wt.setup == "failed" else ""))
+
+    async def _leave_worktree(self, session_id: str, note: str) -> None:
+        """Point the session back at its folder once its worktree is closed."""
+        sess = self.session_registry.get(session_id)
+        record = self._session_store.get(session_id)
+        if record is None:
+            return
+        await self._session_store.set_worktree(session_id, None)
+        if sess is not None:
+            sess.worktree = None
+            sess.worktree_ready = None
+        refusal = await move_session(
+            self.session_registry, self._session_store, session_id, record.workspace_path
+        )
+        if refusal is not None:
+            # The folder is gone: the worktree is too, so say both.
+            log.warning(
+                "session not moved back from its worktree",
+                extra={"extra_fields": {"session_id": session_id, "refusal": refusal}},
+            )
+            note = f"{note} Its folder {record.workspace_path} could not be opened."
+        if sess is not None:
+            await sess.event_log.add(state_event(sess, note))
+
+    async def _settle_worktree(self, session_id: str) -> None:
+        """Remove an unchanged worktree and put the session back in its folder."""
+        wt = self._session_worktree(session_id)
+        if wt is None or wt.setup == "running":
+            return
+        if await settle(wt):
+            await self._leave_worktree(
+                session_id, f"Removed the worktree on {wt.branch}: the run changed nothing."
+            )
+
+    async def _handle_close_worktree(self, msg: CloseWorktree) -> str:
+        """Keep, merge back or remove a session's worktree (TD-5126)."""
+        sid = msg.session_id
+        sess = self.session_registry.get(sid)
+        record = self._session_store.get(sid)
+        if record is None:
+            return build_error("session_not_found", f"Session {sid!r} not found", session_id=sid)
+        wt = self._session_worktree(sid)
+        if wt is None:
+            return build_error(
+                "no_worktree", "This session works in its folder, not a worktree.", session_id=sid
+            )
+        if sess is not None and sess.turn_in_flight:
+            return build_error(
+                "session_busy",
+                "This session has a turn in flight. "
+                "Wait for it or stop it, then close the worktree.",
+                session_id=sid,
+            )
+        if wt.setup == "running":
+            return build_error(
+                "worktree_busy", "The worktree's setup is still running.", session_id=sid
+            )
+        try:
+            note = await close_worktree(wt, msg.action, title=record.title or f"Session {sid[:8]}")
+        except WorktreeHasChanges as e:
+            return build_error("worktree_has_changes", str(e), session_id=sid)
+        except WorktreeError as e:
+            return build_error("worktree_failed", str(e), session_id=sid)
+        await self._leave_worktree(sid, note)
+        log.info(
+            "worktree closed",
+            extra={"extra_fields": {"session_id": sid, "action": msg.action or "auto"}},
+        )
+        return await self._handle_list_sessions()
+
     async def _handle_list_sessions(self) -> str:
         """Build the durable session list as a ``session_list`` event."""
         starred = set(self.session_stars)
@@ -4491,6 +4741,11 @@ class Daemon:
                     title=record.title,
                     preset=record.preset,
                     busy=sess.turn_in_flight if sess is not None else False,
+                    worktree=worktree_info(
+                        sess.worktree
+                        if sess is not None
+                        else SessionWorktree.from_record(record.worktree)
+                    ),
                 )
             )
         summaries.sort(key=lambda s: (s.starred, s.updated_at), reverse=True)

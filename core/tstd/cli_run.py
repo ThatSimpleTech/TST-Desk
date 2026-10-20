@@ -39,7 +39,7 @@ from .cli import (
     hello_message,
     resolve_daemon,
 )
-from .cli_turn import EXIT_USAGE, OUTPUTS, Output, TurnOutcome, stream_turn
+from .cli_turn import EXIT_USAGE, OUTPUTS, Output, TurnOutcome, stream_turn, worktree_notice
 
 _REPLY_SECS = 15.0
 
@@ -301,6 +301,10 @@ async def _open_existing(ws: Any, session_id: str | None, workspace: Path | None
     rows = [r for r in listed.get("sessions") or [] if isinstance(r, dict)]
     row = await asyncio.to_thread(pick_session, rows, session_id=session_id, workspace=workspace)
     chosen = str(row["session_id"])
+    notice = worktree_notice(row.get("worktree"), str(row.get("workspace_path") or "") or None)
+    if notice is not None:
+        # TD-5126: attaching after the last event skips the session's own note.
+        print(notice, file=sys.stderr)
     from_seq = int(row.get("event_count") or 0) + 1
     await _send(ws, {"type": "attach", "session_id": chosen, "from_seq": from_seq})
     return chosen
@@ -345,6 +349,7 @@ async def _turn(
         output=output,
         content=message if existing else None,
         run_permissions=permissions is not None,
+        folder=None if workspace is None else str(workspace),
     )
 
 

@@ -101,6 +101,8 @@ from .output_cap import (
     log_output_cap,
     stub_call,
 )
+from .plan_mode import with_plan_note
+from .plan_review import carry_for
 from .policy import read_guards, save_approved_imports, with_run_rules
 from .progress_guard import (
     PROGRESS_CHECK_INSTRUCTION,
@@ -146,15 +148,22 @@ from .provider import (
 from .reply_retry import StreamResult, stream_reply
 from .router import TierName, TierRouter
 from .session import Session, SessionEventLog
+from .session_goal import (
+    answer_goal_command,
+    goal_provider_content,
+    parse_goal_command,
+    set_goal,
+)
 from .shell_read_only import probe_git
 from .steer import inject_steers
-from .task_list import carry_text
+from .stop_check import TurnStopCheck
 from .tools import ToolDispatcher, ToolRegistry
 from .tools.boundary import PathGuard
 from .tools.consult import offered_tools
 from .tools.dispatch import build_decision_request, canonicalize_path_fields
 from .tools.tool_search import TOOL_SEARCH_NAME
 from .workspace_trust import trusted_imports
+from .worktree_config import config_home, refresh_config
 
 
 class ProviderLike(Protocol):
@@ -309,8 +318,6 @@ async def _show_progress_note(session: Session, messages: list[ChatMessage], tex
 
 async def _finish_progress_answer(
     session: Session,
-    messages: list[ChatMessage],
-    answer: str,
     tracker: CostTracker,
     tier: TierName,
     turn_start: float,
@@ -319,11 +326,22 @@ async def _finish_progress_answer(
     assembler: PromptAssembler,
     router: TierRouter,
     calibration: CalibrationStore,
+    *,
+    check_failed: bool = False,
 ) -> None:
-    """The progress check answered the user. End the turn with that text."""
-    await _show_progress_note(session, messages, answer)
+    """The progress check answered the user. End the turn on that answer.
+
+    *check_failed* ends it as a failed done-check (TD-5124).
+    """
     router.record_success()
-    await _emit_turn_complete(session, tier, turn_start, tracker)
+    await _emit_turn_complete(
+        session,
+        tier,
+        turn_start,
+        tracker,
+        failed=check_failed,
+        error_code="stop_check_failed" if check_failed else None,
+    )
     await maybe_verify_after_turn(session, config, tracker, client_for, assembler, calibration)
     session.snapshot_branches()
     log.info(
@@ -347,8 +365,13 @@ async def _progress_check_gate(
     assembler: PromptAssembler,
     router: TierRouter,
     calibration: CalibrationStore,
+    stop_check: TurnStopCheck | None = None,
 ) -> Literal["proceed", "pause", "stop"]:
-    """Ask the tool-free question. ``stop`` means the turn is over."""
+    """Ask the tool-free question. ``stop`` means the turn is over.
+
+    A DONE answer ends the turn, so the done-check runs on it (TD-5124):
+    a failure sends the model back to work instead.
+    """
     check_messages = [
         *messages,
         ChatMessage(role="user", content=PROGRESS_CHECK_INSTRUCTION),
@@ -383,10 +406,16 @@ async def _progress_check_gate(
         return "pause"
     kind, detail = interpret_check(content or "", guard.last_continue)
     if kind == "done":
+        await _show_progress_note(session, messages, detail)
+        checked = "end" if stop_check is None else await stop_check.at_turn_end(messages)
+        if checked == "retry":
+            guard.note_reply()
+            return "proceed"
+        if checked == "stopped":
+            await _finish_stopped_turn(session, tier, turn_start, tracker)
+            return "stop"
         await _finish_progress_answer(
             session,
-            messages,
-            detail,
             tracker,
             tier,
             turn_start,
@@ -395,6 +424,7 @@ async def _progress_check_gate(
             assembler,
             router,
             calibration,
+            check_failed=checked == "failed",
         )
         return "stop"
     if kind == "continue":
@@ -420,6 +450,7 @@ async def _interactive_guard(
     assembler: PromptAssembler,
     router: TierRouter,
     calibration: CalibrationStore,
+    stop_check: TurnStopCheck | None = None,
 ) -> bool:
     """True when the loop should call the model. False ends this turn.
 
@@ -445,6 +476,7 @@ async def _interactive_guard(
             assembler,
             router,
             calibration,
+            stop_check,
         )
         if checked == "stop":
             return False
@@ -1224,16 +1256,21 @@ def _persist_import_approvals(session: Session, approved: set[Path]) -> None:
             (``UntrustedConfigError``): the approval then stays session-only.
     """
     store = session.trust_store
+    # TD-5126: a worktree's untracked config is the project's file; its
+    # copy follows once the project's is saved.
+    home = config_home(session)
     if store is None:
-        save_approved_imports(session.workspace_path, approved)
-        return
-    # The key is rewritten whole and nothing else moves, so the write can
-    # only add what it owns; it never exposes another section.
-    store.write_through(
-        session.workspace_path,
-        lambda: save_approved_imports(session.workspace_path, approved),
-        owns=("approved_external_imports",),
-    )
+        save_approved_imports(home, approved)
+    else:
+        # The key is rewritten whole and nothing else moves, so the write can
+        # only add what it owns; it never exposes another section.
+        store.write_through(
+            home,
+            lambda: save_approved_imports(home, approved),
+            owns=("approved_external_imports",),
+        )
+    if session.worktree is not None and not session.worktree.config_tracked:
+        refresh_config(session.worktree, store)
 
 
 def session_boundary(session: Session) -> Boundary:
@@ -1249,6 +1286,8 @@ def session_boundary(session: Session) -> Boundary:
         # and a ``tst run --deny`` over a read guards the turn it came with
         # (TD-5118).
         read_guards=lambda: read_guards(with_run_rules(session.policy, session.run_permissions)),
+        # TD-5123: read per call, so plan mode turned on or off mid-turn counts.
+        plan_mode=lambda: session.router is not None and session.router.plan_mode,
     )
 
 
@@ -1323,10 +1362,10 @@ async def _fit_prompt(
     await _clear_stale_results(
         session, messages, tier, tier_cfg, counter, tool_definitions, clear_policy
     )
-    # The task list rides into the summary (TD-5122): the call that made
-    # it may be among the turns this drops.
+    # The task list (TD-5122) and the pinned plan (TD-5123) ride into the
+    # summary: the calls that made them may be among the turns this drops.
     compacted, compaction = maybe_compact(
-        messages, tier_cfg, counter, tool_definitions, carry=carry_text(session.task_list)
+        messages, tier_cfg, counter, tool_definitions, carry=carry_for(session)
     )
     if compaction is not None:
         messages[:] = compacted
@@ -1455,6 +1494,12 @@ async def agent_loop(
             ``None`` is the daemon-wide store, shared with every other
             session talking to the same endpoint.
     """
+    # The daemon attaches the router before the loop runs (TD-1006); a
+    # caller that only passed it here gets the same wiring, so the
+    # classifier's plan-mode rule and ``exit_plan_mode`` (TD-5123) read
+    # the router this loop routes by.
+    if session.router is None:
+        session.router = router
     # ── Conversation state ──────────────────────────────────────────
     # Learned token ratios (TD-5007). Taken before the assembler, which
     # sizes the workspace map from the brain endpoint's ratio (TD-5013).
@@ -1808,11 +1853,14 @@ async def agent_loop(
         # TD-5112: a message sent from here to turn_complete joins this
         # turn at its next tool-batch boundary.
         session.open_steering(queued.id)
-        apply_slash_skill(
-            session,
-            queued.display,
-            claude_global_fallback=config.steering.claude_global_fallback,
-        )
+        # TD-5124: ``/goal`` is TST Desk's own command, never a skill's.
+        goal_command = None if session.autonomy else parse_goal_command(queued.display)
+        if goal_command is None:
+            apply_slash_skill(
+                session,
+                queued.display,
+                claude_global_fallback=config.steering.claude_global_fallback,
+            )
 
         # TD-1721: a preset switch while idle is applied on this turn.
         if session.config is not None:
@@ -1837,7 +1885,15 @@ async def agent_loop(
             },
         )
 
-        messages.append(ChatMessage(role="user", content=queued.provider))
+        provider_content = queued.provider
+        if goal_command is not None and goal_command.kind == "set":
+            # The goal is the task: the model gets it as a directive.
+            provider_content = goal_provider_content(goal_command.text, queued.provider)
+        # TD-5123: while planning, the message reaches the model with the
+        # plan-mode note after it; the window shows it as typed.
+        if router.plan_mode:
+            provider_content = with_plan_note(provider_content)
+        messages.append(ChatMessage(role="user", content=provider_content))
         await session.event_log.add(
             UserTurn(
                 session_id=session.id,
@@ -1847,6 +1903,8 @@ async def agent_loop(
                 seq=1,
             )
         )
+        if goal_command is not None and goal_command.kind == "set":
+            await set_goal(session, goal_command.text, "set")
         await session.conversation_changed()
         # TD-5155: the turn is on disk, so the queue file lets it go.
         await session.user_turn_logged(queued)
@@ -1867,6 +1925,15 @@ async def agent_loop(
         # answered, so they stay out for this turn only; the next turn,
         # whoever sends it, asks again.
         run_refused_imports: set[Path] = set()
+
+        # TD-5124: ``/goal`` alone, ``/goal clear`` or a goal over the
+        # limit is answered here, with no model call.
+        if goal_command is not None and goal_command.kind != "set":
+            note = await answer_goal_command(session, goal_command)
+            await _show_progress_note(session, messages, note)
+            await _emit_turn_complete(session, router.active_tier, turn_start, tracker)
+            session.snapshot_branches()
+            continue
 
         # 1b. Resolve any tier that leaves its slug unset (TD-1805).  This
         #     is the "first use" the story means: not import time, and not
@@ -1912,6 +1979,8 @@ async def agent_loop(
         # user turn, so the next one starts on each tier's own model.
         backups = TurnBackups()
         guard = ProgressGuard()
+        # TD-5124: the done-check when the model ends this turn.
+        stop_check = TurnStopCheck(session, tool_dispatcher, _worker_completion)
         # Model calls this turn has made, and the last tool batch: where a
         # message sent mid-turn joins it (TD-5112).
         turn_step = 0
@@ -2265,6 +2334,7 @@ async def agent_loop(
                 assembler,
                 router,
                 calibration,
+                stop_check,
             ):
                 break
 
@@ -2586,8 +2656,22 @@ async def agent_loop(
                 )
                 await session.conversation_changed()
 
-            # 2h. No tool calls (or no dispatcher) — turn is complete
-            await _emit_turn_complete(session, tier, turn_start, tracker)
+            # 2h. No tool calls (or no dispatcher): the model ended the
+            #     turn. The done-check may send it back to work (TD-5124).
+            checked = await stop_check.at_turn_end(messages)
+            if checked == "retry":
+                continue
+            if checked == "stopped":
+                await _finish_stopped_turn(session, tier, turn_start, tracker)
+                break
+            await _emit_turn_complete(
+                session,
+                tier,
+                turn_start,
+                tracker,
+                failed=checked == "failed",
+                error_code="stop_check_failed" if checked == "failed" else None,
+            )
             await maybe_verify_after_turn(
                 session, config, tracker, client_for, assembler, calibration
             )
