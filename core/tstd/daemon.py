@@ -2601,6 +2601,19 @@ class Daemon:
                     session_id=msg.session_id,
                     in_reply_to=msg.type,
                 )
+            # TD-5118: Grok's own tools never meet TST Desk's policy gate, so
+            # a rule could not be kept there. Refused rather than dropped:
+            # a --deny that silently did nothing would be worse than none.
+            run = msg.run_permissions
+            if run is not None and (run.allow or run.deny) and found.engine == "grok":
+                return build_error(
+                    "run_rules_unsupported",
+                    "This session runs on the Grok engine, whose tools TST Desk's "
+                    "policy does not judge, so --allow and --deny cannot hold there. "
+                    "Use --on-ask alone, or a native session.",
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
+                )
             # Checked with no await before add_user_message counts the turn,
             # so of two sends that both saw the session idle only one gets
             # in (TD-5160: `tst run --continue` races its own list_sessions).
@@ -2650,7 +2663,9 @@ class Daemon:
             provider = build_provider_user_content(msg.content, decoded)
             try:
                 await found.add_user_message(
-                    QueuedUserMessage(display=display, provider=provider),
+                    QueuedUserMessage(
+                        display=display, provider=provider, run_permissions=msg.run_permissions
+                    ),
                     refuse_unsaved=True,
                     steer=msg.steer,
                 )

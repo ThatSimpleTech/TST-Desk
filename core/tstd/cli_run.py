@@ -8,6 +8,11 @@ from ``--message``, or from stdin when ``--message`` is ``-`` or left
 out. ``--output`` picks plain text, one JSON result, or the session's
 protocol events as NDJSON. The exit code says how the turn ended (see
 :mod:`tstd.cli_turn`).
+
+``--allow`` and ``--deny`` add policy rules for this run's turn only, and
+``--on-ask deny-and-continue`` makes every approval that turn would ask
+for a refusal the model reads (TD-5118). The daemon applies them, beside
+the workspace's own rules; see :func:`run_permissions`.
 """
 
 from __future__ import annotations
@@ -38,6 +43,9 @@ from .cli_turn import EXIT_USAGE, OUTPUTS, Output, TurnOutcome, stream_turn
 
 _REPLY_SECS = 15.0
 
+#: ``--on-ask`` choices, and the protocol value each one sends.
+ON_ASK = {"prompt": "prompt", "deny-and-continue": "deny_and_continue"}
+
 #: States a session never leaves: the daemon refuses their messages with
 #: ``session_not_running``. The same set as ``tstd.session.TERMINAL_STATES``
 #: (a test holds them equal), kept here so the CLI need not import the loop.
@@ -55,6 +63,37 @@ class RunError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+def parse_rule(text: str) -> dict[str, str]:
+    """One ``--allow`` / ``--deny`` value: ``TOOL`` or ``TOOL:ARGS``.
+
+    The same globs as a ``policy.rules`` entry. ``TOOL`` alone is every
+    call of the tool (``args: "**"``). A space after the colon is dropped,
+    so a rule can be written as reasons print it (``shell: npm test*``).
+    Tool names never hold a colon, so the first one splits.
+    """
+    tool, sep, args = text.partition(":")
+    tool = tool.strip()
+    args = args.lstrip() if sep else "**"
+    if not tool or any(c.isspace() for c in tool):
+        raise argparse.ArgumentTypeError(f"{text!r}: expected TOOL or TOOL:ARGS")
+    if not args:
+        raise argparse.ArgumentTypeError(f"{text!r}: nothing after the colon")
+    return {"tool": tool, "args": args}
+
+
+def run_permissions(
+    allow: list[dict[str, str]], deny: list[dict[str, str]], on_ask: str
+) -> dict[str, Any] | None:
+    """The ``user_message``'s ``run_permissions``, or None when the run sets none.
+
+    Left out entirely when nothing is set, so a plain ``tst run`` sends the
+    message it always has.
+    """
+    if not allow and not deny and on_ask == "prompt":
+        return None
+    return {"allow": list(allow), "deny": list(deny), "on_ask": ON_ASK[on_ask]}
 
 
 def add_run_command(
@@ -94,6 +133,34 @@ def add_run_command(
         choices=OUTPUTS,
         default="text",
         help="text (default), json (one result object) or ndjson (protocol events)",
+    )
+    run_p.add_argument(
+        "--allow",
+        type=parse_rule,
+        action="append",
+        default=[],
+        metavar="RULE",
+        help=(
+            "run calls matching TOOL or TOOL:ARGS without asking, for this run only "
+            "(repeatable; never a Class C call, and the workspace's ask and never rules win)"
+        ),
+    )
+    run_p.add_argument(
+        "--deny",
+        type=parse_rule,
+        action="append",
+        default=[],
+        metavar="RULE",
+        help="refuse calls matching TOOL or TOOL:ARGS, for this run only (repeatable)",
+    )
+    run_p.add_argument(
+        "--on-ask",
+        choices=tuple(ON_ASK),
+        default="prompt",
+        help=(
+            "prompt (default): a TTY answers an approval, otherwise the run stops with "
+            "exit 4; deny-and-continue: refuse it, tell the model, and let the turn go on"
+        ),
     )
     run_p.add_argument(
         "--timeout",
@@ -248,6 +315,7 @@ async def _turn(
     session_id: str | None,
     continue_last: bool,
     output: Output,
+    permissions: dict[str, Any] | None,
 ) -> TurnOutcome:
     ack = await _recv_event(ws, 10.0)
     if ack.get("type") != "hello_ack":
@@ -262,13 +330,21 @@ async def _turn(
         assert workspace is not None
         sid = await _open_new(ws, workspace)
     sent: dict[str, Any] = {"type": "user_message", "session_id": sid, "content": message}
+    if permissions is not None:
+        sent["run_permissions"] = permissions
     if existing:
         # pick_session read a snapshot; the daemon re-checks as it queues,
         # so a run started alongside this one cannot slip in behind it.
         sent["only_if_idle"] = True
     await _send(ws, sent)
     return await stream_turn(
-        ws, sid, data_dir, budget, output=output, content=message if existing else None
+        ws,
+        sid,
+        data_dir,
+        budget,
+        output=output,
+        content=message if existing else None,
+        run_permissions=permissions is not None,
     )
 
 
@@ -280,13 +356,22 @@ async def _outcome(
     session_id: str | None,
     continue_last: bool,
     output: Output,
+    permissions: dict[str, Any] | None,
 ) -> TurnOutcome:
     info = await resolve_daemon(data_dir)
     try:
         async with connect(f"ws://127.0.0.1:{info['port']}") as ws:
             await _send(ws, hello_message(str(info["token"])))
             return await _turn(
-                ws, workspace, message, data_dir, budget, session_id, continue_last, output
+                ws,
+                workspace,
+                message,
+                data_dir,
+                budget,
+                session_id,
+                continue_last,
+                output,
+                permissions,
             )
     except RunError as e:
         _print_error({"code": e.code, "message": e.message})
@@ -310,6 +395,7 @@ async def run_turn(
     session_id: str | None = None,
     continue_last: bool = False,
     output: Output = "text",
+    permissions: dict[str, Any] | None = None,
 ) -> int:
     """Run one turn and print it in *output* form. Returns the exit code.
 
@@ -319,7 +405,7 @@ async def run_turn(
     """
     try:
         outcome = await _outcome(
-            workspace, message, data_dir, budget, session_id, continue_last, output
+            workspace, message, data_dir, budget, session_id, continue_last, output, permissions
         )
     except CliError as e:
         if output != "json":
@@ -354,5 +440,6 @@ def run_command(args: argparse.Namespace, data_dir: Path) -> int:
             session_id=args.session,
             continue_last=args.continue_last,
             output=args.output,
+            permissions=run_permissions(args.allow, args.deny, args.on_ask),
         )
     )

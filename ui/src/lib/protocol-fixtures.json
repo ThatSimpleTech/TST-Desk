@@ -17,6 +17,7 @@
     "content": "hello world",
     "attachments": [],
     "steer": false,
+    "run_permissions": null,
     "only_if_idle": false
   },
   "send_queued": {
@@ -56,6 +57,7 @@
       }
     ],
     "steer": false,
+    "run_permissions": null,
     "only_if_idle": false
   },
   "user_message_steer": {
@@ -64,6 +66,7 @@
     "content": "Also run the linter",
     "attachments": [],
     "steer": true,
+    "run_permissions": null,
     "only_if_idle": false
   },
   "approve": {
@@ -663,7 +666,8 @@
     "session_id": "sess-1",
     "turn_id": "turn-1",
     "content": "Fix the tests",
-    "steer": null
+    "steer": null,
+    "run_permissions": null
   },
   "user_turn_steer": {
     "type": "user_turn",
@@ -678,6 +682,30 @@
         "tc-1",
         "tc-2"
       ]
+    },
+    "run_permissions": null
+  },
+  "user_turn_run_permissions": {
+    "type": "user_turn",
+    "seq": 12,
+    "session_id": "sess-1",
+    "turn_id": "turn-3",
+    "content": "Run the tests",
+    "steer": null,
+    "run_permissions": {
+      "allow": [
+        {
+          "tool": "shell",
+          "args": "npm test*"
+        }
+      ],
+      "deny": [
+        {
+          "tool": "fs_write",
+          "args": "**"
+        }
+      ],
+      "on_ask": "deny_and_continue"
     }
   },
   "queued_messages": {

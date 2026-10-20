@@ -31,6 +31,7 @@ from .policy import (
 from .protocol import (
     ConversationReset,
     DaemonEvent,
+    RunPermissions,
     ToolResult,
 )
 from .protocol import SessionState as SessionStateEvent
@@ -69,6 +70,10 @@ class QueuedUserMessage:
     # hands it to that turn, and only that turn, at its next tool-batch
     # boundary. A turn that ends first leaves it a turn of its own.
     steer_into: str | None = None
+    # TD-5118: ``tst run`` rules for the turn this message starts. Never
+    # saved to the queue file: a message a restart holds is sent again by
+    # a person in the window, who can answer what it asks.
+    run_permissions: RunPermissions | None = None
 
     @classmethod
     def plain(cls, text: str) -> QueuedUserMessage:
@@ -84,6 +89,15 @@ class QueuedUserMessage:
         if self.images_dropped and isinstance(self.provider, str):
             return self.provider
         return self.display
+
+
+def unattended_denial_message(reason: str) -> str:
+    """What the model reads for a call a deny-and-continue run would have asked about."""
+    return (
+        f"Refused: this call needs approval ({reason}), and this run answers every "
+        "approval with no (tst run --on-ask deny-and-continue). Nothing ran. Carry on "
+        "without it, or finish and say what needs approving."
+    )
 
 
 class SessionError(Exception):
@@ -314,6 +328,10 @@ class Session:
         self.cost_tracker: CostTracker | None = None
         # Approval policy (TD-801), resolved by the daemon on open.
         self.policy = PolicyConfig()
+        # TD-5118: the ``tst run`` rules of the turn in flight. The loop
+        # sets them as it takes the turn's message, and ``turn_complete``
+        # clears them, so they never outlive the one turn they came with.
+        self.run_permissions: RunPermissions | None = None
         # Workspace config trust (TD-5113). The daemon attaches its store
         # before the first config load; None (library use) gates nothing.
         # ``config_view`` is the read the boundary was last loaded from.
@@ -468,6 +486,7 @@ class Session:
         if isinstance(event, TurnComplete):
             self._open_turns = max(0, self._open_turns - 1)
             self._steer_turn = None
+            self.run_permissions = None
 
     @property
     def turn_in_flight(self) -> bool:
@@ -661,6 +680,17 @@ class Session:
             return True
         return await asyncio.to_thread(store.writable, self.workspace_path)
 
+    def unattended_denial(self, reason: str) -> ApprovalOutcome | None:
+        """The refusal a ``--on-ask deny-and-continue`` turn gives instead of asking.
+
+        ``None`` when the turn in flight asks as usual (TD-5118). Nothing is
+        parked and no card is shown: the model reads the refusal and goes on.
+        """
+        run = self.run_permissions
+        if run is None or run.on_ask != "deny_and_continue":
+            return None
+        return ApprovalOutcome(False, unattended_denial_message(reason), unattended=True)
+
     async def request_approval(
         self,
         tool_call_id: str,
@@ -681,6 +711,9 @@ class Session:
         """
         from .protocol import ApprovalRequest as ApprovalRequestEvent
 
+        denial = self.unattended_denial(reason)
+        if denial is not None:
+            return denial
         fut: asyncio.Future[tuple[bool, str | None]] = asyncio.get_running_loop().create_future()
         self._pending_approvals[tool_call_id] = PendingApproval(
             future=fut, tool=tool, arguments=arguments, decision_class=decision_class
@@ -761,36 +794,43 @@ class Session:
         disconnect leaves it parked.  The ``approval_request`` event carries
         a synthetic ``tool_call_id`` and ``tool_name="external_import"``; the
         class is always C (an untrusted-file-read), so ``always_allow`` is
-        never offered.
+        never offered.  On a deny-and-continue turn (TD-5118) it refuses at
+        once with an ``unattended`` outcome, which the loop keeps for that
+        turn only.
         """
         from .protocol import ApprovalRequest as ApprovalRequestEvent
 
         tool_call_id = f"external-import:{path}"
-        fut: asyncio.Future[tuple[bool, str | None]] = asyncio.get_running_loop().create_future()
-        self._pending_approvals[tool_call_id] = PendingApproval(
-            future=fut,
-            tool=None,
-            arguments={"path": str(path)},
-            decision_class=DecisionClass.C,
-        )
         reason = "import from outside the workspace"
-        await self.event_log.add(
-            ApprovalRequestEvent(
-                session_id=self.id,
-                tool_call_id=tool_call_id,
-                tool_name="external_import",
-                arguments={"path": str(path)},
-                decision_class="C",
-                summary=f"Read {path}",
-                reason=reason,
-                proposed_always_allow=None,
-                seq=1,
+        # No card names the file on a deny-and-continue turn, so the
+        # refusal itself does: it is the timeline's Denied row.
+        outcome = self.unattended_denial(f"{reason}: {path}")
+        if outcome is None:
+            fut: asyncio.Future[tuple[bool, str | None]] = (
+                asyncio.get_running_loop().create_future()
             )
-        )
-        if self._state != "awaiting_approval":
-            await self.set_state("awaiting_approval", reason=reason)
-
-        outcome = await self._await_approval_resolution(tool_call_id, fut)
+            self._pending_approvals[tool_call_id] = PendingApproval(
+                future=fut,
+                tool=None,
+                arguments={"path": str(path)},
+                decision_class=DecisionClass.C,
+            )
+            await self.event_log.add(
+                ApprovalRequestEvent(
+                    session_id=self.id,
+                    tool_call_id=tool_call_id,
+                    tool_name="external_import",
+                    arguments={"path": str(path)},
+                    decision_class="C",
+                    summary=f"Read {path}",
+                    reason=reason,
+                    proposed_always_allow=None,
+                    seq=1,
+                )
+            )
+            if self._state != "awaiting_approval":
+                await self.set_state("awaiting_approval", reason=reason)
+            outcome = await self._await_approval_resolution(tool_call_id, fut)
         # Emit a tool_result for the synthetic id so clients clear the
         # approval card and resolve the timeline entry — the approval store
         # only splices a card on a tool_result matching its tool_call_id,
@@ -827,29 +867,33 @@ class Session:
         """
         from .protocol import ApprovalRequest as ApprovalRequestEvent
 
-        fut: asyncio.Future[tuple[bool, str | None]] = asyncio.get_running_loop().create_future()
-        self._pending_approvals[tool_call_id] = PendingApproval(
-            future=fut,
-            tool=None,
-            arguments=arguments,
-            decision_class=DecisionClass.B,
-        )
-        await self.event_log.add(
-            ApprovalRequestEvent(
-                session_id=self.id,
-                tool_call_id=tool_call_id,
-                tool_name=tool_name,
-                arguments=arguments,
-                decision_class="B",
-                summary=summary,
-                reason=reason,
-                proposed_always_allow=None,
-                seq=1,
+        outcome = self.unattended_denial(reason)
+        if outcome is None:
+            fut: asyncio.Future[tuple[bool, str | None]] = (
+                asyncio.get_running_loop().create_future()
             )
-        )
-        if self._state != "awaiting_approval":
-            await self.set_state("awaiting_approval", reason=reason)
-        outcome = await self._await_approval_resolution(tool_call_id, fut)
+            self._pending_approvals[tool_call_id] = PendingApproval(
+                future=fut,
+                tool=None,
+                arguments=arguments,
+                decision_class=DecisionClass.B,
+            )
+            await self.event_log.add(
+                ApprovalRequestEvent(
+                    session_id=self.id,
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    decision_class="B",
+                    summary=summary,
+                    reason=reason,
+                    proposed_always_allow=None,
+                    seq=1,
+                )
+            )
+            if self._state != "awaiting_approval":
+                await self.set_state("awaiting_approval", reason=reason)
+            outcome = await self._await_approval_resolution(tool_call_id, fut)
         await self.event_log.add(
             ToolResult(
                 session_id=self.id,
