@@ -18,6 +18,8 @@ export interface Runtime {
 	tasks: string[];
 	/** The done-check seeded on that session's reply (TD-5124). */
 	check: string;
+	/** The plan the mock model puts up when a turn plans (TD-5123). */
+	plan: string;
 }
 
 export function runtime(): Runtime {

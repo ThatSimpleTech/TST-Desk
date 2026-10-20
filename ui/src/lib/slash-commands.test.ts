@@ -100,8 +100,10 @@ describe("mergeSlashItems", () => {
 describe("built-in slash items (TD-5109)", () => {
 	it("lists /compact after commands and skills", () => {
 		const items = mergeSlashItems(list, [], BUILTIN_SLASH_ITEMS);
-		expect(items.map((c) => c.name)).toEqual(["review", "ship", "compact", "goal"]);
+		expect(items.map((c) => c.name)).toEqual(["review", "ship", "compact", "goal", "plan"]);
 		expect(items[2]!.source).toBe("built-in");
+		expect(items[3]!.source).toBe("built-in");
+		expect(items[4]!.source).toBe("built-in");
 		expect(filterCommands(items, "comp").map((c) => c.name)).toEqual(["compact"]);
 	});
 
@@ -114,8 +116,15 @@ describe("built-in slash items (TD-5109)", () => {
 	it("gives way to a workspace command of the same name", () => {
 		const own = [{ ...list[0]!, name: "compact", body: "Squash my commits." }];
 		const items = mergeSlashItems(own, [], BUILTIN_SLASH_ITEMS);
-		expect(items.map((c) => c.name)).toEqual(["compact", "goal"]);
+		expect(items.map((c) => c.name)).toEqual(["compact", "goal", "plan"]);
 		expect(items[0]!.body).toBe("Squash my commits.");
+		// TD-5123: so does /plan.
+		const plan = mergeSlashItems([{ ...list[0]!, name: "plan", body: "Write PLAN.md." }], [], BUILTIN_SLASH_ITEMS);
+		expect(plan.map((c) => [c.name, c.body])).toEqual([
+			["plan", "Write PLAN.md."],
+			["compact", "/compact "],
+			["goal", "/goal "],
+		]);
 	});
 
 	it("offers /goal with room for the statement (TD-5124)", () => {

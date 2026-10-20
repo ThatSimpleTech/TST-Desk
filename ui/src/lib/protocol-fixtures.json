@@ -119,6 +119,22 @@
     "answers": [],
     "declined": true
   },
+  "review_plan": {
+    "type": "review_plan",
+    "session_id": "sess-1",
+    "tool_call_id": "tc-p",
+    "decision": "approve",
+    "plan": "1. Add greet().",
+    "feedback": "keep it small"
+  },
+  "review_plan_reject": {
+    "type": "review_plan",
+    "session_id": "sess-1",
+    "tool_call_id": "tc-p",
+    "decision": "reject",
+    "plan": null,
+    "feedback": "use the logger"
+  },
   "list_policy_rules": {
     "type": "list_policy_rules",
     "session_id": "sess-1"
@@ -973,6 +989,39 @@
     "tool_call_id": "tc-q",
     "outcome": "declined",
     "answers": []
+  },
+  "plan_review": {
+    "type": "plan_review",
+    "seq": 9,
+    "session_id": "sess-1",
+    "tool_call_id": "tc-p",
+    "plan": "## Plan\n1. Add greet() to src/app.py.\n2. Test it."
+  },
+  "plan_reviewed": {
+    "type": "plan_reviewed",
+    "seq": 11,
+    "session_id": "sess-1",
+    "tool_call_id": "tc-p",
+    "outcome": "approved",
+    "plan": "1. Add greet().",
+    "edited": true,
+    "feedback": "keep it small"
+  },
+  "plan_reviewed_rejected": {
+    "type": "plan_reviewed",
+    "seq": 11,
+    "session_id": "sess-1",
+    "tool_call_id": "tc-p",
+    "outcome": "rejected",
+    "plan": "",
+    "edited": false,
+    "feedback": "use the logger"
+  },
+  "plan_pinned": {
+    "type": "plan_pinned",
+    "seq": 10,
+    "session_id": "sess-1",
+    "plan": "1. Add greet()."
   },
   "approval_request": {
     "type": "approval_request",
@@ -2543,6 +2592,7 @@
     "remove_queued",
     "rename_session",
     "resume",
+    "review_plan",
     "run_verify",
     "send_queued",
     "set_branch",

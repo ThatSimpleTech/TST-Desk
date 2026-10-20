@@ -162,6 +162,18 @@ export interface AnswerQuestion extends ClientMessage {
   declined?: boolean;
 }
 
+/** Review the plan an `exit_plan_mode` call parked (TD-5123). `approve`
+ *  ends plan mode and pins the plan; `plan`, when sent, is the person's
+ *  edit and replaces the model's. `reject` keeps plan mode on. */
+export interface ReviewPlan extends ClientMessage {
+  type: "review_plan";
+  session_id: string;
+  tool_call_id: string;
+  decision: "approve" | "reject";
+  plan?: string | null;
+  feedback?: string;
+}
+
 export interface ListPolicyRules extends ClientMessage {
   type: "list_policy_rules";
   session_id: string;
@@ -1018,6 +1030,7 @@ export type ClientMessageUnion =
   | Deny
   | AlwaysAllow
   | AnswerQuestion
+  | ReviewPlan
   | ListPolicyRules
   | RevokePolicyRule
   | SetSkipAllApprovals
@@ -1388,6 +1401,35 @@ export interface QuestionAnswered extends DaemonEvent {
   tool_call_id: string;
   outcome: "answered" | "declined" | "stopped" | "timed_out" | "cancelled";
   answers: QuestionAnswer[];
+}
+
+/** An `exit_plan_mode` call parked its turn on the model's plan
+ *  (TD-5123). The call's `tool_result` clears the card. */
+export interface PlanReview extends DaemonEvent {
+  type: "plan_review";
+  session_id: string;
+  tool_call_id: string;
+  plan: string;
+}
+
+/** How a parked plan review ended (TD-5123). `plan` is the approved text,
+ *  the person's edit when `edited`; empty unless approved. */
+export interface PlanReviewed extends DaemonEvent {
+  type: "plan_reviewed";
+  session_id: string;
+  tool_call_id: string;
+  outcome: "approved" | "rejected" | "stopped" | "timed_out" | "cancelled";
+  plan: string;
+  edited: boolean;
+  feedback: string;
+}
+
+/** The plan the person approved, pinned to the session (TD-5123). The
+ *  newest one is the pinned plan the Plan pane shows. */
+export interface PlanPinned extends DaemonEvent {
+  type: "plan_pinned";
+  session_id: string;
+  plan: string;
 }
 
 export interface DecisionLogged extends DaemonEvent {
@@ -2633,6 +2675,9 @@ export type DaemonEventUnion =
   | ApprovalRequest
   | QuestionRequest
   | QuestionAnswered
+  | PlanReview
+  | PlanReviewed
+  | PlanPinned
   | DecisionLogged
   | CheckpointNotice
   | VerifyStarted

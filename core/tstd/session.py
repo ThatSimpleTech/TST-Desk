@@ -21,6 +21,8 @@ from .autonomy.judgment import JudgmentBackend
 from .boundary_config import BoundaryConfig
 from .compaction import ContextMeter, compact_on_request, window_user_turns
 from .logging import get_logger, redact_structure
+from .plan_review import PendingPlan, carry_for
+from .plan_review import resolve_all as resolve_plans
 from .policy import (
     ApprovalOutcome,
     PolicyConfig,
@@ -38,7 +40,6 @@ from .protocol import (
 from .protocol import SessionState as SessionStateEvent
 from .provider import ChatMessage
 from .questions import PendingQuestion, resolve_all
-from .task_list import carry_text
 from .workspace_trust import TrustStore, WorkspaceConfigView
 
 if TYPE_CHECKING:
@@ -334,6 +335,9 @@ class Session:
         # how many checks have judged it, for ``/goal`` on its own.
         self.goal: str | None = None
         self.goal_checks = 0
+        # TD-5123: the plan the person approved to end plan mode. Carried
+        # into every compaction summary; rebuilt from the log on revive.
+        self.pinned_plan: str = ""
         # user_index -> sibling snapshots of conversation
         self._branches: dict[int, list[list[ChatMessage]]] = {}
         self._branch_cursor: dict[int, int] = {}
@@ -368,6 +372,8 @@ class Session:
         # TD-5121: ask_user questions parked the same way, by tool call id.
         # Skip-all never answers one; only answer_question, Stop or cancel.
         self.pending_questions: dict[str, PendingQuestion] = {}
+        # TD-5123: exit_plan_mode plans waiting for review, the same way.
+        self.pending_plans: dict[str, PendingPlan] = {}
         # Files the session has touched via successful path-bearing tool
         # calls (TD-503), as workspace-relative posix strings.  The loop
         # passes this set to the assembler so path-scoped steering rules
@@ -625,6 +631,7 @@ class Session:
         for pending in self._pending_approvals.values():
             pending.future.cancel()
         resolve_all(self, "cancelled")
+        resolve_plans(self, "cancelled")
         if self._state in ("running", "awaiting_approval", "paused"):
             await self.set_state("cancelled", reason=reason)
         await self.close_cu_session()
@@ -651,6 +658,7 @@ class Session:
             if not pending.future.done():
                 pending.future.set_result((False, "stopped"))
         resolve_all(self, "stopped")
+        resolve_plans(self, "stopped")
         if self._state == "paused":
             await self.set_state("running", reason="turn stopped")
         # After the state change, so a loop parked on the pause wakes
@@ -791,8 +799,8 @@ class Session:
             await self.set_state("awaiting_approval", reason=reason)
 
     async def leave_awaiting(self, reason: str) -> None:
-        """Back to ``running`` once no approval or question is still parked."""
-        if self._pending_approvals or self.pending_questions:
+        """Back to ``running`` once no approval, question or plan is still parked."""
+        if self._pending_approvals or self.pending_questions or self.pending_plans:
             return
         if self._state == "awaiting_approval":
             await self.set_state("running", reason=reason)
@@ -1311,7 +1319,7 @@ class Session:
             meter.tools,
             guidance=guidance,
             from_position=position,
-            carry=carry_text(self.task_list),
+            carry=carry_for(self),
         )
         if result is None:
             return "nothing_to_compact"

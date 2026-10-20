@@ -188,6 +188,8 @@ class McpSupervisor:
     def attach(self, registry: ToolRegistry, dispatcher: ToolDispatcher) -> None:
         """Register live MCP tools and their dispatcher handlers."""
         for live in self._live.values():
+            spec = self._config.servers.get(live.server_id)
+            read_only = frozenset(spec.read_only_tools) if spec is not None else frozenset()
             for remote in live.remote_tools:
                 local = local_tool_name(live.server_id, remote.name)
                 registry.register(
@@ -202,6 +204,9 @@ class McpSupervisor:
                         # remote schema. Undeclared fields fail toward B.
                         path_fields=(),
                         host_fields=(),
+                        # TD-5123: only the user's list marks a tool
+                        # read-only for plan mode, never the server.
+                        read_only=remote.name in read_only,
                     )
                 )
                 dispatcher.register_handler(local, _handler(live.client, remote.name))

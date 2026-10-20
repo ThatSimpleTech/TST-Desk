@@ -155,6 +155,9 @@ from tstd.protocol import (
     PairingCompleted,
     ParseJob,
     Ping,
+    PlanPinned,
+    PlanReview,
+    PlanReviewed,
     PolicyRules,
     PolicyRuleSummary,
     Question,
@@ -174,6 +177,7 @@ from tstd.protocol import (
     RemoveRemoteDevice,
     RenameSession,
     Resume,
+    ReviewPlan,
     RevokePolicyRule,
     RuleActivated,
     RunDiagnostics,
@@ -319,6 +323,17 @@ FIXTURES = {
     ),
     "answer_question_declined": AnswerQuestion(
         session_id="sess-1", tool_call_id="tc-q", declined=True
+    ),
+    # TD-5123: approve the plan as edited, or reject it with feedback.
+    "review_plan": ReviewPlan(
+        session_id="sess-1",
+        tool_call_id="tc-p",
+        decision="approve",
+        plan="1. Add greet().",
+        feedback="keep it small",
+    ),
+    "review_plan_reject": ReviewPlan(
+        session_id="sess-1", tool_call_id="tc-p", decision="reject", feedback="use the logger"
     ),
     "list_policy_rules": ListPolicyRules(session_id="sess-1"),
     "revoke_policy_rule": RevokePolicyRule(session_id="sess-1", tool="shell", args="rm *"),
@@ -679,6 +694,30 @@ FIXTURES = {
     "question_answered_declined": QuestionAnswered(
         session_id="sess-1", tool_call_id="tc-q", outcome="declined", seq=8
     ),
+    # TD-5123: read-only plan mode ends with a plan the person reviews.
+    "plan_review": PlanReview(
+        session_id="sess-1",
+        tool_call_id="tc-p",
+        plan="## Plan\n1. Add greet() to src/app.py.\n2. Test it.",
+        seq=9,
+    ),
+    "plan_reviewed": PlanReviewed(
+        session_id="sess-1",
+        tool_call_id="tc-p",
+        outcome="approved",
+        plan="1. Add greet().",
+        edited=True,
+        feedback="keep it small",
+        seq=11,
+    ),
+    "plan_reviewed_rejected": PlanReviewed(
+        session_id="sess-1",
+        tool_call_id="tc-p",
+        outcome="rejected",
+        feedback="use the logger",
+        seq=11,
+    ),
+    "plan_pinned": PlanPinned(session_id="sess-1", plan="1. Add greet().", seq=10),
     "approval_request": ApprovalRequest(
         session_id="sess-1",
         tool_call_id="tc-1",

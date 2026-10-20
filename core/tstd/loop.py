@@ -100,6 +100,8 @@ from .output_cap import (
     log_output_cap,
     stub_call,
 )
+from .plan_mode import with_plan_note
+from .plan_review import carry_for
 from .policy import read_guards, save_approved_imports, with_run_rules
 from .progress_guard import (
     PROGRESS_CHECK_INSTRUCTION,
@@ -154,7 +156,6 @@ from .session_goal import (
 from .shell_read_only import probe_git
 from .steer import inject_steers
 from .stop_check import TurnStopCheck
-from .task_list import carry_text
 from .tools import ToolDispatcher, ToolRegistry
 from .tools.boundary import PathGuard
 from .tools.consult import offered_tools
@@ -1277,6 +1278,8 @@ def session_boundary(session: Session) -> Boundary:
         # and a ``tst run --deny`` over a read guards the turn it came with
         # (TD-5118).
         read_guards=lambda: read_guards(with_run_rules(session.policy, session.run_permissions)),
+        # TD-5123: read per call, so plan mode turned on or off mid-turn counts.
+        plan_mode=lambda: session.router is not None and session.router.plan_mode,
     )
 
 
@@ -1351,10 +1354,10 @@ async def _fit_prompt(
     await _clear_stale_results(
         session, messages, tier, tier_cfg, counter, tool_definitions, clear_policy
     )
-    # The task list rides into the summary (TD-5122): the call that made
-    # it may be among the turns this drops.
+    # The task list (TD-5122) and the pinned plan (TD-5123) ride into the
+    # summary: the calls that made them may be among the turns this drops.
     compacted, compaction = maybe_compact(
-        messages, tier_cfg, counter, tool_definitions, carry=carry_text(session.task_list)
+        messages, tier_cfg, counter, tool_definitions, carry=carry_for(session)
     )
     if compaction is not None:
         messages[:] = compacted
@@ -1483,6 +1486,12 @@ async def agent_loop(
             ``None`` is the daemon-wide store, shared with every other
             session talking to the same endpoint.
     """
+    # The daemon attaches the router before the loop runs (TD-1006); a
+    # caller that only passed it here gets the same wiring, so the
+    # classifier's plan-mode rule and ``exit_plan_mode`` (TD-5123) read
+    # the router this loop routes by.
+    if session.router is None:
+        session.router = router
     # ── Conversation state ──────────────────────────────────────────
     # Learned token ratios (TD-5007). Taken before the assembler, which
     # sizes the workspace map from the brain endpoint's ratio (TD-5013).
@@ -1868,6 +1877,10 @@ async def agent_loop(
         if goal_command is not None and goal_command.kind == "set":
             # The goal is the task: the model gets it as a directive.
             provider_content = goal_provider_content(goal_command.text, queued.provider)
+        # TD-5123: while planning, the message reaches the model with the
+        # plan-mode note after it; the window shows it as typed.
+        if router.plan_mode:
+            provider_content = with_plan_note(provider_content)
         messages.append(ChatMessage(role="user", content=provider_content))
         await session.event_log.add(
             UserTurn(

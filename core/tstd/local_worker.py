@@ -14,7 +14,7 @@ from typing import Literal
 from urllib.parse import urlparse
 
 from .config import ModelConfig, TierConfig, apply_credential_host
-from .protocol import ToolCall
+from .protocol import TierState, ToolCall
 from .router import TIER_NAMES, TierName
 from .session import Session
 
@@ -124,3 +124,30 @@ def titlebar_hosts(config: ModelConfig, *, cu_heavy: bool) -> dict[str, str]:
         if host:
             hosts[name] = host
     return hosts
+
+
+def tier_state_event(session: Session, config: ModelConfig) -> TierState:
+    """Build the ``tier_state`` event for the title bar (TD-1006).
+
+    A tier whose slug is still unresolved is omitted rather than sent as a
+    placeholder (TD-1805): the daemon does not yet know its model, and the
+    UI must never be handed a truth it wasn't given.  The loop re-emits
+    ``tier_state`` once discovery lands on the first turn.
+
+    After a computer-use tool (TD-3903) the worker slug is the remapped
+    local-worker preset's worker, not the active preset's remote worker.
+    """
+    assert session.router is not None
+    cu_heavy = session_is_cu_heavy(session)
+    tier_cfg = effective_tier(config, session.router.active_tier, cu_heavy=cu_heavy)
+    return TierState(
+        session_id=session.id,
+        tier=session.router.active_tier,
+        override=session.router.override,
+        model_slugs=titlebar_slugs(config, cu_heavy=cu_heavy),
+        preset=config.active_preset,
+        hosts=titlebar_hosts(config, cu_heavy=cu_heavy),
+        plan=session.router.plan_mode,
+        vision=tier_cfg.vision,
+        seq=1,  # overwritten by the event log
+    )

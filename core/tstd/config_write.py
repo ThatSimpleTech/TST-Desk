@@ -462,6 +462,9 @@ def _mcp_server_lines(server_id: str, spec: McpServerConfig) -> list[str]:
         value = getattr(spec, key)
         if value is not None:
             block.append(f"      {key}: {value:g}")
+    # TD-5123: also hand-set; Settings has no field for it.
+    if spec.read_only_tools:
+        block.append(f"      read_only_tools: {json.dumps(list(spec.read_only_tools))}")
     for key, mapping in (("env", spec.env), ("headers", spec.headers)):
         if mapping:
             block.append(f"      {key}:")

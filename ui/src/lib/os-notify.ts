@@ -64,6 +64,17 @@ export function noticeFor(event: DaemonEventUnion, nameOf?: MachineNamer): OsNot
 			toolCallId: event.tool_call_id,
 		};
 	}
+	if (event.type === "plan_review") {
+		// TD-5123: plan mode ended with a plan; the turn waits for its review.
+		const first = event.plan.split("\n").map((line) => line.replace(/^[#*\-\s]+/, "").trim()).find((line) => line !== "") ?? "";
+		return {
+			title: onWhere("Plan ready for review", event.session_id, nameOf),
+			body: banner(first) || "The agent is waiting for you to review its plan",
+			kind: "question",
+			sessionId: event.session_id,
+			toolCallId: event.tool_call_id,
+		};
+	}
 	if (event.type === "turn_complete") {
 		return {
 			title: onWhere(event.failed ? "Turn failed" : "Turn complete", event.session_id, nameOf),

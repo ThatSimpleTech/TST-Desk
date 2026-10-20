@@ -17,10 +17,12 @@ import signal
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from .daemon import Daemon
 from .keychain import KeychainBackend, KeychainError, store_api_key
 from .mock import MockProvider, Script
+from .plan_mode import PLAN_NOTE
 from .protocol import (
     AssistantDelta,
     StopCheck,
@@ -30,7 +32,7 @@ from .protocol import (
     TurnComplete,
     UserTurn,
 )
-from .provider import ChatMessage
+from .provider import ChatCompletionRequest, ChatMessage
 from .session_persist import SessionPersist
 from .session_store import SessionStore
 
@@ -49,6 +51,35 @@ _TASKS = (
 # A done-check that could not run on that exchange (TD-5124): the reply
 # shows it open, and the walk folds it.
 _CHECK = "$ npm test"
+# The plan the mock model puts up when a turn plans (TD-5123), so the walk
+# reviews it on the card.
+_PLAN = "## Plan\n1. Add `greet()` to app.py.\n2. Call it from main."
+
+
+class _WalkModel(MockProvider):
+    """The walk's model: the reply, or a plan when a turn plans (TD-5123).
+
+    A planning turn's message carries the plan-mode note, so the model's
+    first call of that turn answers with ``exit_plan_mode``; the call after
+    the review's tool result answers as usual.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(default=Script(kind="stream", content=_REPLY))
+        self._plan_next = False
+
+    def chat_completion_stream(self, request: ChatCompletionRequest) -> Any:
+        last = request.messages[-1] if request.messages else None
+        content = last.content if last is not None and last.role == "user" else None
+        self._plan_next = bool(request.tools) and isinstance(content, str) and PLAN_NOTE in content
+        return super().chat_completion_stream(request)
+
+    def _script_for(self, model: str) -> Script:
+        if self._plan_next:
+            self._plan_next = False
+            arguments = json.dumps({"plan": _PLAN})
+            return Script(kind="tool_call", tool_name="exit_plan_mode", tool_arguments=arguments)
+        return super()._script_for(model)
 
 
 class MemoryKeychain(KeychainBackend):
@@ -200,7 +231,7 @@ async def serve(runtime_file: Path) -> None:
 
     daemon = Daemon(
         data_dir=data_dir,
-        provider=MockProvider(default=Script(kind="stream", content=_REPLY)),
+        provider=_WalkModel(),
     )
     task = asyncio.create_task(daemon.run())
     try:
@@ -214,6 +245,7 @@ async def serve(runtime_file: Path) -> None:
             "held_session": _HELD_SESSION,
             "tasks": [content for content, _ in _TASKS],
             "check": _CHECK,
+            "plan": _PLAN,
         }
         await asyncio.to_thread(_write_runtime, runtime_file, payload)
         print(json.dumps(payload), flush=True)

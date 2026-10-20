@@ -67,6 +67,19 @@
 		"Toggle Design mode Point at the Screen frame instead of describing it (⌘⇧D)",
 		"Toggle theme Switch between light and dark"
 	],
+	"plan-review": [
+		"Approve plan",
+		"Edit plan",
+		"Note for the agent",
+		"Reject plan"
+	],
+	"plan-review:editing": [
+		"Approve edited plan",
+		"Edit the plan",
+		"Note for the agent",
+		"Reject plan",
+		"Show plan"
+	],
 	"scheduled-form": [
 		"/Users/me/holidays.ics",
 		"Always run Skip if more than 30 min late Skip if more than 1 h late Skip if more than 2 h late Skip if more than 6 h late",
