@@ -10885,14 +10885,16 @@ the session. A deferring tier's requests carry `tool_search`, whose
 description names every MCP tool by server; the agent searches by keyword
 or `select:<names>`, and the matches (five, up to twenty) go to
 `Session.loaded_mcp_tools` and are sent after every other tool from the
-next call on, through compaction. A tool the conversation already called
-is loaded too, so a revived session keeps what it used. The request stays
-a plain `tools` array. `tool_search` is Class A by the static rule
+next call on, through compaction and a restart (`mcp_tools.json` in the
+session's persist folder, saved with the conversation snapshot). A tool
+the conversation already called is loaded too. The request stays a plain
+`tools` array. `tool_search` is Class A by the static rule
 `tool-search`; a loaded MCP tool still asks. Tests:
-`core/tests/test_mcp_tool_search.py` (ranking, `select:`, the catalog and
-its budget, below/above the threshold, `off`/`always`, the latched
-decision, load order and a byte-identical prefix, history after a revive,
-the handler and its refusal, the rule's shape and order, a real loop turn
+`core/tests/test_mcp_tool_search.py` (ranking, `select:` including a name
+two servers share, the catalog and its budget, below/above the threshold,
+`off`/`always`, the latched decision, load order and a byte-identical
+prefix, called tools from history, the list surviving a daemon restart and
+an unreadable file, the handler and its refusal, the rule's shape and order, a real loop turn
 against a strict endpoint mock that searches, loads, calls the tool once
 with one approval and still offers it on the next user turn, the request
 unchanged under the threshold, and the measurement script) and

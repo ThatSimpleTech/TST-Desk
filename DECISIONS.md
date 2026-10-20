@@ -16678,10 +16678,16 @@ the approach in place of a sign-off.
   `Session.loaded_mcp_tools` and are appended after every other tool in
   load order, so loading one leaves the earlier definitions byte-identical
   for the provider's cache. A tool the conversation has already called is
-  loaded as well, which keeps a session revived from disk (or a tool the
-  model called by name) consistent with its history. Found-but-never-called
-  tools are not persisted across a restart: the model searches again, as
-  it reloads a skill (TD-4502).
+  loaded as well (a tool the model called by name). The list is saved
+  with each conversation snapshot, when it changed, to `mcp_tools.json` in
+  the session's persist folder and read back on revive: on the small
+  windows this is for, compaction folds the calls away, so the history
+  alone would drop tools after a restart (second-opinion review finding).
+  Rejected: carrying the names in the compaction summary (parsing prose
+  back), a new protocol event (a UI type for state no viewer shows).
+- **`select:` with a tool's own name that several servers use** loads each
+  of them under its full name rather than refusing as ambiguous: the
+  result tells the model which is which, and it saves a round trip.
 - **Class A by a fixed rule (`tool-search`).** It reads the daemon's own
   registry and touches no file, host or server. Loading grants nothing:
   each call to a loaded MCP tool is classified as before (Class B by the

@@ -166,6 +166,16 @@ class TestSearch:
         found = search_tools(CATALOG, "select:wx__get_alerts, upload_file,nope", 5)
         assert [t.name for t in found] == ["wx__get_alerts", "files__upload_file"]
 
+    def test_a_short_name_two_servers_use_selects_both(self) -> None:
+        tools = [
+            *CATALOG,
+            _mcp_tool("wiki", "search", "Search wiki pages."),
+            _mcp_tool("mail", "search", "Search mail."),
+        ]
+        found = search_tools(tools, "select:search", 5)
+        assert sorted(t.name for t in found) == ["mail__search", "wiki__search"]
+        assert [t.name for t in search_tools(tools, "select:wiki__search", 5)] == ["wiki__search"]
+
     def test_limit_and_no_match(self) -> None:
         assert len(search_tools(CATALOG, "issue", 1)) == 1
         assert search_tools(CATALOG, "zebra", 5) == []
@@ -278,6 +288,52 @@ class TestOffer:
         names = _names(_offer(deferral, registry, session, window=100_000, messages=messages))
         assert names[-1] == "wx__get_alerts"
         assert session.loaded_mcp_tools == ["wx__get_alerts"]
+
+
+# ── A restart keeps what was loaded ─────────────────────────────────────
+
+
+async def test_loaded_tools_survive_a_restart(tmp_path: Path) -> None:
+    """Compaction folds away the calls, so the history alone cannot say."""
+    from tests.test_queued_restart import SID, _seed, _stop
+    from tstd.daemon import Daemon
+    from tstd.mock import MockProvider, Script
+    from tstd.session_persist import SessionPersist
+
+    data_dir = tmp_path / "data"
+    workspace = tmp_path / "ws"
+    data_dir.mkdir()
+    workspace.mkdir()
+    await _seed(data_dir, workspace, [], [])
+    persist = SessionPersist(data_dir)
+    persist.save_loaded_tools(SID, ["wx__get_forecast", "tracker__create_issue"])
+
+    daemon = Daemon(data_dir=data_dir, provider=MockProvider(default=Script(kind="stream")))
+    await daemon._restore_sessions()
+    try:
+        session = daemon.session_registry.get(SID)
+        assert session is not None
+        assert session.loaded_mcp_tools == ["wx__get_forecast", "tracker__create_issue"]
+        # A later load is saved with the next conversation snapshot.
+        session.loaded_mcp_tools.append("wx__get_alerts")
+        await session.conversation_changed()
+        assert persist.load_loaded_tools(SID)[-1] == "wx__get_alerts"
+        session.loaded_mcp_tools.clear()
+        await session.conversation_changed()
+        assert not (persist.dir_for(SID) / "mcp_tools.json").exists()
+    finally:
+        await _stop(daemon)
+
+
+def test_an_unreadable_list_reads_as_none(tmp_path: Path) -> None:
+    from tstd.session_persist import SessionPersist
+
+    persist = SessionPersist(tmp_path)
+    persist.prepare("s1")
+    (persist.dir_for("s1") / "mcp_tools.json").write_text("{not json")
+    assert persist.load_loaded_tools("s1") == []
+    (persist.dir_for("s1") / "mcp_tools.json").write_text('["a", 3, "b"]')
+    assert persist.load_loaded_tools("s1") == ["a", "b"]
 
 
 # ── The handler ─────────────────────────────────────────────────────────

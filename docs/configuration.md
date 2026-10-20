@@ -1087,10 +1087,11 @@ named with its tool count). The agent calls it with a few keywords, or
 `select:<name>,<name>` for exact names, and the best matches (five unless
 it asks for up to twenty) load: from the next model call on, their full
 definitions are in the request, after every other tool, and they stay
-for the rest of the session, through compaction. A tool the conversation
-has already called is loaded too, so a session revived after a restart
-keeps the tools it was using; one that was found but never called is
-searched for again. Nothing here needs a provider feature: the request
+for the rest of the session, through compaction and a restart (the
+session's folder keeps the list in `mcp_tools.json`). A tool the
+conversation has called is loaded too. A tool's own name that several
+servers use, such as `select:search`, loads each of them under its full
+name. Nothing here needs a provider feature: the request
 is a plain `tools` array, so it works on any OpenAI-compatible endpoint.
 `tool_search` is Class A (§4.4); loading a tool grants it nothing, and
 each call to it is classified as before. Whether a tier defers is decided

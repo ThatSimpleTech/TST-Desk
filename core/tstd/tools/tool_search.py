@@ -121,19 +121,21 @@ def _score(tool: Tool, terms: Sequence[str]) -> tuple[float, int]:
 
 
 def _select(tools: Sequence[Tool], names: str) -> list[Tool]:
-    """Exact picks: a full ``server__tool`` name, or a tool name one server has."""
+    """Exact picks: a full ``server__tool`` name, or a tool's own name.
+
+    A tool's own name that several servers use (two ``search`` tools)
+    picks each of them; the result names them in full, so the model can
+    tell them apart without another search.
+    """
     by_name = {t.name: t for t in tools}
     picked: list[Tool] = []
     for raw in names.split(","):
         name = raw.strip()
         if not name:
             continue
-        found = by_name.get(name)
-        if found is None:
-            suffix = [t for t in tools if t.name.endswith(f"__{name}")]
-            found = suffix[0] if len(suffix) == 1 else None
-        if found is not None and found not in picked:
-            picked.append(found)
+        exact = by_name.get(name)
+        found = [exact] if exact is not None else [t for t in tools if t.name.endswith(f"__{name}")]
+        picked.extend(t for t in found if t not in picked)
     return picked
 
 
