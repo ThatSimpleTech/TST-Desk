@@ -131,3 +131,21 @@ def _zip(files: dict[str, str]) -> bytes:
 
 def _esc(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def raw_xlsx(sheets: list[str]) -> bytes:
+    """An XLSX whose sheets hold exactly the given ``<sheetData>`` XML.
+
+    For hostile shapes make_xlsx will not build: empty rows, far-right
+    cells. Sheets are named S1, S2, ... and found by their default part.
+    """
+    entries = "".join(f'<sheet name="S{i}" sheetId="{i}"/>' for i in range(1, len(sheets) + 1))
+    files = {
+        "[Content_Types].xml": "<Types/>",
+        "xl/workbook.xml": f"<workbook {_S}><sheets>{entries}</sheets></workbook>",
+    }
+    for i, body in enumerate(sheets, start=1):
+        files[f"xl/worksheets/sheet{i}.xml"] = (
+            f"<worksheet {_S}><sheetData>{body}</sheetData></worksheet>"
+        )
+    return _zip(files)

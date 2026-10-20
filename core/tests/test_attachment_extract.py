@@ -8,24 +8,24 @@ markers, measures the caps against the text, and answers the composer's
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import json
 import socket
+import threading
+import time
+import tracemalloc
 import zipfile
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from tests.doc_fixtures import make_docx, make_pdf, make_xlsx
+from tests.doc_fixtures import make_docx, make_pdf, make_xlsx, raw_xlsx
 from tests.test_attachments import _open, _send, attach
-from tstd.attachment_extract import (
-    MAX_XML_BYTES,
-    DocumentError,
-    extract_document,
-    sniff_document,
-)
+from tstd.attachment_extract import DocumentError, extract_document, sniff_document
+from tstd.attachment_office import MAX_XML_BYTES, MAX_XML_ELEMENTS
 from tstd.attachments import (
     MAX_DOCUMENT_FILE_BYTES,
     AttachmentError,
@@ -37,6 +37,7 @@ from tstd.daemon import Daemon
 from tstd.peer_policy import FORWARDED_VERBS, MACHINE_PEER_VERBS
 from tstd.protocol import Attachment, parse_client_message
 from tstd.session import QueuedUserMessage
+from tstd.session_lifecycle import BUSY_CODE
 
 
 def _item(name: str, data: bytes) -> Attachment:
@@ -179,7 +180,7 @@ def test_entity_expansion_is_refused() -> None:
 
 
 def test_a_zip_bomb_stops_at_the_member_cap(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("tstd.attachment_extract.MAX_XML_BYTES", 10_000)
+    monkeypatch.setattr("tstd.attachment_office.MAX_XML_BYTES", 10_000)
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("word/document.xml", "<a>" + " " * 1_000_000 + "</a>")
@@ -188,6 +189,71 @@ def test_a_zip_bomb_stops_at_the_member_cap(monkeypatch: pytest.MonkeyPatch) -> 
         extract_document("x.docx", "docx", out.getvalue(), max_text_bytes=10_000)
     assert excinfo.value.code == "attachment_too_large"
     assert MAX_XML_BYTES == 64 * 1024 * 1024
+
+
+def _extract_xlsx(raw: bytes, cap: int = 4_000_000) -> str:
+    try:
+        return extract_document("x.xlsx", "xlsx", raw, max_text_bytes=cap).text
+    except DocumentError as e:
+        return e.code
+
+
+def test_a_sheet_of_empty_rows_stops_at_the_element_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Empty rows add nothing to the text, so the text cap never stops them;
+    # before the budget every one was parsed (minutes, gigabytes at scale).
+    monkeypatch.setattr("tstd.attachment_office.MAX_XML_ELEMENTS", 10_000)
+    assert (
+        _extract_xlsx(
+            raw_xlsx(["<row/>" * 9_000 + '<row><c t="inlineStr"><is><t>x</t></is></c></row>'])
+        )
+        == "[sheet: S1]\nx"
+    )
+    assert _extract_xlsx(raw_xlsx(["<row/>" * 20_000])) == "attachment_too_large"
+    # The budget is the whole document's, not each sheet's.
+    assert _extract_xlsx(raw_xlsx(["<row/>" * 4_000] * 3)) == "attachment_too_large"
+    assert MAX_XML_ELEMENTS == 4_000_000
+
+
+def test_the_decompressed_budget_spans_every_member(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("tstd.attachment_office.MAX_TOTAL_XML_BYTES", 100_000)
+    one = "<row/>" * 6_000  # 36 KB of XML a sheet, under the per-member cap
+    assert (
+        _extract_xlsx(raw_xlsx([one + '<row><c t="inlineStr"><is><t>x</t></is></c></row>']))
+        == "[sheet: S1]\nx"
+    )
+    assert _extract_xlsx(raw_xlsx([one] * 3)) == "attachment_too_large"
+
+
+def test_a_big_part_is_streamed_not_held(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 300,000 empty rows: as one tree that is tens of MB of elements; read
+    # as a stream it is little more than the XML bytes themselves.
+    body = "<row/>" * 300_000
+    raw = raw_xlsx([body])
+    tracemalloc.start()
+    try:
+        assert _extract_xlsx(raw) == "attachment_no_text"
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 3 * len(body) + 4_000_000
+
+
+def test_an_empty_far_right_cell_costs_nothing() -> None:
+    # Was: pad to XFD and pop back, 16k list steps a row for no output.
+    rows = '<row><c r="XFD1"/></row>' * 20_000
+    started = time.monotonic()
+    assert _extract_xlsx(raw_xlsx([rows])) == "attachment_no_text"
+    assert time.monotonic() - started < 2.0
+    # With text there, the blanks are kept so the column still lines up,
+    # and they are tabs the cap counts.
+    far = '<row><c r="A1" t="inlineStr"><is><t>a</t></is></c><c r="XFD1"><v>9</v></c></row>'
+    assert _extract_xlsx(raw_xlsx([far])) == "[sheet: S1]\na" + "\t" * 16_383 + "9"
+    assert _extract_xlsx(raw_xlsx([far * 100]), cap=10_000) == "attachment_too_large"
+    # A reference past Excel's last column reads as the next column.
+    past = '<row><c r="A1"><v>1</v></c><c r="ZZZZ1"><v>2</v></c></row>'
+    assert _extract_xlsx(raw_xlsx([past])) == "[sheet: S1]\n1\t2"
 
 
 # ── No network ─────────────────────────────────────────────────────────
@@ -250,9 +316,9 @@ async def test_extract_attachment_answers_with_a_token_count(tmp_path: Path) -> 
             }
         )
         assert isinstance(parse_client_message(raw).type, str)
-        response = await daemon._handle_message(raw, None)
-        assert response is not None
-        return dict(json.loads(response))
+        window = _Window()
+        assert await daemon._handle_message(raw, window) is None
+        return await window.next()
 
     ok = await ask("t.xlsx", make_xlsx({"Sheet A": [["abcd" * 10]], "B": [[1]]}))
     text = "[sheet: Sheet A]\n" + "abcd" * 10 + "\n[sheet: B]\n1"
@@ -280,3 +346,169 @@ async def test_extract_attachment_answers_with_a_token_count(tmp_path: Path) -> 
 def test_extract_attachment_reaches_another_computers_session() -> None:
     assert "extract_attachment" in MACHINE_PEER_VERBS
     assert "extract_attachment" in FORWARDED_VERBS
+
+
+class _Window:
+    """A connection that keeps what the daemon sends it."""
+
+    def __init__(self) -> None:
+        self.frames: asyncio.Queue[str] = asyncio.Queue()
+
+    async def send(self, frame: str) -> None:
+        self.frames.put_nowait(frame)
+
+    async def next(self) -> dict[str, Any]:
+        return dict(json.loads(await asyncio.wait_for(self.frames.get(), timeout=10)))
+
+
+def _gate(monkeypatch: pytest.MonkeyPatch, target: str) -> tuple[threading.Event, threading.Event]:
+    """Hold *target* in its worker thread until released: (entered, release)."""
+    module, attr = target.rsplit(".", 1)
+    real = getattr(__import__(module, fromlist=[attr]), attr)
+    entered, release = threading.Event(), threading.Event()
+
+    def held(*args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        assert release.wait(10)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(target, held)
+    return entered, release
+
+
+async def _until_set(event: threading.Event) -> None:
+    for _ in range(500):
+        if event.is_set():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("never reached")
+
+
+async def test_a_chip_being_measured_does_not_hold_up_the_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    daemon = Daemon(data_dir=tmp_path / "data")
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    session_id = await _open(daemon, workspace)
+    entered, release = _gate(monkeypatch, "tstd.attachment_handlers.measure_document")
+    window = _Window()
+    raw = json.dumps(
+        {
+            "type": "extract_attachment",
+            "session_id": session_id,
+            "request_id": "r1",
+            "attachment": attach("a.pdf", make_pdf(["slow"])),
+        }
+    )
+    # Returns at once although the document is still being read...
+    assert await asyncio.wait_for(daemon._handle_message(raw, window), timeout=2) is None
+    await _until_set(entered)
+    # ...so the same connection's next frame is answered meanwhile.
+    listed = await asyncio.wait_for(
+        daemon._handle_message(json.dumps({"type": "list_sessions"}), window), timeout=2
+    )
+    assert listed is not None and json.loads(listed)["type"] == "session_list"
+    assert window.frames.empty()
+    release.set()
+    answer = await window.next()
+    assert (answer["type"], answer["request_id"], answer["units"]) == (
+        "attachment_extracted",
+        "r1",
+        1,
+    )
+    await daemon._shutdown()
+
+
+async def _send_held(
+    daemon: Daemon, session_id: str, monkeypatch: pytest.MonkeyPatch, **extra: Any
+) -> tuple[asyncio.Task[str | None], threading.Event]:
+    """A user_message with a document, parked inside its extraction."""
+    entered, release = _gate(monkeypatch, "tstd.daemon.decode_attachments")
+    raw = json.dumps(
+        {
+            "type": "user_message",
+            "session_id": session_id,
+            "content": "read this",
+            "attachments": [attach("r.pdf", make_pdf(["Total: 42"]))],
+            **extra,
+        }
+    )
+    task = asyncio.create_task(daemon._handle_message(raw, None))
+    await _until_set(entered)
+    return task, release
+
+
+async def _queued(daemon: Daemon, session_id: str) -> list[QueuedUserMessage]:
+    sess = daemon.session_registry.get(session_id)
+    assert sess is not None
+    captured: list[QueuedUserMessage] = []
+    original = sess.add_user_message
+
+    async def spy(content: str | QueuedUserMessage, **kwargs: bool) -> None:
+        captured.append(QueuedUserMessage.plain(content) if isinstance(content, str) else content)
+        await original(content, **kwargs)
+
+    sess.add_user_message = spy  # type: ignore[method-assign]
+    return captured
+
+
+async def test_a_drain_begun_during_extraction_refuses_the_send(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    daemon = Daemon(data_dir=tmp_path / "data")
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    session_id = await _open(daemon, workspace)
+    captured = await _queued(daemon, session_id)
+    task, release = await _send_held(daemon, session_id, monkeypatch)
+    daemon._drain.hold_for(60)
+    release.set()
+    reply = await asyncio.wait_for(task, timeout=10)
+    assert reply is not None
+    assert json.loads(reply)["code"] == "daemon_draining"
+    assert captured == []
+    daemon._drain.hold_for(0)
+    await daemon._shutdown()
+
+
+async def test_a_session_ended_during_extraction_refuses_the_send(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    daemon = Daemon(data_dir=tmp_path / "data")
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    session_id = await _open(daemon, workspace)
+    captured = await _queued(daemon, session_id)
+    task, release = await _send_held(daemon, session_id, monkeypatch)
+    runner = daemon.session_registry.get_runner(session_id)
+    assert runner is not None
+    await runner.cancel()
+    release.set()
+    reply = await asyncio.wait_for(task, timeout=10)
+    assert reply is not None
+    assert json.loads(reply)["code"] == "session_not_running"
+    assert captured == []
+    await daemon._shutdown()
+
+
+async def test_a_turn_begun_during_extraction_refuses_an_only_if_idle_send(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    daemon = Daemon(data_dir=tmp_path / "data")
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    session_id = await _open(daemon, workspace)
+    sess = daemon.session_registry.get(session_id)
+    assert sess is not None and not sess.turn_in_flight
+    captured = await _queued(daemon, session_id)
+    task, release = await _send_held(daemon, session_id, monkeypatch, only_if_idle=True)
+    # Another sender gets in while the document is read (TD-5160's race).
+    sess._open_turns += 1
+    release.set()
+    reply = await asyncio.wait_for(task, timeout=10)
+    assert reply is not None
+    assert json.loads(reply)["code"] == BUSY_CODE
+    assert captured == []
+    sess._open_turns -= 1
+    await daemon._shutdown()

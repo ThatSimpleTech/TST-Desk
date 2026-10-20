@@ -17188,7 +17188,15 @@ they were never on the branch, and the dialog says so.
 - **DOCX and XLSX with the standard library.** They are zips of XML; `zipfile`
   and `xml.etree` read the text with no new dependency. Hostile files: each
   member is read only to 64 MB decompressed, a DOCTYPE or ENTITY anywhere is
-  refused (Office never writes one), and at most 10,000 members.
+  refused (Office never writes one), and at most 10,000 members. A part is
+  streamed (`iterparse`) and each element removed from its parent once read,
+  so memory is the XML's depth, not its size; one document may cost at most
+  128 MB of decompressed XML and 4 million elements in all (about ten
+  seconds of parsing at worst), because a part with no text never reaches
+  the text cap. A sheet row keeps only its non-empty cells and pads blanks
+  on output up to the last one with text, so an empty XFD cell costs nothing
+  and padding is tabs the cap counts. A column reference past XFD reads as
+  the next column.
   Elements are matched by local name, so Strict OOXML (other namespace URIs)
   reads too, and the source names no remote host (TD-1410's literal scan).
 - **Kind from the bytes.** `%PDF-` must lead the file, so a text file that
@@ -17212,7 +17220,12 @@ they were never on the branch, and the dialog says so.
   `message`). The extracted text never comes back, only its size. It is a
   machine-peer and forwarded verb: it reads only the bytes it is handed and
   starts no turn, and a bridged session's caps live on its own computer. The
-  send extracts again rather than trust a client's answer.
+  send extracts again rather than trust a client's answer. The answer is
+  worked out in a background task and sent on the asking connection when
+  ready, because the websocket server awaits each frame's handler before
+  reading the next; two documents are read at once daemon-wide, the rest
+  wait. The send itself still extracts inline: it has to, to keep a
+  connection's messages in order.
 - **The send awaits extraction off the loop.** `decode_attachments` runs in
   `asyncio.to_thread` when a message has files, so drain and session
   liveness are checked again after it, and the `only_if_idle` check moved

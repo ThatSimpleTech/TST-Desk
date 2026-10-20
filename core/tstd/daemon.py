@@ -27,7 +27,7 @@ from pydantic import ValidationError
 
 from . import keychain_mcp
 from .artifacts import ArtifactError, ArtifactRecord, ArtifactStore, artifact_ready_for, to_entry
-from .attachment_handlers import extract_attachment
+from .attachment_handlers import Extractions
 from .attachments import (
     AttachmentError,
     build_provider_user_content,
@@ -1011,6 +1011,8 @@ class Daemon:
         self._attached_clients: dict[str, set[Any]] = {}
         # (connection, session_id) -> streaming task
         self._streaming_tasks: dict[tuple[int, str], asyncio.Task[None]] = {}
+        # TD-5131: chip measurements, off the connection's message pump.
+        self._extractions = Extractions()
         # TD-804: machine-wide skip-all.  Loaded from the user data dir so
         # a workspace file cannot carry it into someone else's clone.
         self.skip_all_approvals = load_skip_all(self.data_dir)
@@ -2081,6 +2083,8 @@ class Daemon:
                     f"cancel {session.id[:8]}", runner.cancel(reason="daemon shutdown")
                 )
 
+        await self._extractions.stop()
+
         # Cancel streaming tasks
         for task in list(self._streaming_tasks.values()):
             if not task.done():
@@ -2802,8 +2806,17 @@ class Daemon:
                     session_id=msg.session_id,
                     in_reply_to=msg.type,
                 )
-            # TD-5131: the composer's chip for a staged document.
-            return await extract_attachment(msg, found.boundary_config.attachments)
+            # TD-5131: the composer's chip for a staged document. Answered
+            # later on this connection: reading a big PDF must not hold up
+            # the next frame (an interrupt, an approval) behind it.
+            connection = _connection
+
+            async def send(reply: str) -> None:
+                with contextlib.suppress(websockets.exceptions.ConnectionClosed):
+                    await connection.send(scrub_wire_json(self.hub.finish(reply, connection)))
+
+            self._extractions.start(msg, found.boundary_config.attachments, send)
+            return None
 
         if isinstance(msg, PreviewRestoreFiles | RestoreFiles):
             found = self.session_registry.get(msg.session_id)

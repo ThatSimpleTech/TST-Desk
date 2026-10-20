@@ -11202,12 +11202,20 @@ the file itself is held only to the transport's ceilings (10 MB a document,
 Extraction stops as soon as the text passes the cap. Refusals:
 `attachment_too_large` (text or file), `attachment_no_text` (a scan),
 `attachment_unreadable` (damaged, password-locked, or XML with a DOCTYPE),
-and a zip member past 64 MB decompressed is refused rather than read. The
+and a zip member past 64 MB decompressed is refused rather than read. DOCX
+and XLSX parts are streamed (`core/tstd/attachment_office.py`), each element
+dropped once read, under a whole-document budget of 128 MB of decompressed
+XML and 4 million elements, so a file of empty rows or empty far-right
+cells, which the text cap never sees, stops after a fixed amount of work
+(`attachment_too_large`); an empty cell costs nothing, since blank columns
+are only padded up to a cell with text. The
 composer stages a document as "PDF · reading…" and sends
 `extract_attachment` to the daemon that owns the session (a forwarded verb,
 so a bridged session measures on its own computer); `attachment_extracted`
 fills the chip with "PDF · 3 pages · ≈1.2k tokens" or drops it with the
-daemon's copy. The sent row keeps the same chip. On `user_message` the
+daemon's copy. The daemon answers it from a background task (two documents
+at a time), so the connection keeps handling interrupts, approvals and sends
+while a document is read. The sent row keeps the same chip. On `user_message` the
 daemon extracts again in a worker thread and re-checks drain and session
 liveness after that await, before the `only_if_idle` check. Nothing opens a
 socket: PDFium reads the bytes it is handed, and DOCX and XLSX use only
@@ -11216,9 +11224,12 @@ socket: PDFium reads the bytes it is handed, and DOCX and XLSX use only
 each kind, the header the model reads, kind from bytes not name, a big PDF
 with little text fits and a small DOCX with too much text is refused, the
 message total counts text, the file ceiling, a scan, a damaged PDF, entity
-expansion, a zip bomb, extraction with `socket` patched to fail, a PDF
-through a real daemon to the loop, `extract_attachment`'s answer and
-refusals, and the verb for a bridged id), `core/tests/doc_fixtures.py`
+expansion, a zip bomb, the whole-document budget, memory held while
+streaming, empty far-right cells, extraction with `socket` patched to fail,
+a PDF through a real daemon to the loop, `extract_attachment`'s answer and
+refusals, the connection staying free while a chip is measured, a drain,
+the session's end and a turn starting while a send's extraction is in
+flight, and the verb for a bridged id), `core/tests/doc_fixtures.py`
 (real PDF, DOCX and XLSX built in memory), `ui/src/lib/attachments-documents.test.ts`,
 `ui/src/lib/protocol.test.ts` (fixtures).
 

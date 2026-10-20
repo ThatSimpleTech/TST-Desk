@@ -2279,7 +2279,9 @@ A DOCX gives its paragraphs and its table rows, tab-separated. The caps above me
 so a 6 MB PDF of 20 KB of text fits and a small XLSX that expands past `max_file_bytes` does not.
 The file itself may be up to 10 MB, and the files on one message up to 12 MB together, whatever
 the caps say: that is what the websocket can carry. A PDF with no text (a scan) is refused with
-`attachment_no_text`, a damaged or password-locked file with `attachment_unreadable`. When you
+`attachment_no_text`, a damaged or password-locked file with `attachment_unreadable`. A DOCX or
+XLSX whose insides pass 128 MB of XML or 4 million elements is refused with `attachment_too_large`
+even when it holds little text: that is a zip bomb, not a document. When you
 stage a document, the composer asks the daemon to extract it (`extract_attachment`) and its chip
 shows the page or sheet count and about how many tokens the text will take.
 
