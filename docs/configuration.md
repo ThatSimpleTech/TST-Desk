@@ -576,7 +576,9 @@ clear_tool_results:
 The shell commands that run without asking (TD-5103). Every other shell call
 asks, as in §4.1. The list is fixed in the daemon: `shell.read_only` can drop
 entries or switch the whole list off, and naming anything that is not built in
-is a load error, so this file can never widen what auto-runs. Changes apply to
+is a load error, so this file can never widen what auto-runs. So is a key it does
+not know (TD-5160): a misspelt `enable: false` or `readonly:` would otherwise
+leave every entry on without a word. Changes apply to
 sessions opened after the daemon reads the file; restart the daemon after
 editing it.
 
@@ -658,6 +660,16 @@ the line is one of the entries above, joined by `;`, newlines, `|`, `||` or
   2.40 or newer, `GIT_DIR` and `GIT_WORK_TREE` are unset, and neither
   `GIT_CONFIG_GLOBAL` nor `GIT_CONFIG_SYSTEM` names a file inside the
   workspace.
+- Some git config names a program the pins below cannot switch off. As each
+  git command is classified, the daemon reads the config that command will
+  see (`git config`, includes followed, so an in-tree file your config
+  includes counts) and the affected entries ask (TD-5160): `git diff` while
+  `diff.external` is set (or `GIT_EXTERNAL_DIFF` is in the daemon's
+  environment), and `git log` and `git show` while signature checks would run
+  the gpg program (`log.showSignature` on, or `format.pretty` or a
+  `pretty.<name>` holding `%G`). A `%G` format word (`--format=%G?`), or
+  `%(signature` for `git branch`, asks as well. If that read fails, git
+  entries ask.
 - For `rg`: `RIPGREP_CONFIG_PATH` does not name a file inside the
   workspace, since one line of it can add `--pre`.
 
@@ -673,10 +685,11 @@ does not rewrite the index, and `GIT_NO_LAZY_FETCH=1`. So no attribute file
 the agent can write routes a file through a filter or textconv driver your
 own config names, and a hook in the tree does not run. Only
 `.git/info/attributes` still applies. This holds whoever approved the command,
-so `git diff` from the list shows raw bytes where a textconv driver would
-have converted them. In a SHA-256 repository the empty tree has another
-name and git refuses with `bad --attr-source`; take the git entries off
-the list there.
+and whether or not the list is on (TD-5160), so `git diff` from the shell
+shows raw bytes where a textconv driver would have converted them; a form the
+list never reads (`git -c … diff`) is not pinned. The empty tree is the one
+for the repository's object format, so SHA-256 repositories work too
+(TD-5160).
 
 A user policy rule (§4.4) still decides first: an `ask` or `never` rule that
 matches stops a listed command as before. The audit database records the

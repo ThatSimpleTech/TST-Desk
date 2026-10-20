@@ -24,6 +24,7 @@ from .classifier import (
     DecisionClass,
     DecisionClassifier,
     DecisionRequest,
+    prepare_read_only,
     relative_parts,
 )
 from .judgment import (
@@ -264,6 +265,7 @@ class AmbiguousClassifier:
             connector and default to **B** on any failure, low confidence,
             or a disabled remote connector.
         """
+        await prepare_read_only(request, self._static.boundary)
         static = self._static.classify(request)
         if static.decision_class is not None:
             return static

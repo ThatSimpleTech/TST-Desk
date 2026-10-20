@@ -4084,10 +4084,17 @@ class Daemon:
         return self.config.active_preset
 
     def _bind_session_preset(self, sess: Session, name: str) -> str:
-        """Point *sess* at a catalog snapshot. Does not write Settings."""
+        """Point *sess* at a catalog snapshot. Does not write Settings.
+
+        The new snapshot also carries the live ``shell.read_only`` list, so
+        a running loop rebinds its wall to it (TD-5160): the classifier
+        must not auto-run from a list the user has since shrunk.
+        """
         chosen = self._resolved_preset(name)
         sess.preset = chosen
         sess.config = self.config.model_copy(update={"active_preset": chosen})
+        if sess.on_config_reloaded is not None:
+            sess.on_config_reloaded()
         return chosen
 
     async def _handle_trust_workspace_config(self, msg: TrustWorkspaceConfig) -> str | None:

@@ -12,9 +12,11 @@ finds them wherever the suite runs; nothing here runs a command.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -54,6 +56,10 @@ def ws(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         stub.chmod(0o755)
     monkeypatch.setenv("PATH", str(bin_dir))
     monkeypatch.setattr(shell_read_only, "git_ready", lambda: True)
+    # What probe_repo_config reads from a plain SHA-1 repository (TD-5160).
+    monkeypatch.setattr(
+        shell_read_only, "_repo_config", {str(root.resolve()): shell_read_only.RepoConfig()}
+    )
     return root
 
 
@@ -449,6 +455,26 @@ def test_config_cannot_grow_the_list(tmp_path: Path) -> None:
         load_config(path)
 
 
+@pytest.mark.parametrize(
+    "shell",
+    [
+        {"read_only": {"enable": False}},
+        {"read_only": {"enabled": False, "comands": ["ls"]}},
+        {"readonly": {"enabled": False}},
+    ],
+)
+def test_a_misspelt_key_is_a_load_error_not_the_whole_list(
+    tmp_path: Path, shell: dict[str, object]
+) -> None:
+    """TD-5160: an ignored typo in the off switch would leave all entries on."""
+    data = yaml.safe_load(default_config_yaml())
+    data["shell"] = shell
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(data))
+    with pytest.raises(ConfigError, match="Extra inputs are not permitted"):
+        load_config(path)
+
+
 def test_the_session_boundary_reads_the_session_config(tmp_path: Path) -> None:
     session = Session(str(tmp_path))
     assert session_boundary(session).shell_read_only == frozenset()
@@ -578,3 +604,50 @@ def test_the_session_boundary_reads_the_live_policy(guarded_ws: Path) -> None:
     # A reload replaces it.
     session.policy = PolicyConfig()
     assert classifier.classify(request).decision_class is DecisionClass.A
+
+
+async def test_a_preset_switch_rebinds_the_list_the_classifier_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TD-5160: binding a preset swaps the session's config. The running
+    loop's classifier must read the new list, or a git command the user has
+    since taken off it still auto-runs."""
+    import tstd.daemon as daemon_module
+    from tests.test_artifacts import _open, _shutdown
+    from tstd.config import ShellConfig
+    from tstd.daemon import Daemon
+    from tstd.mock import MockProvider, Script
+    from tstd.tools import ToolDispatcher
+
+    made: list[ToolDispatcher] = []
+
+    class Recording(ToolDispatcher):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            made.append(self)
+
+    monkeypatch.setattr(daemon_module, "ToolDispatcher", Recording)
+    daemon = Daemon(
+        data_dir=tmp_path / "data", provider=MockProvider(default=Script(kind="stream"))
+    )
+    work = tmp_path / "ws"
+    work.mkdir()
+    sid = await _open(daemon, work)
+    session = daemon.session_registry.get(sid)
+    assert session is not None
+    try:
+        for _ in range(300):
+            if made and made[-1].classifier is not None:
+                break
+            await asyncio.sleep(0.01)
+        classifier = made[-1].classifier
+        assert classifier is not None
+        static = classifier._static  # type: ignore[attr-defined]
+        assert static.boundary.shell_read_only == ALL
+        daemon.config = daemon.config.model_copy(
+            update={"shell": ShellConfig(read_only=ShellReadOnlyConfig(enabled=False))}
+        )
+        daemon._bind_session_preset(session, session.preset)
+        assert static.boundary.shell_read_only == frozenset()
+    finally:
+        await _shutdown(daemon, sid)
