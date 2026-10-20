@@ -827,6 +827,14 @@ shows "Response interrupted", the partial text is not kept as the
 model's answer, and Retry on the message resends it (TD-5152). The
 after-write review and memory distillation get the same errors.
 
+A connection that drops inside a `200` stream splits the same way
+(TD-5120). Before anything has streamed, it is retried like a refused
+connection and, once `max_retries` is spent, ends as `request_error`: a
+llama.cpp or vLLM server that restarts while it reads a long prompt has
+shown nothing yet, so there is nothing to repeat. Once part of the reply
+has streamed, it is `stream_interrupted` and is not retried. The
+after-write review and memory distillation retry it too.
+
 A stall partway through a turn's reply is different (TD-5159): the
 provider went quiet, it did not report a failure. The daemon withdraws
 what that model response had shown (its text and its thinking, with an
@@ -1266,6 +1274,7 @@ three tier definitions. You can pin a tier for a session from the title bar.
 | `read_timeout` | float > 0 | `120` | Longest wait for any bytes from the server, the response headers included. A local model reading a long prompt sends nothing until its first token, so this is the knob for slow prefill — see §3.5. |
 | `total_timeout` | float > 0 or `null` | `null` | Wall-clock cap on one attempt, streaming included. `null` means no cap. A stream cut by it after output began is not retried. Before TD-5106 the client had a field named "total" set to 180; it was only the wait for a free pooled connection and never bounded a request. That wait stays 180 s and is not a key. |
 | `stream_idle_timeout` | float > 0 or `null` | `300` | Aborts a stream that sends no usable chunk for this long. SSE keep-alive comments (`: ping`) do not count, so a server that only pings is caught; `read_timeout` alone never catches it. A stall before any output is retried under `provider_retry`. A stall partway through a turn's reply withdraws the partial reply from the window and asks once more (TD-5159, see `provider_retry`), a fresh request whose own stalls before output are retried too; a second stall after output began ends the turn as `stream_stalled`. Reading stops at `data: [DONE]`, so a server that holds the body open after a finished reply is not a stall (TD-5152). `null` turns the watchdog off. |
+| `fallbacks` | list of tiers | `[]` | Backup endpoints, tried in order when this tier's own endpoint is down: a refused connection, a 5xx, a rate limit or a stall, once `provider_retry` is spent (TD-5120). Each entry is a whole tier with its own `slug` (required), `base_url`, `credential`, prices, `context_window`, `max_output_tokens` and timeouts; nothing is inherited. Config only — see §3.7. |
 
 **Prices are per million tokens, and they are yours to keep accurate.** They drive the live
 cost meter, the audit trail, and the spend cap. Nothing verifies them against your provider, so
@@ -1684,6 +1693,117 @@ the classifier answered in 2 tokens. Check your own server's documentation for i
 The same reserved keys and the plain-JSON rule apply. When a verdict comes back empty at its
 cap, the daemon logs one warning per endpoint and model that names `verdict_extra_body`. If
 `verdict_extra_body` is already set, the warning says to check how the switch is spelled.
+
+
+### 3.7 Backup endpoints (`fallbacks`)
+
+A tier can list backups to use when its own endpoint is down (TD-5120). Without them, a
+llama.cpp restart or a GPU swap fails the turn: every retry goes back to the server that just
+refused it. With them, the same request goes to the next backup once the tier's own retries are
+spent, and the turn carries on there.
+
+On EZER, the brain runs on a local llama.cpp server. A second local server is the first backup,
+and a hosted model is the last resort:
+
+<!-- verify: tier -->
+```yaml
+slug: local-coder
+base_url: http://127.0.0.1:8080/v1
+input_price: 0.0
+output_price: 0.0
+cache_read_price: 0.0
+context_window: 65536
+max_output_tokens: 8192
+read_timeout: 600
+stream_idle_timeout: 600
+fallbacks:
+  - slug: local-coder-small
+    base_url: http://127.0.0.1:8081/v1
+    input_price: 0.0
+    output_price: 0.0
+    cache_read_price: 0.0
+    context_window: 32768
+    max_output_tokens: 4096
+  - slug: your-vendor/your-backup-model
+    base_url: https://openrouter.ai/api/v1
+    credential: openrouter
+    input_price: 0.5
+    output_price: 2.0
+    cache_read_price: 0.05
+    context_window: 131072
+    max_output_tokens: 8192
+```
+
+**Each backup is a whole tier.** It has the same keys as a tier (§2, "A tier"), minus
+`fallbacks`, and nothing is copied from the tier it stands in for. A backup that does not state
+its prices fails to load rather than being priced at the free local model it replaces, so the
+cost meter and the spend cap stay right. Its `context_window` and `max_output_tokens` size
+compaction while it answers, its timeouts and `extra_body` apply to its requests, and `vision`
+says whether it takes images: give it `vision: true` if the tier takes images and you want an
+image turn to survive the switch. Two more rules, both load errors:
+
+- A backup must name its model (`slug`), even on loopback. A backup is only asked when a server
+  is failing, so it is never asked which model it serves (§3.4).
+- A backup has no backups of its own. List them all on the tier, in the order to try them.
+
+A backup bound to a `credential` needs that key in the keychain like any tier. If it is missing
+when the turn reaches the backup, the turn fails with `missing_api_key`. Settings will not
+delete a key a backup names; remove the backup from this file first. A backup may be the same
+model on the same host with another key, such as a second account for when the first is rate
+limited: each endpoint, key and set of timeouts gets its own connection.
+
+A tier that discovers its model (no `slug` on a local server, §3.4) asks its own server on the
+first turn after the daemon starts. If that server is down then, the turn fails as
+`model_unresolved` before any backup is asked. Once discovered, the model is kept for the life
+of the daemon, so a later restart of that server moves to the backups. Give the tier a `slug`
+if its server may be down when the daemon starts.
+
+**What moves a turn to a backup.** The tier's own endpoint gets the whole `provider_retry`
+budget first. Then:
+
+- Before any output, every failure `provider_retry` retries: a refused connection or one that
+  drops before the reply begins (a server restarting while it reads the prompt), a 429, a 500,
+  502, 503 or 504 (in the HTTP status or in-band, TD-5152), a timeout, a stream that closed
+  without a word, and a stall (`stream_idle_timeout`, TD-5106).
+- Partway through a reply, the same failures of the endpoint: a dropped connection or a 429 or
+  5xx reported in-band (both end the call as `stream_interrupted`), and a stall
+  (`stream_stalled`) once the one withdraw-and-ask-again of TD-5159 has stalled too. A reply
+  already shown is never resent to the endpoint that cut it off (TD-5152), so the backup is
+  asked straight away. The partial text is withdrawn first (`assistant_retract`), so the window
+  shows only the backup's reply.
+
+Nothing else moves. A rejected key (401), a bad request, an unknown model (404), a template
+error or a context overflow would fail the same way anywhere, or needs you, so the turn fails as
+before, before or partway through a reply. So does a reply whose stream just ends partway, with
+no finish and no error (`stream_interrupted`), and one that runs past `total_timeout`
+(`timeout`): Retry on the message resends it (TD-5152).
+
+Each backup gets its own `provider_retry` budget before the next one is asked. When the last
+backup fails too, the turn fails with that backup's error.
+
+**How long it stays.** Once a tier has moved, every later model call in the same turn goes
+straight to that backup, so a dead endpoint costs its retries once per turn rather than once per
+tool call. Your next message starts on the tier's own model again: a backup stands in, it never
+becomes the new default, and it may cost money the tier's own model does not.
+
+**What you see.** The timeline gets a **Backup** row naming the tier, both models and hosts, and
+the error that caused the move. The context gauge measures against the backup's window, adds
+`· backup` to its figure, and names the backup in its Tier row. The composer's tier menu shows
+the backup's model with `backup 1` (its place in the list). `tst run --output text` writes one
+line about it to stderr. All of these return to the tier's own model with the next turn.
+
+**What follows the model.** The prompt is fitted to the backup's window before the backup is
+asked, so a smaller backup compacts first, and the gauge is measured with the backup's own token
+ratio. Token calibration (TD-5007) is kept per endpoint and slug, so what a backup reports
+teaches the backup's ratio, never the tier's. Cost is recorded at the backup's prices under its
+slug. The workspace map keeps the size it was given for the brain's own window when the session
+started.
+
+**What does not move.** Only the turn's own model call moves. The tool-call classifier, DoD
+polls and judgment calls, a delegated worker (`delegate`), the after-write review, memory
+distillation and the page extract pass stay on their tier's own model and fail as before when it
+is down, so a safety verdict never comes from a model you did not pick for it. The progress
+check (TD-5002) asks whichever model the turn is on.
 
 ---
 

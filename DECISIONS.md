@@ -16316,3 +16316,112 @@ users); an `ask` floor (a card per consult); sending the session's
 steering or conversation along (cost, and more than the story asks);
 reading files by path inside the tool (a second read path to guard);
 counting a child's consults separately from its parent's turn.
+
+## 2026-10-20 — TD-5120: backup endpoints per tier (Class B)
+
+A tier's endpoint going down (a llama.cpp restart, a GPU swap on EZER)
+failed the turn: `provider_retry` resent to the same endpoint and then
+gave up. Claude Code's fallback model chains move to another model
+instead.
+
+**Decision.** Config: `fallbacks` on a tier, an ordered list of whole
+tiers (`TierConfig`, so every tier key and validator applies). Nothing is
+inherited from the tier. Loop: the turn's own model call, once the
+provider has spent `provider_retry` on it, goes to the next backup when
+the failure is one another endpoint can help with; the backup gets its
+own retry budget, then the next one. Protocol (additive, no version
+bump): a `model_fallback` event; `fallbacks` on `tier_state` (tier →
+1-based position) with `model_slugs` and `hosts` naming the backup; and
+`model` plus `fallback` on `context_usage`. The window adds a **Backup**
+timeline row, `· backup` and the backup's model on the context gauge, and
+`backup N` in the composer's tier menu. `core/tstd/fallback.py` holds the
+chain and the test of what moves; `loop._reply_with_backups` asks them.
+
+**What moves, and why that line.**
+
+- Before any output: exactly what the provider retries
+  (`ProviderError.retryable`), now carried on `StreamResult`: refused or
+  dropped connections, 429, 500/502/503/504 (HTTP or in-band before
+  output), timeouts, an empty stream, a stall. That flag already marks a
+  failure of the endpoint rather than of the request, and it is the one
+  thing "after the retry budget" can mean. Auth, 400/404, template errors
+  and context overflow do not move: they fail the same way anywhere or
+  need the user.
+- Partway through a reply: the same failures of the endpoint. A dropped
+  connection and an in-band 429 or 5xx end the call as
+  `stream_interrupted` with `ProviderError.endpoint_failed` set (carried
+  on `StreamResult` too); `stream_stalled` (the idle watchdog the story
+  names) moves after TD-5159's one withdraw-and-retry has stalled too.
+  The partial reply is withdrawn with `assistant_retract` before the
+  backup is asked, so the window shows one reply.
+
+**Review fix (PR #40).** The first version moved nothing that was cut
+off after the `200` headers. A connection that dropped there was
+`stream_interrupted`, not retryable, whether or not anything had been
+shown, so a llama.cpp or vLLM restart while it read a long prompt (the
+story's own case) failed the turn with nothing on screen and the docs'
+"dropped connection" claim was false. And a 5xx partway through a reply
+stayed, although the story names 5xx without a condition. Now:
+
+- `ProviderClient` maps a drop before any shown chunk to `request_error`,
+  retryable: the same failure a drop before the headers already was, and
+  the same line TD-5158 drew for an in-band error before output. Every
+  caller retries it under `provider_retry` (the off-turn calls too: it is
+  not a timeout), and a turn then moves to a backup.
+- A drop or an in-band 429/5xx after output stays `stream_interrupted`
+  and is still never resent to the same endpoint (TD-5152, TD-5159), but
+  it is marked `endpoint_failed` and moves to the next backup.
+  TD-5152's reason for not resending was the shown text and the gateway
+  that reported the failure; the withdrawal and a different endpoint
+  answer both.
+
+**Conservative choices** (Class C questions the story leaves open):
+
+- No inheritance: a backup states its own prices, window and output cap.
+  Inheriting would price a paid backup at the free local model it stands
+  in for, and the spend cap would never see it. A backup must also name
+  its `slug` (discovery asks a server that is failing) and cannot nest.
+- A reply whose stream just ends partway (no finish, no `[DONE]`, no
+  error), an in-band 4xx partway, and `total_timeout` partway do not
+  move: none names a failure of the endpoint the story lists, so they
+  keep TD-5152's rule and resending is the user's call.
+- Sticky for the rest of the user's turn, reset on the next one. A dead
+  endpoint costs its retry budget once per turn, not once per tool call,
+  and a backup that may cost money never becomes the silent default.
+- Only the turn's own call moves. The classifier, DoD polls, judgment
+  calls, a delegated worker, the after-write review, memory distill and
+  the extract pass stay on their tier's own model, so a safety verdict
+  never comes from a model the user did not pick for it. The progress
+  check asks whichever model the turn is on.
+- A backup whose key is not stored fails the turn with `missing_api_key`
+  (after the `model_fallback` row), rather than being skipped silently.
+- Settings refuses to delete a key a backup names (`bad_request` naming
+  the `presets.<p>.<tier>.fallbacks[n]` entry): backups are config only,
+  so nothing in the app could unbind it, and the config would no longer
+  load. The settings writers already leave a `fallbacks` block alone
+  (they match keys at the tier's own indent).
+- `requires_api_key` still looks at tiers only: a local preset with a
+  hosted backup does not demand a key at setup; the backup's key is
+  checked when it is used.
+- The workspace map keeps the size it was given for the brain's own
+  window; it is sized once per loop (TD-5013), and resizing it for a
+  backup would change the prompt prefix mid-session.
+- Token calibration needs no new code: counters are keyed by endpoint
+  and slug (TD-5007), so a backup gets its own counter and its usage
+  teaches only its own ratio. The prompt is fitted to the backup's window
+  before the backup is asked.
+- Provider clients are cached by endpoint, key and timeouts. The
+  session loop's cache keyed on the host alone, so a backup on the same
+  host with a second key (a rate-limited account's spare) reused the
+  tier's client and sent the tier's key; and both caches ignored
+  timeouts, so a backup sharing a host and key kept the tier's. Both now
+  key on all three (`TierConfig.timeout_key`). Tiers that share all three
+  still share one client.
+
+**Rejected:** retrying inside `ProviderClient` (it cannot fit the prompt
+to another window, withdraw shown text or tell the window); moving
+back to the tier's own model mid-turn (a dead endpoint would cost its
+budget on every call); a cool-down that keeps later turns on the backup
+(turns would silently change model and price); inheriting fields
+selectively (endpoint fields versus model fields is a rule users would
+have to learn to read their own config).

@@ -256,6 +256,24 @@ class TierConfig(BaseModel):
     read_timeout: float = Field(default=120.0, gt=0)
     total_timeout: float | None = Field(default=None, gt=0)
     stream_idle_timeout: float | None = Field(default=300.0, gt=0)
+    # Backup endpoints, tried in order when this tier's own endpoint is
+    # down (TD-5120). Each is a whole tier of its own: model, endpoint,
+    # key, prices, window and timeouts. Nothing is inherited, so a paid
+    # backup can never be priced as the free local model it stands in for.
+    fallbacks: list[TierConfig] = Field(default_factory=list)
+
+    def timeout_key(self) -> tuple[float, float, float | None, float | None]:
+        """The timeouts a provider client is built with, as a cache key.
+
+        A client carries its timeouts, so two tiers, or a tier and its
+        backup (TD-5120), may share one only when these match too.
+        """
+        return (
+            self.connect_timeout,
+            self.read_timeout,
+            self.total_timeout,
+            self.stream_idle_timeout,
+        )
 
     def timeouts(self) -> TimeoutConfig:
         """This tier's timeouts for :class:`~tstd.provider.ProviderClient`."""
@@ -318,6 +336,28 @@ class TierConfig(BaseModel):
                 f"{info.field_name} must be plain JSON ({error}). Quote dates, times and "
                 "other values YAML would read as something else"
             ) from error
+        return value
+
+    @field_validator("fallbacks")
+    @classmethod
+    def _fallbacks_are_flat_and_named(cls, value: list[TierConfig]) -> list[TierConfig]:
+        """A backup names its model and has no backups of its own (TD-5120).
+
+        Discovery asks a server which model it serves, and a backup is
+        only asked for when a server is failing, so it must say. One flat,
+        ordered list is the whole chain: a nested one would hide an order.
+        """
+        for index, backup in enumerate(value):
+            if backup.fallbacks:
+                raise ValueError(
+                    f"fallbacks[{index}] cannot list fallbacks of its own; "
+                    "put every backup in the tier's list, in the order to try them"
+                )
+            if backup.slug is None:
+                raise ValueError(
+                    f"fallbacks[{index}] must name its model (slug); a backup is only "
+                    "used when a server is failing, so it is never asked which model it serves"
+                )
         return value
 
     @model_validator(mode="after")
@@ -1333,13 +1373,29 @@ class ModelConfig(BaseModel):
         for preset_name, preset in self.presets.items():
             for tier_name in TIER_NAMES:
                 tier = getattr(preset, tier_name)
-                cid = tier.credential
-                if cid is not None and cid not in known:
-                    raise ValueError(
-                        f"presets.{preset_name}.{tier_name}.credential "
-                        f"{cid!r} is not a declared credential"
-                    )
+                bound = [(f"presets.{preset_name}.{tier_name}", tier.credential)]
+                bound += [
+                    (f"presets.{preset_name}.{tier_name}.fallbacks[{i}]", backup.credential)
+                    for i, backup in enumerate(tier.fallbacks)
+                ]
+                for where, cid in bound:
+                    if cid is not None and cid not in known:
+                        raise ValueError(f"{where}.credential {cid!r} is not a declared credential")
         return self
+
+    def fallback_bindings(self, credential_id: str) -> list[str]:
+        """Where a backup endpoint uses *credential_id* (TD-5120).
+
+        Settings can unbind a key from a tier, but backups live in the
+        file only, so a key a backup names must not be deleted under it.
+        """
+        return [
+            f"presets.{preset_name}.{tier_name}.fallbacks[{i}]"
+            for preset_name, preset in self.presets.items()
+            for tier_name in TIER_NAMES
+            for i, backup in enumerate(getattr(preset, tier_name).fallbacks)
+            if backup.credential == credential_id
+        ]
 
     def tier(self, name: TierName) -> TierConfig:
         """Get the tier config for the active preset."""

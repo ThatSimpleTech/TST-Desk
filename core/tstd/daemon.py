@@ -1000,7 +1000,7 @@ class Daemon:
         )
         self._slug_snapshot = _snapshot_slugs(self.config)
         self._provider = provider
-        self._clients: dict[tuple[str, str], ProviderLike] = {}
+        self._clients: dict[tuple[str, str, tuple[float | None, ...]], ProviderLike] = {}
         self._pending_memory: dict[str, DistillEmit] = {}
         # Built when the daemon starts serving — the audit database only
         # appears on disk once the daemon actually runs (TD-902).
@@ -1151,8 +1151,9 @@ class Daemon:
 
         An injected constructor provider (tests) is returned for every
         tier so a mock stays in front of the loop. Production caches one
-        handle per ``(base_url, credential)`` so two keys on one host do
-        not share a client, and a remapped local worker (TD-3903) does
+        handle per ``(base_url, credential, timeouts)`` so two keys on one
+        host do not share a client, a backup endpoint gets its own
+        timeouts (TD-5120), and a remapped local worker (TD-3903) does
         not reuse the remote brain client. The handle, not the HTTP
         client, is what the session loop keeps. An authentication failure
         closes the HTTP client and rebuilds it from the keychain (TD-4840).
@@ -1162,7 +1163,9 @@ class Daemon:
             return self._provider
         base_url = resolve_base_url(self.config, tier_cfg)
         cred_id = resolve_credential_id(tier_cfg) or ""
-        cache_key = (base_url, cred_id)
+        # The client carries its timeouts, so a tier or backup (TD-5120)
+        # with other timeouts on the same host and key gets its own.
+        cache_key = (base_url, cred_id, tier_cfg.timeout_key())
         cached = self._clients.get(cache_key)
         if cached is not None:
             return cached
@@ -1477,6 +1480,14 @@ class Daemon:
     async def _delete_named_credential(self, credential_id: str) -> None:
         """Drop catalog row, secret, and tier bindings."""
         cred_id = credential_id.strip()
+        backups = self.config.fallback_bindings(cred_id)
+        if backups:
+            # A backup is config only (TD-5120): nothing here can unbind it,
+            # and deleting its key would leave a config that no longer loads.
+            raise ConfigError(
+                f"The key {cred_id!r} is used by {', '.join(backups)} in config.yaml. "
+                "Remove it there first."
+            )
         bound: list[tuple[str, str]] = []
         for preset_name, preset in self.config.presets.items():
             for tier_name in ("brain", "worker", "validator"):

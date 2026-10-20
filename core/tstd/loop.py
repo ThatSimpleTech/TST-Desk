@@ -20,9 +20,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import functools
 import json
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -59,6 +61,7 @@ from .config import (
     ModelDiscoveryError,
     TierConfig,
     resolve_base_url,
+    resolve_credential_id,
 )
 from .context import PromptAssembler
 from .context.calibration import (
@@ -79,6 +82,7 @@ from .context_fit import fit_inflight_turn, tool_result_char_cap, transcript_fai
 from .cost import CallRecord, CostTracker
 from .cu_verify import ActuationVerifier
 from .discovery import discover_model, resolve_tier_slugs
+from .fallback import BackupChain, TurnBackups, announce_switch, backup_wanted
 from .keychain import KeychainError
 from .local_worker import (
     effective_tier,
@@ -346,17 +350,7 @@ async def _progress_check_gate(
         *messages,
         ChatMessage(role="user", content=PROGRESS_CHECK_INSTRUCTION),
     ]
-    (
-        content,
-        tool_calls,
-        failed,
-        error_msg,
-        _code,
-        _raw,
-        _finish,
-        _details,
-        _began,
-    ) = await _stream_and_parse(
+    check = await _stream_and_parse(
         provider,
         model_slug,
         check_messages,
@@ -366,6 +360,12 @@ async def _progress_check_gate(
         tier,
         tier_cfg,
         emit_events=False,
+    )
+    content, tool_calls, failed, error_msg = (
+        check.content,
+        check.tool_calls,
+        check.failed,
+        check.error_msg,
     )
     if session.cancel_requested or error_msg == "cancelled":
         return "stop"
@@ -653,7 +653,7 @@ async def _stream_and_parse(
     Returns:
         A :class:`StreamResult` of ``(collected_content, tool_calls, failed,
         error_msg, error_code, raw_detail, finish_reason, reasoning_details,
-        began)``.
+        began, retryable, response_id, endpoint_failed)``.
         ``error_code`` is the provider's typed code (e.g. ``auth_failed``)
         so clients can key tailored copy off it (TD-1008). ``raw_detail`` is
         the upstream body for the log; it is empty unless the chunk is a
@@ -663,12 +663,18 @@ async def _stream_and_parse(
         OpenRouter array to echo on the next assistant message (TD-1903),
         or ``None`` when the stream carried none. ``began`` says a chunk
         arrived, after which the provider no longer retries (TD-5159).
+        ``retryable`` is the provider's flag on the error that ended the
+        call, which is what moves a turn to a backup endpoint (TD-5120);
+        ``endpoint_failed`` does the same for a reply the endpoint cut off
+        partway, which is not retried.
     """
     collected_content = ""
     began = False
     tool_calls: dict[int, dict[str, str | int]] = {}
     collected_details: list[dict[str, Any]] = []
     failed = False
+    retryable = False
+    endpoint_failed = False
     error_msg = ""
     error_code: str | None = None
     raw_detail = ""
@@ -704,6 +710,7 @@ async def _stream_and_parse(
             if isinstance(chunk, ProviderError):
                 failed, error_msg, error_code = True, chunk.message, chunk.code
                 raw_detail = chunk.detail
+                retryable, endpoint_failed = chunk.retryable, chunk.endpoint_failed
                 break
             began = True
 
@@ -782,6 +789,9 @@ async def _stream_and_parse(
         finish_reason,
         collected_details or None,
         began,
+        retryable,
+        response_id,
+        endpoint_failed,
     )
 
 
@@ -818,6 +828,100 @@ async def _stream_turn_reply(
         )
 
     return await stream_reply(attempt, session, config.provider_retry)
+
+
+@dataclass
+class _BackupReply:
+    """Where a turn's call ended up after its tier's backups (TD-5120)."""
+
+    reply: StreamResult
+    tier_cfg: TierConfig
+    counter: CalibratedTokenCounter
+    provider: ProviderLike
+
+
+def _keychain_failure(error: KeychainError) -> StreamResult:
+    """A backup whose key is not stored fails the turn saying so (TD-1008)."""
+    return StreamResult(
+        content="",
+        tool_calls={},
+        failed=True,
+        error_msg=str(error),
+        error_code="missing_api_key",
+        raw_detail="",
+        finish_reason=None,
+        reasoning_details=None,
+        began=False,
+    )
+
+
+async def _reply_with_backups(
+    reply: StreamResult,
+    chain: BackupChain,
+    *,
+    session: Session,
+    provider: ProviderLike,
+    counter: CalibratedTokenCounter,
+    messages: list[ChatMessage],
+    tool_definitions: list[ProviderToolDefinition] | None,
+    tracker: CostTracker,
+    config: ModelConfig,
+    client_for: Callable[[TierConfig], Awaitable[ProviderLike]],
+    counter_for: Callable[[TierConfig], CalibratedTokenCounter],
+    overflow_retried: bool,
+    on_switch: Callable[[TierConfig], Awaitable[None]],
+) -> _BackupReply:
+    """Send the turn's request down the tier's backups until one answers.
+
+    *reply* is the failed call to ``chain.current``, after its retry
+    budget. Each backup gets the same conversation, fitted to its own
+    window with its own calibrated counter, through its own client, and
+    its own ``provider_retry`` budget (TD-5120). The chain stays where it
+    stopped, so the rest of the turn uses that backup. When the last one
+    fails too, its failure is the turn's.
+    """
+    tier_cfg = chain.current
+    while backup_wanted(reply) and not (session.cancel_requested or session.stop_turn_requested):
+        previous = tier_cfg
+        backup = chain.advance()
+        if backup is None:
+            break
+        tier_cfg = backup
+        await announce_switch(session, chain, previous, reply)
+        await on_switch(tier_cfg)
+        counter = counter_for(tier_cfg)
+        session.context_meter = ContextMeter(
+            chain.tier, tier_cfg, counter, tool_definitions, fallback=chain.position
+        )
+        try:
+            provider = await client_for(tier_cfg)
+        except KeychainError as e:
+            reply = _keychain_failure(e)
+            break
+        await _fit_prompt(
+            session,
+            messages,
+            chain.tier,
+            tier_cfg,
+            counter,
+            tool_definitions,
+            overflow_retried=overflow_retried,
+            max_prompt_images=config.computer_use.max_prompt_images,
+            clear_policy=config.clear_tool_results,
+        )
+        reply = await _stream_turn_reply(
+            provider,
+            tier_cfg.require_slug(),
+            messages,
+            session,
+            tool_definitions,
+            tracker,
+            chain.tier,
+            tier_cfg,
+            counter,
+            config,
+        )
+    return _BackupReply(reply, tier_cfg, counter, provider)
 
 
 def _carries_non_text(messages: list[ChatMessage]) -> bool:
@@ -1380,10 +1484,17 @@ async def agent_loop(
         tracker.add_listener(_forward)
     # Clients keyed by base_url so a remapped local worker (TD-3903) does
     # not reuse the remote brain client.  Resolved lazily on first use.
-    providers: dict[str, ProviderLike] = {}
+    # The key and timeouts are part of the key too, as in the daemon's own
+    # cache: a backup on the same host with a second key, or other
+    # timeouts, gets a client of its own (TD-5120).
+    providers: dict[tuple[str, str, tuple[float | None, ...]], ProviderLike] = {}
 
     async def client_for(tier_cfg: TierConfig) -> ProviderLike:
-        key = tier_cfg.base_url
+        key = (
+            tier_cfg.base_url,
+            resolve_credential_id(tier_cfg) or "",
+            tier_cfg.timeout_key(),
+        )
         existing = providers.get(key)
         if existing is not None:
             return existing
@@ -1613,6 +1724,64 @@ async def agent_loop(
     _last_reported_tier: TierName | None = None
     _last_reported_slugs: dict[str, str] | None = None
     _last_reported_hosts: dict[str, str] | None = None
+    _last_reported_backups: dict[str, int] | None = None
+
+    async def report_tier_state(
+        tier: TierName, tier_cfg: TierConfig, cu_heavy: bool, backups: TurnBackups
+    ) -> None:
+        """Send ``tier_state`` when the tier, a slug, a host or a backup moved.
+
+        TD-1006 / TD-1720: the title bar is told which tier, slug and host
+        are live. Host changes (credential remap, CU worker) also emit so
+        the pill stays honest, and so does a move to a backup endpoint,
+        which names the backup for its tier (TD-5120).
+        """
+        nonlocal _model_slugs, _last_reported_tier, _last_reported_slugs
+        nonlocal _last_reported_hosts, _last_reported_backups
+        _model_slugs, hosts = backups.overlay(
+            titlebar_slugs(config, cu_heavy=cu_heavy), titlebar_hosts(config, cu_heavy=cu_heavy)
+        )
+        positions = backups.positions()
+        if (
+            tier == _last_reported_tier
+            and _model_slugs == _last_reported_slugs
+            and hosts == _last_reported_hosts
+            and positions == _last_reported_backups
+        ):
+            return
+        _last_reported_tier = tier
+        _last_reported_slugs = _model_slugs
+        _last_reported_hosts = hosts
+        _last_reported_backups = positions
+        await session.event_log.add(
+            TierState(
+                session_id=session.id,
+                tier=tier,
+                override=router.override,
+                model_slugs=_model_slugs,
+                preset=config.active_preset,
+                hosts=hosts,
+                plan=router.plan_mode,
+                vision=tier_cfg.vision,
+                fallbacks=positions,
+                seq=1,
+            )
+        )
+
+    def counter_for(tier_cfg: TierConfig) -> CalibratedTokenCounter:
+        """The calibrated counter for the model *tier_cfg* calls (TD-5007).
+
+        Keyed by endpoint and slug, so a backup endpoint learns its own
+        ratio and never borrows the tier's (TD-5120).
+        """
+        key = calibration_key(tier_cfg)
+        counter = _token_counters.get(key)
+        if counter is None:
+            counter = CalibratedTokenCounter(
+                make_token_counter(tier_cfg.require_slug()), calibration, key
+            )
+            _token_counters[key] = counter
+        return counter
 
     # ── Turn loop ───────────────────────────────────────────────────
     while not session.cancel_requested:
@@ -1728,6 +1897,9 @@ async def agent_loop(
         #    One overflow retry per user turn. Resetting this inside the
         #    loop would clear it on the continue that performs the retry.
         overflow_retried = False
+        # Tiers this turn moved to a backup endpoint (TD-5120). Fresh per
+        # user turn, so the next one starts on each tier's own model.
+        backups = TurnBackups()
         guard = ProgressGuard()
         # Model calls this turn has made, and the last tool batch: where a
         # message sent mid-turn joins it (TD-5112).
@@ -1773,33 +1945,11 @@ async def agent_loop(
                         },
                     )
                     break
-            _model_slugs = titlebar_slugs(config, cu_heavy=cu_heavy)
-            _hosts = titlebar_hosts(config, cu_heavy=cu_heavy)
-            if (
-                tier != _last_reported_tier
-                or _model_slugs != _last_reported_slugs
-                or _hosts != _last_reported_hosts
-            ):
-                _last_reported_tier = tier
-                _last_reported_slugs = _model_slugs
-                _last_reported_hosts = _hosts
-                tier_cfg = effective_tier(config, tier, cu_heavy=cu_heavy)
-                # TD-1006 / TD-1720: tell the title bar which tier, slug,
-                # and host are live. Host changes (credential remap, CU
-                # worker) also emit so the pill stays honest.
-                await session.event_log.add(
-                    TierState(
-                        session_id=session.id,
-                        tier=tier,
-                        override=router.override,
-                        model_slugs=_model_slugs,
-                        preset=config.active_preset,
-                        hosts=_hosts,
-                        plan=router.plan_mode,
-                        vision=tier_cfg.vision,
-                        seq=1,
-                    )
-                )
+            # A tier that moved to a backup earlier in this turn stays on
+            # it: a dead endpoint costs its retry budget once (TD-5120).
+            backup_chain = backups.chain_for(config, tier, tier_cfg)
+            tier_cfg = backup_chain.current
+            await report_tier_state(tier, tier_cfg, cu_heavy, backups)
 
             # 2b. Assemble the per-tier system prompt in stable-prefix
             #     order (TD-305), gating external imports (TD-505): an
@@ -1964,14 +2114,10 @@ async def agent_loop(
             #     steering block and manifest were just re-read from
             #     disk at 2b, so instructions survive compaction.
             model_slug = tier_cfg.require_slug()
-            counter_key = calibration_key(tier_cfg)
-            counter = _token_counters.get(counter_key)
-            if counter is None:
-                counter = CalibratedTokenCounter(
-                    make_token_counter(model_slug), calibration, counter_key
-                )
-                _token_counters[counter_key] = counter
-            session.context_meter = ContextMeter(tier, tier_cfg, counter, tool_definitions)
+            counter = counter_for(tier_cfg)
+            session.context_meter = ContextMeter(
+                tier, tier_cfg, counter, tool_definitions, fallback=backup_chain.position
+            )
             await _fit_prompt(
                 session,
                 messages,
@@ -2156,17 +2302,7 @@ async def agent_loop(
             #     stall after output began is withdrawn from the window
             #     and the call is made once more (TD-5159).
             turn_step += 1
-            (
-                collected_content,
-                tool_calls,
-                failed,
-                error_msg,
-                error_code,
-                raw_detail,
-                finish_reason,
-                reasoning_details,
-                _began,
-            ) = await _stream_turn_reply(
+            reply = await _stream_turn_reply(
                 provider,
                 model_slug,
                 messages,
@@ -2178,6 +2314,43 @@ async def agent_loop(
                 counter,
                 config,
             )
+
+            # 2d.1 The tier's endpoint is down: once its retry budget is
+            #     spent, the same request goes to the next backup in its
+            #     `fallbacks`, and the turn stays there (TD-5120).
+            if backup_wanted(reply) and len(backup_chain.models) > 1:
+                moved = await _reply_with_backups(
+                    reply,
+                    backup_chain,
+                    session=session,
+                    provider=provider,
+                    counter=counter,
+                    messages=messages,
+                    tool_definitions=tool_definitions,
+                    tracker=tracker,
+                    config=config,
+                    client_for=client_for,
+                    counter_for=counter_for,
+                    overflow_retried=overflow_retried,
+                    on_switch=functools.partial(
+                        report_tier_state, tier, cu_heavy=cu_heavy, backups=backups
+                    ),
+                )
+                reply, tier_cfg, counter, provider = (
+                    moved.reply,
+                    moved.tier_cfg,
+                    moved.counter,
+                    moved.provider,
+                )
+                model_slug = tier_cfg.require_slug()
+            collected_content = reply.content
+            tool_calls = reply.tool_calls
+            failed = reply.failed
+            error_msg = reply.error_msg
+            error_code = reply.error_code
+            raw_detail = reply.raw_detail
+            finish_reason = reply.finish_reason
+            reasoning_details = reply.reasoning_details
 
             # 2e. Handle failure
             if failed:

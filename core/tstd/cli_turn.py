@@ -40,6 +40,7 @@ from .cli import (
     _send,
     _turn_timeout_secs,
     config_trust_notice,
+    fallback_notice,
 )
 from .cli_approvals import prompt_approval
 from .logging import REDACTED
@@ -225,6 +226,13 @@ class _TurnReader:
             return None
         if typ == "assistant_retract":
             self._withdraw(event)
+            return None
+        if typ == "model_fallback":
+            # TD-5120: stderr, so stdout stays the reply. NDJSON carries
+            # the event itself.
+            if self.output == "text":
+                self.end_line()
+                print(fallback_notice(event), file=sys.stderr)
             return None
         if typ == "assistant_delta":
             delta = str(event.get("delta") or "")

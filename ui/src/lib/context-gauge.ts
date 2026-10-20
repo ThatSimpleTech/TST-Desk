@@ -7,8 +7,13 @@
 import type { NoticeSpec } from "./error-copy";
 import type { ContextUsage } from "./protocol";
 
-/** What the gauge shows: the last `context_usage`, without the envelope. */
-export type ContextReading = Pick<ContextUsage, "tier" | "used_tokens" | "context_window" | "compact_at">;
+/** What the gauge shows: the last `context_usage`, without the envelope.
+ *  `model` is null from an older daemon; `fallback` is 0 on the tier's own
+ *  model and the backup's 1-based position on a backup endpoint (TD-5120). */
+export type ContextReading = Pick<ContextUsage, "tier" | "used_tokens" | "context_window" | "compact_at"> & {
+	model: string | null;
+	fallback: number;
+};
 
 /** The daemon keeps this much guidance; more is cut there anyway. */
 export const COMPACT_GUIDANCE_MAX = 500;
@@ -55,9 +60,23 @@ function trimZero(s: string): string {
 	return s.replace(/\.0$/, "");
 }
 
-/** "12k / 64k" for the title bar. */
+/** "12k / 64k" for the title bar, and "12k / 32k · backup" while the tier's
+ *  own endpoint is down and a backup's window is the one shown (TD-5120). */
 export function gaugeLabel(reading: ContextReading): string {
-	return `${formatTokens(reading.used_tokens)} / ${formatTokens(reading.context_window)}`;
+	const label = `${formatTokens(reading.used_tokens)} / ${formatTokens(reading.context_window)}`;
+	return reading.fallback > 0 ? `${label} · backup` : label;
+}
+
+/**
+ * The popover's Tier row: "brain · qwen", or "brain · gpt (backup 1)" on a
+ * backup endpoint (TD-5120). The reading names the model its figures were
+ * measured for, so it wins over the title bar's slug; an older daemon sends
+ * none, and the slug stands in.
+ */
+export function gaugeTierLine(reading: ContextReading, slugs: Record<string, string>): string {
+	const model = reading.model ?? slugs[reading.tier] ?? null;
+	const line = model !== null ? `${reading.tier} · ${model}` : reading.tier;
+	return reading.fallback > 0 ? `${line} (backup ${reading.fallback})` : line;
 }
 
 /** Share of the whole window in use, 0-100. */

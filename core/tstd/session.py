@@ -1331,6 +1331,8 @@ class Session:
                 used_tokens=used_tokens,
                 context_window=meter.tier_cfg.context_window,
                 compact_at=budget_threshold(meter.tier_cfg),
+                model=meter.tier_cfg.slug,
+                fallback=meter.fallback,
                 seq=1,
             )
         )

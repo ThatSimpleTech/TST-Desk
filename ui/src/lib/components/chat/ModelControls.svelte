@@ -70,7 +70,7 @@
 				>
 					{#each TIERS as tier (tier)}
 						<option value={tier} disabled={session.planMode && tier !== "brain"}>
-							{tierMenuLabel(tier, session.modelSlugs[tier])}
+							{tierMenuLabel(tier, session.modelSlugs[tier], session.fallbacks[tier])}
 						</option>
 					{/each}
 				</select>

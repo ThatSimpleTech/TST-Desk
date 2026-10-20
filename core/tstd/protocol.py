@@ -2059,6 +2059,11 @@ class TierState(DaemonEvent):
     plan: bool = False
     # Active tier accepts image attachments (TD-4705). Default false.
     vision: bool = False
+    # Tiers this turn moved to a backup endpoint (TD-5120): tier name →
+    # 1-based position in its ``fallbacks`` list. ``model_slugs`` and
+    # ``hosts`` already name the backup for those tiers. Empty when every
+    # tier is on its own model; the next turn starts there again.
+    fallbacks: dict[str, int] = Field(default_factory=dict)
 
 
 class LoosenedSetting(BaseModel):
@@ -2180,6 +2185,12 @@ class ContextUsage(DaemonEvent):
     used_tokens: int = Field(ge=0)
     context_window: int = Field(gt=0)
     compact_at: int = Field(ge=0)
+    # The model the figures are for (TD-5120, additive). On a backup
+    # endpoint the window and the estimate are the backup's, and
+    # ``fallback`` is its 1-based position in the tier's list; 0 is the
+    # tier's own model. ``None`` from an older daemon.
+    model: str | None = None
+    fallback: int = Field(default=0, ge=0)
 
 
 class SteeringReloaded(DaemonEvent):
@@ -2215,6 +2226,30 @@ class RuleActivated(DaemonEvent):
     type: Literal["rule_activated"] = "rule_activated"
     session_id: str
     rule_path: str  # workspace-relative path of the rule file
+
+
+class ModelFallback(DaemonEvent):
+    """A tier's endpoint failed and the turn moved to a backup (TD-5120).
+
+    Sent once the retry budget for ``from_model`` on ``from_host`` is spent
+    and the failure is one a backup can help with (``reason`` is its error
+    code: a refused connection, a 5xx, a rate limit, a timeout or a stalled
+    stream). The same request goes to ``to_model`` on ``to_host``, which is
+    ``fallback`` (1-based) in the tier's ``fallbacks`` list. Hosts are
+    hostname:port, as on ``TierState``. Text the failed call had shown was
+    withdrawn first with an ``assistant_retract``. Every later call in the
+    turn stays on the backup; the next turn starts on the tier's own model.
+    """
+
+    type: Literal["model_fallback"] = "model_fallback"
+    session_id: str
+    tier: TierName
+    from_model: str
+    from_host: str
+    to_model: str
+    to_host: str
+    fallback: int = Field(ge=1)
+    reason: str
 
 
 class TierSwitched(DaemonEvent):
@@ -3776,6 +3811,7 @@ DaemonEventT = Annotated[
     | SteeringReloaded
     | RuleActivated
     | TierSwitched
+    | ModelFallback
     | InstructionStack
     | InstructionFiles
     | CommandList
@@ -3986,6 +4022,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "steering_reloaded",
         "rule_activated",
         "tier_switched",
+        "model_fallback",
         "instruction_stack",
         "instruction_files",
         "command_list",

@@ -1399,6 +1399,10 @@ export interface TierState extends DaemonEvent {
   plan?: boolean;
   /** Active tier accepts images (TD-4705). Omitted by older daemons — treat as off. */
   vision?: boolean;
+  /** Tiers this turn moved to a backup endpoint (TD-5120): tier → 1-based
+   *  position in its `fallbacks`. `model_slugs` and `hosts` already name the
+   *  backup. Omitted by older daemons — treat as none. */
+  fallbacks?: Record<string, number>;
 }
 
 /** One setting a workspace config loosens (TD-5113). */
@@ -2233,6 +2237,12 @@ export interface ContextUsage extends DaemonEvent {
   used_tokens: number;
   context_window: number;
   compact_at: number;
+  /** The model the figures are for (TD-5120). Null or absent from an older
+   *  daemon. */
+  model?: string | null;
+  /** 1-based position of the backup endpoint in use, 0 (or absent) for the
+   *  tier's own model (TD-5120). */
+  fallback?: number;
 }
 
 export interface TierSwitched extends DaemonEvent {
@@ -2240,6 +2250,21 @@ export interface TierSwitched extends DaemonEvent {
   session_id: string;
   tier: "brain" | "worker" | "validator";
   previous?: "brain" | "worker" | "validator" | null;
+}
+
+/** A tier's endpoint failed after its retry budget and the turn moved to the
+ *  next backup in its `fallbacks` (TD-5120). `reason` is the error code.
+ *  Hosts are hostname:port. Later calls in the turn stay on the backup. */
+export interface ModelFallback extends DaemonEvent {
+  type: "model_fallback";
+  session_id: string;
+  tier: "brain" | "worker" | "validator";
+  from_model: string;
+  from_host: string;
+  to_model: string;
+  to_host: string;
+  fallback: number;
+  reason: string;
 }
 
 /** One persisted job on job_list (TD-3805). */
@@ -2519,6 +2544,7 @@ export type DaemonEventUnion =
   | SteeringReloaded
   | RuleActivated
   | TierSwitched
+  | ModelFallback
   | InstructionStack
   | InstructionFiles
   | CommandList

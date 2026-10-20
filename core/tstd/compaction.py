@@ -86,6 +86,9 @@ class ContextMeter:
     tier_cfg: TierConfig
     counter: TokenCounter
     tools: Sequence[ToolDefinition] | None
+    #: 1-based position of the backup endpoint in use, 0 for the tier's
+    #: own model (TD-5120). ``tier_cfg`` is then the backup's.
+    fallback: int = 0
 
     def measure(self, messages: list[ChatMessage]) -> int:
         return estimate_tokens(messages, self.counter, self.tools)[0]
