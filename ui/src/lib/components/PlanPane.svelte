@@ -6,7 +6,8 @@
 	import { machineNameFor } from '../machines.svelte.js';
 	import { session } from '../session-status.svelte.js';
 	import { progressLabel } from '../task-list';
-	import { taskListFor } from '../task-list-store.svelte.js';
+	import { pinnedPlanFor, taskListFor } from '../task-list-store.svelte.js';
+	import Markdown from './chat/Markdown.svelte';
 
 	let comment = $state('');
 
@@ -22,20 +23,30 @@
 	// TD-5122: the native loop's task list. Display only, so another
 	// computer's session shows its list too: the hub forwards the events.
 	let tasks = $derived(taskListFor(session.sessionId));
+	// TD-5123: the plan the person approved to end plan mode, pinned.
+	let pinned = $derived(pinnedPlanFor(session.sessionId));
 </script>
 
 <div class="plan">
-	{#if tasks.length > 0}
-		<section class="native" aria-label="Task list">
-			<p class="progress">Tasks · {progressLabel(tasks)}</p>
-			<TaskListView items={tasks} />
-		</section>
+	{#if pinned !== '' || tasks.length > 0}
+		{#if pinned !== ''}
+			<section class="native" aria-label="Approved plan">
+				<p class="progress">Approved plan · pinned</p>
+				<div class="pinned"><Markdown text={pinned} /></div>
+			</section>
+		{/if}
+		{#if tasks.length > 0}
+			<section class="native" aria-label="Task list">
+				<p class="progress">Tasks · {progressLabel(tasks)}</p>
+				<TaskListView items={tasks} />
+			</section>
+		{/if}
 	{:else if remoteName !== null}
 		<EmptyState align="start" body={staysOnCopy(remoteName)} />
 	{:else if !hasPlan}
 		<EmptyState
 			align="start"
-			body="The agent's task list lands here as it works. In Grok's plan mode the plan lands here too: approve it to start implementing, or type a revision note first."
+			body="The agent's task list lands here as it works, and so does a plan you approve to end plan mode. In Grok's plan mode the plan lands here too: approve it to start implementing, or type a revision note first."
 		/>
 	{:else}
 		{#if grok.planEntries.length > 0}
@@ -76,6 +87,10 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-2);
+	}
+	.pinned {
+		font-size: var(--text-sm);
+		overflow-wrap: anywhere;
 	}
 	.progress {
 		margin: 0;

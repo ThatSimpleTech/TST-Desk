@@ -16624,6 +16624,231 @@ it is re-injected were left open. Adam approved the story as written
   keep their fixed tool lists without `task_list`; the plan is the
   parent's. The Grok engine keeps its own plan.
 
+## 2026-10-20 — TD-5124: a done-check on interactive turns, from the workspace or `/goal` (Class B)
+
+**Context.** The definition-of-done poll (TD-4103) ran only in unattended
+runs with a signed charter, so an interactive turn could stop early, or
+claim it was done, unchecked. Local models do both. The story asks for a
+workspace `stop_check` (a `$` command or a worker-judged statement, reusing
+`autonomy/dod.py`), a failure sent back as a user message up to N times,
+then the turn ending with the failure shown, and `/goal <statement>`
+checked the same way, all without a charter. The shape of the setting, of
+the feedback and of `/goal`, and what the window shows were left open.
+Adam approved the story as written (gap audit decisions, 2026-10-14); the
+open Class C questions below took the most conservative answer that still
+meets it.
+
+**Decision.**
+
+- **Its own section of `.tst/config.yaml`.** `stop_check: {checks,
+  max_retries, timeout_secs}` on the workspace config model, so it loads,
+  reloads on resume and move, and falls back to the defaults exactly like
+  `caps` and `memory`. `checks` takes the charter's DoD shape (one string is
+  one check, up to 10 of 4000 characters); `max_retries` defaults to 3, at
+  most 20, and `0` checks without ever sending the model back;
+  `timeout_secs` (default 300, at most 3600) is passed to the shell tool,
+  whose own 30 s is too short for a test suite. Unknown keys are refused.
+- **A repo's `stop_check` waits for trust (TD-5113).** Class C answered
+  conservatively: a check runs on its own at every turn end, a command
+  through the shell tool or a statement that reaches the model as a user
+  message, which is what a hook does, and decision 3 lets hooks come from a
+  workspace only once it is trusted. So any `stop_check.checks` entry counts
+  as loosening and the trust card lists it. `/goal` is the user's own and
+  needs no trust.
+- **The DoD code, shared.** `poll_definition_of_done`, the GREEN/RED
+  prompt (`dod_worker_prompt`), `parse_dod_verdict`, `shell_exit_zero` and
+  the gate-only dispatch (`dispatch_check_command`: no Class C stop, no
+  ledger entry) are now used by both. Runners may answer `None` for an item
+  they could not judge; `DodItemResult.decided` says so. The unattended
+  runners never do, so a charter's poll still fails toward red. The worker's
+  objective is the user message that started the turn.
+- **A `$` check goes through the normal gate.** Class C answered
+  conservatively: no auto-approval. The classifier, the policy rules and an
+  approval card decide, as for any shell call. Each run logs a `tool_call`
+  and `tool_result` under a `check-` id, so the chat shows the command and
+  its output, the approval card clears, and the audit has it.
+- **What ends a turn.** All green: it ends. Red: the failure goes back and
+  the turn continues, until `max_retries` failures have gone back; the
+  next failure ends the turn with `turn_complete` `failed` and
+  `error_code: stop_check_failed`, so `tst run` exits non-zero and a
+  scheduled run records a failure (not transient, so no retry). An item
+  that could not be judged (declined, refused by policy or the allowlist,
+  could not start, no verdict) ends the turn as `unchecked` and sends
+  nothing back when no other item is red: Class C answered conservatively,
+  since the model could not fix it and a retry would only spend tokens.
+  When one item is red and another could not be judged, the red one
+  decides (review of PR #45): it goes back, or fails the turn after
+  `max_retries`, and the feedback names only red items. Otherwise a `$`
+  check that really failed would be dropped whenever a worker statement
+  beside it got no verdict, which the 8-token verdict cap makes common.
+  Stop during a check seals the turn as Stop always does.
+- **The feedback is a user message the window does not number.** It is
+  `ChatMessage(role="user", steer=True, check=True)`: `steer` because it
+  joins the running turn (compaction never cuts at it, in-turn elision
+  reaches past it), and `check` because no `user_turn` showed it, so
+  `window_user_turns` and a summary's turn count skip it and Edit and
+  branch arrows still pick the right turn. `check` is saved with the
+  conversation. A summary labels it "Done-check:". The text names each
+  failing item; a command's output keeps its start and its end, up to
+  2000 characters, since a test run reports at the bottom.
+- **A `stop_check` event, shown on the reply.** `stop_check` carries the
+  outcome (`passed`, `retry`, `failed`, `unchecked`), the attempt, the
+  limit and each item (`source`, `via`, `passed`, `decided`, a capped
+  `detail`). The window adds it to the assistant row as a fold beside the
+  tool folds; `failed` and `unchecked` open on their own. A new turn-failure
+  copy names `stop_check_failed`. `tst run` and `tst attach` print one
+  line on stderr. The feedback itself is never a chat bubble.
+- **`/goal` is the daemon's.** The loop reads it when the turn starts, so
+  it works the same from the window, the phone and `tst run --message`,
+  and never as a skill name. `/goal <statement>` sets the goal and the
+  statement becomes the turn's task (the model gets a short directive;
+  the transcript keeps what was typed). `/goal` alone and `/goal clear`
+  (`off`, `stop`, `none`, `cancel`, `reset`) are answered with no model
+  call: both the typed line and the answer go into the conversation, so
+  turn numbering holds. A goal is checked as a worker-judged statement
+  after the workspace checks, with the same `max_retries`; it clears when a
+  check passes with it and stays set when the turn gives up, so the next
+  message picks it up again. At most 4000 characters. The window palette
+  lists it as a built-in.
+- **The goal survives a restart.** A `session_goal` event (`set`,
+  `cleared`, `met`) records each change; revive takes the newest, and the
+  daemon logs it again when rotation drops it or an attach finds it
+  missing (the TD-5122 task-list pattern). A display-only strip above the
+  composer shows it.
+- **Where it runs.** Every native interactive turn the model ends, on the
+  normal path and when the progress guard's own check answers DONE (both
+  end the turn). Not in unattended runs (the charter's DoD still runs
+  there), delegate children, or Grok-engine sessions.
+- **Not while planning (merge with TD-5123).** TD-5123's read-only plan
+  mode landed on main while this story was open, and neither story says
+  whether a planning turn is checked. The conservative answer: no. A
+  planning turn only reads and ends in a plan the person reviews; a red
+  check would send the model back to fix what plan mode refuses, burning
+  `max_retries` into a `stop_check_failed` the person never asked for, and
+  a `$` check that plan mode refuses would only say "could not run". So
+  `TurnStopCheck.items()` is empty while `router.plan_mode` is on: no
+  `stop_check` event, nothing sent back, the goal stays set. A plan
+  approved mid-turn turns plan mode off, so that turn's end is checked.
+
+---
+
+## 2026-10-20 — TD-5123: read-only plan mode, ended by a plan the user reviews (Class B; revises TD-4603 and TD-5117)
+
+**Context.** TD-4603's plan mode only pinned routing to the brain; every
+tool still dispatched. The gap audit's TD-5123 asks for Claude Code's
+"analyze before you edit": refuse every mutating call while planning, end
+with a plan the user approves, rejects or edits, and toggle it from the
+composer, a slash command and the phone. Size 5, so the approach is
+recorded here instead of waiting for sign-off (Adam approved the gap-audit
+stories on 2026-10-14). The story and the 2026-10-14 decisions leave the
+mechanism, the MCP marking and the plan's lifetime open.
+
+**Decision.**
+
+1. **The classifier refuses; nothing downstream can run it.** A new first
+   rule, `plan-mode` (Class C, `refuses=True`), fires while the session's
+   router is in plan mode and the call is not plan-safe. Dispatch returns
+   that refusal (`error_code` `plan_mode`) straight after classifying,
+   before the path guard and the policy gate, so no `auto` rule, approval,
+   Skip all approvals or autonomy grant can run it. A plain Class C rule
+   would have asked, and skip-all promotes a C ask to auto. The tool result
+   tells the model it is planning, why this call was refused, and to call
+   `exit_plan_mode`. `Boundary.plan_mode` is a callable read per call (like
+   `read_guards`), so turning plan mode on or off mid-turn counts, and a
+   delegate child, which shares its parent's classifier, is judged by its
+   parent's plan mode.
+2. **Plan-safe is an allowlist.** `mutates` was not enough: the GitHub
+   write tools (`github_put_file`, `github_merge`, ...) declare none. A
+   builtin runs only if it is on `PLAN_READ_ONLY_BUILTINS` (fs reads, web
+   search and fetch, `load_skill`, `task_list`, `ask_user`, `consult`,
+   `send_file`, `exit_plan_mode`, the GitHub reads), is capture-only
+   computer use (`actuates` false), is `shell` made only of the TD-5103
+   read-only list (with the list off, every shell command is refused), or
+   is `delegate` without `kind: worker`. A test lists every builtin that
+   runs, so a new tool is refused until someone decides it reads.
+   `propose_steering_edit` is refused: a steering edit is a change, even
+   as a proposal the user's Accept writes.
+3. **MCP tools are read-only only by the user's config.** New key
+   `mcp.servers.<id>.read_only_tools`: the server's own tool names, matched
+   exactly. The loader sets `Tool.read_only`, which only the classifier's
+   `mcp:` branch reads; a plugin tool is never plan-safe whatever it
+   declares. MCP's `readOnlyHint` is not trusted (the spec calls
+   annotations untrusted hints, and TST Desk still speaks 2024-11-05,
+   which has none). Settings keeps the list when it rewrites a server. The
+   key adds nothing outside plan mode: a listed tool still asks.
+4. **`delegate kind: worker` is refused while planning (revises TD-5117
+   item 3).** TD-5117 kept the explicit worker running because the brain
+   could still write under TD-4603. Now nothing writes in plan mode, and a
+   worker child whose every write is refused only spends tokens; the
+   refusal names `kind research` instead. The child's own calls are still
+   refused by the shared classifier if one ever runs.
+5. **The model knows it is planning.** While plan mode is on, the turn's
+   message reaches the model with a fixed note after the person's words
+   (`plan_mode.PLAN_NOTE`); the window shows the message as typed. Tool
+   definitions never change with plan mode (`exit_plan_mode` is always
+   offered and refuses outside plan mode), so toggling keeps the
+   llama.cpp prefix cache.
+6. **`exit_plan_mode` parks like `ask_user` (TD-5121).** It is Class A by
+   its own rule (`exit-plan-mode`): the review is the one prompt. New
+   events `plan_review` (the plan), `plan_reviewed` (outcome `approved`,
+   `rejected`, `stopped`, `timed_out`, `cancelled`, with the approved plan,
+   `edited` and the person's `feedback`) and `plan_pinned`; new client
+   message `review_plan` (`decision` approve or reject, optional edited
+   `plan`, optional `feedback`). Editing is approving with your own text,
+   not a third verdict. The session waits in `awaiting_approval` ("waiting
+   for your plan review"); Stop, cancel and `approval_timeout_seconds` end
+   it, and skip-all never reviews a plan. Unattended runs, delegate
+   children and `--on-ask deny-and-continue` turns are refused
+   (`exit_plan_unattended`), and so is a plan the log's secret scrub would
+   change (`plan_secret_shaped`), as for TD-5121 and TD-5140. Plans and
+   edits are capped at 12,000 characters (`PLAN_MAX_CHARS`). `review_plan`
+   is a machine-peer and forwarded verb and an approval verb (never queued
+   while a lane connects): approving only turns plan mode off, which
+   `set_plan` already allows a peer.
+7. **Approving ends plan mode and pins the plan.** The daemon turns plan
+   mode off and logs `tier_state` (so every chip clears) and `plan_pinned`
+   before `plan_reviewed`, then the tool result hands the model the
+   approved text. The pinned plan lives on `Session.pinned_plan`, rides in
+   every compaction summary ahead of the task list (`carry_for`), shows in
+   the Plan pane above the task list, and comes back on revive from the
+   newest `plan_pinned`, which is logged again when the log window rotates
+   it out or an attach finds it missing (the TD-5122 pattern). A new
+   approval replaces it; there is no unpin control (not asked for).
+   Rejecting keeps plan mode on and returns the feedback.
+8. **Toggles.** The composer's Plan chip (TD-4603's), `/plan` (toggle),
+   `/plan on`, `/plan off` and `/plan <task>` (plan mode on, then the task)
+   handled in the window like `/compact`, and the phone, whose WebView
+   shows the same composer and card. A workspace command named `plan`
+   still wins the slash palette, as one named `compact` does. Grok
+   sessions keep their own modes and `/plan`.
+9. **`tst run`.** A `plan_review` exits `approval_needed` in every mode: a
+   plan is reviewed, and maybe edited, on the card. A `plan_mode` refusal
+   counts as a refusal (exit 3), so a script that hits a session left in
+   plan mode is told instead of exiting 0 having written nothing.
+10. **Plan mode outlives a restart (revises TD-4603's "in memory only").**
+    Once plan mode refuses writes it is a safety boundary, not a routing
+    lock: a restart that ended it would let a message held across a deploy
+    (TD-5155) run with writes on although the person never approved a plan
+    or turned planning off. The session row keeps `plan_mode`
+    (`sessions.json`, written whenever a `tier_state` changes it), and
+    revive sets it on the new router before the loop starts. A row written
+    before the field falls back to the newest `tier_state` in the log, so
+    the deploy that ships this keeps a session that was planning. The
+    pinned plan survives as before. A pinned tier (`set_tier`) is still in
+    memory only: it routes, it does not guard.
+
+**Class C answered conservatively:** the allowlist (rather than refusing
+only `mutates` tools), plugins never plan-safe, the server's
+`readOnlyHint` ignored, exact tool names (no globs) in
+`read_only_tools`, `propose_steering_edit` and `delegate kind: worker`
+refused, and plan mode kept across a restart (item 10; review of PR #47).
+
+**Alternatives rejected:** a plain Class C rule (skip-all would run it);
+narrowing the offered tool set in plan mode (breaks the prefix cache, and
+the model would not hear why); a plan document file in the workspace (a
+write in plan mode); TTY plan review in `tst run` (editing a plan wants
+the card); trusting MCP annotations.
+
 ## 2026-10-20 — TD-5126: a git worktree per session, on by default (Class B)
 
 Approved as specified in the gap audit with Adam's decision 7 (on by default

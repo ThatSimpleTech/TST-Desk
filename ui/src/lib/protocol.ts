@@ -162,6 +162,18 @@ export interface AnswerQuestion extends ClientMessage {
   declined?: boolean;
 }
 
+/** Review the plan an `exit_plan_mode` call parked (TD-5123). `approve`
+ *  ends plan mode and pins the plan; `plan`, when sent, is the person's
+ *  edit and replaces the model's. `reject` keeps plan mode on. */
+export interface ReviewPlan extends ClientMessage {
+  type: "review_plan";
+  session_id: string;
+  tool_call_id: string;
+  decision: "approve" | "reject";
+  plan?: string | null;
+  feedback?: string;
+}
+
 export interface ListPolicyRules extends ClientMessage {
   type: "list_policy_rules";
   session_id: string;
@@ -1028,6 +1040,7 @@ export type ClientMessageUnion =
   | Deny
   | AlwaysAllow
   | AnswerQuestion
+  | ReviewPlan
   | ListPolicyRules
   | RevokePolicyRule
   | SetSkipAllApprovals
@@ -1399,6 +1412,35 @@ export interface QuestionAnswered extends DaemonEvent {
   tool_call_id: string;
   outcome: "answered" | "declined" | "stopped" | "timed_out" | "cancelled";
   answers: QuestionAnswer[];
+}
+
+/** An `exit_plan_mode` call parked its turn on the model's plan
+ *  (TD-5123). The call's `tool_result` clears the card. */
+export interface PlanReview extends DaemonEvent {
+  type: "plan_review";
+  session_id: string;
+  tool_call_id: string;
+  plan: string;
+}
+
+/** How a parked plan review ended (TD-5123). `plan` is the approved text,
+ *  the person's edit when `edited`; empty unless approved. */
+export interface PlanReviewed extends DaemonEvent {
+  type: "plan_reviewed";
+  session_id: string;
+  tool_call_id: string;
+  outcome: "approved" | "rejected" | "stopped" | "timed_out" | "cancelled";
+  plan: string;
+  edited: boolean;
+  feedback: string;
+}
+
+/** The plan the person approved, pinned to the session (TD-5123). The
+ *  newest one is the pinned plan the Plan pane shows. */
+export interface PlanPinned extends DaemonEvent {
+  type: "plan_pinned";
+  session_id: string;
+  plan: string;
 }
 
 export interface DecisionLogged extends DaemonEvent {
@@ -2343,6 +2385,41 @@ export interface WorktreeState extends DaemonEvent {
   note: string;
 }
 
+/** One item of a done-check after it ran (TD-5124). */
+export interface StopCheckItem {
+  /** The check as configured (`$ ...` or a statement), or the goal. */
+  item: string;
+  source: "workspace" | "goal";
+  via: "shell" | "worker";
+  passed: boolean;
+  /** False when it could not be judged (a declined command, no verdict). */
+  decided?: boolean;
+  /** The command output's start and tail, or the worker's reply. */
+  detail?: string;
+}
+
+/** The done-check ran because the model ended an interactive turn
+ *  (TD-5124). `retry`: the failure went back to the model and the turn goes
+ *  on. `failed`: still failing after `max_retries` tries, so the turn ends
+ *  with `stop_check_failed`. `unchecked`: no item failed, but one could not be judged. */
+export interface StopCheck extends DaemonEvent {
+  type: "stop_check";
+  session_id: string;
+  outcome: "passed" | "retry" | "failed" | "unchecked";
+  attempt: number;
+  max_retries: number;
+  items: StopCheckItem[];
+}
+
+/** The session's goal after `/goal` set or cleared it, or a done-check met
+ *  it (TD-5124). `goal` is null once cleared. The newest one is the goal. */
+export interface SessionGoal extends DaemonEvent {
+  type: "session_goal";
+  session_id: string;
+  goal: string | null;
+  change: "set" | "cleared" | "met";
+}
+
 export interface TierSwitched extends DaemonEvent {
   type: "tier_switched";
   session_id: string;
@@ -2631,6 +2708,9 @@ export type DaemonEventUnion =
   | ApprovalRequest
   | QuestionRequest
   | QuestionAnswered
+  | PlanReview
+  | PlanReviewed
+  | PlanPinned
   | DecisionLogged
   | CheckpointNotice
   | VerifyStarted
@@ -2643,6 +2723,8 @@ export type DaemonEventUnion =
   | ContextUsage
   | TaskList
   | WorktreeState
+  | StopCheck
+  | SessionGoal
   | SteeringReloaded
   | RuleActivated
   | TierSwitched

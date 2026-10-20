@@ -361,7 +361,8 @@ function applyTurnEvidence(event: DaemonEventUnion): boolean {
 		event.type === "model_fallback" ||
 		event.type === "tool_call" ||
 		event.type === "approval_request" ||
-		event.type === "question_request"
+		event.type === "question_request" ||
+		event.type === "plan_review"
 	) {
 		setRowBusy(event.session_id, true);
 		return true;

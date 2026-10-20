@@ -17,6 +17,8 @@ The machine modes never prompt: an approval request ends the run with
 ``approval_needed`` and the turn waits for the window, the same as a
 text run without a TTY. An ``ask_user`` question (TD-5121) is asked the
 same way: answered on a TTY in text mode, otherwise ``approval_needed``.
+A plan from read-only plan mode (TD-5123) is ``approval_needed`` in every
+mode: it is reviewed, and maybe edited, on the card.
 Under ``--on-ask deny-and-continue`` the daemon refuses instead of asking
 (TD-5118), and ``ask_user`` refuses its question too, so no request
 reaches the run.
@@ -37,6 +39,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .cli import (
+    PLAN_WAITING,
     RETRACT_NOTICE,
     _print_error,
     _recv_event,
@@ -44,6 +47,7 @@ from .cli import (
     _turn_timeout_secs,
     config_trust_notice,
     fallback_notice,
+    stop_check_notice,
 )
 from .cli_approvals import prompt_approval
 from .cli_questions import prompt_questions
@@ -72,7 +76,8 @@ EXIT_CODES: dict[Status, int] = {
 #: Tool-result codes for a call a gate refused: the workspace boundary, a
 #: ``never`` policy rule, or a person answering Deny. A handler's own
 #: failure is not a refusal.
-REFUSAL_CODES = frozenset({"boundary_refusal", "policy_denied", "approval_denied"})
+#: ``plan_mode``: the session is planning and refused a change (TD-5123).
+REFUSAL_CODES = frozenset({"boundary_refusal", "policy_denied", "approval_denied", "plan_mode"})
 
 APPROVAL_NEEDED = "approval_needed"
 
@@ -247,6 +252,11 @@ class _TurnReader:
             return await self._approval(ws, event)
         if typ == "question_request":
             return await self._question(ws, event)
+        if typ == "plan_review":
+            # TD-5123: reviewed on the card in every mode, where it can be edited.
+            self.end_line()
+            print(f"{APPROVAL_NEEDED}: {PLAN_WAITING}", file=sys.stderr)
+            return self.outcome("approval_needed", APPROVAL_NEEDED, PLAN_WAITING)
         if typ == "tool_call":
             self.tool_names[str(event.get("tool_call_id"))] = str(event.get("name") or "tool")
             return None
@@ -265,6 +275,12 @@ class _TurnReader:
             if self.output == "text":
                 self.end_line()
                 print(fallback_notice(event), file=sys.stderr)
+            return None
+        if typ == "stop_check":
+            # TD-5124: stderr, like a fallback; stdout stays the reply.
+            if self.output == "text":
+                self.end_line()
+                print(stop_check_notice(event), file=sys.stderr)
             return None
         if typ == "assistant_delta":
             delta = str(event.get("delta") or "")

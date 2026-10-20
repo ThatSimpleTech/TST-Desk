@@ -1263,6 +1263,23 @@ class McpServerConfig(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     #: Extra headers on every request to an http server (TD-5110).
     headers: dict[str, str] = Field(default_factory=dict)
+    #: The server's tools, by the name the server gives them, that only
+    #: read (TD-5123). Plan mode lets these run; every other tool of the
+    #: server is refused while planning. The server's own annotations
+    #: are not trusted for this, only this list.
+    read_only_tools: list[str] = Field(default_factory=list)
+
+    @field_validator("read_only_tools", mode="before")
+    @classmethod
+    def _read_only_names(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+            raise ValueError("read_only_tools must be a list of tool names")
+        names = [v.strip() for v in value]
+        if any(not n for n in names):
+            raise ValueError("read_only_tools has an empty tool name")
+        return names
 
     @field_validator("env", mode="before")
     @classmethod

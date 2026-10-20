@@ -49,7 +49,7 @@ function cloneMessages(messages: readonly ChatMessage[]): ChatMessage[] {
       return { ...m, tools: m.tools?.map((t) => ({ ...t })) };
     }
     const parts = m.parts.map((p) =>
-      p.kind === "text" ? { ...p } : { kind: "tool" as const, tool: { ...p.tool } },
+      p.kind === "tool" ? { kind: "tool" as const, tool: { ...p.tool } } : { ...p },
     );
     const tools = parts.flatMap((p) => (p.kind === "tool" ? [p.tool] : []));
     return { ...m, parts, tools: tools.length > 0 ? tools : undefined };

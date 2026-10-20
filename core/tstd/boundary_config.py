@@ -135,6 +135,54 @@ class WorktreeSection(BaseModel):
     setup: str = Field(default="", max_length=4096)
 
 
+DEFAULT_STOP_CHECK_RETRIES = 3
+DEFAULT_STOP_CHECK_TIMEOUT = 300
+MAX_STOP_CHECK_TIMEOUT = 3600
+MAX_STOP_CHECK_RETRIES = 20
+MAX_STOP_CHECKS = 10
+MAX_STOP_CHECK_CHARS = 4000
+
+
+class StopCheckSection(BaseModel):
+    """The done-check for interactive turns (TD-5124).
+
+    ``checks`` uses the charter's definition-of-done shape: a ``$`` item
+    runs as a shell command through the dispatcher (classifier, policy,
+    approval), anything else is a statement the worker judges GREEN/RED.
+    A single string is one check. Empty means no check. ``max_retries``
+    is how many times a failure goes back to the model in one turn, and
+    ``timeout_secs`` how long a ``$`` command may run (the shell tool's
+    own default of 30 s is too short for a test suite). Unknown keys are
+    refused, like ``caps``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    checks: list[str] = Field(default_factory=list, max_length=MAX_STOP_CHECKS)
+    max_retries: int = Field(default=DEFAULT_STOP_CHECK_RETRIES, ge=0, le=MAX_STOP_CHECK_RETRIES)
+    timeout_secs: int = Field(default=DEFAULT_STOP_CHECK_TIMEOUT, ge=1, le=MAX_STOP_CHECK_TIMEOUT)
+
+    @field_validator("checks", mode="before")
+    @classmethod
+    def _one_or_many(cls, v: Any) -> Any:
+        return [v] if isinstance(v, str) else v
+
+    @field_validator("checks")
+    @classmethod
+    def _checks_are_text(cls, v: list[str]) -> list[str]:
+        out: list[str] = []
+        for item in v:
+            text = item.strip()
+            if not text or text == "$":
+                raise ValueError("checks entries must be a $ command or a statement")
+            if len(text) > MAX_STOP_CHECK_CHARS:
+                raise ValueError(
+                    f"checks entries must be at most {MAX_STOP_CHECK_CHARS} characters"
+                )
+            out.append(text)
+        return out
+
+
 class BoundaryConfig(BaseModel):
     """Top-level workspace boundary configuration."""
 
@@ -152,6 +200,9 @@ class BoundaryConfig(BaseModel):
     # A worktree per session (TD-5126). Not a wall: ``enabled`` is read even
     # from an untrusted file, ``setup`` only from a trusted one.
     worktree: WorktreeSection = Field(default_factory=WorktreeSection)
+    # Done-check for interactive turns (TD-5124). Its own section: it runs
+    # when the model ends a turn, and neither pauses nor refuses anything.
+    stop_check: StopCheckSection = Field(default_factory=StopCheckSection)
 
     @property
     def allowed_hosts(self) -> frozenset[str]:
@@ -206,6 +257,14 @@ DEFAULT_CONFIG_TEMPLATE = """\
 # worktree:
 #   enabled: true    # false keeps sessions in this checkout (TD-5126)
 #   setup: ""        # runs once in each new worktree, e.g. "npm ci"
+
+# stop_check:
+#   # Run when the model ends a turn; a failure goes back to it as a
+#   # message. "$ ..." is a shell command (approval as usual), anything
+#   # else a statement the worker model judges. Empty means no check.
+#   checks: []
+#   max_retries: 3   # failures sent back per turn before it gives up
+#   timeout_secs: 300  # how long a "$" check may run
 """
 
 

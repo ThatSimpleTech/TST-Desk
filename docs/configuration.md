@@ -894,7 +894,7 @@ the folder; its `worktree_state` note says why, and `tst run` prints it.
   decision made on the same bytes carries over (§4.8). Ignored files that
   `.tst/worktree-include` names are copied: gitignore syntax, matched from the repository's
   top like `.git/info/exclude`, and only files git ignores (a `.env`, say). A workspace's
-  `worktree.setup` command then runs once in the new worktree (§4.9).
+  `worktree.setup` command then runs once in the new worktree (§4.10).
 - **Trust covers the bytes, wherever they sit.** Trusting or declining the config on the card
   in a worktree chat decides the project folder's file and every other worktree's copy too
   when they hold the same bytes, and the other way round, so the next chat does not ask
@@ -927,7 +927,7 @@ the folder; its `worktree_state` note says why, and `tst run` prints it.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `enabled` | bool | `true` | Worktrees for sessions, scheduled jobs and delegated workers on this computer. A workspace can still turn them off for itself (§4.9). |
+| `enabled` | bool | `true` | Worktrees for sessions, scheduled jobs and delegated workers on this computer. A workspace can still turn them off for itself (§4.10). |
 | `folder` | string | `""` | Where worktrees go, one folder each named `<repository>-<id>`. Empty is `worktrees/` in the data dir, outside every repository. `~` is expanded. |
 | `setup_timeout_s` | int 10–3600 | `600` | Seconds a workspace's `worktree.setup` may run before it is stopped and reported as failed. |
 
@@ -1162,6 +1162,7 @@ reply per call), so `timeout_seconds` bounds the whole call.
 | `timeout_seconds` | number > 0 | `30` | Longest silence in a tool call: no result and no progress for this long ends the call and sends `notifications/cancelled`. Over http it bounds the whole call. Settings keeps it when it toggles or edits the server. |
 | `startup_timeout_seconds` | number > 0 | `8` | Time allowed for each step of the handshake (`initialize`, then `tools/list`), whatever `timeout_seconds` says. Raise it for a server that loads a model before it answers. |
 | `max_call_seconds` | number > 0 | `600` | Hard cap on one stdio tool call, progress or not. Never below `timeout_seconds`. |
+| `read_only_tools` | list of strings | `[]` | The server's tools, by the name the server gives them (not the `<id>__` name), that only read (TD-5123). Read-only plan mode lets these run and refuses every other tool of the server. Only this list counts: a server's own `readOnlyHint` is not trusted. Names are matched exactly, no globs. It changes nothing outside plan mode: a listed tool still asks like any MCP tool. Settings keeps it when it toggles or edits the server. |
 | `env` | mapping of name → string | `{}` | stdio only. Extra environment for this server's child, on top of the daemon's. Names are `[A-Za-z_][A-Za-z0-9_]*`. A value is a literal or `keychain:<entry>` (entry: lowercase letters, digits, `_` and `-`, at most 64). Numbers become strings; a YAML boolean is refused, so quote it. A value may not hold a line break or NUL. |
 | `headers` | mapping of name → string | `{}` | http only. Extra headers on every request to this server, same value rules as `env`. Names are HTTP field names, one spelling each (case is ignored). `Accept`, `Connection`, `Content-Length`, `Content-Type`, `Host` and `Transfer-Encoding` are TST Desk's own and are refused. |
 
@@ -1905,8 +1906,8 @@ template whose values are the defaults, so a scaffolded file changes nothing unt
 file is read when a workspace opens and again when a paused session resumes, which is what lets
 you raise a cap and continue without restarting.
 
-Seven top-level sections live here, each read by a different part of the daemon: `boundary`,
-`caps`, `attachments`, `policy`, `approved_external_imports`, `memory`, and `worktree`.
+Eight top-level sections live here, each read by a different part of the daemon: `boundary`,
+`caps`, `attachments`, `policy`, `approved_external_imports`, `memory`, `stop_check`, and `worktree`.
 
 **A file that loosens anything waits for your trust (TD-5113).** This file usually arrives with
 a clone, so one that loosens the packaged defaults (an `auto` rule, a network host, a raised
@@ -2319,6 +2320,28 @@ A `never` rule for `ask_user` turns the tool off in this workspace. Each questio
 kept in the audit database (`questions`), and an answer is never cleared from the agent's context as
 stale tool output (`clear_tool_results`).
 
+**Read-only plan mode (TD-5123).** The Plan chip in the composer, `/plan` (or `/plan on`, `/plan
+off`, `/plan <task>` to plan one task) and the same chip on the phone turn plan mode on. Every turn
+then runs on the brain tier, and the agent may only read: the classifier refuses `fs_write`,
+`fs_edit`, memory writes, `shell` commands that are not entirely on the read-only list
+(`shell.read_only`; with the list off, every shell command), MCP tools not in their server's
+`read_only_tools`, plugin tools, desktop and browser actuation, the GitHub write tools,
+`propose_steering_edit`, `delegate` with `kind: worker`, and any other tool not known to only read. The refusal comes first, before your `policy` rules, an approval
+card or Skip all approvals, so none of them can run a refused call, and it tells the agent it is
+planning. Reads (`fs_read`, `fs_list`, `fs_grep`, the GitHub reads, screenshots), web search and
+fetch, `load_skill`, `send_file`, `task_list`, `ask_user`, `consult` and `delegate` for research
+still run under the usual rules. The agent ends plan mode with `exit_plan_mode`: its plan
+shows on a card on the window and the phone, where you approve it, edit it and then approve your
+version, or reject it with a note. Approving turns plan mode off and pins the plan: the Plan pane
+shows it, and every compaction carries it into its summary. Rejecting keeps plan mode on. Skip
+all approvals never approves a plan, and the review waits like an approval (Stop and
+`approval_timeout_seconds` end it). `tst run` exits `approval_needed` on a plan in every mode; a
+refused call counts as a refusal (`plan_mode`). Plan mode outlives a daemon restart (a deploy's
+stop and launch, a crash): only approving a plan or turning it off ends it, so a message held
+across the restart still runs read-only. The session row in `sessions.json` keeps it
+(`plan_mode`), and the pinned plan is read back too. A pinned tier (`set_tier`) still lasts only
+until the restart.
+
 **Reads inside the workspace never ask (TD-5141).** `fs_read`, `fs_list` and `fs_grep` on a
 path inside the workspace are Class A by a fixed rule, so they run without asking and without
 a model call to judge them. That includes `.env` and other secret files. A rule still wins, so
@@ -2616,6 +2639,7 @@ them when:
 | `approved_external_imports` | It lists any path. |
 | `worktree.setup` | It names a command. The daemon runs it in each new worktree (TD-5126), so a repo-shipped one waits for your trust; until then the new chat says it was skipped. |
 | `mcp_servers`, `hooks` | The key is set at all. TST Desk does not read either from a workspace yet; they are judged now so a later feature cannot run them untrusted. |
+| `stop_check.checks` | It names any check (TD-5124). A check runs on its own whenever the model ends a turn: a command through the shell tool, or a statement that goes to the model as a message when it fails. |
 
 Tightening never asks: `allowed_commands`, `ask` and `never` rules, `class_c_default: never`,
 an approval timeout, narrower `writable_paths` and lower caps apply as written. A section the
@@ -2649,7 +2673,72 @@ When the file loosens something:
 - **Only this computer decides.** A phone or another computer that sends the decision gets
   `loopback_only`. A session on another computer shows the card without its buttons.
 
-### 4.9 `worktree` — a worktree per session (TD-5126)
+### 4.9 `stop_check` — the done-check when the model ends a turn (TD-5124)
+
+Local models often stop early, or say they are done when they are not. A done-check runs every
+time the model ends an interactive turn, and a failure sends the model back to work.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `checks` | list of strings (one string is one check), up to 10 | `[]` | What must hold when the model ends a turn. `$ <command>` runs the command through the shell tool, and it passes when the command exits 0. Anything else is a statement the worker model judges GREEN or RED from the request and the model's last reply. Empty means no check. Up to 4000 characters each. |
+| `max_retries` | int, 0–20 | `3` | How many times in one turn a failure goes back to the model. `0` checks and shows the result, but never sends the model back. |
+| `timeout_secs` | int, 1–3600 | `300` | How long a `$` check may run before it is killed. The shell tool's own 30 seconds is too short for most test suites. |
+
+<!-- verify: workspace -->
+```yaml
+stop_check:
+  checks:
+    - "$ uv run pytest -q"
+    - "The README documents every new flag"
+  max_retries: 2
+  timeout_secs: 900
+```
+
+What happens when the model ends a turn:
+
+- **Every check runs, in order, then your `/goal` if the session has one.** A `$` check goes
+  through the classifier, your policy rules and an approval card like any other shell call, so
+  a command the policy does not allow asks first. It shows in the chat as a shell call with its
+  output. The check runs as TST Desk, not as an agent decision: it is not added to the decision
+  ledger.
+- **All pass:** the turn ends as usual, with "Done-check passed" on the reply. A goal that was
+  part of the check is met, and cleared.
+- **One fails:** the failure (the command's output, start and end kept, up to 2000 characters, or
+  the statement that is not true yet) goes back to the model as a user message, and the turn goes
+  on. The chat shows "Done-check failed · try 1 of 3" on the reply; the message itself is not a
+  chat bubble. After `max_retries` tries the next failure ends the turn with the failure shown:
+  `turn_complete` carries `failed` and `error_code: stop_check_failed`, so `tst run` exits non-zero
+  and a scheduled run records a failure. The goal stays set, so your next message picks it up
+  again.
+- **One cannot be judged:** you declined the command, a policy rule or the allowlist refused it,
+  it could not start, or the worker gave no GREEN or RED. If nothing else failed, the turn ends,
+  nothing goes back to the model, and the chat says the check could not run.
+- **One fails and another cannot be judged:** the failure wins. It goes back to the model (or,
+  after `max_retries` tries, ends the turn with `stop_check_failed`) exactly as above; the item
+  that could not be judged is shown with a `?` but left out of the message, since the model cannot
+  fix it. The next try runs every check again, so a command you declined asks again.
+- **Stop** during a check ends the turn, as it does anywhere else.
+
+The check also runs when the progress guard's own check (TD-5002, §4.2) finds the work done,
+since that ends the turn too. It does not run in an unattended run, which polls its charter's
+`definition_of_done` instead, or in a delegate child. A Grok-engine session has its own loop and
+no done-check. Nor does it run on a turn that ends while plan mode (§4.4) is on: planning only
+reads and ends in a plan you review, so a check would send the model back to fix what it may not
+touch. The goal stays set, and the first turn after plan mode is checked as usual.
+
+**`/goal <statement>` gives one session a goal, checked the same way.** Type it in the composer
+of a native-engine session (or send it with `tst run --message`). The statement becomes the task
+for that turn, so you do not need a second message, and it joins the workspace's checks as a
+statement the worker judges, with the same `max_retries` (3 when the file sets none). The goal
+lasts until a check passes with it, `/goal clear` (or `off`, `stop`, `none`, `cancel`, `reset`)
+clears it, or another `/goal` replaces it. `/goal` on its own shows the goal and how many checks
+have judged it. Neither of those calls the model. A goal is at most 4000 characters, it needs no
+charter, and it survives a restart.
+
+**A repo's `stop_check` waits for your trust (§4.8).** It runs on its own at every turn end, so it
+counts as loosening. Your own `/goal` needs no trust.
+
+### 4.10 `worktree` — a worktree per session (TD-5126)
 
 | Key | Type | Default | Effect |
 |---|---|---|---|

@@ -70,6 +70,10 @@ class Tool:
         provenance: Optional origin tag. MCP tools use ``mcp:<server-id>``
             (TD-4401). In-process plugins use ``plugin:<distribution>``
             (TD-4601). Builtins leave this unset.
+        read_only: An MCP tool the user listed in its server's
+            ``read_only_tools`` (TD-5123), so plan mode lets it run. Only
+            the classifier's ``mcp:`` check reads it; a builtin is judged
+            by ``mutates`` and a plugin is never read-only in plan mode.
     """
 
     name: str
@@ -92,6 +96,8 @@ class Tool:
     actuates: bool | None = None
     # ``mcp:<server-id>`` (TD-4401) or ``plugin:<dist>`` (TD-4601). None = builtin.
     provenance: str | None = None
+    # TD-5123: the user marked this MCP tool read-only in config.
+    read_only: bool = False
 
     def __post_init__(self) -> None:
         """Validate basic invariants."""
@@ -604,7 +610,7 @@ def create_registry(
     """Registry of builtins, skills, delegate, consult, send_file, steering, and plugins.
 
     The native loop's own tools come before plugins too: ``task_list``
-    (TD-5122) and ``ask_user`` (TD-5121).
+    (TD-5122), ``ask_user`` (TD-5121) and ``exit_plan_mode`` (TD-5123).
 
     ``candidate_selection`` (judgments.candidate_selection, TD-711) adds
     ``browser_pick`` to the tool surface.
@@ -615,6 +621,7 @@ def create_registry(
     from .consult import register_consult_tool
     from .delegate import register_delegate_tools
     from .desktop import register_desktop_tools
+    from .exit_plan import register_exit_plan_tool
     from .plugins import load_plugins
     from .send_file import register_send_file_tool
     from .steering_edit import register_steering_edit_tool
@@ -631,6 +638,7 @@ def create_registry(
     register_steering_edit_tool(registry)
     register_task_list_tool(registry)
     register_ask_user_tool(registry)
+    register_exit_plan_tool(registry)
     # Before plugins so a plugin cannot take a GitHub tool name (TD-4852).
     from ..connectors.github_tools import register_github_tools
 

@@ -9999,6 +9999,9 @@ the daemon's fixture). See DECISIONS.md. Later, TD-5119 adds `consult`
 to both kinds while it is on for the worker tier; it writes nothing and
 reaches no web host or MCP server, so the research child stays
 read-only, and with it off the research child has exactly these five.
+Since TD-5123 (2026-10-20) plan mode is read-only: an explicit
+`kind: worker` is refused there (`plan_mode`), and the default stays
+research.
 
 ---
 
@@ -10851,6 +10854,114 @@ disk, a restart finds it and the next compaction still carries it), `ui/src/lib/
 (store, Plan pane, strip), `ui/src/lib/protocol.test.ts` (fixture), and
 the UI walk (the strip at 375 px and the Plan pane at 1280 px on the
 seeded held session; census gains `tasks`). See DECISIONS.md.
+
+### TD-5124 — Done-check on interactive turns
+**Size:** 5 · **Depends on:** none · Gap audit 2026-10-14
+
+The definition-of-done poll ran only in unattended runs, so an interactive
+turn could stop early, or claim it was done, unchecked. Local models do
+both. Claude Code's hooks can block a stop, and its goal feature keeps
+working toward a condition.
+
+**Acceptance criteria:**
+- [x] A workspace can set a `stop_check` (a `$`-command or a worker-judged
+      statement, reusing the DoD code in core/tstd/autonomy/dod.py).
+- [x] When the model ends a turn, the check runs. On failure, its output
+      goes back as a user message, up to N times, and then the turn ends
+      with the failure shown.
+- [x] `/goal <statement>` sets a session goal checked the same way.
+- [x] It works without a signed charter.
+
+Done (2026-10-20): `core/tstd/stop_check.py` (the check),
+`core/tstd/session_goal.py` (`/goal`, the goal's restore), `stop_check` in `.tst/config.yaml` (`checks`, `max_retries` 3,
+`timeout_secs` 300; `core/tstd/boundary_config.py`), and the shared DoD
+pieces in `core/tstd/autonomy/dod.py` (`poll_definition_of_done` with
+runners that may answer "could not judge", `dod_worker_prompt`,
+`dispatch_check_command`). When the model ends a native interactive turn,
+on the normal path or the progress guard's DONE, each workspace check runs,
+then the session's goal: a `$` check through the classifier, policy and
+approval like any shell call, logged as its own `tool_call`/`tool_result`;
+a statement judged GREEN/RED by the worker. All green ends the turn (a goal
+in it is met and cleared). A red check goes back as a user message
+(`steer` and `check` on the stored message: no `user_turn`, not one of the
+window's numbered turns) and the turn continues; after `max_retries` the
+turn ends with `turn_complete` `failed`, `error_code: stop_check_failed`
+(`tst run` exits non-zero). A check that could not be judged ends the turn
+as `unchecked` with nothing sent back, unless another item is red: then
+the red one decides and only it goes back. Events: `stop_check` (outcome,
+attempt, items) and `session_goal` (`set`, `cleared`, `met`; restored on
+revive, logged again after rotation or on attach). `/goal` alone and `/goal
+clear` answer with no model call. A repo's `stop_check` waits for trust
+(TD-5113). The window shows the check as a fold on the reply (a failure the
+turn ended on opens on its own), a goal strip above the composer, `/goal`
+in the slash palette and copy for `stop_check_failed`; `tst run`/`tst
+attach` print a line on stderr. Not in unattended runs, delegate children,
+Grok sessions, or a turn that ends in read-only plan mode (TD-5123, merged
+from main: a planning turn is not a claim the work is done; the goal stays
+set). Tests: `core/tests/test_stop_check.py` (config, trust,
+`/goal` parsing, outcomes, the feedback's turn numbering and persistence, a
+shell check that fails then passes, `max_retries` 1 and 0, a declined
+command, a red command beside an unjudged statement or a declined command, a worker statement, `/goal` set/met/kept/status/clear, the
+progress guard's DONE, revive and rotation, a planning turn left unchecked), `ui/src/lib/stop-check.test.ts`,
+`ui/src/lib/slash-commands.test.ts`. See DECISIONS.md, docs/configuration.md
+§4.9 and docs/architecture.md.
+
+### TD-5123 — Read-only plan mode
+**Size:** 5 · **Depends on:** TD-5117 · Gap audit 2026-10-14
+
+TD-4603's plan mode only pinned routing to the brain; writes and shell
+still ran. Claude Code's plan mode analyzes without editing, then puts up
+a plan to approve.
+
+**Acceptance criteria:**
+- [x] In plan mode, the classifier refuses every mutating call (fs_write,
+      fs_edit, shell outside the TD-5103 list, MCP tools not marked
+      read-only). The refusal tells the model it is planning.
+- [x] Plan mode ends with a plan the user approves, rejects or edits.
+      Approving switches to normal mode with the plan pinned.
+- [x] Toggle from the composer, a slash command and the phone.
+
+Done (2026-10-20): the classifier's first rule, `plan-mode` (Class C,
+`refuses`), fires while the router is planning and the call is not
+plan-safe (`autonomy/classifier.plan_mode_allows`): a builtin on
+`PLAN_READ_ONLY_BUILTINS`, capture-only computer use, `shell` made only of
+the read-only list, `delegate` without `kind: worker`, or an MCP tool the
+user listed in the new `mcp.servers.<id>.read_only_tools`. Plugin tools,
+the GitHub writes (which declare no `mutates`) and `propose_steering_edit`
+are refused too. Dispatch returns the refusal (`plan_mode`) before the
+policy gate, so no `auto` rule, approval or skip-all runs it, and its text
+(`plan_mode.planning_refusal`) says the model is planning, why, and to call
+`exit_plan_mode`. A planning turn's message reaches the model with
+`PLAN_NOTE` after it. `exit_plan_mode` (`tools/exit_plan.py`, Class A by
+`exit-plan-mode`) parks the turn on `plan_review` (`plan_review.py`) until
+`review_plan`: approve (with an optional edited `plan`) turns plan mode off
+(`tier_state.plan` false), pins the plan (`plan_pinned`, carried into every
+compaction summary ahead of the task list, shown in the Plan pane, read
+back on revive) and hands the model the approved text; reject keeps plan
+mode on and returns the note. Stop, cancel and the approval timeout end the
+wait; skip-all never reviews; unattended runs refuse. The window and the
+phone show `PlanReviewCard.svelte` (Approve, Edit plan / Show plan, Reject,
+a note); `/plan`, `/plan on|off` and `/plan <task>` are handled by the
+window; the composer's Plan chip is TD-4603's. `tst run` exits
+`approval_needed` on a plan, and a `plan_mode` refusal counts as refused.
+Plan mode outlives a restart: the session row keeps `plan_mode` (written
+on every `tier_state` that changes it) and revive sets it again before the
+loop starts, so only approving or turning it off ends it. OS banners and the ntfy, Slack, Discord and Telegram channels say a plan
+is waiting. Tests: `core/tests/test_plan_mode.py` (every refusal and every
+read in plan mode, the allowlist pinned over all builtins, skip-all plus
+an `auto` rule cannot write, MCP marking from config, the note, approve,
+edit, reject, refusals, Stop, outside plan mode, `delegate kind: worker`,
+compaction carry, revive, plan mode kept across a restart with writes
+still refused, peers, channels, `tst run`),
+`ui/src/lib/plan-review.test.ts`, `ui/src/lib/plan-review-component.test.ts`,
+`ui/src/lib/task-list.test.ts` (pinned plan in the Plan pane),
+`ui/src/lib/os-notify.test.ts`, `ui/src/lib/protocol.test.ts`,
+`ui/src/lib/slash-commands.test.ts`, and the UI walk (at 375 px: the chip,
+`/plan`, `/plan <task>` and `/plan off`, the card's Edit, Show, note,
+Approve edited plan and Reject; then the pinned plan in the Plan pane at
+1280 px; census gains `plan-review` and `plan-review:editing`). The
+phone's APK is not rebuilt here; its WebView shows this UI once it is.
+See DECISIONS.md, docs/configuration.md §4.4 and docs/architecture.md.
 
 ### TD-5126 — Worktree per session, on by default in git repos
 **Size:** 5 · **Depends on:** none · Gap audit 2026-10-14

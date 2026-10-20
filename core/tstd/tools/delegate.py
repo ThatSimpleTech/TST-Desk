@@ -12,7 +12,7 @@ Two kinds of child (TD-5117): ``worker`` reads, writes and runs shell;
 ``research`` only reads files and the web. Either returns a summary
 capped in tokens, and its transcript goes to the window on the
 ``delegate`` result, never into the parent's context. In plan mode
-``research`` is the default; ``kind: worker`` still runs when asked for.
+``research`` is the default and ``kind: worker`` is refused (TD-5123).
 """
 
 from __future__ import annotations
@@ -111,7 +111,7 @@ def register_delegate_tools(registry: ToolRegistry) -> None:
                 "shell. kind 'research' is read-only: fs_read, fs_list, "
                 "fs_grep, web_search and web_fetch. Either may also consult "
                 "when it is on for the worker tier. Use research to explore "
-                "code or the web. In plan mode the default is research. "
+                "code or the web. In plan mode only research runs. "
                 "worktree: true runs the child in its own git worktree from "
                 "the last commit (your uncommitted edits are not in it); "
                 "its changes come back on a branch for you to merge."
@@ -132,7 +132,7 @@ def register_delegate_tools(registry: ToolRegistry) -> None:
                         "enum": list(DELEGATE_KINDS),
                         "description": (
                             "worker (read, write, shell) or research (read-only "
-                            "files and web). Default worker; research in plan mode."
+                            "files and web). Default worker; only research in plan mode."
                         ),
                     },
                     "worktree": {

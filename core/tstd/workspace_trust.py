@@ -155,6 +155,12 @@ def _boundary_loosened(path: Path, data: dict[str, Any]) -> list[Loosened]:
     if cfg.worktree.setup.strip():
         # A command the daemon runs in each new worktree (TD-5126).
         out.append(Loosened("worktree.setup", cfg.worktree.setup, "none"))
+    # A done-check (TD-5124) runs on its own at every turn end: a command
+    # through the shell tool, or a statement sent to the model as a user
+    # message when it fails. Like ``hooks``, a repo's own counts as soon
+    # as it names one.
+    for check in cfg.stop_check.checks:
+        out.append(Loosened("stop_check.checks", check, "none"))
     return out
 
 

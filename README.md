@@ -239,7 +239,9 @@ path on any OS), the agent sends files to the chat (`send_file`) as cards you ca
 or download to the paired phone, where an APK opens the installer, steering edits the agent
 proposes (`propose_steering_edit`) as a diff that only your Accept writes, a task list the
 agent keeps (`task_list`) in the Plan pane and above the composer that outlives compaction,
-questions the agent asks you (`ask_user`) as buttons to tap on the window or the phone, remote attach over
+questions the agent asks you (`ask_user`) as buttons to tap on the window or the phone,
+a done-check (`stop_check` in `.tst/config.yaml`, or `/goal`) that sends the agent back to work
+when it stops before a command passes or a statement holds, remote attach over
 Tailscale (never `0.0.0.0`) with Slack/ntfy notify
 and the scheduler rail, the `vllm` preset and UI-TARS grounding for local pixel loops,
 a validating `CHARTER.md` schema and the project-home charter editor, the

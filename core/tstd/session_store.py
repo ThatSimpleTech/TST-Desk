@@ -80,6 +80,11 @@ class SessionRecord:
     # None in the folder itself. ``workspace_path`` stays the folder the
     # user opened, so the rail groups a worktree session with its project.
     worktree: dict[str, Any] | None = None
+    # Read-only plan mode (TD-5123). Plan mode is a safety boundary, so a
+    # restart must not end it: revive reads it back from here. None on a
+    # row written before the field; revive then takes the newest
+    # ``tier_state`` in the log.
+    plan_mode: bool | None = None
 
 
 class SessionStore:
@@ -147,6 +152,7 @@ class SessionStore:
             engine=chosen_engine,
             preset=chosen_preset,
             worktree=worktree if worktree is not None or existing is None else existing.worktree,
+            plan_mode=existing.plan_mode if existing else False,
         )
         self._records[session_id] = record
         await self._persist()
@@ -233,6 +239,21 @@ class SessionStore:
             return False
         record.preset = preset
         record.updated_at = _now_iso()
+        await self._persist()
+        return True
+
+    async def set_plan_mode(self, session_id: str, on: bool) -> bool:
+        """Record whether this session is in read-only plan mode (TD-5123).
+
+        Writes only on a change: every ``tier_state`` comes through here.
+        Returns False when the id is unknown.
+        """
+        record = self._records.get(session_id)
+        if record is None:
+            return False
+        if record.plan_mode is on:
+            return True
+        record.plan_mode = on
         await self._persist()
         return True
 

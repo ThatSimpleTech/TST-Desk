@@ -37,6 +37,7 @@ from .consult import handle_consult
 from .delegate import register_delegate_handlers
 from .desktop import register_desktop_handlers
 from .dispatch import ToolDispatcher
+from .exit_plan import exit_plan_mode
 from .search import DEFAULT_MAX_RESULTS, STOPPED, glob_crosses_folders, glob_matcher, grep
 from .send_file import send_file
 from .shell import ShellPolicy, run_shell
@@ -323,6 +324,7 @@ def register_builtin_handlers(
     dispatcher.register_handler("propose_steering_edit", propose_steering_edit)
     dispatcher.register_handler("task_list", task_list)
     dispatcher.register_handler("ask_user", ask_user)
+    dispatcher.register_handler("exit_plan_mode", exit_plan_mode)
     from ..connectors.github_tools import register_github_handlers
 
     register_github_handlers(dispatcher)

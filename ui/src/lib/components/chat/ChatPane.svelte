@@ -27,7 +27,7 @@
 	} from "../../chat-store.svelte.js";
 	import { loadCommands, startCommands } from "../../commands.svelte.js";
 	import { ws } from "../../connection-status.svelte.js";
-	import { localWorkspacePath, session, workspaceName } from "../../session-status.svelte.js";
+	import { localWorkspacePath, session, setPlan, workspaceName } from "../../session-status.svelte.js";
 	import { machineNameFor, sessionMachineUp } from "../../machines.svelte.js";
 	import { unreachableNotice } from "../../machines";
 	import { settings } from "../../settings.svelte.js";
@@ -35,6 +35,7 @@
 	import { canSend, formatTurnDuration, showCancel } from "../../chat-store";
 	import type { AttachmentDraft } from "../../attachments";
 	import { parseCompactCommand } from "../../context-gauge";
+	import { parsePlanCommand, type PlanCommand } from "../../plan-review";
 	import { greetingContext, greetingForHour, SUGGESTIONS } from "../../greeting";
 	import { workingVerb } from "../../working-flavor";
 	import Composer from "./Composer.svelte";
@@ -46,6 +47,8 @@
 	import WorktreeNotice from "./WorktreeNotice.svelte";
 	import { sessions } from "../../sessions.svelte.js";
 	import { taskListFor } from "../../task-list-store.svelte.js";
+	import GoalStrip from "./GoalStrip.svelte";
+	import { goalFor } from "../../goal-store.svelte.js";
 	import WakeupCard from "../WakeupCard.svelte";
 	import { bindWakeup, startWakeup } from "../../wakeup.svelte.js";
 
@@ -105,15 +108,33 @@
 	const waitElapsedMs = $derived(chat.awaitingSince === null ? 0 : Math.max(0, now - chat.awaitingSince));
 
 	// `/compact [what to keep]` compacts instead of reaching the model
-	// (TD-5109). Grok sessions keep their own slash commands.
+	// (TD-5109), and `/plan` turns read-only plan mode on or off (TD-5123).
+	// Grok sessions keep their own slash commands.
 	function submitDraft(text: string, attachments: readonly AttachmentDraft[]): void {
-		const compact =
-			session.engine === "grok" || attachments.length > 0 ? null : parseCompactCommand(text);
+		const grokEngine = session.engine === "grok";
+		const plan = grokEngine ? null : parsePlanCommand(text);
+		if (plan !== null && (plan.kind === "send" || attachments.length === 0)) {
+			runPlanCommand(plan, attachments);
+			return;
+		}
+		const compact = grokEngine || attachments.length > 0 ? null : parseCompactCommand(text);
 		if (compact === null) {
 			sendUserMessage(text, attachments);
 			return;
 		}
 		requestCompact(compact.guidance);
+	}
+
+	function runPlanCommand(plan: PlanCommand, attachments: readonly AttachmentDraft[]): void {
+		if (plan.kind === "toggle") {
+			setPlan(!session.planMode);
+		} else if (plan.kind === "set") {
+			if (plan.on !== session.planMode) setPlan(plan.on);
+		} else {
+			// Plan mode first, on the same connection, so the task's turn plans.
+			if (!session.planMode) setPlan(true);
+			sendUserMessage(plan.text, attachments);
+		}
 	}
 
 	// Engine this chat started with, falling back to Settings only when an
@@ -210,6 +231,8 @@
 		</div>
 		<!-- TD-5122: the agent's task list, the phone's view of the plan.
 		     Renders nothing while there is no unfinished list. -->
+		<!-- TD-5124: the goal /goal set; gone once a done-check meets it. -->
+		<GoalStrip goal={goalFor(session.sessionId)} />
 		<TaskStrip items={taskListFor(session.sessionId)} />
 		<!-- TD-5155: what a restart left held, above the pane's own queue.
 		     Renders nothing while nothing is held. -->

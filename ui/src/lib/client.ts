@@ -53,6 +53,9 @@ const KNOWN_EVENT_TYPES = new Set([
   "approval_request",
   "question_request",
   "question_answered",
+  "plan_review", // TD-5123
+  "plan_reviewed", // TD-5123
+  "plan_pinned", // TD-5123
   "decision_logged",
   "checkpoint_notice",
   "verify_started", // TD-5158
@@ -65,6 +68,8 @@ const KNOWN_EVENT_TYPES = new Set([
   "context_usage",
   "task_list", // TD-5122
   "worktree_state", // TD-5126
+  "stop_check", // TD-5124
+  "session_goal", // TD-5124
   "steering_reloaded",
   "rule_activated",
   "tier_switched",

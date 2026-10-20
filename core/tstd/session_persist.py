@@ -83,13 +83,16 @@ def chat_message_to_dict(message: ChatMessage) -> dict[str, Any]:
 
     Plus ``steer`` on a user message that joined a running turn (TD-5112),
     which the wire never carries, so a restored conversation still knows
-    where its turns start.
+    where its turns start, and ``check`` on a done-check's feedback
+    (TD-5124), so it still knows which user messages the window numbers.
     """
     from .provider import ChatCompletionRequest
 
     row = ChatCompletionRequest._message_to_dict(message)
     if message.steer:
         row["steer"] = True
+    if message.check:
+        row["check"] = True
     return row
 
 
@@ -162,6 +165,9 @@ def chat_message_from_dict(data: dict[str, Any]) -> ChatMessage:
     steer = data.get("steer", False)
     if not isinstance(steer, bool):
         raise ValueError("steer must be a boolean")
+    check = data.get("check", False)
+    if not isinstance(check, bool):
+        raise ValueError("check must be a boolean")
     return ChatMessage(
         role=role,
         content=content,
@@ -169,6 +175,7 @@ def chat_message_from_dict(data: dict[str, Any]) -> ChatMessage:
         tool_call_id=tool_call_id,
         reasoning_details=reasoning_details,
         steer=steer,
+        check=check,
     )
 
 

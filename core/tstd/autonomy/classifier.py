@@ -33,6 +33,11 @@ the *obvious* cases — the ones that must never reach the model:
 - an MCP tool with no declared path or host metadata → B, never A
   (TD-4402; even if ``side_effect_class`` was reset to ``auto``)
 - the builtin ``task_list``, which touches no file or host → A (TD-5122)
+- while plan mode is on, every call that could change something → C and
+  refused outright, ahead of every other rule (TD-5123): the policy gate,
+  skip-all and an ``auto`` rule never see it
+- the builtin ``exit_plan_mode``, whose plan review is the one prompt → A
+  (TD-5123)
 
 Anything the table cannot decide is left unclassified so the worker-tier
 classifier (TD-703) can handle it, defaulting to **B** — fail toward
@@ -230,6 +235,10 @@ class Boundary:
             :func:`tstd.policy.read_guards`). A listed shell command that
             names a file one matches, or that can print a file it does not
             name, is not Class A while there is one.
+        plan_mode: Whether the session is planning (TD-5123), read on
+            every call so turning plan mode on or off mid-turn counts. A
+            delegate child shares its parent's classifier, so the child is
+            judged by its parent's plan mode.
     """
 
     workspace_root: Path | None
@@ -238,6 +247,7 @@ class Boundary:
     cap_exceeded: bool = False
     shell_read_only: frozenset[str] = frozenset()
     read_guards: Callable[[], Sequence[str]] = field(default=lambda: (), compare=False)
+    plan_mode: Callable[[], bool] = field(default=lambda: False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -269,6 +279,9 @@ class DecisionRequest:
         has_path_host_metadata: ``True`` when the tool declared
             ``path_fields``, ``host_fields``, or a ``host_resolver``.
             An MCP tool without that declaration cannot be Class A.
+        read_only: Copied from ``Tool.read_only``: an MCP tool the user
+            listed in ``read_only_tools`` (TD-5123). Plan mode reads it
+            for ``mcp:`` tools only.
     """
 
     tool_name: str
@@ -281,6 +294,7 @@ class DecisionRequest:
     side_effect_class: str = "auto"
     provenance: str | None = None
     has_path_host_metadata: bool = False
+    read_only: bool = False
 
 
 # ── Rule table ─────────────────────────────────────────────────────────
@@ -302,6 +316,10 @@ class Rule:
     #: What let the call through, for the audit (TD-5103): the read-only
     #: list entries a ``shell-read-only`` call used.
     allowed_by: Callable[[DecisionRequest, Boundary], tuple[str, ...]] | None = None
+    #: The call is refused when this rule fires (TD-5123): dispatch returns
+    #: the refusal before the policy gate, so no rule, approval or skip-all
+    #: can run it.
+    refuses: bool = False
 
 
 @dataclass(frozen=True)
@@ -324,6 +342,11 @@ class Classification:
     rule: Rule | None = None
     reason: str = ""
     allowed_by: tuple[str, ...] = ()
+
+    @property
+    def refused(self) -> bool:
+        """The rule that fired refuses the call outright (TD-5123)."""
+        return self.rule is not None and self.rule.refuses
 
 
 # ── Path resolution helpers ────────────────────────────────────────────
@@ -695,6 +718,59 @@ def _rule_shell_read_only(req: DecisionRequest, boundary: Boundary) -> bool:
     return bool(_read_only_entries(req, boundary))
 
 
+#: Builtins that only read, or change nothing but the session's own
+#: state, so they run while planning (TD-5123). An allowlist on purpose:
+#: ``mutates`` is not enough (the GitHub write tools declare none), so a
+#: builtin not named here is refused until someone decides it reads.
+#: ``shell`` (its read-only list), ``delegate`` (not ``kind: worker``) and
+#: capture-only computer use are judged in :func:`plan_mode_allows`.
+PLAN_READ_ONLY_BUILTINS: frozenset[str] = frozenset(
+    {
+        "fs_read",
+        "fs_list",
+        "fs_grep",
+        "web_search",
+        "web_fetch",
+        "load_skill",
+        "task_list",
+        "ask_user",
+        "consult",
+        "send_file",
+        "exit_plan_mode",
+    }
+    | GITHUB_READ_TOOLS
+)
+
+
+def plan_mode_allows(req: DecisionRequest, boundary: Boundary) -> bool:
+    """Whether *req* may run while the session is planning (TD-5123).
+
+    Plan mode analyzes without changing anything, so only calls that read
+    run: a builtin on :data:`PLAN_READ_ONLY_BUILTINS`, a shell command made
+    only of the static read-only list (TD-5103), a capture-only desktop or
+    browser tool, ``delegate`` unless it asks for the writing ``worker``
+    child, and an MCP tool the user listed in its server's
+    ``read_only_tools``. A plugin tool (or any other tool with provenance)
+    is never read-only here: nothing vouches for it.
+    """
+    if req.provenance is not None:
+        return req.provenance.startswith("mcp:") and req.read_only
+    if req.tool_name == "shell":
+        return bool(_read_only_entries(req, boundary))
+    if req.is_mutation or req.writes:
+        return False
+    if req.actuates is not None:
+        return req.actuates is False
+    if req.tool_name == "delegate":
+        return req.arguments.get("kind") != "worker"
+    return req.tool_name in PLAN_READ_ONLY_BUILTINS
+
+
+def _rule_plan_mode(req: DecisionRequest, boundary: Boundary) -> bool:
+    """Plan mode is on and the call could change something (TD-5123)."""
+    return boundary.plan_mode() and not plan_mode_allows(req, boundary)
+
+
 def _rule_mcp_undeclared_fields(req: DecisionRequest, _boundary: Boundary) -> bool:
     """MCP tools with no declared path/host metadata are never Class A.
 
@@ -838,6 +914,26 @@ def _rule_consult(req: DecisionRequest, _boundary: Boundary) -> bool:
     )
 
 
+def _rule_exit_plan_mode(req: DecisionRequest, _boundary: Boundary) -> bool:
+    """``exit_plan_mode`` puts a plan in front of the user (TD-5123).
+
+    It parks the turn on the plan review, which is the prompt: asking for
+    approval first would put two prompts on one plan. It changes nothing
+    itself; only the user's Approve ends plan mode. Only the builtin, with
+    no path, host or write: an MCP or plugin tool of that name carries
+    provenance and gets no grant.
+    """
+    return (
+        req.tool_name == "exit_plan_mode"
+        and req.provenance is None
+        and req.side_effect_class == "auto"
+        and not req.is_mutation
+        and not req.reads
+        and not req.writes
+        and not req.hosts
+    )
+
+
 def _rule_in_workspace_edit(req: DecisionRequest, boundary: Boundary) -> bool:
     """An in-workspace write inside writable_paths is a reversible Class A edit."""
     if not req.is_mutation or not req.writes:
@@ -891,6 +987,17 @@ def _rule_outside_writable(req: DecisionRequest, boundary: Boundary) -> bool:
 
 
 RULE_TABLE: tuple[Rule, ...] = (
+    # First, ahead of every grant and every other refusal: while planning,
+    # a call that could change something is refused, not asked (TD-5123).
+    # As a C rule that asked, skip-all or an ``auto`` policy rule could
+    # still have run it.
+    Rule(
+        id="plan-mode",
+        description="plan mode is on: only calls that read run while planning",
+        decision_class=DecisionClass.C,
+        match=_rule_plan_mode,
+        refuses=True,
+    ),
     Rule(
         id="boundary-unsafe-path",
         description="action touches a path with a Windows-unsafe form",
@@ -1037,6 +1144,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="consult asks the brain or validator a question; writes nothing",
         decision_class=DecisionClass.A,
         match=_rule_consult,
+    ),
+    Rule(
+        id="exit-plan-mode",
+        description="exit_plan_mode puts the plan in front of the user; the review is the prompt",
+        decision_class=DecisionClass.A,
+        match=_rule_exit_plan_mode,
     ),
     # GitHub reads have no path or host metadata. A host on the request
     # would be Class C under the default network deny, and a path would

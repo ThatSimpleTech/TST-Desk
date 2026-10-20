@@ -153,6 +153,69 @@ async function walkMessageActions(): Promise<void> {
 	await expect(chat.getByText("Say hello again")).toBeVisible();
 }
 
+/**
+ * TD-5123: read-only plan mode at a phone's width, where the chat is the
+ * only pane: the chip and `/plan` turn it on, the model's plan comes up on
+ * a card, and approving an edited plan ends plan mode with it pinned in
+ * the Plan pane. A second plan is rejected, and plan mode stays on.
+ */
+test("plans read-only and reviews the plan on a phone's width", async () => {
+	await page.setViewportSize({ width: 375, height: 812 });
+	const bar = page.getByRole("group", { name: "Model" });
+	const chip = bar.getByRole("button", { name: "Plan", exact: true });
+	const composer = page.getByRole("textbox", { name: "Message composer" });
+	const send = page.getByRole("button", { name: "Send message" });
+	const card = page.getByRole("article", { name: "The agent's plan" });
+	await expect(chip).toBeVisible();
+	await expect(chip).toHaveAttribute("aria-pressed", "false");
+
+	// `/plan` alone toggles, and never reaches the model.
+	await composer.fill("/plan");
+	await send.click();
+	await expect(chip).toHaveAttribute("aria-pressed", "true");
+	await composer.fill("Add a greeting");
+	await send.click();
+	await expect(card).toBeVisible();
+	await expect(card).toContainText("Call it from main.");
+	await snap("plan-review", card);
+
+	await card.getByRole("button", { name: "Edit plan" }).click();
+	const editor = card.getByRole("textbox", { name: "Edit the plan" });
+	await expect(editor).toHaveValue(info.plan);
+	await editor.fill(`${info.plan}\n3. Keep it small.`);
+	await snap("plan-review:editing", card);
+	await card.getByRole("button", { name: "Show plan" }).click();
+	await expect(card).toContainText("Keep it small.");
+	await card.getByRole("textbox", { name: "Note for the agent" }).fill("Looks good");
+	// "Approve plan" is this button before an edit; its label says which is sent.
+	await card.getByRole("button", { name: "Approve edited plan" }).click();
+	await expect(card).toHaveCount(0);
+	await expect(chip).toHaveAttribute("aria-pressed", "false");
+
+	// `/plan <task>` plans that task; Reject keeps plan mode on.
+	await composer.fill("/plan Add a farewell");
+	await send.click();
+	await expect(card).toBeVisible();
+	await expect(chip).toHaveAttribute("aria-pressed", "true");
+	await card.getByRole("textbox", { name: "Note for the agent" }).fill("Not yet");
+	await card.getByRole("button", { name: "Reject plan" }).click();
+	await expect(card).toHaveCount(0);
+	await expect(chip).toHaveAttribute("aria-pressed", "true");
+	await composer.fill("/plan off");
+	await send.click();
+	await expect(chip).toHaveAttribute("aria-pressed", "false");
+
+	await page.setViewportSize({ width: 1280, height: 800 });
+	const more = page
+		.getByRole("tablist", { name: "Right pane views" })
+		.locator("button[aria-haspopup='menu']");
+	await more.click();
+	await page.getByRole("menuitemradio", { name: "Plan", exact: true }).click();
+	const pinned = page.getByRole("region", { name: "Approved plan" });
+	await expect(pinned).toContainText("Keep it small.");
+	await page.getByRole("tab", { name: "Activity" }).click();
+});
+
 test("visits every right-pane view", async () => {
 	for (const tab of ["Activity", "Files", "Work"]) {
 		await page.getByRole("tab", { name: tab }).click();
@@ -323,6 +386,31 @@ test("shows the agent's task list in the chat and the Plan pane", async () => {
 	await expect(strip).toContainText(info.tasks[1]);
 	await page.setViewportSize({ width: 1280, height: 800 });
 	await expect(plan).toBeVisible();
+});
+
+/**
+ * TD-5124: the held session's reply carries a done-check that could not run
+ * (the command was declined). It shows open on the reply, so the reason is
+ * on screen; its toggle folds and unfolds it, at a phone's width too.
+ */
+test("shows a done-check on the reply and folds it", async () => {
+	const chat = page.getByRole("region", { name: "Chat pane" });
+	const fold = chat.getByRole("group", { name: "Done-check" });
+	const toggle = fold.getByRole("button", { name: "Done-check could not run" });
+	await expect(toggle).toHaveAttribute("aria-expanded", "true");
+	await expect(fold).toContainText(info.check);
+	await expect(fold).toContainText("The user declined this command.");
+	await snap("done-check", fold);
+
+	await toggle.click();
+	await expect(toggle).toHaveAttribute("aria-expanded", "false");
+	await expect(fold).not.toContainText("The user declined this command.");
+
+	await page.setViewportSize({ width: 375, height: 812 });
+	await expect(toggle).toBeVisible();
+	await toggle.click();
+	await expect(fold).toContainText(info.check);
+	await page.setViewportSize({ width: 1280, height: 800 });
 });
 
 /**
