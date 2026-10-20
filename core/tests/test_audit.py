@@ -105,7 +105,7 @@ def test_exempt_modules_never_touch_the_audit_database() -> None:
     from tstd.audit import audit_db_path
     from tstd.session_index import INDEX_FILE
 
-    assert INDEX_FILE != audit_db_path(Path("/d")).name
+    assert audit_db_path(Path("/d")).name != INDEX_FILE
     for name in _OWN_DATABASE:
         source = (TSTD_ROOT / name).read_text(encoding="utf-8")
         assert "audit" not in source.lower()
