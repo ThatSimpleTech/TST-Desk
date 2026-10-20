@@ -10852,6 +10852,76 @@ disk, a restart finds it and the next compaction still carries it), `ui/src/lib/
 the UI walk (the strip at 375 px and the Plan pane at 1280 px on the
 seeded held session; census gains `tasks`). See DECISIONS.md.
 
+### TD-5126 — Worktree per session, on by default in git repos
+**Size:** 5 · **Depends on:** none · Gap audit 2026-10-14
+
+Sessions shared one working tree, so two sessions in one repository saw
+each other's half-made edits. Claude Code and its desktop app run
+parallel sessions in separate git worktrees; Adam did this by hand.
+On by default in git repos (Decisions, Adam, 2026-10-14).
+
+**Acceptance criteria:**
+- [x] Sessions and scheduled jobs in a git repo get their own worktree by
+      default (decided 2026-10-14). The daemon creates it under a
+      configured folder on a new branch from the current HEAD. One
+      workspace key turns it off.
+- [x] If the main checkout has uncommitted changes, the start screen says
+      the worktree won't have them and offers to start in the main
+      checkout instead.
+- [x] A `.tst/worktree-include` file (gitignore syntax) copies gitignored
+      files such as `.env` into each new worktree, and an optional setup
+      command runs once (for example `npm ci`).
+- [x] On close: keep, merge back or remove. Unchanged worktrees are
+      removed automatically.
+- [x] Delegate children can get their own worktree.
+- [x] The session rail shows the branch.
+
+Done (2026-10-20): `core/tstd/worktree.py` (git) and
+`core/tstd/worktree_session.py` (sessions). A session or scheduled job
+opened on a folder in a git repository with a commit works in a worktree
+on `tst/wt/<first 8 of the id>` from the main checkout's `HEAD`, in
+`worktree.folder` (Settings config; empty is `worktrees/` in the data
+dir). `Session.workspace_path` is the worktree's copy of the folder, so
+tools, wall, checkpoints and steering work there unchanged; the store
+row's `workspace_path` and `Session.project_path` stay the folder, so the
+rail groups the row with its project and New chat makes another worktree.
+`worktree.enabled: false` in Settings or in the workspace's
+`.tst/config.yaml` (read even untrusted: it loosens nothing) keeps
+sessions in the folder. `session_list` rows carry `worktree` (branch,
+path, `main_dirty`, setup state); `worktree_state` events say when one is
+made, set up or closed. The start screen shows the branch, the main
+checkout's uncommitted changes the worktree lacks with **Start in the
+main checkout instead**, and the setup's progress. An untracked
+`.tst/config.yaml` is copied with the trust decided on its bytes;
+`.tst/worktree-include` copies only files git ignores; `worktree.setup`
+runs once in the background from a trusted config only (a repo-shipped
+one is a loosened setting) and the first turn waits for it. The rail row
+shows the branch and offers **Close worktree…**: unchanged it is removed,
+otherwise Keep, Merge back (commit on the branch, conflict check with
+`git merge-tree`, merge into the main checkout; refused with nothing
+changed on a conflict or a checkout mid-merge) or Remove; the session then
+works in the folder. An unchanged worktree is also removed when its
+session is deleted and when a scheduled run ends; one with changes is
+never removed without a choice. `delegate` takes `worktree: true`: the
+child works in its own worktree from the parent's last commit with its
+tools rebound there, and its changes come back committed on its branch
+for the parent to merge. Moving a worktree session waits until its
+worktree is closed. Tests: `core/tests/test_worktree.py` (creation, a
+subfolder workspace, no repo or no commit, the workspace key even
+untrusted, dirty count, include copying only ignored files, config and
+trust carried, setup run and the first turn waiting, untrusted setup
+skipped, the loosened setting, close: unchanged, ask then keep, merge,
+conflict refused with both sides intact, remove, the stored record),
+`core/tests/test_worktree_daemon.py` (a turn writes in the worktree and
+the list groups by folder, two sessions two trees, Settings off, the
+dirty notice and start in the main checkout, close asks then merges,
+delete removes an unchanged one, restart keeps the root, scheduled runs
+with and without changes, delegate with and without changes and outside
+git, move refused until closed), `ui/src/lib/worktree.test.ts` (wire,
+row actions, the row's branch and close step, the start screen), the
+protocol fixtures, and the UI walk (the rail shows the branch of the
+walk's chat and Close worktree removes it). See DECISIONS.md.
+
 ---
 
 # Epic E52 — Files to the user

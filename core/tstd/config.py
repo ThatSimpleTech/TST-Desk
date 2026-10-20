@@ -578,6 +578,20 @@ class SchedulerConfig(BaseModel):
     max_run_seconds: float = Field(default=DEFAULT_MAX_RUN_SECONDS, gt=0, le=60 * 60)
 
 
+class WorktreeConfig(BaseModel):
+    """A git worktree per session (TD-5126), machine-wide.
+
+    ``enabled`` is the default for every git workspace; a workspace's own
+    ``worktree.enabled: false`` turns it off there. ``folder`` holds the
+    worktrees; empty is ``worktrees/`` in the data dir, outside every
+    repository. ``setup_timeout_s`` bounds a workspace's ``worktree.setup``.
+    """
+
+    enabled: bool = True
+    folder: str = ""
+    setup_timeout_s: int = Field(default=600, ge=10, le=3600)
+
+
 class SessionConfig(BaseModel):
     """On-disk session event-log window (TD-2901).
 
@@ -1339,6 +1353,7 @@ class ModelConfig(BaseModel):
     shell: ShellConfig = Field(default_factory=ShellConfig)
     provider_retry: ProviderRetryConfig = Field(default_factory=ProviderRetryConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
+    worktree: WorktreeConfig = Field(default_factory=WorktreeConfig)
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
     judgments: JudgmentsConfig = Field(default_factory=JudgmentsConfig)
     remote: RemoteConfig = Field(default_factory=RemoteConfig)

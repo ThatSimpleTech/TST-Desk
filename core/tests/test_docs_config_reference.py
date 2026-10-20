@@ -46,6 +46,7 @@ from tstd.boundary_config import (
     BoundarySection,
     CapsSection,
     MemorySection,
+    WorktreeSection,
     load_workspace_boundary,
 )
 from tstd.config import (
@@ -83,6 +84,7 @@ from tstd.config import (
     TelegramNotifyConfig,
     TierConfig,
     VoiceConfig,
+    WorktreeConfig,
     default_config_yaml,
     load_config,
 )
@@ -253,6 +255,8 @@ _CREDENTIAL_FIELDS = frozenset(CredentialConfig.model_fields)
 _SECTION_FIELDS = frozenset(BoundarySection.model_fields)
 _CAPS_FIELDS = frozenset(CapsSection.model_fields)
 _MEMORY_FIELDS = frozenset(MemorySection.model_fields)
+_WORKTREE_FIELDS = frozenset(WorktreeConfig.model_fields)
+_WORKSPACE_WORKTREE_FIELDS = frozenset(WorktreeSection.model_fields)
 _ATTACHMENT_FIELDS = frozenset(AttachmentLimits.model_fields)
 _POLICY_FIELDS = frozenset(PolicyConfig.model_fields)
 _RULE_FIELDS = frozenset(PolicyRule.model_fields)
@@ -281,6 +285,8 @@ def _check_workspace(data: dict[str, Any], where: str) -> None:
         _check_keys(data["attachments"], _ATTACHMENT_FIELDS, f"{where} attachments")
     if "memory" in data:
         _check_keys(data["memory"], _MEMORY_FIELDS, f"{where} memory")
+    if "worktree" in data:
+        _check_keys(data["worktree"], _WORKSPACE_WORKTREE_FIELDS, f"{where} worktree")
     if "policy" in data:
         _check_keys(data["policy"], _POLICY_FIELDS, f"{where} policy")
         for i, rule in enumerate(data["policy"].get("rules", [])):
@@ -387,6 +393,8 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
                 )
         if "speech" in data:
             _check_keys(data["speech"], _SPEECH_FIELDS, f"{where} speech")
+        if "worktree" in data:
+            _check_keys(data["worktree"], _WORKTREE_FIELDS, f"{where} worktree")
         if "autonomy" in data:
             _check_keys(data["autonomy"], _AUTONOMY_FIELDS, f"{where} autonomy")
         if "mcp" in data:
@@ -450,6 +458,8 @@ def test_every_config_key_is_documented() -> None:
         | _SECTION_FIELDS
         | _CAPS_FIELDS
         | _MEMORY_FIELDS
+        | _WORKTREE_FIELDS
+        | _WORKSPACE_WORKTREE_FIELDS
         | _ATTACHMENT_FIELDS
         | _POLICY_FIELDS
         | _RULE_FIELDS

@@ -16623,3 +16623,108 @@ it is re-injected were left open. Adam approved the story as written
 - **Native only, parent only.** Delegated worker and research children
   keep their fixed tool lists without `task_list`; the plan is the
   parent's. The Grok engine keeps its own plan.
+
+## 2026-10-20 — TD-5126: a git worktree per session, on by default (Class B)
+
+Approved as specified in the gap audit with Adam's decision 7 (on by default
+in git repos, with the story's safeguards). Size 5, so the approach is
+recorded here instead of waiting for sign-off.
+
+- **Where the session works, and what it belongs to.** `Session.workspace_path`
+  is the worktree's copy of the folder the user opened (the worktree's top
+  plus the folder's path inside the repository), so every root-bound piece
+  (tools, path guard, classifier wall, checkpointer, ledger, prompt
+  assembler, Grok's cwd) works there with no change. The folder itself stays
+  the session's identity: the store row's `workspace_path`, the
+  `session_list` row's `workspace_path` and `Session.project_path`. The rail
+  groups by it, `new_session` anchors on it (so a second chat gets a second
+  worktree, never the first one's), Schedule this chat names it, and the
+  known-workspaces list never fills with worktree folders. Rejected:
+  reporting the worktree as the row's workspace (every project view, New
+  chat and Move would have scattered across worktree folders).
+- **Branch and folder.** `tst/wt/<first 8 of the session id>` from the main
+  checkout's `HEAD`, in `worktree.folder` (Settings config; empty is
+  `worktrees/` in the data dir, outside every repository, so no repository
+  sees an untracked folder and no wall includes another session's tree).
+  `tst/wt/` does not collide with the checkpointer's `tst/session/` or the
+  autonomy `tst/auto/` refs.
+- **When there is no worktree.** A folder outside git, a bare repository or
+  one with no commit yet works in the folder, silently. A git failure
+  (folder exists, git refuses) works in the folder and says why on the
+  start screen. Autonomy runs keep their own branch and are not changed.
+  `tst run` opens an ordinary session, so it gets one too.
+- **The off switch.** Settings `worktree.enabled` for the computer and
+  `worktree.enabled: false` in the workspace's `.tst/config.yaml`. The
+  workspace key is read from the file as written even when the file is not
+  trusted: turning worktrees off loosens nothing (TD-5113).
+- **The setup command is a trusted-config setting.** `worktree.setup` runs a
+  shell command with no approval, so a repo-shipped one counts as loosened
+  and runs only from a trusted file, the same rule as hooks (decision 3).
+  It is not a tool call, so it does not meet the classifier (directive 6
+  covers tool calls); it runs with the shell tool's secret-stripped
+  environment, in the worktree, bounded by `worktree.setup_timeout_s`
+  (default 600 s), in the background so the window is not held. The
+  session's first turn waits for it (`Session.worktree_ready`, checked in
+  `wait_for_user_message`, so both loops honour it). Untrusted, it is
+  skipped and the start screen says so.
+- **What is copied in.** An untracked `.tst/config.yaml` (the wall and
+  policy must not quietly fall back to defaults in a worktree) with the
+  trust decision made on the same bytes (same hash, so the user already
+  decided on exactly these settings). `.tst/worktree-include` (gitignore
+  syntax, matched from the repository's top like `.git/info/exclude`)
+  copies a file only when git also ignores it, as Claude Code's
+  `.worktreeinclude` does; a symlink is copied as a link, never followed.
+  Settings TST Desk writes during a worktree session (Always allow, a spend
+  cap) land in that copy; an untracked copy goes away with the worktree.
+- **TST Desk's own untracked `.tst/` files are not changes.** The memory
+  templates, the copied config and the decisions ledger appear in every
+  worktree. Counting them would make every worktree "changed" (never
+  removed automatically) and every main checkout "dirty" (the notice on
+  every new chat), and committing them in a merge would collide with the
+  main checkout's own untracked copies. Accepted memory is committed, so it
+  still counts.
+- **Filters off for the checkout.** `git worktree add` runs with every
+  configured filter driver pinned off, as all the daemon's git calls since
+  TD-5157 (a merged `.gitattributes` must not make the daemon run a
+  filter). A git-lfs file is checked out as its pointer; the documented way
+  to run the user's own filters there is `worktree.setup: "git lfs pull"`.
+  Hooks stay off (TD-5108), including `post-checkout`.
+- **Closing.** `close_worktree` with no `action` removes an unchanged
+  worktree and refuses a changed one with `worktree_has_changes`, so the
+  window asks keep, merge back or remove. Merge back commits the worktree's
+  changes on its branch (`commit_on_head`, filters and hooks off), checks
+  for conflicts with `git merge-tree --write-tree` (git 2.38+) and only then
+  runs `git merge` in the main checkout, with filters pinned; a conflict, a
+  checkout mid-merge or mid-rebase, or local changes the merge would
+  overwrite are refused and nothing in the main checkout changes (a failed
+  merge is aborted). After any close the session works in the folder it was
+  opened on, the way `move_session` moves one, so the chat stays usable.
+  Keep leaves the folder and branch on disk and TST Desk forgets them.
+  Refused mid-turn and while setup runs. Not a machine-peer verb (a merge
+  writes this computer's checkout); a phone may close its own computer's.
+- **Removed on its own only when unchanged.** On close, on delete, and when
+  a scheduled run ends (a run that changed nothing leaves no folder). A
+  changed worktree is never removed without a choice: deleting its session
+  keeps it on disk on its branch, and a scheduled run's stays with its
+  session until closed. Archive stays a filing action and touches nothing.
+- **Delegate children.** `delegate` takes `worktree: true` (the model asks
+  for isolation per call; default off, so existing delegations are
+  unchanged). The child's worktree branches from the parent's last commit
+  (uncommitted parent edits are not in it, which the tool description
+  says). Its path guard, classifier wall (a sibling classifier with the
+  parent's connector and its own cache), memory committer and workspace are
+  rebound to that folder; the checkpointer is dropped (the branch is its
+  record) and the ledger stays the parent's. When it finishes, its changes
+  are committed on its branch and the folder is removed; the summary names
+  the branch and the `git diff` and `git merge` to take it, which the parent
+  runs through the classifier like any shell command. No changes, no
+  branch. A worktree that cannot be made is refused rather than letting the
+  child share the parent's files.
+- **Move waits.** A session with a worktree cannot be moved
+  (`worktree_session`); the rail hides Move on such rows. The worktree
+  belongs to the folder it came from.
+- **Known gaps, accepted.** A worktree folder deleted by hand leaves its
+  session pointing at a missing folder until it is closed (close prunes it).
+  Trust records for removed worktrees stay in `workspace_trust.yaml`.
+  `tst run` sessions keep their worktree until closed from the rail or
+  deleted. The setup command's grandchildren are not killed on timeout.

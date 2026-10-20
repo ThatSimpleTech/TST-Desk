@@ -121,6 +121,20 @@ class MemorySection(BaseModel):
     max_lines: int = Field(default=DEFAULT_MEMORY_MAX_LINES, ge=1)
 
 
+class WorktreeSection(BaseModel):
+    """A worktree per session in this workspace (TD-5126).
+
+    ``enabled: false`` keeps every session in the main checkout. ``setup``
+    runs once in each new worktree (``npm ci``, say). A command a repo
+    ships is loosening, so it runs only once the file is trusted (TD-5113).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    setup: str = Field(default="", max_length=4096)
+
+
 class BoundaryConfig(BaseModel):
     """Top-level workspace boundary configuration."""
 
@@ -135,6 +149,9 @@ class BoundaryConfig(BaseModel):
     # Line cap on ``.tst/memory/**`` (TD-2103). Its own section: this refuses
     # a write, it does not pause a running agent the way ``caps`` does.
     memory: MemorySection = Field(default_factory=MemorySection)
+    # A worktree per session (TD-5126). Not a wall: ``enabled`` is read even
+    # from an untrusted file, ``setup`` only from a trusted one.
+    worktree: WorktreeSection = Field(default_factory=WorktreeSection)
 
     @property
     def allowed_hosts(self) -> frozenset[str]:
@@ -185,6 +202,10 @@ DEFAULT_CONFIG_TEMPLATE = """\
 
 # memory:
 #   max_lines: 200   # a memory file at this cap is distilled, not appended
+
+# worktree:
+#   enabled: true    # false keeps sessions in this checkout (TD-5126)
+#   setup: ""        # runs once in each new worktree, e.g. "npm ci"
 """
 
 

@@ -36,6 +36,7 @@ from ..output_cap import (
 from ..protocol import WorkerStep
 from ..provider import ChatCompletionRequest, ChatMessage, ProviderError, ToolCall
 from ..session import Session
+from ..worktree import SessionWorktree
 from .delegate_child import (
     CHILD_TOOLS,
     CONSULT_TOOL_NAME,
@@ -49,6 +50,7 @@ from .delegate_child import (
     child_preamble,
     resolve_kind,
 )
+from .delegate_worktree import bind_child_root, close_child_tree, open_child_tree
 from .dispatch import ToolDispatcher
 from .registry import Tool, ToolRegistry
 from .results import HandlerFailed, HandlerOutput, HandlerRefusal
@@ -109,7 +111,10 @@ def register_delegate_tools(registry: ToolRegistry) -> None:
                 "shell. kind 'research' is read-only: fs_read, fs_list, "
                 "fs_grep, web_search and web_fetch. Either may also consult "
                 "when it is on for the worker tier. Use research to explore "
-                "code or the web. In plan mode the default is research."
+                "code or the web. In plan mode the default is research. "
+                "worktree: true runs the child in its own git worktree from "
+                "the last commit (your uncommitted edits are not in it); "
+                "its changes come back on a branch for you to merge."
             ),
             parameters={
                 "type": "object",
@@ -128,6 +133,13 @@ def register_delegate_tools(registry: ToolRegistry) -> None:
                         "description": (
                             "worker (read, write, shell) or research (read-only "
                             "files and web). Default worker; research in plan mode."
+                        ),
+                    },
+                    "worktree": {
+                        "type": "boolean",
+                        "description": (
+                            "Run the child in its own git worktree (TD-5126). "
+                            "Default false: it works in your files."
                         ),
                     },
                 },
@@ -170,6 +182,7 @@ async def handle_delegate(
     task: str,
     context: str = "",
     kind: str | None = None,
+    worktree: bool | str = False,
     tool_call_id: str = "",
 ) -> HandlerOutput:
     """``delegate`` handler — run a one-level worker or research child."""
@@ -189,16 +202,27 @@ async def handle_delegate(
     router = session.router
     resolved = resolve_kind(kind, plan_mode=router is not None and router.plan_mode)
     steps: list[WorkerStep] = []
+    own_tree = await open_child_tree(session, worktree)
     try:
         summary = await run_worker_child(
-            parent=session, task=task, context=context, kind=resolved, transcript=steps
+            parent=session,
+            task=task,
+            context=context,
+            kind=resolved,
+            transcript=steps,
+            worktree=own_tree,
         )
     except HandlerRefusal as e:
+        await close_child_tree(own_tree, task, steps)
         raise HandlerRefusal(e.code, e.message, tuple(steps)) from e
     except Exception as e:
         # A child that wrote files or ran commands before it failed still
         # shows them in the window (TD-5160).
+        await close_child_tree(own_tree, task, steps)
         raise HandlerFailed(e, tuple(steps)) from e
+    note = await close_child_tree(own_tree, task, steps)
+    if note:
+        summary = f"{summary}\n\n{note}"
     return HandlerOutput(text=summary, transcript=tuple(steps))
 
 
@@ -209,6 +233,7 @@ async def run_worker_child(
     context: str = "",
     kind: DelegateKind = "worker",
     transcript: list[WorkerStep] | None = None,
+    worktree: SessionWorktree | None = None,
 ) -> str:
     """Slim worker loop: assemble, complete, dispatch, repeat until text or cap.
 
@@ -262,7 +287,7 @@ async def run_worker_child(
         if handler is not None:
             child_dispatcher.register_handler(tool.name, handler)
 
-    child = Session(parent.workspace_path)
+    child = Session(parent.workspace_path if worktree is None else str(worktree.root))
     child.delegate_depth = 1
     child.parent_id = parent.id
     child.boundary_config = parent.boundary_config
@@ -276,6 +301,10 @@ async def run_worker_child(
     child.config_view = parent.config_view
     child.cost_tracker = tracker
     child.touched_paths = parent.touched_paths
+    if worktree is not None:
+        # Root-bound pieces follow the child into its worktree (TD-5126).
+        child.worktree = worktree
+        bind_child_root(parent, child, child_dispatcher)
     child.autonomy = False
     # TD-5119: the child acts as the worker tier, and its consults count
     # against the parent's turn.

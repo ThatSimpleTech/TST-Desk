@@ -64,10 +64,22 @@ _WRITE_CONTENT = "hello from M1\n"
 _TURN_TIMEOUT = 45.0
 
 
+def keep_in_checkout(workspace: Path) -> None:
+    """Turn the worktree per session off here (TD-5126), with the workspace key.
+
+    The harness checks one session's write, checkpoint and ledger in the
+    folder it opened; a worktree is tested on its own (tests/test_worktree*).
+    """
+    config = workspace / ".tst" / "config.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text("worktree:\n  enabled: false\n", encoding="utf-8")
+
+
 def _prepare_workspace(workspace: Path, plan: HarnessPlan) -> None:
     """A clean git baseline with one steering file (AGENTS.md)."""
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "AGENTS.md").write_text(plan.steering, encoding="utf-8")
+    keep_in_checkout(workspace)
     if plan.policy is not None:
         save_policy(workspace, plan.policy)
 

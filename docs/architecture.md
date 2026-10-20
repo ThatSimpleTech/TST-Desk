@@ -324,6 +324,25 @@ If you are adding a feature and find yourself writing any of these, stop:
 - Making a reply depend on which client sent the request. Any attached client can approve,
   deny, cancel, or resume; the session does not care which one.
 
+### A worktree per session (TD-5126)
+
+A session or scheduled job opened on a folder in a git repository works in its own git
+worktree, so two sessions in one repository never edit the same files. `_start_session`
+asks `worktree_session.open_worktree` for one before the loop starts: a new branch
+`tst/wt/<id>` from the main checkout's `HEAD`, in `worktree.folder` (the data dir's
+`worktrees/` by default). `Session.workspace_path` is then the worktree's copy of the folder,
+so every tool, the wall, the checkpointer and the prompt assembler work there unchanged.
+`Session.project_path` and the store row's `workspace_path` stay the folder the user opened:
+the rail groups by it, `new_session` anchors on it, and Schedule this chat names it.
+
+The workspace config comes along when git does not track it, with the trust decided on those
+bytes; `.tst/worktree-include` copies ignored files; a trusted `worktree.setup` runs once in
+the background and the first turn waits for it. `close_worktree` keeps, merges back or
+removes the worktree, then moves the session back to its folder the way `move_session` does.
+An unchanged worktree is removed on close, on delete, and when a scheduled run ends. A
+delegate child asked for `worktree: true` gets its own from the parent's last commit; its
+changes come back committed on its branch for the parent to merge.
+
 ---
 
 ## 3. The wire protocol
@@ -536,12 +555,13 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `shutdown` | — | Ask the daemon to shut down cleanly. Sent by the supervising host. |
 | `drain` | — | Before a restart: wait up to `timeout_s` for open turns, then refuse every verb that starts a turn (`user_message`, `send_queued`, `fork_from`, `run_grok_command`, `approve_grok_plan`, `start_autonomy`, `run_job`) with `daemon_draining` (and `in_reply_to`, the refused verb) for `hold_s` more. Due jobs wait too; approve, deny, stop and resume still pass. `0`/`0` releases, and a release, a later drain or shutdown ends a drain's wait early. Loopback only (`loopback_only` for a phone or a paired computer). Answered with `drain_result`. Sent by `tst drain` (TD-5023). |
 | `list_sessions` | — | Ask for the current session list. A viewer's list also carries every paired computer's cached rows, answered from the cache without dialing (TD-5015). |
-| `new_session` | yes | Create a fresh session in an existing session's workspace. |
+| `new_session` | yes | Create a fresh session in an existing session's workspace: the folder it was opened on, never its worktree, so a git folder gets another worktree (TD-5126). |
 | `archive_session` | yes | File a session away, or restore it. Never a kill. |
 | `set_session_star` | yes | Star or unstar a session. Machine-wide. Acked with `session_list` (TD-3003). |
-| `delete_session` | yes | Destroy a session and its event log. Refused mid-turn. |
+| `delete_session` | yes | Destroy a session and its event log. Refused mid-turn. Its worktree goes too when unchanged; one with changes stays on disk on its branch (TD-5126). |
 | `move_session` | yes | Reassign a session to another workspace, keeping its id and log. |
 | `rename_session` | yes | Set a session's display title, or restore the auto-title when empty. Metadata only. |
+| `close_worktree` | yes | Close a session's git worktree (TD-5126). `action` is `keep` (folder and branch stay on disk), `merge` (commit its changes on the branch, merge the branch into the main checkout; refused with nothing changed on a conflict or a mid-merge checkout) or `remove`. An unchanged worktree is removed whatever `action` says; with no `action`, one with changes is refused with `worktree_has_changes` so the window can ask. The session then works in the folder it was opened on. Refused mid-turn (`session_busy`) and while setup runs (`worktree_busy`). Acked with `session_list`. Not a machine-peer verb. |
 | `get_setup_state` | — | Ask for the onboarding state: key presence, presets, active preset. |
 | `set_api_key` | — | Store an API key in the OS keychain. Optional `base_url` is the host that key talks to (TD-1722). |
 | `validate_api_key` | — | Probe a key with one cheap live call. |
@@ -628,6 +648,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `tier_state` | session | The active tier, any pinned override, slugs, preset, hosts (TD-1720), and plan-mode lock (TD-4603). Native-engine sessions only. Additive `fallbacks` maps a tier that moved to a backup endpoint this turn to the backup's 1-based position in its list; `model_slugs` and `hosts` then name the backup (TD-5120). |
 | `context_compacted` | session | Older turns were compacted to fit the context window. Never silent. Additive `trigger` (`auto` \| `manual` \| `from_here`) and `guidance` say who asked and what to keep (TD-5109). The trigger `inflight_trim` is not compaction: the loop trimmed the middles of this turn's tool results and no message left, so `dropped_messages` counts the results trimmed. The window shows it as a quieter "Trim" row that leads with the results trimmed and the tokens freed (TD-5150). The trigger `clear_stale` is not compaction either: before any turn is compacted, tool results from earlier turns were replaced with a one-line placeholder naming the tool, its target and the size that went (`clear_tool_results` in config.yaml), and no message left, so `dropped_messages` counts the results cleared. The window shows it as the same quiet "Trim" row, previewed "Cleared earlier tool results" (TD-5115). |
 | `context_usage` | session | The next request's estimated tokens against the tier's window and its compaction point, for the title-bar gauge. Sent before each model call and after a compaction (TD-5109). Additive `model` names the model the figures are for, and `fallback` its 1-based position in the tier's `fallbacks` (0 for the tier's own model): on a backup the window and the calibrated estimate are the backup's (TD-5120). |
+| `worktree_state` | session | The session's git worktree changed: made, set up, or closed (TD-5126). `worktree` is the state now (`branch`, `path`, `main_dirty`, `setup`, `setup_note`), null once the session works in the folder it was opened on; `note` says what happened in a sentence (a setup failure, a merge, or why no worktree could be made). The window refreshes the session list on it. |
 | `task_list` | session | The session's whole task list after the native loop's `task_list` tool changed it: items, each with `content` and a `status` of `pending`, `in_progress` or `done` (TD-5122). The newest one is the list; an empty list clears it. The Plan pane and the task strip above the composer (what the phone shows) read it. Logged again as soon as the log window rotates the last one out, and on attach if it is missing, so a restart and a late window always find it. |
 | `steering_reloaded` | session | Steering files were re-resolved after a detected change. |
 | `rule_activated` | session | A path-scoped rule entered the prompt because a matching file was touched. |
@@ -644,7 +665,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `memory_proposal` | session | Distill produced file diffs the user must accept, edit, or reject (TD-2401). |
 | `steering_proposal` | session | The agent proposed a steering edit with `propose_steering_edit`; nothing is written until the user decides (TD-5140). Shaped like `memory_proposal`: a proposal id, then action (`create` or `replace`), path, diff, before and after per file. `replaces` names a stale proposal this fresh diff supersedes; `autonomy` marks one an unattended run parked for its summary. Only emitted when the event's secret scrub leaves it unchanged, so the card shows exactly what Accept writes. |
 | `steering_decision` | session | The decision on a steering proposal, with its diff (TD-5140): the user's `accepted`, `edited` (the diff is what was written) or `rejected`, or the daemon's `expired`, logged when it restores a session whose proposal a restart dropped (nothing written). |
-| `session_list` | connection | The current session list. Each row carries the catalog `preset` (TD-1721). `busy` is a turn in flight; `state: running` is loop liveness (TD-1714, TD-1720). Each row carries `machine`: null for this computer, else the `mch_` id of the paired computer it lives on, whose rows use bridged ids. Only viewers get other computers' rows (TD-5015). |
+| `session_list` | connection | The current session list. Each row carries the catalog `preset` (TD-1721). `busy` is a turn in flight; `state: running` is loop liveness (TD-1714, TD-1720). Each row carries `machine`: null for this computer, else the `mch_` id of the paired computer it lives on, whose rows use bridged ids. Only viewers get other computers' rows (TD-5015). `worktree` is the git worktree the session works in (`branch`, `path`, `main_dirty`, `setup`, `setup_note`), null in the folder itself; `workspace_path` stays the folder it was opened on, so the rail groups the row with its project (TD-5126). |
 | `machine_list` | connection | The paired computers: id, name, host, port, `status` (`connected`, `connecting`, `unreachable`, `refused`, `locked`, `outdated`), last seen, paired at, `same_computer` for a self-pair, and a `detail` line. Never a key. The reply to the four machine verbs, and pushed to viewers when one changes; never sent to a machine peer (TD-5015). |
 | `drain_result` | connection | Reply to `drain`, to that connection only: `drained` (no turn open at all), the session ids still `running`, `paused` for the person (the progress guard or a cap, TD-5155) or in `awaiting_approval` (ids only), and `hold_until` (null once released) (TD-5023). Only `running` turns can finish by themselves; `tst drain` exits 0 when none is left unless `--strict`. |
 | `policy_rules` | connection | The workspace's saved policy rules. An `auto` rule with no wildcard carries `exact`, the one text its `args` matches (`app/[[]id]/page.tsx` → `app/[id]/page.tsx`; for `shell`, the command segment once wrappers such as `timeout 60` are stripped). `exact` is null for a glob, and for every `ask` and `never` rule, which also match in another case (TD-5149, TD-5158). |

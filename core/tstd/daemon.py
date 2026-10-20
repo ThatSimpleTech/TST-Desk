@@ -208,6 +208,7 @@ from .protocol import (
     CharterDocument,
     CheckCuPermissions,
     ClientMessageT,
+    CloseWorktree,
     CommandEntry,
     CommandList,
     CompactContext,
@@ -512,6 +513,18 @@ from .workspace_trust import (
     same_workspace,
     trusted_imports,
 )
+from .worktree import SessionWorktree, WorktreeError
+from .worktree_session import (
+    WorktreeHasChanges,
+    open_worktree,
+    record_root,
+    settle,
+    start_setup,
+    state_event,
+    worktree_folder,
+)
+from .worktree_session import close as close_worktree
+from .worktree_session import info as worktree_info
 from .ws import WebSocketServer
 
 log = get_logger("tstd.daemon")
@@ -2245,8 +2258,9 @@ class Daemon:
             if record.preset != chosen:
                 await self._session_store.set_preset(record.session_id, chosen)
             loaded = await asyncio.to_thread(self._session_persist.load, record.session_id)
+            root, worktree = record_root(record.workspace_path, record.worktree)
             if loaded is not None and loaded.conversation is not None:
-                await self._revive_session(record.session_id, record.workspace_path, loaded)
+                await self._revive_session(record.session_id, root, loaded)
                 continue
             final_state = "interrupted"
             if record.state in {"complete", "failed", "cancelled"} and (
@@ -2254,9 +2268,8 @@ class Daemon:
             ):
                 # Terminal with no snapshot stays terminal. Same as before.
                 final_state = record.state
-            sess = await self.session_registry.restore(
-                record.session_id, record.workspace_path, final_state
-            )
+            sess = await self.session_registry.restore(record.session_id, root, final_state)
+            sess.worktree = worktree
             sess.preset = chosen
             # A tombstone never gets a runtime, but Resume, a spend cap and
             # a move still reload its wall: gated too, or a loosening file
@@ -2413,7 +2426,11 @@ class Daemon:
 
     async def _scheduled_run_turn(self, workspace: Path, message: str) -> TurnResult:
         """In-process ``tst run``: one session, one message, no nested daemon."""
-        return await run_turn_on_daemon(self, workspace, message)
+        result = await run_turn_on_daemon(self, workspace, message)
+        if result.session_id is not None and not result.waiting:
+            # TD-5126: a run that changed nothing leaves no worktree behind.
+            await self._settle_worktree(result.session_id)
+        return result
 
     async def _send_scheduled_notify(self, channel: DeliverTo, summary: str) -> None:
         """Deliver a scheduled summary to slack or ntfy (TD-3807).
@@ -2604,7 +2621,8 @@ class Daemon:
                     "session_not_found",
                     f"Session {msg.session_id!r} not found",
                 )
-            return await self._start_session(anchor.workspace_path)
+            # The folder, not the anchor's worktree (TD-5126).
+            return await self._start_session(anchor.project_path)
 
         if isinstance(msg, UserMessage):
             # Every refusal names in_reply_to, so the window can tell a
@@ -3316,7 +3334,11 @@ class Daemon:
             save_session_stars(self.data_dir, stars)
             return await self._handle_list_sessions()
 
+        if isinstance(msg, CloseWorktree):
+            return await self._handle_close_worktree(msg)
+
         if isinstance(msg, DeleteSession):
+            doomed = self._session_worktree(msg.session_id)
             refusal = await delete_session(
                 self.session_registry,
                 self._session_store,
@@ -3327,9 +3349,20 @@ class Daemon:
             if refusal is None:
                 self.session_stars = [i for i in self.session_stars if i != msg.session_id]
                 save_session_stars(self.data_dir, self.session_stars)
+                # TD-5126: an unchanged worktree goes with its session; one
+                # with changes stays on disk, on its branch.
+                if doomed is not None and doomed.setup != "running":
+                    await settle(doomed)
             return refusal if refusal is not None else await self._handle_list_sessions()
 
         if isinstance(msg, MoveSession):
+            if self._session_worktree(msg.session_id) is not None:
+                # The worktree belongs to the folder it came from (TD-5126).
+                return build_error(
+                    "worktree_session",
+                    "This session works in a git worktree. Close the worktree, then move it.",
+                    session_id=msg.session_id,
+                )
             refusal = await move_session(
                 self.session_registry,
                 self._session_store,
@@ -3798,6 +3831,8 @@ class Daemon:
         """
         sess = await self.session_registry.restore(session_id, workspace_path, "idle")
         record = self._session_store.get(session_id)
+        if record is not None:
+            sess.worktree = SessionWorktree.from_record(record.worktree)
         if record is not None and record.engine == "grok":
             sess.engine = "grok"
         elif record is not None and record.engine == "native":
@@ -3945,6 +3980,12 @@ class Daemon:
     async def _attach_session_runtime(self, sess: Session) -> None:
         """Boundary, tools, persist hooks, and a running loop for *sess*."""
         sess.load_global_memory = self.load_global_memory
+        # TD-5126: a delegate child's worktree goes here too.
+        sess.worktree_folder = (
+            worktree_folder(self.config.worktree, self.data_dir)
+            if self.config.worktree.enabled
+            else None
+        )
         sess.event_log.subscribe(self._on_session_event)  # type: ignore[arg-type]
 
         async def _snap() -> None:
@@ -4107,15 +4148,43 @@ class Daemon:
         # Memory templates (TD-2101): plant .tst/memory/ on every session
         # start so an already-opened workspace still gets the files. Never
         # overwrites; config scaffold stays OpenWorkspace-only.
-        await asyncio.to_thread(scaffold_workspace_memory, workspace_path)
         sess = await self.session_registry.create(workspace_path)
+        # TD-5126: in a git repository the session works in its own
+        # worktree. ``workspace_path`` stays the folder on the record.
+        opened = None
+        if self.config.worktree.enabled:
+            opened = await open_worktree(
+                workspace_path,
+                sess.id[:8],
+                folder=worktree_folder(self.config.worktree, self.data_dir),
+                trust=self.workspace_trust,
+            )
+            if opened.worktree is not None:
+                sess.worktree = opened.worktree
+                sess.workspace_path = str(opened.worktree.root)
+        await asyncio.to_thread(scaffold_workspace_memory, sess.workspace_path)
         # A scheduled pin names the loop for this session only. The window's
         # active preset and engine stay where Settings left them.
         sess.engine = self.config.engine.kind if engine is None else engine
         self._bind_session_preset(sess, self.config.active_preset if preset is None else preset)
         await self._session_store.upsert(
-            sess.id, workspace_path, sess.state, engine=sess.engine, preset=sess.preset
+            sess.id,
+            workspace_path,
+            sess.state,
+            engine=sess.engine,
+            preset=sess.preset,
+            worktree=sess.worktree.to_record() if sess.worktree is not None else None,
         )
+        if opened is not None and opened.setup:
+            # Before the loop starts, so its first wait sees the gate.
+            self._tasks.append(
+                start_setup(
+                    sess,
+                    opened.setup,
+                    float(self.config.worktree.setup_timeout_s),
+                    self._worktree_setup_done,
+                )
+            )
         self._session_persist.prepare(sess.id)
         await self._attach_session_runtime(sess)
         source = config_source(sess)
@@ -4129,6 +4198,8 @@ class Daemon:
             },
         )
         await self._emit_working_context(sess, source)
+        if opened is not None and (opened.worktree is not None or opened.note):
+            await sess.event_log.add(state_event(sess, opened.note))
 
         # Return the session_state event (seq=1, "running")
         events = sess.event_log.events_from(1)
@@ -4461,6 +4532,84 @@ class Daemon:
         self._streaming_tasks[conn_key] = task
         return None
 
+    def _session_worktree(self, session_id: str) -> SessionWorktree | None:
+        """The session's worktree, live or as stored (TD-5126)."""
+        live = self.session_registry.get(session_id)
+        if live is not None:
+            return live.worktree
+        record = self._session_store.get(session_id)
+        return SessionWorktree.from_record(record.worktree) if record is not None else None
+
+    async def _worktree_setup_done(self, sess: Session) -> None:
+        """Persist and announce a finished ``worktree.setup`` (TD-5126)."""
+        wt = sess.worktree
+        if wt is None:
+            return
+        await self._session_store.set_worktree(sess.id, wt.to_record())
+        await sess.event_log.add(state_event(sess, wt.setup_note if wt.setup == "failed" else ""))
+
+    async def _leave_worktree(self, session_id: str, note: str) -> None:
+        """Point the session back at its folder once its worktree is closed."""
+        sess = self.session_registry.get(session_id)
+        record = self._session_store.get(session_id)
+        if record is None:
+            return
+        await self._session_store.set_worktree(session_id, None)
+        if sess is not None:
+            sess.worktree = None
+            sess.worktree_ready = None
+        await move_session(
+            self.session_registry, self._session_store, session_id, record.workspace_path
+        )
+        if sess is not None:
+            await sess.event_log.add(state_event(sess, note))
+
+    async def _settle_worktree(self, session_id: str) -> None:
+        """Remove an unchanged worktree and put the session back in its folder."""
+        wt = self._session_worktree(session_id)
+        if wt is None or wt.setup == "running":
+            return
+        if await settle(wt):
+            await self._leave_worktree(
+                session_id, f"Removed the worktree on {wt.branch}: the run changed nothing."
+            )
+
+    async def _handle_close_worktree(self, msg: CloseWorktree) -> str:
+        """Keep, merge back or remove a session's worktree (TD-5126)."""
+        sid = msg.session_id
+        sess = self.session_registry.get(sid)
+        record = self._session_store.get(sid)
+        if record is None:
+            return build_error("session_not_found", f"Session {sid!r} not found", session_id=sid)
+        wt = self._session_worktree(sid)
+        if wt is None:
+            return build_error(
+                "no_worktree", "This session works in its folder, not a worktree.", session_id=sid
+            )
+        if sess is not None and sess.turn_in_flight:
+            return build_error(
+                "session_busy",
+                "This session has a turn in flight. "
+                "Wait for it or stop it, then close the worktree.",
+                session_id=sid,
+            )
+        if wt.setup == "running":
+            return build_error(
+                "worktree_busy", "The worktree's setup is still running.", session_id=sid
+            )
+        try:
+            note = await close_worktree(wt, msg.action, title=record.title or f"Session {sid[:8]}")
+        except WorktreeHasChanges as e:
+            return build_error("worktree_has_changes", str(e), session_id=sid)
+        except WorktreeError as e:
+            return build_error("worktree_failed", str(e), session_id=sid)
+        await self._leave_worktree(sid, note)
+        log.info(
+            "worktree closed",
+            extra={"extra_fields": {"session_id": sid, "action": msg.action or "auto"}},
+        )
+        return await self._handle_list_sessions()
+
     async def _handle_list_sessions(self) -> str:
         """Build the durable session list as a ``session_list`` event."""
         starred = set(self.session_stars)
@@ -4480,6 +4629,11 @@ class Daemon:
                     title=record.title,
                     preset=record.preset,
                     busy=sess.turn_in_flight if sess is not None else False,
+                    worktree=worktree_info(
+                        sess.worktree
+                        if sess is not None
+                        else SessionWorktree.from_record(record.worktree)
+                    ),
                 )
             )
         summaries.sort(key=lambda s: (s.starred, s.updated_at), reverse=True)

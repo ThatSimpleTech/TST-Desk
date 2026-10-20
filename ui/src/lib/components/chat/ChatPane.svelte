@@ -43,6 +43,8 @@
 	import HeldMessages from "./HeldMessages.svelte";
 	import QueuedMessages from "./QueuedMessages.svelte";
 	import TaskStrip from "./TaskStrip.svelte";
+	import WorktreeNotice from "./WorktreeNotice.svelte";
+	import { sessions } from "../../sessions.svelte.js";
 	import { taskListFor } from "../../task-list-store.svelte.js";
 	import WakeupCard from "../WakeupCard.svelte";
 	import { bindWakeup, startWakeup } from "../../wakeup.svelte.js";
@@ -84,6 +86,10 @@
 		keepDraft();
 	});
 	const sendable = $derived(canSend(chat.sessionId, ws.state, machineUp));
+	// TD-5126: the bound chat's worktree, from the daemon's session list.
+	const boundWorktree = $derived(
+		sessions.rows.find((r) => r.sessionId === chat.sessionId)?.worktree ?? null,
+	);
 
 	// Working-line clock (TD-1713): ticks only while a first-token wait is in
 	// flight, so the verb rotation and elapsed readout cost nothing at rest.
@@ -155,6 +161,9 @@
 					     leave nothing live to bind. Point at the escape. -->
 					<p class="pointer">Start a new session from the rail to begin.</p>
 				{:else}
+					{#if boundWorktree !== null}
+						<WorktreeNotice sessionId={chat.sessionId} worktree={boundWorktree} />
+					{/if}
 					<div class="chips" role="group" aria-label="Suggestions">
 						{#each SUGGESTIONS as suggestion (suggestion)}
 							<button class="chip" type="button" onclick={() => (chat.draft = suggestion)}>

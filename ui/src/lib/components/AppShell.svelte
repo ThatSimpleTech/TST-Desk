@@ -30,7 +30,7 @@
 	import { onEvent } from '../connection-status.svelte.js';
 	import { entries, push } from '../timeline-store.svelte.js';
 	import { inspectorCounts, tabCount } from '../inspector';
-	import { selectRow, setPickForNewSession, visibleRows } from '../sessions.svelte.js';
+	import { selectRow, sessions, setPickForNewSession, visibleRows } from '../sessions.svelte.js';
 	import ChatPane from './chat/ChatPane.svelte';
 	import ProjectPane from './ProjectPane.svelte';
 	import ArtifactPane from './ArtifactPane.svelte';
@@ -264,7 +264,9 @@
 
 	$effect(() => {
 		if (projects.surface !== 'artifacts') return;
-		bindArtifacts(session.sessionId, session.workspacePath);
+		// A worktree session's files are in its worktree (TD-5126).
+		const tree = sessions.rows.find((r) => r.sessionId === session.sessionId)?.worktree;
+		bindArtifacts(session.sessionId, tree?.path ?? session.workspacePath);
 	});
 
 	$effect(() => {

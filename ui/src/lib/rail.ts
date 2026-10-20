@@ -215,6 +215,7 @@ export type RailRowActionId =
 	| "unarchive"
 	| "move"
 	| "open-window"
+	| "close-worktree"
 	| "delete";
 
 export interface RailRowAction {
@@ -243,6 +244,10 @@ export const DELETE_CONFIRM =
 	"Delete this session and its event log? The conversation can't be " +
 	"recovered. Archive instead to hide it and keep it.";
 
+/** Added to Delete's confirm for a session in a worktree (TD-5126). */
+export const DELETE_WORKTREE_NOTE =
+	"Its worktree is removed if unchanged; one with changes stays on disk on its branch.";
+
 /** The actions a row offers, given whether it is filed away.
  *
  *  Archive and Unarchive are one slot, never both: a row is in exactly one of
@@ -255,10 +260,41 @@ export const DELETE_CONFIRM =
  *  both name this computer's projects and scheduler, and the hub never
  *  forwards them. Open in terminal is never a row action; its other entry
  *  points gate on the same id. */
-export function rowActions(archived: boolean, starred = false, remote = false): RailRowAction[] {
+export function rowActions(
+	archived: boolean,
+	starred = false,
+	remote = false,
+	worktree = false,
+): RailRowAction[] {
 	const all = allRowActions(archived, starred);
-	return remote ? all.filter((a) => a.id !== "move" && a.id !== "schedule") : all;
+	// TD-5126: only a row working in its own worktree can close one, and
+	// only on this computer (a merge writes this computer's checkout). Its
+	// worktree belongs to its folder, so it moves only once that is closed.
+	let shown = all;
+	if (worktree) {
+		shown = all.filter((a) => a.id !== "move");
+		if (!remote) shown.splice(shown.findIndex((a) => a.id === "delete"), 0, CLOSE_WORKTREE_ACTION);
+	}
+	return remote ? shown.filter((a) => a.id !== "move" && a.id !== "schedule") : shown;
 }
+
+/** The row action that closes a session's worktree (TD-5126). */
+export const CLOSE_WORKTREE_ACTION: RailRowAction = {
+	id: "close-worktree",
+	label: "Close worktree…",
+	icon: "branch",
+	danger: false,
+	hint:
+		"Leave this session's git worktree. Unchanged, it is removed; with changes, " +
+		"you choose to keep it, merge it back, or remove it. The chat then works in the main checkout.",
+};
+
+/** Copy for the close step's three choices (TD-5126). */
+export const CLOSE_WORKTREE_HINTS = {
+	keep: "Leave the worktree folder and its branch on disk.",
+	merge: "Commit its changes on the branch and merge the branch into the main checkout.",
+	remove: "Delete the worktree and its branch, changes included.",
+} as const;
 
 function allRowActions(archived: boolean, starred: boolean): RailRowAction[] {
 	return [
