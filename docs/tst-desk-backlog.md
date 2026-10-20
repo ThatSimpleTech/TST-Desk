@@ -9981,10 +9981,12 @@ in, or tell a refusal from a failure.
 - [x] The message can come from stdin.
 - [x] Exit codes separate success, refusal, approval needed and error.
 
-**Notes:** `--continue` takes the newest local, unarchived session of
-`--workspace` by `updated_at`; a session with a turn in flight is refused,
-not queued behind. The run attaches after the session's last event and
-reports the turn from its own `user_turn`. Exit codes: 0 success, 1 error,
+**Notes:** `--continue` takes the local, unarchived session of
+`--workspace` that has not ended and was used last (`updated_at`, which
+the daemon now moves on every `user_turn`); a session with a turn in
+flight is refused, not queued behind. The run attaches after the
+session's last event and reports the turn from its own `user_turn`, read
+through the daemon's redaction. Exit codes: 0 success, 1 error,
 2 usage, 3 refused (a `boundary_refusal`, `policy_denied` or
 `approval_denied` tool result), 4 approval needed. The machine modes never
 prompt. See DECISIONS.md and architecture.md "`tst run` for scripts".

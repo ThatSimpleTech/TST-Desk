@@ -2,11 +2,12 @@
 
 By default the turn opens a new session in ``--workspace``. ``--session
 <id>`` sends the message into that session instead, and ``--continue``
-into the newest session of the workspace, the way the window's session
-list orders them. The message comes from ``--message``, or from stdin
-when ``--message`` is ``-`` or left out. ``--output`` picks plain text,
-one JSON result, or the session's protocol events as NDJSON. The exit
-code says how the turn ended (see :mod:`tstd.cli_turn`).
+into the workspace's most recently used session that can still run
+turns, the one the window's quick entry would open. The message comes
+from ``--message``, or from stdin when ``--message`` is ``-`` or left
+out. ``--output`` picks plain text, one JSON result, or the session's
+protocol events as NDJSON. The exit code says how the turn ended (see
+:mod:`tstd.cli_turn`).
 """
 
 from __future__ import annotations
@@ -36,6 +37,11 @@ from .cli import (
 from .cli_turn import EXIT_USAGE, OUTPUTS, Output, TurnOutcome, stream_turn
 
 _REPLY_SECS = 15.0
+
+#: States a session never leaves: the daemon refuses their messages with
+#: ``session_not_running``. The same set as ``tstd.session.TERMINAL_STATES``
+#: (a test holds them equal), kept here so the CLI need not import the loop.
+ENDED_STATES = frozenset({"complete", "failed", "cancelled", "interrupted"})
 
 
 class UsageError(Exception):
@@ -81,7 +87,7 @@ def add_run_command(
         "--continue",
         dest="continue_last",
         action="store_true",
-        help="send the message into the workspace's newest session",
+        help="send the message into the workspace's most recently used session",
     )
     run_p.add_argument(
         "--output",
@@ -157,10 +163,12 @@ def pick_session(
 ) -> dict[str, Any]:
     """The ``session_list`` row this run sends into.
 
-    ``session_id`` names it; otherwise it is the newest local, unarchived
-    session of ``workspace``. A session with a turn in flight is refused
-    rather than queued behind: that turn may be waiting on a person.
-    Blocking (it resolves paths); call it off the event loop.
+    ``session_id`` names it; otherwise it is the local, unarchived session
+    of ``workspace`` that can still run turns and was used last (the
+    daemon moves ``updated_at`` when a turn starts), as the window's quick
+    entry picks. A session with a turn in flight is refused rather than
+    queued behind: that turn may be waiting on a person. Blocking (it
+    resolves paths); call it off the event loop.
     """
     if session_id is not None:
         row = next((r for r in rows if r.get("session_id") == session_id), None)
@@ -178,6 +186,7 @@ def pick_session(
             for r in rows
             if r.get("machine") is None
             and not r.get("archived")
+            and r.get("state") not in ENDED_STATES
             and _same_dir(str(r.get("workspace_path")), workspace)
         ]
         if not mine:

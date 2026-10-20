@@ -29,6 +29,7 @@ from typing import Any, Literal
 
 from .cli import _print_error, _recv_event, _send, _turn_timeout_secs, config_trust_notice
 from .cli_approvals import prompt_approval
+from .logging import REDACTED
 
 Status = Literal["success", "refused", "approval_needed", "error"]
 Output = Literal["text", "json", "ndjson"]
@@ -84,6 +85,33 @@ class TurnOutcome:
             "cost": self.cost,
             "error": error,
         }
+
+
+def is_sent_message(logged: str, sent: str) -> bool:
+    """Whether a ``user_turn``'s *logged* content is the message *sent*.
+
+    The daemon redacts every event before it is stored or broadcast, so a
+    message with secret-shaped text comes back with ``[REDACTED]`` in its
+    place. Each one stands for at least one character of *sent*: matching
+    against the marker, rather than redacting *sent* here, holds when the
+    daemon's patterns differ from this install's.
+    """
+    if logged == sent:
+        return True
+    if REDACTED not in logged:
+        return False
+    head, *middle, tail = logged.split(REDACTED)
+    if not sent.startswith(head):
+        return False
+    pos = len(head)
+    # Earliest placement of each literal piece leaves the most room for the
+    # rest; the +1 keeps every redacted run non-empty.
+    for piece in middle:
+        found = sent.find(piece, pos + 1)
+        if found < 0:
+            return False
+        pos = found + len(piece)
+    return len(sent) - len(tail) >= pos + 1 and sent.endswith(tail)
 
 
 @dataclass
@@ -144,7 +172,9 @@ class _TurnReader:
         if event.get("session_id") != self.session_id:
             return None
         if not self.ours:
-            if typ != "user_turn" or event.get("content") != self.content:
+            if typ != "user_turn" or self.content is None:
+                return None
+            if not is_sent_message(str(event.get("content") or ""), self.content):
                 return None
             self.ours = True
         self.emit(event)
@@ -224,9 +254,10 @@ async def stream_turn(
     """Follow *session_id* until its turn completes, fails or needs approval.
 
     *content* is the message this run sent into a session that already
-    existed: events before the ``user_turn`` carrying it belong to an
-    earlier turn and are skipped. ``None`` (a session this run opened)
-    takes every event of the session.
+    existed: events before the ``user_turn`` carrying it (redacted as the
+    daemon logs it; see :func:`is_sent_message`) belong to an earlier turn
+    and are skipped. ``None`` (a session this run opened) takes every
+    event of the session.
     """
     reader = _TurnReader(session_id, output, ours=content is None, content=content)
     deadline = time.monotonic() + _turn_timeout_secs(data_dir, budget)

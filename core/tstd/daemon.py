@@ -357,6 +357,7 @@ from .protocol import (
     UsageReport,
     UsageRollup,
     UserMessage,
+    UserTurn,
     ValidateApiKey,
     build_error,
     parse_client_message,
@@ -2376,6 +2377,11 @@ class Daemon:
                 await event_log.drop_before(result.earliest_seq)
         if isinstance(event, SessionStateEvent):
             await self._session_store.update_state(event.session_id, event.state)
+        elif isinstance(event, UserTurn):
+            # A turn is use: the rail's newest-first order, quick entry and
+            # `tst run --continue` all read updated_at as "used last", and a
+            # turn changes no state (TD-5111).
+            await self._session_store.touch(event.session_id)
         announce = self._cu_permissions_session(event)
         if announce is not None:
             first_run = not load_shown(self.data_dir, driver_cu_platform(self.desktop_driver))

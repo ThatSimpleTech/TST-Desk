@@ -15001,12 +15001,26 @@ holds were left open.
   attaches from the row's `event_count + 1`, so the session's earlier
   turns never replay, and it counts the turn from the `user_turn` that
   carries its own message, so a turn another viewer queued in the
-  meantime is not reported as this run's.
-- **`--continue` is the newest local, unarchived session of
-  `--workspace`**, by `updated_at` (the order the window's list uses, stars
-  aside). No such session is an error, not a new session: a script that
-  says continue and silently starts fresh has lost its context.
-  `--session` with `--workspace` must name the same folder.
+  meantime is not reported as this run's. The daemon redacts every event
+  it logs, so that `user_turn` can come back with `[REDACTED]` where the
+  message had secret-shaped text (`sk-` has no word boundary, so
+  `task-management-dashboard` matches). Each marker is read as one or more
+  characters of the sent message, rather than redacting the message in
+  the CLI, so a daemon whose patterns differ from the CLI's install still
+  matches.
+- **`--continue` is the local, unarchived session of `--workspace` that
+  can still run turns and was used last**, by `updated_at` (the window's
+  quick entry picks the same way, stars aside). Ended sessions
+  (`complete`, `failed`, `cancelled`, `interrupted`) are skipped: the
+  daemon would refuse the message. **The daemon now moves `updated_at`
+  when a `user_turn` is logged.** A plain turn changes no state, so before
+  this `updated_at` moved only on a state change, a title, preset, archive
+  or move, and "newest" was not the session last worked in, though the
+  rail, quick entry, auto-bind and `doctor`'s current workspace all read
+  it as "used last". The rail's newest-first order now follows use. No
+  such session is an error, not a new session: a script that says
+  continue and silently starts fresh has lost its context. `--session`
+  with `--workspace` must name the same folder.
 - **A session with a turn in flight is refused (`session_busy`), not
   queued behind.** That turn may be parked on an approval only a person can
   give; queueing would hold the script until its timeout. The most
@@ -15047,4 +15061,9 @@ holds were left open.
 **Rejected:** a new `send_message`-style protocol verb (the existing ones
 cover it); continuing into a starred or archived session first; queueing
 behind a busy session; making refusal also cover model-side refusals,
-which TST Desk does not surface as a typed event.
+which TST Desk does not surface as a typed event. Taking the first
+`user_turn` after the attach point whatever its text (a message another
+viewer sent between the list and ours would be reported as this run's);
+a new `last_turn_at` field on `session_list` rows (a protocol addition,
+and the window's own "newest" would still be wrong); tightening the `sk-`
+pattern here (that is the redaction's own scope, TD-1405).

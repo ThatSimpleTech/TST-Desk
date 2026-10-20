@@ -122,10 +122,12 @@ not a second harness.
 
 **`tst run` for scripts (TD-5111)** adds no protocol message. `--session <id>`
 and `--continue` send `list_sessions`, pick the row (the named id, or the
-newest local, unarchived session of `--workspace` by `updated_at`), refuse
-it while `busy`, then `attach` from `event_count + 1` so no earlier turn
-replays, and send `user_message`. The turn is the events from the
-`user_turn` carrying that message to its `turn_complete`. The message comes
+local, unarchived session of `--workspace` that has not ended, newest by
+`updated_at`, which the daemon moves when a turn starts), refuse it while
+`busy`, then `attach` from `event_count + 1` so no earlier turn replays,
+and send `user_message`. The turn is the events from the `user_turn`
+carrying that message to its `turn_complete`; a `[REDACTED]` in that
+`user_turn` stands for the secret-shaped text the daemon scrubbed. The message comes
 from `--message`, or from stdin for `--message -` or no `--message` (a
 terminal is read only for `-`). `--output json` prints one object,
 `{session_id, status, reply, cost, error}`, where `cost` is
@@ -557,7 +559,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 |---|---|---|
 | `ready` | connection | Daemon and protocol versions. Declared and parseable, but not emitted in v0.1. |
 | `session_state` | session | A session state transition, with an optional reason. Additive `engine` (`native` \| `grok`) names the loop this session started with. |
-| `user_turn` | session | A user message the loop accepted, so replay can show the user's side without inventing it. `turn_id` is the queued message's own id (TD-5155). |
+| `user_turn` | session | A user message the loop accepted, so replay can show the user's side without inventing it. `turn_id` is the queued message's own id (TD-5155). Logging it moves the session's `updated_at`, so `session_list` orders by use (TD-5111). |
 | `queued_messages` | session | The messages a restart left held, in order, whole each time (TD-5155): `queued_id`, `content` (what the `user_turn` will show) and `images_dropped` (attached images the queue file did not keep). Logged after a restart that left any and on every `send_queued` or `remove_queued`, and logged again when the log window trimmed the last one away, so the latest in a replay is the list. Nothing in it is sent until the person picks Send. |
 | `conversation_reset` | session | The conversation forked or a sibling was selected. The viewer drops rows after that user turn and replaces it. |
 | `assistant_delta` | session | A streamed chunk of assistant output. |
