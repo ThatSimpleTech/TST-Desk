@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import fixtures from "./protocol-fixtures.json";
 import type { DaemonEventUnion, FilesRestored, FilesRestorePreview } from "./protocol";
 import {
+  closeRewind,
   createRewindState,
   isRewindError,
   openRewind,
@@ -85,6 +86,24 @@ describe("rewind dialog state", () => {
     reduceRewind(edit, PREVIEW);
     restoreRequest(edit);
     expect(reduceRewind(edit, RESTORED)).toBe("fork");
+  });
+
+  it("hands back an edit that never went out when it closes", () => {
+    const refused = opened("try again, smaller").state;
+    reduceRewind(refused, {
+      type: "error",
+      seq: 1,
+      session_id: "sess-1",
+      code: "rewind_grok",
+      message: "Grok sessions keep no checkpoints.",
+      in_reply_to: "preview_restore_files",
+    });
+    expect(refused.phase).toBe("error");
+    expect(closeRewind(refused)).toEqual({ turnId: "turn-1", text: "try again, smaller" });
+    expect(refused.phase).toBe("closed");
+    expect(refused.resend).toBeNull();
+
+    expect(closeRewind(opened().state)).toBeNull();
   });
 
   it("shows the daemon's refusal of its own request in the dialog", () => {

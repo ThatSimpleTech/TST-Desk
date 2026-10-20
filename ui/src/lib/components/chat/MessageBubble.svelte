@@ -15,7 +15,7 @@
 	// stay when the fold collapses (TD-5144).
 	import type { ChatMessage } from "../../chat-store";
 	import { forkFrom, requestCompact, setBranch } from "../../chat-store.svelte.js";
-	import { openRestore } from "../../rewind-store.svelte.js";
+	import { openRestore, takeUnsentEdit } from "../../rewind-store.svelte.js";
 	import { hasReasoning } from "../../reasoning-disclosure.svelte.js";
 	import Icon from "../Icon.svelte";
 	import AttachmentChips from "./AttachmentChips.svelte";
@@ -64,6 +64,18 @@
 		}
 		if (forkFrom(message.userIndex, text)) editing = false;
 	}
+
+	// TD-5125: a restore dialog that closes without resending (cancelled,
+	// refused, or the fork never went out) hands the edited text back here,
+	// with the box still ticked as the person left it.
+	$effect(() => {
+		if (message.turnId === undefined) return;
+		const text = takeUnsentEdit(message.turnId);
+		if (text === null) return;
+		editDraft = text;
+		restoreToo = true;
+		editing = true;
+	});
 
 	let copied = $state(false);
 	let copiedTimer: ReturnType<typeof setTimeout> | null = null;

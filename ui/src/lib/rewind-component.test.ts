@@ -15,6 +15,7 @@ const connection = vi.hoisted(() => {
 const chatStore = vi.hoisted(() => ({
   chat: { sessionId: "sess-1" as string | null },
   forks: [] as [number, string][],
+  forkOk: true,
 }));
 
 vi.mock("./connection-status.svelte.js", () => ({
@@ -32,6 +33,7 @@ vi.mock("./connection-status.svelte.js", () => ({
 vi.mock("./chat-store.svelte.js", () => ({
   chat: chatStore.chat,
   forkFrom: (userIndex: number, text: string) => {
+    if (!chatStore.forkOk) return false;
     chatStore.forks.push([userIndex, text]);
     return true;
   },
@@ -91,6 +93,7 @@ beforeEach(() => {
   connection.sent.length = 0;
   connection.up = true;
   chatStore.forks.length = 0;
+  chatStore.forkOk = true;
   target = document.createElement("div");
   document.body.appendChild(target);
   stop = startRewind();
@@ -190,6 +193,91 @@ describe("Restore files to here", () => {
     click("Resend without restoring");
     expect(chatStore.forks).toEqual([[0, "make the button green"]]);
     expect(sentOf("restore_files")).toEqual([]);
+  });
+
+  describe("Edit and resend keeps the edited text when nothing is resent", () => {
+    const REFUSAL = {
+      type: "error",
+      seq: 1,
+      session_id: "sess-1",
+      code: "rewind_grok",
+      message: "Grok sessions keep no checkpoints, so there are no files to restore.",
+      in_reply_to: "preview_restore_files",
+    };
+
+    function editWithRestore(text: string): void {
+      click("Edit");
+      const area = target.querySelector<HTMLTextAreaElement>("textarea.edit")!;
+      area.value = text;
+      area.dispatchEvent(new Event("input", { bubbles: true }));
+      target.querySelector<HTMLInputElement>(".restore-too input")!.click();
+      flushSync();
+      click("Save");
+      expect(target.querySelector("textarea.edit")).toBeNull();
+    }
+
+    function editBox(): { text: string | undefined; ticked: boolean | undefined } {
+      return {
+        text: target.querySelector<HTMLTextAreaElement>("textarea.edit")?.value,
+        ticked: target.querySelector<HTMLInputElement>(".restore-too input")?.checked,
+      };
+    }
+
+    it("gives the text back to the edit box when the restore is refused", () => {
+      editWithRestore("make the button green");
+      emit(REFUSAL);
+      expect(target.textContent).toContain("Grok sessions keep no checkpoints");
+      expect(target.textContent).toContain("Your edited message is kept");
+
+      click("Close");
+      expect(target.querySelector('[role="dialog"]')).toBeNull();
+      expect(editBox()).toEqual({ text: "make the button green", ticked: true });
+      expect(chatStore.forks).toEqual([]);
+    });
+
+    it("can resend the edit from the refusal without restoring", () => {
+      editWithRestore("make the button green");
+      emit(REFUSAL);
+      click("Resend without restoring");
+      expect(chatStore.forks).toEqual([[0, "make the button green"]]);
+      expect(sentOf("restore_files")).toEqual([]);
+      expect(target.querySelector('[role="dialog"]')).toBeNull();
+      expect(target.querySelector("textarea.edit")).toBeNull();
+    });
+
+    it("gives the text back when the dialog is cancelled", () => {
+      editWithRestore("make the button green");
+      click("Cancel");
+      expect(editBox()).toEqual({ text: "make the button green", ticked: true });
+
+      // Saving again takes the same path, with the text as it was edited.
+      click("Save");
+      expect(sentOf("preview_restore_files")).toHaveLength(2);
+      emit(PREVIEW);
+      click("Cancel");
+      expect(editBox().text).toBe("make the button green");
+    });
+
+    it("gives the text back when the fork after a restore doesn't go out", () => {
+      chatStore.forkOk = false;
+      editWithRestore("make the button green");
+      emit(PREVIEW);
+      click("Restore 3 files and resend");
+      emit(RESTORED);
+      expect(target.textContent).toContain("Your edited message wasn't sent");
+      click("Done");
+      expect(editBox()).toEqual({ text: "make the button green", ticked: true });
+    });
+
+    it("leaves the edit box closed after a restore that resent", () => {
+      editWithRestore("make the button green");
+      emit(PREVIEW);
+      click("Restore 3 files and resend");
+      emit(RESTORED);
+      click("Done");
+      expect(chatStore.forks).toEqual([[0, "make the button green"]]);
+      expect(target.querySelector("textarea.edit")).toBeNull();
+    });
   });
 
   it("shows a refusal in the dialog", () => {

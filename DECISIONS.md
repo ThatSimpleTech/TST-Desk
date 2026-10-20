@@ -16645,7 +16645,13 @@ approach is recorded here rather than proposed.
   stamping the branch tip on `user_turn` (a git call per turn at three emit
   sites) and keying by `user_index` (a fork renumbers turns; files move in
   time, not by branch). Every value in a message is escaped onto one line, so
-  a file name cannot write a trailer.
+  a file name cannot write a trailer: every non-printable character is
+  escaped (C0 and C1 controls, U+2028/U+2029, lone surrogates), and the
+  reader splits on `\n` only, as git does, not on everything
+  `str.splitlines()` breaks at. The rewind's `git log -z` records open with
+  NUL NUL RS, since a path is printed raw and may itself hold RS; two NULs in
+  a row never occur inside a record. Either gap let an agent-chosen file name
+  end the walk early and hide its earlier writes from the plan.
 - **Pre-images keep the person's own copy.** Before an `fs_edit` or
   `fs_write`, the dispatcher asks the checkpointer to commit the target as it
   is on disk when that differs from the branch (`Kind: preimage`). Without it
@@ -16680,7 +16686,12 @@ approach is recorded here rather than proposed.
 - **Edit and resend** gains a "Restore files to here too" box. With it, Save
   opens the same dialog; the window sends `fork_from` only after
   `files_restored` comes back (or on "Resend without restoring"), so a refused
-  restore never forks.
+  restore never forks. A refusal offers "Resend without restoring" too, and
+  whenever the dialog closes without the fork going out (Cancel, a refusal,
+  or a fork that could not be sent) the edited text goes back to the row's
+  edit box with the box still ticked, so it is never lost. The box is not
+  hidden for Grok or non-git sessions: the window does not know those in
+  advance, and the daemon's refusal says why.
 - **The phone.** The phone runs this same window, so the row button and the
   dialog are the phone's too (checked at 375 px). Both verbs are machine-peer
   and forwarded verbs, so a phone on the hub restores a session on another

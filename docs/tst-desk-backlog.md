@@ -10888,7 +10888,9 @@ commits itself on the branch (`Kind: restore`), never moves HEAD, the index
 or another ref, and logs `files_restored` (a "Files restored" timeline row).
 Edit and resend has a "Restore files to here too" box: Save opens the same
 dialog and the fork goes out once `files_restored` comes back, or on
-"Resend without restoring". The phone runs this window (row and dialog
+"Resend without restoring" (offered on a refusal too); when the dialog
+closes without the fork going out, the edited text goes back to the row's
+edit box. The phone runs this window (row and dialog
 checked at 375 px), and both verbs are machine-peer and forwarded verbs, so
 a phone on the hub restores another computer's session too. Refused
 mid-turn, in an autonomous run, on the Grok engine (it writes files with
@@ -10899,13 +10901,16 @@ and are not restored; the dialog says so. Tests:
 recreate, HEAD/main/index untouched, hand edit after and between agent
 writes left alone and restored when ticked, uncommitted work from before
 the turn comes back, stale preview, not git, pre-`Log-Seq` refusal, another
-session's branch ignored, trailer injection), `core/tests/test_rewind_wire.py`
+session's branch ignored, trailer injection through every line break
+`str.splitlines()` knows and a record separator in a file name),
+`core/tests/test_rewind_wire.py`
 (a real loop's two turns previewed and restored, a hand edit the agent
 wrote over comes back through the dispatcher's pre-image, mid-turn and
 unknown-turn refusals, the verbs for a phone and a bridged id, and a
 restore through a real hub), `ui/src/lib/rewind.test.ts`,
 `ui/src/lib/rewind-component.test.ts` (row, dialog, ticking, Edit and
-resend with and without the restore, refusal shown in the dialog),
+resend with and without the restore, refusal shown in the dialog, the
+edited text back in its box after a refusal, a cancel or an unsent fork),
 `ui/src/lib/timeline.test.ts`, `ui/src/lib/protocol.test.ts` (fixtures),
 and the UI walk (census gains `restore` and the row button). See
 DECISIONS.md.

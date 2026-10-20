@@ -3,7 +3,8 @@
 	// after a message and the diff a restore takes away, before anything is
 	// written. Files changed by hand since are listed apart, unticked: they
 	// stay as they are unless the person ticks them. Edit and resend comes
-	// through here too, and resends once the files are back.
+	// through here too, and resends once the files are back; if the restore is
+	// refused or cancelled, the edited text goes back to its row.
 	import {
 		closeRestore,
 		confirmRestore,
@@ -54,12 +55,27 @@
 				</div>
 			{:else if rewind.phase === 'error'}
 				<p class="error" role="alert">{rewind.error}</p>
+				{#if resending}
+					<p class="body">
+						Your edited message is kept. Close goes back to it; you can also send it without
+						restoring.
+					</p>
+				{/if}
 				<div class="actions">
 					<button class="btn" type="button" onclick={closeRestore}>Close</button>
+					{#if resending}
+						<button class="btn btn--primary" type="button" onclick={resendWithoutRestoring}
+							>Resend without restoring</button
+						>
+					{/if}
 				</div>
 			{:else if rewind.phase === 'done' && rewind.result !== null}
 				<p class="done" role="status">
-					{restoredSummary(rewind.result)}{rewind.resent ? ' Your edited message was resent.' : ''}
+					{restoredSummary(rewind.result)}{rewind.resent
+						? ' Your edited message was resent.'
+						: resending
+							? " Your edited message wasn't sent; it goes back to its edit box when you close this."
+							: ''}
 				</p>
 				<div class="actions">
 					<button class="btn btn--primary" type="button" onclick={closeRestore}>Done</button>

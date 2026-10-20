@@ -5,7 +5,8 @@
 // diff, and Restore sends back the preview's `plan_id` with the hand-edited
 // files the person ticked. The daemon's `files_restored` closes the loop.
 // Edit and resend (AC 3) rides the same flow with the edited text kept in
-// `resend`, sent as a fork once the files are back.
+// `resend`, sent as a fork once the files are back. If it never goes out,
+// closing the dialog hands it back to the row's edit box.
 //
 // The store (rewind-store.svelte.ts) owns the wiring; everything here takes
 // the state and an event, so it unit-tests without a socket.
@@ -76,8 +77,24 @@ export function openRewind(
   return { type: "preview_restore_files", session_id: sessionId, turn_id: turnId };
 }
 
-export function closeRewind(state: RewindState): void {
+/** Edit and resend's text that never went out, and the row it belongs to. */
+export interface UnsentEdit {
+  turnId: string;
+  text: string;
+}
+
+/**
+ * Close the dialog. Returns Edit and resend's text when it was not sent
+ * (cancelled, refused, or the fork failed), so the row's edit box can take
+ * it back instead of losing it.
+ */
+export function closeRewind(state: RewindState): UnsentEdit | null {
+  const unsent =
+    state.resend !== null && state.turnId !== null
+      ? { turnId: state.turnId, text: state.resend }
+      : null;
   Object.assign(state, createRewindState());
+  return unsent;
 }
 
 /** The restore request for the preview on screen, or null when there is none. */
