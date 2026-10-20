@@ -2294,6 +2294,12 @@ class SkillStackEntry(BaseModel):
     source: Literal["workspace", "user", "claude_workspace", "claude_user"]
     loaded: bool = False
     tokens: int = Field(ge=0)
+    # Frontmatter keys the skill carried that TST Desk did not act on;
+    # the skill loaded anyway (TD-5107). Additive, defaults empty.
+    ignored_keys: list[str] = Field(default_factory=list)
+    # `disable-model-invocation`: kept out of the model's catalog, and
+    # only the user's `/name` loads it (TD-5107).
+    user_only: bool = False
 
 
 class InstructionStack(DaemonEvent):

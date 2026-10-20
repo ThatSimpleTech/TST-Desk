@@ -9424,6 +9424,29 @@ comments while sending no tokens.
       local-model example
 - [x] Tests in core/tests/test_provider_timeouts.py
 
+### TD-5107 — Load skills with unknown frontmatter and warn
+**Size:** 2 · **Depends on:** none · Gap audit 2026-10-14 (revisits TD-5011)
+
+A `SKILL.md` with a key TST Desk could not honor (`model`, `hooks`,
+`context`, `disallowed-tools`) or any unknown key was dropped whole, with
+only a log line, so imported skills vanished. The Agent Skills spec says
+to load such a skill and warn.
+
+**Acceptance criteria:**
+- [x] A SKILL.md with unknown or unsupported keys (for example `model`,
+      `hooks`, `context`, `disallowed-tools`) still loads. The ignored
+      keys are listed in the skills inspector (`SkillStackEntry.ignored_keys`,
+      an "ignored: ..." chip in the Stack view) and the doctor (a new
+      `skills` row after `steering`)
+- [x] `when_to_use` and `compatibility` are kept and shown to the model
+      with the description, on the skill's catalog line
+- [x] Tests cover a Claude-style skill and an agentskills.io-style skill
+      with extra keys (core/tests/test_skill_frontmatter_ignored.py, the
+      doctor row in test_diagnostics.py, ui stack-store and protocol tests)
+- [x] `disable-model-invocation` is honored the strict way, not ignored:
+      the skill loads but stays out of the model's catalog and
+      `load_skill`; only the user's `/name` loads it (DECISIONS.md)
+
 ### TD-5109 — Context gauge and compact-on-demand
 **Size:** 3 · **Depends on:** none · Gap audit 2026-10-14, local-model batch (PR #10)
 

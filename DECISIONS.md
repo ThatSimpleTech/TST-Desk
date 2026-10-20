@@ -15109,3 +15109,69 @@ too); that case was not in the note and is left as is.
 **The turn loop closes its stream.** The reader that breaks out on Stop or
 a provider error now closes the provider stream in a `finally`, so the
 hang-up comes before the turn moves on rather than from the finalizer.
+
+---
+
+## 2026-10-20 — TD-5107: skills with frontmatter TST Desk does not act on load and warn (Class B; revises TD-5011)
+
+TD-5011 skipped a skill that carried `model`, `tools`,
+`disallowed-tools`, `hooks`, `context`, `agent`, a non-default
+`disable-model-invocation` or `user-invocable`, or any unknown key, on the
+grounds that a partial skill must not load. The Agent Skills spec asks
+the opposite of clients: load a skill with fields you do not recognise
+and warn. Imported skills vanished with only a log line.
+
+**Decision:** Only a missing or blank `description`, or a `name`,
+`whenToUse` or `when_to_use` that is not text, still skips a skill. Every
+other key loads with it. Keys fall into four groups: read (`name`,
+`description`, `whenToUse`, `when_to_use`, `compatibility`,
+`disable-model-invocation`), labels that pass silently (`license`,
+`version`, `metadata`, `argument-hint`; they describe and ask nothing),
+`user-invocable` at its default (silent), and everything else, which is
+ignored and listed. `allowed-tools` moves from silent to listed: it is a
+grant TST Desk does not apply, and the user should see that. The list is
+`Skill.ignored_keys` (sorted), logged once per file, sent on the
+inspector's `SkillStackEntry.ignored_keys` (additive, default empty, no
+protocol bump) and named in a new Doctor row, `skills`, after `steering`.
+
+**Decision:** `when_to_use` (Claude Code's key) is read like `whenToUse`.
+When both are set and differ, `whenToUse` (ours) wins and `when_to_use`
+is listed as ignored. `compatibility` is shown to the model on the
+catalog line as "(compatibility: ...)", after "(when to use: ...)". A
+non-text `compatibility` is listed as ignored rather than skipping the
+skill, because TD-5011 loaded any value and a story that loads more
+skills must not start skipping one.
+
+**Decision (the conservative option, a Class C question the story left
+open):** `disable-model-invocation` is honored rather than ignored. Any
+value except `false` or blank makes the skill user-only: it is left out
+of the model's catalog, the `load_skill` tool refuses it, and only the
+user's `/name` (or the composer's "Load skill" marker) attaches it. The
+inspector marks it "slash only" via `SkillStackEntry.user_only`. TD-5011
+rejected this mode because skipping was then the strict answer; once the
+skill must load, ignoring the key would let the model start a workflow
+its author marked manual-only, so honoring it is now the strict answer.
+`user-invocable: false` is listed as ignored instead: the user typing
+`/name` is never a safety question.
+
+**Decision:** Doctor's `skills` row is `ok` when discovery runs, with
+"N skill(s) found; frontmatter keys ignored: name (keys); ...". It names
+skills, never paths (TD-1104). It skips with no workspace, like
+`steering`, and fails only when discovery itself raises. Discovery is
+designed not to raise, so, like the `steering` row, the row catches any
+exception, not just `OSError`: an escaped error closed the window's
+connection with 1011 and Doctor showed no report at all. A `SKILL.md`
+that is not UTF-8 (Windows-1252, or UTF-16 from PowerShell 5.1
+`Out-File`) was the case that raised; discovery now skips it and logs
+it once, like an unreadable file, rather than guessing an encoding, so
+prompt assembly and the inspector survive it too (review finding on
+PR #27). The row status set stays ok/fail/skip: a skill that loaded is
+not a failure, and a new "warn" status would change every viewer.
+
+**Rejected:** Enforcing `disallowed-tools` while the skill is loaded
+(tool-pattern semantics TST Desk does not have; every call still goes
+through the classifier). Mapping `allowed-tools` onto policy rules (as
+TD-5011: a skill would widen permissions by being loaded). A "warn"
+doctor status. Listing labels like `license` as ignored (noise on every
+agentskills.io skill). Capping `compatibility` length in the catalog
+(the spec's 500-character limit is the author's to keep).

@@ -1545,6 +1545,12 @@ export interface SkillStackEntry {
   source: "workspace" | "user" | "claude_workspace" | "claude_user";
   loaded: boolean;
   tokens: number;
+  // Frontmatter keys the skill carried that TST Desk did not act on; the
+  // skill loaded anyway (TD-5107). Absent from an older daemon.
+  ignored_keys?: string[];
+  // `disable-model-invocation`: not in the model's catalog; only the
+  // user's `/name` loads it (TD-5107).
+  user_only?: boolean;
 }
 
 export interface InstructionStack extends DaemonEvent {
