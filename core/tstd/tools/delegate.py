@@ -7,6 +7,12 @@ no peer agents, no extra window.
 
 Child tool execution goes through :func:`tstd.loop.dispatch_worker_child_tools`
 so the classifier chokepoint inventory stays in ``loop.py``.
+
+Two kinds of child (TD-5117): ``worker`` reads, writes and runs shell;
+``research`` only reads files and the web. Either returns a summary
+capped in tokens, and its transcript goes to the window on the
+``delegate`` result, never into the parent's context. In plan mode
+``research`` is the default; ``kind: worker`` still runs when asked for.
 """
 
 from __future__ import annotations
@@ -18,6 +24,7 @@ from typing import Any
 
 from ..config import ModelConfig, TierConfig
 from ..context import PromptAssembler
+from ..context.tokens import make_token_counter
 from ..logging import get_logger
 from ..output_cap import (
     LENGTH_FINISH,
@@ -26,26 +33,44 @@ from ..output_cap import (
     split_cut_calls,
     stub_call,
 )
+from ..protocol import WorkerStep
 from ..provider import ChatCompletionRequest, ChatMessage, ProviderError, ToolCall
 from ..session import Session
+from .delegate_child import (
+    CHILD_TOOLS,
+    DELEGATE_KINDS,
+    RESEARCH_CHILD_TOOLS,
+    SUMMARY_TOKEN_CAP,
+    WORKER_CHILD_TOOLS,
+    DelegateKind,
+    TranscriptRecorder,
+    cap_worker_summary,
+    child_preamble,
+    resolve_kind,
+)
 from .dispatch import ToolDispatcher
 from .registry import Tool, ToolRegistry
-from .results import HandlerRefusal
+from .results import HandlerOutput, HandlerRefusal
+
+# The child's kinds, tools and cap live in ``delegate_child``; they are
+# re-exported so callers keep one import path.
+__all__ = [
+    "CHILD_MAX_ITERATIONS",
+    "RESEARCH_CHILD_TOOLS",
+    "SUMMARY_TOKEN_CAP",
+    "WORKER_CHILD_TOOLS",
+    "DelegateRuntime",
+    "cap_worker_summary",
+    "handle_delegate",
+    "register_delegate_handlers",
+    "register_delegate_tools",
+    "run_worker_child",
+    "worker_child_registry",
+]
 
 log = get_logger("tstd.delegate")
 
 CHILD_MAX_ITERATIONS = 8
-SUMMARY_CHAR_CAP = 2000
-SUMMARY_TRUNCATION = "\n… [truncated: worker summary capped at 2000 characters]"
-
-WORKER_CHILD_TOOLS: tuple[str, ...] = (
-    "fs_read",
-    "fs_list",
-    "fs_grep",
-    "fs_write",
-    "fs_edit",
-    "shell",
-)
 
 
 @dataclass
@@ -72,9 +97,13 @@ def register_delegate_tools(registry: ToolRegistry) -> None:
         Tool(
             name="delegate",
             description=(
-                "Run a one-level worker child on a focused task. The child "
-                "uses the worker model and filesystem/shell tools only; it "
-                "cannot delegate further. Returns a capped summary."
+                "Run a one-level child on the worker model for a focused "
+                "task; it cannot delegate further and returns a capped "
+                "summary, so its reading stays out of your context. "
+                "kind 'worker' (the default) can read, write files and run "
+                "shell. kind 'research' is read-only: fs_read, fs_list, "
+                "fs_grep, web_search and web_fetch. Use research to explore "
+                "code or the web. In plan mode the default is research."
             ),
             parameters={
                 "type": "object",
@@ -86,6 +115,14 @@ def register_delegate_tools(registry: ToolRegistry) -> None:
                     "context": {
                         "type": "string",
                         "description": "Optional extra context for the child",
+                    },
+                    "kind": {
+                        "type": "string",
+                        "enum": list(DELEGATE_KINDS),
+                        "description": (
+                            "worker (read, write, shell) or research (read-only "
+                            "files and web). Default worker; research in plan mode."
+                        ),
                     },
                 },
                 "required": ["task"],
@@ -105,18 +142,10 @@ def register_delegate_handlers(dispatcher: ToolDispatcher) -> None:
     dispatcher.register_handler("delegate", handle_delegate)
 
 
-def cap_worker_summary(text: str, limit: int = SUMMARY_CHAR_CAP) -> str:
-    """Return *text* truncated to *limit* characters with a marker."""
-    if len(text) <= limit:
-        return text
-    keep = max(0, limit - len(SUMMARY_TRUNCATION))
-    return text[:keep] + SUMMARY_TRUNCATION
-
-
-def worker_child_registry(parent: ToolRegistry) -> ToolRegistry:
-    """Copy fs/shell tools from *parent*. Never includes ``delegate``."""
+def worker_child_registry(parent: ToolRegistry, kind: DelegateKind = "worker") -> ToolRegistry:
+    """Copy *kind*'s tools from *parent*. Never includes ``delegate``."""
     child = ToolRegistry()
-    for name in WORKER_CHILD_TOOLS:
+    for name in CHILD_TOOLS[kind]:
         tool = parent.get(name)
         if tool is not None:
             child.register(tool)
@@ -127,9 +156,10 @@ async def handle_delegate(
     session: object,
     task: str,
     context: str = "",
+    kind: str | None = None,
     tool_call_id: str = "",
-) -> str:
-    """``delegate`` handler — run a one-level worker child."""
+) -> HandlerOutput:
+    """``delegate`` handler — run a one-level worker or research child."""
     if not isinstance(session, Session):
         raise HandlerRefusal("delegate_no_session", "Error: delegate requires a session")
     if session.delegate_depth >= 1:
@@ -143,15 +173,29 @@ async def handle_delegate(
             "delegate_unbound",
             "Error: delegate runtime is not bound on this session",
         )
-    return await run_worker_child(parent=session, task=task, context=context)
+    router = session.router
+    resolved = resolve_kind(kind, plan_mode=router is not None and router.plan_mode)
+    steps: list[WorkerStep] = []
+    summary = await run_worker_child(
+        parent=session, task=task, context=context, kind=resolved, transcript=steps
+    )
+    return HandlerOutput(text=summary, transcript=tuple(steps))
 
 
-async def run_worker_child(*, parent: Session, task: str, context: str = "") -> str:
+async def run_worker_child(
+    *,
+    parent: Session,
+    task: str,
+    context: str = "",
+    kind: DelegateKind = "worker",
+    transcript: list[WorkerStep] | None = None,
+) -> str:
     """Slim worker loop: assemble, complete, dispatch, repeat until text or cap.
 
     Does not call ``agent_loop`` — no autonomy overlay, no CU episode, no
     second title-bar session.  Cost records land on the parent tracker
-    with ``source="worker"``.
+    with ``source="worker"``.  *kind* picks the child's tools (TD-5117);
+    each step is appended to *transcript* for the window.
     """
     if parent.delegate_depth >= 1:
         raise HandlerRefusal(
@@ -174,7 +218,7 @@ async def run_worker_child(*, parent: Session, task: str, context: str = "") -> 
         parent.cost_tracker = tracker
 
     parent_dispatcher = runtime.dispatcher
-    child_registry = worker_child_registry(parent_dispatcher.registry)
+    child_registry = worker_child_registry(parent_dispatcher.registry, kind)
     child_dispatcher = ToolDispatcher(
         child_registry,
         max_result_chars=parent_dispatcher.max_result_chars,
@@ -190,35 +234,55 @@ async def run_worker_child(*, parent: Session, task: str, context: str = "") -> 
     child_dispatcher.skip_all_fn = parent_dispatcher.skip_all_fn
     child_dispatcher.autonomy_fn = parent_dispatcher.autonomy_fn
     child_dispatcher.on_class_c = parent_dispatcher.on_class_c
-    for name in WORKER_CHILD_TOOLS:
-        handler = parent_dispatcher._handlers.get(name)
+    for tool in child_registry.list_tools():
+        handler = parent_dispatcher._handlers.get(tool.name)
         if handler is not None:
-            child_dispatcher.register_handler(name, handler)
+            child_dispatcher.register_handler(tool.name, handler)
 
     child = Session(parent.workspace_path)
     child.delegate_depth = 1
     child.parent_id = parent.id
     child.boundary_config = parent.boundary_config
+    # The session's own config, not the library cache (TD-4843): web_search
+    # and web_fetch read their endpoints from it, the registry's host
+    # resolver already closes over the same search block, and the shell's
+    # read-only list (TD-5103) comes from it too.
+    child.config = parent.config
     child.policy = parent.policy
     child.trust_store = parent.trust_store
     child.config_view = parent.config_view
     child.cost_tracker = tracker
     child.touched_paths = parent.touched_paths
     child.autonomy = False
+    # web_fetch's extract pass (TD-5114) reaches the worker tier and this
+    # child's result cap through the runtime; without one a research
+    # child's question was refused and it read the raw page instead.
+    # delegate_depth still refuses a nested delegate.
+    child.delegate_runtime = DelegateRuntime(
+        provider_factory=runtime.provider_factory,
+        config=runtime.config,
+        dispatcher=child_dispatcher,
+        assembler=runtime.assembler,
+        session_start=runtime.session_start,
+    )
 
     caps = parent.boundary_config.caps
     remaining = max(0, caps.max_iterations - runtime.iterations)
     child_limit = min(CHILD_MAX_ITERATIONS, remaining)
     last_text = ""
+    worker_cfg = runtime.config.tier("worker")
+    counter = make_token_counter(worker_cfg.slug)
+    record = TranscriptRecorder(transcript)
 
-    user_blob = task.strip()
+    def finish(text: str) -> str:
+        return cap_worker_summary(text, counter=counter)
+
+    task_text = task.strip()
     if context.strip():
-        user_blob = f"{user_blob}\n\nContext:\n{context.strip()}"
-    user_blob = (
-        "You are a one-level worker. You cannot call delegate. "
-        "Complete the task, then reply with a concise summary and no "
-        f"further tool calls.\n\nTask:\n{user_blob}"
-    )
+        task_text = f"{task_text}\n\nContext:\n{context.strip()}"
+    record.add("task", task_text)
+    tool_names = [t.name for t in child_registry.list_tools()]
+    user_blob = f"{child_preamble(kind, tool_names)}\n\nTask:\n{task_text}"
 
     assembled = await runtime.assembler.assemble(
         "worker",
@@ -230,17 +294,18 @@ async def run_worker_child(*, parent: Session, task: str, context: str = "") -> 
         ChatMessage(role="user", content=user_blob),
     ]
 
-    worker_cfg = runtime.config.tier("worker")
     provider = await _provider_for(runtime.provider_factory, worker_cfg)
     tool_defs = child_registry.to_provider_definitions()
 
     if child_limit == 0:
-        return cap_worker_summary("Worker stopped: parent iteration cap.")
+        record.add("note", "Worker stopped: parent iteration cap.")
+        return finish("Worker stopped: parent iteration cap.")
 
     for child_i in range(child_limit):
         if parent.cancel_requested or parent.stop_turn_requested:
             why = "parent cancelled" if parent.cancel_requested else "parent stopped the turn"
-            return cap_worker_summary(last_text or f"Worker stopped: {why}.")
+            record.add("note", f"Worker stopped: {why}.")
+            return finish(last_text or f"Worker stopped: {why}.")
         # Child never inherits skip-all for spend: a delegated worker
         # must not keep billing after the parent cap is already hit.
         violation = _cap_violation(
@@ -251,7 +316,8 @@ async def run_worker_child(*, parent: Session, task: str, context: str = "") -> 
             skip_all=False,
         )
         if violation is not None:
-            return cap_worker_summary(last_text or f"Worker stopped: {violation}")
+            record.add("note", f"Worker stopped: {violation}")
+            return finish(last_text or f"Worker stopped: {violation}")
 
         request = ChatCompletionRequest(
             model=worker_cfg.require_slug(),
@@ -263,7 +329,8 @@ async def run_worker_child(*, parent: Session, task: str, context: str = "") -> 
         )
         resp = await provider.chat_completion(request)
         if isinstance(resp, ProviderError):
-            return cap_worker_summary(last_text or f"Worker stopped: {resp.message}")
+            record.add("note", f"Worker stopped: {resp.message}")
+            return finish(last_text or f"Worker stopped: {resp.message}")
         if resp.usage is not None:
             tracker.record("worker", resp.usage, worker_cfg, source="worker")
             await parent.event_log.add(tracker.emit_cost_update(parent.id))
@@ -272,6 +339,7 @@ async def run_worker_child(*, parent: Session, task: str, context: str = "") -> 
         content = resp.message.content or ""
         if content.strip():
             last_text = content
+            record.add("reply", content)
 
         # Stopped at max_output_tokens (TD-5008): a cut call is not run,
         # and goes back to the worker with empty arguments and a note.
@@ -288,7 +356,10 @@ async def run_worker_child(*, parent: Session, task: str, context: str = "") -> 
 
         if not tool_calls and not cut:
             finished = content.strip() or last_text or "Worker finished with no summary."
-            return cap_worker_summary(finished)
+            return finish(finished)
+
+        if cut:
+            record.add("note", f"{len(cut)} tool call(s) cut at the output cap and not run.")
 
         if cut:
             stubs = [stub_call(tc.id, tc.function.name if tc.function else "") for tc in cut]
@@ -307,12 +378,15 @@ async def run_worker_child(*, parent: Session, task: str, context: str = "") -> 
             except json.JSONDecodeError:
                 parsed = {"_raw": raw}
             items.append((tc.id, name, parsed))
+            record.add("tool_call", raw or "{}", tool=name)
 
         results = await dispatch_worker_child_tools(child_dispatcher, child, items)
         for r in results:
+            record.add("tool_result", r.output, tool=r.name, status=r.status)
             messages.append(ChatMessage(role="tool", content=r.output, tool_call_id=r.tool_call_id))
 
-    return cap_worker_summary(last_text or "Worker stopped: iteration cap.")
+    record.add("note", "Worker stopped: iteration cap.")
+    return finish(last_text or "Worker stopped: iteration cap.")
 
 
 async def _provider_for(

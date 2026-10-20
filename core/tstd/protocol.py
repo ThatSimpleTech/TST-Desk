@@ -1791,6 +1791,23 @@ class ToolCall(DaemonEvent):
     decision_class: Literal["A", "B", "C"] | None = None
 
 
+class WorkerStep(BaseModel):
+    """One step of a delegated worker's run, for display only (TD-5117).
+
+    The worker's transcript rides on the ``delegate`` call's
+    ``tool_result`` so the window can show it. The parent model never
+    sees it: its tool message is the capped summary in ``output``.
+    ``text`` is cut to a few thousand characters per step, and
+    ``truncated`` says so.
+    """
+
+    kind: Literal["task", "reply", "tool_call", "tool_result", "note"]
+    text: str
+    tool: str | None = None
+    status: Literal["success", "error"] | None = None
+    truncated: bool = False
+
+
 class ToolResult(DaemonEvent):
     """The result of a tool call."""
 
@@ -1810,6 +1827,9 @@ class ToolResult(DaemonEvent):
     # asking (TD-5103). Empty when anything else decided: a policy rule,
     # an approval, or another class default. The audit row keeps them.
     allowed_by: list[str] = Field(default_factory=list)
+    # A ``delegate`` call's worker transcript (TD-5117), for display.
+    # Empty for every other tool.
+    transcript: list[WorkerStep] = Field(default_factory=list)
 
 
 class ShellOutput(DaemonEvent):

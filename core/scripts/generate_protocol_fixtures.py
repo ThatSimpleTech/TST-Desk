@@ -238,6 +238,7 @@ from tstd.protocol import (
     ValidateApiKey,
     VerifyResult,
     VerifyStarted,
+    WorkerStep,
     build_hello_ack,
     build_pair_ok,
 )
@@ -577,6 +578,24 @@ FIXTURES = {
         output="exit 0",
         seq=8,
         allowed_by=["git log", "head"],
+    ),
+    "tool_result_delegate": ToolResult(
+        session_id="sess-1",
+        tool_call_id="tc-9",
+        status="success",
+        output="animals.md names one animal pair.",
+        seq=9,
+        transcript=[
+            WorkerStep(kind="task", text="Which pair is in animals.md?"),
+            WorkerStep(kind="tool_call", text='{"path": "animals.md"}', tool="fs_read"),
+            WorkerStep(
+                kind="tool_result",
+                text="pair: zebra-quokka-7731",
+                tool="fs_read",
+                status="success",
+            ),
+            WorkerStep(kind="reply", text="animals.md names one animal pair."),
+        ],
     ),
     "tool_result_denied": ToolResult(
         session_id="sess-1",

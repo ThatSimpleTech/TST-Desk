@@ -1866,6 +1866,23 @@ banner, starts the counters over and continues the same turn. A reply resets the
 window only. A file write resets the 52-call budget too. Unattended autonomy runs keep the
 charter breakers and do not take this check.
 
+**A delegated child runs inside these caps too.** The `delegate` tool starts a one-level child
+on the worker tier. It gets at most 8 model calls, fewer if the session has fewer
+`max_iterations` left, and spend and wall clock are checked before each of its calls the same
+way. There are two kinds (TD-5117). `worker`, the default, can read, write files and run shell.
+`research` is read-only: `fs_read`, `fs_list`, `fs_grep`, `web_search` and `web_fetch`, and
+nothing else, no MCP or plugin tool included. Either kind's calls go through the same
+classifier and approval gate as the session's own. Either kind hands back a summary of at most
+500 tokens, counted with the worker tier's counter (four characters a token for a local model).
+Only that summary enters the conversation; the child's steps show in the window under the
+`delegate` call (expand it in the chat or the Activity panel), cut to 4,000 characters a step.
+The child reads the session's own config, as the session's tools do: a research child's
+`web_search` goes to the session's `search.base_url` and fallbacks, the hosts `network` and the
+host allowlist judged, and a worker child's shell keeps the session's read-only list. In plan
+mode `delegate` with no `kind` runs `research`; `kind: worker` still runs when asked for, because
+plan mode today only locks the brain (TD-4603). There is no key for any of this, and `delegate`
+itself still asks for approval like any Class B call.
+
 ### 4.3 `attachments` — what a message may carry
 
 | Key | Type | Default | Effect |

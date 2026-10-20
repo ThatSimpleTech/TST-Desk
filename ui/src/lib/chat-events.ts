@@ -475,6 +475,9 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
         block.status = event.status;
         block.output = event.output;
         block.errorCode = event.error_code ?? null;
+        if (event.transcript !== undefined && event.transcript.length > 0) {
+          block.transcript = event.transcript;
+        }
       }
       return;
     }
