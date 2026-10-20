@@ -9951,6 +9951,48 @@ driver and hook that run with the list off and not with it on), and
 
 ---
 
+### TD-5117 — Read-only research worker
+**Size:** 3 · **Depends on:** none (TD-5102 for `fs_grep`, landed)
+
+From the 2026-10-14 gap audit (docs/gap-audit-2026-10-14.md). The only
+`delegate` child could write and run shell, so there was no safe way to
+keep exploration out of the parent's context.
+
+**Acceptance criteria:**
+- [x] `delegate` takes `kind: research`. That child gets fs_read, fs_list,
+      fs_grep (once TD-5102 lands), web_search and web_fetch only, on the
+      worker tier.
+- [x] It returns a summary capped in tokens. Its transcript stays out of
+      the parent context and stays viewable in the UI.
+- [x] Plan mode (TD-5123) sends research to this worker. Verified on the
+      plan mode that exists, TD-4603's brain lock, which TD-5123 extends:
+      `delegate` with no `kind` runs research there. Nothing is refused, so
+      TD-4603's "Tools still dispatch" holds; refusing writes is TD-5123's.
+
+Done (2026-10-20): `kind` is optional, `worker` or `research`
+(`core/tstd/tools/delegate_child.py`). The research child's registry is
+built from exactly those five tools, so no MCP, plugin, write or shell
+tool reaches it, and it runs on the worker tier through the parent's
+classifier and approval gate. Both kinds return at most 500 tokens,
+counted by the worker tier's counter (TD-4602's 2000 characters under
+the heuristic). The handler returns `HandlerOutput`; the model gets only
+the summary, and the child's steps ride on the `delegate` call's
+`tool_result` as `transcript` (each step cut to 4,000 characters, about
+60,000 in all), shown in the chat fold and the Activity row. The child
+gets the session's own config (TD-4843), so its `web_search` reaches the
+session's search endpoints, the hosts the classifier judged. TD-5123 is
+not built, so plan mode here is TD-4603's flag, which TD-5123 extends:
+while it is on, `delegate` with no `kind` runs research, and an explicit
+`kind: worker` still runs. Tests:
+`core/tests/test_research_worker.py` (tools offered, writes and shell
+refused, web_search on the session's endpoint, token cap, transcript on
+the event and absent from every brain request, plan mode default and
+explicit worker), `core/tests/test_delegate.py` (token cap), and
+`ui/src/lib/worker-transcript.test.ts` (chat fold and Activity row from
+the daemon's fixture). See DECISIONS.md.
+
+---
+
 ### TD-5140 — Agent-proposed steering edits, written only on approval
 **Size:** 5 · **Depends on:** TD-5101, TD-5108, TD-5113 (Adam's order: after the safety batch)
 

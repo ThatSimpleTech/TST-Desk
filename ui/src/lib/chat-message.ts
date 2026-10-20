@@ -7,6 +7,7 @@
 import type { AttachmentChip } from "./attachments";
 import type { ResponseMark } from "./chat-retract";
 import type { SentFileRef } from "./sent-files";
+import type { WorkerStep } from "./protocol";
 
 export interface ChatMessage {
   id: string;
@@ -78,4 +79,6 @@ export interface ToolBlock {
    *  Filled from the session's `artifact_ready` events, which replay on
    *  attach, so the cards come back with the transcript. */
   files?: SentFileRef[];
+  /** A `delegate` call's worker transcript (TD-5117), from its result. */
+  transcript?: WorkerStep[];
 }
