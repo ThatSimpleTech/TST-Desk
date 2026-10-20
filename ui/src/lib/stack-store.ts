@@ -141,6 +141,18 @@ export function memoryReasonLabel(reason: MemoryStackEntry["reason"]): string {
  *  has not reported a miss, and the two must not render alike. */
 export type CacheBadge = "unobserved" | "unreported" | "miss" | "hit";
 
+/** Chip text for a skill's ignored frontmatter keys (TD-5107), or null
+ *  when the daemon named none. */
+export function skillIgnoredBadge(keys: readonly string[] | undefined): string | null {
+	if (!keys || keys.length === 0) return null;
+	return `ignored: ${keys.join(", ")}`;
+}
+
+/** Hover text for that chip: what "ignored" means for the skill. */
+export function skillIgnoredTitle(keys: readonly string[]): string {
+	return `Loaded without acting on these frontmatter keys: ${keys.join(", ")}`;
+}
+
 export function warningBadge(warning: string): string {
 	const match = warning.match(/exceeds (\d+) lines/);
 	if (match) return `over ${match[1]} lines`;

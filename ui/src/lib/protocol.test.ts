@@ -1228,6 +1228,10 @@ describe("Session lifecycle messages match TypeScript types", () => {
     const skill = m.skills?.[0] as SkillStackEntry;
     expect(isString(skill.name)).toBe(true);
     expect(typeof skill.loaded).toBe("boolean");
+    // TD-5107: a skill loaded with frontmatter keys it ignored.
+    const flagged = m.skills?.find((s) => (s.ignored_keys ?? []).length > 0);
+    expect(flagged?.ignored_keys?.every(isString)).toBe(true);
+    expect(typeof flagged?.user_only).toBe("boolean");
   });
 
   it("command_list", () => {

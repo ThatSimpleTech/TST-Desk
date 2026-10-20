@@ -556,7 +556,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `steering_reloaded` | session | Steering files were re-resolved after a detected change. |
 | `rule_activated` | session | A path-scoped rule entered the prompt because a matching file was touched. |
 | `tier_switched` | session | The active tier was overridden, naming the previous tier. |
-| `instruction_stack` | session | The resolved steering stack: sources, tokens, imports, cache state, and skills (TD-4502). |
+| `instruction_stack` | session | The resolved steering stack: sources, tokens, imports, cache state, and skills (TD-4502), each with the frontmatter keys it ignored and whether only `/name` loads it (TD-5107). |
 | `instruction_files` | connection | The workspace's Instructions column: root steering plus `.tst/rules/*` (TD-2802). |
 | `command_list` | connection | The workspace's slash commands: name, description, source, body (TD-4501). |
 | `context_pins` | connection | The workspace's Context column: pinned files and folders (TD-2804). |
@@ -575,7 +575,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `pairing_code` | connection | Reply to `start_pairing`: the code (and `ABCD-2345` display form), host, port, desktop name, the `tstdesk://pair` link, a QR of it as standalone SVG, and when it expires (TD-5014). |
 | `pairing_completed` | connection | A phone redeemed the code. Carries that device's summary (never its key). Sent to the computer's own loopback windows only (TD-5014). |
 | `api_key_validated` | connection | The result of a key probe. Never carries the key. |
-| `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. |
+| `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. The `skills` row names each skill's ignored frontmatter keys (TD-5107). |
 | `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |
 | `usage_exported` | connection | Where `export_usage` wrote, and how many rows (TD-1706). |
 | `log_trimmed` | connection | Attach asked for a seq the on-disk window dropped. Replay continues from `earliest_seq` (TD-2901). |

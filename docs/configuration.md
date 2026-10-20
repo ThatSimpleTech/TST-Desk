@@ -684,7 +684,7 @@ turns never verify. There is no charter and no auto-revert.
 User-listed MCP servers (TD-4401). The user names each server in
 user-data-dir `config.yaml` — that listing is the load, not dynamic
 discovery (TD-601). Interactive and autonomy sessions both load them.
-A dead or refused server is a doctor row (`mcp:<id>` after `steering`),
+A dead or refused server is a doctor row (`mcp:<id>` after `skills`),
 not a dead daemon. Builtins stay registered. The computer-use sidecar
 (`computer_use.command` → `mcp/tst-cu-mcp`) is a different product.
 A packaged sidecar with empty `command` serves `tstd --cu-mcp` (TD-1725).

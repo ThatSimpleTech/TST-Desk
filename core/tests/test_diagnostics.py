@@ -148,6 +148,7 @@ class TestWithoutWorkspace:
                 "grok_cli",
                 "workspace",
                 "steering",
+                "skills",
             ]
             # Daemon alive by definition; git and probe-driven rows green.
             assert _row(checks, "daemon")["status"] == "ok"
@@ -155,9 +156,10 @@ class TestWithoutWorkspace:
             assert _row(checks, "provider")["status"] == "ok"
             assert _row(checks, "git")["status"] == "ok"
             assert _row(checks, "grok_cli")["status"] in {"ok", "skip"}
-            # No workspace opened: both workspace-scoped rows skip.
+            # No workspace opened: every workspace-scoped row skips.
             assert _row(checks, "workspace")["status"] == "skip"
             assert _row(checks, "steering")["status"] == "skip"
+            assert _row(checks, "skills")["status"] == "skip"
 
     @pytest.mark.asyncio
     async def test_no_key_fails_with_fix(self, fakes: FakeKeychain) -> None:
@@ -223,6 +225,43 @@ class TestWithWorkspace:
                 assert work not in workspace["detail"]
                 steering = _row(checks, "steering")
                 assert steering["status"] == "ok"
+                await ws.close()
+            finally:
+                await _stop_daemon(task)
+
+    @pytest.mark.asyncio
+    async def test_skills_row_lists_ignored_frontmatter(self, fakes: FakeKeychain) -> None:
+        # TD-5107: the skill loads; the row names the keys it carried that
+        # TST Desk does not act on, by skill name, never by path.
+        fakes.stored["openrouter"] = "sk-ok"
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as work:
+            skill = Path(work) / ".claude" / "skills" / "notes" / "SKILL.md"
+            skill.parent.mkdir(parents=True)
+            skill.write_text(
+                "---\nname: notes\ndescription: Notes\nmodel: haiku\n"
+                "hooks: {PreToolUse: []}\n---\nbody\n"
+            )
+            plain = Path(work) / ".claude" / "skills" / "plain" / "SKILL.md"
+            plain.parent.mkdir(parents=True)
+            plain.write_text("---\ndescription: Plain\n---\nbody\n")
+            daemon, task = await _start_daemon(Path(tmp))
+            try:
+                ws = await _connect_and_handshake(
+                    f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+                )
+                await self._open_workspace(ws, work)
+                await ws.send(json.dumps({"type": "run_diagnostics"}))
+                resp = dict(json.loads(await ws.recv()))
+                checks = list(resp["checks"])
+                names = [c["name"] for c in checks]
+                assert names.index("skills") == names.index("steering") + 1
+                skills = _row(checks, "skills")
+                assert skills["status"] == "ok"
+                assert skills["detail"] == (
+                    "2 skill(s) found; frontmatter keys ignored: notes (hooks, model)"
+                )
+                assert skills.get("fix") is None
+                assert work not in skills["detail"]
                 await ws.close()
             finally:
                 await _stop_daemon(task)

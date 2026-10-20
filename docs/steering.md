@@ -926,16 +926,25 @@ What does **not** carry over, and what to do about it:
   `references/guide.md` can find the file; the shell still starts in the workspace (TD-5011).
   A skill body over 4,000 tokens is refused by `load_skill` and `/name`, not truncated, and is
   left out of the catalog so the model does not spend a turn on it. `description` is the one
-  required key.
-  `whenToUse` is optional and falls back to `description`. `name` is accepted, but the
-  directory name is the skill's name: when they differ, the directory wins and the mismatch
-  is logged. `license`, `version`, `metadata`, `compatibility`, `argument-hint` and
-  `allowed-tools` are ignored. Without the `allowed-tools` grant, the skill's tool calls go
-  through this workspace's policy like any other call. `disable-model-invocation` and
-  `user-invocable` are ignored at their defaults. Any other value, and `model`, `tools`, `disallowed-tools`, `hooks`,
-  `context`, `agent` or an unknown key, skips the skill, because the catalog cannot honor
-  it and a partial skill does not load (TD-4502). A skip is logged with the key, once per
-  file while the daemon runs.
+  required key; a skill without it, or with a `name`, `whenToUse` or `when_to_use` that is not
+  text, is skipped.
+  `whenToUse` (or Claude Code's `when_to_use`; ours wins when both are set) is optional and
+  falls back to `description`. `compatibility` (the Agent Skills spec's environment needs) is
+  shown to the model beside the description, as is a when-to-use that says more than the
+  description. `name` is accepted, but the directory name is the skill's name: when they
+  differ, the directory wins and the mismatch is logged. `license`, `version`, `metadata`
+  and `argument-hint` are labels and pass silently. `disable-model-invocation: true` (any
+  value but `false`) is honored: the skill is left out of the model's catalog and
+  `load_skill` refuses it, so only your `/name` loads it; the inspector marks it "slash
+  only".
+  Every other key loads with the skill and is ignored (TD-5107; before it, these keys
+  skipped the whole skill). That covers `allowed-tools`, `model`, `effort`, `tools`,
+  `disallowed-tools`, `hooks`, `context`, `agent`, `paths`, `user-invocable: false` and any
+  key TST Desk does not know, following the Agent Skills spec's advice to load and warn.
+  Without the `allowed-tools` grant, the skill's tool calls go through this workspace's
+  policy like any other call, and `disallowed-tools` is not enforced. The ignored keys are
+  logged once per file while the daemon runs, shown on the skill in the Stack inspector
+  ("ignored: hooks, model"), and named in Doctor's `skills` row.
 - **Frontmatter conventions from other tools** are stripped, not interpreted. If your
   `CLAUDE.md` opens with a YAML block — `description`, `globs`, `alwaysApply`, or anything else
   — it is removed before the file is assembled, so it never reaches the model and you have

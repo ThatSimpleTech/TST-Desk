@@ -1022,7 +1022,21 @@
         "description": "Review a PR",
         "source": "workspace",
         "loaded": false,
-        "tokens": 40
+        "tokens": 40,
+        "ignored_keys": [],
+        "user_only": false
+      },
+      {
+        "name": "deploy",
+        "description": "Deploy to staging",
+        "source": "claude_workspace",
+        "loaded": false,
+        "tokens": 120,
+        "ignored_keys": [
+          "context",
+          "model"
+        ],
+        "user_only": true
       }
     ]
   },
@@ -1474,6 +1488,12 @@
         "name": "steering",
         "status": "ok",
         "detail": "3 steering source(s) parsed",
+        "fix": null
+      },
+      {
+        "name": "skills",
+        "status": "ok",
+        "detail": "2 skill(s) found; frontmatter keys ignored: deploy (context, model)",
         "fix": null
       }
     ]

@@ -150,15 +150,17 @@ class TestOverCap:
 
 
 class TestSkipWarnings:
-    def test_a_skipped_skill_is_logged_once_not_every_prompt(
+    def test_an_ignored_key_is_logged_once_not_every_prompt(
         self, dirs: tuple[Path, Path], caplog: pytest.LogCaptureFixture
     ) -> None:
+        # Since TD-5107 the skill loads; the warning about its key is still once.
         ws, home = dirs
         path = ws / ".claude" / "skills" / "odd" / "SKILL.md"
         path.parent.mkdir(parents=True)
         path.write_text("---\ndescription: Odd\nmodel: haiku\n---\nbody\n", encoding="utf-8")
         with caplog.at_level(logging.WARNING, logger="tstd.skills"):
             for _ in range(3):
-                PromptAssembler(ws, home_dir=home).assemble_sync("brain")
-        skips = [r for r in caplog.records if "cannot honor" in r.getMessage()]
-        assert len(skips) == 1
+                prompt = PromptAssembler(ws, home_dir=home).assemble_sync("brain")
+        assert "- `odd`: Odd" in prompt.text
+        warnings = [r for r in caplog.records if "keys ignored" in r.getMessage()]
+        assert len(warnings) == 1

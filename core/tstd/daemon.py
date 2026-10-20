@@ -96,7 +96,7 @@ from .context.instructions import (
 )
 from .context.memory_loader import list_workspace_memory
 from .context.prompt import PromptAssembler
-from .context.skills import list_workspace_skills_async
+from .context.skills import list_workspace_skills_async, skills_doctor_detail
 from .context.stack import build_instruction_stack
 from .context_pins import PinOutsideError, add_pin, list_pin_cards, project_capacity, remove_pin
 from .coworker import load_coworker, save_coworker
@@ -1662,11 +1662,11 @@ class Daemon:
     async def _diagnostics_report(self) -> DiagnosticsReport:
         """Run the doctor checks (TD-1104) and return the report.
 
-        Rows in display order: daemon → key → provider → git → workspace →
-        steering → optional ``mcp:<id>`` (only when ``mcp.servers`` is
-        non-empty).  Blocking filesystem calls ride worker threads; the live
-        provider probe is the only slow row (one token, worst case the
-        provider timeout).
+        Rows in display order: daemon → key → provider → git → grok_cli →
+        workspace → steering → skills → optional ``mcp:<id>`` (only when
+        ``mcp.servers`` is non-empty).  Blocking filesystem calls ride
+        worker threads; the live provider probe is the only slow row (one
+        token, worst case the provider timeout).
         """
         checks: list[DiagnosticCheck] = [
             # The reply itself proves reachability; the row carries versions
@@ -1729,9 +1729,13 @@ class Daemon:
             checks.append(
                 DiagnosticCheck(name="steering", status="skip", detail="no workspace open yet")
             )
+            checks.append(
+                DiagnosticCheck(name="skills", status="skip", detail="no workspace open yet")
+            )
         else:
             checks.append(await asyncio.to_thread(_check_writable, workspace))
             checks.append(await self._check_steering(workspace))
+            checks.append(await self._check_skills(workspace))
 
         if self.config.mcp.servers:
             try:
@@ -1850,6 +1854,26 @@ class Daemon:
                 assembled.notices,
             ),
         )
+
+    async def _check_skills(self, workspace: Path) -> DiagnosticCheck:
+        """Skills found, and the frontmatter keys each one ignored (TD-5107).
+
+        A skill with keys TST Desk does not act on still loads, so the row
+        stays ok; it names those keys so the user sees what was dropped.
+        """
+        try:
+            skills = await list_workspace_skills_async(
+                workspace,
+                claude_global_fallback=self.config.steering.claude_global_fallback,
+            )
+        except OSError as e:
+            return DiagnosticCheck(
+                name="skills",
+                status="fail",
+                detail=_relativize_paths(f"skill discovery failed: {e}", workspace),
+                fix="Make the named skills folder readable and re-run Doctor.",
+            )
+        return DiagnosticCheck(name="skills", status="ok", detail=skills_doctor_detail(skills))
 
     async def run(self) -> None:
         """Start the daemon and run until shutdown is requested."""
