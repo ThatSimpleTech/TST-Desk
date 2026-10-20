@@ -11,9 +11,11 @@ the worker judges GREEN/RED. No charter is involved.
 - All green: the turn ends. A goal that was checked is met and cleared.
 - Some red: the failure goes back to the model as a user message and the
   turn goes on, up to ``max_retries`` times; after that the turn ends with
-  ``stop_check_failed`` and the failure shown.
-- An item that could not be judged (a declined command, no verdict): the
-  turn ends and nothing goes back, since the model could not fix that.
+  ``stop_check_failed`` and the failure shown. A red item wins over one
+  that could not be judged: the red one goes back, the other is left out.
+- No red, but an item that could not be judged (a declined command, no
+  verdict): the turn ends and nothing goes back, since the model could
+  not fix that.
 
 Each check logs a ``stop_check`` event; a ``$`` item's command logs its
 own ``tool_call`` and ``tool_result``, so the window shows it running and
@@ -85,24 +87,34 @@ def _turn_request(conversation: Sequence[ChatMessage]) -> str:
 
 
 def outcome_for(poll: DodPoll, attempt: int, max_retries: int) -> StopCheckOutcome:
-    """``passed``, ``retry``, ``failed`` or ``unchecked`` for one poll."""
-    if any(not result.decided for result in poll.results):
-        return "unchecked"
+    """``passed``, ``retry``, ``failed`` or ``unchecked`` for one poll.
+
+    A red item decides the outcome even when another item could not be
+    judged: the model can fix the red one, so it goes back (or, out of
+    tries, fails the turn). ``unchecked`` is only for a poll with no red
+    item and at least one that could not be judged.
+    """
+    if any(result.decided and not result.green for result in poll.results):
+        return "retry" if attempt <= max_retries else "failed"
     if poll.all_green:
         return "passed"
-    return "retry" if attempt <= max_retries else "failed"
+    return "unchecked"
 
 
 def feedback_text(
     results: Sequence[tuple[DodItemResult, Source]], attempt: int, max_retries: int
 ) -> str:
-    """The user message a failed check sends back to the model."""
+    """The user message a failed check sends back to the model.
+
+    Only items judged red are named: one that could not be judged (a
+    declined command, no verdict) is nothing the model can fix.
+    """
     lines = [
         f"The done-check failed (try {attempt} of {max_retries}), so the work is not "
         "finished. Fix what it reports, then end your turn again.",
     ]
     for result, source in results:
-        if result.green:
+        if result.green or not result.decided:
             continue
         if source == "goal":
             lines.append(f"- Goal not met yet: {result.item}")

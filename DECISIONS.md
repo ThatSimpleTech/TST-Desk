@@ -16674,9 +16674,14 @@ meets it.
   scheduled run records a failure (not transient, so no retry). An item
   that could not be judged (declined, refused by policy or the allowlist,
   could not start, no verdict) ends the turn as `unchecked` and sends
-  nothing back: Class C answered conservatively, since the model could not
-  fix it and a retry would only spend tokens. Stop during a check seals
-  the turn as Stop always does.
+  nothing back when no other item is red: Class C answered conservatively,
+  since the model could not fix it and a retry would only spend tokens.
+  When one item is red and another could not be judged, the red one
+  decides (review of PR #45): it goes back, or fails the turn after
+  `max_retries`, and the feedback names only red items. Otherwise a `$`
+  check that really failed would be dropped whenever a worker statement
+  beside it got no verdict, which the 8-token verdict cap makes common.
+  Stop during a check seals the turn as Stop always does.
 - **The feedback is a user message the window does not number.** It is
   `ChatMessage(role="user", steer=True, check=True)`: `steer` because it
   joins the running turn (compaction never cuts at it, in-turn elision

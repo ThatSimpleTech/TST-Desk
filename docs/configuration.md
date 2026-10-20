@@ -2616,8 +2616,12 @@ What happens when the model ends a turn:
   and a scheduled run records a failure. The goal stays set, so your next message picks it up
   again.
 - **One cannot be judged:** you declined the command, a policy rule or the allowlist refused it,
-  it could not start, or the worker gave no GREEN or RED. The turn ends, nothing goes back to the
-  model, and the chat says the check could not run.
+  it could not start, or the worker gave no GREEN or RED. If nothing else failed, the turn ends,
+  nothing goes back to the model, and the chat says the check could not run.
+- **One fails and another cannot be judged:** the failure wins. It goes back to the model (or,
+  after `max_retries` tries, ends the turn with `stop_check_failed`) exactly as above; the item
+  that could not be judged is shown with a `?` but left out of the message, since the model cannot
+  fix it. The next try runs every check again, so a command you declined asks again.
 - **Stop** during a check ends the turn, as it does anywhere else.
 
 The check also runs when the progress guard's own check (TD-5002, §4.2) finds the work done,

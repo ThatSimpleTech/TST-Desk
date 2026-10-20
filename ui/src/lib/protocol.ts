@@ -2326,7 +2326,7 @@ export interface StopCheckItem {
 /** The done-check ran because the model ended an interactive turn
  *  (TD-5124). `retry`: the failure went back to the model and the turn goes
  *  on. `failed`: still failing after `max_retries` tries, so the turn ends
- *  with `stop_check_failed`. `unchecked`: an item could not be judged. */
+ *  with `stop_check_failed`. `unchecked`: no item failed, but one could not be judged. */
 export interface StopCheck extends DaemonEvent {
   type: "stop_check";
   session_id: string;

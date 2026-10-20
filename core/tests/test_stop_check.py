@@ -91,17 +91,26 @@ async def _shell_run(
     *,
     message: str = "build the feature",
     deny: bool = False,
+    deny_only: str | None = None,
+    worker: tuple[str, ...] = (),
 ) -> tuple[Session, MockProvider, Any]:
     session = Session(str(tmp_path))
     session.boundary_config = boundary
     dispatcher = make_shell_dispatcher(tmp_path)
-    if deny:
+    if deny or deny_only is not None:
 
-        async def _deny(*_args: object) -> ApprovalOutcome:
+        async def _deny(
+            _call_id: str, _tool: object, arguments: dict[str, Any], *_rest: object
+        ) -> ApprovalOutcome:
+            if deny_only is not None and deny_only not in str(arguments.get("command")):
+                return ApprovalOutcome(True, "")
             return ApprovalOutcome(False, "The user declined this command.")
 
         dispatcher.approval_handler = _deny
-    mock = MockProvider(sequences={"test-brain": brain})
+    sequences: dict[str, list[Script]] = {"test-brain": brain}
+    if worker:
+        sequences["test-worker"] = [Script(kind="text", content=v) for v in worker]
+    mock = MockProvider(sequences=sequences)
     runner = await start_loop(
         session, TierRouter(lead_turns=80), mock, make_config(), dispatcher.registry, dispatcher
     )
@@ -237,7 +246,7 @@ class TestPieces:
         green = DodPoll((DodItemResult("x", True, "GREEN", "worker"),))
         unknown = DodPoll(
             (
-                DodItemResult("x", False, "RED", "worker"),
+                DodItemResult("x", True, "GREEN", "worker"),
                 DodItemResult("y", False, "?", "worker", decided=False),
             )
         )
@@ -246,6 +255,23 @@ class TestPieces:
         assert outcome_for(red, 4, 3) == "failed"
         assert outcome_for(red, 1, 0) == "failed"
         assert outcome_for(unknown, 1, 3) == "unchecked"
+        only_unknown = DodPoll((DodItemResult("y", False, "?", "worker", decided=False),))
+        assert outcome_for(only_unknown, 1, 3) == "unchecked"
+
+    def test_a_red_item_wins_over_one_that_could_not_be_judged(self) -> None:
+        mixed = DodPoll(
+            (
+                DodItemResult("$ false", False, "exit code: 1", "shell"),
+                DodItemResult("The README is updated", False, "Hmm", "worker", decided=False),
+            )
+        )
+        assert outcome_for(mixed, 1, 3) == "retry"
+        assert outcome_for(mixed, 4, 3) == "failed"
+        assert outcome_for(mixed, 1, 0) == "failed"
+        # Only the red item goes back: the model cannot fix the other.
+        text = feedback_text([(result, "workspace") for result in mixed.results], 1, 3)
+        assert "`$ false` failed" in text
+        assert "README" not in text
 
     def test_no_check_for_unattended_runs_or_delegates(self) -> None:
         session = Session("/tmp/ws")
@@ -389,6 +415,47 @@ class TestShellCheck:
             if isinstance(e, ToolResultEvent) and e.tool_call_id.startswith("check-")
         ]
         assert [e.error_code for e in denied] == ["approval_denied"]
+        await runner.cancel()
+
+    async def test_a_red_command_goes_back_beside_an_unjudged_statement(
+        self, tmp_path: Path
+    ) -> None:
+        # The worker has an 8-token verdict cap, so a reasoning model may
+        # answer with no verdict; the `$` failure must still go back.
+        session, mock, runner = await _shell_run(
+            tmp_path,
+            [_say("Done."), _say("Done, really."), _say("Should not be asked.")],
+            _boundary("$ false", "The README is updated", max_retries=1),
+            worker=("Let me think about", "Let me think about"),
+        )
+        turn = await wait_for_turn(session, 1, 15.0)
+        assert turn.failed is True
+        assert turn.error_code == "stop_check_failed"
+        checks = _checks(session)
+        assert [c.outcome for c in checks] == ["retry", "failed"]
+        assert [(i.passed, i.decided) for i in checks[0].items] == [(False, True), (False, False)]
+        calls = _brain(mock)
+        assert len(calls) == 2
+        feedback = _last_user(calls[1])
+        assert "`$ false` failed" in feedback
+        assert "README" not in feedback
+        await runner.cancel()
+
+    async def test_a_red_command_goes_back_beside_a_declined_one(self, tmp_path: Path) -> None:
+        session, mock, runner = await _shell_run(
+            tmp_path,
+            [_say("Done."), _say("Done, really.")],
+            _boundary("$ make check", "$ test -f done.txt", max_retries=1),
+            deny_only="make check",
+        )
+        turn = await wait_for_turn(session, 1, 15.0)
+        assert turn.error_code == "stop_check_failed"
+        assert [c.outcome for c in _checks(session)] == ["retry", "failed"]
+        first = _checks(session)[0]
+        assert [(i.passed, i.decided) for i in first.items] == [(False, False), (False, True)]
+        feedback = _last_user(_brain(mock)[1])
+        assert "`$ test -f done.txt` failed" in feedback
+        assert "make check" not in feedback
         await runner.cancel()
 
     async def test_no_check_no_change(self, tmp_path: Path) -> None:

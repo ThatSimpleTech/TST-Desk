@@ -10884,7 +10884,8 @@ in it is met and cleared). A red check goes back as a user message
 window's numbered turns) and the turn continues; after `max_retries` the
 turn ends with `turn_complete` `failed`, `error_code: stop_check_failed`
 (`tst run` exits non-zero). A check that could not be judged ends the turn
-as `unchecked` with nothing sent back. Events: `stop_check` (outcome,
+as `unchecked` with nothing sent back, unless another item is red: then
+the red one decides and only it goes back. Events: `stop_check` (outcome,
 attempt, items) and `session_goal` (`set`, `cleared`, `met`; restored on
 revive, logged again after rotation or on attach). `/goal` alone and `/goal
 clear` answer with no model call. A repo's `stop_check` waits for trust
@@ -10895,7 +10896,7 @@ attach` print a line on stderr. Not in unattended runs, delegate children
 or Grok sessions. Tests: `core/tests/test_stop_check.py` (config, trust,
 `/goal` parsing, outcomes, the feedback's turn numbering and persistence, a
 shell check that fails then passes, `max_retries` 1 and 0, a declined
-command, a worker statement, `/goal` set/met/kept/status/clear, the
+command, a red command beside an unjudged statement or a declined command, a worker statement, `/goal` set/met/kept/status/clear, the
 progress guard's DONE, revive and rotation), `ui/src/lib/stop-check.test.ts`,
 `ui/src/lib/slash-commands.test.ts`. See DECISIONS.md, docs/configuration.md
 §4.9 and docs/architecture.md.

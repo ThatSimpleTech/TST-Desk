@@ -2316,8 +2316,9 @@ class StopCheck(DaemonEvent):
     back to the model as a user message and the turn goes on),
     ``failed`` (still failing after ``max_retries`` tries, so the turn
     ends with ``turn_complete.error_code`` ``stop_check_failed``) or
-    ``unchecked`` (an item could not be judged, so the turn ends and
-    nothing went back). ``attempt`` counts the checks run this turn,
+    ``unchecked`` (no item failed but one could not be judged, so the
+    turn ends and nothing went back; a failed item outranks it).
+    ``attempt`` counts the checks run this turn,
     from 1. The window shows it on the assistant's reply.
     """
 
