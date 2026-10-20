@@ -800,7 +800,8 @@ runtime is Podman; another binary is accepted only if it speaks the
 same `run` argv (`--userns=keep-id`, one bind mount of the workspace
 at `/workspace`, `--network=none` when the charter wall is deny; a
 host allowlist omits that flag so Podman slirp can work, and never
-`--network=host`). The argv never bind-mounts `$HOME`, `~/.ssh`, cloud
+`--network=host`, and `--memory` at the charter's `caps.shell_memory_mb`,
+half of RAM when it is unset, TD-5116). The argv never bind-mounts `$HOME`, `~/.ssh`, cloud
 creds, the OS keychain, or the user-data-dir; there is no extra-mount
 API. Firecracker / EZER is a follow-up, not this key.
 
@@ -1697,15 +1698,53 @@ autonomous session the container's `/workspace` counts as the workspace.
 | `spend_usd` | float ≥ 0 | `25.0` | Session spend, in dollars, that pauses the run. Settings → Budget writes this for the open workspace. Until it is set, the built-in $25 pause still applies and the title bar does not show a budget. |
 | `wall_clock_hours` | float ≥ 0 | `8.0` | Session runtime, in hours, that pauses the run. |
 | `max_iterations` | int ≥ 1 | `200` | Loop iterations that pause the run. |
+| `shell_memory_mb` | int ≥ 64 \| null | `null` | Memory, in MiB, that one shell command may use. `null` is half of the machine's RAM. A command over it is killed; it does not pause the run. See below. |
 
-All three are checked **before every model call**, in that order, and all three trigger at or
-past the value rather than strictly past it. `spend_usd: 0` is legal and pauses before the first
+The first three are checked **before every model call**, in that order, and all three trigger at
+or past the value rather than strictly past it. `spend_usd: 0` is legal and pauses before the first
 call.
 
-Hitting a cap **pauses**; it does not kill the session. The session moves to `paused` with the
+Hitting one of those three **pauses**; it does not kill the session. The session moves to `paused` with the
 violation as its reason, the UI raises a card, and the run waits — indefinitely, on an event, not
 a poll. Resuming re-reads this file and re-checks the caps, so resuming without raising the cap
 pauses again immediately. That is the loop: raise the number here, then resume.
+
+**`shell_memory_mb` caps each shell command's memory (TD-5116).** A runaway build used to be
+able to take the machine's memory, and the kernel's out-of-memory killer could take the daemon
+with it. Every command the shell tool runs now gets its own cap, applied the strongest way the
+machine allows:
+
+- **Linux with systemd user scopes.** The command runs in its own transient scope
+  (`systemd-run --user --scope`, unit `tstd-shell-<id>.scope`) with `MemoryMax` at the cap,
+  `MemorySwapMax=0` so it is killed at the cap rather than pushed into swap, and
+  `OOMPolicy=stop`. The kernel kills inside that scope only, never the daemon. Afterwards the
+  daemon reads the unit's result, or the scope's `memory.events` when systemd has not caught up
+  yet, and clears the failed unit.
+- **Other Linux.** The shell sets `ulimit -v` (`RLIMIT_AS`) to the cap and then runs the
+  command, so the command and everything it starts inherit the limit and cannot raise it. This
+  counts address space, not resident memory: an allocation past it fails and the command dies of
+  its own out-of-memory error. Runtimes that reserve large address ranges up front (sanitizers,
+  some JVM and WebAssembly setups) can fail well below the cap here; raise the cap if they do.
+  A lower limit the daemon already runs under is kept.
+- **Autonomous sessions.** Podman runs get `--memory=<cap>m`, from the charter's `caps` (a
+  charter's caps replace this file's for the run).
+- **macOS and Windows hosts.** Not capped: macOS does not enforce `RLIMIT_AS`, and neither has
+  systemd scopes. Autonomous runs there are still capped by Podman.
+
+Which Linux method works is probed once, on the first shell command after the daemon starts: a
+scope with the same settings must start, receive the command text unchanged (systemd 254+ is
+told not to expand `$$` and `${x}` in it), and show the cap in its `memory.max`. The answer holds
+until the daemon restarts, so restart it after changing systemd or cgroup setup.
+
+When the cap stops a command, its result says so plainly, on a line under the exit code:
+`memory cap: killed — the command went over its 2048 MB memory cap (caps.shell_memory_mb).` With
+`ulimit` the line says the command ran out of memory at its cap, read from its error text
+(`MemoryError`, `Cannot allocate memory`, `std::bad_alloc`, `out of memory`, …; a JavaScript
+heap limit is not counted). In a container an exit of 137 (SIGKILL) is reported as the likely
+cause. A command the tool itself timed out, cancelled or stopped gets no such line. Each command
+has its own cap; two commands running at once can each use it. A value above half of RAM loosens
+the default, so a repo's config that sets one waits for your trust (§4.8). Skip-all does not
+lift it: the cap is applied by the shell tool, not by an approval.
 
 **Interactive turns also pause when they stop making progress.** This is not a cap and it is
 not in this file. Skip-all still skips the three caps above. It does not skip the progress
@@ -2081,7 +2120,7 @@ them when:
 | `policy.rules` | A rule has `effect: auto`. |
 | `boundary.network` | It names any host. The default is `deny`. |
 | `boundary.writable_paths` | An entry is absolute, starts with `~`, or climbs out with `..`. Writes outside the workspace are refused whatever this says; the entry is shown because the file asked for it. |
-| `caps.*`, `attachments.*`, `memory.max_lines` | The value is above the default. |
+| `caps.*`, `attachments.*`, `memory.max_lines` | The value is above the default. For `caps.shell_memory_mb` the default is half of this machine's RAM, so the same file can loosen on a small laptop and not on a big box. |
 | `approved_external_imports` | It lists any path. |
 | `mcp_servers`, `hooks` | The key is set at all. TST Desk does not read either from a workspace yet; they are judged now so a later feature cannot run them untrusted. |
 

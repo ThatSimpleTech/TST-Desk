@@ -2,8 +2,8 @@
 
 Defines the wall the agent may not cross: ``writable_paths``,
 ``allowed_commands``, ``network``, and the caps (``spend_usd``,
-``wall_clock_hours``, ``max_iterations``).  Mirrors the spec §12.4
-charter shape.  Sensible defaults apply when the file is absent:
+``wall_clock_hours``, ``max_iterations``, ``shell_memory_mb``).  Mirrors
+the spec §12.4 charter shape.  Sensible defaults apply when the file is absent:
 workspace-only writes, no network, a conservative spend cap.  Validation
 produces actionable errors naming the offending key.
 """
@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from .attachments import AttachmentLimits
 from .config import ConfigError
+from .host_memory import MIN_SHELL_MEMORY_MB, shell_memory_cap_mb
 
 # Defaults when `.tst/config.yaml` is absent: workspace-only writes, no
 # network, a conservative spend cap, 8 wall-clock hours, 200 iterations.
@@ -95,6 +96,11 @@ class CapsSection(BaseModel):
 
     Unknown keys are refused, like ``BoundarySection``: a misspelled cap
     would otherwise silently revert to its default.
+
+    ``shell_memory_mb`` (TD-5116) is the one cap that does not pause the
+    run: it bounds each shell command's memory, and a command over it is
+    killed. ``None`` is half of RAM, worked out on the machine that runs
+    the command, so a file written on a big box does not pin its number.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -102,6 +108,11 @@ class CapsSection(BaseModel):
     spend_usd: float = Field(default=DEFAULT_SPEND_USD, ge=0)
     wall_clock_hours: float = Field(default=DEFAULT_WALL_CLOCK_HOURS, ge=0)
     max_iterations: int = Field(default=DEFAULT_MAX_ITERATIONS, ge=1)
+    shell_memory_mb: int | None = Field(default=None, ge=MIN_SHELL_MEMORY_MB)
+
+    def shell_memory_cap(self) -> int | None:
+        """MiB each shell command may use; None only when RAM is unknown."""
+        return shell_memory_cap_mb(self.shell_memory_mb)
 
 
 class MemorySection(BaseModel):
@@ -115,11 +126,11 @@ class BoundaryConfig(BaseModel):
 
     boundary: BoundarySection = Field(default_factory=BoundarySection)
     caps: CapsSection = Field(default_factory=CapsSection)
-    # Attachment caps (TD-1709).  Its own section rather than a fourth key
-    # under ``caps``: every cap there pauses a running agent and is re-read on
-    # resume, while these refuse a client's message outright and never pause
-    # anything.  Filing them together would break the one sentence that makes
-    # ``caps`` legible.
+    # Attachment caps (TD-1709).  Its own section rather than another key
+    # under ``caps``: the run caps there pause a running agent and are re-read
+    # on resume, while these refuse a client's message outright and never
+    # pause anything.  ``caps.shell_memory_mb`` is the story's own name
+    # (TD-5116); it bounds the machine, not the message.
     attachments: AttachmentLimits = Field(default_factory=AttachmentLimits)
     # Line cap on ``.tst/memory/**`` (TD-2103). Its own section: this refuses
     # a write, it does not pause a running agent the way ``caps`` does.
@@ -165,6 +176,7 @@ DEFAULT_CONFIG_TEMPLATE = """\
 #   spend_usd: 25.0        # autonomy pauses past this spend
 #   wall_clock_hours: 8.0  # autonomy pauses past this runtime
 #   max_iterations: 200    # autonomy pauses past this many iterations
+#   shell_memory_mb: null  # MiB per shell command; null is half of RAM
 
 # attachments:
 #   max_file_bytes: 4000000  # per file attached to a message

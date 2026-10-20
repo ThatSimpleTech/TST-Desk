@@ -21,6 +21,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from ..config import AutonomyConfig, ModelConfig
+from ..host_memory import default_shell_memory_mb
 from ..proc_lifecycle import finish_subprocess
 
 WORKSPACE_DEST = "/workspace"
@@ -188,6 +189,7 @@ def container_argv(
     image: str,
     inner: Sequence[str],
     network: str | list[str] = "deny",
+    memory_mb: int | None = None,
 ) -> list[str]:
     """Argv that execs *inner* with only *workspace* bind-mounted.
 
@@ -198,6 +200,8 @@ def container_argv(
     Podman's default slirp can reach tool-level hosts; it never uses
     ``--network=host``. Unexpected values fail closed as deny.
     ``--pull=never`` so a start check cannot phone a registry.
+    *memory_mb* is ``--memory`` (TD-5116); the runners below always pass
+    one when RAM is known.
     """
     if not inner:
         raise SandboxError("container command is empty")
@@ -218,6 +222,10 @@ def container_argv(
     argv = [runtime, "run", "--rm"]
     if _network_denied(network):
         argv.append("--network=none")
+    if memory_mb is not None:
+        if memory_mb < 1:
+            raise SandboxError("container memory cap must be at least 1 MB")
+        argv.append(f"--memory={memory_mb}m")
     argv.extend(
         [
             "--userns=keep-id",
@@ -244,11 +252,13 @@ def autonomy_shell_argv(
     image: str,
     network: str | list[str] = "deny",
     which: WhichFn | None = None,
+    memory_mb: int | None = None,
 ) -> list[str]:
     """Argv that runs *command* inside the sandbox via ``/bin/sh -c``.
 
     The inner shell is the *image's* ``/bin/sh``, not the host's. Used by
-    the product shell tool on autonomous sessions (TD-4301).
+    the product shell tool on autonomous sessions (TD-4301). *memory_mb*
+    is the session's ``caps.shell_memory_mb``; None is half of RAM.
     """
     if not command.strip():
         raise SandboxError("container command is empty")
@@ -261,6 +271,7 @@ def autonomy_shell_argv(
         image=image,
         inner=["/bin/sh", "-c", command],
         network=network,
+        memory_mb=memory_mb if memory_mb is not None else default_shell_memory_mb(),
     )
 
 
@@ -272,8 +283,12 @@ async def sandbox_exec(
     which: WhichFn | None = None,
     inspect: InspectFn | None = None,
     network: str | list[str] = "deny",
+    memory_mb: int | None = None,
 ) -> SandboxExec:
-    """Run *inner* inside the sandbox, or raise :class:`SandboxError`."""
+    """Run *inner* inside the sandbox, or raise :class:`SandboxError`.
+
+    *memory_mb* is ``--memory``; None is half of RAM (TD-5116).
+    """
     autonomy = _autonomy_of(config)
     err = await sandbox_start_error(autonomy, which=which, inspect=inspect)
     if err is not None:
@@ -287,6 +302,7 @@ async def sandbox_exec(
         image=autonomy.image,
         inner=inner,
         network=network,
+        memory_mb=memory_mb if memory_mb is not None else default_shell_memory_mb(),
     )
     try:
         proc = await asyncio.create_subprocess_exec(

@@ -15,6 +15,10 @@ workspace as the working directory.  Three safety rails surround it:
   with ``CREATE_NEW_PROCESS_GROUP`` (and ``CREATE_NO_WINDOW``, so a
   console does not flash per command) and ``taskkill /T /F`` walks the
   tree (TD-1406).
+- **Memory cap.**  Each command runs under ``caps.shell_memory_mb``
+  (TD-5116): a systemd user scope where one works, else ``RLIMIT_AS``,
+  and Podman's ``--memory`` in a container.  A command killed for going
+  over says so in its result (``shell_memory.py``).
 - **``allowed_commands`` allowlist.**  When configured, each top-level
   segment's leading binary is resolved with ``shutil.which`` and matched
   by basename.  Unresolvable binaries and unparseable commands are
@@ -66,10 +70,14 @@ from ..proc_lifecycle import (
 from ..protocol import ShellOutput
 from ..session import Session
 from ..shell_read_only import run_env
+from . import shell_memory
+from .shell_memory import ShellMemoryCap
 from .shell_writes import SHELL_WRITE_NOTE, writes_workspace_files
 
 # Read chunk size for draining stdout/stderr.
 _READ_CHUNK = 4096
+# How much of a stream's end is kept past the capture cap (TD-5116).
+_TAIL_CHARS = 4096
 # How long to wait for drains to settle after killing the process group.
 _KILL_GRACE_SECS = 5.0
 # Cap on how long the Windows taskkill helper may stall the event loop.
@@ -294,12 +302,18 @@ def check_allowed(command: str, policy: ShellPolicy) -> None:
 
 @dataclass
 class _StreamCapture:
-    """Bounded capture buffer for one output stream."""
+    """Bounded capture buffer for one output stream.
+
+    ``tail`` keeps the stream's last few KB even past the cap: a dying
+    command's out-of-memory error comes last, and the memory cap's note
+    reads it from there (TD-5116).
+    """
 
     cap: int
     parts: list[str] = field(default_factory=list)
     total: int = 0
     truncated: bool = False
+    tail: str = ""
 
     def offer(self, text: str) -> str | None:
         """Accept *text*; return the slice to keep/emit, or None past cap.
@@ -307,6 +321,7 @@ class _StreamCapture:
         Reading continues past the cap (the pipe must drain or the child
         blocks); only buffering and event emission stop.
         """
+        self.tail = (self.tail + text)[-_TAIL_CHARS:]
         if self.truncated:
             return None
         room = self.cap - self.total
@@ -500,8 +515,13 @@ def _format_result(
     return "\n".join(lines)
 
 
-def _open_shell_process(session: Session, command: str) -> Awaitable[asyncio.subprocess.Process]:
-    """Host shell for interactive sessions; container argv when autonomous."""
+def _open_shell_process(
+    session: Session, command: str, cap: ShellMemoryCap | None = None
+) -> Awaitable[asyncio.subprocess.Process]:
+    """Host shell for interactive sessions; container argv when autonomous.
+
+    *cap* is the memory cap the command runs under (TD-5116).
+    """
     env = sanitized_env()
     if not session.autonomy:
         # A git command the read-only list reads runs with git's command
@@ -509,7 +529,7 @@ def _open_shell_process(session: Session, command: str) -> Awaitable[asyncio.sub
         if session.config is not None:
             env.update(run_env(command, session.config.shell.read_only.entries(), env))
         return asyncio.create_subprocess_shell(
-            command,
+            shell_memory.host_command(cap, command),
             cwd=session.workspace_path,
             env=env,
             stdout=asyncio.subprocess.PIPE,
@@ -534,6 +554,7 @@ def _open_shell_process(session: Session, command: str) -> Awaitable[asyncio.sub
             runtime=cfg.autonomy.runtime,
             image=cfg.autonomy.image,
             network=network,
+            memory_mb=cap.mb if cap is not None else None,
         )
     except SandboxError as e:
         raise ValueError(str(e)) from e
@@ -582,7 +603,8 @@ async def run_shell(
     # and losing the handle would orphan the whole process group (TD-605
     # AC2; the TestCancel flake family).  On cancellation, wait for the
     # spawn to settle, kill the group, and let cancellation propagate.
-    spawn = asyncio.ensure_future(_open_shell_process(session, command))
+    cap = await shell_memory.plan_cap(session, sanitized_env())
+    spawn = asyncio.ensure_future(_open_shell_process(session, command, cap))
     try:
         proc = await asyncio.shield(spawn)
     except asyncio.CancelledError:
@@ -687,4 +709,7 @@ async def run_shell(
     # command ran in a container that sees the workspace at its mount.
     mount = _AUTONOMY_WORKSPACE if session.autonomy else None
     wrote = writes_workspace_files(command, session.workspace_path, mount=mount)
-    return _format_result(header, exit_code, out, err, SHELL_WRITE_NOTE if wrote else "")
+    # A command this tool killed (timeout, cancel, stop) already says why.
+    memory = "" if header else await shell_memory.cap_note(cap, exit_code, err.tail)
+    notes = "\n".join(n for n in (memory, SHELL_WRITE_NOTE if wrote else "") if n)
+    return _format_result(header, exit_code, out, err, notes)
