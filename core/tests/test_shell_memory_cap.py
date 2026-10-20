@@ -494,16 +494,28 @@ class TestScopeVerdict:
         self._state(monkeypatch, {}, None)
         shell_memory._probe.done = True
         shell_memory._probe.tools = self._cap().tools
-        note = await cap_note(self._cap(), 1, stderr)
-        assert note.startswith("memory cap: systemd could not start this command's")
+        note = await cap_note(self._cap(), 1, stderr + "\n")
+        assert note.startswith("memory cap: systemd-run reported that it could not start")
         assert "did not run" in note
         assert shell_memory._probe.done is False
 
+    @pytest.mark.parametrize(
+        ("exit_code", "stderr"),
+        [
+            (0, "Failed to connect to bus: x"),
+            (3, "Failed to connect to bus: No medium found"),
+            (1, "building...\nFailed to connect to bus: No medium found"),
+        ],
+    )
     async def test_a_command_that_prints_such_a_line_itself_is_not_mistaken(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, exit_code: int, stderr: str
     ) -> None:
+        """A command that ran systemctl can print the line too; only systemd-run's
+        lone line and exit 1 count."""
         self._state(monkeypatch, {}, None)
-        assert await cap_note(self._cap(), 0, "Failed to connect to bus: x") == ""
+        shell_memory._probe.done = True
+        assert await cap_note(self._cap(), exit_code, stderr) == ""
+        assert shell_memory._probe.done is True
 
 
 class TestProbeRetries:

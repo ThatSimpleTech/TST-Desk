@@ -1890,9 +1890,10 @@ told not to expand `$$` and `${x}` in it), and show the cap in its `memory.max`.
 settings for systemd 254+, then 253, then 246–252, and uses the first that passes. A probe that
 found no usable scope (one that timed out at startup, say) runs again after five minutes. A
 working answer holds until a command's scope fails to start (the user bus went away): that
-command did not run, its result says so (`memory cap: systemd could not start this command's
-memory-capped scope, so the command did not run`), and the next command probes again, falling
-back to `ulimit` if systemd is still unusable (TD-5160). Restart the daemon after changing
+command did not run, its result says so (`memory cap: systemd-run reported that it could not
+start this command's memory-capped scope …`, when systemd-run's lone error line is all of stderr
+and the exit is 1), and the next command probes again, falling back to `ulimit` if systemd is
+still unusable (TD-5160). Restart the daemon after changing
 systemd or cgroup setup to pick it up at once.
 
 When the cap stops a command, its result says so plainly, on a line under the exit code:

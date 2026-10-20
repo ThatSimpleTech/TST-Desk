@@ -922,3 +922,27 @@ async def test_a_file_saved_by_rename_while_staging_stages_its_new_bytes(
     await _stage_into(repo, ours, target)
     shown = _git_in(repo, ours, "show", ":sub/notes.md")
     assert shown.stdout == "saved by the editor\n"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Windows keeps the inode check")
+async def test_a_file_swapped_for_a_hard_link_while_staging_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TD-5160: a new inode passes only with one link; a hard link to a
+    file outside the workspace has two, so its bytes are not stored."""
+    repo = make_repo(tmp_path)
+    outside, secret_oid = _secret(tmp_path)
+    target = repo / "notes.md"
+    target.write_bytes(b"workspace file\n")
+    real = git_stage.path_attributes
+
+    async def link_then_attributes(*args: object, **kwargs: object) -> object:
+        target.unlink()
+        os.link(outside / "id_rsa", target)
+        return await real(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(git_stage, "path_attributes", link_then_attributes)
+    with pytest.raises(GitRawError, match="changed while it was being staged"):
+        await _stage_into(repo, tmp_path / "ours.index", target)
+    exists = _git_in(repo, tmp_path / "ours.index", "cat-file", "-e", secret_oid)
+    assert exists.returncode != 0, "the host file was written into the object store"

@@ -41,7 +41,6 @@ ANSWER_TRUNCATION = "\n… [truncated: the page answer was capped]"
 # Korean text runs about one character a token (TD-5160).
 _CHARS_PER_TOKEN = 3
 _PROMPT_RESERVE_TOKENS = 600
-_MIN_WINDOW_CHARS = 2_000
 _SCAN_CHUNK = 1_024
 
 EXTRACT_SYSTEM_PROMPT = """\
@@ -71,7 +70,9 @@ def worker_window_tokens(cfg: TierConfig, question: str) -> int:
 def window_end(text: str, offset: int, tokens: int) -> int:
     """Where a window from *offset* holding about *tokens* tokens ends.
 
-    Never less than :data:`_MIN_WINDOW_CHARS` past *offset* (or the end).
+    At least one character, so paging always moves on. There is no larger
+    floor: on a small worker a fixed number of dense-script characters can
+    be more tokens than it holds, and that is a 400 (TD-5160).
     """
     end, spent = offset, 0.0
     while end < len(text):
@@ -86,7 +87,7 @@ def window_end(text: str, offset: int, tokens: int) -> int:
             break
         spent += cost
         end += len(chunk)
-    return min(len(text), max(end, offset + _MIN_WINDOW_CHARS))
+    return min(len(text), max(end, offset + 1))
 
 
 def cap_answer(text: str, limit: int = ANSWER_CHAR_CAP) -> str:

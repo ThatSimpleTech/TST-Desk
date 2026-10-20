@@ -115,12 +115,13 @@ _OWN_HEAP_LIMITS = (
     "hip out of memory",
     "mps backend out of memory",
 )
-# What systemd-run prints when it cannot start the scope: the command never
-# ran (TD-5160).
+# What systemd-run prints, alone, when it cannot start the scope; it then
+# exits 1 without running the command (TD-5160). A command that runs
+# systemctl can print the same line, so only a lone line counts, and the
+# note does not claim more than systemd-run said.
 _SCOPE_START_FAILED = re.compile(
-    r"^Failed to (?:start transient scope unit"
-    r"|connect to (?:user scope )?bus|create bus connection)",
-    re.MULTILINE,
+    r"Failed to (?:start transient scope unit"
+    r"|connect to (?:user scope )?bus|create bus connection)[^\n]*"
 )
 # A probe that found no usable scope is tried again after this long.
 _REPROBE_SECS = 300.0
@@ -470,10 +471,14 @@ def _note(cap: ShellMemoryCap, *, likely: bool = False, exit_code: int = _SIGKIL
 
 
 _SCOPE_NOT_STARTED = (
-    "memory cap: systemd could not start this command's memory-capped scope, so the "
-    "command did not run (systemd-run's error is in stderr). Run it again: the next "
+    "memory cap: systemd-run reported that it could not start this command's "
+    "memory-capped scope (stderr), in which case the command did not run. The next "
     "command checks systemd again and falls back to a ulimit cap if it is still unusable."
 )
+
+
+def _scope_not_started(exit_code: int, stderr: str) -> bool:
+    return exit_code == 1 and _SCOPE_START_FAILED.fullmatch(stderr.strip()) is not None
 
 
 async def cap_note(cap: ShellMemoryCap | None, exit_code: int, stderr: str) -> str:
@@ -481,7 +486,7 @@ async def cap_note(cap: ShellMemoryCap | None, exit_code: int, stderr: str) -> s
     if cap is None:
         return ""
     if cap.method == "scope":
-        if exit_code != 0 and _SCOPE_START_FAILED.search(stderr):
+        if _scope_not_started(exit_code, stderr):
             # The user bus or manager went away since the probe: the next
             # command probes again rather than fail the same way (TD-5160).
             reset_scope_probe()

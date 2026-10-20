@@ -656,3 +656,15 @@ async def test_the_worker_window_counts_dense_scripts_as_a_token_a_character(
     wide = sum(1 for ch in read if ord(ch) > 0x7F)
     # 4000 context - 200 output - 600 reserve - the question: under 3,200.
     assert 2_000 <= wide < 3_200
+
+
+def test_a_tight_worker_window_has_no_floor_past_its_budget() -> None:
+    """A small worker reading CJK: a fixed 2,000-character floor would be
+    2,000 tokens against a few hundred free."""
+    from tstd.tools.web_extract import estimated_tokens, window_end
+
+    text = "中文网页内容" * 1_000
+    end = window_end(text, 0, 300)
+    assert estimated_tokens(text[:end]) <= 300
+    assert end > 0
+    assert window_end(text, 10, 0) == 11  # never stuck

@@ -10444,6 +10444,13 @@ fix); one that is not, or no longer applies, says why.
       Podman without cgroup v2 and the systemd manager cannot cap: the swap
       flag is added, and the start check refuses such a host with the fix
       (conservative choice; not run against a real Podman)
+- [x] Second-opinion review of this branch: a hard link swapped in while
+      staging is refused (a new inode passes only with one link); the
+      worker window has no floor past its token budget; a scope-start
+      failure counts only as systemd-run's lone line with exit 1. Its
+      claim that `git show`, `git log -p` and `git status -v` run
+      `diff.external` was checked against git 2.53 and is false (only
+      `git diff` does)
 - [x] Tests fail on the old code and pass on the new, except coverage tests
       for code that was already right (note 21's counter test, the key
       framings in note 13, the native-thread lines in note 31); ruff, mypy,

@@ -154,8 +154,10 @@ def _open_checked(top: Path, rel: str, planned: os.stat_result | None) -> int:
     points at as a regular-file blob the agent can read back. On POSIX
     every part of the path is opened with ``O_NOFOLLOW``, which refuses a
     link anywhere on it; a file an editor saved by temp file and rename in
-    that gap is a new inode but still a regular file in the workspace, so
-    its new bytes are staged as ``git add`` would (TD-5160). Without
+    that gap is a new inode but still a regular file in the workspace with
+    one link, so its new bytes are staged as ``git add`` would (TD-5160).
+    A new inode with more links may be a hard link to a file elsewhere,
+    and is refused. Without
     ``dir_fd`` (Windows) only the final part can refuse a link, so the
     device and inode must still be the ones the plan saw. The bytes are
     then read from this descriptor, never from the path again.
@@ -171,10 +173,12 @@ def _open_checked(top: Path, rel: str, planned: os.stat_result | None) -> int:
         raise GitRawError(f"'{rel}' changed while it was being staged ({reason})") from None
     try:
         st = os.fstat(fd)
+        # A new inode is an editor's save only if nothing else links to it:
+        # a hard link swapped in would name a file outside the workspace.
         same = (
-            _WALK_OPENS
-            or planned is None
+            planned is None
             or (st.st_dev, st.st_ino) == (planned.st_dev, planned.st_ino)
+            or (_WALK_OPENS and st.st_nlink == 1)
         )
         if not stat.S_ISREG(st.st_mode) or not same:
             raise GitRawError(f"'{rel}' changed while it was being staged; not staging it")

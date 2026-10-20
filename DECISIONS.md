@@ -16099,13 +16099,16 @@ Class C questions the notes left open (each the conservative option).
   read and the run.
 - **Staging after an atomic save.** On POSIX each folder on the path is
   opened with `O_NOFOLLOW` from the one before it, which refuses a
-  swapped-in symlink anywhere on the path; the device/inode test (which
-  failed a file an editor saved by rename) is kept only on Windows, which
-  has no `dir_fd`.
+  swapped-in symlink anywhere on the path, and a file whose inode changed
+  since the plan is staged only if it has one link (an editor's temp file
+  and rename); more links may be a hard link to a file elsewhere, and are
+  refused. Windows, with no `dir_fd`, keeps the strict device/inode test.
 - **`message_not_saved` copy.** The daemon's text no longer says the text
   is back in the composer (older windows and APKs do not do that); the
   window from TD-5158 on adds it, with a note to add attachments again.
-- **`web_fetch`.** The shown URL is redacted and cut to 300 characters;
+- **`web_fetch`.** (The worker window's old 2,000-character floor is gone:
+  on a small worker it could be more tokens than the worker holds.) The
+  shown URL is redacted and cut to 300 characters;
   the raw window and the question-mode answer shrink until the whole
   result fits the cap. The extract pass checks the session caps first, as
   delegate does (skip-all never lifts them). A cached page cut at a smaller
