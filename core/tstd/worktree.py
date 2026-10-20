@@ -58,6 +58,7 @@ class RepoSpot:
     top: Path  # the main checkout's top folder
     prefix: str  # the workspace below ``top``, posix, "" at the top
     head: str  # the commit ``HEAD`` names
+    in_head: bool = True  # ``HEAD`` has ``prefix``; a worktree would have its files
 
 
 @dataclass
@@ -73,6 +74,9 @@ class SessionWorktree:
     main_dirty: int = 0  # changed paths in the main checkout at creation
     setup: SetupState = "none"
     setup_note: str = ""
+    # git tracks the workspace config here. When it does not, the worktree
+    # holds a copy of the project's file and TST Desk saves to the project's.
+    config_tracked: bool = False
 
     @property
     def root(self) -> Path:
@@ -123,7 +127,9 @@ async def find_repo(workspace: Path, env: Mapping[str, str]) -> RepoSpot | None:
     """The workspace's repository, or ``None`` when there is no worktree to make.
 
     ``None`` for a folder outside git, a bare repository, and a repository
-    with no commit yet (there is no ``HEAD`` to branch from).
+    with no commit yet (there is no ``HEAD`` to branch from). ``in_head``
+    is False for a folder ``HEAD`` does not have (new, untracked or
+    ignored): a worktree's copy of it would be empty.
     """
     rc, out, _err = await run_git(
         workspace, "rev-parse", "--is-inside-work-tree", "--show-toplevel", "--show-prefix", env=env
@@ -139,8 +145,14 @@ async def find_repo(workspace: Path, env: Mapping[str, str]) -> RepoSpot | None:
     )
     if rc != 0 or not out.strip():
         return None
+    head = out.decode().strip()
     top = await asyncio.to_thread(Path(lines[1].strip()).resolve)
-    return RepoSpot(top=top, prefix=prefix, head=out.decode().strip())
+    in_head = True
+    if prefix:
+        # ``<rev>:<path>`` reads the path from the top, whatever the cwd.
+        rc, out, _err = await run_git(top, "cat-file", "-t", f"{head}:{prefix}", env=env)
+        in_head = rc == 0 and out.strip() == b"tree"
+    return RepoSpot(top=top, prefix=prefix, head=head, in_head=in_head)
 
 
 #: ``.tst`` entries that are the user's shared content, not TST Desk's own.

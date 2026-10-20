@@ -10922,6 +10922,25 @@ row actions, the row's branch and close step, the start screen), the
 protocol fixtures, and the UI walk (the rail shows the branch of the
 walk's chat and Close worktree removes it). See DECISIONS.md.
 
+Review fixes (2026-10-20, PR #46): a trust decision on the card covers
+the same bytes in the project folder and its worktrees, so the next
+session does not ask again and `worktree.setup` runs (a skipped setup
+runs in the trusting session at once); a folder `HEAD` does not have gets
+no worktree (its copy would be empty), and a delegate child is refused
+one there; with an untracked config, Always allow, Revoke, a spend cap and
+import approvals are saved to the project's file and the worktree's copy
+follows it (`core/tstd/worktree_config.py`), while a tracked config's save
+is a change on the branch; a delegate child in its own worktree is told
+that root; `tst run` names the worktree's branch and path on stderr.
+Tests: `core/tests/test_worktree_config.py` (trust reaches the project
+and the setup runs, only the same bytes, revoke and spend cap stay with
+the project after the worktree goes, a spend cap with no config, import
+approvals, a tracked config is the branch's), `core/tests/test_worktree.py`
+(a folder the last commit lacks), `core/tests/test_worktree_daemon.py`
+(the child's stated root, an absolute path under it, a child refused in a
+folder the commit lacks), `core/tests/test_worktree_cli.py` (the stderr
+note on a new and a continued run; none outside git).
+
 ---
 
 # Epic E52 — Files to the user

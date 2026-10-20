@@ -16649,10 +16649,15 @@ recorded here instead of waiting for sign-off.
   `tst/wt/` does not collide with the checkpointer's `tst/session/` or the
   autonomy `tst/auto/` refs.
 - **When there is no worktree.** A folder outside git, a bare repository or
-  one with no commit yet works in the folder, silently. A git failure
-  (folder exists, git refuses) works in the folder and says why on the
-  start screen. Autonomy runs keep their own branch and are not changed.
-  `tst run` opens an ordinary session, so it gets one too.
+  one with no commit yet works in the folder, silently. So does a folder
+  `HEAD` does not have (new, untracked or ignored: `git cat-file -t
+  HEAD:<prefix>` is not `tree`), with a note, because the worktree's copy
+  of it would be empty and the session would work with none of its files;
+  a delegate child asking for a worktree there is refused. A git failure
+  (folder exists, git refuses) works in the folder; the `worktree_state`
+  note says why. Autonomy runs keep their own branch and are not changed.
+  `tst run` opens an ordinary session, so it gets one too, and says so on
+  stderr (below).
 - **The off switch.** Settings `worktree.enabled` for the computer and
   `worktree.enabled: false` in the workspace's `.tst/config.yaml`. The
   workspace key is read from the file as written even when the file is not
@@ -16674,8 +16679,27 @@ recorded here instead of waiting for sign-off.
   syntax, matched from the repository's top like `.git/info/exclude`)
   copies a file only when git also ignores it, as Claude Code's
   `.worktreeinclude` does; a symlink is copied as a link, never followed.
-  Settings TST Desk writes during a worktree session (Always allow, a spend
-  cap) land in that copy; an untracked copy goes away with the worktree.
+- **An untracked config is the project's file; the copy follows it**
+  (`tstd/worktree_config.py`). Always allow, Revoke, a spend cap and import
+  approvals are saved to the project folder's `.tst/config.yaml`, as before
+  worktrees, through the same trust gate, and the worktree's copy is then
+  refreshed from it with the trust decided on its bytes; a session's start
+  or revival refreshes it too (no project file, no copy). Rejected: saving
+  into the copy (the first cut). The copy is TST Desk's own untracked file,
+  so the save was neither a change nor merged: a removal discarded it
+  without asking, and a revoked `auto` rule stayed in the project and came
+  back in every new session. A tracked config is the branch's own file
+  (`config_tracked` on the record): a save there is a change in the
+  worktree, merged back or removed with the rest.
+- **A trust decision covers the bytes, wherever they sit.** The card's
+  decision is recorded for the session's folder and for the project folder
+  and every stored session's worktree whose config is byte-identical, then
+  each re-applies. Recording it for the worktree folder alone (the first
+  cut) meant every new session asked again and `worktree.setup` never ran
+  from a config trusted on the card. A setup skipped for want of trust
+  runs in the trusting session when the decision lands, unless a turn is
+  in flight (it would change files under the turn's tools; the note then
+  says the next new chat runs it).
 - **TST Desk's own untracked `.tst/` files are not changes.** The memory
   templates, the copied config and the decisions ledger appear in every
   worktree. Counting them would make every worktree "changed" (never
@@ -16716,7 +16740,10 @@ recorded here instead of waiting for sign-off.
   says). Its path guard, classifier wall (a sibling classifier with the
   parent's connector and its own cache), memory committer and workspace are
   rebound to that folder; the checkpointer is dropped (the branch is its
-  record) and the ledger stays the parent's. When it finishes, its changes
+  record) and the ledger stays the parent's. Its prompt is assembled for
+  that folder (`PromptAssembler.for_workspace`), so the root it is told is
+  the one its tools accept, and its task says that a path under the
+  parent's root is the same path relative to its own. When it finishes, its changes
   are committed on its branch and the folder is removed; the summary names
   the branch and the `git diff` and `git merge` to take it, which the parent
   runs through the classifier like any shell command. No changes, no
@@ -16725,8 +16752,22 @@ recorded here instead of waiting for sign-off.
 - **Move waits.** A session with a worktree cannot be moved
   (`worktree_session`); the rail hides Move on such rows. The worktree
   belongs to the folder it came from.
+- **`tst run` says where its edits went.** A stderr note names the branch
+  and the worktree's path whenever the run's session works in one: from
+  the session's `worktree_state` event for a new session, from the
+  `session_list` row for `--session` and `--continue`. Class C left open
+  by the story, decided conservatively: the run keeps the default (a
+  worktree, as every session in a git folder gets) and the user is told,
+  in every output mode; the `--output json` object keeps its documented
+  five keys rather than growing a sixth.
 - **Known gaps, accepted.** A worktree folder deleted by hand leaves its
   session pointing at a missing folder until it is closed (close prunes it).
   Trust records for removed worktrees stay in `workspace_trust.yaml`.
   `tst run` sessions keep their worktree until closed from the rail or
   deleted. The setup command's grandchildren are not killed on timeout.
+  The window does not show the note of a session that got no worktree (a
+  git failure, a folder `HEAD` lacks); the chat works in the folder, with
+  no branch on its row, and `tst run` prints the note. A live sibling
+  worktree session keeps the policy it holds in memory after another
+  session's save, as two sessions in one folder always have; its copy
+  catches up when it saves, starts or is revived.

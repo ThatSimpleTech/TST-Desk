@@ -882,7 +882,9 @@ repository gets its own worktree, on a new branch `tst/wt/<first 8 of the sessio
 the main checkout's `HEAD`, so two sessions in one repository never edit the same files. The
 session works in the worktree's copy of the folder; the rail still groups it under the folder
 and shows its branch. A folder outside git, or a repository with no commit yet, works as
-before. If git cannot make the worktree, the session works in the folder and says why.
+before, and so does a folder the last commit does not have (new, untracked or ignored): a
+worktree's copy of it would be empty. If git cannot make the worktree, the session works in
+the folder; its `worktree_state` note says why, and `tst run` prints it.
 
 - **Uncommitted changes stay behind.** The worktree starts from `HEAD`. When the main checkout
   has uncommitted changes, the new chat says so and offers **Start in the main checkout
@@ -893,6 +895,16 @@ before. If git cannot make the worktree, the session works in the folder and say
   `.tst/worktree-include` names are copied: gitignore syntax, matched from the repository's
   top like `.git/info/exclude`, and only files git ignores (a `.env`, say). A workspace's
   `worktree.setup` command then runs once in the new worktree (§4.9).
+- **Trust covers the bytes, wherever they sit.** Trusting or declining the config on the card
+  in a worktree chat decides the project folder's file and every other worktree's copy too
+  when they hold the same bytes, and the other way round, so the next chat does not ask
+  again. A `worktree.setup` that was skipped for want of trust runs in that chat once you
+  trust it, unless a turn is running (then the next new chat runs it).
+- **Settings TST Desk saves.** When git does not track `.tst/config.yaml`, Always allow,
+  Revoke, a spend cap and import approvals are saved to the project folder's file, as without
+  worktrees, and the worktree's copy follows it: it is refreshed then, and when the session
+  starts or is revived. A tracked config is the branch's own file: a save there is a change
+  in the worktree, merged back or removed with the rest.
 - **Filters.** The checkout runs with git filter drivers off, as every other git call the
   daemon makes (TD-5157). A file a filter would rewrite (git-lfs) is checked out as git
   stores it; `worktree.setup: "git lfs pull"` fetches the real files.
@@ -905,10 +917,13 @@ before. If git cannot make the worktree, the session works in the folder and say
   run ends. A worktree with changes is never removed without your choice: deleting its
   session leaves it on disk on its branch, and a scheduled run's stays with its session.
 - **`tst run` too.** It opens an ordinary session, so its changes land in that session's
-  worktree; close it from the rail, or set `worktree.enabled: false` for a scripted folder.
+  worktree, and it says so on stderr in every output mode: the branch and the worktree's
+  path (`--output json` keeps its one object). Close it from the rail or `git merge` the
+  branch, or set `worktree.enabled: false` for a scripted folder.
 - **Delegated workers.** `delegate` with `worktree: true` gives the child its own worktree
-  from the parent's last commit. Its changes come back committed on its branch, which the
-  parent reviews and merges through the shell; the folder is removed.
+  from the parent's last commit. The child is told that worktree as its root, the one its
+  tools work in. Its changes come back committed on its branch, which the parent reviews and
+  merges through the shell; the folder is removed.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
@@ -2639,7 +2654,7 @@ When the file loosens something:
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `enabled` | bool | `true` | `false` keeps every session and scheduled job in this folder, with no worktree. Read even from a file you have not trusted: turning worktrees off loosens nothing. Settings' `worktree.enabled` (§2) turns them off everywhere. |
-| `setup` | string | `""` | A shell command run once in each new worktree, in the folder's copy (`npm ci`, `uv sync`). It runs in the background with secrets stripped from its environment, for up to `worktree.setup_timeout_s`; the session's first turn waits for it. The new chat shows that it is running, and its output's tail if it fails. Applies only from a trusted file (§4.8). |
+| `setup` | string | `""` | A shell command run once in each new worktree, in the folder's copy (`npm ci`, `uv sync`). It runs in the background with secrets stripped from its environment, for up to `worktree.setup_timeout_s`; the session's first turn waits for it. The new chat shows that it is running, and its output's tail if it fails. Applies only from a trusted file (§4.8); trusting the file on the card runs a skipped setup in that chat. |
 
 <!-- verify: workspace -->
 ```yaml

@@ -90,6 +90,24 @@ async def test_a_subfolder_workspace_works_in_the_same_subfolder_of_the_worktree
     assert (made.worktree.root / "main.py").is_file()
 
 
+async def test_a_folder_the_last_commit_lacks_gets_no_worktree_and_says_so(
+    tmp_path: Path,
+) -> None:
+    repo = make_repo(tmp_path / "repo")
+    (repo / "projects" / "app").mkdir(parents=True)
+    (repo / "projects" / "app" / "main.py").write_text("print(1)\n", encoding="utf-8")
+    (repo / "build").mkdir()  # ignored by the repo's .gitignore
+    (repo / "build" / "notes.txt").write_text("scratch\n", encoding="utf-8")
+
+    for folder in (repo / "projects" / "app", repo / "build"):
+        made = await open_worktree(str(folder), "new1", folder=tmp_path / "wts", trust=None)
+        # A worktree would hold none of the folder's files: work in the folder.
+        assert made.worktree is None
+        assert "not in the last commit" in made.note and str(folder) in made.note
+    assert not (tmp_path / "wts").exists()
+    assert git(repo, "branch", "--list", "tst/wt/*") == ""
+
+
 async def test_no_worktree_outside_git_or_before_the_first_commit(tmp_path: Path) -> None:
     plain = tmp_path / "plain"
     plain.mkdir()

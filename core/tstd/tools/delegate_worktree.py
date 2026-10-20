@@ -60,6 +60,15 @@ async def close_child_tree(
     return note
 
 
+def worktree_brief(parent_root: str, wt: SessionWorktree) -> str:
+    """The line that tells the child where it works, for paths the parent named."""
+    return (
+        f"You work in your own git worktree, {wt.root}: the workspace as of its last "
+        f"commit. A path under {parent_root} is the same path relative to {wt.root}; "
+        "use the relative form."
+    )
+
+
 def bind_child_root(parent: Session, child: Session, dispatcher: ToolDispatcher) -> None:
     """Point the child's root-bound tool pieces at its worktree.
 

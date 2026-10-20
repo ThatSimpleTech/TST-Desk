@@ -50,7 +50,7 @@ from .delegate_child import (
     child_preamble,
     resolve_kind,
 )
-from .delegate_worktree import bind_child_root, close_child_tree, open_child_tree
+from .delegate_worktree import bind_child_root, close_child_tree, open_child_tree, worktree_brief
 from .dispatch import ToolDispatcher
 from .registry import Tool, ToolRegistry
 from .results import HandlerFailed, HandlerOutput, HandlerRefusal
@@ -287,6 +287,10 @@ async def run_worker_child(
         if handler is not None:
             child_dispatcher.register_handler(tool.name, handler)
 
+    # TD-5126: a child in its own worktree is told that root, not the parent's.
+    assembler = runtime.assembler
+    if worktree is not None:
+        assembler = runtime.assembler.for_workspace(worktree.root)
     child = Session(parent.workspace_path if worktree is None else str(worktree.root))
     child.delegate_depth = 1
     child.parent_id = parent.id
@@ -318,7 +322,7 @@ async def run_worker_child(
         provider_factory=runtime.provider_factory,
         config=runtime.config,
         dispatcher=child_dispatcher,
-        assembler=runtime.assembler,
+        assembler=assembler,
         session_start=runtime.session_start,
         # The parent's count, so a consult in the child checks the
         # iteration cap the parent is under.
@@ -343,8 +347,10 @@ async def run_worker_child(
     record.add("task", task_text)
     tool_names = [t.name for t in child_registry.list_tools()]
     user_blob = f"{child_preamble(kind, tool_names)}\n\nTask:\n{task_text}"
+    if worktree is not None:
+        user_blob = f"{user_blob}\n\n{worktree_brief(parent.workspace_path, worktree)}"
 
-    assembled = await runtime.assembler.assemble(
+    assembled = await assembler.assemble(
         "worker",
         task=user_blob,
         matched_paths=set(parent.touched_paths),

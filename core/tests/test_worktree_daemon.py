@@ -13,6 +13,7 @@ from tests.test_delegate import _bind_runtime, _parent_dispatcher
 from tests.test_two_daemons import _Steps
 from tests.test_worktree import git, make_repo, on_disk
 from tstd.config import WorktreeConfig
+from tstd.context.prompt import WORKSPACE_ROOT_LABEL
 from tstd.daemon import Daemon
 from tstd.mock import MockProvider, Script
 from tstd.protocol import TurnComplete, WorktreeState
@@ -272,6 +273,60 @@ async def test_a_delegate_child_can_work_in_its_own_worktree(tmp_path: Path) -> 
     assert branch in out.text and "git merge" in out.text
     assert git(repo, "worktree", "list").count("\n") == 1  # the child's folder is gone
     assert out.transcript and branch in out.transcript[-1].text
+    # The child is told its own root, the one its tools are bound to.
+    child_root = tmp_path / "wts" / f"repo-{branch.removeprefix('tst/wt/')}"
+    system = str(mock.calls[0].messages[0].content)
+    assert f"{WORKSPACE_ROOT_LABEL} {child_root.resolve().as_posix()}" in system
+    assert f"{WORKSPACE_ROOT_LABEL} {repo.resolve().as_posix()}\n" not in system
+
+
+async def test_a_delegate_child_can_write_by_the_absolute_root_it_is_told(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path / "repo")
+    mock = MockProvider(sequences={"test-worker": [Script(kind="text", content="unused")]})
+    parent = _delegate_parent(repo, tmp_path, mock)
+
+    class _AbsoluteWriter(MockProvider):
+        async def chat_completion(self, request):  # type: ignore[no-untyped-def]
+            self.calls.append(request)
+            if len(self.calls) > 1:
+                return await MockProvider(
+                    default=Script(kind="text", content="Wrote.")
+                ).chat_completion(request)
+            system = str(request.messages[0].content)
+            root = system.split(WORKSPACE_ROOT_LABEL, 1)[1].split("\n", 1)[0].strip()
+            script = Script(
+                kind="tool_call",
+                tool_name="fs_write",
+                tool_arguments=json.dumps({"path": f"{root}/abs.txt", "content": "abs\n"}),
+            )
+            return await MockProvider(default=script).chat_completion(request)
+
+    writer = _AbsoluteWriter()
+    _bind_runtime(parent, _parent_dispatcher(repo), writer)
+
+    out = await handle_delegate(parent, "Write abs.txt", worktree=True)
+
+    branches = git(repo, "branch", "--list", "tst/wt/*").split()
+    assert len(branches) == 1, out.text
+    assert git(repo, "show", f"{branches[0]}:abs.txt") == "abs\n"
+    assert not (repo / "abs.txt").exists()
+
+
+async def test_a_delegate_worktree_for_a_folder_the_commit_lacks_is_refused(
+    tmp_path: Path,
+) -> None:
+    repo = make_repo(tmp_path / "repo")
+    app = repo / "app"
+    app.mkdir()
+    (app / "main.py").write_text("print(1)\n", encoding="utf-8")
+    parent = _delegate_parent(app, tmp_path, MockProvider())
+    try:
+        await handle_delegate(parent, "Write it", worktree=True)
+    except HandlerRefusal as e:
+        assert e.code == "delegate_worktree"
+        assert "not in the last commit" in e.message
+    else:
+        raise AssertionError("expected a refusal")
 
 
 async def test_a_delegate_child_that_changes_nothing_leaves_no_branch(tmp_path: Path) -> None:

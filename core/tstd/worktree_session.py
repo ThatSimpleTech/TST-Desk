@@ -11,7 +11,9 @@ and what closing one does to the session. The git calls are in
   the folder; ``project_path`` is still the folder, so the rail groups the
   session with its project and New chat opens the next one there.
 - The workspace config comes along when git does not track it, and a trust
-  decision made on those exact bytes in the main checkout carries over.
+  decision made on those exact bytes carries over (:mod:`tstd.worktree_config`).
+- A folder the last commit lacks (new, untracked or ignored) gets no
+  worktree: its copy there would be empty. The start screen says why.
   Ignored files ``.tst/worktree-include`` names are copied, and the
   config's ``worktree.setup`` runs once, only from a trusted file.
 - Closing keeps, merges back or removes the worktree; an unchanged one is
@@ -21,8 +23,6 @@ and what closing one does to the session. The git calls are in
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import shutil
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,8 +40,8 @@ from .tools.shell import sanitized_env
 from .workspace_trust import TrustStore, read_view
 from .worktree import (
     INCLUDE_FILE,
-    WORKSPACE_CONFIG,
     CloseAction,
+    RepoSpot,
     SessionWorktree,
     WorktreeChanges,
     WorktreeError,
@@ -57,6 +57,7 @@ from .worktree import (
     remove,
     run_setup,
 )
+from .worktree_config import carry_config
 
 log = get_logger("tstd.worktree")
 
@@ -143,18 +144,8 @@ def record_root(
     return (str(wt.root), wt) if wt is not None else (workspace_path, None)
 
 
-def _carry_config(project: str, root: Path, trust: TrustStore | None) -> None:
-    """Copy an untracked workspace config over, and the trust decided on its bytes."""
-    src, dst = Path(project) / WORKSPACE_CONFIG, root / WORKSPACE_CONFIG
-    if src.is_file() and not dst.exists():
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
-    if trust is None or not dst.is_file():
-        return
-    digest = hashlib.sha256(dst.read_bytes()).hexdigest()
-    state = trust.state_for(project, digest)
-    if state in ("trusted", "declined"):
-        trust.record(root, digest, "trusted" if state == "trusted" else "declined")
+def _not_in_head(spot: RepoSpot) -> str:
+    return f"{spot.prefix} is not in the last commit, so a worktree would not have its files."
 
 
 @dataclass
@@ -188,6 +179,10 @@ async def open_worktree(
         spot = None
     if spot is None:
         return Opened(None)
+    if not spot.in_head:
+        return Opened(
+            None, note=f"No worktree for this session: {_not_in_head(spot)} It works in {project}."
+        )
     path = folder_for(folder, spot.top, name)
     try:
         dirty = await main_dirty_count(spot.top, env)
@@ -209,7 +204,7 @@ async def open_worktree(
     )
     notes = [f"Working in a new worktree on {wt.branch}."]
     try:
-        await asyncio.to_thread(_carry_config, project, wt.root, trust)
+        wt.config_tracked = await asyncio.to_thread(carry_config, project, wt.root, trust)
         copied = await copy_included(spot.top, Path(project) / INCLUDE_FILE, path, env)
         if copied:
             notes.append(
@@ -310,6 +305,8 @@ async def open_child(parent: Session, child_id: str) -> SessionWorktree:
         spot = await find_repo(Path(parent.workspace_path), env)
         if spot is None:
             raise WorktreeError("this workspace is not a git repository with a commit")
+        if not spot.in_head:
+            raise WorktreeError(_not_in_head(spot))
         name = f"{parent.id[:8]}-{child_id[:8]}"
         path = folder_for(folder, spot.top, name)
         await add_worktree(spot, path, branch_for(name), env)
@@ -323,7 +320,9 @@ async def open_child(parent: Session, child_id: str) -> SessionWorktree:
         prefix=spot.prefix,
         base=spot.head,
     )
-    await asyncio.to_thread(_carry_config, parent.workspace_path, wt.root, parent.trust_store)
+    wt.config_tracked = await asyncio.to_thread(
+        carry_config, parent.workspace_path, wt.root, parent.trust_store
+    )
     return wt
 
 

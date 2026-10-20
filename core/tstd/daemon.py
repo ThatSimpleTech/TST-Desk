@@ -514,6 +514,7 @@ from .workspace_trust import (
     trusted_imports,
 )
 from .worktree import SessionWorktree, WorktreeError
+from .worktree_config import config_home, refresh_config, same_config_folders
 from .worktree_session import (
     WorktreeHasChanges,
     open_worktree,
@@ -521,6 +522,7 @@ from .worktree_session import (
     settle,
     start_setup,
     state_event,
+    workspace_settings,
     worktree_folder,
 )
 from .worktree_session import close as close_worktree
@@ -2891,19 +2893,22 @@ class Daemon:
                     f"Session {msg.session_id!r} not found",
                 )
             ws = found.workspace_path
+            # TD-5126: a worktree's untracked config is the project's file.
+            home = config_home(found)
             try:
                 after = self.workspace_trust.write_through(
-                    ws, lambda: save_spend_cap(ws, msg.spend_usd), owns=("caps.spend_usd",)
+                    home, lambda: save_spend_cap(home, msg.spend_usd), owns=("caps.spend_usd",)
                 )
             except UntrustedConfigError as e:
                 return build_error("workspace_config_untrusted", str(e), session_id=found.id)
             except ConfigError as e:
                 return build_error("bad_request", str(e), session_id=found.id)
+            await self._follow_project_config(found)
             if not after.applies:
                 # The budget made a refused section valid and exposed
                 # loosening the card never showed (TD-5113): the file now
                 # waits on the card, so its sessions drop to the defaults.
-                await self._reapply_workspace_config(ws)
+                await self._reapply_workspace_configs(home, ws)
                 return None
             error = reload_session_boundary(found, ws)
             if error is not None:
@@ -3037,8 +3042,10 @@ class Daemon:
             # it is never left parked with no card to answer it.
             saved: PolicyConfig | None = None
             gate_error: str | None = None
+            # TD-5126: a worktree's untracked config is the project's file.
+            home = config_home(found)
             try:
-                before = self.workspace_trust.before_write(found.workspace_path)
+                before = self.workspace_trust.before_write(home)
                 # TD-5149: the file as it is now, not the copy the session
                 # opened with. Nothing reloads that copy when the user edits
                 # .tst/config.yaml by hand, and saving it would write over
@@ -3047,7 +3054,7 @@ class Daemon:
             except UntrustedConfigError:
                 gate_error = build_error(
                     "workspace_config_untrusted",
-                    f"Approved once. {workspace_config_path(found.workspace_path)} loosens "
+                    f"Approved once. {workspace_config_path(home)} loosens "
                     "settings you have not trusted, so the rule was not saved. Trust the "
                     "workspace config to save rules into it.",
                     session_id=found.id,
@@ -3074,7 +3081,7 @@ class Daemon:
                 return build_error(
                     "policy_rule_stricter",
                     f"{'Approved once' if allowed else 'Denied'}. The rule {named} in "
-                    f"{workspace_config_path(found.workspace_path)} covers this call, so "
+                    f"{workspace_config_path(home)} covers this call, so "
                     "Always allow did not replace it. Revoke that rule in Settings → Policy "
                     "if you want this call to run without asking.",
                     session_id=found.id,
@@ -3084,19 +3091,18 @@ class Daemon:
                 return gate_error
             saved = add_rule(saved, rule)
             try:
-                save_policy(found.workspace_path, saved)
-                after = self.workspace_trust.after_write(
-                    found.workspace_path, before, owns=("policy.rules",)
-                )
+                save_policy(home, saved)
+                after = self.workspace_trust.after_write(home, before, owns=("policy.rules",))
             except ConfigError as e:
                 return build_error("policy_save_failed", f"Failed to save policy: {e}")
+            await self._follow_project_config(found)
             # The session runs under what was just saved, rules added by
             # hand included, in the object the dispatcher already holds.
             adopt_policy(found.policy, saved)
             # Resolve the parked call as approved so the loop proceeds.
             found.resolve_approval(msg.tool_call_id, True)
             if not after.applies:
-                await self._reapply_workspace_config(found.workspace_path)
+                await self._reapply_workspace_configs(home, found.workspace_path)
             return None
 
         if isinstance(msg, ListPolicyRules):
@@ -3118,8 +3124,11 @@ class Daemon:
                     "session_not_found",
                     f"Session {msg.session_id!r} not found",
                 )
+            # TD-5126: a worktree's untracked config is the project's file,
+            # so a revoke reaches every later session, not only this copy.
+            home = config_home(found)
             try:
-                before = self.workspace_trust.before_write(found.workspace_path)
+                before = self.workspace_trust.before_write(home)
                 # TD-5149: revoke from the file as it is now, so rules added
                 # by hand since the session opened are kept.
                 saved = policy_from_mapping(before.path, before.effective)
@@ -3141,15 +3150,14 @@ class Daemon:
                     rules=[rule_summary(r) for r in found.policy.rules],
                 ).model_dump_json()
             try:
-                save_policy(found.workspace_path, saved)
-                after = self.workspace_trust.after_write(
-                    found.workspace_path, before, owns=("policy.rules",)
-                )
+                save_policy(home, saved)
+                after = self.workspace_trust.after_write(home, before, owns=("policy.rules",))
             except ConfigError as e:
                 return build_error("policy_save_failed", f"Failed to save policy: {e}")
+            await self._follow_project_config(found)
             adopt_policy(found.policy, saved)
             if not after.applies:
-                await self._reapply_workspace_config(found.workspace_path)
+                await self._reapply_workspace_configs(home, found.workspace_path)
             return PolicyRules(
                 seq=1,
                 rules=[rule_summary(r) for r in found.policy.rules],
@@ -4007,6 +4015,7 @@ class Daemon:
 
         # TD-5113: every config load below goes through the trust gate.
         sess.trust_store = self.workspace_trust
+        await self._follow_project_config(sess)
         error = reload_session_boundary(sess, sess.workspace_path)
         if error is not None:
             log.warning(
@@ -4258,12 +4267,40 @@ class Daemon:
             )
         decision: Literal["trusted", "declined"] = "trusted" if msg.trust else "declined"
         self.workspace_trust.record(workspace, view.sha256, decision)
+        # TD-5126: a worktree's config is the project's file or a checkout
+        # of it. The decision covers these bytes wherever they sit, so the
+        # next session, in the folder or a new worktree, does not ask again.
+        twins = await asyncio.to_thread(
+            same_config_folders,
+            found.project_path,
+            workspace,
+            view.sha256,
+            self._stored_worktrees(),
+        )
+        for folder in twins:
+            self.workspace_trust.record(folder, view.sha256, decision)
         log.info(
             "workspace config trust decided",
-            extra={"extra_fields": {"workspace_path": workspace, "decision": decision}},
+            extra={
+                "extra_fields": {
+                    "workspace_path": workspace,
+                    "decision": decision,
+                    "also": len(twins),
+                }
+            },
         )
-        await self._reapply_workspace_config(workspace)
+        await self._reapply_workspace_configs(workspace, *twins)
+        if decision == "trusted":
+            await self._run_held_setup(found)
         return None
+
+    async def _reapply_workspace_configs(self, *workspaces: str) -> None:
+        """:meth:`_reapply_workspace_config` once per distinct folder."""
+        done: list[str] = []
+        for workspace in workspaces:
+            if not any(same_workspace(workspace, d) for d in done):
+                done.append(workspace)
+                await self._reapply_workspace_config(workspace)
 
     async def _reapply_workspace_config(self, workspace: str) -> None:
         """Every live session on *workspace* re-reads its config and re-announces its wall."""
@@ -4539,6 +4576,48 @@ class Daemon:
             return live.worktree
         record = self._session_store.get(session_id)
         return SessionWorktree.from_record(record.worktree) if record is not None else None
+
+    def _stored_worktrees(self) -> list[SessionWorktree]:
+        """Every session's worktree, as the store keeps them (TD-5126)."""
+        found = (SessionWorktree.from_record(r.worktree) for r in self._session_store.records())
+        return [wt for wt in found if wt is not None]
+
+    async def _follow_project_config(self, sess: Session) -> None:
+        """Bring a worktree's copy of an untracked config up to the project's file."""
+        wt = sess.worktree
+        if wt is not None and not wt.config_tracked:
+            await asyncio.to_thread(refresh_config, wt, self.workspace_trust)
+
+    async def _run_held_setup(self, sess: Session) -> None:
+        """Run the ``worktree.setup`` that waited for the trust just given (TD-5126).
+
+        Not while a turn runs: the command would change files under the
+        turn's tools. The next new chat runs it then.
+        """
+        wt = sess.worktree
+        if wt is None or wt.setup != "skipped":
+            return
+        settings = await asyncio.to_thread(
+            workspace_settings, sess.workspace_path, self.workspace_trust
+        )
+        if not settings.setup:
+            return
+        if sess.turn_in_flight:
+            wt.setup_note = "worktree.setup is trusted now; it runs in the next new chat."
+            await self._session_store.set_worktree(sess.id, wt.to_record())
+            await sess.event_log.add(state_event(sess))
+            return
+        wt.setup, wt.setup_note = "running", ""
+        await self._session_store.set_worktree(sess.id, wt.to_record())
+        await sess.event_log.add(state_event(sess))
+        self._tasks.append(
+            start_setup(
+                sess,
+                settings.setup,
+                float(self.config.worktree.setup_timeout_s),
+                self._worktree_setup_done,
+            )
+        )
 
     async def _worktree_setup_done(self, sess: Session) -> None:
         """Persist and announce a finished ``worktree.setup`` (TD-5126)."""

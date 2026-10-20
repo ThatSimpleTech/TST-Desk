@@ -135,7 +135,10 @@ terminal is read only for `-`). `--output json` prints one object,
 `{session_id, status, reply, cost, error}`, where `cost` is
 `turn_complete.cost` and `error` is `null` or `{code, message}`;
 `--output ndjson` prints each of the session's events as received, one per
-line. Errors and refusals go to stderr in every mode. Neither machine mode
+line. Errors and refusals go to stderr in every mode, and so does a note when
+the session works in a git worktree (TD-5126): its branch and path, from the
+session's `worktree_state` event, or for `--session` and `--continue` from the
+row's `worktree`. Neither machine mode
 prompts: an `approval_request` ends the run and the turn waits for the
 window. Exit codes:
 
@@ -335,9 +338,13 @@ so every tool, the wall, the checkpointer and the prompt assembler work there un
 `Session.project_path` and the store row's `workspace_path` stay the folder the user opened:
 the rail groups by it, `new_session` anchors on it, and Schedule this chat names it.
 
-The workspace config comes along when git does not track it, with the trust decided on those
-bytes; `.tst/worktree-include` copies ignored files; a trusted `worktree.setup` runs once in
-the background and the first turn waits for it. `close_worktree` keeps, merges back or
+A folder `HEAD` does not have (new, untracked or ignored) gets no worktree: its copy would be
+empty. The workspace config comes along when git does not track it, with the trust decided on
+those bytes; `.tst/worktree-include` copies ignored files; a trusted `worktree.setup` runs once
+in the background and the first turn waits for it. `worktree_config` keeps an untracked
+config's copy following the project's file: TST Desk's own saves (Always allow, Revoke, a
+spend cap, import approvals) go to the project's file and refresh the copy, and a trust
+decision covers the same bytes in the project folder and every stored worktree. `close_worktree` keeps, merges back or
 removes the worktree, then moves the session back to its folder the way `move_session` does.
 An unchanged worktree is removed on close, on delete, and when a scheduled run ends. A
 delegate child asked for `worktree: true` gets its own from the parent's last commit; its
@@ -507,7 +514,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `list_policy_rules` | yes | List the workspace's saved policy rules. |
 | `revoke_policy_rule` | yes | Remove one saved rule, identified by `(tool, args)`. |
 | `set_spend_cap` | yes | Set or clear the workspace's session spend budget (`caps.spend_usd` in `.tst/config.yaml`). Null removes it and the built-in $25 pause applies; a number replaces that pause. Acked with `boundary_update`. |
-| `trust_workspace_config` | yes | Trust or decline the workspace's `.tst/config.yaml` when it loosens anything, naming the `sha256` the card showed (TD-5113). A file that changed since is refused with `workspace_config_changed` and re-announced. The decision is stored per workspace in the data dir and applies to every live session there; acked with their `boundary_update`. Only this computer's own window may send it (`loopback_only` otherwise). |
+| `trust_workspace_config` | yes | Trust or decline the workspace's `.tst/config.yaml` when it loosens anything, naming the `sha256` the card showed (TD-5113). A file that changed since is refused with `workspace_config_changed` and re-announced. The decision is stored per workspace in the data dir and applies to every live session there; acked with their `boundary_update`. It also covers the same bytes in the session's project folder and its worktrees, and a trust runs a `worktree.setup` it was holding in that session (TD-5126). Only this computer's own window may send it (`loopback_only` otherwise). |
 | `set_skip_all_approvals` | — | Turn skip-all (dangerously skip permissions) on or off. Machine-wide; every ask including shell and Class C runs as auto; caps do not pause; `never` still refuses. Acked with `setup_state`. |
 | `set_load_global_memory` | — | Turn global memory on or off. Machine-wide; off never reads `~/.tstdesk/memory/`. Acked with `setup_state` (TD-2603). |
 | `set_coworker` | — | Turn coworker mode on or off. Machine-wide; persists `{user_data_dir}/coworker.yaml`. Acked with `setup_state` (TD-2905). |
