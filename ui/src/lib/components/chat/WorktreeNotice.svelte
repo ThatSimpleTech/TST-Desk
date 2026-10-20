@@ -16,7 +16,14 @@
 	<p class="where"><Icon name="branch" size={13} /><span>{notice.where}</span></p>
 	{#if notice.dirty !== null}
 		<p class="dirty">{notice.dirty}</p>
-		<button class="chip" type="button" onclick={() => startInMainCheckout(sessionId)}>
+		<!-- The daemon refuses to close a worktree while its setup runs. -->
+		<button
+			class="chip"
+			type="button"
+			disabled={worktree.setup === "running"}
+			title={worktree.setup === "running" ? "Available once the setup finishes." : undefined}
+			onclick={() => startInMainCheckout(sessionId)}
+		>
 			Start in the main checkout instead
 		</button>
 	{/if}
@@ -64,7 +71,12 @@
 		cursor: pointer;
 	}
 
-	.chip:hover {
+	.chip:disabled {
+		cursor: default;
+		opacity: 0.6;
+	}
+
+	.chip:hover:not(:disabled) {
 		color: var(--color-ink);
 		background: var(--color-lifted);
 	}

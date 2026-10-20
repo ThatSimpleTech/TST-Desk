@@ -244,6 +244,16 @@ describe("the start screen", () => {
 		expect(mocks.sent.at(-1)).toEqual({ type: "close_worktree", session_id: "sess-1", action: "remove" });
 	});
 
+	it("waits for the setup before it offers the main checkout", async () => {
+		app = mount(WorktreeNotice, {
+			target: document.body,
+			props: { sessionId: "sess-1", worktree: { ...WT, main_dirty: 1, setup: "running" } },
+		});
+		await tick();
+		expect(button("Start in the main checkout instead").disabled).toBe(true);
+		expect(document.body.textContent).toContain("Setting up the worktree");
+	});
+
 	it("offers nothing to undo when the checkout was clean", async () => {
 		app = mount(WorktreeNotice, {
 			target: document.body,
