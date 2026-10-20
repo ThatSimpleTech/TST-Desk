@@ -1478,6 +1478,25 @@
     "model": null,
     "fallback": 0
   },
+  "task_list": {
+    "type": "task_list",
+    "seq": 19,
+    "session_id": "sess-1",
+    "items": [
+      {
+        "content": "Read the failing test",
+        "status": "done"
+      },
+      {
+        "content": "Fix the date parser",
+        "status": "in_progress"
+      },
+      {
+        "content": "Run the suite",
+        "status": "pending"
+      }
+    ]
+  },
   "tier_switched": {
     "type": "tier_switched",
     "seq": 19,

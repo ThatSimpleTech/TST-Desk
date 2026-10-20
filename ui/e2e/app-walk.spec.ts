@@ -288,6 +288,43 @@ test("sends and removes messages a restart left held", async () => {
 	await expect(chat.getByText(second, { exact: true })).toHaveCount(0);
 });
 
+/**
+ * TD-5122: the held session also kept the task list its agent made. The
+ * strip above the composer shows it, on a phone's width too, where the
+ * chat is the only pane; the Plan pane shows the whole list.
+ */
+test("shows the agent's task list in the chat and the Plan pane", async () => {
+	const chat = page.getByRole("region", { name: "Chat pane" });
+	const strip = chat.getByRole("region", { name: "Task progress" });
+	await expect(strip).toContainText("Tasks · 1 of 3 done");
+	await expect(strip).toContainText(info.tasks[1]);
+	await snap("tasks", strip);
+
+	const toggle = strip.getByRole("button", { name: "Task list" });
+	await toggle.click();
+	await expect(toggle).toHaveAttribute("aria-expanded", "true");
+	await expect(strip.getByRole("listitem")).toHaveCount(info.tasks.length);
+	await toggle.click();
+	await expect(strip.getByRole("listitem")).toHaveCount(0);
+
+	const more = page
+		.getByRole("tablist", { name: "Right pane views" })
+		.locator("button[aria-haspopup='menu']");
+	await more.click();
+	await page.getByRole("menuitemradio", { name: "Plan", exact: true }).click();
+	const plan = page.getByRole("region", { name: "Task list" });
+	await expect(plan).toContainText("Tasks · 1 of 3 done");
+	await expect(plan.getByRole("listitem")).toHaveCount(info.tasks.length);
+	for (const task of info.tasks) await expect(plan).toContainText(task);
+
+	await page.setViewportSize({ width: 375, height: 812 });
+	await expect(plan).toBeHidden();
+	await expect(strip).toBeVisible();
+	await expect(strip).toContainText(info.tasks[1]);
+	await page.setViewportSize({ width: 1280, height: 800 });
+	await expect(plan).toBeVisible();
+});
+
 test("runs the command palette actions that stay in this window", async () => {
 	await openPalette(page);
 	const palette = page.getByRole("dialog", { name: "Command palette" });

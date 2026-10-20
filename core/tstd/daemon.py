@@ -487,6 +487,7 @@ from .speech import transcribe as transcribe_speech
 from .steering_proposals import decide as decide_steering
 from .steering_proposals import expire_restored as expire_restored_steering
 from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
+from .task_list import keep_task_list_visible, restore_task_list
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
 from .turn_seal import (
     INTERRUPTED_BY_RESTART,
@@ -2465,6 +2466,7 @@ class Daemon:
                 )
             if result.trimmed:
                 await event_log.drop_before(result.earliest_seq)
+                await self._keep_task_list_on_disk(session_id, event_log)
         if isinstance(event, SessionStateEvent):
             await self._session_store.update_state(event.session_id, event.state)
         elif isinstance(event, UserTurn):
@@ -2495,6 +2497,21 @@ class Daemon:
         # subscription, and replay reads from persist storage instead.
         if isinstance(event, CuSession) and not event.active:
             await self._maybe_broadcast_cu_focus(event.session_id)
+
+    async def _keep_task_list_on_disk(self, session_id: str, event_log: SessionEventLog) -> None:
+        """Log the task list again when rotation drops its last event (TD-5122).
+
+        The newest ``task_list`` event is the list's only copy on disk: a
+        revive rebuilds the list from it, and the next compaction carries
+        that list into the model's context. One long step (streamed
+        deltas, shell output) can rotate it out with a window attached or
+        not, so it goes back in as soon as it falls out. The re-logged
+        event lands in the window and stops here.
+        """
+        session = self.session_registry.get(session_id)
+        if session is None or session.event_log is not event_log:
+            return
+        await keep_task_list_visible(session)
 
     async def _maybe_broadcast_cu_focus(self, closed_session_id: str) -> None:
         """Broadcast ``focus_window`` when no session still actuates (TD-4832).
@@ -3800,6 +3817,8 @@ class Daemon:
         # TD-5155: messages accepted before the stop come back held.
         rows = await asyncio.to_thread(self._session_persist.load_queue, session_id)
         await restore_queue(sess, rows, loaded.events)
+        # TD-5122: the task list is the newest one the log kept.
+        restore_task_list(sess, loaded.events)
         # TD-5140: open steering proposals lived in the old process's memory.
         await expire_restored_steering(sess, loaded.events)
         await self._seal_cut_review(sess, loaded.events)
@@ -4400,6 +4419,8 @@ class Daemon:
         # TD-5155: held messages whose list the log window trimmed away
         # are logged again, so this replay shows them.
         await keep_held_visible(session)
+        # TD-5122: so is the task list, which the Plan pane shows.
+        await keep_task_list_visible(session)
         # Replay from from_seq. A rotated prefix is a typed notice, then
         # the same gap/dup rules over whatever is still in the window.
         earliest = session.event_log.earliest_seq

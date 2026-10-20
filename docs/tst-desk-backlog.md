@@ -10809,6 +10809,49 @@ refused like an unattended run. Tests: `core/tests/test_ask_user.py`,
 (`tools/ask_user.denies_every_ask`), so it needs no change when TD-5118
 merges; a later tidy-up may read the attribute directly.
 
+### TD-5122 — Task list tool for the native loop
+**Size:** 5 · **Depends on:** none · Gap audit 2026-10-14
+
+Only the Grok engine fed the Plan pane. Local models drift on multi-step
+work, and an explicit list that survives compaction helps them most.
+Claude Code and Cowork both show a live task list.
+
+**Acceptance criteria:**
+- [x] A `task_list` tool creates and updates items (pending, in progress,
+      done).
+- [x] The Plan pane shows it for the native engine, the same way it shows
+      the Grok engine's plan (ui/src/lib/components/PlanPane.svelte).
+- [x] The list is re-injected after compaction.
+- [x] It shows on the phone.
+
+Done (2026-10-20): `core/tstd/tools/task_list.py` (the tool) and
+`core/tstd/task_list.py` (the session's list). Each call sends the whole
+list (`tasks`, each `content` and a `status` of `pending`, `in_progress`
+or `done`; up to 30 items of 200 characters) and replaces the last one;
+an empty list clears it. The classifier's `task-list` rule makes the
+builtin Class A, so no card appears; a policy rule still wins. Each
+change logs a `task_list` event with the whole list. The Plan pane shows
+the focused chat's list with its progress (`Tasks · 1 of 3 done`) ahead
+of Grok's plan, and a new list opens the Plan tab. A strip above the
+composer shows the progress and the item in progress and opens to every
+item; on a phone the chat is the one pane, so that is where it shows.
+The strip goes away once every item is done. Every compaction (budget,
+`/compact`, Summarize from here) ends its summary with the list under
+`[Kept across compaction]`, and a later one carries only the newest.
+A restart rebuilds the list from the log; when the log window rotates
+the last `task_list` event out (a long step's deltas or shell output),
+the daemon logs it again at once, attached window or not, and an attach
+also logs it again if the log window lost it. Tests:
+`core/tests/test_task_list.py` (tool, replace, refusals, Class A with no
+card, policy override, the rule's shape and order, the summary carry in
+both compaction paths, a loop run whose request after compaction carries
+the list after the call that made it was dropped, revive, attach, and a
+long step that rotates the list out of a 5-event window: it is back on
+disk, a restart finds it and the next compaction still carries it), `ui/src/lib/task-list.test.ts`
+(store, Plan pane, strip), `ui/src/lib/protocol.test.ts` (fixture), and
+the UI walk (the strip at 375 px and the Plan pane at 1280 px on the
+seeded held session; census gains `tasks`). See DECISIONS.md.
+
 ---
 
 # Epic E52 — Files to the user

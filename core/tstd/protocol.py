@@ -2269,6 +2269,28 @@ class ContextUsage(DaemonEvent):
     fallback: int = Field(default=0, ge=0)
 
 
+TaskStatus = Literal["pending", "in_progress", "done"]
+
+
+class TaskListItem(BaseModel):
+    """One item on the native loop's task list (TD-5122)."""
+
+    content: str = Field(min_length=1, max_length=200)
+    status: TaskStatus = "pending"
+
+
+class TaskList(DaemonEvent):
+    """The session's whole task list, after a ``task_list`` call (TD-5122).
+
+    The native loop's counterpart of ``grok_plan``. Each event carries the
+    full list, so the newest one is the truth; an empty list clears it.
+    """
+
+    type: Literal["task_list"] = "task_list"
+    session_id: str
+    items: list[TaskListItem] = Field(default_factory=list, max_length=30)
+
+
 class SteeringReloaded(DaemonEvent):
     """Emitted when steering files are re-resolved after a detected change.
 
@@ -3887,6 +3909,7 @@ DaemonEventT = Annotated[
     | TierState
     | ContextCompacted
     | ContextUsage
+    | TaskList
     | SteeringReloaded
     | RuleActivated
     | TierSwitched
@@ -4101,6 +4124,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "tier_state",
         "context_compacted",
         "context_usage",
+        "task_list",
         "steering_reloaded",
         "rule_activated",
         "tier_switched",

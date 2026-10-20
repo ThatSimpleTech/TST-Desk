@@ -32,6 +32,7 @@ the *obvious* cases — the ones that must never reach the model:
   every other shell command → B (TD-4805)
 - an MCP tool with no declared path or host metadata → B, never A
   (TD-4402; even if ``side_effect_class`` was reset to ``auto``)
+- the builtin ``task_list``, which touches no file or host → A (TD-5122)
 
 Anything the table cannot decide is left unclassified so the worker-tier
 classifier (TD-703) can handle it, defaulting to **B** — fail toward
@@ -776,6 +777,26 @@ def _rule_steering_proposal(req: DecisionRequest, boundary: Boundary) -> bool:
     )
 
 
+def _rule_task_list(req: DecisionRequest, _boundary: Boundary) -> bool:
+    """``task_list`` changes only the session's own list (TD-5122).
+
+    No path, no host, no write: the list is daemon state shown in the
+    Plan pane, as a ``desktop-capture`` screenshot is daemon state. Only
+    the builtin matches: an MCP or plugin tool of that name carries
+    provenance and gets no grant, and any path or host on the request
+    means it is not the builtin's shape.
+    """
+    return (
+        req.tool_name == "task_list"
+        and req.provenance is None
+        and req.side_effect_class == "auto"
+        and not req.is_mutation
+        and not req.reads
+        and not req.writes
+        and not req.hosts
+    )
+
+
 def _rule_ask_user(req: DecisionRequest, _boundary: Boundary) -> bool:
     """``ask_user`` asks the person a question and changes nothing (TD-5121).
 
@@ -998,6 +1019,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="propose_steering_edit parks a diff for the user; writes nothing",
         decision_class=DecisionClass.A,
         match=_rule_steering_proposal,
+    ),
+    Rule(
+        id="task-list",
+        description="task_list updates the session's own task list; touches no file or host",
+        decision_class=DecisionClass.A,
+        match=_rule_task_list,
     ),
     Rule(
         id="ask-user",

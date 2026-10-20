@@ -237,7 +237,8 @@ below), headless runs via `tst run`, computer-use — a screenshot and clicks th
 same classifier, behind a kill switch — on macOS, Windows, and Linux X11 via `tst-cu-mcp` (browser
 path on any OS), the agent sends files to the chat (`send_file`) as cards you can open, save,
 or download to the paired phone, where an APK opens the installer, steering edits the agent
-proposes (`propose_steering_edit`) as a diff that only your Accept writes,
+proposes (`propose_steering_edit`) as a diff that only your Accept writes, a task list the
+agent keeps (`task_list`) in the Plan pane and above the composer that outlives compaction,
 questions the agent asks you (`ask_user`) as buttons to tap on the window or the phone, remote attach over
 Tailscale (never `0.0.0.0`) with Slack/ntfy notify
 and the scheduler rail, the `vllm` preset and UI-TARS grounding for local pixel loops,

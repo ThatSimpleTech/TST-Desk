@@ -63,6 +63,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "tier_state",
   "context_compacted",
   "context_usage",
+  "task_list", // TD-5122
   "steering_reloaded",
   "rule_activated",
   "tier_switched",

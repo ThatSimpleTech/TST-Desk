@@ -2294,6 +2294,22 @@ export interface ContextUsage extends DaemonEvent {
   fallback?: number;
 }
 
+/** A task list item's state (TD-5122). */
+export type TaskStatus = "pending" | "in_progress" | "done";
+
+export interface TaskListItem {
+  content: string;
+  status: TaskStatus;
+}
+
+/** The session's whole task list after the native loop's `task_list` tool
+ *  changed it (TD-5122). The newest one is the list; empty clears it. */
+export interface TaskList extends DaemonEvent {
+  type: "task_list";
+  session_id: string;
+  items: TaskListItem[];
+}
+
 export interface TierSwitched extends DaemonEvent {
   type: "tier_switched";
   session_id: string;
@@ -2592,6 +2608,7 @@ export type DaemonEventUnion =
   | TierState
   | ContextCompacted
   | ContextUsage
+  | TaskList
   | SteeringReloaded
   | RuleActivated
   | TierSwitched

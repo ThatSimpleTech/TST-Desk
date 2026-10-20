@@ -32,11 +32,13 @@ from .protocol import (
     ConversationReset,
     DaemonEvent,
     RunPermissions,
+    TaskListItem,
     ToolResult,
 )
 from .protocol import SessionState as SessionStateEvent
 from .provider import ChatMessage
 from .questions import PendingQuestion, resolve_all
+from .task_list import carry_text
 from .workspace_trust import TrustStore, WorkspaceConfigView
 
 if TYPE_CHECKING:
@@ -324,6 +326,9 @@ class Session:
         # TD-5109: how the loop last measured the prompt, so a compaction
         # asked for between turns counts tokens as the next request will.
         self.context_meter: ContextMeter | None = None
+        # TD-5122: the model's task list (``task_list`` tool). Carried into
+        # every compaction summary; rebuilt from the log on revive.
+        self.task_list: list[TaskListItem] = []
         # user_index -> sibling snapshots of conversation
         self._branches: dict[int, list[list[ChatMessage]]] = {}
         self._branch_cursor: dict[int, int] = {}
@@ -1301,6 +1306,7 @@ class Session:
             meter.tools,
             guidance=guidance,
             from_position=position,
+            carry=carry_text(self.task_list),
         )
         if result is None:
             return "nothing_to_compact"

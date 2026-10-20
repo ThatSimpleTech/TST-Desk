@@ -16546,3 +16546,80 @@ single-select question take both a pick and an "Other" exclusive choice
 the tool result (hashed in the audit DB); answering from skip-all or in an
 autonomy run with the recommended option (that is the model's own choice,
 which it can make without asking).
+
+## 2026-10-20 — TD-5122: a `task_list` tool for the native loop (Class B)
+
+**Context.** Only the Grok engine fed the Plan pane (ACP `plan` updates
+become `grok_plan`). Local models drift on multi-step work, and the gap
+audit asked for a task list the native loop keeps, shown in the Plan pane
+and on the phone, that survives compaction. The story names the tool and
+its three states; the call shape, the event, where the list lives and how
+it is re-injected were left open. Adam approved the story as written
+(gap audit decisions, 2026-10-14); no Class C question came up.
+
+**Decision.**
+
+- **One tool, whole-list writes.** `task_list({"tasks": [{"content",
+  "status"}]})` replaces the list every call; creating, adding, reordering
+  and ticking an item are the same call, and an empty list clears it. This
+  is the shape of Codex's `update_plan` and Claude Code's `TodoWrite`, and
+  the simplest for a small model to follow: no ids to keep in step and no
+  partial state if a call is cut off. `status` is a strict enum
+  (`pending`, `in_progress`, `done`, the story's words); the dispatcher's
+  schema check already answers `completed` with the allowed values, so no
+  alias table. Caps: 30 items, 200 characters each, one line each
+  (whitespace collapsed). "One item in progress" is guidance in the
+  description, not a refusal: refusing makes a weak model loop.
+- **A new `task_list` event, not `grok_plan`.** The event carries the whole
+  list (`items`, each `content` + `status`) and the newest one is the
+  truth, so a window that attaches late, a phone and a hub-forwarded
+  bridged session all read the same thing with no merge. `grok_plan` stays
+  Grok's: its entries are free-form ACP statuses with markdown and an
+  approve verb a task list does not have. The Plan pane shows the native
+  list first when the focused session has one (with no Approve button),
+  then Grok's plan. A new list (empty → non-empty) for the focused chat
+  opens the Plan tab, as a Grok plan does; later updates leave the tab
+  where the user put it.
+- **Class A by its own rule (`task-list`).** The list is daemon state,
+  like a capture screenshot: no path, no host, no write. Only the builtin
+  shape matches (no provenance, `auto`, no reads/writes/hosts), placed
+  after every C rule and before the ask floor. A policy rule still wins.
+  Without it every update went to the worker tier and defaulted to B: an
+  approval card per tick.
+- **Re-injection rides in the compaction summary.** `maybe_compact` and
+  `compact_on_request` take `carry`; the summary ends with
+  `[Kept across compaction]` and the list as it stands, after the 2,000
+  character cap so the cap never cuts it. A later compaction strips the old
+  carry when it folds that summary in and carries the newest list, so
+  there is never more than one copy. Rejected: putting the list in the
+  system prompt every turn (changes the cache prefix on every tick, and
+  TD-5142's one-system-message wire already merges the summary there
+  after a compaction); a separate system message (folded as stale text by
+  the next compaction).
+- **Where the list lives.** On the session (`Session.task_list`), rebuilt
+  on revive from the newest `task_list` event in the persisted log, and
+  logged again on attach when the log window no longer has it (the
+  TD-5155 held-messages pattern), which also puts it back on disk. That
+  newest event is the list's only copy on disk, and every streamed delta
+  and shell line is an event, so one long step can rotate it out of the
+  window whether a window is attached or not. The daemon therefore logs
+  the list again as soon as an append's rotation drops it (in the same
+  subscriber that writes the event), so the window always holds it. A
+  lost list would be worse than a stale Plan pane: the next compaction
+  strips the old summary's carry and has nothing to carry, so the model
+  loses its plan. No separate file. Known gaps, accepted: a crash between
+  the rotating write and the re-log, or lowering `log_max_events` while
+  the session is stopped (the load windows the file), can still drop it;
+  the agent's next `task_list` call writes it again. A fork (edit a
+  message) keeps the session's list; the model rewrites it if the branch
+  changes the plan.
+- **The phone's view is a strip above the composer.** On a narrow window
+  the chat is the one pane (TD-3701), so the Plan pane is not on screen.
+  The strip shows "Tasks · 2 of 5 done" and the item in progress; tapping
+  it lists every item. It shows on every width (the right pane may be on
+  another tab) and goes away once every item is done; the Plan pane keeps
+  the finished list. The UI walk seeds its held session with a list and
+  checks the strip at 375 px and the Plan pane at 1280 px.
+- **Native only, parent only.** Delegated worker and research children
+  keep their fixed tool lists without `task_list`; the plan is the
+  parent's. The Grok engine keeps its own plan.
