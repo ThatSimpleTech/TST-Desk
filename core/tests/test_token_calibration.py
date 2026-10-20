@@ -282,7 +282,12 @@ async def _run(
 
 
 _READS = 5
-_READ_CHARS = 20_000
+# Sized so the whole turn sits well inside the 41k test window by the raw
+# estimate (about 27k tokens with today's ~41 tool definitions) yet over it
+# at the 1.5 calibrated ratio. 20k chars a read left no room: one more
+# builtin tool (TD-5121 ask_user beside TD-5119 consult) pushed the raw
+# estimate past the budget and the control turn elided too.
+_READ_CHARS = 16_000
 
 
 def _reads(workspace: Path) -> tuple[tuple[str, str], ...]:
