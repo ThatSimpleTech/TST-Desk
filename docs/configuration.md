@@ -2417,7 +2417,10 @@ not its name. The tier that reads the result decides what comes back:
 | `.ipynb` (nbformat 4) | Each cell's source, then its stream, result and error outputs as text (colour codes stripped). Image and HTML-only outputs are named, not shown | Same |
 
 A PDF read takes `pages`: one page (`"3"`) or a range (`"1-5"`). Empty reads the first 10 pages;
-a range is cut to 20 pages and the result names the next range to ask for. A damaged or
+a range is cut to 20 pages and the result names the next range to ask for. The text also stops
+at whole pages under the call's result cap (50,000 characters, lower on a small tier), so dense
+pages end earlier and the note still names the next page; images come only for pages whose text
+is in the result, and one page longer than the cap is cut and says so. A damaged or
 password-locked PDF is an error. PDF text comes from PDFium (`pypdfium2`), on the machine; nothing
 is uploaded. `limit` and `offset` window a notebook's lines as they do a text file's. A notebook
 that is not nbformat 4 JSON, and every other text file, read as before.

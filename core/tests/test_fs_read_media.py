@@ -220,6 +220,42 @@ class TestPdf:
         assert isinstance(wide, str)
         assert f"Page{PDF_MAX_PAGES}" in wide and f"Page{PDF_MAX_PAGES + 1}" not in wide
 
+    async def test_dense_pdf_fits_the_cap_and_names_the_next_page(self, tmp_path: Path) -> None:
+        # Each page's text is ~400 characters; a 1,500-character cap holds
+        # three. Before the fix the dispatcher cut the text mid-page and its
+        # offset/limit marker replaced the note naming the next range.
+        (tmp_path / "dense.pdf").write_bytes(
+            make_pdf([f"P{n:02d} " + "word " * 80 for n in range(1, 31)])
+        )
+        dispatcher = make_dispatcher(tmp_path)
+        dispatcher.max_result_chars = 1500
+        result = await dispatcher.dispatch(
+            "t1", "fs_read", {"path": "dense.pdf"}, session=text_only()
+        )
+        out = result.output
+        assert len(out) <= 1500
+        assert "offset/limit" not in out and "truncated" not in out
+        assert "pages 1-2 below" in out and "P02" in out and "P03" not in out
+        assert 'continue with pages="3-22"' in out
+        assert "did not fit in one result" in out
+
+    async def test_dense_pdf_images_only_of_pages_shown(self, tmp_path: Path) -> None:
+        f = tmp_path / "dense.pdf"
+        f.write_bytes(make_pdf([f"P{n:02d} " + "word " * 80 for n in range(1, 6)]))
+        out = handlers._read_pdf_file(f, "", True, vision=True, vision_slots=5, max_chars=1500)
+        assert isinstance(out, HandlerOutput)
+        assert len(out.images) == 2
+        assert "images of page 1, 2 follow" in out.text
+        assert 'continue with pages="3-5"' in out.text
+
+    async def test_one_page_larger_than_the_cap_is_cut_and_said(self, tmp_path: Path) -> None:
+        f = tmp_path / "huge.pdf"
+        f.write_bytes(make_pdf(["word " * 300, "next"]))
+        out = handlers._read_pdf_file(f, "", False, vision=False, vision_slots=0, max_chars=1000)
+        assert isinstance(out, str) and len(out) <= 1000
+        assert "page 1's text was cut" in out
+        assert 'continue with pages="2-2"' in out
+
     @pytest.mark.parametrize("pages", ["0", "5-2", "abc", "9"])
     async def test_bad_range_is_an_error(self, tmp_path: Path, pages: str) -> None:
         f = tmp_path / "doc.pdf"

@@ -20,7 +20,7 @@ import asyncio
 import contextlib
 import os
 import threading
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -41,7 +41,7 @@ from .dispatch import ToolDispatcher
 from .exit_plan import exit_plan_mode
 from .read_notebook import render_notebook
 from .read_pdf import PDF_MAX_PAGE_IMAGES, PDF_MAX_PAGES, PagesError, looks_like_pdf, read_pdf
-from .results import HandlerOutput, ToolImage
+from .results import DEFAULT_MAX_RESULT_CHARS, HandlerOutput, ToolImage
 from .search import DEFAULT_MAX_RESULTS, STOPPED, glob_crosses_folders, glob_matcher, grep
 from .send_file import send_file
 from .shell import ShellPolicy, run_shell
@@ -105,10 +105,25 @@ def _read_image(target: Path, mime: str, *, vision: bool) -> str | HandlerOutput
     )
 
 
+#: Room kept under the result cap for the notes after the page text.
+_PDF_NOTE_ROOM = 600
+
+
 def _read_pdf_file(
-    target: Path, pages: str, page_images: bool, *, vision: bool, vision_slots: int
+    target: Path,
+    pages: str,
+    page_images: bool,
+    *,
+    vision: bool,
+    vision_slots: int,
+    max_chars: int = DEFAULT_MAX_RESULT_CHARS,
 ) -> str | HandlerOutput:
-    """PDF pages as text, with page images when asked on a vision tier."""
+    """PDF pages as text, with page images when asked on a vision tier.
+
+    The text stops at whole pages under *max_chars* (the dispatcher's cap
+    for this call), so the cap never cuts a page in half or drops the note
+    naming the next range: offset/limit do not page a PDF, ``pages`` does.
+    """
     slots = vision_slots if page_images and vision else 0
     try:
         doc = read_pdf(target, pages, image_slots=slots, max_image_bytes=FS_READ_MAX_IMAGE_BYTES)
@@ -119,37 +134,62 @@ def _read_pdf_file(
     if doc.page_count == 0:
         return f"PDF: {target} has no pages."
     noun = "page" if doc.page_count == 1 else "pages"
-    head = f"PDF: {target}, {doc.page_count} {noun}; pages {doc.first}-{doc.last} below."
-    body: list[str] = [head]
+    budget = max(0, (max_chars or DEFAULT_MAX_RESULT_CHARS) - _PDF_NOTE_ROOM)
+    blocks: list[str] = []
+    used = 0
+    last = doc.first - 1
+    cut_page: int | None = None
     for number, text in doc.texts:
-        body.append(f"── page {number} ──")
-        body.append(text if text.strip() else "(no text on this page; it may be a scan)")
-    if doc.last < doc.page_count:
-        body.append(
-            f"… [pages {doc.first}-{doc.last} of {doc.page_count}; "
-            f'continue with pages="{doc.last + 1}-{min(doc.page_count, doc.last + PDF_MAX_PAGES)}"]'
+        block = f"── page {number} ──\n" + (
+            text if text.strip() else "(no text on this page; it may be a scan)"
         )
+        if used + len(block) + 1 > budget:
+            if not blocks:
+                # Not even one page fits: send what does, and say so.
+                blocks.append(block[: max(0, budget - 1)])
+                last = number
+                cut_page = number
+            break
+        blocks.append(block)
+        used += len(block) + 1
+        last = number
+    head = f"PDF: {target}, {doc.page_count} {noun}; pages {doc.first}-{last} below."
+    body: list[str] = [head, *blocks]
+    if cut_page is not None:
+        body.append(
+            f"[page {cut_page}'s text was cut: it is longer than one result holds "
+            f"({max_chars} characters)]"
+        )
+    if last < doc.page_count:
+        why = "" if last == doc.last else "; the rest did not fit in one result"
+        body.append(
+            f"… [pages {doc.first}-{last} of {doc.page_count}{why}; "
+            f'continue with pages="{last + 1}-{min(doc.page_count, last + PDF_MAX_PAGES)}"]'
+        )
+    # Images only of pages whose text is in this result.
+    shown = [(n, img) for n, img in zip(doc.imaged, doc.images, strict=False) if n <= last]
+    too_large = [n for n in doc.too_large if n <= last]
     if page_images:
         if not vision:
             body.append(
                 "[page images were not made: the model reading this result does not accept images]"
             )
         else:
-            if doc.imaged:
-                listed = ", ".join(str(n) for n in doc.imaged)
+            if shown:
+                listed = ", ".join(str(n) for n, _ in shown)
                 body.append(f"[images of page {listed} follow, in that order]")
-            if doc.too_large:
-                listed = ", ".join(str(n) for n in doc.too_large)
+            if too_large:
+                listed = ", ".join(str(n) for n in too_large)
                 body.append(f"[page {listed} rendered too large to send as an image]")
-            skipped = (doc.last - doc.first + 1) - len(doc.imaged) - len(doc.too_large)
+            skipped = (last - doc.first + 1) - len(shown) - len(too_large)
             if skipped > 0:
                 body.append(
                     f"[{skipped} more page(s) in the range were not imaged: one result "
                     f"carries at most {min(PDF_MAX_PAGE_IMAGES, vision_slots)} page image(s)]"
                 )
     text = "\n".join(body)
-    if doc.images:
-        return HandlerOutput(text=text, images=tuple(doc.images))
+    if shown:
+        return HandlerOutput(text=text, images=tuple(img for _, img in shown))
     return text
 
 
@@ -183,6 +223,7 @@ def _read_any(
     *,
     vision: bool,
     vision_slots: int,
+    max_chars: int = DEFAULT_MAX_RESULT_CHARS,
 ) -> str | HandlerOutput:
     """Route a read by what the file is, from its bytes (TD-5130)."""
     if not target.exists():
@@ -197,7 +238,14 @@ def _read_any(
     if mime is not None:
         return _read_image(target, mime, vision=vision)
     if looks_like_pdf(head, target):
-        return _read_pdf_file(target, pages, page_images, vision=vision, vision_slots=vision_slots)
+        return _read_pdf_file(
+            target,
+            pages,
+            page_images,
+            vision=vision,
+            vision_slots=vision_slots,
+            max_chars=max_chars,
+        )
     if target.suffix.lower() == ".ipynb" and b"\x00" not in head:
         try:
             raw = target.read_text(encoding="utf-8")
@@ -346,7 +394,24 @@ async def fs_read(
     notebook as cells and text outputs. The session says whether the
     model has vision (``tool_vision``) and how many images a prompt keeps
     (``tool_max_images``); a session without them is treated as text-only.
+    Called directly it fits a PDF under the default result cap; the
+    registered handler passes the dispatcher's cap for the call.
     """
+    return await _fs_read(
+        session, path, limit, offset, pages, page_images, max_chars=DEFAULT_MAX_RESULT_CHARS
+    )
+
+
+async def _fs_read(
+    session: object,
+    path: str,
+    limit: int,
+    offset: int,
+    pages: str,
+    page_images: bool,
+    *,
+    max_chars: int,
+) -> str | HandlerOutput:
     max_images = getattr(session, "tool_max_images", 1)
     # A negative cap is unlimited; 0 keeps no image, so nothing can be shown.
     slots = max_images if isinstance(max_images, int) and max_images >= 0 else PDF_MAX_PAGE_IMAGES
@@ -360,7 +425,36 @@ async def fs_read(
         page_images,
         vision_slots=slots if vision else 0,
         vision=vision,
+        max_chars=max_chars,
     )
+
+
+def _fs_read_handler(
+    dispatcher: ToolDispatcher,
+) -> Callable[..., Awaitable[str | HandlerOutput]]:
+    """fs_read bound to *dispatcher*, so a PDF fits the cap it applies (TD-5130)."""
+
+    async def handler(
+        session: object,
+        path: str,
+        limit: int = 0,
+        offset: int = 0,
+        pages: str = "",
+        page_images: bool = False,
+        tool_call_id: str = "",
+    ) -> str | HandlerOutput:
+        # Read per call: the loop lowers the cap for a small tier (TD-4839).
+        return await _fs_read(
+            session,
+            path,
+            limit,
+            offset,
+            pages,
+            page_images,
+            max_chars=dispatcher.max_result_chars or DEFAULT_MAX_RESULT_CHARS,
+        )
+
+    return handler
 
 
 async def fs_list(
@@ -462,7 +556,7 @@ def register_builtin_handlers(
     ``sent_files`` stores what ``send_file`` sends (TD-5143); omitted, the
     handler still exists and refuses with ``send_unavailable``.
     """
-    dispatcher.register_handler("fs_read", fs_read)
+    dispatcher.register_handler("fs_read", _fs_read_handler(dispatcher))
     dispatcher.register_handler("fs_list", fs_list)
     dispatcher.register_handler("fs_grep", fs_grep)
     dispatcher.register_handler("web_search", web_search)

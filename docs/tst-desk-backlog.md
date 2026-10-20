@@ -11240,7 +11240,9 @@ the model as an `image_url` part after one line of text when the tier the
 loop just called has `vision: true` (and `max_prompt_images` is not 0); a
 text-only tier gets a refusal that says so. A PDF returns page text under
 `── page N ──` markers through PDFium (`pypdfium2`), 10 pages by default,
-`pages="3"` or `"1-5"`, at most 20 a call with the next range named;
+`pages="3"` or `"1-5"`, at most 20 a call with the next range named,
+and stops at whole pages under the dispatcher's result cap so a dense PDF
+still names the next page instead of hitting the offset/limit marker;
 `page_images: true` on a vision tier adds PNG page images (at most 5 and
 at most `max_prompt_images`). A notebook returns each cell's source and its
 stream, result and error outputs, colour codes stripped, windowed by
