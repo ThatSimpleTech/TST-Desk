@@ -1807,6 +1807,18 @@ class CheckpointNotice(DaemonEvent):
     message: str
 
 
+class VerifyStarted(DaemonEvent):
+    """An after-write review started running (TD-5158).
+
+    It runs after ``turn_complete`` and holds the loop until its
+    ``verify_result``; Stop ends it (TD-5151). The window offers Stop in
+    that span. Not shown in the timeline.
+    """
+
+    type: Literal["verify_started"] = "verify_started"
+    session_id: str
+
+
 class VerifyResult(DaemonEvent):
     """Interactive validator review of a write turn (TD-4204).
 
@@ -3542,6 +3554,7 @@ DaemonEventT = Annotated[
     | ApprovalRequest
     | DecisionLogged
     | CheckpointNotice
+    | VerifyStarted
     | VerifyResult
     | CostUpdate
     | BoundaryUpdate
@@ -3748,6 +3761,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "approval_request",
         "decision_logged",
         "checkpoint_notice",
+        "verify_started",
         "verify_result",
         "cost_update",
         "boundary_update",

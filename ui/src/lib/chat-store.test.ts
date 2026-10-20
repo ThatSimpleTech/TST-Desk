@@ -317,6 +317,58 @@ describe("sending and cancelling", () => {
   });
 });
 
+describe("a review after the turn (TD-5158)", () => {
+  const started = (sessionId = "s1"): DaemonEventUnion => ({
+    type: "verify_started",
+    session_id: sessionId,
+    seq: 20,
+  });
+  const result = (pending: boolean, sessionId = "s1"): DaemonEventUnion => ({
+    type: "verify_result",
+    session_id: sessionId,
+    verdict: "error",
+    summary: pending ? "Confirm to review this write." : "Verify stopped.",
+    cost: 0,
+    pending,
+    seq: 21,
+  });
+
+  it("offers Stop while the review runs, although the turn is over", () => {
+    const { store, state, sent } = boundStore();
+    store.sendUserMessage("write it");
+    store.applyEvent(turnComplete("s1"));
+    expect(showCancel(state.turnState)).toBe(false);
+    store.applyEvent(started());
+    expect(state.reviewRunning).toBe(true);
+    expect(store.cancelTurn()).toBe(true);
+    expect(sent[sent.length - 1]).toEqual({ type: "stop_turn", session_id: "s1" });
+    expect(state.reviewRunning).toBe(false);
+  });
+
+  it("ends with the review's result, not with an ask-mode card", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(result(true));
+    expect(state.reviewRunning).toBe(false);
+    store.applyEvent(started());
+    store.applyEvent(result(true));
+    expect(state.reviewRunning).toBe(true);
+    store.applyEvent(result(false));
+    expect(state.reviewRunning).toBe(false);
+  });
+
+  it("ignores another session's review, and a new turn or a bind clears it", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(started("other"));
+    expect(state.reviewRunning).toBe(false);
+    store.applyEvent(started());
+    store.applyEvent(userTurn("s1", "t2", "next"));
+    expect(state.reviewRunning).toBe(false);
+    store.applyEvent(started());
+    store.selectSession("s2", null);
+    expect(state.reviewRunning).toBe(false);
+  });
+});
+
 describe("retry (TD-1606)", () => {
   it("retries the last user turn as a fork, not a third row", () => {
     const { store, sent } = boundStore();

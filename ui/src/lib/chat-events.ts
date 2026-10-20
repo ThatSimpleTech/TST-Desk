@@ -164,6 +164,8 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
   switch (event.type) {
     case "user_turn": {
       if (event.session_id !== state.sessionId) return;
+      // A turn starts only once the loop is free: no review is running.
+      state.reviewRunning = false;
       // The daemon took one of our sends: the composer it emptied is saved
       // now, not after the debounce (TD-5019).
       if (takeSent(ctx.sending, event.content)) ctx.flushDraft();
@@ -421,8 +423,17 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       for (const block of copies) addFile(block, ref);
       return;
     }
+    case "verify_started":
+      // The review holds the loop after turn_complete; Stop reaches it
+      // (TD-5151), so the composer offers Stop until its result (TD-5158).
+      if (event.session_id === state.sessionId) state.reviewRunning = true;
+      return;
     case "verify_result":
-      // Timeline only (TD-4204). Never a second assistant bubble.
+      // Timeline only (TD-4204). Never a second assistant bubble. A
+      // pending one is an ask-mode card: nothing runs until Run.
+      if (event.session_id === state.sessionId && event.pending !== true) {
+        state.reviewRunning = false;
+      }
       return;
     default:
       // Cost, approvals, and the rest stay the activity timeline's

@@ -1261,6 +1261,13 @@ export interface CheckpointNotice extends DaemonEvent {
   message: string;
 }
 
+/** TD-5158: an after-write review started running; it holds the loop and
+ *  Stop reaches it until its `verify_result`. */
+export interface VerifyStarted extends DaemonEvent {
+  type: "verify_started";
+  session_id: string;
+}
+
 export interface VerifyResult extends DaemonEvent {
   type: "verify_result";
   session_id: string;
@@ -2384,6 +2391,7 @@ export type DaemonEventUnion =
   | ApprovalRequest
   | DecisionLogged
   | CheckpointNotice
+  | VerifyStarted
   | VerifyResult
   | CostUpdate
   | BoundaryUpdate

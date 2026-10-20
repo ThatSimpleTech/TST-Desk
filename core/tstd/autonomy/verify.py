@@ -16,7 +16,7 @@ from ..context import PromptAssembler
 from ..context.calibration import CalibrationStore, process_calibration_store
 from ..cost import CostTracker
 from ..logging import get_logger
-from ..protocol import VerifyResult
+from ..protocol import VerifyResult, VerifyStarted
 from ..provider import (
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -294,6 +294,8 @@ async def _run_validator(
     stopped with no verdict from the partial text.
     """
     with session.review_open():
+        # The window offers Stop until the result (TD-5158).
+        await session.event_log.add(VerifyStarted(session_id=session.id, seq=1))
         finished = await _review(session, config, tracker, client_for, assembler, store)
     if not finished:
         await _report(session, "error", STOPPED_SUMMARY)

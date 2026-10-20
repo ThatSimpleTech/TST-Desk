@@ -16,7 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -358,6 +358,7 @@ from .protocol import (
     UsageRollup,
     UserMessage,
     ValidateApiKey,
+    VerifyResult,
     build_error,
     parse_client_message,
     scrub_wire_json,
@@ -474,7 +475,13 @@ from .steering_proposals import decide as decide_steering
 from .steering_proposals import expire_restored as expire_restored_steering
 from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
-from .turn_seal import INTERRUPTED_BY_RESTART, open_turn, repair_cut_conversation
+from .turn_seal import (
+    INTERRUPTED_BY_RESTART,
+    REVIEW_CUT_BY_RESTART,
+    open_review,
+    open_turn,
+    repair_cut_conversation,
+)
 from .voice import (
     MAX_AUDIO_BYTES,
     VoiceError,
@@ -2182,6 +2189,7 @@ class Daemon:
                 sess.event_log.replace(loaded.events)
                 # TD-5140: a replay-only session holds no proposal either.
                 await expire_restored_steering(sess, loaded.events)
+                await self._seal_cut_review(sess, loaded.events)
             if final_state != record.state:
                 await self._session_store.update_state(record.session_id, final_state)
             log.info(
@@ -3648,6 +3656,7 @@ class Daemon:
         await restore_queue(sess, rows, loaded.events)
         # TD-5140: open steering proposals lived in the old process's memory.
         await expire_restored_steering(sess, loaded.events)
+        await self._seal_cut_review(sess, loaded.events)
         await self._emit_working_context(sess, config_source(sess))
         log.info(
             "revived session",
@@ -3681,6 +3690,21 @@ class Daemon:
         )
         await sess.conversation_changed()
         log.info("sealed cut turn", extra={"extra_fields": {"session_id": sess.id}})
+
+    async def _seal_cut_review(self, sess: Session, events: Sequence[DaemonEvent]) -> None:
+        """End a review the last daemon died during (TD-5158).
+
+        Its ``verify_started`` would otherwise leave the window offering
+        Stop for a review nothing runs.
+        """
+        if not open_review(events):
+            return
+        await sess.event_log.add(
+            VerifyResult(
+                session_id=sess.id, verdict="error", summary=REVIEW_CUT_BY_RESTART, cost=0, seq=1
+            )
+        )
+        log.info("sealed cut review", extra={"extra_fields": {"session_id": sess.id}})
 
     async def _held_message_action(self, msg: SendQueued | RemoveQueued) -> str | None:
         """Send or drop a message a restart left held (TD-5155).

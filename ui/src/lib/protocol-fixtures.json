@@ -772,6 +772,11 @@
     "code": "dirty_baseline",
     "message": "This workspace has uncommitted changes."
   },
+  "verify_started": {
+    "type": "verify_started",
+    "seq": 10,
+    "session_id": "sess-1"
+  },
   "verify_result": {
     "type": "verify_result",
     "seq": 10,

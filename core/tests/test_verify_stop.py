@@ -28,7 +28,7 @@ from tstd.autonomy.verify import (
 from tstd.config import AutonomyConfig, ModelConfig, TierConfig
 from tstd.cost import CostTracker
 from tstd.mock import MockProvider, Script
-from tstd.protocol import TurnComplete, VerifyResult
+from tstd.protocol import TurnComplete, VerifyResult, VerifyStarted
 from tstd.provider import ProviderClient, RetryConfig
 from tstd.router import TierRouter
 from tstd.session import Session, SessionRunner
@@ -415,3 +415,94 @@ async def test_a_stop_while_the_prompt_is_fitted_reads_as_stopped(tmp_path: Path
     assert _validator_calls(mock) == 0
     _assert_stopped(session)
     _assert_idle(session)
+
+
+# ── The window's Stop during a review (TD-5158) ─────────────────────────
+
+
+async def test_a_running_review_is_announced_before_its_result(tmp_path: Path) -> None:
+    """The window offers Stop from verify_started until the verify_result."""
+    session = Session(str(tmp_path))
+    await session.set_state("running")
+    note_tool_result(session, "fs_write", "success", diff="+hello\n")
+    mock = MockProvider(scripts={"test-validator": _QUICK_REVIEW})
+    config = _config()
+
+    async def client_for(tier: TierConfig) -> Any:
+        del tier
+        return mock
+
+    await maybe_verify_after_turn(
+        session,
+        config,
+        CostTracker(config),
+        client_for,
+        _Assembler(),  # type: ignore[arg-type]
+    )
+    kinds = [
+        e.type for e in session.event_log.all_events if isinstance(e, VerifyStarted | VerifyResult)
+    ]
+    assert kinds == ["verify_started", "verify_result"]
+
+
+async def test_an_ask_review_is_announced_only_when_it_runs(tmp_path: Path) -> None:
+    session = Session(str(tmp_path))
+    await session.set_state("running")
+    note_tool_result(session, "fs_write", "success", diff="+hello\n")
+    mock = MockProvider(scripts={"test-validator": _QUICK_REVIEW})
+    config = _config("ask")
+
+    async def client_for(tier: TierConfig) -> Any:
+        del tier
+        return mock
+
+    await maybe_verify_after_turn(
+        session,
+        config,
+        CostTracker(config),
+        client_for,
+        _Assembler(),  # type: ignore[arg-type]
+    )
+    assert not [e for e in session.event_log.all_events if isinstance(e, VerifyStarted)]
+    await confirm_pending_verify(session)
+    assert len([e for e in session.event_log.all_events if isinstance(e, VerifyStarted)]) == 1
+
+
+async def test_a_review_a_restart_cut_off_is_sealed(tmp_path: Path) -> None:
+    """Restored with verify_started last, the window would offer Stop forever."""
+    from tstd.daemon import Daemon
+    from tstd.protocol import UserTurn
+    from tstd.provider import ChatMessage
+    from tstd.session_persist import SessionPersist
+    from tstd.session_store import SessionStore
+    from tstd.turn_seal import REVIEW_CUT_BY_RESTART
+
+    data_dir = tmp_path / "data"
+    workspace = tmp_path / "ws"
+    data_dir.mkdir()
+    workspace.mkdir()
+    await SessionStore(data_dir).upsert("rev-1", str(workspace), "running")
+    persist = SessionPersist(data_dir)
+    persist.prepare("rev-1")
+    for event in (
+        UserTurn(session_id="rev-1", turn_id="t1", content="write it", seq=1),
+        TurnComplete(session_id="rev-1", tokens=0, cost=0.0, tier="brain", duration=0.1, seq=2),
+        VerifyStarted(session_id="rev-1", seq=3),
+    ):
+        persist.append_event("rev-1", event)
+    persist.save_conversation(
+        "rev-1",
+        [ChatMessage(role="user", content="write it"), ChatMessage(role="assistant", content="ok")],
+    )
+
+    daemon = Daemon(data_dir=data_dir, provider=MockProvider(default=_QUICK_REVIEW))
+    await daemon._restore_sessions()
+    session = daemon.session_registry.get("rev-1")
+    assert session is not None
+    try:
+        sealed = [e for e in _verifies(session) if not e.pending]
+        assert [(e.verdict, e.summary) for e in sealed] == [("error", REVIEW_CUT_BY_RESTART)]
+    finally:
+        runner = daemon.session_registry.get_runner("rev-1")
+        if runner is not None:
+            await runner.cancel()

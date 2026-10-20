@@ -141,6 +141,7 @@ export function applyBind(
   ctx.wait.end();
   state.lastTurnDuration = null;
   state.lastTurnError = null;
+  state.reviewRunning = false;
   // The activity lane scopes to the same session (TD-1009). Bind it before
   // the attach, so the replay the attach fetches lands in a list already
   // pointing at the session it describes.
