@@ -15524,8 +15524,9 @@ how each mechanism is driven and how a kill is recognised were left open.
   cap) needs slice properties set out of band and makes the kill land on
   whichever command is biggest; left for a follow-up if one is wanted.
 - **The scope is `systemd-run --user --scope --quiet
-  --expand-environment=no --unit=tstd-shell-<id>.scope` with
-  `MemoryMax=<cap>M`, `MemorySwapMax=0` and `OOMPolicy=stop`,** wrapped
+  --expand-environment=no --unit=tstd-shell-<id>.scope
+  --description="tstd shell command"` with `MemoryMax=<cap>M`,
+  `MemorySwapMax=0` and `OOMPolicy=stop`,** wrapped
   as `exec systemd-run … /bin/sh -c <command>` through the same
   `create_subprocess_shell` as before. `exec` keeps the spawned pid as the
   process-group leader, so the timeout and cancel kills are unchanged, and
@@ -15537,8 +15538,9 @@ how each mechanism is driven and how a kill is recognised were left open.
 - **One probe per daemon, held until restart.** A scope with exactly
   these properties must start, receive a `$$`/`${v}` marker unchanged and
   show the cap in its own `memory.max` (cgroup v2 with the memory
-  controller delegated). With the flag first, then without; anything else
-  falls back to `RLIMIT_AS`. Claude Code also holds its cgroup setup until
+  controller delegated). With the flag first, then without, then without
+  `OOMPolicy` too (review fixes below); anything else falls back to
+  `RLIMIT_AS`. Claude Code also holds its cgroup setup until
   relaunch. A stale answer (a user bus that goes away later) shows up as
   `systemd-run`'s own error in the command's stderr; restarting re-probes.
 - **Recognising a kill.** After every scoped command the daemon asks
@@ -15573,14 +15575,16 @@ how each mechanism is driven and how a kill is recognised were left open.
   one cap that does not pause: int ≥ 64 MiB (a shell cannot start under
   less with `ulimit -v`), `null` is half of RAM worked out where the
   command runs, so a committed file does not pin a number. A charter's
-  `caps` can set it for a run. No off switch: the conservative reading of
+  `caps` can set it for a run; one that leaves it unset keeps the
+  workspace file's value (review fixes below). No off switch: the conservative reading of
   "default about half of RAM"; a large value is the escape hatch, and one
   above half of RAM is a loosened setting on the trust card (TD-5113).
 - **macOS and Windows hosts run uncapped.** macOS does not enforce
   `RLIMIT_AS` and neither has systemd scopes; a Windows job object is a
   separate story. Their autonomous runs are capped by Podman.
-- **No protocol change.** The cap is not on `boundary_update`; the result
-  line is where it is seen.
+- **No new message.** The cap is not on `boundary_update`; the result
+  line is where it is seen. The charter's `caps` mapping gains the
+  optional `shell_memory_mb` (the TS `CharterCaps` type with it).
 
 **Rejected:** a daemon-side RSS watchdog (polling misses a fast hog, and
 the story names `RLIMIT_AS`); `systemd-run --wait` services (the command
@@ -15588,3 +15592,40 @@ would stop being the daemon's child, losing the pipes, cwd, environment
 and process-group kill); `--collect` on the scope (the `Result` would be
 gone before it could be read); reading `podman inspect` after dropping
 `--rm` (leaves containers behind on every crash or cancel).
+
+### 2026-10-20 — TD-5116 review fixes (PR #37)
+
+- **The scope's description is fixed text.** `systemd-run` defaults a
+  scope's Description to the command line, and the user manager logs
+  `Started <unit> - <description>` to the persistent journal, where
+  `redact_secrets` never reaches: every command, tokens included, went to
+  the journal (prime directive 2). Commands get `--description="tstd
+  shell command"`, the probe `"tstd shell memory probe"`. Rejected:
+  redacting the command into the description (a redactor misses formats
+  it does not know; fixed text cannot leak).
+- **`OOMPolicy` is optional.** Scopes take it only from systemd 253, so
+  246–252 (Ubuntu 22.04, Debian 12, RHEL 9) refused the whole scope and
+  fell back to `RLIMIT_AS`, which needlessly breaks runtimes that reserve
+  address space. The probe now tries 254+ settings, then 253 (no
+  `--expand-environment`), then 246–252 (neither); `MemoryMax` alone
+  makes the kernel kill inside the scope. Those releases record no
+  `Result=oom-kill` for a scope and usually collect it before the daemon
+  asks, so there a SIGKILL exit (137, or -9) is reported as the likely
+  cause, worded as in a container. On 253+ a bare SIGKILL is still not
+  put down to the cap. Conservative choice: no note beats a wrong one
+  except where the exit status is the only evidence left.
+- **A charter run keeps the workspace's memory cap unless the charter
+  sets one.** The charter's caps replaced the file's wholesale, so
+  `caps.shell_memory_mb` in `.tst/config.yaml` (already through the trust
+  gate) was dropped for every charter run. Now only a value the charter
+  sets replaces it; neither set is half of RAM. The charter's own value
+  still wins, as its other caps do: the human signs it, and the sign card
+  now shows it. Rejected: the lower of the two (the card could then show
+  a cap the run is not held to).
+- **The app keeps and edits the charter's value.** `charterPayload`
+  rebuilt `caps` from three fixed keys, so Save and Start deleted a
+  hand-written `shell_memory_mb`. It now passes a set value through and
+  leaves an unset one out; the Charter column has a **Shell memory (MB)**
+  field (blank is unset), the YAML preview and the sign card show it. The
+  Charter column is not in the UI walk's census, so the census is
+  unchanged.

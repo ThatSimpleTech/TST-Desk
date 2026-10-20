@@ -18,8 +18,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shlex
 import subprocess
 import sys
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -30,6 +32,7 @@ import yaml
 from tests.test_dispatch import make_config
 from tests.test_sandbox import _fake_runtime, _which_for
 from tstd.autonomy.charter import Charter
+from tstd.autonomy.charter_io import write_charter_document
 from tstd.autonomy.sandbox import autonomy_shell_argv, sandbox_exec
 from tstd.boundary_config import BoundaryConfig, boundary_from_mapping
 from tstd.config import ConfigError
@@ -38,6 +41,7 @@ from tstd.host_memory import MIB, default_shell_memory_mb, physical_memory_mb
 from tstd.mock import MockProvider, Script
 from tstd.protocol import ApprovalRequest, ToolResult, TurnComplete
 from tstd.session import Session
+from tstd.session_lifecycle import reload_session_boundary
 from tstd.tools import run_shell, shell_memory
 from tstd.tools.shell import sanitized_env
 from tstd.tools.shell_memory import ShellMemoryCap, cap_note, plan_cap, ran_out_of_memory
@@ -161,7 +165,15 @@ class TestContainer:
         assert f"--memory={default_shell_memory_mb()}m" in result.argv
 
     @requires_linux
-    async def test_an_autonomous_command_runs_under_the_session_cap(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        ("in_file", "in_charter", "expect"),
+        [(96, None, 96), (96, 128, 128), (None, 128, 128)],
+        ids=["file-when-charter-leaves-it", "charter-wins", "charter-alone"],
+    )
+    async def test_an_autonomous_command_runs_under_the_run_cap(
+        self, tmp_path: Path, in_file: int | None, in_charter: int | None, expect: int
+    ) -> None:
+        """Through the charter flow a run really takes: write, sign, reload."""
         # A runtime that records its argv and exits as a killed container does.
         log = tmp_path / "argv.json"
         runtime = tmp_path / "podman"
@@ -172,15 +184,35 @@ class TestContainer:
         )
         runtime.chmod(0o755)
         ws = tmp_path / "ws"
-        ws.mkdir()
-        session = _session(ws, 96)
+        (ws / ".tst").mkdir(parents=True)
+        if in_file is not None:
+            (ws / ".tst" / "config.yaml").write_text(
+                yaml.safe_dump({"caps": {"shell_memory_mb": in_file}}), encoding="utf-8"
+            )
+        caps: dict[str, Any] = {"spend_usd": 5, "wall_clock_hours": 1, "max_iterations": 10}
+        if in_charter is not None:
+            caps["shell_memory_mb"] = in_charter
+        charter, _ = write_charter_document(
+            ws,
+            {
+                "objective": "build",
+                "definition_of_done": ["tests pass"],
+                "boundary": {"writable_paths": ["**"], "network": "deny"},
+                "caps": caps,
+            },
+        )
+        session = Session(str(ws))
         session.autonomy = True
+        session.charter = charter
         session.config = make_config()
         session.config.autonomy.runtime = str(runtime)
+        assert reload_session_boundary(session, str(ws)) is None
+        # The charter's other caps still replace the file's.
+        assert session.boundary_config.caps.max_iterations == 10
         result = await run_shell(session, "true")
-        assert "--memory=96m" in json.loads(log.read_text(encoding="utf-8"))
+        assert f"--memory={expect}m" in json.loads(log.read_text(encoding="utf-8"))
         assert "exit code: 137" in result
-        assert "memory cap: killed (exit 137) in a container capped at 96 MB" in result
+        assert f"memory cap: killed (exit 137) in a container capped at {expect} MB" in result
 
     async def test_only_a_sigkill_exit_is_put_down_to_the_cap(self) -> None:
         cap = ShellMemoryCap(mb=96, method="container")
@@ -321,6 +353,30 @@ class TestScope:
         assert "fine" in result and "exit code: 2" in result
         assert "memory cap" not in result
 
+    async def test_the_scope_never_takes_the_command_as_its_description(
+        self, tmp_path: Path
+    ) -> None:
+        # The scope reads its own Description: the unit is the last part of
+        # its cgroup path. A fake token, new each run so an older journal
+        # line cannot match, rides along in a comment.
+        secret = f"ghp_{uuid.uuid4().hex}0000"
+        command = (
+            "u=$(sed -n 's|^0::.*/||p' /proc/self/cgroup); "
+            f'systemctl --user show --property=Description --value "$u" # {secret}'
+        )
+        result = await run_shell(_session(tmp_path, 64), command)
+        stdout = result.split("── stdout ──")[1].split("── stderr ──")[0].strip()
+        assert stdout == "tstd shell command"
+        journal = await asyncio.to_thread(
+            subprocess.run,
+            ["journalctl", "--user", "--since=-2min", "-o", "cat", "--no-pager"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+        assert secret not in journal.stdout
+
     async def test_the_command_text_reaches_the_shell_unexpanded(self, tmp_path: Path) -> None:
         # systemd 254+ rewrites ``$$`` and ``${x}`` in systemd-run arguments
         # unless told not to.
@@ -331,19 +387,81 @@ class TestScope:
         assert "/bin/sh|" in result
 
 
+# ── The scope's journal line never carries the command ─────────────────
+
+
+_SECRET = "ghp_" + "x" * 36
+
+
+def test_the_scope_description_is_fixed_text_not_the_command() -> None:
+    """systemd logs a scope's Description in its "Started" journal line.
+
+    Its default is the command line, so without ``--description`` every
+    command, secrets and all, would go to the journal unredacted.
+    """
+    tools = shell_memory._ScopeTools("systemd-run", "systemctl", no_expand=True)
+    cap = ShellMemoryCap(mb=64, method="scope", unit="u.scope", tools=tools)
+    command = f"curl -H 'Authorization: Bearer {_SECRET}' https://example.invalid"
+    argv = shlex.split(shell_memory.host_command(cap, command))
+    split = argv.index("--")
+    assert "--description=tstd shell command" in argv[:split]
+    # The command is only ever the scope's payload, never one of its settings.
+    assert not any(_SECRET in arg for arg in argv[:split])
+    assert argv[split + 1 :] == ["/bin/sh", "-c", command]
+
+
+# ── systemd before 253: no OOMPolicy, no oom-kill result ────────────────
+
+
+class TestScopeWithoutOomPolicy:
+    @pytest.fixture(autouse=True)
+    def _collected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """systemd has collected the scope: no Result, no control group."""
+
+        async def _gone(_cap: ShellMemoryCap, _tools: Any) -> dict[str, str]:
+            return {}
+
+        monkeypatch.setattr(shell_memory, "_unit_state", _gone)
+
+    @staticmethod
+    def _cap(*, oom_policy: bool) -> ShellMemoryCap:
+        tools = shell_memory._ScopeTools("systemd-run", "systemctl", False, oom_policy)
+        return ShellMemoryCap(mb=64, method="scope", unit="u.scope", tools=tools)
+
+    @pytest.mark.parametrize("exit_code", [137, -9])
+    async def test_a_sigkill_is_put_down_to_the_cap(self, exit_code: int) -> None:
+        note = await cap_note(self._cap(oom_policy=False), exit_code, "")
+        assert note.startswith(f"memory cap: killed (exit {exit_code}) under its 64 MB memory cap")
+        assert "usual cause" in note
+
+    @pytest.mark.parametrize("exit_code", [0, 1, 143])
+    async def test_any_other_exit_gets_no_note(self, exit_code: int) -> None:
+        assert await cap_note(self._cap(oom_policy=False), exit_code, "") == ""
+
+    async def test_systemd_253_and_later_still_needs_its_own_word(self) -> None:
+        # There systemd records Result=oom-kill, so a bare SIGKILL is not the cap.
+        assert await cap_note(self._cap(oom_policy=True), 137, "") == ""
+
+
 def _fake_systemd(tmp_path: Path, mode: str, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     """A ``systemd-run`` that answers the probe the way *mode* says.
 
     ``old`` refuses ``--expand-environment`` and passes text through, as
-    systemd before 254 does; ``expands`` takes the flag but loses the
-    marker anyway; ``works`` passes.
+    systemd 253 does; ``pre253`` also refuses ``OOMPolicy`` on a scope, as
+    systemd 246-252 does; ``expands`` takes the flag but loses the marker
+    anyway; ``works`` passes. Each call's argv is appended to
+    ``calls.jsonl``.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "systemd-run").write_text(
-        f"#!{sys.executable}\nimport sys\nmode = {mode!r}\n"
-        "if mode == 'old' and '--expand-environment=no' in sys.argv:\n"
+        f"#!{sys.executable}\nimport json, sys\nmode = {mode!r}\n"
+        f"open({str(tmp_path / 'calls.jsonl')!r}, 'a').write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "if mode in ('old', 'pre253') and '--expand-environment=no' in sys.argv:\n"
         "    sys.exit('systemd-run: unrecognized option')\n"
+        "if mode == 'pre253' and '--property=OOMPolicy=stop' in sys.argv:\n"
+        "    sys.exit('Failed to start transient scope unit: Cannot set property OOMPolicy, "
+        "or unknown property.')\n"
         "print('' if mode == 'expands' else 'verbatim')\n"
         f"print({256 * MIB})\n",
         encoding="utf-8",
@@ -370,6 +488,36 @@ class TestProbe:
         assert tools is not None and not tools.no_expand
         cap = ShellMemoryCap(mb=64, method="scope", unit="u.scope", tools=tools)
         assert "--expand-environment" not in shell_memory.host_command(cap, "true")
+
+    async def test_systemd_before_253_still_gets_a_scope_without_oom_policy(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Ubuntu 22.04 (249), Debian 12 and RHEL 9 (252): scopes take
+        # MemoryMax but refuse OOMPolicy, which the cap does not need.
+        tools = await shell_memory._probe_scope_tools(
+            _fake_systemd(tmp_path, "pre253", monkeypatch)
+        )
+        assert tools is not None
+        assert (tools.no_expand, tools.oom_policy) == (False, False)
+        cap = ShellMemoryCap(mb=64, method="scope", unit="u.scope", tools=tools)
+        argv = shlex.split(shell_memory.host_command(cap, "true"))
+        assert "--property=MemoryMax=64M" in argv
+        assert "--property=MemorySwapMax=0" in argv
+        assert not any("OOMPolicy" in arg for arg in argv)
+
+    async def test_systemd_253_keeps_oom_policy(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tools = await shell_memory._probe_scope_tools(_fake_systemd(tmp_path, "old", monkeypatch))
+        assert tools is not None and tools.oom_policy
+
+    async def test_the_probe_never_logs_its_command_as_the_description(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        await shell_memory._probe_scope_tools(_fake_systemd(tmp_path, "works", monkeypatch))
+        (argv,) = [json.loads(line) for line in (tmp_path / "calls.jsonl").read_text().splitlines()]
+        assert "--description=tstd shell memory probe" in argv
+        assert argv.index("--description=tstd shell memory probe") < argv.index("--")
 
     async def test_a_scope_that_mangles_the_command_is_not_used(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

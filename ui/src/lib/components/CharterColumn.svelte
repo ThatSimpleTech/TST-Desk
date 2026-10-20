@@ -6,9 +6,11 @@
 	import {
 		charterEmptyCopy,
 		charterLedeCopy,
+		charterShellMemory,
 		containerCopy,
 		networkIsDeny,
 		previewCharterYaml,
+		shellMemoryCopy,
 		startConfirmCopy,
 	} from '../charter';
 	import EmptyState from './EmptyState.svelte';
@@ -33,6 +35,7 @@
 		setNetworkHosts,
 		setNotes,
 		setObjective,
+		setShellMemory,
 		startCharter,
 	} from '../charter.svelte.js';
 
@@ -224,6 +227,19 @@
 					oninput={(e) => setCap('max_iterations', e.currentTarget.valueAsNumber)}
 				/>
 			</label>
+			<label class="cap">
+				<span class="lbl">Shell memory (MB)</span>
+				<input
+					type="number"
+					min="64"
+					step="1"
+					placeholder="unset"
+					title="Unset: the workspace's caps.shell_memory_mb, else half of RAM"
+					aria-label="Shell memory cap in MB"
+					value={charterShellMemory(charter.draft.caps) ?? ''}
+					oninput={(e) => setShellMemory(e.currentTarget.valueAsNumber)}
+				/>
+			</label>
 		</fieldset>
 		<fieldset class="field">
 			<legend class="lbl">Stop conditions</legend>
@@ -285,6 +301,8 @@
 					<dd>{charter.draft.caps.wall_clock_hours} hours</dd>
 					<dt>Max iterations</dt>
 					<dd>{charter.draft.caps.max_iterations}</dd>
+					<dt>Shell memory</dt>
+					<dd>{shellMemoryCopy(charter.draft.caps)}</dd>
 				</dl>
 				<p class="container">{containerCopy()}</p>
 				<div class="actions">

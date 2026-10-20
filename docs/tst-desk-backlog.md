@@ -10228,18 +10228,22 @@ before.
 Done (2026-10-20): `core/tstd/tools/shell_memory.py` and
 `core/tstd/host_memory.py`. `caps.shell_memory_mb` in `.tst/config.yaml`
 (int ≥ 64, MiB; unset is half of RAM, worked out on the machine that runs
-the command; a charter's `caps` may set it for a run). On Linux each
-command runs in its own `systemd-run --user --scope` unit with
-`MemoryMax`, `MemorySwapMax=0`, `OOMPolicy=stop` and
-`--expand-environment=no` (systemd 254+ otherwise rewrites `$$` and
-`${x}` in the command), so the kernel kills inside that scope and never
-the daemon. One probe per daemon checks that a scope starts, passes the
+the command; a charter's `caps` may set it for a run, and one that leaves
+it unset keeps the file's value; the Charter column edits it and the sign
+card shows it). On Linux each command runs in its own `systemd-run --user
+--scope` unit with `MemoryMax`, `MemorySwapMax=0`, `OOMPolicy=stop`
+(systemd 253+) and `--expand-environment=no` (systemd 254+ otherwise
+rewrites `$$` and `${x}` in the command), so the kernel kills inside that
+scope and never the daemon. The scope's description is fixed text, so the
+journal's "Started" line never carries the command. One probe per daemon checks that a scope starts, passes the
 command text through untouched and shows the cap in `memory.max`;
 without that the shell sets `ulimit -v` and then execs the command. The
 result gets a line under the exit code: `memory cap: killed — the command
 went over its N MB memory cap (caps.shell_memory_mb)`, from the unit's
 `Result=oom-kill` or the scope's `memory.events`; the failed unit is
-cleared. Under `ulimit` nothing is killed by the kernel: the allocation
+cleared. systemd 246–252 takes no `OOMPolicy` on a scope and records no
+oom-kill result, so there the scope runs without it and a SIGKILL exit is
+reported as the likely cause. Under `ulimit` nothing is killed by the kernel: the allocation
 fails and the line is read from the command's own out-of-memory error.
 Autonomous runs: Podman gets `--memory=<cap>m` and an exit of 137 is
 reported as the likely cause. macOS and Windows hosts are not capped
@@ -10249,8 +10253,11 @@ Linux (systemd 259) for the scope path and with the scope forced off for
 `ulimit`; Podman is checked by argv and a fake runtime, as it is not
 installed here. Tests: `core/tests/test_shell_memory_cap.py` (config,
 trust, Podman argv, `ulimit`, scope, the probe with fake `systemd-run`s,
-and a real daemon whose hog turn ends and whose next shell call runs).
-See DECISIONS.md.
+and a real daemon whose hog turn ends and whose next shell call runs; after
+review: the fixed description, read back from inside a real scope and
+checked against the journal, the pre-253 probe and note, and a charter run
+through write, sign and reload) and `ui/src/lib/charter.test.ts` (the
+charter's value survives Save and Start). See DECISIONS.md.
 
 ---
 

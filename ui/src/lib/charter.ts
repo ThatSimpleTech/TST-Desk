@@ -42,6 +42,7 @@ export function emptyCharterDraft(): CharterFields {
 			spend_usd: 25,
 			wall_clock_hours: 8,
 			max_iterations: 200,
+			shell_memory_mb: null,
 		},
 		stop_conditions: [""],
 	};
@@ -49,6 +50,20 @@ export function emptyCharterDraft(): CharterFields {
 
 function nonempty(entries: string[]): string[] {
 	return entries.map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+}
+
+/** The shell memory cap a charter sets, or null when it leaves it to the workspace (TD-5116). */
+export function charterShellMemory(caps: CharterFields["caps"]): number | null {
+	const mb = caps.shell_memory_mb;
+	return typeof mb === "number" && Number.isFinite(mb) ? mb : null;
+}
+
+/** Sign-card line for the shell memory cap (TD-5116). */
+export function shellMemoryCopy(caps: CharterFields["caps"]): string {
+	const mb = charterShellMemory(caps);
+	return mb === null
+		? "not set: .tst/config.yaml's caps.shell_memory_mb, else half of RAM"
+		: `${mb} MB per command`;
 }
 
 export function networkIsDeny(network: CharterNetwork): network is "deny" {
@@ -69,13 +84,22 @@ export function charterPayload(fields: CharterFields): Record<string, unknown> {
 			allowed_commands: nonempty(fields.boundary.allowed_commands),
 			network: hosts,
 		},
-		caps: {
-			spend_usd: fields.caps.spend_usd,
-			wall_clock_hours: fields.caps.wall_clock_hours,
-			max_iterations: fields.caps.max_iterations,
-		},
+		caps: capsPayload(fields.caps),
 		stop_conditions: nonempty(fields.stop_conditions),
 	};
+}
+
+/** Caps as the daemon takes them. An unset shell memory cap is left out, so
+ *  the run keeps the workspace's (TD-5116); a set one is never dropped. */
+function capsPayload(caps: CharterFields["caps"]): Record<string, number> {
+	const out: Record<string, number> = {
+		spend_usd: caps.spend_usd,
+		wall_clock_hours: caps.wall_clock_hours,
+		max_iterations: caps.max_iterations,
+	};
+	const mb = charterShellMemory(caps);
+	if (mb !== null) out.shell_memory_mb = mb;
+	return out;
 }
 
 function yamlList(items: string[]): string {
@@ -117,6 +141,7 @@ export function previewCharterYaml(fields: CharterFields, notes: string): string
 		`  spend_usd: ${caps.spend_usd}`,
 		`  wall_clock_hours: ${caps.wall_clock_hours}`,
 		`  max_iterations: ${caps.max_iterations}`,
+		...(caps.shell_memory_mb === undefined ? [] : [`  shell_memory_mb: ${caps.shell_memory_mb}`]),
 		"stop_conditions:",
 		yamlList(stops) === "[]" ? "  []" : yamlList(stops),
 		"---",

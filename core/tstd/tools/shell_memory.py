@@ -8,10 +8,15 @@ the workspace config, half of RAM when unset:
 - **systemd user scope** (Linux, where ``systemd-run --user --scope`` works
   and the user manager has the memory controller). Each command gets its
   own transient scope with ``MemoryMax``, ``MemorySwapMax=0`` (so a hog is
-  killed at the cap instead of filling swap) and ``OOMPolicy=stop``. The
-  kernel kills inside that scope only. Afterwards the unit's ``Result`` (or
-  the scope's own ``memory.events``, when systemd has not caught up yet)
-  says whether it did, so the result can say so.
+  killed at the cap instead of filling swap) and, from systemd 253,
+  ``OOMPolicy=stop``. The kernel kills inside that scope only. Afterwards
+  the unit's ``Result`` (or the scope's own ``memory.events``, when systemd
+  has not caught up yet) says whether it did, so the result can say so.
+  systemd before 253 takes no ``OOMPolicy`` on a scope and records no
+  ``Result=oom-kill`` for one, so there a SIGKILL exit is reported as the
+  likely cause, as in a container. The scope's description is fixed text:
+  systemd's default is the command line, which the user manager logs in
+  its "Started" line, and a command can carry a secret.
 - **``RLIMIT_AS``** (Linux without user scopes). The shell sets
   ``ulimit -v`` and then execs the command, so the child and everything it
   starts inherit the limit and cannot raise it. The kernel kills nothing:
@@ -48,6 +53,11 @@ _log = logging.getLogger(__name__)
 CapMethod = Literal["scope", "rlimit", "container"]
 
 _PROBE_MB = 256
+# The scope's Description. Never the command: systemd defaults it to the
+# command line and logs it to the journal when the scope starts, where
+# redaction cannot reach (prime directive 2).
+_SHELL_DESCRIPTION = "tstd shell command"
+_PROBE_DESCRIPTION = "tstd shell memory probe"
 _PROBE_TIMEOUT_SECS = 5.0
 _QUERY_TIMEOUT_SECS = 5.0
 # After the kernel's count shows a kill, how long to give systemd to mark
@@ -56,6 +66,8 @@ _SETTLE_POLLS = 20
 _SETTLE_SECS = 0.05
 # The exit status of a process killed by SIGKILL, as a shell reports it.
 _SIGKILL_EXIT = 137
+# ``returncode`` of a process asyncio saw die of SIGKILL itself.
+_SIGKILL_RETURNCODE = -9
 
 # Prints a marker, then the scope's own ``memory.max``. The marker needs
 # ``$$`` and ``${v}`` to reach the shell as written: systemd 254+ expands
@@ -89,12 +101,24 @@ _OWN_HEAP_LIMITS = ("javascript heap out of memory",)
 
 @dataclass(frozen=True)
 class _ScopeTools:
-    """systemd's binaries, and whether ``systemd-run`` takes
-    ``--expand-environment=no`` (254+; older releases never expand)."""
+    """systemd's binaries, and what this ``systemd-run`` takes.
+
+    Attributes:
+        no_expand: ``--expand-environment=no`` (254+; older releases never
+            expand).
+        oom_policy: ``OOMPolicy=stop`` on a scope (253+). Without it the
+            cap still holds, but systemd records no ``Result=oom-kill``.
+    """
 
     systemd_run: str
     systemctl: str
     no_expand: bool
+    oom_policy: bool = True
+
+
+# What the probe tries, in order: ``(no_expand, oom_policy)`` for systemd
+# 254+, then 253, then 246-252.
+_PROBE_VARIANTS = ((True, True), (False, True), (False, False))
 
 
 @dataclass
@@ -135,16 +159,19 @@ def reset_scope_probe() -> None:
     _probe.tools = None
 
 
-def _scope_args(unit: str, mb: int, *, no_expand: bool) -> list[str]:
+def _scope_args(
+    unit: str, mb: int, *, no_expand: bool, oom_policy: bool, description: str
+) -> list[str]:
     return [
         "--user",
         "--scope",
         "--quiet",
         *(["--expand-environment=no"] if no_expand else []),
         f"--unit={unit}",
+        f"--description={description}",
         f"--property=MemoryMax={mb}M",
         "--property=MemorySwapMax=0",
-        "--property=OOMPolicy=stop",
+        *(["--property=OOMPolicy=stop"] if oom_policy else []),
         "--",
     ]
 
@@ -153,9 +180,17 @@ def _unit_name(kind: str) -> str:
     return f"tstd-{kind}-{uuid.uuid4().hex[:16]}.scope"
 
 
-async def _probe_once(systemd_run: str, env: dict[str, str], *, no_expand: bool) -> str | None:
+async def _probe_once(
+    systemd_run: str, env: dict[str, str], *, no_expand: bool, oom_policy: bool
+) -> str | None:
     """Run the probe in a scope; None when it passed, else why it failed."""
-    args = _scope_args(_unit_name("probe"), _PROBE_MB, no_expand=no_expand)
+    args = _scope_args(
+        _unit_name("probe"),
+        _PROBE_MB,
+        no_expand=no_expand,
+        oom_policy=oom_policy,
+        description=_PROBE_DESCRIPTION,
+    )
     try:
         proc = await asyncio.create_subprocess_exec(
             systemd_run,
@@ -182,10 +217,11 @@ async def _probe_scope_tools(env: dict[str, str]) -> _ScopeTools | None:
     The probe starts a scope with a command's own properties, checks that
     the command text arrived unexpanded, and reads ``memory.max`` back.
     ``--expand-environment=no`` is tried first, then (for systemd before
-    254, which has no such flag and never expands) plain. A session with no
-    user manager, a user manager without the memory controller, and a
-    systemd that refuses a property all fail, and commands fall back to
-    ``RLIMIT_AS``.
+    254, which has no such flag and never expands) plain, then (before 253,
+    which refuses ``OOMPolicy`` on a scope) without ``OOMPolicy``: the cap
+    is ``MemoryMax`` either way. A session with no user manager, a user
+    manager without the memory controller, and a systemd that refuses the
+    memory properties all fail, and commands fall back to ``RLIMIT_AS``.
     """
     # The daemon's PATH: the command's environment keeps it unchanged.
     systemd_run = shutil.which("systemd-run")
@@ -194,10 +230,10 @@ async def _probe_scope_tools(env: dict[str, str]) -> _ScopeTools | None:
         _log.info("shell memory cap: no systemd-run on PATH; using RLIMIT_AS")
         return None
     why = ""
-    for no_expand in (True, False):
-        failure = await _probe_once(systemd_run, env, no_expand=no_expand)
+    for no_expand, oom_policy in _PROBE_VARIANTS:
+        failure = await _probe_once(systemd_run, env, no_expand=no_expand, oom_policy=oom_policy)
         if failure is None:
-            return _ScopeTools(systemd_run, systemctl, no_expand)
+            return _ScopeTools(systemd_run, systemctl, no_expand, oom_policy)
         why = failure
     _log.info("shell memory cap: systemd user scope unusable (%s); using RLIMIT_AS", why)
     return None
@@ -253,7 +289,13 @@ def host_command(cap: ShellMemoryCap | None, command: str) -> str:
     if cap is None:
         return command
     if cap.method == "scope" and cap.tools is not None:
-        args = _scope_args(cap.unit, cap.mb, no_expand=cap.tools.no_expand)
+        args = _scope_args(
+            cap.unit,
+            cap.mb,
+            no_expand=cap.tools.no_expand,
+            oom_policy=cap.tools.oom_policy,
+            description=_SHELL_DESCRIPTION,
+        )
         argv = [cap.tools.systemd_run, *args, "/bin/sh", "-c", command]
         return "exec " + shlex.join(argv)
     if cap.method == "rlimit":
@@ -351,8 +393,17 @@ async def _scope_oom_killed(cap: ShellMemoryCap) -> bool:
     return True
 
 
-def _note(cap: ShellMemoryCap) -> str:
+def _killed_by_sigkill(exit_code: int) -> bool:
+    return exit_code in (_SIGKILL_EXIT, _SIGKILL_RETURNCODE)
+
+
+def _note(cap: ShellMemoryCap, *, likely: bool = False, exit_code: int = _SIGKILL_EXIT) -> str:
     fix = "Use less memory, or raise caps.shell_memory_mb in .tst/config.yaml."
+    if cap.method == "scope" and likely:
+        return (
+            f"memory cap: killed (exit {exit_code}) under its {cap.mb} MB memory cap "
+            f"(caps.shell_memory_mb); going over that cap is the usual cause. {fix}"
+        )
     if cap.method == "scope":
         return (
             f"memory cap: killed — the command went over its {cap.mb} MB memory cap "
@@ -375,6 +426,11 @@ async def cap_note(cap: ShellMemoryCap | None, exit_code: int, stderr: str) -> s
         return ""
     if cap.method == "scope":
         hit = await _scope_oom_killed(cap)
+        # systemd before 253 records no oom-kill result for a scope, and has
+        # usually collected it by now: the exit status is all there is.
+        old_systemd = cap.tools is not None and not cap.tools.oom_policy
+        if not hit and old_systemd and _killed_by_sigkill(exit_code):
+            return _note(cap, likely=True, exit_code=exit_code)
     elif cap.method == "rlimit":
         hit = exit_code != 0 and ran_out_of_memory(stderr)
     else:

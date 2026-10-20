@@ -801,7 +801,7 @@ same `run` argv (`--userns=keep-id`, one bind mount of the workspace
 at `/workspace`, `--network=none` when the charter wall is deny; a
 host allowlist omits that flag so Podman slirp can work, and never
 `--network=host`, and `--memory` at the charter's `caps.shell_memory_mb`,
-half of RAM when it is unset, TD-5116). The argv never bind-mounts `$HOME`, `~/.ssh`, cloud
+else this file's, else half of RAM, TD-5116). The argv never bind-mounts `$HOME`, `~/.ssh`, cloud
 creds, the OS keychain, or the user-data-dir; there is no extra-mount
 API. Firecracker / EZER is a follow-up, not this key.
 
@@ -1716,24 +1716,32 @@ machine allows:
 
 - **Linux with systemd user scopes.** The command runs in its own transient scope
   (`systemd-run --user --scope`, unit `tstd-shell-<id>.scope`) with `MemoryMax` at the cap,
-  `MemorySwapMax=0` so it is killed at the cap rather than pushed into swap, and
-  `OOMPolicy=stop`. The kernel kills inside that scope only, never the daemon. Afterwards the
-  daemon reads the unit's result, or the scope's `memory.events` when systemd has not caught up
-  yet, and clears the failed unit.
+  `MemorySwapMax=0` so it is killed at the cap rather than pushed into swap, and (systemd 253
+  and later) `OOMPolicy=stop`. The kernel kills inside that scope only, never the daemon.
+  Afterwards the daemon reads the unit's result, or the scope's `memory.events` when systemd has
+  not caught up yet, and clears the failed unit. systemd 246–252 (Ubuntu 22.04, Debian 12,
+  RHEL 9) refuses `OOMPolicy` on a scope and records no out-of-memory result for one, so there
+  the scope runs without it and a SIGKILL exit (137) is reported as the likely cause. The
+  scope's description is the fixed text `tstd shell command`, never the command: systemd logs a
+  scope's description to the journal when it starts, and a command can carry a secret.
 - **Other Linux.** The shell sets `ulimit -v` (`RLIMIT_AS`) to the cap and then runs the
   command, so the command and everything it starts inherit the limit and cannot raise it. This
   counts address space, not resident memory: an allocation past it fails and the command dies of
   its own out-of-memory error. Runtimes that reserve large address ranges up front (sanitizers,
   some JVM and WebAssembly setups) can fail well below the cap here; raise the cap if they do.
   A lower limit the daemon already runs under is kept.
-- **Autonomous sessions.** Podman runs get `--memory=<cap>m`, from the charter's `caps` (a
-  charter's caps replace this file's for the run).
+- **Autonomous sessions.** Podman runs get `--memory=<cap>m`. A charter's caps replace this
+  file's for the run, except that a charter which leaves `shell_memory_mb` unset keeps this
+  file's value (half of RAM when neither sets it). The Charter column has a **Shell memory (MB)**
+  field for it (blank leaves it unset), and the sign card shows it or, when unset, where the
+  run's cap comes from.
 - **macOS and Windows hosts.** Not capped: macOS does not enforce `RLIMIT_AS`, and neither has
   systemd scopes. Autonomous runs there are still capped by Podman.
 
 Which Linux method works is probed once, on the first shell command after the daemon starts: a
 scope with the same settings must start, receive the command text unchanged (systemd 254+ is
-told not to expand `$$` and `${x}` in it), and show the cap in its `memory.max`. The answer holds
+told not to expand `$$` and `${x}` in it), and show the cap in its `memory.max`. It tries the
+settings for systemd 254+, then 253, then 246–252, and uses the first that passes. The answer holds
 until the daemon restarts, so restart it after changing systemd or cgroup setup.
 
 When the cap stops a command, its result says so plainly, on a line under the exit code:
