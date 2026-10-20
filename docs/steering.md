@@ -927,7 +927,9 @@ What does **not** carry over, and what to do about it:
   A skill body over 4,000 tokens is refused by `load_skill` and `/name`, not truncated, and is
   left out of the catalog so the model does not spend a turn on it. `description` is the one
   required key; a skill without it, or with a `name`, `whenToUse` or `when_to_use` that is not
-  text, is skipped.
+  text, is skipped. So is a `SKILL.md` that is not UTF-8 (a Windows-1252 file, or UTF-16 from
+  PowerShell 5.1 `Out-File`): it is logged once and the other skills load. Save it as UTF-8 to
+  bring it back.
   `whenToUse` (or Claude Code's `when_to_use`; ours wins when both are set) is optional and
   falls back to `description`. `compatibility` (the Agent Skills spec's environment needs) is
   shown to the model beside the description, as is a when-to-use that says more than the

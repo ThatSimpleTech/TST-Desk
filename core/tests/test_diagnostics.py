@@ -267,6 +267,70 @@ class TestWithWorkspace:
                 await _stop_daemon(task)
 
     @pytest.mark.asyncio
+    async def test_non_utf8_skill_still_gets_a_report(self, fakes: FakeKeychain) -> None:
+        # A Windows-1252 SKILL.md used to raise UnicodeDecodeError out of
+        # discovery, closing the connection with 1011 and no report. It is
+        # now skipped (and logged) and the good skill is still counted.
+        fakes.stored["openrouter"] = "sk-ok"
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as work:
+            bad = Path(work) / ".tst" / "skills" / "bad" / "SKILL.md"
+            bad.parent.mkdir(parents=True)
+            bad.write_bytes(b"---\ndescription: caf\xe9\n---\nbody\n")
+            plain = Path(work) / ".tst" / "skills" / "plain" / "SKILL.md"
+            plain.parent.mkdir(parents=True)
+            plain.write_text("---\ndescription: Plain\n---\nbody\n", encoding="utf-8")
+            daemon, task = await _start_daemon(Path(tmp))
+            try:
+                ws = await _connect_and_handshake(
+                    f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+                )
+                await self._open_workspace(ws, work)
+                await ws.send(json.dumps({"type": "run_diagnostics"}))
+                resp = dict(json.loads(await ws.recv()))
+                assert resp["type"] == "diagnostics_report"
+                checks = list(resp["checks"])
+                skills = _row(checks, "skills")
+                assert skills["status"] == "ok"
+                assert skills["detail"] == "1 skill(s) found"
+                assert _row(checks, "steering")["status"] == "ok"
+                await ws.close()
+            finally:
+                await _stop_daemon(task)
+
+    @pytest.mark.asyncio
+    async def test_skills_row_fails_alone_when_discovery_raises(
+        self, fakes: FakeKeychain, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Discovery is designed not to raise. If it does with anything, not
+        # just OSError, only the skills row fails; the report still arrives.
+        async def boom(*_args: object, **_kwargs: object) -> list[object]:
+            raise ValueError(f"cannot read {work}/.tst/skills/odd/SKILL.md")
+
+        monkeypatch.setattr("tstd.daemon.list_workspace_skills_async", boom)
+        fakes.stored["openrouter"] = "sk-ok"
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as work:
+            daemon, task = await _start_daemon(Path(tmp))
+            try:
+                ws = await _connect_and_handshake(
+                    f"ws://127.0.0.1:{daemon.ws_server.port}", daemon.ws_server.token
+                )
+                await self._open_workspace(ws, work)
+                await ws.send(json.dumps({"type": "run_diagnostics"}))
+                resp = dict(json.loads(await ws.recv()))
+                assert resp["type"] == "diagnostics_report"
+                checks = list(resp["checks"])
+                skills = _row(checks, "skills")
+                assert skills["status"] == "fail"
+                assert "skill discovery failed" in skills["detail"]
+                assert "odd/SKILL.md" in skills["detail"]
+                assert work not in skills["detail"]
+                assert skills["fix"]
+                assert _row(checks, "steering")["status"] == "ok"
+                await ws.close()
+            finally:
+                await _stop_daemon(task)
+
+    @pytest.mark.asyncio
     async def test_broken_import_fails_steering_with_fix(self, fakes: FakeKeychain) -> None:
         fakes.stored["openrouter"] = "sk-ok"
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as work:

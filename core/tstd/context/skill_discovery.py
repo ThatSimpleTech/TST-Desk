@@ -164,6 +164,13 @@ class SkillDiscoverer:
             raw = path.read_text(encoding="utf-8")
         except OSError:
             return None
+        except UnicodeDecodeError:
+            # Not UTF-8 text (a Windows-1252 file, or UTF-16 from PowerShell
+            # 5.1 `Out-File`). Its frontmatter cannot be read, so it is
+            # skipped like an unreadable file. Raising here would take down
+            # every caller: prompt assembly, the inspector, Doctor.
+            warn_once("skill skipped; SKILL.md is not UTF-8 text", path)
+            return None
         metadata, body = parse_frontmatter(raw)
         fields = _read_frontmatter(metadata)
         if fields is None:

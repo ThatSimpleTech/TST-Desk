@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -195,6 +196,42 @@ class TestDoctorDetail:
     def test_no_skills(self, dirs: tuple[Path, Path]) -> None:
         ws, home = dirs
         assert skills_doctor_detail(list_workspace_skills(ws, home)) == "no skills found"
+
+
+class TestNotUtf8:
+    """A SKILL.md that is not UTF-8 is skipped and named, never raised.
+
+    Before, the decode error escaped discovery and took down every caller,
+    the doctor's ``skills`` row included.
+    """
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            # Windows-1252, as an editor on a Western-locale Windows saves it.
+            "---\ndescription: Caf\u00e9 notes\n---\nbody\n".encode("cp1252"),
+            # UTF-16LE with a BOM, as PowerShell 5.1 `Out-File` writes it.
+            "\ufeff---\ndescription: Notes\n---\nbody\n".encode("utf-16-le"),
+        ],
+        ids=["cp1252", "utf-16le"],
+    )
+    def test_skipped_with_a_warning_and_the_rest_load(
+        self, dirs: tuple[Path, Path], raw: bytes, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        ws, home = dirs
+        bad = ws / ".tst" / "skills" / "bad" / "SKILL.md"
+        bad.parent.mkdir(parents=True)
+        bad.write_bytes(raw)
+        _agentskills_ws(ws)
+        with caplog.at_level(logging.WARNING, logger="tstd.skills"):
+            skills = list_workspace_skills(ws, home)
+        assert [s.name for s in skills] == ["pdf-processing"]
+        warnings = [r for r in caplog.records if "not UTF-8" in r.getMessage()]
+        assert len(warnings) == 1
+        assert skills_doctor_detail(skills) == (
+            "1 skill(s) found; frontmatter keys ignored: "
+            "pdf-processing (allowed-tools, x-vendor-rating)"
+        )
 
 
 class TestWhenToUseKeys:

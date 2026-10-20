@@ -15031,9 +15031,16 @@ its author marked manual-only, so honoring it is now the strict answer.
 **Decision:** Doctor's `skills` row is `ok` when discovery runs, with
 "N skill(s) found; frontmatter keys ignored: name (keys); ...". It names
 skills, never paths (TD-1104). It skips with no workspace, like
-`steering`, and fails only when discovery itself raises an `OSError`.
-The row status set stays ok/fail/skip: a skill that loaded is not a
-failure, and a new "warn" status would change every viewer.
+`steering`, and fails only when discovery itself raises. Discovery is
+designed not to raise, so, like the `steering` row, the row catches any
+exception, not just `OSError`: an escaped error closed the window's
+connection with 1011 and Doctor showed no report at all. A `SKILL.md`
+that is not UTF-8 (Windows-1252, or UTF-16 from PowerShell 5.1
+`Out-File`) was the case that raised; discovery now skips it and logs
+it once, like an unreadable file, rather than guessing an encoding, so
+prompt assembly and the inspector survive it too (review finding on
+PR #27). The row status set stays ok/fail/skip: a skill that loaded is
+not a failure, and a new "warn" status would change every viewer.
 
 **Rejected:** Enforcing `disallowed-tools` while the skill is loaded
 (tool-pattern semantics TST Desk does not have; every call still goes

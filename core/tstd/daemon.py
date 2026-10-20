@@ -1873,6 +1873,15 @@ class Daemon:
                 detail=_relativize_paths(f"skill discovery failed: {e}", workspace),
                 fix="Make the named skills folder readable and re-run Doctor.",
             )
+        except Exception as e:  # discovery is designed not to raise; report if it does
+            # One bad skill must cost this row, never the whole report: an
+            # escaped error closes the window's connection with no report.
+            return DiagnosticCheck(
+                name="skills",
+                status="fail",
+                detail=_relativize_paths(f"skill discovery failed: {e}", workspace),
+                fix="Fix or remove the skill file that discovery stopped on and re-run Doctor.",
+            )
         return DiagnosticCheck(name="skills", status="ok", detail=skills_doctor_detail(skills))
 
     async def run(self) -> None:
