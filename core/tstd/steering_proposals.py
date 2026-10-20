@@ -74,9 +74,10 @@ STALE_MESSAGE = "The file changed since this was proposed. A fresh diff is on th
 
 _INSTRUCTION_NAMES = frozenset({"AGENTS.md", "CLAUDE.md", "SKILL.md"})
 _RULES_PARTS = (".tst", "rules")
-_COMMAND_PAIRS = frozenset(
-    {(".tst", "commands"), (".claude", "commands"), (".tstdesk", "commands")}
-)
+# The workspace command trees the loader reads (context/commands.py). It
+# reads ``.tstdesk/commands`` only under the home directory, so a proposal
+# there inside a workspace would land a file nothing uses (TD-5158).
+_COMMAND_PAIRS = frozenset({(".tst", "commands"), (".claude", "commands")})
 _POLICY_PARTS = (".tst", "config.yaml")
 _PROTECTED = frozenset({_POLICY_PARTS, tuple(p.casefold() for p in CHARTER_RELATIVE_PARTS)})
 
@@ -151,7 +152,9 @@ class ParkedSteering:
     """One proposal waiting for the user, with the exact text.
 
     ``before`` is the file as the diff saw it (``None``: did not exist).
-    ``workspace`` is the canonical root it was proposed in.
+    ``workspace`` is the canonical root it was proposed in. ``user_text``
+    says ``after`` is the user's own edit carried onto a fresh card after
+    the file changed, so accepting it is logged as ``edited`` (TD-5158).
     """
 
     proposal_id: str
@@ -161,6 +164,7 @@ class ParkedSteering:
     after: str
     tool_call_id: str = ""
     autonomy: bool = False
+    user_text: bool = False
 
     @property
     def action(self) -> Literal["create", "replace"]:
@@ -272,12 +276,70 @@ def hidden_part(diff: SteeringFileDiff) -> Literal["path", "before", "after"] | 
     return None
 
 
-def write_steering_file(target: Path, text: str) -> None:
-    """Write *text* atomically: a temp file beside the target, then rename.
+def write_steering_file(root: Path, relative: str, text: str) -> None:
+    """Write *text* to *relative* under *root* atomically: a temp file, then rename.
 
     The rename replaces the directory entry, so a hardlinked file is
     never written through. An existing file keeps its permission bits.
+
+    Where the OS allows it, every directory under *root* is opened with
+    ``O_NOFOLLOW`` and the file is written relative to the last one, so
+    the path is resolved once. The agent's turn keeps running while the
+    card is open, and a shell command could swap a directory on the
+    checked path for a symlink between the check and the write; the user's
+    text would then land wherever the link points (TD-5158). A swapped
+    directory now fails the write instead.
     """
+    if not _DIR_FD_WRITES:
+        _write_by_path(root.joinpath(*relative.split("/")), text)
+        return
+    *dirs, name = relative.split("/")
+    dir_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in dirs:
+            with contextlib.suppress(FileExistsError):
+                os.mkdir(part, dir_fd=dir_fd)
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
+            os.close(dir_fd)
+            dir_fd = child
+        _write_in_dir(dir_fd, name, text)
+    finally:
+        os.close(dir_fd)
+
+
+#: ``openat``-style writes: POSIX. Windows takes the path-based write; a
+#: symlink there needs a privilege an agent's shell does not have.
+_DIR_FD_WRITES = (
+    hasattr(os, "O_NOFOLLOW")
+    and hasattr(os, "O_DIRECTORY")
+    and os.open in os.supports_dir_fd
+    and os.rename in os.supports_dir_fd
+)
+
+
+def _write_in_dir(dir_fd: int, name: str, text: str) -> None:
+    try:
+        info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        mode = stat.S_IMODE(info.st_mode) if stat.S_ISREG(info.st_mode) else 0o644
+    except FileNotFoundError:
+        mode = 0o644
+    tmp = f".{name}.{uuid.uuid4().hex}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    fd = os.open(tmp, flags, 0o600, dir_fd=dir_fd)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fchmod(handle.fileno(), mode)
+            os.fsync(handle.fileno())
+        os.replace(tmp, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp, dir_fd=dir_fd)
+        raise
+
+
+def _write_by_path(target: Path, text: str) -> None:
     try:
         mode = stat.S_IMODE(target.stat().st_mode)
     except FileNotFoundError:
@@ -397,7 +459,8 @@ async def decide(
         return _error(
             session, msg, "steering_write_failed", f"Couldn't write {parked.relative}: {reason}"
         )
-    decision: Literal["accepted", "edited"] = "accepted" if text == parked.after else "edited"
+    edited = parked.user_text or text != parked.after
+    decision: Literal["accepted", "edited"] = "edited" if edited else "accepted"
     await _log_decision(session, parked, decision, file_diff(parked, after=text))
     return None
 
@@ -405,7 +468,9 @@ async def decide(
 def _error(
     session: Session, msg: SteeringAccept | SteeringEdit | SteeringReject, code: str, text: str
 ) -> str:
-    return build_error(code, text, session_id=session.id, in_reply_to=msg.type)
+    return build_error(
+        code, text, session_id=session.id, in_reply_to=msg.type, proposal_id=msg.proposal_id
+    )
 
 
 def _write_if_unchanged(session: Session, parked: ParkedSteering, text: str) -> None:
@@ -424,7 +489,7 @@ def _write_if_unchanged(session: Session, parked: ParkedSteering, text: str) -> 
     current = read_current(target)
     if current != parked.before:
         raise _Stale(current)
-    write_steering_file(target, text)
+    write_steering_file(canonical_path(root), parked.relative, text)
 
 
 async def _offer_fresh(
@@ -439,7 +504,13 @@ async def _offer_fresh(
     The fresh one carries the text the user was saving, so an edit made on
     the stale card is not lost.
     """
-    fresh = replace(parked, proposal_id=f"sp-{uuid.uuid4()}", before=current, after=text)
+    fresh = replace(
+        parked,
+        proposal_id=f"sp-{uuid.uuid4()}",
+        before=current,
+        after=text,
+        user_text=parked.user_text or text != parked.after,
+    )
     if hidden_part(file_diff(fresh)) is not None:
         # The card could not show the file as it is now. Keep the stale one
         # so Reject still logs a decision; Accept stays refused as stale.

@@ -167,6 +167,8 @@ async def test_every_steering_kind_can_be_proposed(tmp_path: Path, relative: str
         (".git/AGENTS.md", "not_steering"),
         (".vscode/SKILL.md", "not_steering"),
         (".tst/memory/MEMORY.md", "not_steering"),
+        # Only ~/.tstdesk/commands is read; inside a workspace nothing loads it (TD-5158).
+        (".tstdesk/commands/review.md", "not_steering"),
     ],
 )
 async def test_other_paths_are_refused(tmp_path: Path, relative: str, code: str) -> None:

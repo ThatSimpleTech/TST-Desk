@@ -947,7 +947,8 @@
     "code": "test",
     "message": "fail",
     "machine": null,
-    "in_reply_to": null
+    "in_reply_to": null,
+    "proposal_id": null
   },
   "error_with_session": {
     "type": "error",
@@ -956,7 +957,8 @@
     "code": "test",
     "message": "fail",
     "machine": null,
-    "in_reply_to": null
+    "in_reply_to": null,
+    "proposal_id": null
   },
   "shell_output": {
     "type": "shell_output",

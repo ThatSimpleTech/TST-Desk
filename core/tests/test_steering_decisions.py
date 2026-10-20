@@ -236,6 +236,28 @@ async def test_a_stale_edit_keeps_the_users_text_in_the_fresh_diff(proposed: Run
     assert (fresh.files[0].action, fresh.files[0].after) == ("create", mine)
 
 
+async def test_accepting_the_fresh_card_of_a_stale_edit_is_logged_as_edited(
+    proposed: Run,
+) -> None:
+    """The fresh card carries the user's text; the log must not credit the agent (TD-5158)."""
+    run = proposed
+    [stale] = run.events(SteeringProposal)
+    (run.ws / "AGENTS.md").write_text("# Project\n\n- Changed.\n", encoding="utf-8")
+    mine = "# Mine\n"
+    reply = await run.send("steering_edit", stale.proposal_id, content=mine)
+    assert reply is not None and reply["code"] == "steering_proposal_stale"
+    fresh = run.events(SteeringProposal)[-1]
+    # Changed again, so the fresh card goes stale too and is re-offered.
+    (run.ws / "AGENTS.md").write_text("# Project\n\n- Changed twice.\n", encoding="utf-8")
+    reply = await run.send("steering_accept", fresh.proposal_id)
+    assert reply is not None and reply["code"] == "steering_proposal_stale"
+    again = run.events(SteeringProposal)[-1]
+    assert await run.send("steering_accept", again.proposal_id) is None
+    assert _read(run) == mine
+    [decision] = run.events(SteeringDecision)
+    assert decision.decision == "edited"
+
+
 async def test_a_file_changed_to_what_the_card_would_blank_gets_no_fresh_diff(
     proposed: Run,
 ) -> None:
@@ -271,6 +293,49 @@ async def test_a_symlink_swapped_in_after_the_proposal_is_refused(tmp_path: Path
         (run.ws / ".tst" / "rules").symlink_to(outside, target_is_directory=True)
         reply = await run.send("steering_accept", event.proposal_id)
         assert reply is not None and reply["code"] == "outside_workspace"
+        assert list(outside.iterdir()) == []
+        assert event.proposal_id in run.session.steering_proposals
+    finally:
+        await _shutdown(run.daemon, run.sid)
+
+
+@pytest.mark.skipif(not POSIX, reason="symlinks need privileges on Windows")
+async def test_a_directory_swapped_between_the_check_and_the_write_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The write must not re-resolve a path the agent can change (TD-5158).
+
+    The turn keeps running while the card is open. The path was checked,
+    then the write resolved ``sub/`` again, so a directory swapped for a
+    symlink in between sent the user's text out of the workspace.
+    """
+    from tstd import steering_proposals
+
+    steps = [
+        _call("propose_steering_edit", path="sub/CLAUDE.md", text="# Sub\n"),
+        Script(kind="stream", content="Proposed."),
+    ]
+    run = await _run(tmp_path, steps, {"sub/keep.txt": "x\n"})
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    real_read = steering_proposals.read_current
+
+    def read_then_swap(path: Path) -> str | None:
+        current = real_read(path)
+        sub = run.ws / "sub"
+        (sub / "keep.txt").unlink()
+        sub.rmdir()
+        sub.symlink_to(outside, target_is_directory=True)
+        return current
+
+    try:
+        await run.turn()
+        [event] = run.events(SteeringProposal)
+        monkeypatch.setattr(steering_proposals, "read_current", read_then_swap)
+        reply = await run.send("steering_accept", event.proposal_id)
+        assert reply is not None and reply["code"] == "steering_write_failed"
+        # The refusal names its card, so the window shows it there (TD-5158).
+        assert reply["proposal_id"] == event.proposal_id
         assert list(outside.iterdir()) == []
         assert event.proposal_id in run.session.steering_proposals
     finally:
