@@ -9365,10 +9365,12 @@ turn.
       containing characters outside `[A-Za-z0-9_-]`, is excluded with a
       visible warning in Settings and the doctor
 - [x] One bad tool never fails a whole request. A test registers a bad
-      tool next to a good one and sends the request a turn sends (the
-      registry's whole tool list) to a strict mock endpoint, which
-      succeeds (core/tests/test_mcp_schema_sanitize.py; the request, not a
-      full loop turn)
+      tool next to a good one and runs a turn against a strict mock
+      endpoint, which succeeds
+      (core/tests/test_mcp_schema_sanitize.py::test_a_loop_turn_streams_against_a_strict_endpoint,
+      a real streamed loop turn, added by TD-5158; until then only one
+      non-streaming request was sent, and the criterion had been reworded
+      to match that and ticked)
 - [x] Excluded tools are listed with the reason (the doctor row, and
       "Left out <name>: <reason>" under the server in Settings)
 
@@ -9431,9 +9433,12 @@ after the fact.
 **Acceptance criteria:**
 - [x] The title bar shows used against budget for the active tier's
       `context_window`, using the daemon's calibrated estimate (TD-5013),
-      from the `context_usage` event. It also shows on the phone (the
-      same app; the header stays visible below 640px). Not checked on a
-      device in this story
+      from the `context_usage` event
+- [ ] It also shows on the phone. Not checked on a device: the code
+      supports it (the APK is the same UI; TitleBar renders ContextGauge,
+      and AppShell's narrow layout keeps the title bar below 640px), but
+      no device or narrow-width test has shown it yet. (Split out and
+      unticked by TD-5158: it had been ticked unverified.)
 - [x] `/compact [guidance]` and a button compact now. Guidance is passed
       to the summary (it heads it and keeps more of what it names; no
       model call, DECISIONS.md)
@@ -9503,7 +9508,12 @@ other's request.
       and a consumer that stops early closes the whole chain
 - [x] `HttpMcpClient.call_tool` takes its request id itself and passes
       it to the request, so each cancel notice names its own call
-- [x] Tests in core and ui fail on the old code and pass on the new
+- [x] Tests in core and ui fail on the old code and pass on the new, or,
+      for the two item (4) guards
+      (`test_real_from_here_compaction_goes_out_with_one_system_message`,
+      `test_summarize_from_here_then_a_turn_passes_the_strict_template`),
+      fail when `wire_messages` is a no-op: they restore a regression
+      guard and pass on the old code (qualified by TD-5158)
 
 ### TD-5113 — Trust prompt for repo-supplied config
 **Size:** 3 · **Depends on:** none
@@ -9847,9 +9857,10 @@ the event's class, so it said C, and a failed call was stored as
 - [x] Tests fail on the old code (event C, dispatch A) and pass on the new
 
 **Follow-up (not in this story):** a boundary refusal that forces C after
-the classifier said A or B (a hardlink, a Windows-unsafe form) still
+the classifier said A or B (an in-place write to a hardlinked file) still
 shows the classifier's class on the event, which is written before the
-guard runs.
+guard runs. (Corrected by TD-5158: Windows-unsafe forms were listed here
+too, but the classifier and the guard judge the same string for them.)
 
 ### TD-5149 — Always allow saves a rule that matches only the file it was for
 **Size:** 2 · **Depends on:** TD-803, TD-5101, TD-5141
@@ -9950,6 +9961,8 @@ deploy waited on a turn that never ends without the person.
       `user_message` handler returns, and leaves it once its `user_turn`
       and the conversation are saved; the turn is logged under the
       message's id, so a message whose turn is in the log is not held again
+      (a send whose write fails was accepted anyway until TD-5158; it is
+      now refused)
 - [x] After a restart the queued messages come back held, not sent: logged
       as `queued_messages`, sent only by `send_queued` (refused during a
       drain hold, like `user_message`), dropped by `remove_queued`
@@ -9966,6 +9979,108 @@ deploy waited on a turn that never ends without the person.
       message and event tables, DECISIONS.md
 - [x] Tests fail on the old code: a restart with a message queued behind a
       guard pause loses it, and drain exits 2 on a guard-paused session
+
+### TD-5158 — Low-severity review notes from waves 2-4
+**Size:** 3 · **Depends on:** TD-5113, TD-5140, TD-5147, TD-5148, TD-5149, TD-5150, TD-5151, TD-5152, TD-5153, TD-5154, TD-5155, TD-5157
+
+The reviewers of waves 2-4 left 33 low-severity notes, each with evidence.
+Each was checked against main. A real one is fixed with a test that fails
+on the old code (or, where the note is about docs disagreeing with the
+code, a docs fix); one that is not, or no longer applies, says why.
+
+**Acceptance criteria:**
+- [x] 1. TD-5148 PR conflicted with main in DECISIONS.md: already fixed
+      (PR #11 merged; main has both entries)
+- [x] 2. TD-5148 follow-up named Windows-unsafe forms: corrected in
+      DECISIONS.md and the TD-5148 follow-up (only the hardlink case
+      splits). The related gap was real: joining a path to the workspace
+      hid `C:/x` and UNC prefixes, so they ran as A off Windows; such a
+      form is now kept as written, so the event, dispatch and audit say C
+      and the guard refuses it
+- [x] 3. TD-5147 refusal said "Edit a message after the summary instead",
+      which "Summarize from here" leaves impossible: it now says to send a
+      new message
+- [x] 4. TD-5147 a refused Edit or Retry lost its text and left it in the
+      in-flight sends with a branch snapshot: fork and branch refusals
+      name `in_reply_to`, the text goes back to the composer and the
+      snapshot is dropped
+- [x] 5. TD-5147 PR body miscounted the new tests (11, 10 failing on the
+      old code): not a repo bug; only the merged PR #12 body says it, and
+      the backlog criterion holds
+- [x] 6. TD-5113 restored tombstones had no trust store, so Resume, a
+      spend cap or a move read a loosening config as trusted: they now get
+      the daemon's store
+- [x] 7. TD-5113 "reads the file once per load" was false (the wall and the
+      policy each read it): the policy now reuses the wall's read;
+      DECISIONS.md corrected
+- [x] 8. TD-5113 trust card cut `hooks` and `mcp_servers` at 200
+      characters: values are shown whole
+- [x] 9. TD-5149 `ask`/`never` rules showed as "exactly .env" although
+      they match any case: only `auto` rules carry `exact`; docs/architecture.md
+      and docs/configuration.md say so
+- [x] 10. TD-5150 "no worse than today" was wrong for old windows and every
+      older APK (blank amber rows): docs fix in DECISIONS.md and
+      android/README.md Upgrading
+- [x] 11. TD-5140 a directory swapped for a symlink between the check and
+      the write sent the user's text out of the workspace: the write walks
+      the path with `O_NOFOLLOW` and writes relative to the last folder
+- [x] 12. TD-5140 accepting the fresh card a stale Edit produced was logged
+      `accepted`: it is logged `edited`
+- [x] 13. TD-5140 workspace `.tstdesk/commands/` was proposable though
+      nothing reads it: no longer offered; docs/steering.md
+- [x] 14. TD-5140 a refusal could land on the wrong card: steering
+      refusals carry `proposal_id`, and the window uses it
+- [x] 15. TD-5151 a stale Stop turned a later Run into "Verify stopped.":
+      Run drops a stop no open turn owns
+- [x] 16. TD-5151 a Stop after the call returned stayed set: every review
+      acknowledges a stop no turn owns when it closes
+- [x] 17. TD-5151 the window showed no Stop during a review: the daemon
+      logs `verify_started`, and the composer shows Stop until the result
+      (a review cut by a restart is sealed on restore)
+- [x] 18. TD-5152 a role-only opening chunk counted as output, so an
+      in-band 429/503 after it was not retried: chunks that show nothing
+      are held until one that does
+- [x] 19. TD-5152 an in-band `code` of 0 or a negative was taken as the
+      status: only 400-599 counts, else 502
+- [x] 20. TD-5152 a string `context_length_exceeded` code was a retried
+      502: a window refusal by string code or message is a 400, so
+      `context_overflow`
+- [x] 21. TD-5155 a failed queue write was only logged and the send
+      counted as accepted: the window's send is refused with
+      `message_not_saved` and the text goes back to the composer
+- [x] 22. TD-5155 a send cancelled during its write left an open turn with
+      nothing queued: the count and the queue move together or not at all
+- [x] 23. TD-5155 every held list could take a fresh send's echo row: only
+      a row new to the list can be a send of ours the daemon held
+- [x] 24. TD-5155 docs did not mention that Continue, Approve and Deny pass
+      the drain hold: docs/linux.md says so and when to use `--strict`
+- [x] 25. TD-5155 PR body said the restart test times out on old code (it
+      fails at import): not a repo bug; only the merged PR #22 body says it
+- [x] 26. TD-5155 the walk never showed the held strip: the walk daemon
+      seeds an archived session with two held messages, and the walk
+      unarchives it, records the strip ("held" in the census) and uses
+      Send and Remove
+- [x] 27. TD-5153 the 120 s claim for the default budget holds only once
+      the validator's token ratio is learned: docs/configuration.md says so
+- [x] 28. TD-5153 Stop during prompt fitting then a refused prompt read
+      "Not reviewed": it reads "Verify stopped." and the flag is cleared
+- [x] 29. TD-5154 "fail on the old code" was ticked though the two item (4)
+      guards pass on it: the criterion now says what they fail on
+- [x] 30. TD-5154 the turn loop never closed the stream it stopped reading:
+      its reader closes the stream in a `finally`; DECISIONS.md corrected
+- [x] 31. TD-5154 TD-5104 and TD-5109 criteria were reworded or ticked
+      unverified: TD-5104's now has a real loop-turn test against a strict
+      endpoint; TD-5109's phone criterion is split out and unticked
+- [x] 32. TD-5157 under `core.ignorecase` staging added a case-variant entry
+      beside the tracked one: it stages under the index's spelling, as
+      `git add` does
+- [x] 33. TD-5157 a file swapped for a symlink while staging was read
+      through it: each file is opened with `O_NOFOLLOW`, must be the device
+      and inode the plan saw, and is hashed from that descriptor
+- [x] Tests fail on the old code and pass on the new, except two that add
+      coverage for code that was already right and pass on both (TD-5104's
+      loop-turn test, the walk's held step); ruff, mypy, tsc, vitest and
+      the UI walk pass
 
 ---
 
