@@ -650,7 +650,23 @@
     "seq": 3,
     "session_id": "sess-1",
     "turn_id": "turn-1",
-    "content": "Fix the tests"
+    "content": "Fix the tests",
+    "steer": null
+  },
+  "user_turn_steer": {
+    "type": "user_turn",
+    "seq": 9,
+    "session_id": "sess-1",
+    "turn_id": "turn-2",
+    "content": "Also run the linter",
+    "steer": {
+      "turn_id": "turn-1",
+      "step": 2,
+      "after_tool_call_ids": [
+        "tc-1",
+        "tc-2"
+      ]
+    }
   },
   "queued_messages": {
     "type": "queued_messages",

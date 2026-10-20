@@ -8,7 +8,8 @@ import type { BranchSnaps } from "./chat-fork";
 import { applyHeldList, clearHeldPending } from "./chat-held";
 import type { ChatMessage, ChatState, ToolBlock } from "./chat-store";
 import type { MessageQueue } from "./chat-queue";
-import { dropSent, prependDraft, refusedSend, returnToDraft, takeSent } from "./draft-store";
+import { toChips } from "./attachments";
+import { dropSent, prependDraft, refusedSend, returnToDraft, takeSentText } from "./draft-store";
 import type { FirstTokenWait } from "./first-token-wait";
 import { machineOf } from "./bridged-id";
 import type { DaemonEventUnion, SessionState, SessionSummary } from "./protocol";
@@ -28,8 +29,8 @@ export interface BindHold {
 /** Collaborators the reducer may touch. The store keeps the rest. */
 export interface ChatEventContext {
   state: ChatState;
-  wait: Pick<FirstTokenWait, "end">;
-  queue: Pick<MessageQueue, "flushHead">;
+  wait: Pick<FirstTokenWait, "begin" | "end">;
+  queue: Pick<MessageQueue, "flushHead" | "settle" | "hasWaiting" | "release">;
   forks: BranchSnaps;
   allocateId: () => string;
   switchSession: (sessionId: string | null, turnState: SessionState["state"] | null) => void;
@@ -168,11 +169,18 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       state.reviewRunning = false;
       // The daemon took one of our sends: the composer it emptied is saved
       // now, not after the debounce (TD-5019).
-      if (takeSent(ctx.sending, event.content)) ctx.flushDraft();
+      const sentText = takeSentText(ctx.sending, event.content);
+      if (sentText !== null) ctx.flushDraft();
+      // A Send now row waiting for this (TD-5112) leaves the queue strip; its
+      // row lands below, where the model read it.
+      const steered = sentText === null ? undefined : ctx.queue.settle(sentText);
       const already = state.messages.find(
         (m) => m.role === "user" && m.turnId === event.turn_id,
       );
       if (already !== undefined) return;
+      // Steered into the running turn: what the model said before it is
+      // done, and the reply after it is a row of its own.
+      if (event.steer != null) sealInFlightAssistant(state);
       // A new turn, from this pane or another device: the cut one is no
       // longer the last, so its Continue goes (TD-5019).
       state.lastTurnError = null;
@@ -187,12 +195,15 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
         return;
       }
       const userIndex = state.messages.filter((m) => m.role === "user").length;
+      const chips = steered === undefined ? [] : toChips(steered.attachments);
       state.messages.push({
         id: ctx.allocateId(),
         role: "user",
-        text: event.content,
+        // Our own steer reads as typed, with its chips, as an echo would.
+        text: steered?.text ?? event.content,
         complete: true,
         at: Date.now(),
+        attachments: chips.length === 0 ? undefined : chips,
         userIndex,
         siblingIndex: 0,
         siblingCount: 1,
@@ -202,7 +213,7 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
     }
     case "queued_messages": {
       if (event.session_id !== state.sessionId) return;
-      applyHeldList(state, ctx.sending, event);
+      for (const sent of applyHeldList(state, ctx.sending, event)) ctx.queue.settle(sent);
       return;
     }
     case "assistant_reasoning": {
@@ -279,7 +290,14 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       // Not after a turn a restart cut off either (TD-5018): the rows were
       // queued behind a reply that never came, and sending one would answer
       // for the user. They wait for Continue or a send of their own.
-      if (event.error_code !== "interrupted_by_restart") ctx.queue.flushHead();
+      if (event.error_code === "interrupted_by_restart") return;
+      ctx.queue.flushHead();
+      // A Send now that no tool batch took (TD-5112) is the daemon's next
+      // turn, and it starts now: the composer queues behind it.
+      if (ctx.queue.hasWaiting()) {
+        state.turnState = "running";
+        wait.begin();
+      }
       return;
     }
     case "session_state": {
@@ -301,7 +319,11 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
         state.turnState = event.state;
         wait.end();
       }
-      if (isTerminal(event.state)) sealInFlightAssistant(state);
+      if (isTerminal(event.state)) {
+        sealInFlightAssistant(state);
+        // A Send now still waiting (TD-5112) will never run now.
+        ctx.queue.release();
+      }
       return;
     }
     case "session_list": {
@@ -358,8 +380,13 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       if (event.session_id != null && event.session_id !== state.sessionId) return;
       wait.end();
       const refused = refusedSend(ctx.sending);
+      // A refused Send now (TD-5112) leaves the strip, and its text goes back
+      // to the composer like any refused send's. It has no echo row to keep
+      // it visible, so a dead session gives it back too.
+      const steer = refused !== null && ctx.queue.settle(refused) !== undefined;
       if (event.code === "session_not_running") {
         sealInFlightAssistant(state);
+        if (steer && refused !== null) prependDraft(state, refused);
         return;
       }
       // A drain holds new turns while running ones finish, so a reply may

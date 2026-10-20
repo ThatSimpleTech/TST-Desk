@@ -2663,6 +2663,8 @@ class Daemon:
                         "content_length": len(msg.content),
                         "attachment_count": len(decoded),
                         "attachment_bytes": sum(a.size for a in decoded),
+                        # TD-5112: joins the running turn at its next step.
+                        "steer": found.steering_turn is not None,
                     }
                 },
             )

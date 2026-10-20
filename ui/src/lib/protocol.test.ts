@@ -611,6 +611,16 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isString(m.turn_id)).toBe(true);
     expect(isString(m.content)).toBe(true);
     expect(isNumber(m.seq)).toBe(true);
+    expect(m.steer ?? null).toBeNull();
+  });
+
+  it("user_turn_steer", () => {
+    // TD-5112: a message handed to the running turn after a tool batch.
+    const m = fixtures.user_turn_steer as UserTurn;
+    expect(m.type).toBe("user_turn");
+    expect(m.steer?.turn_id).toBe("turn-1");
+    expect(m.steer?.step).toBe(2);
+    expect(m.steer?.after_tool_call_ids).toEqual(["tc-1", "tc-2"]);
   });
 
   it("assistant_delta", () => {
@@ -1126,7 +1136,7 @@ describe("All fixtures have required shape", () => {
 
   it("every daemon event has a type and seq field", () => {
     const eventTypes = [
-      "ready", "session_state", "conversation_reset", "user_turn", "assistant_delta", "assistant_reasoning", "tool_call", "tool_result",
+      "ready", "session_state", "conversation_reset", "user_turn", "user_turn_steer", "assistant_delta", "assistant_reasoning", "tool_call", "tool_result",
       "tool_result_truncated", "tool_result_diff", "tool_result_read_only", "tool_result_denied",
       "shell_output", "tool_progress", "approval_request", "approval_request_always_allow", "decision_logged",
       "checkpoint_notice", "verify_result", "cost_update", "boundary_update", "boundary_update_config_trust", "turn_complete",

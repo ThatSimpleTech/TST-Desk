@@ -10212,6 +10212,41 @@ prompt. See DECISIONS.md and architecture.md "`tst run` for scripts".
 
 ---
 
+### TD-5112 — Steer a running turn
+**Size:** 3 · **Depends on:** none · Gap audit 2026-10-14
+
+A message sent while a turn ran waited for the whole turn (the loop took
+messages only at a turn's start), so a long tool run could not be
+redirected without stopping it.
+
+**Acceptance criteria:**
+- [x] A message sent while tools run is injected at the next tool-batch boundary as a user
+      message. The model sees it before its next step, without stopping the turn.
+- [x] "Send now" shows that the message is waiting for the next boundary; Stop still cancels.
+- [x] Works from the phone remote.
+- [x] The audit DB records the injection point.
+
+**Notes:** The daemon does it (`core/tstd/steer.py`), so any connection
+steers the same way and directive 5 holds. A `user_message` queued while
+a native-engine turn runs is marked; after the turn's next tool batch,
+just before its next model call (after any cap or progress-guard pause),
+the loop appends every marked message as a user message and logs its `user_turn` with a `steer` point (`turn_id`,
+`step`, `after_tool_call_ids`). The audit database's `steers` table
+(schema v5) keeps that point per message, keyed to the running turn's
+`turns` index. A message queued before the turn started is not marked
+and waits its own turn. A turn that ends without another batch, or is
+stopped, leaves the message to start the next turn, as before. The Grok
+engine runs its own tools, so there it waits for the turn to end. In the
+window, Send now mid-turn leaves the row in the queue strip, read-only,
+marked "Sent, waiting for the next step" (or "this turn to end" on
+Grok), until its `user_turn` puts it in the transcript where the model
+read it; the queue's next row waits behind it. Tests:
+`core/tests/test_steer_turn.py` (loop, a pause, Stop, backlog, queue
+file, audit, a paired phone over the socket) and `ui/src/lib/chat-steer.test.ts`.
+See DECISIONS.md TD-5112.
+
+---
+
 # Epic E52 — Files to the user
 
 Filed 2026-10-15. The agent built an APK for Adam and had no way to hand it over in the chat.

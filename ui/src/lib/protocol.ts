@@ -1168,11 +1168,23 @@ export interface ConversationReset extends DaemonEvent {
   content: string;
 }
 
+/** Where a message sent mid-turn joined the running turn (TD-5112).
+ *  `turn_id` is the running turn's own user_turn id, `step` the model calls
+ *  it had made, `after_tool_call_ids` the batch the model read just before. */
+export interface SteerPoint {
+  turn_id: string;
+  step: number;
+  after_tool_call_ids: string[];
+}
+
 export interface UserTurn extends DaemonEvent {
   type: "user_turn";
   session_id: string;
   turn_id: string;
   content: string;
+  /** Set when the message steered a running turn instead of starting one
+   *  (TD-5112). Additive: older daemons omit it, and null starts a turn. */
+  steer?: SteerPoint | null;
 }
 
 /** One message a restart left held (TD-5155). `content` is what its user

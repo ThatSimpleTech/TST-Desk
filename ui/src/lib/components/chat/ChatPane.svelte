@@ -206,6 +206,7 @@
 		     at all while the queue is empty. -->
 		<QueuedMessages
 			queued={chat.queued}
+			engine={session.engine}
 			onsendnow={sendQueuedNow}
 			onedit={editQueuedMessage}
 			onremove={removeQueuedMessage}

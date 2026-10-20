@@ -15506,3 +15506,61 @@ Python (Python's `[^x]` is not bash's); dynamic filter pins as in
 `git_raw` (an in-tree `diff=` attribute can still route to a configured
 external diff command, which no `-c` value turns off); a column on
 `tool_calls`.
+
+## TD-5112 — Steer a running turn (Class B)
+
+**What steers.** A message is marked when it is queued while a
+native-engine turn runs: `Session.open_steering` is called by the loop
+when it takes a turn's message, and the session's own `turn_complete`
+observer closes it. Every path that ends a turn and keeps the loop emits
+`turn_complete`, so nothing else has to remember to close it. `user_message` and
+`send_queued` both go through it. A message queued before the turn
+started (two sends back to back, the queue's next row) is not marked and
+keeps its own turn. Autonomy continue prompts are queued after
+`turn_complete`, so they never steer; a person's message to an autonomy
+run does.
+
+**Where it goes in.** Just before the first model call after a tool
+batch: after the stop, cancel and autonomy Class C checks and after any
+cap or progress-guard pause, so a message sent while the turn sat paused
+goes in on resume. A retried call is not a boundary. `inject_steers`
+takes every marked message off the queue in order, appends each as a user message (a `/skill` in it loads as it would
+at a turn's start), logs its `user_turn` with `steer`, saves the
+conversation, and only then lets the queue file drop it (TD-5155), so a
+restart finds it in the log or the file. Each steered message gives up
+its open turn, since no `turn_complete` will close it. Context fitting
+sees it as a user boundary: tool results before it are compaction's span,
+not in-flight elision's.
+
+**Protocol.** No new verb: `user_message` already reaches the daemon from
+the window, a phone and a bridged computer, and a new verb would start
+refused for machine peers and older clients. `user_turn` gains an
+additive `steer: {turn_id, step, after_tool_call_ids} | null`; an older
+window shows a steered message as an ordinary user row.
+
+**Audit.** Schema v5 adds `steers` (session, message id, the running
+turn's id, its `turns` index, step, the batch's tool_call_ids as JSON,
+ts). A table of its own, so no `turns` or `tool_calls` row is rewritten,
+and no message text, as no turn's text is stored.
+
+**Stop.** Unchanged. A stop seals the turn before the injection point, so
+a stopped turn makes no further model call, and a message still waiting
+starts the next turn, as a queued row does after a stop today. Dropping
+it was rejected: the person sent it, and the protocol has no way to give
+it back except the composer.
+
+**Window.** Send now mid-turn sends and leaves the row in the queue
+strip, read-only and dashed, labelled "Sent, waiting for the next step"
+("this turn to end" on the Grok engine), with no echo in the transcript;
+its `user_turn` removes the row and adds the user row where the model
+read it, sealing the reply before it. The queue's next row is not sent
+while one waits, since the daemon owes that one a turn first. A turn that
+ends with one still waiting shows the next turn starting. A refused send
+puts the text back in the composer; a restart that holds it moves it to
+the held list; a session that ends first makes it an ordinary row again.
+Waiting rows are never saved as draft text.
+
+**Rejected:** injecting everything queued (a backlog is a turn of its
+own); a daemon event listing waiting messages (only the sender needs it,
+and the `user_turn` already settles it everywhere); injecting into the
+Grok engine (its tool batches are not ours).

@@ -139,6 +139,7 @@ from .provider import (
 from .router import TierName, TierRouter
 from .session import Session, SessionEventLog
 from .shell_read_only import probe_git
+from .steer import inject_steers
 from .tools import ToolDispatcher, ToolRegistry
 from .tools.boundary import PathGuard
 from .tools.dispatch import build_decision_request, canonicalize_path_fields
@@ -1414,6 +1415,9 @@ async def agent_loop(
         # A stop that landed as the previous turn sealed must not abort
         # this one. A stop after this line belongs to this turn.
         session.acknowledge_stop_turn()
+        # TD-5112: a message sent from here to turn_complete joins this
+        # turn at its next tool-batch boundary.
+        session.open_steering(queued.id)
         apply_slash_skill(
             session,
             queued.display,
@@ -1508,6 +1512,10 @@ async def agent_loop(
         #    loop would clear it on the continue that performs the retry.
         overflow_retried = False
         guard = ProgressGuard()
+        # Model calls this turn has made, and the last tool batch: where a
+        # message sent mid-turn joins it (TD-5112).
+        turn_step = 0
+        last_batch: list[str] = []
         while True:
             if session.cancel_requested:
                 break
@@ -1938,8 +1946,23 @@ async def agent_loop(
             ):
                 break
 
+            # 2c.6 A message sent while the last batch ran (or while the
+            #     turn sat paused after it) goes in now, before the next
+            #     model call (TD-5112). Stop and cancel were checked above.
+            #     Only at a batch boundary: a retried call is not one.
+            if last_batch:
+                await inject_steers(
+                    session,
+                    messages,
+                    step=turn_step,
+                    after_tool_call_ids=last_batch,
+                    claude_global_fallback=config.steering.claude_global_fallback,
+                )
+                last_batch = []
+
             # 2d. Call provider (streaming). Only this call teaches the
             #     token ratio (TD-5007); the progress check does not.
+            turn_step += 1
             (
                 collected_content,
                 tool_calls,
@@ -2159,6 +2182,9 @@ async def agent_loop(
                         if not await advance_autonomy(session):
                             return
                         break
+                    # The batch is answered; a message sent while it ran
+                    # joins before the next model call (2c.6, TD-5112).
+                    last_batch = [call.id for call in provider_tool_calls]
                     # Loop back to call the provider again with tool results
                     continue
                 # Without a dispatcher, fall through to emit turn_complete

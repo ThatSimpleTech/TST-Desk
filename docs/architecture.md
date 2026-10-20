@@ -236,6 +236,16 @@ The only things that stop a loop are `Session.cancel` (user asked) and daemon sh
 `stop_turn` ends the current turn, or a running after-write review (TD-5151), and leaves the loop
 waiting for the next message.
 
+**A message sent mid-turn steers that turn, on the daemon (TD-5112).** A `user_message` that
+arrives while a native-engine turn runs is marked when it is queued. After the turn's next tool
+batch, just before the next model call (after any cap or progress-guard pause), the loop takes
+every marked message off the queue and appends each as a user message, so the model reads it before its next step and the turn carries on. Its
+`user_turn` carries a `steer` point, and the audit database keeps one `steers` row per message.
+A turn that ends without another batch leaves the message to start the next turn, as before, and
+so does Stop: a stopped turn makes no further model call. The Grok engine runs its own tools, so
+there a message waits for the turn to end. Which connection sent it does not matter, so a phone
+steers the same way.
+
 ### The session state machine
 
 Derived from `Session.VALID_TRANSITIONS`. States with no outgoing transitions are terminal —
@@ -432,7 +442,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `hello` | — | Opening handshake: auth token plus protocol version. |
 | `pair` | — | First frame from a phone redeeming a pairing code, instead of `hello`: code, device name, protocol version. Remote peers only (loopback gets `bad_request`). Optional `replaces`: the phone's current key, whose entry is retired. Success is a bare `pair_ok` with the device's own key, then close 1000; failure is `pair_failed` or `pair_locked`, then close 1008 (TD-5014). |
 | `open_workspace` | — | Open a workspace directory as a new session. |
-| `user_message` | yes | Queue a user turn for the session's loop. The message is written to the session's `queued.json` before the handler returns and leaves it once its `user_turn` is saved, so a restart before the turn starts brings it back held (TD-5155). A message that cannot be written is refused with `message_not_saved` (`in_reply_to: user_message`) and not queued; the window puts it back in the composer (TD-5158). |
+| `user_message` | yes | Queue a user turn for the session's loop. Sent while a native-engine turn runs, it joins that turn at its next tool-batch boundary instead (TD-5112). The message is written to the session's `queued.json` before the handler returns and leaves it once its `user_turn` is saved, so a restart before the turn starts brings it back held (TD-5155). A message that cannot be written is refused with `message_not_saved` (`in_reply_to: user_message`) and not queued; the window puts it back in the composer (TD-5158). |
 | `send_queued` | yes | Send a message a restart left held, named by its `queued_id` from `queued_messages` (TD-5155). It joins the loop's queue as if just sent, so a drain hold refuses it with `daemon_draining`; a session that can no longer run turns refuses it with `session_not_running`; an id that is no longer held is `queued_not_found`. Each refusal names `in_reply_to`. |
 | `remove_queued` | yes | Drop a message a restart left held, unsent (TD-5155). An id that is no longer held is `queued_not_found`. |
 | `fork_from` | yes | Replace a past user turn and fork a sibling from there. `user_index` counts user turns from the start of the session and is mapped through compaction summaries; a turn inside one is refused with `user_turn_compacted` (TD-5147). Refused mid-turn. Every refusal names `in_reply_to`, so the window can give the edited text back to the composer (TD-5158). |
@@ -561,7 +571,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 |---|---|---|
 | `ready` | connection | Daemon and protocol versions. Declared and parseable, but not emitted in v0.1. |
 | `session_state` | session | A session state transition, with an optional reason. Additive `engine` (`native` \| `grok`) names the loop this session started with. |
-| `user_turn` | session | A user message the loop accepted, so replay can show the user's side without inventing it. `turn_id` is the queued message's own id (TD-5155). Logging it moves the session's `updated_at`, so `session_list` orders by use (TD-5111). |
+| `user_turn` | session | A user message the loop accepted, so replay can show the user's side without inventing it. `turn_id` is the queued message's own id (TD-5155). `steer` is set when a message sent mid-turn joined the running turn at a tool-batch boundary instead of starting one (TD-5112): `turn_id` (the running turn's), `step` (its model calls so far) and `after_tool_call_ids` (the batch the model read just before it); the audit database records the same point in `steers`. Logging it moves the session's `updated_at`, so `session_list` orders by use (TD-5111). |
 | `queued_messages` | session | The messages a restart left held, in order, whole each time (TD-5155): `queued_id`, `content` (what the `user_turn` will show) and `images_dropped` (attached images the queue file did not keep). Logged after a restart that left any and on every `send_queued` or `remove_queued`, and logged again when the log window trimmed the last one away, so the latest in a replay is the list. Nothing in it is sent until the person picks Send. |
 | `conversation_reset` | session | The conversation forked or a sibling was selected. The viewer drops rows after that user turn and replaces it. |
 | `assistant_delta` | session | A streamed chunk of assistant output. |

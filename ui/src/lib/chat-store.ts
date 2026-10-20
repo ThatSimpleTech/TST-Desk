@@ -195,8 +195,11 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
 
   // Closure-level so retryLastUserMessage can call it without `this` —
   // the reactive shell re-exports these methods detached.
-  /** `armWait` false hands the message over without touching the first-token
-   *  clock — see the queue's send-now (TD-1704). */
+  /** `armWait` false is the queue's send-now mid-turn, a steer (TD-1704,
+   *  TD-5112): the first-token clock is left alone and no echo row is added,
+   *  because the daemon hands the message to the running turn at its next
+   *  tool-batch boundary and its user_turn places it in the transcript there.
+   *  The queue row shows it waiting until then. */
   function sendUserMessageToWire(
     text: string,
     armWait = true,
@@ -220,6 +223,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     );
     if (!sent) return false;
     noteSent(sending, content);
+    if (!armWait) return true;
     nextId += 1;
     const userIndex = state.messages.filter((m) => m.role === "user").length;
     state.messages.push({
@@ -233,7 +237,6 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       siblingIndex: 0,
       siblingCount: 1,
     });
-    if (!armWait) return true;
     // A fresh send restarts the wait and its watchdog even atop one already
     // in flight — the honest clock is from the latest send.
     wait.end();
