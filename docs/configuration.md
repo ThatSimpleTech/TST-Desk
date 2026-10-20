@@ -68,6 +68,7 @@ no effect.
 | `embeddings` | mapping | see below | Local embeddings sidecar for memory ranking. Omitted in an older user copy is filled from the shipped file at load. Empty `base_url` disables the client. Empty `command` is attach-only — the host never spawns on `base_url` alone. |
 | `computer_use` | mapping | see below | Desktop computer-use sidecar. Omitted in an older user copy is filled from the shipped file at load. Empty `command` is mock-only — the daemon never spawns `mcp/tst-cu-mcp`. Empty `grounding.base_url` leaves click targeting on the intended (x, y). |
 | `session` | mapping | see below | On-disk session event-log window. Omitted in an older user copy is filled from the shipped file at load. Zero is invalid, not unbounded. |
+| `clear_tool_results` | mapping | see below | Clear stale tool results before whole turns are compacted (TD-5115). Omitted in an older user copy is filled from the shipped file at load, which turns it on. |
 | `shell` | mapping | see below | The read-only shell list (TD-5103): commands that run without asking. Omitted in an older user copy means the whole built-in list, on. Config can shrink it or switch it off, never add to it. |
 | `remote` | mapping | see below | Opt-in Tailscale bind. Omitted in an older user copy is filled from the shipped file at load. Empty `bind` is loopback only. |
 | `notify` | mapping | see below | Outbound notification channels. Omitted in an older user copy is filled from the shipped file at load. Slack and ntfy are off until their `enabled` flag is true and a destination URL is stored in the OS keychain. |
@@ -506,6 +507,69 @@ drop a different prefix than `from_seq`. Zero is a load error, not
 | `log_max_events` | int ≥ 1 | `10000` | Maximum events kept in `events.jsonl`. Oldest drop first. Attach from a rotated seq gets `log_trimmed` and replays from the earliest kept seq. |
 | `send_file_max_bytes` | int 1..2147483648 | `536870912` | Largest file `send_file` copies into the chat (512 MiB). Bigger is refused with `file_too_large`; nothing is copied. |
 | `send_file_session_max_bytes` | int ≥ 1 | `4294967296` | Total of sent files one session may hold (4 GiB). Past it, `session_quota`. |
+
+### `clear_tool_results`
+
+How old tool output leaves a full context window (TD-5115). Compaction
+folds whole earlier turns into a short summary once the prompt passes the
+tier's budget (80% of `context_window` minus `max_output_tokens`). Most of
+what fills a small local window by then is old tool output, such as a file
+read three turns ago that the model has already used. So at the same budget,
+and before anything is compacted, the tool results of earlier turns are
+cleared first: each becomes one line that names the tool, its target (the
+`path`, `url`, `command` or `query` it was called with, cut to 80
+characters) and the size that went, for example
+
+```text
+[Earlier tool result cleared to save context: fs_read "docs/spec.md", 12,000 chars. Run the tool again if you need it.]
+```
+
+The user's messages, the model's answers and the tool calls themselves stay
+verbatim, so the conversation still reads the same; the model calls the tool
+again if it needs the output back.
+
+- The tool results of the turn that is running are never cleared. When they
+  overflow, their middles are trimmed instead (TD-5010). A message sent while
+  a turn runs joins that turn (TD-5112), so the results it got before that
+  message stay too. The check also runs when such a message joins the
+  prompt, before anything is compacted.
+- One clear takes every stale result at once, and only goes ahead when it
+  brings the prompt down to 70% of the budget and frees at least
+  `clear_at_least_tokens`. Otherwise the turn compacts, as it did before.
+  The gap is room for several more turns before the next clear. A clear
+  rewrites the prompt from the oldest result it clears, and a local server
+  such as llama.cpp reads the prompt again from there; between clears
+  nothing earlier changes, and a cleared line is never rewritten, so its
+  prefix cache keeps hitting.
+- Each result is matched to its own call, the one in the model's message just
+  before it, so the line and `exclude_tools` name the right tool even when a
+  server repeats call ids from turn to turn or sends none. A result that
+  cannot be matched to a call there is never cleared.
+- Each clear shows in the Activity panel as a quiet "Trim" row, previewed
+  "Cleared earlier tool results", with the results cleared and the tokens
+  freed (`context_compacted` with the trigger `clear_stale`).
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `enabled` | bool | `true` | `false` goes back to compaction alone. |
+| `keep_recent_tool_results` | int ≥ 0 | `3` | The newest results that are never cleared, counted across the whole conversation, the running turn included. |
+| `clear_at_least_tokens` | int ≥ 0 | `2000` | A clear that would free fewer estimated tokens than this does not happen. Rewriting the prompt costs a local server its cached prefix, so a clear has to buy room. |
+| `exclude_tools` | list of tool names | `[]` | Tools whose results are never cleared, such as an MCP tool whose output the model must keep in view. Names are matched exactly; blanks and repeats are dropped. |
+
+<!-- verify: model -->
+```yaml
+presets:
+  local:
+    brain: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    worker: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    validator: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+active_preset: local
+clear_tool_results:
+  enabled: true
+  keep_recent_tool_results: 5
+  clear_at_least_tokens: 4000
+  exclude_tools: [load_skill]
+```
 
 ### `shell`
 

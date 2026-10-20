@@ -135,13 +135,13 @@ def elide_tool_text(text: str, target_chars: int) -> str:
     return (text[:head_len] + note)[:target_chars]
 
 
-def _inflight_tool_indexes(messages: list[ChatMessage]) -> list[int]:
-    """Tool results that belong to the turn still in flight.
+def turn_start_index(messages: Sequence[ChatMessage]) -> int:
+    """Index of the user message that started the turn in flight, or -1.
 
-    Everything before the user message that started it is an earlier
-    turn. Compaction owns that span; elision must not touch it. A message
-    sent mid-turn that joined the turn (TD-5112) does not start one, so
-    the results the turn got before it stay in reach.
+    A message sent mid-turn that joined the turn (TD-5112) does not start
+    one. When only such messages are left (a summary stands for the
+    turn's start), the last user message starts it, as every user
+    message did before.
     """
     last_user = -1
     turn_start = -1
@@ -150,10 +150,18 @@ def _inflight_tool_indexes(messages: list[ChatMessage]) -> list[int]:
             last_user = index
             if not message.steer:
                 turn_start = index
-    # Only steers left (a summary stands for the turn's start): the last
-    # user message starts the span, as every user message did before.
-    if turn_start < 0:
-        turn_start = last_user
+    return turn_start if turn_start >= 0 else last_user
+
+
+def _inflight_tool_indexes(messages: list[ChatMessage]) -> list[int]:
+    """Tool results that belong to the turn still in flight.
+
+    Everything before the user message that started it is an earlier
+    turn. Compaction owns that span; elision must not touch it. A message
+    sent mid-turn that joined the turn (TD-5112) does not start one, so
+    the results the turn got before it stay in reach.
+    """
+    turn_start = turn_start_index(messages)
     if turn_start < 0:
         return []
     return [

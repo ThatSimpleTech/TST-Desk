@@ -921,6 +921,17 @@ FIXTURES = {
         trigger="inflight_trim",
         seq=18,
     ),
+    # Clearing earlier turns' tool results (TD-5115): dropped_messages
+    # counts the results cleared, and every message stays.
+    "context_compacted_clear_stale": ContextCompacted(
+        session_id="sess-1",
+        dropped_messages=5,
+        kept_messages=34,
+        tokens_before=23123,
+        tokens_after=13153,
+        trigger="clear_stale",
+        seq=18,
+    ),
     "context_usage": ContextUsage(
         session_id="sess-1",
         tier="brain",

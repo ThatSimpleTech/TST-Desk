@@ -263,6 +263,18 @@ session:
   send_file_max_bytes: 536870912
   send_file_session_max_bytes: 4294967296
 
+# Clear stale tool results (TD-5115). Once the prompt passes the compaction
+# budget, tool results from earlier turns, oldest first, become a one-line
+# placeholder (tool, target, size) before whole turns are compacted. The
+# newest keep_recent_tool_results stay, and so does every result of a tool
+# named in exclude_tools. A clear that cannot free clear_at_least_tokens is
+# skipped. enabled: false goes back to compaction alone.
+clear_tool_results:
+  enabled: true
+  keep_recent_tool_results: 3
+  clear_at_least_tokens: 2000
+  exclude_tools: []
+
 # Shell commands that run without asking (TD-5103). Only these built-in
 # read-only entries can be listed: delete lines to shrink the list, or set
 # enabled: false to have every shell command ask. A command qualifies only
