@@ -246,7 +246,8 @@ Tailscale (never `0.0.0.0`) with Slack/ntfy notify
 and the scheduler rail, the `vllm` preset and UI-TARS grounding for local pixel loops,
 a validating `CHARTER.md` schema and the project-home charter editor, the
 autonomy engine (unattended runner, circuit breakers, hard-required container),
-slash commands, `SKILL.md`, plan lock, MCP loading,
+slash commands, `SKILL.md`, plan lock, MCP loading (with `tool_search` loading MCP tools
+on demand once their schemas would crowd the window),
 Design mode on browser and desktop frames,
 plus the session rail, settings, diagnostics, and keyless local-model support.
 

@@ -3857,6 +3857,9 @@ class Daemon:
         if restored_plan_mode(record.plan_mode if record is not None else None, loaded.events):
             sess.router = TierRouter()
             sess.router.set_plan(True)
+        sess.loaded_mcp_tools[:] = await asyncio.to_thread(
+            self._session_persist.load_loaded_tools, session_id
+        )
         await self._attach_session_runtime(sess)
         if cut:
             await self._seal_cut_turn(sess)
@@ -4003,12 +4006,20 @@ class Daemon:
         )
         sess.event_log.subscribe(self._on_session_event)  # type: ignore[arg-type]
 
+        saved_tools = list(sess.loaded_mcp_tools)
+
         async def _snap() -> None:
             await asyncio.to_thread(
                 self._session_persist.save_conversation,
                 sess.id,
                 list(sess.conversation),
             )
+            # TD-5127: tools tool_search loaded outlive a restart, also
+            # once compaction has folded away the calls that used them.
+            if sess.loaded_mcp_tools != saved_tools:
+                names = list(sess.loaded_mcp_tools)
+                await asyncio.to_thread(self._session_persist.save_loaded_tools, sess.id, names)
+                saved_tools[:] = names
 
         sess._conversation_hook = _snap
 

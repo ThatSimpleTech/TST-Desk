@@ -92,6 +92,7 @@ from .local_worker import (
     titlebar_slugs,
 )
 from .logging import get_logger, redact_secrets
+from .mcp.deferral import McpToolDeferral
 from .memory_commit import MemoryCommitter
 from .output_cap import (
     LENGTH_FINISH,
@@ -160,6 +161,7 @@ from .tools import ToolDispatcher, ToolRegistry
 from .tools.boundary import PathGuard
 from .tools.consult import offered_tools
 from .tools.dispatch import build_decision_request, canonicalize_path_fields
+from .tools.tool_search import TOOL_SEARCH_NAME
 from .workspace_trust import trusted_imports
 from .worktree_config import config_home, refresh_config
 
@@ -1727,14 +1729,18 @@ async def agent_loop(
     # Pre-compute tool definitions if we have a registry. Each model call
     # offers these less ``consult`` when its tier is not given it (TD-5119).
     all_tool_definitions: list[ProviderToolDefinition] | None = None
+    # TD-5127: MCP schemas over the threshold stay out of the request
+    # until ``tool_search`` loads them; it is offered only then.
+    mcp_deferral: McpToolDeferral | None = None
     if tool_registry is not None:
         all_tool_definitions = tool_registry.to_provider_definitions()
-        if session.delegate_depth >= 1:
-            all_tool_definitions = [
-                d
-                for d in all_tool_definitions
-                if d.function is None or d.function.name != "delegate"
-            ]
+        unusable = {"delegate"} if session.delegate_depth >= 1 else set()
+        if tool_dispatcher is None or not tool_dispatcher.has_handler(TOOL_SEARCH_NAME):
+            unusable.add(TOOL_SEARCH_NAME)
+        all_tool_definitions = [
+            d for d in all_tool_definitions if d.function is None or d.function.name not in unusable
+        ]
+        mcp_deferral = McpToolDeferral(tool_registry, config.mcp.tool_search)
 
     # Tracks the last steering prefix hash for change detection (TD-509).
     _last_prefix_hash: str | None = None
@@ -2189,6 +2195,15 @@ async def agent_loop(
             #     disk at 2b, so instructions survive compaction.
             model_slug = tier_cfg.require_slug()
             counter = counter_for(tier_cfg)
+            if mcp_deferral is not None:
+                tool_definitions = mcp_deferral.offer(
+                    tool_definitions,
+                    session=session,
+                    tier=tier,
+                    tier_cfg=tier_cfg,
+                    counter=counter,
+                    messages=messages,
+                )
             session.context_meter = ContextMeter(
                 tier, tier_cfg, counter, tool_definitions, fallback=backup_chain.position
             )

@@ -43,6 +43,7 @@ from .send_file import send_file
 from .shell import ShellPolicy, run_shell
 from .steering_edit import propose_steering_edit
 from .task_list import task_list
+from .tool_search import register_tool_search_handler
 from .web_search import web_fetch, web_search
 from .write import fs_edit, fs_write
 
@@ -325,6 +326,7 @@ def register_builtin_handlers(
     dispatcher.register_handler("task_list", task_list)
     dispatcher.register_handler("ask_user", ask_user)
     dispatcher.register_handler("exit_plan_mode", exit_plan_mode)
+    register_tool_search_handler(dispatcher)
     from ..connectors.github_tools import register_github_handlers
 
     register_github_handlers(dispatcher)

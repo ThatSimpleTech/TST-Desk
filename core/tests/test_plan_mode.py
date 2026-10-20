@@ -132,6 +132,7 @@ def test_planning_refuses_every_call_that_could_change_something(
         ("delegate", {"task": "find the callers", "kind": "research"}),
         ("desktop_screenshot", {}),
         ("exit_plan_mode", {"plan": PLAN}),
+        ("tool_search", {"query": "issue"}),
         ("github_get_file", {"owner": "o", "repo": "r", "path": "a.py"}),
     ],
 )
@@ -172,6 +173,7 @@ def test_every_builtin_is_decided_and_only_readers_run() -> None:
             "load_skill",
             "send_file",
             "task_list",
+            "tool_search",
             "web_fetch",
             "web_search",
         }

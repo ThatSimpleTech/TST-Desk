@@ -38,6 +38,7 @@ the *obvious* cases — the ones that must never reach the model:
   skip-all and an ``auto`` rule never see it
 - the builtin ``exit_plan_mode``, whose plan review is the one prompt → A
   (TD-5123)
+- the builtin ``tool_search``, which only reads the registry → A (TD-5127)
 
 Anything the table cannot decide is left unclassified so the worker-tier
 classifier (TD-703) can handle it, defaulting to **B** — fail toward
@@ -737,6 +738,9 @@ PLAN_READ_ONLY_BUILTINS: frozenset[str] = frozenset(
         "consult",
         "send_file",
         "exit_plan_mode",
+        # TD-5127: loads deferred MCP definitions; each loaded tool is
+        # still judged on its own, so an unlisted one stays refused.
+        "tool_search",
     }
     | GITHUB_READ_TOOLS
 )
@@ -885,6 +889,27 @@ def _rule_ask_user(req: DecisionRequest, _boundary: Boundary) -> bool:
         req.tool_name == "ask_user"
         and req.provenance is None
         and req.side_effect_class == "auto"
+        and not req.is_mutation
+        and not req.reads
+        and not req.writes
+        and not req.hosts
+    )
+
+
+def _rule_tool_search(req: DecisionRequest, _boundary: Boundary) -> bool:
+    """``tool_search`` loads deferred MCP tool definitions (TD-5127).
+
+    It reads the daemon's own registry and changes only which definitions
+    the session's next requests carry; no file, host or server is touched.
+    A loaded tool is granted nothing: each call to it is classified on its
+    own. Only the builtin matches: an MCP or plugin tool of that name
+    carries provenance and gets no grant.
+    """
+    return (
+        req.tool_name == "tool_search"
+        and req.provenance is None
+        and req.side_effect_class == "auto"
+        and req.actuates is None
         and not req.is_mutation
         and not req.reads
         and not req.writes
@@ -1150,6 +1175,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="exit_plan_mode puts the plan in front of the user; the review is the prompt",
         decision_class=DecisionClass.A,
         match=_rule_exit_plan_mode,
+    ),
+    Rule(
+        id="tool-search",
+        description="tool_search loads MCP tool definitions; touches no file, host or server",
+        decision_class=DecisionClass.A,
+        match=_rule_tool_search,
     ),
     # GitHub reads have no path or host metadata. A host on the request
     # would be Class C under the default network deny, and a path would
