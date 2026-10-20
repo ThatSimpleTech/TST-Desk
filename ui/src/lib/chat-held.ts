@@ -34,12 +34,14 @@ export function droppedNote(imagesDropped: number): string | null {
  *  echo is the text as typed, which an attachment's file block follows in
  *  the daemon's copy. Only a row new to this list can be such a send: one
  *  already held was held before the send, so a fresh send with the same
- *  text keeps its echo when a later list names that row again (TD-5158). */
+ *  text keeps its echo when a later list names that row again (TD-5158).
+ *  Returns the texts of those sends, so a Send now row still waiting for
+ *  its turn (TD-5112) can leave the queue strip too. */
 export function applyHeldList(
   state: { held: HeldMessage[]; messages: ChatMessage[] },
   sending: string[],
   event: QueuedMessages,
-): void {
+): string[] {
   const before = new Set(state.held.map((row) => row.id));
   state.held = event.messages.map((entry) => ({
     id: entry.queued_id,
@@ -47,10 +49,12 @@ export function applyHeldList(
     imagesDropped: entry.images_dropped,
     pending: false,
   }));
+  const taken: string[] = [];
   for (const entry of event.messages) {
     if (before.has(entry.queued_id)) continue;
     const sent = takeSentText(sending, entry.content);
     if (sent === null) continue;
+    taken.push(sent);
     for (let i = state.messages.length - 1; i >= 0; i--) {
       const row = state.messages[i];
       if (row.role === "user" && row.turnId === undefined && row.text === sent) {
@@ -59,6 +63,7 @@ export function applyHeldList(
       }
     }
   }
+  return taken;
 }
 
 /** A refused Send or Remove leaves its row as it was, ready to try again. */

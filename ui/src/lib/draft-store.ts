@@ -50,7 +50,10 @@ function browserStorage(): Storage | null {
 function snapshot(draft: string, queued: readonly QueuedMessage[]): SavedDraft {
   return {
     text: draft,
-    queued: queued.filter((row) => row.attachments.length === 0 && row.text.trim() !== "").map((row) => row.text),
+    // A waiting row (TD-5112) was sent: it is the daemon's, not draft text.
+    queued: queued
+      .filter((row) => row.waiting !== true && row.attachments.length === 0 && row.text.trim() !== "")
+      .map((row) => row.text),
   };
 }
 

@@ -228,9 +228,17 @@ def _print_error(event: dict[str, Any]) -> None:
     print(str(message or "error"), file=sys.stderr)
 
 
+# A stalled response was withdrawn and is being asked again (TD-5159).
+# Streamed text cannot be taken back off a terminal, so this says why the
+# reply starts over below it.
+RETRACT_NOTICE = "(the provider went quiet; the reply above was withdrawn and is being asked again)"
+
+
 def _visible_event_line(event: dict[str, Any]) -> str | None:
     """One-line TTY form of a user-visible event. Not a JSON dump."""
     typ = event.get("type")
+    if typ == "assistant_retract":
+        return RETRACT_NOTICE
     if typ == "turn_complete":
         if event.get("failed"):
             return f"turn failed: {event.get('error_code') or 'turn_failed'}"

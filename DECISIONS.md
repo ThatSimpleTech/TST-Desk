@@ -13010,6 +13010,7 @@ retries it under `provider_retry`. A stall after output began is
 to the window, and a second attempt would append a second reply to the
 first. The audit asked for "retried". This is the part of that which is
 safe. Retrying mid-reply would need the loop to withdraw shown text.
+TD-5159 adds that withdrawal and retries once; see its entry.
 
 **With TD-5146.** Ported onto main after TD-5146, which has the work
 check and memory distill stream and never resend a `timeout`. A stall is
@@ -15506,6 +15507,173 @@ Python (Python's `[^x]` is not bash's); dynamic filter pins as in
 `git_raw` (an in-tree `diff=` attribute can still route to a configured
 external diff command, which no `-c` value turns off); a column on
 `tool_calls`.
+
+## 2026-10-20 — TD-5159: a stall after output began is withdrawn and asked again (Class B)
+
+TD-5106 left one criterion open: a stream that went quiet after output
+began ended the turn as `stream_stalled`, because a second attempt would
+append a second reply to text the window already showed. A retry needed
+the loop to withdraw shown text, and nothing on the wire could say which
+text that was: `assistant_delta` carried no id, and a turn's row in the
+window holds every model call of the turn, text and tools interleaved.
+
+**Decision.** Protocol (additive, no version bump):
+
+- `assistant_delta` and `assistant_reasoning` take an optional
+  `response_id`. The loop stamps a fresh one on every model call of the
+  turn (`resp-` plus 16 hex). Text the daemon writes itself (a failure
+  line, a progress note, the keychain message) and the Grok engine carry
+  none, and such text is never withdrawn.
+- A new `assistant_retract` event (`session_id`, `response_id`, `reason`)
+  withdraws every delta and reasoning chunk with that id. The window cuts
+  the row back to where that response began: it notes the row's text,
+  reasoning and part lengths at the response's first chunk, so text from
+  earlier calls in the turn, and tools that ran, stay. Tool calls never
+  stream inside a response (`tool_call` is sent after the stream ends),
+  so a withdrawal can never take a tool off the row.
+
+Loop (`core/tstd/reply_retry.py`): a turn's model call that fails with
+`stream_stalled` after a chunk arrived (`StreamResult.began`; before that
+the provider retries it under `provider_retry`, as TD-5106 has it) sends
+`assistant_retract`, waits `retry_delay(1, provider_retry)`, and makes
+the same request again under a new id. The partial text never entered
+the conversation (TD-5152), so the retry sees what the first attempt saw,
+and the turn's executed tool results are already in it, so nothing is
+run twice.
+
+**Conservative choices** (the story allowed "at most once or per
+provider_retry"):
+
+- One retry per model call, not `max_retries`: each attempt can wait a
+  whole `stream_idle_timeout` (300 s by default, 600 s in the EZER
+  example), so four of them would hold a turn for 20 to 40 minutes. A
+  second stall ends the turn as `stream_stalled`, as before, and its
+  partial text stays on screen above the failure line, as before.
+  `provider_retry.max_retries: 0` turns the retry off too.
+- Only `stream_stalled`. A cut-off stream (`stream_interrupted`, TD-5152)
+  is the gateway reporting a failure or giving up, and `total_timeout`
+  (`timeout`) is a cap the user set on one attempt; neither is retried.
+- The progress check (`emit_events=False`) and the off-turn calls (the
+  work check, memory distill) are untouched: nothing of theirs is shown,
+  and TD-5146's no-resend rule stands for them.
+- Stop or cancel during the wait ends the turn with nothing kept: the
+  withdrawn text is not offered back as a stopped turn's partial answer.
+- The window shows "Provider went quiet. Asking again…" in the Working
+  line until the retry's first chunk, by arming the first-token wait from
+  the retract (concrete daemon evidence that a request is in flight, so
+  TD-1714 holds), and the activity timeline records the withdrawal. No
+  new control.
+
+**Older clients.** A window from before this story drops the unknown
+event (client.ts) and shows the withdrawn text above the retried reply:
+doubled text, nothing lost, no error. An older daemon reading an events
+file with the event drops that line as unknown. `tst run --output text`
+and the CLI's session follower have already printed the withdrawn text
+and cannot take it back, so they print a note; `--output json`,
+scheduled run receipts and mailed replies leave the withdrawn text out
+(`shown_deltas`).
+
+**Rejected:** a delta that clears the row (no id to scope it, and it
+would take tools and earlier text with it); the retract carrying the
+withdrawn text for the window to strip as a suffix (a trimmed or partial
+replay would strip the wrong text; ids say exactly what to remove);
+splitting text parts per response (TD-1902 splits text only at tools so
+markdown renders intact); retrying in the provider (it cannot reach the
+window, and the off-turn calls must not resend); erasing printed text
+with terminal escapes in `tst run` (stdout is often a pipe).
+
+## TD-5112 — Steer a running turn (Class B)
+
+**What steers.** A message is marked when it asks to steer and is
+queued while a native-engine turn runs: `Session.open_steering` is called
+by the loop when it takes a turn's message, and the session's own
+`turn_complete` observer closes it. Every path that ends a turn and keeps
+the loop emits `turn_complete`, so nothing else has to remember to close
+it. The mark is the running turn's id, and a boundary takes only the
+messages marked for its own turn: two messages sent to steer a turn that
+ended before a boundary took them each start a turn of their own (the
+first, then the second), rather than the second steering the first's.
+`user_message` asks with `steer: true`; `send_queued` mid-turn always
+asks, since it is a click on a held row. A message queued before the turn
+started (two sends back to back) is not marked and keeps its own turn,
+and so is one sent without `steer`, such as the queue's next row, which
+the window flushes on `turn_complete` even when another device's message
+has already started the next turn. Autonomy continue prompts never ask,
+so they never steer; a person's Send now to an autonomy run does.
+
+**Where it goes in.** Just before the first model call after a tool
+batch: after the stop, cancel and autonomy Class C checks and after any
+cap or progress-guard pause, so a message sent while the turn sat paused
+goes in on resume. A retried call is not a boundary. `inject_steers`
+takes every marked message off the queue in order, appends each as a user message (a `/skill` in it loads as it would
+at a turn's start), logs its `user_turn` with `steer`, saves the
+conversation, and only then lets the queue file drop it (TD-5155), so a
+restart finds it in the log or the file. Each steered message gives up
+its open turn, since no `turn_complete` will close it. The prompt was
+fitted before the pause, so it is fitted again (compaction, in-turn
+elision, the gauge, the image cap) once a steer is in, and the steer's
+own tokens are counted for the call that reads it.
+
+**Context fitting.** A steered message is a user message, but not a turn
+boundary. The conversation keeps it marked (`ChatMessage.steer`, saved in
+`conversation.json` and never sent on the wire). Compaction cuts only
+where a turn started, so the turns it keeps are whole and the running one
+keeps its request however many steers it took; in-turn elision reaches
+every result since the turn started, before and after a steer. Rejected:
+treating each steer as a turn boundary, which left the results before a
+steer in neither span (compaction kept them whole, elision could not touch
+them) and with two steers summarized the running turn's own request.
+
+**Protocol.** No new verb: `user_message` already reaches the daemon from
+the window, a phone and a bridged computer, and a new verb would start
+refused for machine peers and older clients. It gains an additive
+`steer: bool = false`, which only Send now mid-turn sets. The daemon
+cannot tell a Send now from a queued row the window flushes, or from a
+client that knows nothing of steering, so the client says which it is.
+The default keeps what every other sender did before: a message that does
+not ask waits for a turn of its own. An older window or phone never
+steers, and never sees a message it echoed at the click land again
+mid-turn. The phone runs the window's own UI, so a phone built with it
+steers the same way. Rejected: steering every message that arrives
+mid-turn (it turned the window's queued rows into steers whenever another
+device had started the next turn). `user_turn` gains an additive
+`steer: {turn_id, step, after_tool_call_ids} | null`; an older window
+shows a steered message as an ordinary user row. Every refusal of a
+`user_message` now names `in_reply_to` (it was only `daemon_draining`
+and `message_not_saved`).
+
+**Audit.** Schema v5 adds `steers` (session, message id, the running
+turn's id, its `turns` index, step, the batch's tool_call_ids as JSON,
+ts). A table of its own, so no `turns` or `tool_calls` row is rewritten,
+and no message text, as no turn's text is stored.
+
+**Stop.** Unchanged. A stop seals the turn before the injection point, so
+a stopped turn makes no further model call, and a message still waiting
+starts the next turn, as a queued row does after a stop today. Dropping
+it was rejected: the person sent it, and the protocol has no way to give
+it back except the composer.
+
+**Window.** Send now mid-turn sends and leaves the row in the queue
+strip, read-only and dashed, labelled "Sent, waiting for the next step"
+("this turn to end" on the Grok engine), with no echo in the transcript;
+its `user_turn` removes the row and adds the user row where the model
+read it, sealing the reply before it. The queue's next row is not sent
+while one waits, since the daemon owes that one a turn first. A turn that
+ends with one still waiting starts that send's first-token clock, as any
+send does, but does not mark a turn running: only the daemon's events do
+that (AGENTS §6), so a refusal that crosses `turn_complete` cannot leave
+the window holding a turn no event will end. A refused send, whatever the
+code, puts the text back in the composer, so a waiting row never holds
+the queue behind it; a restart that holds it moves it to the held list; a
+session that ends first makes it an ordinary row again. Files with no
+text cannot be told from another device's message when their `user_turn`
+comes back, so Send now sends them as before this story: echoed at once,
+for a turn of their own. Waiting rows are never saved as draft text.
+
+**Rejected:** injecting everything queued (a backlog is a turn of its
+own); a daemon event listing waiting messages (only the sender needs it,
+and the `user_turn` already settles it everywhere); injecting into the
+Grok engine (its tool batches are not ours).
 
 ---
 

@@ -31,6 +31,7 @@ describe("KIND_LABELS", () => {
       "trim",
       "steering_reload",
       "error",
+      "retry",
       "verify"
     ];
     for (const k of kinds) expect(KIND_LABELS[k]).toBeTruthy();

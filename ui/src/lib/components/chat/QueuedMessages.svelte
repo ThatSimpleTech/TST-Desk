@@ -7,16 +7,22 @@
 	// The whole strip lives inside one `showQueue` guard, so an empty queue
 	// contributes no element, no border and no reserved height above the
 	// composer. The container is invisible because it does not exist.
-	import { showQueue, type QueuedMessage } from "../../chat-queue";
+	//
+	// A row sent with Send now while a turn runs (TD-5112) stays here, read
+	// only and without buttons, saying it waits for the next step, until the
+	// daemon hands it to the turn and it moves into the transcript.
+	import { showQueue, waitingLabel, type QueuedMessage } from "../../chat-queue";
 	import Icon from "../Icon.svelte";
 
 	let {
 		queued,
+		engine = null,
 		onsendnow,
 		onedit,
 		onremove,
 	}: {
 		queued: QueuedMessage[];
+		engine?: "native" | "grok" | null;
 		onsendnow: (id: string) => void;
 		onedit: (id: string, text: string) => void;
 		onremove: (id: string) => void;
@@ -26,35 +32,42 @@
 {#if showQueue(queued)}
 	<div class="queue" role="list" aria-label="Queued messages">
 		{#each queued as row (row.id)}
-			<div class="row" role="listitem">
-				<!-- A textarea, not an input: an input silently drops the newlines
-				     of a multi-line message the moment it round-trips. -->
-				<textarea
-					class="text"
-					rows="1"
-					aria-label="Queued message"
-					value={row.text}
-					oninput={(event) => onedit(row.id, event.currentTarget.value)}
-				></textarea>
-				<button
-					class="act"
-					type="button"
-					title="Send now — run this next"
-					aria-label="Send now"
-					onclick={() => onsendnow(row.id)}
-				>
-					<Icon name="arrow-up" size={14} />
-				</button>
-				<button
-					class="act"
-					type="button"
-					title="Remove from queue"
-					aria-label="Remove from queue"
-					onclick={() => onremove(row.id)}
-				>
-					<Icon name="x" size={14} />
-				</button>
-			</div>
+			{#if row.waiting}
+				<div class="row waiting" role="listitem" aria-label="Sent message">
+					<p class="text sent">{row.text}</p>
+					<span class="state" role="status">{waitingLabel(engine)}</span>
+				</div>
+			{:else}
+				<div class="row" role="listitem">
+					<!-- A textarea, not an input: an input silently drops the newlines
+					     of a multi-line message the moment it round-trips. -->
+					<textarea
+						class="text"
+						rows="1"
+						aria-label="Queued message"
+						value={row.text}
+						oninput={(event) => onedit(row.id, event.currentTarget.value)}
+					></textarea>
+					<button
+						class="act"
+						type="button"
+						title="Send now — the agent reads it at its next step"
+						aria-label="Send now"
+						onclick={() => onsendnow(row.id)}
+					>
+						<Icon name="arrow-up" size={14} />
+					</button>
+					<button
+						class="act"
+						type="button"
+						title="Remove from queue"
+						aria-label="Remove from queue"
+						onclick={() => onremove(row.id)}
+					>
+						<Icon name="x" size={14} />
+					</button>
+				</div>
+			{/if}
 		{/each}
 	</div>
 {/if}
@@ -95,6 +108,24 @@
 		background: transparent;
 		border: none;
 		outline: none;
+	}
+
+	/* Sent and out of the person's hands: no focus ring, no edit surface. */
+	.waiting {
+		padding-right: var(--space-3);
+		border-style: dashed;
+	}
+
+	.sent {
+		margin: 0;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+
+	.state {
+		flex-shrink: 0;
+		font-size: var(--text-xs);
+		color: var(--color-ink-muted);
 	}
 
 	.act {

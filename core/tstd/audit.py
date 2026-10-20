@@ -37,7 +37,8 @@ ToolCallStatus = Literal["success", "error", "refused"]
 # ── Schema ─────────────────────────────────────────────────────────────
 #
 # Schema objects: sessions, turns, tool_calls, decisions, model_calls,
-# judgments (TD-708), allowed_calls (TD-5103) — and `costs`, which is a
+# judgments (TD-708), allowed_calls (TD-5103), steers (TD-5112) — and
+# `costs`, which is a
 # VIEW over model_calls, not a table. Rollup rows would duplicate truth in
 # a store that can never correct them; a view aggregates on read instead
 # (TD-903 queries it).
@@ -181,9 +182,29 @@ CREATE TABLE allowed_calls (
 );
 """
 
+# v5 records where a message sent mid-turn joined the running turn
+# (TD-5112): one row per message. ``turn_index`` is the running turn's,
+# the same number its ``turns`` row gets when it completes; ``step`` is
+# the model calls that turn had made; ``after_tool_calls`` is the JSON
+# list of the tool_call_ids whose results the model read just before it.
+# The message text is not stored, as no turn's text is.
+_SCHEMA_V5 = """
+CREATE TABLE steers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(session_id),
+    message_id TEXT NOT NULL,
+    into_turn_id TEXT NOT NULL,
+    turn_index INTEGER NOT NULL,
+    step INTEGER NOT NULL,
+    after_tool_calls TEXT NOT NULL,
+    ts REAL NOT NULL
+);
+CREATE INDEX idx_steers_session ON steers(session_id, ts);
+"""
+
 # Ordered migration steps; index + 1 is the schema version that step
 # produces. Every release that changes the schema appends one entry.
-MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3, _SCHEMA_V4)
+MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3, _SCHEMA_V4, _SCHEMA_V5)
 
 
 # ── Scrubbing ──────────────────────────────────────────────────────────
@@ -448,6 +469,33 @@ class AuditStore:
                 completion_tokens,
                 cost,
                 1 if is_classifier else 0,
+                ts or time.time(),
+            ),
+        )
+        self._conn.commit()
+        return int(cur.lastrowid or 0)
+
+    def append_steer(
+        self,
+        session_id: str,
+        message_id: str,
+        into_turn_id: str,
+        turn_index: int,
+        step: int,
+        after_tool_call_ids: Sequence[str],
+        ts: float | None = None,
+    ) -> int:
+        """Record where a message sent mid-turn joined the running turn (TD-5112)."""
+        cur = self._conn.execute(
+            "INSERT INTO steers (session_id, message_id, into_turn_id, turn_index, step,"
+            " after_tool_calls, ts) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                session_id,
+                message_id,
+                into_turn_id,
+                turn_index,
+                step,
+                json.dumps(list(after_tool_call_ids)),
                 ts or time.time(),
             ),
         )

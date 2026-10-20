@@ -9441,16 +9441,61 @@ comments while sending no tokens.
 - [x] A stream that sends nothing for `stream_idle_timeout` is aborted;
       before any output it is retried under the existing `provider_retry`
       policy
-- [ ] A stall after output began is not retried: it ends the turn as
-      `stream_stalled`, because a second attempt would append a second
-      reply to text the window already shows (DECISIONS.md). A retry
-      there needs the loop to withdraw shown text; not planned. A
-      scheduled job does try again later (TD-5154)
+- [x] A stall after output began is withdrawn and retried (TD-5159):
+      the loop sends `assistant_retract` for that model response, the
+      window takes its partial text back, and the request is sent once
+      more; a second stall ends the turn as `stream_stalled`. Until
+      TD-5159 it ended the turn at once, because a second attempt would
+      have appended a second reply to text the window already showed
+      (DECISIONS.md). A scheduled job also tries again later (TD-5154)
 - [x] The misnamed "total" is fixed: the old field is `pool` (not a key),
       and `total_timeout` is a real wall-clock cap on one attempt
 - [x] docs/configuration.md documents the keys and shows an EZER
       local-model example
 - [x] Tests in core/tests/test_provider_timeouts.py
+
+### TD-5159 — A stall after output began is retried without a second reply
+**Size:** 3 · **Depends on:** TD-5106, TD-5146, TD-5152
+
+TD-5106's watchdog ends a stream that goes quiet. Before any output the
+provider retries it; after output began the turn ended as
+`stream_stalled`, because a second attempt would have appended a second
+reply to the partial text the window already showed. Nothing on the
+wire said which shown text belonged to the stalled response.
+
+**Acceptance criteria:**
+- [x] When a turn's stream stalls (`stream_stalled`) after output was
+      shown, the daemon sends `assistant_retract` naming that model
+      response's `response_id` (a new additive field on
+      `assistant_delta` and `assistant_reasoning`), and the window takes
+      that response's text and thinking off the message, showing
+      "Provider went quiet. Asking again" until the retry's first token
+- [x] The request is then sent again after `provider_retry`'s first
+      backoff, at most once per model call (`provider_retry.max_retries:
+      0` turns it off), so the user ends up with exactly one reply, on
+      screen and in the conversation; a second stall ends the turn as
+      `stream_stalled`
+- [x] Tool calls already executed in that turn are not executed again:
+      only the stalled response's text-in-progress is withdrawn, and the
+      text and tools of earlier calls in the turn stay
+- [x] Off-turn calls (the after-write review, memory distill) keep
+      TD-5146's no-resend rule; the progress check and a cut-off stream
+      (`stream_interrupted`) are unchanged; Stop during the wait keeps
+      nothing
+- [x] Older clients degrade safely: an unknown event is dropped and the
+      withdrawn text stays above the retry. `tst run --output json`,
+      scheduled-run receipts and mailed replies leave withdrawn text out;
+      `tst run --output text` notes it on stderr
+- [x] TD-5106's open criterion is ticked
+- [x] docs/configuration.md, docs/architecture.md (event table) and
+      DECISIONS.md updated
+- [x] Tests in core (`core/tests/test_stall_retry.py`) and ui
+      (`ui/src/lib/chat-retract.test.ts`, `protocol.test.ts`) fail on the
+      old code and pass on the new
+
+Done (2026-10-20): `core/tstd/reply_retry.py` wraps the turn's model
+call; `ui/src/lib/chat-retract.ts` marks where each response began on
+the row and cuts back to it. Class B entry in DECISIONS.md.
 
 ### TD-5107 — Load skills with unknown frontmatter and warn
 **Size:** 2 · **Depends on:** none · Gap audit 2026-10-14 (revisits TD-5011)
@@ -10237,6 +10282,55 @@ shrunk under the result cap, and name the next `offset`; pages stay in
 daemon memory for `search.fetch_cache_seconds` (900, 0 is off), never on
 disk. Classification and approval are unchanged. Tests in
 core/tests/test_web_fetch_pass.py. See DECISIONS.md.
+
+---
+
+### TD-5112 — Steer a running turn
+**Size:** 3 · **Depends on:** none · Gap audit 2026-10-14
+
+A message sent while a turn ran waited for the whole turn (the loop took
+messages only at a turn's start), so a long tool run could not be
+redirected without stopping it.
+
+**Acceptance criteria:**
+- [x] A message sent while tools run is injected at the next tool-batch boundary as a user
+      message. The model sees it before its next step, without stopping the turn.
+- [x] "Send now" shows that the message is waiting for the next boundary; Stop still cancels.
+- [x] Works from the phone remote.
+- [x] The audit DB records the injection point.
+
+**Notes:** The daemon does it (`core/tstd/steer.py`), so any connection
+steers the same way and directive 5 holds. A `user_message` that asks to
+steer (`steer: true`, what Send now mid-turn sends, from the window or the
+phone's copy of it) and arrives while a native-engine turn runs is marked
+with that turn's id; after the turn's next tool batch, just before its
+next model call (after any cap or progress-guard pause), the loop appends
+every message marked for it as a user message and logs its `user_turn`
+with a `steer` point (`turn_id`, `step`, `after_tool_call_ids`), then fits
+the prompt again so the steer's own tokens are counted. The audit
+database's `steers` table (schema v5) keeps that point per message, keyed
+to the running turn's `turns` index. A message queued before the turn
+started, or sent without asking (a queued row the window flushes at a
+turn's end, another client), waits its own turn. A turn that ends without
+another batch, or is stopped, leaves the message to start the next turn,
+as before, and a second one sent with it keeps a turn of its own too: its
+mark names the turn that ended. A steered message stays inside its turn
+for context fitting: compaction cuts only where a turn started, so the
+running turn keeps its request, and in-turn elision reaches the results
+the turn got before the steer. The Grok engine runs its own tools, so
+there it waits for the turn to end. In the window, Send now mid-turn
+leaves the row in the queue strip, read-only, marked "Sent, waiting for
+the next step" (or "this turn to end" on Grok), until its `user_turn`
+puts it in the transcript where the model read it; the queue's next row
+waits behind it. Every refusal of a `user_message` names `in_reply_to`,
+so a refused waiting row, whatever the code, goes back to the composer
+instead of holding the queue. Files with no text cannot be matched to
+their `user_turn`, so Send now sends them as before: echoed, for a turn of
+their own. Tests: `core/tests/test_steer_turn.py` (loop, a pause, Stop,
+backlog, a message that does not ask, two sent to a turn that ended,
+compaction and elision around steers, the steer's tokens, queue file,
+audit, a paired phone over the socket, refusals) and
+`ui/src/lib/chat-steer.test.ts`. See DECISIONS.md TD-5112.
 
 ---
 
