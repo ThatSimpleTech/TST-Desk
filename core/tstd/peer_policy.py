@@ -24,7 +24,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
 
-from .protocol import ClientMessage, build_error
+from .protocol import ClientMessage, DaemonEvent, ModelFallback, TierState, build_error
 
 DeviceKind = Literal["phone", "machine"]
 
@@ -152,6 +152,25 @@ def classify(remote: bool, device_kind: DeviceKind | None, features: Iterable[st
     machine = device_kind == "machine" or BRIDGE_FEATURE in wanted
     viewer = not machine and VIEWER_FEATURE in wanted and (not remote or device_kind == "phone")
     return PeerView(remote=remote, machine=machine, viewer=viewer)
+
+
+def outbound_event(event: DaemonEvent, peer: PeerView) -> DaemonEvent:
+    """*event* as *peer* may see it: another computer never learns service hosts (TD-5169).
+
+    The title bar's ``hosts`` and a fallback's ``from_host``/``to_host`` say
+    where this computer's models live. A phone keeps them (it edits
+    Services); a machine peer gets the slugs without the hosts, and a hub
+    relays a bridged session to its own clients with them already gone.
+    A later reply that lists a service's models (``service_models``) is
+    never a machine-peer verb, so it never reaches one either.
+    """
+    if not peer.machine:
+        return event
+    if isinstance(event, TierState) and event.hosts:
+        return event.model_copy(update={"hosts": {}})
+    if isinstance(event, ModelFallback) and (event.from_host or event.to_host):
+        return event.model_copy(update={"from_host": "", "to_host": ""})
+    return event
 
 
 def message_session_id(msg: ClientMessage) -> str | None:
