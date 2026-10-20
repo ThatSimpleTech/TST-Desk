@@ -2554,7 +2554,29 @@ class Daemon:
             ]
             display = render_user_content(msg.content, decoded)
             provider = build_provider_user_content(msg.content, decoded)
-            await found.add_user_message(QueuedUserMessage(display=display, provider=provider))
+            try:
+                await found.add_user_message(
+                    QueuedUserMessage(display=display, provider=provider), refuse_unsaved=True
+                )
+            except OSError as e:
+                # Accepted means saved (TD-5155): a send that cannot reach
+                # the queue file is refused, and the window puts the text
+                # back in the composer, instead of being lost to the next
+                # restart without a word (TD-5158).
+                found.pending_images = []
+                log.warning(
+                    "user message not saved; refused",
+                    extra={"extra_fields": {"session_id": msg.session_id, "error": str(e)}},
+                )
+                reason = e.strerror or type(e).__name__
+                return build_error(
+                    "message_not_saved",
+                    f"Couldn't save the message to disk ({reason}), so it was not sent. "
+                    "It is back in the composer; check that TST Desk's data folder is "
+                    "writable, then send it again.",
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
+                )
             # Title from the user's text, not the rendered body — an
             # attachment-only message must stay untitled (TD-3001).
             await self._session_store.maybe_set_title(msg.session_id, msg.content)

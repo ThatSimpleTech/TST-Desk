@@ -300,6 +300,15 @@ describe("notification routing", () => {
     expect(toasts[0].body).not.toContain("unrecognised");
   });
 
+  it("a send the daemon could not save is a readable toast (TD-5158)", () => {
+    const message = "Couldn't save the message to disk (Permission denied), so it was not sent.";
+    notifyEvent({ type: "error", code: "message_not_saved", message, session_id: "s1", seq: 3 } as DaemonEventUnion);
+    expect(banners).toHaveLength(0);
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].title).toBe("Message not sent");
+    expect(toasts[0].body).toBe(message);
+  });
+
   it("an edit or branch switch on a summarized message is a readable toast (TD-5147)", () => {
     const message =
       "That message was folded into a summary to free up context, so it can't be edited or switched any more. Send a new message to carry on from the summary.";

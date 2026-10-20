@@ -346,7 +346,13 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
         prependDraft(state, fork.text);
         return;
       }
-      if (event.code !== "session_not_running" && event.code !== "daemon_draining") return;
+      if (
+        event.code !== "session_not_running" &&
+        event.code !== "daemon_draining" &&
+        event.code !== "message_not_saved"
+      ) {
+        return;
+      }
       if (event.session_id != null && event.session_id !== state.sessionId) return;
       wait.end();
       const refused = refusedSend(ctx.sending);
@@ -356,7 +362,8 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       }
       // A drain holds new turns while running ones finish, so a reply may
       // still be streaming here: it is not sealed. The text goes back to
-      // the composer to send again once the restart is done (TD-5019).
+      // the composer to send again once the restart is done (TD-5019), or
+      // once the data folder is writable again (TD-5158).
       if (refused !== null) returnToDraft(state, refused);
       return;
     }
