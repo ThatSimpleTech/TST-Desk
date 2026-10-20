@@ -38,6 +38,19 @@ def test_allow_line_exempts_the_whole_line() -> None:
     assert len(list(LIST.hits("pat\npatio-safe"))) == 1
 
 
+def test_allow_reaches_only_the_match_context_on_a_long_line() -> None:
+    # A minified bundle is one line: an allowed name elsewhere on it must
+    # not exempt a real hit.
+    line = "pat " + "x" * 200 + " patio-safe"
+    assert len(list(LIST.hits(line))) == 1
+
+
+def test_hits_hide_the_match_unless_shown() -> None:
+    assert list(LIST.hits("ask pat", show=False)) == ["rule 2 at offset 4"]
+    found = release_scan.scan_bytes(LIST, "f", b"secret-host", show=False)
+    assert found == ["f: rule 1 at offset 0"]
+
+
 def test_plain_file_and_folder(tmp_path: Path) -> None:
     (tmp_path / "dist").mkdir()
     (tmp_path / "dist" / "app.js").write_text("const u='secret-host:4000'")

@@ -15,8 +15,15 @@ import pytest
 from websockets.asyncio.client import connect
 
 from tests.platform_helpers import stop_daemon_gracefully
+from tstd import daemon as daemon_module
 from tstd.daemon import Daemon
-from tstd.peer_policy import LOOPBACK_PLAIN, PeerView, outbound_event
+from tstd.peer_policy import (
+    HOST_PLACEHOLDER,
+    LOOPBACK_PLAIN,
+    PeerView,
+    outbound_event,
+    service_hosts,
+)
 from tstd.protocol import PROTOCOL_VERSION, AssistantDelta, ModelFallback, TierState
 
 MACHINE = PeerView(remote=True, machine=True, viewer=False)
@@ -69,6 +76,36 @@ def test_other_events_pass_through_for_a_machine() -> None:
     assert outbound_event(delta, MACHINE) is delta
 
 
+def test_service_hosts_walks_every_base_url() -> None:
+    dump = {
+        "tiers": {
+            "brain": {"base_url": "http://192.0.2.49:4000/v1", "model": "m"},
+            "worker": {"base_url": "http://127.0.0.1:8000/v1"},
+        },
+        "fallbacks": [{"base_url": "https://box.example.ts.net/v1"}],
+        "credentials": {"k": {"base_url": None}, "j": {"voice_base_url": "gpu.lan:9000"}},
+    }
+    assert service_hosts(dump) == {
+        "192.0.2.49:4000",
+        "192.0.2.49",
+        "box.example.ts.net",
+        "gpu.lan:9000",
+        "gpu.lan",
+    }
+
+
+def test_machine_peer_text_has_hosts_replaced() -> None:
+    hosts = service_hosts({"base_url": "http://192.0.2.49:4000/v1"})
+    delta = AssistantDelta(
+        session_id="s1", delta="Failed to connect to http://192.0.2.49:4000/v1: refused", seq=5
+    )
+    out = outbound_event(delta, MACHINE, hosts)
+    assert isinstance(out, AssistantDelta)
+    assert out.delta == f"Failed to connect to http://{HOST_PLACEHOLDER}/v1: refused"
+    assert outbound_event(delta, PHONE, hosts) is delta
+    assert outbound_event(TIER, MACHINE, hosts).hosts == {}  # type: ignore[attr-defined]
+
+
 async def _hello(uri: str, token: str) -> Any:
     ws = await connect(uri)
     await ws.send(json.dumps({"type": "hello", "token": token, "version": PROTOCOL_VERSION}))
@@ -76,10 +113,14 @@ async def _hello(uri: str, token: str) -> Any:
     return ws
 
 
+_seen: list[dict[str, Any]] = []
+
+
 async def _tier_states(ws: Any, count: int) -> list[dict[str, Any]]:
     seen: list[dict[str, Any]] = []
     while len(seen) < count:
         evt = json.loads(await asyncio.wait_for(ws.recv(), timeout=3))
+        _seen.append(evt)
         if evt["type"] == "tier_state":
             seen.append(evt)
     return seen
@@ -88,12 +129,16 @@ async def _tier_states(ws: Any, count: int) -> list[dict[str, Any]]:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("peer", "stripped"), [(MACHINE, True), (LOOPBACK_PLAIN, False)])
 async def test_attach_replay_and_live_stream(
-    tmp_path: Path, peer: PeerView, stripped: bool
+    tmp_path: Path, peer: PeerView, stripped: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _seen.clear()
     data_dir = tmp_path / "data"
     workspace = tmp_path / "ws"
     data_dir.mkdir()
     workspace.mkdir()
+    monkeypatch.setattr(
+        daemon_module, "service_hosts", lambda _dump: frozenset({"192.0.2.49:4000"})
+    )
     daemon = Daemon(data_dir=data_dir)
     task = asyncio.create_task(daemon.run())
     try:
@@ -112,8 +157,13 @@ async def test_attach_replay_and_live_stream(
         daemon.ws_server.peer_view = lambda _conn: peer  # type: ignore[method-assign]
         await ws.send(json.dumps({"type": "attach", "session_id": session_id, "from_seq": 1}))
         replayed = await _tier_states(ws, 2)  # the one logged at open, then ours
+        await session.event_log.add(
+            AssistantDelta(session_id=session_id, delta="down: 192.0.2.49:4000", seq=1)
+        )
         await session.event_log.add(TIER.model_copy(update={"session_id": session_id}))
         (live,) = await _tier_states(ws, 1)
+        delta = next(e for e in _seen if e["type"] == "assistant_delta")
+        assert delta["delta"] == ("down: model-service" if stripped else "down: 192.0.2.49:4000")
 
         ours = [replayed[-1], live]
         for evt in ours:

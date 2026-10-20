@@ -21,7 +21,9 @@ any zlib stream inside a file is inflated and scanned too — a PyInstaller
 onefile binary keeps its Python modules (docstrings included) that way,
 so a grep over the raw bytes would miss them.
 
-Exit 0 clean, 1 hits (each printed as ``path[:entry]: match``), 2 usage.
+Each hit prints as ``path[:entry]: rule N at offset M``; ``--show`` prints
+the matched text instead, for a local run. CI never passes it: a public
+run's log is public. Exit 0 clean, 1 hits, 2 usage.
 """
 
 from __future__ import annotations
@@ -69,18 +71,33 @@ class Denylist:
                 deny.append(re.compile(line, re.IGNORECASE))
         return cls(tuple(deny), tuple(allow))
 
-    def hits(self, text: str) -> Iterator[str]:
-        """Each denied match in *text* that no allow rule exempts, with context."""
-        for pattern in self.deny:
+    def matches(self, text: str) -> Iterator[tuple[int, int, str]]:
+        """``(rule, offset, context)`` for each denied match no allow rule exempts.
+
+        An allow rule is tested against the match's own context (a few dozen
+        characters either side, within its line), not the whole line: a
+        minified bundle is one line, and one allowed name must not hide it.
+        """
+        for rule, pattern in enumerate(self.deny, start=1):
             for m in pattern.finditer(text):
                 start = text.rfind("\n", 0, m.start()) + 1
                 end = text.find("\n", m.end())
-                line = text[start : end if end != -1 else len(text)]
-                if any(a.search(line) for a in self.allow):
-                    continue
+                end = len(text) if end == -1 else end
                 lo = max(m.start() - _CONTEXT, start)
-                hi = min(m.end() + _CONTEXT, len(text) if end == -1 else end)
-                yield text[lo:hi].replace("\r", " ").strip()
+                hi = min(m.end() + _CONTEXT, end)
+                context = text[lo:hi]
+                if any(a.search(context) for a in self.allow):
+                    continue
+                yield rule, m.start(), context.replace("\r", " ").strip()
+
+    def hits(self, text: str, *, show: bool = True) -> Iterator[str]:
+        """Printable hits. Without *show*, the rule number and offset only.
+
+        CI logs on a public repo are public, and the matched text is the
+        private string itself, so CI never prints it.
+        """
+        for rule, offset, context in self.matches(text):
+            yield context if show else f"rule {rule} at offset {offset}"
 
 
 def load_denylist(path: str | None) -> Denylist | None:
@@ -125,9 +142,11 @@ def _inflated(data: bytes) -> Iterator[bytes]:
         pos = at - len(d.unused_data)
 
 
-def scan_bytes(denylist: Denylist, label: str, data: bytes, depth: int = 0) -> list[str]:
+def scan_bytes(
+    denylist: Denylist, label: str, data: bytes, depth: int = 0, *, show: bool = True
+) -> list[str]:
     """Hits in *data*, its zip entries and its zlib streams, as printable lines."""
-    found = [f"{label}: {hit}" for hit in denylist.hits(data.decode("latin-1"))]
+    found = [f"{label}: {hit}" for hit in denylist.hits(data.decode("latin-1"), show=show)]
     if data[:4] == b"PK\x03\x04":
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as zf:
@@ -136,25 +155,27 @@ def scan_bytes(denylist: Denylist, label: str, data: bytes, depth: int = 0) -> l
                         continue
                     if depth < _MAX_DEPTH:
                         entry = zf.read(info)
-                        found += scan_bytes(denylist, f"{label}:{info.filename}", entry, depth + 1)
-                    for hit in denylist.hits(info.filename):
+                        found += scan_bytes(
+                            denylist, f"{label}:{info.filename}", entry, depth + 1, show=show
+                        )
+                    for hit in denylist.hits(info.filename, show=show):
                         found.append(f"{label}: entry name {hit}")
         except zipfile.BadZipFile:
             pass
     elif depth < _MAX_DEPTH:
         for n, blob in enumerate(_inflated(data)):
-            found += scan_bytes(denylist, f"{label}:zlib#{n}", blob, depth + 1)
+            found += scan_bytes(denylist, f"{label}:zlib#{n}", blob, depth + 1, show=show)
     return found
 
 
-def scan_path(denylist: Denylist, path: Path) -> list[str]:
+def scan_path(denylist: Denylist, path: Path, *, show: bool = True) -> list[str]:
     """Hits in one file, or in every file under a folder."""
     if path.is_dir():
         found: list[str] = []
         for child in sorted(p for p in path.rglob("*") if p.is_file()):
-            found += scan_bytes(denylist, str(child), child.read_bytes())
+            found += scan_bytes(denylist, str(child), child.read_bytes(), show=show)
         return found
-    return scan_bytes(denylist, str(path), path.read_bytes())
+    return scan_bytes(denylist, str(path), path.read_bytes(), show=show)
 
 
 def tracked_files(root: Path) -> list[Path]:
@@ -166,14 +187,14 @@ def tracked_files(root: Path) -> list[Path]:
     return [root / n for n in names if (root / n).is_file()]
 
 
-def scan_git(denylist: Denylist, root: Path) -> list[str]:
+def scan_git(denylist: Denylist, root: Path, *, show: bool = True) -> list[str]:
     """Hits in tracked files, by repo-relative path. Text only: no inflation."""
     found: list[str] = []
     for path in tracked_files(root):
         rel = path.relative_to(root).as_posix()
         text = path.read_bytes().decode("latin-1")
-        found += [f"{rel}: {hit}" for hit in denylist.hits(rel)]
-        found += [f"{rel}: {hit}" for hit in denylist.hits(text)]
+        found += [f"{rel}: {hit}" for hit in denylist.hits(rel, show=show)]
+        found += [f"{rel}: {hit}" for hit in denylist.hits(text, show=show)]
     return found
 
 
@@ -183,6 +204,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--git", action="store_true", help="scan tracked files at HEAD")
     parser.add_argument("--denylist", help="pattern file (default: see module doc)")
     parser.add_argument("--require", action="store_true", help="fail when no list is set")
+    parser.add_argument(
+        "--show",
+        action="store_true",
+        help="print the matched text (local runs only: CI logs are public)",
+    )
     args = parser.parse_args(argv)
     if not args.git and not args.paths:
         parser.print_usage(sys.stderr)
@@ -193,12 +219,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2 if args.require else 0
     found: list[str] = []
     if args.git:
-        found += scan_git(denylist, REPO)
+        found += scan_git(denylist, REPO, show=args.show)
     for path in args.paths:
         if not path.exists():
             print(f"release scan: {path} does not exist", file=sys.stderr)
             return 2
-        found += scan_path(denylist, path)
+        found += scan_path(denylist, path, show=args.show)
     for line in found:
         print(line)
     print(f"release scan: {len(found)} hit(s)")
