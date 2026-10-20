@@ -189,6 +189,12 @@ class ChatMessage:
     # It belongs to that turn: compaction never cuts at it and in-turn
     # elision reaches past it. Kept with the conversation, never sent.
     steer: bool = False
+    # A done-check's feedback (TD-5124): the check failed, so its output
+    # went back to the model as this user message. Always ``steer`` too,
+    # since it joins the running turn; unlike a steer, no ``user_turn``
+    # showed it, so it is not one of the window's numbered user turns.
+    # Kept with the conversation, never sent.
+    check: bool = False
 
 
 def _prefix_content(prefix: str, content: MessageContent | None) -> MessageContent:

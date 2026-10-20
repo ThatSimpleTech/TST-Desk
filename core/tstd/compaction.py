@@ -216,7 +216,8 @@ def _render_summary(dropped: list[ChatMessage], guidance: str = "", turns: int =
         hit = bool(terms) and on_topic(text)
         limit = _SUMMARY_CHARS_ON_TOPIC if hit else _SUMMARY_CHARS_PER_MESSAGE
         if message.role == "user":
-            lines.append((f"User: {_truncate(text, limit)}", hit))
+            who = "Done-check" if message.check else "User"
+            lines.append((f"{who}: {_truncate(text, limit)}", hit))
         elif message.role == "assistant":
             if message.tool_calls:
                 names = ", ".join(
@@ -277,7 +278,9 @@ def window_user_turns(messages: Sequence[ChatMessage]) -> list[int | None]:
         if index == 0 and message.role == "system":
             continue  # the system prompt
         if message.role == "user":
-            turns.append(index)
+            # A done-check's feedback (TD-5124) is no turn the window shows.
+            if not message.check:
+                turns.append(index)
             continue
         folded = summary_user_turns(message)
         if folded:
@@ -290,7 +293,7 @@ def _user_turns(messages: Sequence[ChatMessage]) -> int:
     total = 0
     for message in messages:
         if message.role == "user":
-            total += 1
+            total += 0 if message.check else 1
         else:
             total += summary_user_turns(message) or 0
     return total

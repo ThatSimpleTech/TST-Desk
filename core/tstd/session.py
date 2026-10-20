@@ -330,6 +330,11 @@ class Session:
         # TD-5122: the model's task list (``task_list`` tool). Carried into
         # every compaction summary; rebuilt from the log on revive.
         self.task_list: list[TaskListItem] = []
+        # TD-5124: the goal ``/goal`` set, checked when the model ends a
+        # turn until a check passes; rebuilt from the log on revive. And
+        # how many checks have judged it, for ``/goal`` on its own.
+        self.goal: str | None = None
+        self.goal_checks = 0
         # TD-5123: the plan the person approved to end plan mode. Carried
         # into every compaction summary; rebuilt from the log on revive.
         self.pinned_plan: str = ""

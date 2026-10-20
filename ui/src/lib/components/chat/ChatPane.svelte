@@ -45,6 +45,8 @@
 	import QueuedMessages from "./QueuedMessages.svelte";
 	import TaskStrip from "./TaskStrip.svelte";
 	import { taskListFor } from "../../task-list-store.svelte.js";
+	import GoalStrip from "./GoalStrip.svelte";
+	import { goalFor } from "../../goal-store.svelte.js";
 	import WakeupCard from "../WakeupCard.svelte";
 	import { bindWakeup, startWakeup } from "../../wakeup.svelte.js";
 
@@ -220,6 +222,8 @@
 		</div>
 		<!-- TD-5122: the agent's task list, the phone's view of the plan.
 		     Renders nothing while there is no unfinished list. -->
+		<!-- TD-5124: the goal /goal set; gone once a done-check meets it. -->
+		<GoalStrip goal={goalFor(session.sessionId)} />
 		<TaskStrip items={taskListFor(session.sessionId)} />
 		<!-- TD-5155: what a restart left held, above the pane's own queue.
 		     Renders nothing while nothing is held. -->

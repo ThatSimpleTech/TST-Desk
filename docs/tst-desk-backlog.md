@@ -10855,6 +10855,57 @@ disk, a restart finds it and the next compaction still carries it), `ui/src/lib/
 the UI walk (the strip at 375 px and the Plan pane at 1280 px on the
 seeded held session; census gains `tasks`). See DECISIONS.md.
 
+### TD-5124 — Done-check on interactive turns
+**Size:** 5 · **Depends on:** none · Gap audit 2026-10-14
+
+The definition-of-done poll ran only in unattended runs, so an interactive
+turn could stop early, or claim it was done, unchecked. Local models do
+both. Claude Code's hooks can block a stop, and its goal feature keeps
+working toward a condition.
+
+**Acceptance criteria:**
+- [x] A workspace can set a `stop_check` (a `$`-command or a worker-judged
+      statement, reusing the DoD code in core/tstd/autonomy/dod.py).
+- [x] When the model ends a turn, the check runs. On failure, its output
+      goes back as a user message, up to N times, and then the turn ends
+      with the failure shown.
+- [x] `/goal <statement>` sets a session goal checked the same way.
+- [x] It works without a signed charter.
+
+Done (2026-10-20): `core/tstd/stop_check.py` (the check),
+`core/tstd/session_goal.py` (`/goal`, the goal's restore), `stop_check` in `.tst/config.yaml` (`checks`, `max_retries` 3,
+`timeout_secs` 300; `core/tstd/boundary_config.py`), and the shared DoD
+pieces in `core/tstd/autonomy/dod.py` (`poll_definition_of_done` with
+runners that may answer "could not judge", `dod_worker_prompt`,
+`dispatch_check_command`). When the model ends a native interactive turn,
+on the normal path or the progress guard's DONE, each workspace check runs,
+then the session's goal: a `$` check through the classifier, policy and
+approval like any shell call, logged as its own `tool_call`/`tool_result`;
+a statement judged GREEN/RED by the worker. All green ends the turn (a goal
+in it is met and cleared). A red check goes back as a user message
+(`steer` and `check` on the stored message: no `user_turn`, not one of the
+window's numbered turns) and the turn continues; after `max_retries` the
+turn ends with `turn_complete` `failed`, `error_code: stop_check_failed`
+(`tst run` exits non-zero). A check that could not be judged ends the turn
+as `unchecked` with nothing sent back, unless another item is red: then
+the red one decides and only it goes back. Events: `stop_check` (outcome,
+attempt, items) and `session_goal` (`set`, `cleared`, `met`; restored on
+revive, logged again after rotation or on attach). `/goal` alone and `/goal
+clear` answer with no model call. A repo's `stop_check` waits for trust
+(TD-5113). The window shows the check as a fold on the reply (a failure the
+turn ended on opens on its own), a goal strip above the composer, `/goal`
+in the slash palette and copy for `stop_check_failed`; `tst run`/`tst
+attach` print a line on stderr. Not in unattended runs, delegate children,
+Grok sessions, or a turn that ends in read-only plan mode (TD-5123, merged
+from main: a planning turn is not a claim the work is done; the goal stays
+set). Tests: `core/tests/test_stop_check.py` (config, trust,
+`/goal` parsing, outcomes, the feedback's turn numbering and persistence, a
+shell check that fails then passes, `max_retries` 1 and 0, a declined
+command, a red command beside an unjudged statement or a declined command, a worker statement, `/goal` set/met/kept/status/clear, the
+progress guard's DONE, revive and rotation, a planning turn left unchecked), `ui/src/lib/stop-check.test.ts`,
+`ui/src/lib/slash-commands.test.ts`. See DECISIONS.md, docs/configuration.md
+§4.9 and docs/architecture.md.
+
 ### TD-5123 — Read-only plan mode
 **Size:** 5 · **Depends on:** TD-5117 · Gap audit 2026-10-14
 

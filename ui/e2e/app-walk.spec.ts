@@ -388,6 +388,31 @@ test("shows the agent's task list in the chat and the Plan pane", async () => {
 	await expect(plan).toBeVisible();
 });
 
+/**
+ * TD-5124: the held session's reply carries a done-check that could not run
+ * (the command was declined). It shows open on the reply, so the reason is
+ * on screen; its toggle folds and unfolds it, at a phone's width too.
+ */
+test("shows a done-check on the reply and folds it", async () => {
+	const chat = page.getByRole("region", { name: "Chat pane" });
+	const fold = chat.getByRole("group", { name: "Done-check" });
+	const toggle = fold.getByRole("button", { name: "Done-check could not run" });
+	await expect(toggle).toHaveAttribute("aria-expanded", "true");
+	await expect(fold).toContainText(info.check);
+	await expect(fold).toContainText("The user declined this command.");
+	await snap("done-check", fold);
+
+	await toggle.click();
+	await expect(toggle).toHaveAttribute("aria-expanded", "false");
+	await expect(fold).not.toContainText("The user declined this command.");
+
+	await page.setViewportSize({ width: 375, height: 812 });
+	await expect(toggle).toBeVisible();
+	await toggle.click();
+	await expect(fold).toContainText(info.check);
+	await page.setViewportSize({ width: 1280, height: 800 });
+});
+
 test("runs the command palette actions that stay in this window", async () => {
 	await openPalette(page);
 	const palette = page.getByRole("dialog", { name: "Command palette" });

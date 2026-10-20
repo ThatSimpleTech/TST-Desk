@@ -2352,6 +2352,41 @@ export interface TaskList extends DaemonEvent {
   items: TaskListItem[];
 }
 
+/** One item of a done-check after it ran (TD-5124). */
+export interface StopCheckItem {
+  /** The check as configured (`$ ...` or a statement), or the goal. */
+  item: string;
+  source: "workspace" | "goal";
+  via: "shell" | "worker";
+  passed: boolean;
+  /** False when it could not be judged (a declined command, no verdict). */
+  decided?: boolean;
+  /** The command output's start and tail, or the worker's reply. */
+  detail?: string;
+}
+
+/** The done-check ran because the model ended an interactive turn
+ *  (TD-5124). `retry`: the failure went back to the model and the turn goes
+ *  on. `failed`: still failing after `max_retries` tries, so the turn ends
+ *  with `stop_check_failed`. `unchecked`: no item failed, but one could not be judged. */
+export interface StopCheck extends DaemonEvent {
+  type: "stop_check";
+  session_id: string;
+  outcome: "passed" | "retry" | "failed" | "unchecked";
+  attempt: number;
+  max_retries: number;
+  items: StopCheckItem[];
+}
+
+/** The session's goal after `/goal` set or cleared it, or a done-check met
+ *  it (TD-5124). `goal` is null once cleared. The newest one is the goal. */
+export interface SessionGoal extends DaemonEvent {
+  type: "session_goal";
+  session_id: string;
+  goal: string | null;
+  change: "set" | "cleared" | "met";
+}
+
 export interface TierSwitched extends DaemonEvent {
   type: "tier_switched";
   session_id: string;
@@ -2654,6 +2689,8 @@ export type DaemonEventUnion =
   | ContextCompacted
   | ContextUsage
   | TaskList
+  | StopCheck
+  | SessionGoal
   | SteeringReloaded
   | RuleActivated
   | TierSwitched

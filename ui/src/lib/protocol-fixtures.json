@@ -1546,6 +1546,39 @@
       }
     ]
   },
+  "stop_check": {
+    "type": "stop_check",
+    "seq": 20,
+    "session_id": "sess-1",
+    "outcome": "retry",
+    "attempt": 1,
+    "max_retries": 3,
+    "items": [
+      {
+        "item": "$ uv run pytest -q",
+        "source": "workspace",
+        "via": "shell",
+        "passed": false,
+        "decided": true,
+        "detail": "exit code: 1\n\u2500\u2500 stdout \u2500\u2500\nFAILED tests/test_dates.py::test_leap_day"
+      },
+      {
+        "item": "The parser handles leap days",
+        "source": "goal",
+        "via": "worker",
+        "passed": true,
+        "decided": true,
+        "detail": "GREEN"
+      }
+    ]
+  },
+  "session_goal": {
+    "type": "session_goal",
+    "seq": 21,
+    "session_id": "sess-1",
+    "goal": "The parser handles leap days",
+    "change": "set"
+  },
   "tier_switched": {
     "type": "tier_switched",
     "seq": 19,

@@ -459,6 +459,7 @@ from .session import (
     SessionRegistry,
     SessionRunner,
 )
+from .session_goal import keep_goal_visible, restore_goal
 from .session_lifecycle import (
     BUSY_CODE,
     apply_workspace_config,
@@ -2491,6 +2492,8 @@ class Daemon:
         if session is None or session.event_log is not event_log:
             return
         await keep_task_list_visible(session)
+        # TD-5124: the goal's newest event is its only copy on disk too.
+        await keep_goal_visible(session)
         # TD-5123: the pinned plan's newest event is its only copy too.
         await keep_pinned_plan_visible(session)
 
@@ -3819,6 +3822,8 @@ class Daemon:
         await restore_queue(sess, rows, loaded.events)
         # TD-5122: the task list is the newest one the log kept.
         restore_task_list(sess, loaded.events)
+        # TD-5124: so is the goal.
+        restore_goal(sess, loaded.events)
         # TD-5123: so is the pinned plan.
         restore_pinned_plan(sess, loaded.events)
         # TD-5140: open steering proposals lived in the old process's memory.
@@ -4427,6 +4432,8 @@ class Daemon:
         await keep_held_visible(session)
         # TD-5122: so is the task list, which the Plan pane shows.
         await keep_task_list_visible(session)
+        # TD-5124: and the session's goal.
+        await keep_goal_visible(session)
         # TD-5123: and the pinned plan, which it shows too.
         await keep_pinned_plan_visible(session)
         # Replay from from_seq. A rotated prefix is a typed notice, then

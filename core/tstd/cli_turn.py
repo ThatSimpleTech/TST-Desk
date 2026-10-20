@@ -47,6 +47,7 @@ from .cli import (
     _turn_timeout_secs,
     config_trust_notice,
     fallback_notice,
+    stop_check_notice,
 )
 from .cli_approvals import prompt_approval
 from .cli_questions import prompt_questions
@@ -249,6 +250,12 @@ class _TurnReader:
             if self.output == "text":
                 self.end_line()
                 print(fallback_notice(event), file=sys.stderr)
+            return None
+        if typ == "stop_check":
+            # TD-5124: stderr, like a fallback; stdout stays the reply.
+            if self.output == "text":
+                self.end_line()
+                print(stop_check_notice(event), file=sys.stderr)
             return None
         if typ == "assistant_delta":
             delta = str(event.get("delta") or "")
