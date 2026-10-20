@@ -46,7 +46,18 @@ import { showCancel } from "./chat-store";
 import { isBridged, machineOf } from "./bridged-id";
 import { sessionMachineUp } from "./machines.svelte.js";
 import { failsPendingNew, pendingNewAnchor, setPendingNew } from "./pending-new-session";
-import type { DaemonEventUnion, SessionSummary, SessionWorktreeInfo } from "./protocol";
+import {
+	applySearchResults,
+	contentHit,
+	resetSessionSearch,
+	searchContent,
+} from "./session-search.svelte.js";
+import type {
+	DaemonEventUnion,
+	SessionSearchHit,
+	SessionSummary,
+	SessionWorktreeInfo,
+} from "./protocol";
 
 export {
 	ACTIVITY_LABELS,
@@ -158,6 +169,7 @@ export function resetSessions(): void {
 	listInFlight = false;
 	sessions.rows = [];
 	sessions.filter = "";
+	resetSessionSearch();
 	sessions.collapsed = false;
 	sessions.showArchived = false;
 	sessions.showStarredOnly = false;
@@ -174,6 +186,10 @@ function requestRefreshIfIdle(): void {
 }
 
 function reduce(event: DaemonEventUnion): void {
+	if (event.type === "session_search_results") {
+		applySearchResults(event);
+		return;
+	}
 	if (event.type === "session_list") {
 		listInFlight = false;
 		sessions.rows = event.sessions
@@ -298,8 +314,9 @@ function reduce(event: DaemonEventUnion): void {
 }
 
 /** The rendered rows: the current shelf, newest first, narrowed by the
- *  filter. Matches the session id and the workspace path (its basename
- *  included via the path).
+ *  filter. Matches the session id, the workspace path (its basename
+ *  included via the path), the title, and what the session said: the
+ *  daemon's full-text index names those rows (TD-5129).
  *
  *  The shelf split is why archived sessions are "hidden from the default
  *  list" (TD-1715): one daemon list, one filter, two views — never a second
@@ -313,8 +330,14 @@ export function visibleRows(): SessionRow[] {
 			(needle === "" ||
 				r.sessionId.toLowerCase().includes(needle) ||
 				r.workspacePath.toLowerCase().includes(needle) ||
-				(r.title !== null && r.title.toLowerCase().includes(needle))),
+				(r.title !== null && r.title.toLowerCase().includes(needle)) ||
+				contentHit(r.sessionId, sessions.filter) !== null),
 	);
+}
+
+/** Why *row* matched the search box by its words, or null (TD-5129). */
+export function rowHit(row: SessionRow): SessionSearchHit | null {
+	return contentHit(row.sessionId, sessions.filter);
 }
 
 /** Rows on the shelf being shown, before the filter — tells "nothing here"
@@ -327,6 +350,7 @@ export function shelfRowCount(): number {
 
 export function setFilter(value: string): void {
 	sessions.filter = value;
+	searchContent(value);
 }
 
 /** Click a row: attach the window to that session. No-op when unknown or

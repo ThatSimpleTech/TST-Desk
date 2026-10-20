@@ -17175,3 +17175,70 @@ it. Refused on the Grok engine (`rewind_grok`): Grok writes files with its own
 tools, nothing reaches the branch, and "nothing changed" would be untrue. Refused when a later checkpoint has no `Log-Seq` (`rewind_predates`, an
 older session), rather than guess its order. Shell writes are not restored:
 they were never on the branch, and the dialog says so.
+
+## 2026-10-20 — TD-5129: a local full-text index of what sessions said (Class B)
+
+**Context.** The gap audit asked for searching and recalling earlier
+sessions: an SQLite FTS index updated as sessions write, a rail that
+searches message text, and a Class A `session_search` tool that cites
+session and turn, with nothing leaving the computer. Adam approved the
+story as written (gap audit decisions, 2026-10-14). The index's shape,
+what goes in it, how the rail asks, and the tool's scope were left open.
+Sized 5, so this entry records the approach in place of a sign-off.
+
+**Decision.**
+
+- **One file, `session_index.db` in the data dir, SQLite FTS5** (stdlib
+  `sqlite3`, no new dependency; external-content table with triggers,
+  `unicode61 remove_diacritics 2`, WAL, mode 0600). It is a view of the
+  session logs, not a record: a failed write is logged and the next
+  start's catch-up repairs it, and deleting the file rebuilds it from the
+  logs that remain. A newer schema than this build turns search off
+  rather than migrating down.
+- **Fed from the redacted events `events.jsonl` gets**, in the daemon's
+  per-session persist lock, so the index never holds a secret the log
+  scrubbed and sees each session in seq order. Indexed: user messages and
+  assistant replies. Not indexed: thinking, tool calls and tool output,
+  daemon notices. Replies are buffered per `response_id` and written once
+  when the next non-text event arrives (one write per reply, not per
+  token); `assistant_retract` drops the buffer and any row. Rows outlive
+  the `log_max_events` window on purpose (that is recall).
+- **Turns** are the 1-based count of user turns in the session's own log;
+  a mid-turn message (TD-5112) counts with the turn it joined, and a fork
+  restarts the count at the edited turn. A log that was trimmed before
+  the index first saw it numbers from its oldest kept turn; that is the
+  only case where the number can differ from the window's.
+- **Restart safety:** `indexed_sessions` keeps, per session, the last seq
+  whose effects are all written (never one inside a buffered reply), and
+  restore replays the log from there before revive adds anything.
+- **Rail:** a connection-scoped `search_sessions` → `session_search_results`
+  pair, one best hit per session over every session this computer knows,
+  sent 200 ms after typing pauses and only from two characters. The rail
+  keeps its own title/id/path filter and adds message matches with their
+  snippet; a reply whose `query` is not what the box holds is dropped.
+  Every word is quoted and prefix-matched, so nothing typed is FTS syntax;
+  when all words find nothing, any word may (BM25 ranks rare words
+  first).
+- **Tool scope (Class C question, conservative choice):** `session_search`
+  searches only the other sessions whose row has the caller's
+  `workspace_path` (a worktree session keeps its project's path), never
+  other projects and never the caller itself, at most two hits per
+  session and ten in all. The story says "in the same workspace"; a wider
+  scope would hand one project's conversations to another's model.
+- **Not forwarded to paired computers (Class C question, conservative
+  choice):** `search_sessions` is not a machine-peer verb, so the rail
+  searches this computer's sessions only; another computer's rows still
+  match on their titles. Searching a peer's text would send it across
+  the link, which the story did not ask for.
+- **Class A by a static rule `session-search`**, shaped like
+  `tool-search`: builtin only, `auto`, no reads, writes, hosts or
+  actuation. It is on `PLAN_READ_ONLY_BUILTINS`. Its result goes to the
+  session's own model like any `fs_read` output; the index and both
+  searches open no socket (tested with `socket` patched to fail).
+
+**Rejected.** A search inside `events.jsonl` with `grep` at query time:
+the logs are windowed, so old sessions would lose their text, and every
+keystroke would read every log. A vector index: needs an embedding model
+and a dependency, and the story asks for full-text. A config switch: the
+index costs one small write per message, and with no key there is
+nothing to misconfigure.
