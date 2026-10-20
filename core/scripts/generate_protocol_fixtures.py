@@ -540,6 +540,14 @@ FIXTURES = {
         seq=7,
         diff="--- a/test.txt\n+++ b/test.txt\n@@ -1 +1 @@\n-old line\n+new line",
     ),
+    "tool_result_read_only": ToolResult(
+        session_id="sess-1",
+        tool_call_id="tc-1",
+        status="success",
+        output="exit 0",
+        seq=8,
+        allowed_by=["git log", "head"],
+    ),
     "tool_result_denied": ToolResult(
         session_id="sess-1",
         tool_call_id="tc-1",

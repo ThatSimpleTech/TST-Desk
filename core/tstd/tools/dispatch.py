@@ -478,6 +478,12 @@ class ToolDispatcher:
                     decision_class=decision_class,
                 )
 
+        # What let the call run without asking, for the audit (TD-5103):
+        # the read-only list, only when no policy rule or approval decided.
+        allowed_by = (
+            classification.allowed_by if decision.effect == "auto" and decision.rule is None else ()
+        )
+
         # 3.25 Diff snapshot (TD-604).  A successful mutation reports the
         # change it made: snapshot the canonical write targets before the
         # handler runs, then diff against their state afterwards.
@@ -520,6 +526,7 @@ class ToolDispatcher:
                 output=e.message,
                 error_code=e.code,
                 decision_class=decision_class,
+                allowed_by=allowed_by,
             )
         except Exception as e:
             log.exception(
@@ -538,6 +545,7 @@ class ToolDispatcher:
                 status="error",
                 output=f"Tool '{name}' failed: {e}",
                 error_code="handler_error",
+                allowed_by=allowed_by,
             )
 
         # 3.2.1 Touch-tracking (TD-503).  The handler ran, so the call's
@@ -699,6 +707,7 @@ class ToolDispatcher:
             diff=diff_text,
             image_png=image_png,
             verification=verification.status if verification is not None else None,
+            allowed_by=allowed_by,
         )
 
     # ── Batch dispatch ────────────────────────────────────────────────

@@ -138,6 +138,7 @@ from .provider import (
 )
 from .router import TierName, TierRouter
 from .session import Session, SessionEventLog
+from .shell_read_only import probe_git
 from .tools import ToolDispatcher, ToolRegistry
 from .tools.boundary import PathGuard
 from .tools.dispatch import build_decision_request, canonicalize_path_fields
@@ -914,6 +915,7 @@ async def _dispatch_and_append_results(
                 truncated=r.truncated,
                 error_code=r.error_code,
                 diff=r.diff,
+                allowed_by=list(r.allowed_by),
                 seq=1,
             )
         )
@@ -1029,6 +1031,9 @@ def session_boundary(session: Session) -> Boundary:
         workspace_root=Path(session.workspace_path),
         writable_patterns=tuple(session.boundary_config.boundary.writable_paths),
         allowed_hosts=session.boundary_config.allowed_hosts,
+        shell_read_only=(
+            session.config.shell.read_only.entries() if session.config is not None else frozenset()
+        ),
     )
 
 
@@ -1210,6 +1215,8 @@ async def agent_loop(
     # completion on the worker tier's model, tracked as separate
     # classifier cost (it never touches the main turn accounting).
     if tool_dispatcher is not None:
+        # Git entries on the read-only shell list wait for this (TD-5103).
+        await probe_git()
         boundary = session_boundary(session)
         judgments_cfg = config.judgments
         if tool_dispatcher.classifier is None:

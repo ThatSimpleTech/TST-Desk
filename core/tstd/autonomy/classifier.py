@@ -28,6 +28,8 @@ the *obvious* cases — the ones that must never reach the model:
 - a built-in read (``fs_read`` / ``fs_list`` / ``fs_grep``) inside the
   workspace → A, with no worker call (TD-5141); a user policy rule
   (``ask`` / ``never``) still decides whether it runs
+- a shell command made only of the static read-only list → A (TD-5103);
+  every other shell command → B (TD-4805)
 - an MCP tool with no declared path or host metadata → B, never A
   (TD-4402; even if ``side_effect_class`` was reset to ``auto``)
 
@@ -51,6 +53,7 @@ from typing import Any
 
 from ..connectors.github_classify import GITHUB_READ_TOOLS
 from ..policy_shell import host_dialects
+from ..shell_read_only import match as read_only_match
 from .charter import CHARTER_RELATIVE_PARTS
 from .cmd_targets import cmd_write_targets
 
@@ -216,12 +219,16 @@ class Boundary:
             (the default) means no network calls are allowed.
         cap_exceeded: ``True`` when any declared cap (spend, wall-clock,
             iterations) is already over its limit.
+        shell_read_only: The read-only shell list entries in force
+            (TD-5103, ``shell.read_only`` in ``config.yaml``). Empty, the
+            default, means no shell command is Class A.
     """
 
     workspace_root: Path | None
     writable_patterns: tuple[str, ...] = ("**",)
     allowed_hosts: frozenset[str] = frozenset()
     cap_exceeded: bool = False
+    shell_read_only: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -283,6 +290,9 @@ class Rule:
     description: str
     decision_class: DecisionClass
     match: Callable[[DecisionRequest, Boundary], bool]
+    #: What let the call through, for the audit (TD-5103): the read-only
+    #: list entries a ``shell-read-only`` call used.
+    allowed_by: Callable[[DecisionRequest, Boundary], tuple[str, ...]] | None = None
 
 
 @dataclass(frozen=True)
@@ -297,11 +307,14 @@ class Classification:
             explainability — every classification can say *which rule*
             decided it and why.
         reason: A short human-readable explanation of the decision.
+        allowed_by: The read-only list entries that made a shell call
+            Class A (TD-5103); empty for every other call.
     """
 
     decision_class: DecisionClass | None = None
     rule: Rule | None = None
     reason: str = ""
+    allowed_by: tuple[str, ...] = ()
 
 
 # ── Path resolution helpers ────────────────────────────────────────────
@@ -619,15 +632,41 @@ def _rule_shell_exec_later_write(req: DecisionRequest, boundary: Boundary) -> bo
     return any(is_exec_later_write(boundary, t) for t in _shell_target_paths(req, boundary))
 
 
-def _rule_shell_floor(req: DecisionRequest, _boundary: Boundary) -> bool:
-    """Every shell command is at least Class B (TD-4805).
+def _read_only_entries(req: DecisionRequest, boundary: Boundary) -> tuple[str, ...]:
+    """The read-only list entries covering a builtin shell call (TD-5103).
 
-    The static table cannot see a shell command's targets, so no static
-    A is possible; the only path to A was the worker tier's reading of an
-    opaque string.  Auto-run for shell belongs to the user's saved
-    always-allow rules (TD-803), not to model judgment.
+    Only the shipped tool qualifies: an MCP or plugin tool named ``shell``
+    carries provenance and gets no grant.
     """
-    return req.tool_name == "shell"
+    command = req.arguments.get("command")
+    if req.tool_name != "shell" or req.provenance is not None or not isinstance(command, str):
+        return ()
+    return read_only_match(command, boundary.shell_read_only, boundary.workspace_root)
+
+
+def _rule_shell_floor(req: DecisionRequest, boundary: Boundary) -> bool:
+    """Every shell command is at least Class B (TD-4805), unless the
+    static read-only list covers it (TD-5103).
+
+    The static table cannot see a shell command's targets, so the only
+    path to A was the worker tier's reading of an opaque string.  Auto-run
+    for shell belongs to the user's saved always-allow rules (TD-803) and
+    to the fixed, parsed list in :mod:`tstd.shell_read_only`, never to
+    model judgment.
+    """
+    return req.tool_name == "shell" and not _read_only_entries(req, boundary)
+
+
+def _rule_shell_read_only(req: DecisionRequest, boundary: Boundary) -> bool:
+    """Every command of the line is on the read-only list (TD-5103).
+
+    Static, so no worker call: the list is code, parsed, and only
+    shrinks by config.  It sits after ``mcp-undeclared-fields`` like
+    every A grant, and ``shell-floor`` above stands aside only for it.
+    A user policy rule still decides first: policy falls back to the
+    class default only when no rule matches.
+    """
+    return bool(_read_only_entries(req, boundary))
 
 
 def _rule_mcp_undeclared_fields(req: DecisionRequest, _boundary: Boundary) -> bool:
@@ -864,6 +903,13 @@ RULE_TABLE: tuple[Rule, ...] = (
         match=_rule_builtin_read,
     ),
     Rule(
+        id="shell-read-only",
+        description="shell command on the static read-only list",
+        decision_class=DecisionClass.A,
+        match=_rule_shell_read_only,
+        allowed_by=_read_only_entries,
+    ),
+    Rule(
         id="desktop-capture",
         description="desktop capture cannot actuate",
         decision_class=DecisionClass.A,
@@ -944,9 +990,12 @@ class DecisionClassifier:
         """
         for rule in RULE_TABLE:
             if rule.match(request, self.boundary):
+                allowed = rule.allowed_by(request, self.boundary) if rule.allowed_by else ()
+                named = f" ({', '.join(allowed)})" if allowed else ""
                 return Classification(
                     decision_class=rule.decision_class,
                     rule=rule,
-                    reason=f"[{rule.id}] {rule.description}",
+                    reason=f"[{rule.id}] {rule.description}{named}",
+                    allowed_by=allowed,
                 )
         return Classification(decision_class=None, rule=None, reason="no rule fired")

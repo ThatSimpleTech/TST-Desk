@@ -1203,6 +1203,8 @@ export interface ToolResult extends DaemonEvent {
   truncated: boolean;
   error_code?: string | null;
   diff?: string | null;
+  /** Read-only shell list entries that let the call run without asking (TD-5103). */
+  allowed_by?: string[];
 }
 
 export interface ShellOutput extends DaemonEvent {

@@ -259,6 +259,32 @@ session:
   send_file_max_bytes: 536870912
   send_file_session_max_bytes: 4294967296
 
+# Shell commands that run without asking (TD-5103). Only these built-in
+# read-only entries can be listed: delete lines to shrink the list, or set
+# enabled: false to have every shell command ask. A command qualifies only
+# when every part of it is on the list, with no redirect, no write, exec
+# or symlink-following flag, and no path outside the workspace.
+shell:
+  read_only:
+    enabled: true
+    commands:
+      - ls
+      - pwd
+      - cat
+      - head
+      - tail
+      - wc
+      - file
+      - stat
+      - git status
+      - git log
+      - git diff
+      - git show
+      - git branch
+      - rg
+      - grep
+      - find
+
 # How stubbornly to retry a retryable provider failure (429, 5xx, transport).
 # The defaults spend 4 attempts in roughly 8 seconds — fine for a blip, and
 # too short for a gateway that answers "temporarily rate-limited upstream,

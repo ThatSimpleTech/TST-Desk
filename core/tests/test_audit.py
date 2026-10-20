@@ -32,7 +32,7 @@ def store(tmp_path: Path) -> Iterator[AuditStore]:
 
 
 def test_schema_has_the_audit_tables(store: AuditStore) -> None:
-    """The set grew by the judgments table (TD-708). The old name counted six."""
+    """The set grew by the judgments table (TD-708) and allowed_calls (TD-5103)."""
     rows = store._conn.execute(
         "SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
         " AND name != 'schema_migrations'"
@@ -46,6 +46,7 @@ def test_schema_has_the_audit_tables(store: AuditStore) -> None:
         "decisions",
         "model_calls",
         "judgments",
+        "allowed_calls",
     }
     assert views == {"costs"}
 

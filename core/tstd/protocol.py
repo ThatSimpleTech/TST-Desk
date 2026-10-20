@@ -1706,6 +1706,10 @@ class ToolResult(DaemonEvent):
     error_code: str | None = None
     # Unified diff of what a write changed (TD-604), for display.
     diff: str | None = None
+    # The read-only shell list entries that let the call run without
+    # asking (TD-5103). Empty when anything else decided: a policy rule,
+    # an approval, or another class default. The audit row keeps them.
+    allowed_by: list[str] = Field(default_factory=list)
 
 
 class ShellOutput(DaemonEvent):

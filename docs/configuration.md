@@ -68,6 +68,7 @@ no effect.
 | `embeddings` | mapping | see below | Local embeddings sidecar for memory ranking. Omitted in an older user copy is filled from the shipped file at load. Empty `base_url` disables the client. Empty `command` is attach-only — the host never spawns on `base_url` alone. |
 | `computer_use` | mapping | see below | Desktop computer-use sidecar. Omitted in an older user copy is filled from the shipped file at load. Empty `command` is mock-only — the daemon never spawns `mcp/tst-cu-mcp`. Empty `grounding.base_url` leaves click targeting on the intended (x, y). |
 | `session` | mapping | see below | On-disk session event-log window. Omitted in an older user copy is filled from the shipped file at load. Zero is invalid, not unbounded. |
+| `shell` | mapping | see below | The read-only shell list (TD-5103): commands that run without asking. Omitted in an older user copy means the whole built-in list, on. Config can shrink it or switch it off, never add to it. |
 | `remote` | mapping | see below | Opt-in Tailscale bind. Omitted in an older user copy is filled from the shipped file at load. Empty `bind` is loopback only. |
 | `notify` | mapping | see below | Outbound notification channels. Omitted in an older user copy is filled from the shipped file at load. Slack and ntfy are off until their `enabled` flag is true and a destination URL is stored in the OS keychain. |
 | `autonomy` | mapping | see below | Rootless container for autonomous runs (TD-4301) and interactive verify after writes (TD-4204). Interactive sessions ignore `runtime` and `image`. Omitted in an older user copy is filled from the shipped file at load. A missing or rootful runtime refuses start with install copy. |
@@ -490,6 +491,112 @@ drop a different prefix than `from_seq`. Zero is a load error, not
 | `log_max_events` | int ≥ 1 | `10000` | Maximum events kept in `events.jsonl`. Oldest drop first. Attach from a rotated seq gets `log_trimmed` and replays from the earliest kept seq. |
 | `send_file_max_bytes` | int 1..2147483648 | `536870912` | Largest file `send_file` copies into the chat (512 MiB). Bigger is refused with `file_too_large`; nothing is copied. |
 | `send_file_session_max_bytes` | int ≥ 1 | `4294967296` | Total of sent files one session may hold (4 GiB). Past it, `session_quota`. |
+
+### `shell`
+
+The shell commands that run without asking (TD-5103). Every other shell call
+asks, as in §4.1. The list is fixed in the daemon: `shell.read_only` can drop
+entries or switch the whole list off, and naming anything that is not built in
+is a load error, so this file can never widen what auto-runs. Changes apply to
+sessions opened after the daemon reads the file; restart the daemon after
+editing it.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `read_only` | mapping | see below | The list. |
+
+#### `shell.read_only`
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `enabled` | bool | `true` | The one key that turns the list off: `false` and every shell command asks again. |
+| `commands` | list of entries | all 16 | Which built-in entries are in force: `ls`, `pwd`, `cat`, `head`, `tail`, `wc`, `file`, `stat`, `git status`, `git log`, `git diff`, `git show`, `git branch`, `rg`, `grep`, `find`. Delete one to have it ask. Any other value refuses the load. |
+
+<!-- verify: model -->
+```yaml
+presets:
+  local:
+    brain: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    worker: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    validator: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+active_preset: local
+shell:
+  read_only:
+    enabled: true
+    commands: [ls, cat, head, git status, git diff, rg]
+```
+
+<!-- verify: model-invalid -->
+```yaml
+presets:
+  local:
+    brain: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    worker: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    validator: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+active_preset: local
+shell:
+  read_only:
+    commands: [ls, npm test]
+```
+
+**What qualifies.** A command runs without asking only when every command in
+the line is one of the entries above, joined by `;`, newlines, `|`, `||` or
+`&&`, and all of these hold:
+
+- Words are plain (letters, digits and `_ - . / : = , + @ %`; `~` and `^`
+  inside a word, as in `HEAD~1`) or quoted, with no `$`, backtick or `\` inside
+  double quotes. A redirect (`>`, `2>/dev/null`, `<`), `$VAR`, `$(…)`, a
+  backtick, an unquoted glob (`*`, `?`, `[`), braces, a leading `~`, a
+  comment, `&`, parentheses or a wrapper such as `timeout`, `env` or
+  `FOO=1` asks. Quote a glob you mean for the program itself:
+  `find . -name '*.py'`.
+- No option that writes, runs another program, reads a list of file names,
+  or follows symlinks during a walk: `find -exec`, `-execdir`, `-ok`,
+  `-okdir`, `-delete`, `-fprint`, `-fprint0`, `-fprintf`, `-fls`, `-L`,
+  `-follow`, `-files0-from`; `rg --pre`, `--pre-glob`, `-z`, `-L`,
+  `--hostname-bin`; `grep -R` (and BSD grep's `-S`, `-O`); `ls -L`; `wc --files0-from`;
+  `file -C`, `-f`, `-z`; `git --output`, `--ext-diff`, `--show-signature`.
+  A long option abbreviated to a prefix of one of these (`--deref`) asks too.
+- `git` takes no option before the subcommand except `--no-pager`, `-P` and
+  `--no-optional-locks`, so `git -c …`, `git -C …` and `--git-dir` ask.
+  `git branch` only lists: any other option, or a branch name without
+  `--list`, `-a`, `-r`, `--contains`, `--merged` or `--points-at`, asks
+  (`git branch -v name` would create `name`).
+- Every operand, and every value attached to an option (`--file=x`, the `x`
+  of `-fx`), resolves inside the workspace after symlinks are followed. So
+  `cat /etc/hosts`, `ls ..` and a symlink that leads out of the workspace
+  ask. A pattern that starts with `/` (`rg /api`) asks for the same reason.
+- The program is found on `PATH` outside the workspace, and `PATH` has no
+  empty or relative entry.
+- For a git entry: the workspace root holds its own `.git` (a workspace
+  inside a bigger repository would list files outside the wall), git is
+  2.40 or newer, `GIT_DIR` and `GIT_WORK_TREE` are unset, and neither
+  `GIT_CONFIG_GLOBAL` nor `GIT_CONFIG_SYSTEM` names a file inside the
+  workspace.
+- For `rg`: `RIPGREP_CONFIG_PATH` does not name a file inside the
+  workspace, since one line of it can add `--pre`.
+
+On Windows the list never matches, because commands run through `cmd /c`.
+
+**What a listed git command runs with.** git reads its own config and
+attributes, and both can name a command to run. A git command the list reads
+runs with `core.fsmonitor=false`, `core.hooksPath` pointed at nothing and
+`safe.bareRepository=explicit` (added through `GIT_CONFIG_COUNT`, after any
+you set), in-tree `.gitattributes` read from the empty tree
+(`GIT_ATTR_SOURCE`), `GIT_OPTIONAL_LOCKS=0` so `git status` does not
+rewrite the index, and `GIT_NO_LAZY_FETCH=1`. So an attribute in the tree
+cannot route a file through a filter or textconv driver your own config
+names, and a hook in the tree does not run. `.git/info/attributes` and your
+own attributes file still apply. This holds whoever approved the command,
+so `git diff` from the list shows raw bytes where a textconv driver would
+have converted them. In a SHA-256 repository the empty tree has another
+name and git refuses with `bad --attr-source`; take the git entries off
+the list there.
+
+A user policy rule (§4.4) still decides first: an `ask` or `never` rule that
+matches stops a listed command as before. The audit database records the
+entries that let each call run in `allowed_calls` (one row per call, keyed by
+its `tool_calls` row).
 
 ### `provider_retry`
 
@@ -1491,7 +1598,9 @@ not a sandbox.
 
 **Shell commands ask unless you skip them.** Every shell call is at least Class B: the
 static classifier cannot see inside a command string, so shell never auto-runs on the
-classifier's say-so (TD-4805). Settings → Policy **Dangerously skip permissions**
+classifier's say-so (TD-4805). The one exception is the fixed read-only list in
+§2 `shell` (TD-5103): `git status`, `cat a.txt | head` and the like are Class A from the
+rule table, never from a model's judgment. Settings → Policy **Dangerously skip permissions**
 promotes every ask to auto, including shell and Class C (TD-806) — that is skip
 everything; turning it on accepts that unparsed write forms and Class C steering
 redirects will run. "Always allow this in this workspace" still writes a rule for the
