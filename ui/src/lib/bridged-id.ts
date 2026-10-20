@@ -51,6 +51,7 @@ export const BRIDGED_VERBS: ReadonlySet<string> = new Set([
   "deny",
   "always_allow",
   "answer_question", // TD-5121: the person's answer to an ask_user question
+  "review_plan", // TD-5123: approve, edit or reject the agent's plan
   "run_verify",
   "deny_verify",
   "new_session",

@@ -29,6 +29,7 @@ from ..cu_verify import ActuationVerifier, StateProbe, Verification
 from ..desktop.protocol import DesktopError
 from ..logging import get_logger
 from ..memory_commit import MemoryCommitter
+from ..plan_mode import PLAN_MODE_REFUSED, planning_refusal
 from ..policy import (
     ApprovalOutcome,
     PolicyConfig,
@@ -152,6 +153,7 @@ def build_decision_request(tool: Tool, arguments: dict[str, Any]) -> DecisionReq
         side_effect_class=tool.side_effect_class,
         provenance=tool.provenance,
         has_path_host_metadata=bool(tool.path_fields or tool.host_fields or tool.host_resolver),
+        read_only=tool.read_only,
     )
 
 
@@ -323,6 +325,10 @@ class ToolDispatcher:
             )
         self._handlers[name] = handler
 
+    def has_handler(self, name: str) -> bool:
+        """Whether a call to *name* would reach a handler."""
+        return name in self._handlers
+
     # ── Single dispatch ───────────────────────────────────────────────
 
     async def dispatch(
@@ -390,6 +396,23 @@ class ToolDispatcher:
         request = build_decision_request(tool, arguments)
         classification = await self.classifier.classify(request)
         decision_class = classification.decision_class
+
+        # 3.15 Plan mode (TD-5123): a call that could change something is
+        # refused here, before the policy gate, so no rule, approval or
+        # skip-all runs it, and the model is told it is planning.
+        if classification.refused:
+            log.info(
+                "plan mode refusal",
+                extra={"extra_fields": {"tool_call_id": tool_call_id, "tool": name}},
+            )
+            return ToolResult(
+                tool_call_id=tool_call_id,
+                name=name,
+                status="error",
+                output=planning_refusal(request),
+                error_code=PLAN_MODE_REFUSED,
+                decision_class=decision_class,
+            )
 
         # 3.2 Path boundary enforcement (TD-602, security-critical).
         # Path-bearing tools are refused before the handler runs: no

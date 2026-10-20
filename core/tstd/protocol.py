@@ -400,6 +400,29 @@ class AnswerQuestion(ClientMessage):
     declined: bool = False
 
 
+#: Longest plan ``exit_plan_mode`` may put up for review, and the longest
+#: edit of it (TD-5123). A pinned plan rides in every compaction summary,
+#: so it stays well inside a 32k window.
+PLAN_MAX_CHARS = 12_000
+
+
+class ReviewPlan(ClientMessage):
+    """Approve, edit or reject the plan an ``exit_plan_mode`` call parked (TD-5123).
+
+    ``approve`` ends plan mode and pins the plan; with ``plan`` set, the
+    person's edited text replaces the model's (that is how a plan is
+    edited). ``reject`` keeps plan mode on and hands ``feedback`` to the
+    model. With no review waiting the reply is ``no_pending_plan``.
+    """
+
+    type: Literal["review_plan"] = "review_plan"
+    session_id: str
+    tool_call_id: str
+    decision: Literal["approve", "reject"]
+    plan: str | None = Field(default=None, max_length=PLAN_MAX_CHARS)
+    feedback: str = Field(default="", max_length=4000)
+
+
 class ListPolicyRules(ClientMessage):
     """List the workspace's saved policy rules (TD-803 settings)."""
 
@@ -994,6 +1017,24 @@ class RenameSession(ClientMessage):
     type: Literal["rename_session"] = "rename_session"
     session_id: str
     title: str
+
+
+class CloseWorktree(ClientMessage):
+    """Close a session's git worktree (TD-5126).
+
+    ``action`` is what happens to a worktree with changes: ``keep`` leaves
+    its folder and branch on disk, ``merge`` commits its changes on the
+    branch and merges the branch into the main checkout, ``remove``
+    deletes both. An unchanged worktree is removed whatever ``action``
+    says, and with no ``action`` a changed one is refused with
+    ``worktree_has_changes`` so the window can ask. Either way the session
+    then works in the main checkout. Refused mid-turn. Answered with
+    ``session_list``.
+    """
+
+    type: Literal["close_worktree"] = "close_worktree"
+    session_id: str
+    action: Literal["keep", "merge", "remove"] | None = None
 
 
 class GetSetupState(ClientMessage):
@@ -2114,6 +2155,54 @@ class QuestionAnswered(DaemonEvent):
     answers: list[QuestionAnswer] = Field(default_factory=list, max_length=4)
 
 
+class PlanReview(DaemonEvent):
+    """An ``exit_plan_mode`` call parked its turn on a plan (TD-5123).
+
+    The turn waits like an approval (the session is ``awaiting_approval``)
+    until ``review_plan`` approves or rejects it, Stop, cancel, or the
+    approval timeout. The window and the phone show the plan with
+    Approve, Edit and Reject; the call's ``tool_result`` clears the card.
+    """
+
+    type: Literal["plan_review"] = "plan_review"
+    session_id: str
+    tool_call_id: str
+    plan: str = Field(min_length=1, max_length=PLAN_MAX_CHARS)
+
+
+PlanOutcomeKind = Literal["approved", "rejected", "stopped", "timed_out", "cancelled"]
+
+
+class PlanReviewed(DaemonEvent):
+    """How a parked plan review ended (TD-5123).
+
+    Logged before the call's ``tool_result``. ``plan`` is the plan as
+    approved (the person's edit when ``edited``), empty otherwise;
+    ``feedback`` is what the person said with their decision.
+    """
+
+    type: Literal["plan_reviewed"] = "plan_reviewed"
+    session_id: str
+    tool_call_id: str
+    outcome: PlanOutcomeKind
+    plan: str = Field(default="", max_length=PLAN_MAX_CHARS)
+    edited: bool = False
+    feedback: str = Field(default="", max_length=4000)
+
+
+class PlanPinned(DaemonEvent):
+    """The plan the person approved, pinned to the session (TD-5123).
+
+    The newest one is the pinned plan. The Plan pane shows it, and every
+    compaction carries it into its summary. Logged again when the log
+    window rotates the last one out, and on attach if it is missing.
+    """
+
+    type: Literal["plan_pinned"] = "plan_pinned"
+    session_id: str
+    plan: str = Field(min_length=1, max_length=PLAN_MAX_CHARS)
+
+
 class DecisionLogged(DaemonEvent):
     """A decision appended to the autonomy ledger."""
 
@@ -2368,6 +2457,74 @@ class TaskList(DaemonEvent):
     type: Literal["task_list"] = "task_list"
     session_id: str
     items: list[TaskListItem] = Field(default_factory=list, max_length=30)
+
+
+class WorktreeState(DaemonEvent):
+    """A session's worktree changed (TD-5126): made, set up, or closed.
+
+    ``worktree`` is the state now; None means the session works in the
+    folder it was opened on. ``note`` says what happened in a sentence:
+    the setup's result, a merge, or why no worktree could be made.
+    """
+
+    type: Literal["worktree_state"] = "worktree_state"
+    session_id: str
+    worktree: SessionWorktreeInfo | None = None
+    note: str = ""
+
+
+StopCheckOutcome = Literal["passed", "retry", "failed", "unchecked"]
+
+
+class StopCheckItem(BaseModel):
+    """One item of a done-check, after it ran (TD-5124)."""
+
+    # The check as configured (``$ ...`` or a statement), or the goal.
+    item: str = Field(min_length=1, max_length=4000)
+    source: Literal["workspace", "goal"]
+    via: Literal["shell", "worker"]
+    passed: bool
+    # False when the check could not be judged: the person declined the
+    # command, a policy refused it, or the worker gave no verdict.
+    decided: bool = True
+    # The shell output's start, or the worker's reply; capped.
+    detail: str = Field(default="", max_length=2000)
+
+
+class StopCheck(DaemonEvent):
+    """The done-check ran because the model ended an interactive turn (TD-5124).
+
+    ``outcome``: ``passed`` (the turn ends), ``retry`` (the failure went
+    back to the model as a user message and the turn goes on),
+    ``failed`` (still failing after ``max_retries`` tries, so the turn
+    ends with ``turn_complete.error_code`` ``stop_check_failed``) or
+    ``unchecked`` (no item failed but one could not be judged, so the
+    turn ends and nothing went back; a failed item outranks it).
+    ``attempt`` counts the checks run this turn,
+    from 1. The window shows it on the assistant's reply.
+    """
+
+    type: Literal["stop_check"] = "stop_check"
+    session_id: str
+    outcome: StopCheckOutcome
+    attempt: int = Field(ge=1)
+    max_retries: int = Field(ge=0)
+    items: list[StopCheckItem] = Field(default_factory=list)
+
+
+class SessionGoal(DaemonEvent):
+    """The session's goal after ``/goal`` changed it, or a done-check met it (TD-5124).
+
+    ``goal`` is ``None`` once cleared. ``change`` says why: ``set`` by
+    ``/goal <statement>``, ``cleared`` by ``/goal clear``, ``met`` when a
+    done-check passed with the goal in it. The newest one is the goal; a
+    restart restores it from the log.
+    """
+
+    type: Literal["session_goal"] = "session_goal"
+    session_id: str
+    goal: str | None = Field(default=None, max_length=4000)
+    change: Literal["set", "cleared", "met"]
 
 
 class SteeringReloaded(DaemonEvent):
@@ -2727,6 +2884,25 @@ class InstructionStack(DaemonEvent):
     skills: list[SkillStackEntry] = Field(default_factory=list)
 
 
+WorktreeSetup = Literal["none", "running", "ok", "failed", "skipped"]
+
+
+class SessionWorktreeInfo(BaseModel):
+    """The git worktree a session works in (TD-5126).
+
+    ``main_dirty`` counts the main checkout's uncommitted paths when the
+    worktree was made: the worktree does not have them. ``setup`` is the
+    state of the workspace's ``worktree.setup`` command; ``setup_note``
+    carries its output's tail or why it was skipped.
+    """
+
+    branch: str
+    path: str
+    main_dirty: int = Field(default=0, ge=0)
+    setup: WorktreeSetup = "none"
+    setup_note: str = ""
+
+
 class SessionSummary(BaseModel):
     """One entry in a ``session_list`` response."""
 
@@ -2770,6 +2946,9 @@ class SessionSummary(BaseModel):
     # (TD-1714). Additive with a default — a client that ignores it
     # still reads the list it always did.
     busy: bool = False
+    # The git worktree this session works in (TD-5126); ``workspace_path``
+    # stays the folder it was opened on. Additive: None in that folder.
+    worktree: SessionWorktreeInfo | None = None
 
 
 class SessionList(DaemonEvent):
@@ -3848,6 +4027,7 @@ ClientMessageT = Annotated[
     | Deny
     | AlwaysAllow
     | AnswerQuestion
+    | ReviewPlan
     | ListPolicyRules
     | RevokePolicyRule
     | ForkFrom
@@ -3901,6 +4081,7 @@ ClientMessageT = Annotated[
     | DeleteSession
     | MoveSession
     | RenameSession
+    | CloseWorktree
     | GetSetupState
     | SetApiKey
     | ValidateApiKey
@@ -3982,6 +4163,9 @@ DaemonEventT = Annotated[
     | ApprovalRequest
     | QuestionRequest
     | QuestionAnswered
+    | PlanReview
+    | PlanReviewed
+    | PlanPinned
     | DecisionLogged
     | CheckpointNotice
     | VerifyStarted
@@ -3993,6 +4177,9 @@ DaemonEventT = Annotated[
     | ContextCompacted
     | ContextUsage
     | TaskList
+    | WorktreeState
+    | StopCheck
+    | SessionGoal
     | SteeringReloaded
     | RuleActivated
     | TierSwitched
@@ -4067,6 +4254,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "deny",
         "always_allow",
         "answer_question",
+        "review_plan",
         "list_policy_rules",
         "revoke_policy_rule",
         "fork_from",
@@ -4120,6 +4308,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "delete_session",
         "move_session",
         "rename_session",
+        "close_worktree",
         "get_setup_state",
         "set_api_key",
         "validate_api_key",
@@ -4201,6 +4390,9 @@ _KNOWN_EVENT_TYPES = frozenset(
         "approval_request",
         "question_request",
         "question_answered",
+        "plan_review",
+        "plan_reviewed",
+        "plan_pinned",
         "decision_logged",
         "checkpoint_notice",
         "verify_started",
@@ -4212,6 +4404,9 @@ _KNOWN_EVENT_TYPES = frozenset(
         "context_compacted",
         "context_usage",
         "task_list",
+        "worktree_state",
+        "stop_check",
+        "session_goal",
         "steering_reloaded",
         "rule_activated",
         "tier_switched",

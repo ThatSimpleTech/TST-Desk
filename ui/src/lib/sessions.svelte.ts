@@ -46,7 +46,7 @@ import { showCancel } from "./chat-store";
 import { isBridged, machineOf } from "./bridged-id";
 import { sessionMachineUp } from "./machines.svelte.js";
 import { failsPendingNew, pendingNewAnchor, setPendingNew } from "./pending-new-session";
-import type { DaemonEventUnion, SessionSummary } from "./protocol";
+import type { DaemonEventUnion, SessionSummary, SessionWorktreeInfo } from "./protocol";
 
 export {
 	ACTIVITY_LABELS,
@@ -57,6 +57,14 @@ export {
 	rowTitleFull,
 } from "./rail-activity";
 export type { BoundTurn, RowActivity } from "./rail-activity";
+
+/** Refusals of `close_worktree` the row shows in place (TD-5126). */
+const WORKTREE_REFUSALS: ReadonlySet<string> = new Set([
+	"worktree_failed",
+	"worktree_busy",
+	"no_worktree",
+	"worktree_session",
+]);
 
 /** localStorage key for the rail's collapsed flag. */
 export const COLLAPSED_STORAGE_KEY = "tstdesk.sessionRailCollapsed";
@@ -83,6 +91,9 @@ export interface SessionRow {
 	/** The paired computer this row lives on (`mch_…`), or null for this
 	 *  computer's own (TD-5015). Gates still read `machineOf(sessionId)`. */
 	machine: string | null;
+	/** The git worktree this session works in (TD-5126), null in its folder.
+	 *  Daemon truth from session_list. */
+	worktree: SessionWorktreeInfo | null;
 }
 
 export const sessions = $state({
@@ -106,6 +117,11 @@ export const sessions = $state({
 	/** The daemon's refusal copy for the last lifecycle action, or null.
 	 *  Rendered in the rail so the answer lands where the click did. */
 	refusal: null as string | null,
+	/** Row whose Close worktree step is open (TD-5126). */
+	closeWorktreeFor: null as string | null,
+	/** The daemon's "this worktree has changes" copy: the step then offers
+	 *  keep, merge back and remove. Null while it is still checking. */
+	worktreeAsk: null as string | null,
 });
 
 // Coalesce refresh storms: a turn's state transitions each touch updated_at,
@@ -172,6 +188,7 @@ function reduce(event: DaemonEventUnion): void {
 				preset: s.preset ?? "",
 				busy: s.busy === true,
 				machine: s.machine ?? machineOf(s.session_id),
+				worktree: s.worktree ?? null,
 			}))
 			.sort((a, b) => {
 				if (a.starred !== b.starred) return a.starred ? -1 : 1;
@@ -193,10 +210,36 @@ function reduce(event: DaemonEventUnion): void {
 		sessions.menuFor = keep(sessions.menuFor);
 		sessions.confirmDeleteFor = keep(sessions.confirmDeleteFor);
 		sessions.moveFor = keep(sessions.moveFor);
+		// A closed worktree leaves its row without one: the step is done.
+		const closing = sessions.rows.find((r) => r.sessionId === sessions.closeWorktreeFor);
+		if (closing === undefined || closing.worktree === null) {
+			sessions.closeWorktreeFor = null;
+			sessions.worktreeAsk = null;
+		}
 		// The refusal is shown inside one of those; with none left it is stale.
-		if (sessions.menuFor === null && sessions.confirmDeleteFor === null && sessions.moveFor === null) {
+		if (
+			sessions.menuFor === null &&
+			sessions.confirmDeleteFor === null &&
+			sessions.moveFor === null &&
+			sessions.closeWorktreeFor === null
+		) {
 			sessions.refusal = null;
 		}
+		return;
+	}
+	// TD-5126: a worktree changed (made, set up, closed). The list carries it.
+	if (event.type === "worktree_state") {
+		requestRefreshIfIdle();
+		return;
+	}
+	if (event.type === "error" && event.code === "worktree_has_changes") {
+		sessions.closeWorktreeFor = event.session_id ?? sessions.closeWorktreeFor;
+		sessions.worktreeAsk = event.message;
+		sessions.refusal = null;
+		return;
+	}
+	if (event.type === "error" && WORKTREE_REFUSALS.has(event.code)) {
+		sessions.refusal = event.message;
 		return;
 	}
 	// A refused lifecycle action (TD-1715): the daemon owns "is a turn in
@@ -318,7 +361,8 @@ function applyTurnEvidence(event: DaemonEventUnion): boolean {
 		event.type === "model_fallback" ||
 		event.type === "tool_call" ||
 		event.type === "approval_request" ||
-		event.type === "question_request"
+		event.type === "question_request" ||
+		event.type === "plan_review"
 	) {
 		setRowBusy(event.session_id, true);
 		return true;
@@ -397,6 +441,8 @@ export function setPickForNewSession(
  *  with the actions themselves because the reducer above closes menus on
  *  every refreshed list, and a store must not import from its own consumer. */
 export function closeRowMenus(): void {
+	sessions.closeWorktreeFor = null;
+	sessions.worktreeAsk = null;
 	sessions.menuFor = null;
 	sessions.confirmDeleteFor = null;
 	sessions.moveFor = null;

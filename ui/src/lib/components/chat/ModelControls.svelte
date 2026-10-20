@@ -1,5 +1,6 @@
 <script lang="ts">
-	// Model controls for the composer: Plan, a tier dropdown, the session
+	// Model controls for the composer: Plan (read-only plan mode, TD-5123;
+	// `/plan` and the phone use the same chip), a tier dropdown, the session
 	// preset, and (on the grok engine) the mode chips. The dropdown names
 	// each role with the model that role is actually running: brain (kimi).
 	import { tierMenuLabel } from "../../composer-layout";
@@ -52,8 +53,8 @@
 				type="button"
 				aria-pressed={session.planMode}
 				title={session.planMode
-					? "Plan mode on — every turn uses brain. Click to clear."
-					: "Plan mode — lock every turn to brain"}
+					? "Plan mode on: read-only, every turn uses brain. The agent ends it with a plan for you to approve. Click to clear."
+					: "Plan mode: the agent researches read-only on brain, then puts up a plan for you to approve"}
 				onclick={() => setPlan(!session.planMode)}
 			>
 				Plan

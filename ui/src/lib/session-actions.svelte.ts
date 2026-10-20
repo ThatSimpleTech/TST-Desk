@@ -153,3 +153,30 @@ export function openSessionInNewWindow(sessionId: string): void {
 	closeRowMenus();
 	void openSessionWindow(sessionId);
 }
+
+/** Close a row's worktree (TD-5126). Asks first: an unchanged worktree is
+ *  simply removed, and one with changes comes back as `worktree_has_changes`,
+ *  which opens the keep / merge back / remove choice on the row. */
+export function requestCloseWorktree(sessionId: string): boolean {
+	closeRowMenus();
+	// A merge writes the main checkout of the computer the session is on.
+	if (isBridged(sessionId)) return false;
+	const sent = sendToDaemon({ type: "close_worktree", session_id: sessionId });
+	if (sent) sessions.closeWorktreeFor = sessionId;
+	return sent;
+}
+
+/** The user's choice for a worktree with changes. */
+export function closeWorktree(action: "keep" | "merge" | "remove"): boolean {
+	const sessionId = sessions.closeWorktreeFor;
+	if (sessionId === null) return false;
+	sessions.refusal = null;
+	return sendToDaemon({ type: "close_worktree", session_id: sessionId, action });
+}
+
+/** "Start in the main checkout instead" on a fresh chat's start screen. The
+ *  worktree is new and the chat has no turn yet, so it is removed outright. */
+export function startInMainCheckout(sessionId: string): boolean {
+	if (isBridged(sessionId)) return false;
+	return sendToDaemon({ type: "close_worktree", session_id: sessionId, action: "remove" });
+}

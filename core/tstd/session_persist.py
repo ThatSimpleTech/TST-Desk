@@ -30,6 +30,9 @@ _EVENTS = "events.jsonl"
 _CONVERSATION = "conversation.json"
 # Messages the daemon accepted that no turn has started yet (TD-5155).
 _QUEUED = "queued.json"
+# MCP tools ``tool_search`` loaded (TD-5127). The conversation alone loses
+# them: compaction folds the calls that used them into a summary.
+_MCP_TOOLS = "mcp_tools.json"
 
 
 def _write_all(fd: int, text: str) -> None:
@@ -83,13 +86,16 @@ def chat_message_to_dict(message: ChatMessage) -> dict[str, Any]:
 
     Plus ``steer`` on a user message that joined a running turn (TD-5112),
     which the wire never carries, so a restored conversation still knows
-    where its turns start.
+    where its turns start, and ``check`` on a done-check's feedback
+    (TD-5124), so it still knows which user messages the window numbers.
     """
     from .provider import ChatCompletionRequest
 
     row = ChatCompletionRequest._message_to_dict(message)
     if message.steer:
         row["steer"] = True
+    if message.check:
+        row["check"] = True
     return row
 
 
@@ -162,6 +168,9 @@ def chat_message_from_dict(data: dict[str, Any]) -> ChatMessage:
     steer = data.get("steer", False)
     if not isinstance(steer, bool):
         raise ValueError("steer must be a boolean")
+    check = data.get("check", False)
+    if not isinstance(check, bool):
+        raise ValueError("check must be a boolean")
     return ChatMessage(
         role=role,
         content=content,
@@ -169,6 +178,7 @@ def chat_message_from_dict(data: dict[str, Any]) -> ChatMessage:
         tool_call_id=tool_call_id,
         reasoning_details=reasoning_details,
         steer=steer,
+        check=check,
     )
 
 
@@ -282,6 +292,37 @@ class SessionPersist:
             )
             return []
         return [row for row in raw if isinstance(row, dict)]
+
+    def save_loaded_tools(self, session_id: str, names: list[str]) -> None:
+        """Replace the loaded-MCP-tool list; an empty list removes it (TD-5127)."""
+        path = self.dir_for(session_id)
+        path.mkdir(parents=True, exist_ok=True)
+        with self._write_lock:
+            if names:
+                _replace_with(path / _MCP_TOOLS, json.dumps(names))
+                return
+            (path / _MCP_TOOLS).unlink(missing_ok=True)
+
+    def load_loaded_tools(self, session_id: str) -> list[str]:
+        """The loaded MCP tool names on disk, or [] (TD-5127).
+
+        An unreadable file is logged and read as none: the model can
+        search for the tools again.
+        """
+        path = self.dir_for(session_id) / _MCP_TOOLS
+        if not path.is_file():
+            return []
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            log.warning(
+                "loaded mcp tools unreadable",
+                extra={"extra_fields": {"session_id": session_id, "error": str(e)}},
+            )
+            return []
+        if not isinstance(raw, list):
+            return []
+        return [name for name in raw if isinstance(name, str)]
 
     def load(self, session_id: str) -> LoadedSession | None:
         """Read what is on disk. ``None`` if this session has no directory.

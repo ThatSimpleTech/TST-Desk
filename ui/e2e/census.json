@@ -34,6 +34,9 @@
 		"Copy report",
 		"Re-run"
 	],
+	"done-check": [
+		"Done-check could not run"
+	],
 	"held": [
 		"Remove held message",
 		"Send held message"
@@ -64,6 +67,19 @@
 		"Stop computer use Halt all desktop actuation immediately. Capture still works.",
 		"Toggle Design mode Point at the Screen frame instead of describing it (⌘⇧D)",
 		"Toggle theme Switch between light and dark"
+	],
+	"plan-review": [
+		"Approve plan",
+		"Edit plan",
+		"Note for the agent",
+		"Reject plan"
+	],
+	"plan-review:editing": [
+		"Approve edited plan",
+		"Edit the plan",
+		"Note for the agent",
+		"Reject plan",
+		"Show plan"
 	],
 	"restore": [
 		"Close"

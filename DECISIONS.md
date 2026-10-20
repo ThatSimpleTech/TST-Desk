@@ -16624,6 +16624,473 @@ it is re-injected were left open. Adam approved the story as written
   keep their fixed tool lists without `task_list`; the plan is the
   parent's. The Grok engine keeps its own plan.
 
+## 2026-10-20 — TD-5124: a done-check on interactive turns, from the workspace or `/goal` (Class B)
+
+**Context.** The definition-of-done poll (TD-4103) ran only in unattended
+runs with a signed charter, so an interactive turn could stop early, or
+claim it was done, unchecked. Local models do both. The story asks for a
+workspace `stop_check` (a `$` command or a worker-judged statement, reusing
+`autonomy/dod.py`), a failure sent back as a user message up to N times,
+then the turn ending with the failure shown, and `/goal <statement>`
+checked the same way, all without a charter. The shape of the setting, of
+the feedback and of `/goal`, and what the window shows were left open.
+Adam approved the story as written (gap audit decisions, 2026-10-14); the
+open Class C questions below took the most conservative answer that still
+meets it.
+
+**Decision.**
+
+- **Its own section of `.tst/config.yaml`.** `stop_check: {checks,
+  max_retries, timeout_secs}` on the workspace config model, so it loads,
+  reloads on resume and move, and falls back to the defaults exactly like
+  `caps` and `memory`. `checks` takes the charter's DoD shape (one string is
+  one check, up to 10 of 4000 characters); `max_retries` defaults to 3, at
+  most 20, and `0` checks without ever sending the model back;
+  `timeout_secs` (default 300, at most 3600) is passed to the shell tool,
+  whose own 30 s is too short for a test suite. Unknown keys are refused.
+- **A repo's `stop_check` waits for trust (TD-5113).** Class C answered
+  conservatively: a check runs on its own at every turn end, a command
+  through the shell tool or a statement that reaches the model as a user
+  message, which is what a hook does, and decision 3 lets hooks come from a
+  workspace only once it is trusted. So any `stop_check.checks` entry counts
+  as loosening and the trust card lists it. `/goal` is the user's own and
+  needs no trust.
+- **The DoD code, shared.** `poll_definition_of_done`, the GREEN/RED
+  prompt (`dod_worker_prompt`), `parse_dod_verdict`, `shell_exit_zero` and
+  the gate-only dispatch (`dispatch_check_command`: no Class C stop, no
+  ledger entry) are now used by both. Runners may answer `None` for an item
+  they could not judge; `DodItemResult.decided` says so. The unattended
+  runners never do, so a charter's poll still fails toward red. The worker's
+  objective is the user message that started the turn.
+- **A `$` check goes through the normal gate.** Class C answered
+  conservatively: no auto-approval. The classifier, the policy rules and an
+  approval card decide, as for any shell call. Each run logs a `tool_call`
+  and `tool_result` under a `check-` id, so the chat shows the command and
+  its output, the approval card clears, and the audit has it.
+- **What ends a turn.** All green: it ends. Red: the failure goes back and
+  the turn continues, until `max_retries` failures have gone back; the
+  next failure ends the turn with `turn_complete` `failed` and
+  `error_code: stop_check_failed`, so `tst run` exits non-zero and a
+  scheduled run records a failure (not transient, so no retry). An item
+  that could not be judged (declined, refused by policy or the allowlist,
+  could not start, no verdict) ends the turn as `unchecked` and sends
+  nothing back when no other item is red: Class C answered conservatively,
+  since the model could not fix it and a retry would only spend tokens.
+  When one item is red and another could not be judged, the red one
+  decides (review of PR #45): it goes back, or fails the turn after
+  `max_retries`, and the feedback names only red items. Otherwise a `$`
+  check that really failed would be dropped whenever a worker statement
+  beside it got no verdict, which the 8-token verdict cap makes common.
+  Stop during a check seals the turn as Stop always does.
+- **The feedback is a user message the window does not number.** It is
+  `ChatMessage(role="user", steer=True, check=True)`: `steer` because it
+  joins the running turn (compaction never cuts at it, in-turn elision
+  reaches past it), and `check` because no `user_turn` showed it, so
+  `window_user_turns` and a summary's turn count skip it and Edit and
+  branch arrows still pick the right turn. `check` is saved with the
+  conversation. A summary labels it "Done-check:". The text names each
+  failing item; a command's output keeps its start and its end, up to
+  2000 characters, since a test run reports at the bottom.
+- **A `stop_check` event, shown on the reply.** `stop_check` carries the
+  outcome (`passed`, `retry`, `failed`, `unchecked`), the attempt, the
+  limit and each item (`source`, `via`, `passed`, `decided`, a capped
+  `detail`). The window adds it to the assistant row as a fold beside the
+  tool folds; `failed` and `unchecked` open on their own. A new turn-failure
+  copy names `stop_check_failed`. `tst run` and `tst attach` print one
+  line on stderr. The feedback itself is never a chat bubble.
+- **`/goal` is the daemon's.** The loop reads it when the turn starts, so
+  it works the same from the window, the phone and `tst run --message`,
+  and never as a skill name. `/goal <statement>` sets the goal and the
+  statement becomes the turn's task (the model gets a short directive;
+  the transcript keeps what was typed). `/goal` alone and `/goal clear`
+  (`off`, `stop`, `none`, `cancel`, `reset`) are answered with no model
+  call: both the typed line and the answer go into the conversation, so
+  turn numbering holds. A goal is checked as a worker-judged statement
+  after the workspace checks, with the same `max_retries`; it clears when a
+  check passes with it and stays set when the turn gives up, so the next
+  message picks it up again. At most 4000 characters. The window palette
+  lists it as a built-in.
+- **The goal survives a restart.** A `session_goal` event (`set`,
+  `cleared`, `met`) records each change; revive takes the newest, and the
+  daemon logs it again when rotation drops it or an attach finds it
+  missing (the TD-5122 task-list pattern). A display-only strip above the
+  composer shows it.
+- **Where it runs.** Every native interactive turn the model ends, on the
+  normal path and when the progress guard's own check answers DONE (both
+  end the turn). Not in unattended runs (the charter's DoD still runs
+  there), delegate children, or Grok-engine sessions.
+- **Not while planning (merge with TD-5123).** TD-5123's read-only plan
+  mode landed on main while this story was open, and neither story says
+  whether a planning turn is checked. The conservative answer: no. A
+  planning turn only reads and ends in a plan the person reviews; a red
+  check would send the model back to fix what plan mode refuses, burning
+  `max_retries` into a `stop_check_failed` the person never asked for, and
+  a `$` check that plan mode refuses would only say "could not run". So
+  `TurnStopCheck.items()` is empty while `router.plan_mode` is on: no
+  `stop_check` event, nothing sent back, the goal stays set. A plan
+  approved mid-turn turns plan mode off, so that turn's end is checked.
+
+---
+
+## 2026-10-20 — TD-5123: read-only plan mode, ended by a plan the user reviews (Class B; revises TD-4603 and TD-5117)
+
+**Context.** TD-4603's plan mode only pinned routing to the brain; every
+tool still dispatched. The gap audit's TD-5123 asks for Claude Code's
+"analyze before you edit": refuse every mutating call while planning, end
+with a plan the user approves, rejects or edits, and toggle it from the
+composer, a slash command and the phone. Size 5, so the approach is
+recorded here instead of waiting for sign-off (Adam approved the gap-audit
+stories on 2026-10-14). The story and the 2026-10-14 decisions leave the
+mechanism, the MCP marking and the plan's lifetime open.
+
+**Decision.**
+
+1. **The classifier refuses; nothing downstream can run it.** A new first
+   rule, `plan-mode` (Class C, `refuses=True`), fires while the session's
+   router is in plan mode and the call is not plan-safe. Dispatch returns
+   that refusal (`error_code` `plan_mode`) straight after classifying,
+   before the path guard and the policy gate, so no `auto` rule, approval,
+   Skip all approvals or autonomy grant can run it. A plain Class C rule
+   would have asked, and skip-all promotes a C ask to auto. The tool result
+   tells the model it is planning, why this call was refused, and to call
+   `exit_plan_mode`. `Boundary.plan_mode` is a callable read per call (like
+   `read_guards`), so turning plan mode on or off mid-turn counts, and a
+   delegate child, which shares its parent's classifier, is judged by its
+   parent's plan mode.
+2. **Plan-safe is an allowlist.** `mutates` was not enough: the GitHub
+   write tools (`github_put_file`, `github_merge`, ...) declare none. A
+   builtin runs only if it is on `PLAN_READ_ONLY_BUILTINS` (fs reads, web
+   search and fetch, `load_skill`, `task_list`, `ask_user`, `consult`,
+   `send_file`, `exit_plan_mode`, the GitHub reads), is capture-only
+   computer use (`actuates` false), is `shell` made only of the TD-5103
+   read-only list (with the list off, every shell command is refused), or
+   is `delegate` without `kind: worker`. A test lists every builtin that
+   runs, so a new tool is refused until someone decides it reads.
+   `propose_steering_edit` is refused: a steering edit is a change, even
+   as a proposal the user's Accept writes.
+3. **MCP tools are read-only only by the user's config.** New key
+   `mcp.servers.<id>.read_only_tools`: the server's own tool names, matched
+   exactly. The loader sets `Tool.read_only`, which only the classifier's
+   `mcp:` branch reads; a plugin tool is never plan-safe whatever it
+   declares. MCP's `readOnlyHint` is not trusted (the spec calls
+   annotations untrusted hints, and TST Desk still speaks 2024-11-05,
+   which has none). Settings keeps the list when it rewrites a server. The
+   key adds nothing outside plan mode: a listed tool still asks.
+4. **`delegate kind: worker` is refused while planning (revises TD-5117
+   item 3).** TD-5117 kept the explicit worker running because the brain
+   could still write under TD-4603. Now nothing writes in plan mode, and a
+   worker child whose every write is refused only spends tokens; the
+   refusal names `kind research` instead. The child's own calls are still
+   refused by the shared classifier if one ever runs.
+5. **The model knows it is planning.** While plan mode is on, the turn's
+   message reaches the model with a fixed note after the person's words
+   (`plan_mode.PLAN_NOTE`); the window shows the message as typed. Tool
+   definitions never change with plan mode (`exit_plan_mode` is always
+   offered and refuses outside plan mode), so toggling keeps the
+   llama.cpp prefix cache.
+6. **`exit_plan_mode` parks like `ask_user` (TD-5121).** It is Class A by
+   its own rule (`exit-plan-mode`): the review is the one prompt. New
+   events `plan_review` (the plan), `plan_reviewed` (outcome `approved`,
+   `rejected`, `stopped`, `timed_out`, `cancelled`, with the approved plan,
+   `edited` and the person's `feedback`) and `plan_pinned`; new client
+   message `review_plan` (`decision` approve or reject, optional edited
+   `plan`, optional `feedback`). Editing is approving with your own text,
+   not a third verdict. The session waits in `awaiting_approval` ("waiting
+   for your plan review"); Stop, cancel and `approval_timeout_seconds` end
+   it, and skip-all never reviews a plan. Unattended runs, delegate
+   children and `--on-ask deny-and-continue` turns are refused
+   (`exit_plan_unattended`), and so is a plan the log's secret scrub would
+   change (`plan_secret_shaped`), as for TD-5121 and TD-5140. Plans and
+   edits are capped at 12,000 characters (`PLAN_MAX_CHARS`). `review_plan`
+   is a machine-peer and forwarded verb and an approval verb (never queued
+   while a lane connects): approving only turns plan mode off, which
+   `set_plan` already allows a peer.
+7. **Approving ends plan mode and pins the plan.** The daemon turns plan
+   mode off and logs `tier_state` (so every chip clears) and `plan_pinned`
+   before `plan_reviewed`, then the tool result hands the model the
+   approved text. The pinned plan lives on `Session.pinned_plan`, rides in
+   every compaction summary ahead of the task list (`carry_for`), shows in
+   the Plan pane above the task list, and comes back on revive from the
+   newest `plan_pinned`, which is logged again when the log window rotates
+   it out or an attach finds it missing (the TD-5122 pattern). A new
+   approval replaces it; there is no unpin control (not asked for).
+   Rejecting keeps plan mode on and returns the feedback.
+8. **Toggles.** The composer's Plan chip (TD-4603's), `/plan` (toggle),
+   `/plan on`, `/plan off` and `/plan <task>` (plan mode on, then the task)
+   handled in the window like `/compact`, and the phone, whose WebView
+   shows the same composer and card. A workspace command named `plan`
+   still wins the slash palette, as one named `compact` does. Grok
+   sessions keep their own modes and `/plan`.
+9. **`tst run`.** A `plan_review` exits `approval_needed` in every mode: a
+   plan is reviewed, and maybe edited, on the card. A `plan_mode` refusal
+   counts as a refusal (exit 3), so a script that hits a session left in
+   plan mode is told instead of exiting 0 having written nothing.
+10. **Plan mode outlives a restart (revises TD-4603's "in memory only").**
+    Once plan mode refuses writes it is a safety boundary, not a routing
+    lock: a restart that ended it would let a message held across a deploy
+    (TD-5155) run with writes on although the person never approved a plan
+    or turned planning off. The session row keeps `plan_mode`
+    (`sessions.json`, written whenever a `tier_state` changes it), and
+    revive sets it on the new router before the loop starts. A row written
+    before the field falls back to the newest `tier_state` in the log, so
+    the deploy that ships this keeps a session that was planning. The
+    pinned plan survives as before. A pinned tier (`set_tier`) is still in
+    memory only: it routes, it does not guard.
+
+**Class C answered conservatively:** the allowlist (rather than refusing
+only `mutates` tools), plugins never plan-safe, the server's
+`readOnlyHint` ignored, exact tool names (no globs) in
+`read_only_tools`, `propose_steering_edit` and `delegate kind: worker`
+refused, and plan mode kept across a restart (item 10; review of PR #47).
+
+**Alternatives rejected:** a plain Class C rule (skip-all would run it);
+narrowing the offered tool set in plan mode (breaks the prefix cache, and
+the model would not hear why); a plan document file in the workspace (a
+write in plan mode); TTY plan review in `tst run` (editing a plan wants
+the card); trusting MCP annotations.
+
+## 2026-10-20 — TD-5126: a git worktree per session, on by default (Class B)
+
+Approved as specified in the gap audit with Adam's decision 7 (on by default
+in git repos, with the story's safeguards). Size 5, so the approach is
+recorded here instead of waiting for sign-off.
+
+- **Where the session works, and what it belongs to.** `Session.workspace_path`
+  is the worktree's copy of the folder the user opened (the worktree's top
+  plus the folder's path inside the repository), so every root-bound piece
+  (tools, path guard, classifier wall, checkpointer, ledger, prompt
+  assembler, Grok's cwd) works there with no change. The folder itself stays
+  the session's identity: the store row's `workspace_path`, the
+  `session_list` row's `workspace_path` and `Session.project_path`. The rail
+  groups by it, `new_session` anchors on it (so a second chat gets a second
+  worktree, never the first one's), Schedule this chat names it, and the
+  known-workspaces list never fills with worktree folders. Rejected:
+  reporting the worktree as the row's workspace (every project view, New
+  chat and Move would have scattered across worktree folders).
+- **Branch and folder.** `tst/wt/<first 8 of the session id>` from the main
+  checkout's `HEAD`, in `worktree.folder` (Settings config; empty is
+  `worktrees/` in the data dir, outside every repository, so no repository
+  sees an untracked folder and no wall includes another session's tree).
+  `tst/wt/` does not collide with the checkpointer's `tst/session/` or the
+  autonomy `tst/auto/` refs.
+- **When there is no worktree.** A folder outside git, a bare repository or
+  one with no commit yet works in the folder, silently. So does a folder
+  `HEAD` does not have (new, untracked or ignored: `git cat-file -t
+  HEAD:<prefix>` is not `tree`), with a note, because the worktree's copy
+  of it would be empty and the session would work with none of its files;
+  a delegate child asking for a worktree there is refused. A git failure
+  (folder exists, git refuses) works in the folder; the `worktree_state`
+  note says why. Autonomy runs keep their own branch and are not changed.
+  `tst run` opens an ordinary session, so it gets one too, and says so on
+  stderr (below).
+- **The off switch.** Settings `worktree.enabled` for the computer and
+  `worktree.enabled: false` in the workspace's `.tst/config.yaml`. The
+  workspace key is read from the file as written even when the file is not
+  trusted: turning worktrees off loosens nothing (TD-5113).
+- **The setup command is a trusted-config setting.** `worktree.setup` runs a
+  shell command with no approval, so a repo-shipped one counts as loosened
+  and runs only from a trusted file, the same rule as hooks (decision 3).
+  It is not a tool call, so it does not meet the classifier (directive 6
+  covers tool calls); it runs with the shell tool's secret-stripped
+  environment, in the worktree, bounded by `worktree.setup_timeout_s`
+  (default 600 s), in the background so the window is not held. The
+  session's first turn waits for it (`Session.worktree_ready`, checked in
+  `wait_for_user_message`, so both loops honour it). Untrusted, it is
+  skipped and the start screen says so.
+- **What is copied in.** An untracked `.tst/config.yaml` (the wall and
+  policy must not quietly fall back to defaults in a worktree) with the
+  trust decision made on the same bytes (same hash, so the user already
+  decided on exactly these settings). `.tst/worktree-include` (gitignore
+  syntax, matched from the repository's top like `.git/info/exclude`)
+  copies a file only when git also ignores it, as Claude Code's
+  `.worktreeinclude` does; a symlink is copied as a link, never followed.
+- **An untracked config is the project's file; the copy follows it**
+  (`tstd/worktree_config.py`). Always allow, Revoke, a spend cap and import
+  approvals are saved to the project folder's `.tst/config.yaml`, as before
+  worktrees, through the same trust gate, and the worktree's copy is then
+  refreshed from it with the trust decided on its bytes; a session's start
+  or revival refreshes it too (no project file, no copy). Rejected: saving
+  into the copy (the first cut). The copy is TST Desk's own untracked file,
+  so the save was neither a change nor merged: a removal discarded it
+  without asking, and a revoked `auto` rule stayed in the project and came
+  back in every new session. A tracked config is the branch's own file
+  (`config_tracked` on the record): a save there is a change in the
+  worktree, merged back or removed with the rest.
+- **A trust decision covers the bytes, wherever they sit.** The card's
+  decision is recorded for the session's folder and for the project folder
+  and every stored session's worktree whose config is byte-identical, then
+  each re-applies. Recording it for the worktree folder alone (the first
+  cut) meant every new session asked again and `worktree.setup` never ran
+  from a config trusted on the card. A setup skipped for want of trust
+  runs in the trusting session when the decision lands, unless a turn is
+  in flight (it would change files under the turn's tools; the note then
+  says the next new chat runs it).
+- **TST Desk's own untracked `.tst/` files are not changes.** The memory
+  templates, the copied config and the decisions ledger appear in every
+  worktree. Counting them would make every worktree "changed" (never
+  removed automatically) and every main checkout "dirty" (the notice on
+  every new chat), and committing them in a merge would collide with the
+  main checkout's own untracked copies. Accepted memory is committed, so it
+  still counts, and anything new in the shared `.tst/rules`, `skills`,
+  `commands`, `context` folders or `.tst/worktree-include` is the user's
+  work and counts too.
+- **Filters off for the checkout.** `git worktree add` runs with every
+  configured filter driver pinned off, as all the daemon's git calls since
+  TD-5157 (a merged `.gitattributes` must not make the daemon run a
+  filter). A git-lfs file is checked out as its pointer; the documented way
+  to run the user's own filters there is `worktree.setup: "git lfs pull"`.
+  Hooks stay off (TD-5108), including `post-checkout`.
+- **Closing.** `close_worktree` with no `action` removes an unchanged
+  worktree and refuses a changed one with `worktree_has_changes`, so the
+  window asks keep, merge back or remove. Merge back commits the worktree's
+  changes on its branch (`commit_on_head`, filters and hooks off), checks
+  for conflicts with `git merge-tree --write-tree` (git 2.38+) and only then
+  runs `git merge` in the main checkout, with filters pinned; a conflict, a
+  checkout mid-merge or mid-rebase, or local changes the merge would
+  overwrite are refused and nothing in the main checkout changes (a failed
+  merge is aborted). After any close the session works in the folder it was
+  opened on, the way `move_session` moves one, so the chat stays usable.
+  Keep leaves the folder and branch on disk and TST Desk forgets them.
+  Refused mid-turn and while setup runs. Not a machine-peer verb (a merge
+  writes this computer's checkout); a phone may close its own computer's.
+- **Removed on its own only when unchanged.** On close, on delete, and when
+  a scheduled run ends (a run that changed nothing leaves no folder). A
+  changed worktree is never removed without a choice: deleting its session
+  keeps it on disk on its branch, and a scheduled run's stays with its
+  session until closed. Archive stays a filing action and touches nothing.
+- **Delegate children.** `delegate` takes `worktree: true` (the model asks
+  for isolation per call; default off, so existing delegations are
+  unchanged). The child's worktree branches from the parent's last commit
+  (uncommitted parent edits are not in it, which the tool description
+  says). Its path guard, classifier wall (a sibling classifier with the
+  parent's connector and its own cache), memory committer and workspace are
+  rebound to that folder; the checkpointer is dropped (the branch is its
+  record) and the ledger stays the parent's. Its prompt is assembled for
+  that folder (`PromptAssembler.for_workspace`), so the root it is told is
+  the one its tools accept, and its task says that a path under the
+  parent's root is the same path relative to its own. When it finishes, its changes
+  are committed on its branch and the folder is removed; the summary names
+  the branch and the `git diff` and `git merge` to take it, which the parent
+  runs through the classifier like any shell command. No changes, no
+  branch. A worktree that cannot be made is refused rather than letting the
+  child share the parent's files.
+- **Move waits.** A session with a worktree cannot be moved
+  (`worktree_session`); the rail hides Move on such rows. The worktree
+  belongs to the folder it came from.
+- **`tst run` says where its edits went.** A stderr note names the branch
+  and the worktree's path whenever the run's session works in one: from
+  the session's `worktree_state` event for a new session, from the
+  `session_list` row for `--session` and `--continue`. Class C left open
+  by the story, decided conservatively: the run keeps the default (a
+  worktree, as every session in a git folder gets) and the user is told,
+  in every output mode; the `--output json` object keeps its documented
+  five keys rather than growing a sixth.
+- **Known gaps, accepted.** A worktree folder deleted by hand leaves its
+  session pointing at a missing folder until it is closed (close prunes it).
+  Trust records for removed worktrees stay in `workspace_trust.yaml`.
+  `tst run` sessions keep their worktree until closed from the rail or
+  deleted. The setup command's grandchildren are not killed on timeout.
+  The window does not show the note of a session that got no worktree (a
+  git failure, a folder `HEAD` lacks); the chat works in the folder, with
+  no branch on its row, and `tst run` prints the note. A live sibling
+  worktree session keeps the policy it holds in memory after another
+  session's save, as two sessions in one folder always have; its copy
+  catches up when it saves, starts or is revived.
+
+## 2026-10-20 — TD-5127: on-demand MCP tool search (Class B)
+
+**Context.** Every MCP tool schema went into every request
+(`core/tstd/mcp/loader.py` registers them all), which costs a 32k or 65k
+local window several thousand tokens before the conversation starts. The
+gap audit asked for Claude Code's MCP tool search: above a threshold the
+tools leave the request and a built-in search loads the ones the model
+needs, on any OpenAI-compatible endpoint. The story sets the behaviour and
+the threshold's unit (tool tokens as a share of the window); the config
+shape, the search, what a loaded tool means and when the decision is made
+were left open. Adam approved the story as written (gap audit decisions,
+2026-10-14); no Class C question came up. Sized 5, so this entry records
+the approach in place of a sign-off.
+
+**Decision.**
+
+- **Config: `mcp.tool_search.mode` (`auto` | `always` | `off`, default
+  `auto`) and `threshold_percent` (default 10).** Claude Code's
+  `ENABLE_TOOL_SEARCH` has the same three settings and the same 10%
+  default. On by default because the story's first criterion is the
+  default behaviour; `off` gives back the old request byte for byte.
+  Global config only, like the rest of `mcp`. **A bare `off` means
+  `off`:** PyYAML reads YAML 1.1, where unquoted `off` (and `no`,
+  `false`) is the boolean false, and `off` is the only way to turn this
+  default-on change off (there is no Settings control), so the field maps
+  false to `off` before validation. A bare `on`/`yes`/`true` is refused
+  with "write auto or always" rather than guessed at (review finding on
+  PR #44). Rejected: only documenting the quoting, which leaves the
+  config's own comment form failing to load.
+- **"Tool tokens" are the MCP tool definitions only**, counted the way the
+  request serializes them, with the tier's calibrated counter (TD-5007),
+  against that tier's `context_window`. Builtins are always sent: they are
+  the loop's own tools and the model cannot search for what it does not
+  know exists.
+- **The decision is latched per tier and window for the life of the
+  loop.** The learned token ratio moves the estimate between calls; a
+  tool list that flipped with it would cost the prompt cache and confuse
+  the model. A backup endpoint with another window (TD-5120) decides for
+  itself.
+- **No provider feature.** A deferred request is a plain `tools` array
+  without the MCP tools, plus `tool_search`. A loaded tool is sent with
+  its full definition from the next call on; nothing like Anthropic's
+  `defer_loading` or `tool_reference` is used, so vLLM, llama.cpp and LM
+  Studio take it as they took the old request. The end-to-end test runs
+  the turn against the strict endpoint mock from TD-5104, which refuses
+  any unknown top-level key or tool field.
+- **`tool_search` is a builtin, offered only while that tier defers.** Its
+  description carries a catalog of the MCP tool names by server (names
+  only, capped at 4,000 characters; a server past the cap is named with
+  its count), built once per session so it never changes as tools load.
+  The query is keywords, ranked over tool names (whole words first, then
+  substrings) and descriptions with a plural-s stem, or `select:<names>`
+  for exact picks. Five results unless the model asks for up to twenty.
+  The result lists each loaded tool's name and one-line description; it
+  does not repeat the schema, which the next request carries anyway.
+  Rejected: an embedding search (needs the embeddings endpoint, which is
+  optional), returning schemas in the result (pays for each one twice).
+- **Loaded means loaded for the session.** Matches go to
+  `Session.loaded_mcp_tools` and are appended after every other tool in
+  load order, so loading one leaves the earlier definitions byte-identical
+  for the provider's cache. A tool the conversation has already called is
+  loaded as well (a tool the model called by name). The list is saved
+  with each conversation snapshot, when it changed, to `mcp_tools.json` in
+  the session's persist folder and read back on revive: on the small
+  windows this is for, compaction folds the calls away, so the history
+  alone would drop tools after a restart (second-opinion review finding).
+  Rejected: carrying the names in the compaction summary (parsing prose
+  back), a new protocol event (a UI type for state no viewer shows).
+- **`select:` with a tool's own name that several servers use** loads each
+  of them under its full name rather than refusing as ambiguous: the
+  result tells the model which is which, and it saves a round trip.
+- **Class A by a fixed rule (`tool-search`).** It reads the daemon's own
+  registry and touches no file, host or server. Loading grants nothing:
+  each call to a loaded MCP tool is classified as before (Class B by the
+  ask floor), which the end-to-end test checks.
+- **It runs in read-only plan mode (TD-5123).** Merging main brought plan
+  mode, which refuses every builtin not on `PLAN_READ_ONLY_BUILTINS`.
+  `tool_search` changes nothing but the session's own tool list, as
+  `task_list` does, and without it a deferred MCP tool the user put in
+  `read_only_tools` could not be reached while planning. It is on the
+  list; each tool it loads is still judged on its own, so a tool outside
+  `read_only_tools` stays refused.
+- **Measured on EZER** (`core/scripts/measure_mcp_tool_search.py`, six
+  stdio catalog servers written for the measurement in
+  `core/scripts/mcp_catalog_server.py`, 70 tools, sized like public
+  tracker, wiki, calendar, mail, SQL and storage servers; exact counts
+  from the local 27B's vLLM `/tokenize`, no generation): 15,294 prompt
+  tokens with every schema, 8,272 deferred, 9,037 after one search loaded
+  five tools. Five servers at 32k: 14,132 → 8,228. Five servers at 65k
+  stay under 10% and are sent whole, as designed. No real third-party MCP
+  servers were installed for this; the catalogs are fixtures.
+
+---
+
 ## 2026-10-20 — TD-5125: "Restore files to here" from the session branch (Class B)
 
 **Context.** Every agent write already lands on `tst/session/<id>` (TD-705),

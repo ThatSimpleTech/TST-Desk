@@ -15,6 +15,7 @@ import type { FirstTokenWait } from "./first-token-wait";
 import { machineOf } from "./bridged-id";
 import type { DaemonEventUnion, SessionState, SessionSummary } from "./protocol";
 import { sentFileFromEvent, type SentFileRef } from "./sent-files";
+import { checkFromEvent } from "./stop-check";
 import { chooseBoundSession, isTerminal } from "./session-binding";
 import { windowBindSessionId } from "./window-bind";
 
@@ -495,6 +496,15 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
         return;
       }
       for (const block of copies) addFile(block, ref);
+      return;
+    }
+    case "stop_check": {
+      // TD-5124: the done-check lands on the reply it judged. A retry's
+      // feedback went to the model only; the next reply streams after it.
+      if (event.session_id !== state.sessionId) return;
+      const row = currentAssistant(ctx);
+      row.parts ??= [];
+      row.parts.push({ kind: "check", check: checkFromEvent(event) });
       return;
     }
     case "verify_started":

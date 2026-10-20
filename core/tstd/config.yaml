@@ -337,6 +337,16 @@ provider_retry:
 scheduler:
   max_run_seconds: 900
 
+# A git worktree per session (TD-5126). A session or scheduled job in a git
+# repository works in its own worktree, on a new branch tst/wt/<id> from the
+# main checkout's HEAD. folder: where worktrees go; empty is worktrees/ in
+# this data dir. A workspace turns it off with `worktree: {enabled: false}`
+# in its .tst/config.yaml. setup_timeout_s bounds that file's worktree.setup.
+worktree:
+  enabled: true
+  folder: ""
+  setup_timeout_s: 600
+
 # Desktop computer-use (TD-3301). Empty command is mock-only — no sidecar,
 # no pointer motion. A non-empty command is argv for mcp/tst-cu-mcp over
 # stdio (no socket). The daemon owns the child.
@@ -387,7 +397,10 @@ autonomy:
 # no dynamic discovery. HTTP urls must be loopback. A server's env:
 # (stdio) or headers: (http) holds literals that are not secrets, or
 # "keychain:<entry>" — tokens stay in the keychain (TD-5110); Settings →
-# MCP servers stores one without showing it.
+# MCP servers stores one without showing it. Once the MCP tool schemas
+# would take over 10% of a tier's context_window, they stay out of the
+# request and the agent loads the ones it needs with tool_search
+# (TD-5127); tool_search: {mode: auto|always|off, threshold_percent: 10}.
 mcp:
   servers: {}
 

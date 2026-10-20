@@ -45,6 +45,7 @@ from tstd.protocol import (
     CharterDocument,
     CheckCuPermissions,
     CheckpointNotice,
+    CloseWorktree,
     CommandEntry,
     CommandList,
     ConfigTrust,
@@ -157,6 +158,9 @@ from tstd.protocol import (
     PairingCompleted,
     ParseJob,
     Ping,
+    PlanPinned,
+    PlanReview,
+    PlanReviewed,
     PolicyRules,
     PolicyRuleSummary,
     PreviewRestoreFiles,
@@ -179,6 +183,7 @@ from tstd.protocol import (
     RestoreFileEntry,
     RestoreFiles,
     Resume,
+    ReviewPlan,
     RevokePolicyRule,
     RuleActivated,
     RunDiagnostics,
@@ -193,9 +198,11 @@ from tstd.protocol import (
     SaveMemory,
     ScreenFrame,
     SendQueued,
+    SessionGoal,
     SessionJobSource,
     SessionList,
     SessionState,
+    SessionWorktreeInfo,
     SetApiKey,
     SetBranch,
     SetCoworker,
@@ -234,6 +241,8 @@ from tstd.protocol import (
     SteeringReject,
     SteeringReloaded,
     SteerPoint,
+    StopCheck,
+    StopCheckItem,
     TaskList,
     TaskListItem,
     TestEmail,
@@ -255,6 +264,7 @@ from tstd.protocol import (
     VerifyResult,
     VerifyStarted,
     WorkerStep,
+    WorktreeState,
     build_hello_ack,
     build_pair_ok,
 )
@@ -329,6 +339,17 @@ FIXTURES = {
     ),
     "answer_question_declined": AnswerQuestion(
         session_id="sess-1", tool_call_id="tc-q", declined=True
+    ),
+    # TD-5123: approve the plan as edited, or reject it with feedback.
+    "review_plan": ReviewPlan(
+        session_id="sess-1",
+        tool_call_id="tc-p",
+        decision="approve",
+        plan="1. Add greet().",
+        feedback="keep it small",
+    ),
+    "review_plan_reject": ReviewPlan(
+        session_id="sess-1", tool_call_id="tc-p", decision="reject", feedback="use the logger"
     ),
     "list_policy_rules": ListPolicyRules(session_id="sess-1"),
     "revoke_policy_rule": RevokePolicyRule(session_id="sess-1", tool="shell", args="rm *"),
@@ -465,6 +486,9 @@ FIXTURES = {
     "move_session": MoveSession(session_id="sess-1", workspace_path="/home/user/other"),
     "rename_session": RenameSession(session_id="sess-1", title="My name"),
     "rename_session_restore": RenameSession(session_id="sess-1", title=""),
+    # TD-5126: no action asks the daemon; an unchanged worktree just goes.
+    "close_worktree": CloseWorktree(session_id="sess-1"),
+    "close_worktree_merge": CloseWorktree(session_id="sess-1", action="merge"),
     # Onboarding (TD-1101 first-run wizard)
     "get_setup_state": GetSetupState(),
     "set_api_key": SetApiKey(api_key="sk-or-test-key"),
@@ -717,6 +741,30 @@ FIXTURES = {
     "question_answered_declined": QuestionAnswered(
         session_id="sess-1", tool_call_id="tc-q", outcome="declined", seq=8
     ),
+    # TD-5123: read-only plan mode ends with a plan the person reviews.
+    "plan_review": PlanReview(
+        session_id="sess-1",
+        tool_call_id="tc-p",
+        plan="## Plan\n1. Add greet() to src/app.py.\n2. Test it.",
+        seq=9,
+    ),
+    "plan_reviewed": PlanReviewed(
+        session_id="sess-1",
+        tool_call_id="tc-p",
+        outcome="approved",
+        plan="1. Add greet().",
+        edited=True,
+        feedback="keep it small",
+        seq=11,
+    ),
+    "plan_reviewed_rejected": PlanReviewed(
+        session_id="sess-1",
+        tool_call_id="tc-p",
+        outcome="rejected",
+        feedback="use the logger",
+        seq=11,
+    ),
+    "plan_pinned": PlanPinned(session_id="sess-1", plan="1. Add greet().", seq=10),
     "approval_request": ApprovalRequest(
         session_id="sess-1",
         tool_call_id="tc-1",
@@ -1080,6 +1128,35 @@ FIXTURES = {
         ],
         seq=19,
     ),
+    "stop_check": StopCheck(
+        session_id="sess-1",
+        outcome="retry",
+        attempt=1,
+        max_retries=3,
+        items=[
+            StopCheckItem(
+                item="$ uv run pytest -q",
+                source="workspace",
+                via="shell",
+                passed=False,
+                detail="exit code: 1\n── stdout ──\nFAILED tests/test_dates.py::test_leap_day",
+            ),
+            StopCheckItem(
+                item="The parser handles leap days",
+                source="goal",
+                via="worker",
+                passed=True,
+                detail="GREEN",
+            ),
+        ],
+        seq=20,
+    ),
+    "session_goal": SessionGoal(
+        session_id="sess-1",
+        goal="The parser handles leap days",
+        change="set",
+        seq=21,
+    ),
     "tier_switched": TierSwitched(
         session_id="sess-1",
         tier="worker",
@@ -1125,6 +1202,41 @@ FIXTURES = {
         },
         fallbacks={"brain": 1},
         seq=22,
+    ),
+    # TD-5126: a session working in its own git worktree.
+    "session_list_worktree": SessionList(
+        sessions=[
+            {
+                "session_id": "sess-1",
+                "workspace_path": "/home/user/project",
+                "state": "running",
+                "created_at": "2026-10-20T10:00:00Z",
+                "updated_at": "2026-10-20T10:00:00Z",
+                "event_count": 3,
+                "worktree": SessionWorktreeInfo(
+                    branch="tst/wt/sess-1ab",
+                    path="/home/user/.local/share/tst-desk/worktrees/project-sess-1ab",
+                    main_dirty=2,
+                    setup="running",
+                ),
+            },
+        ]
+    ),
+    "worktree_state": WorktreeState(
+        session_id="sess-1",
+        worktree=SessionWorktreeInfo(
+            branch="tst/wt/sess-1ab",
+            path="/home/user/.local/share/tst-desk/worktrees/project-sess-1ab",
+            setup="failed",
+            setup_note="Setup exited with 1: npm ci",
+        ),
+        note="Setup exited with 1: npm ci",
+        seq=20,
+    ),
+    "worktree_state_closed": WorktreeState(
+        session_id="sess-1",
+        note="Merged tst/wt/sess-1ab into the main checkout.",
+        seq=21,
     ),
     "session_list": SessionList(
         sessions=[

@@ -17,6 +17,8 @@ The machine modes never prompt: an approval request ends the run with
 ``approval_needed`` and the turn waits for the window, the same as a
 text run without a TTY. An ``ask_user`` question (TD-5121) is asked the
 same way: answered on a TTY in text mode, otherwise ``approval_needed``.
+A plan from read-only plan mode (TD-5123) is ``approval_needed`` in every
+mode: it is reviewed, and maybe edited, on the card.
 Under ``--on-ask deny-and-continue`` the daemon refuses instead of asking
 (TD-5118), and ``ask_user`` refuses its question too, so no request
 reaches the run.
@@ -37,6 +39,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .cli import (
+    PLAN_WAITING,
     RETRACT_NOTICE,
     _print_error,
     _recv_event,
@@ -44,6 +47,7 @@ from .cli import (
     _turn_timeout_secs,
     config_trust_notice,
     fallback_notice,
+    stop_check_notice,
 )
 from .cli_approvals import prompt_approval
 from .cli_questions import prompt_questions
@@ -72,7 +76,8 @@ EXIT_CODES: dict[Status, int] = {
 #: Tool-result codes for a call a gate refused: the workspace boundary, a
 #: ``never`` policy rule, or a person answering Deny. A handler's own
 #: failure is not a refusal.
-REFUSAL_CODES = frozenset({"boundary_refusal", "policy_denied", "approval_denied"})
+#: ``plan_mode``: the session is planning and refused a change (TD-5123).
+REFUSAL_CODES = frozenset({"boundary_refusal", "policy_denied", "approval_denied", "plan_mode"})
 
 APPROVAL_NEEDED = "approval_needed"
 
@@ -139,6 +144,24 @@ def is_sent_message(logged: str, sent: str) -> bool:
     return len(sent) - len(tail) >= pos + 1 and sent.endswith(tail)
 
 
+def worktree_notice(worktree: Any, folder: str | None = None) -> str | None:
+    """A stderr line for a session that works in a git worktree (TD-5126).
+
+    The run's edits land there, on the worktree's branch, and not in the
+    folder the run named, so a script told nothing would find no change.
+    """
+    if not isinstance(worktree, dict) or not worktree.get("branch"):
+        return None
+    branch, path = worktree["branch"], worktree.get("path") or "?"
+    where = f"not in {folder}" if folder else "not in the folder it was opened on"
+    return (
+        f"note: this session works in a git worktree on {branch} at {path}, {where}. "
+        f"Its changes stay there until you merge them (Close worktree in TST Desk, or "
+        f"git merge {branch}). worktree.enabled: false in .tst/config.yaml keeps runs in "
+        "the folder."
+    )
+
+
 @dataclass
 class _Refusal:
     tool: str
@@ -165,6 +188,10 @@ class _TurnReader:
     refusals: list[_Refusal] = field(default_factory=list)
     tool_names: dict[str, str] = field(default_factory=dict)
     line_open: bool = False
+    # TD-5126: the worktree line is said once, not on every setup update,
+    # naming the folder the run was given.
+    worktree_told: bool = False
+    folder: str | None = None
 
     def outcome(
         self, status: Status, code: str | None = None, message: str | None = None
@@ -218,10 +245,18 @@ class _TurnReader:
                 self.end_line()
                 print(notice, file=sys.stderr)
             return None
+        if typ == "worktree_state":
+            self._worktree(event)
+            return None
         if typ == "approval_request":
             return await self._approval(ws, event)
         if typ == "question_request":
             return await self._question(ws, event)
+        if typ == "plan_review":
+            # TD-5123: reviewed on the card in every mode, where it can be edited.
+            self.end_line()
+            print(f"{APPROVAL_NEEDED}: {PLAN_WAITING}", file=sys.stderr)
+            return self.outcome("approval_needed", APPROVAL_NEEDED, PLAN_WAITING)
         if typ == "tool_call":
             self.tool_names[str(event.get("tool_call_id"))] = str(event.get("name") or "tool")
             return None
@@ -240,6 +275,12 @@ class _TurnReader:
             if self.output == "text":
                 self.end_line()
                 print(fallback_notice(event), file=sys.stderr)
+            return None
+        if typ == "stop_check":
+            # TD-5124: stderr, like a fallback; stdout stays the reply.
+            if self.output == "text":
+                self.end_line()
+                print(stop_check_notice(event), file=sys.stderr)
             return None
         if typ == "assistant_delta":
             delta = str(event.get("delta") or "")
@@ -264,6 +305,21 @@ class _TurnReader:
         return self.outcome(
             "error", RUN_PERMISSIONS_UNSUPPORTED, RUN_PERMISSIONS_UNSUPPORTED_MESSAGE
         )
+
+    def _worktree(self, event: dict[str, Any]) -> None:
+        """Say where the run's edits go, and why there is no worktree or setup failed."""
+        worktree = event.get("worktree")
+        line = None if self.worktree_told else worktree_notice(worktree, self.folder)
+        if line is not None:
+            self.worktree_told = True
+        elif isinstance(worktree, dict):
+            failed = worktree.get("setup") == "failed"
+            line = f"note: {worktree.get('setup_note')}" if failed else None
+        elif event.get("note"):
+            line = f"note: {event['note']}"
+        if line is not None:
+            self.end_line()
+            print(line, file=sys.stderr)
 
     def _withdraw(self, event: dict[str, Any]) -> None:
         """The provider stalled partway through a response; the daemon asks again.
@@ -339,6 +395,7 @@ async def stream_turn(
     output: Output = "text",
     content: str | None = None,
     run_permissions: bool = False,
+    folder: str | None = None,
 ) -> TurnOutcome:
     """Follow *session_id* until its turn completes, fails or needs approval.
 
@@ -347,7 +404,8 @@ async def stream_turn(
     daemon logs it; see :func:`is_sent_message`) belong to an earlier turn
     and are skipped. ``None`` (a session this run opened) takes every
     event of the session. *run_permissions* says this run sent some, so
-    its ``user_turn`` must carry them back.
+    its ``user_turn`` must carry them back. *folder* is the workspace the
+    run named, for the note that its session works in a worktree instead.
     """
     reader = _TurnReader(
         session_id,
@@ -355,6 +413,7 @@ async def stream_turn(
         ours=content is None,
         content=content,
         permissions_sent=run_permissions,
+        folder=folder,
     )
     deadline = time.monotonic() + _turn_timeout_secs(data_dir, budget)
     while time.monotonic() < deadline:

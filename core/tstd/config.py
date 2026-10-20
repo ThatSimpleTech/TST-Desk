@@ -578,6 +578,20 @@ class SchedulerConfig(BaseModel):
     max_run_seconds: float = Field(default=DEFAULT_MAX_RUN_SECONDS, gt=0, le=60 * 60)
 
 
+class WorktreeConfig(BaseModel):
+    """A git worktree per session (TD-5126), machine-wide.
+
+    ``enabled`` is the default for every git workspace; a workspace's own
+    ``worktree.enabled: false`` turns it off there. ``folder`` holds the
+    worktrees; empty is ``worktrees/`` in the data dir, outside every
+    repository. ``setup_timeout_s`` bounds a workspace's ``worktree.setup``.
+    """
+
+    enabled: bool = True
+    folder: str = ""
+    setup_timeout_s: int = Field(default=600, ge=10, le=3600)
+
+
 class SessionConfig(BaseModel):
     """On-disk session event-log window (TD-2901).
 
@@ -1249,6 +1263,23 @@ class McpServerConfig(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     #: Extra headers on every request to an http server (TD-5110).
     headers: dict[str, str] = Field(default_factory=dict)
+    #: The server's tools, by the name the server gives them, that only
+    #: read (TD-5123). Plan mode lets these run; every other tool of the
+    #: server is refused while planning. The server's own annotations
+    #: are not trusted for this, only this list.
+    read_only_tools: list[str] = Field(default_factory=list)
+
+    @field_validator("read_only_tools", mode="before")
+    @classmethod
+    def _read_only_names(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+            raise ValueError("read_only_tools must be a list of tool names")
+        names = [v.strip() for v in value]
+        if any(not n for n in names):
+            raise ValueError("read_only_tools has an empty tool name")
+        return names
 
     @field_validator("env", mode="before")
     @classmethod
@@ -1277,12 +1308,49 @@ class McpServerConfig(BaseModel):
         return value.strip()
 
 
+McpToolSearchMode = Literal["auto", "always", "off"]
+
+
+class McpToolSearchConfig(BaseModel):
+    """Leave MCP tool schemas out of the request until searched (TD-5127).
+
+    ``auto`` defers them for a tier once their definitions would take
+    more than ``threshold_percent`` of that tier's ``context_window``;
+    ``always`` defers them whatever their size; ``off`` sends every
+    schema on every call, as before.  A deferred tool loads for the
+    rest of the session when the builtin ``tool_search`` finds it or
+    the model calls it by name.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: McpToolSearchMode = "auto"
+    threshold_percent: float = Field(default=10.0, gt=0, le=100)
+
+    @field_validator("mode", mode="before")
+    @classmethod
+    def _yaml_bare_off(cls, value: object) -> object:
+        """Read a bare YAML ``off`` as ``off``.
+
+        PyYAML follows YAML 1.1, where an unquoted ``off`` (or ``no``,
+        ``false``) is the boolean false, and ``off`` is the one way to
+        turn tool search off.  A bare ``on``/``yes``/``true`` names
+        neither ``auto`` nor ``always``, so it is refused with the fix.
+        """
+        if value is False:
+            return "off"
+        if value is True:
+            raise ValueError("YAML reads a bare on, yes or true as true; write auto or always")
+        return value
+
+
 class McpConfig(BaseModel):
     """User-listed MCP servers. Empty means none — no doctor rows."""
 
     model_config = ConfigDict(extra="forbid")
 
     servers: dict[str, McpServerConfig] = Field(default_factory=dict)
+    tool_search: McpToolSearchConfig = Field(default_factory=McpToolSearchConfig)
 
     @field_validator("servers")
     @classmethod
@@ -1339,6 +1407,7 @@ class ModelConfig(BaseModel):
     shell: ShellConfig = Field(default_factory=ShellConfig)
     provider_retry: ProviderRetryConfig = Field(default_factory=ProviderRetryConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
+    worktree: WorktreeConfig = Field(default_factory=WorktreeConfig)
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
     judgments: JudgmentsConfig = Field(default_factory=JudgmentsConfig)
     remote: RemoteConfig = Field(default_factory=RemoteConfig)

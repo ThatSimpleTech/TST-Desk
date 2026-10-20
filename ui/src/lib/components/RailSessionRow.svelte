@@ -11,7 +11,13 @@
 	// alone knows if a turn is in flight, so both are always offered and its
 	// refusal renders in place, under the row that asked.
 	import Icon from './Icon.svelte';
-	import { DELETE_CONFIRM, rowActions, type RailRowActionId } from '../rail';
+	import {
+		CLOSE_WORKTREE_HINTS,
+		DELETE_CONFIRM,
+		DELETE_WORKTREE_NOTE,
+		rowActions,
+		type RailRowActionId
+	} from '../rail';
 	import { workspaceName } from '../session-status.svelte.js';
 	import {
 		closeRowMenus,
@@ -27,6 +33,7 @@
 	} from '../sessions.svelte.js';
 	import {
 		cancelRename,
+		closeWorktree,
 		confirmDelete,
 		moveRow,
 		moveTargets,
@@ -34,6 +41,7 @@
 		renameSession,
 		requestDelete,
 		requestMove,
+		requestCloseWorktree,
 		requestRename,
 		scheduleThisChat,
 		setArchived,
@@ -62,6 +70,7 @@
 	let confirming = $derived(sessions.confirmDeleteFor === row.sessionId);
 	let moving = $derived(sessions.moveFor === row.sessionId);
 	let renaming = $derived(sessions.renameFor === row.sessionId);
+	let closingTree = $derived(sessions.closeWorktreeFor === row.sessionId);
 	let activity = $derived(liveActivity(row));
 	let targets = $derived(moving ? moveTargets(row.sessionId) : []);
 	let draft = $state('');
@@ -106,6 +115,7 @@
 		else if (id === 'unarchive') setArchived(row.sessionId, false);
 		else if (id === 'move') requestMove(row.sessionId);
 		else if (id === 'open-window') openSessionInNewWindow(row.sessionId);
+		else if (id === 'close-worktree') requestCloseWorktree(row.sessionId);
 		else if (id === 'delete') requestDelete(row.sessionId);
 	}
 
@@ -125,7 +135,7 @@
 	}
 </script>
 
-<div class="wrap" class:wrap-open={menuOpen || confirming || moving || renaming}>
+<div class="wrap" class:wrap-open={menuOpen || confirming || moving || renaming || closingTree}>
 	<div class="row" class:row-active={active}>
 		<button
 			class="open"
@@ -146,6 +156,13 @@
 				<span class="row-sub">
 					{rowSubtitle(row)} · {ACTIVITY_LABELS[activity]}{#if stateNote !== null} · <span class="row-state">{stateNote}</span>{/if}
 				</span>
+				{#if row.worktree !== null}
+					<!-- TD-5126: the branch this session's worktree is on. -->
+					<span class="row-branch" title={`Works in a git worktree on ${row.worktree.branch}`}>
+						<Icon name="branch" size={11} />
+						<span class="row-branch-name">{row.worktree.branch}</span>
+					</span>
+				{/if}
 			</span>
 		</button>
 		<button
@@ -161,7 +178,7 @@
 
 	{#if menuOpen}
 		<div class="menu" role="group" aria-label={`Actions for session ${rowTitleFull(row)}`}>
-			{#each rowActions(row.archived, row.starred, remote) as action (action.id)}
+			{#each rowActions(row.archived, row.starred, remote, row.worktree !== null) as action (action.id)}
 				<button
 					class="action"
 					class:action-danger={action.danger}
@@ -178,7 +195,9 @@
 
 	{#if confirming}
 		<div class="commit" role="alertdialog" aria-label="Confirm delete">
-			<p class="commit-copy">{DELETE_CONFIRM}</p>
+			<p class="commit-copy">
+				{DELETE_CONFIRM}{#if row.worktree !== null}{' '}{DELETE_WORKTREE_NOTE}{/if}
+			</p>
 			<div class="commit-btns">
 				<button class="btn btn-danger" type="button" onclick={() => confirmDelete()}>
 					Delete
@@ -222,12 +241,57 @@
 		</div>
 	{/if}
 
-	{#if sessions.refusal !== null && (confirming || moving || menuOpen)}
+	{#if closingTree}
+		<div class="commit" role="alertdialog" aria-label="Close worktree">
+			{#if sessions.worktreeAsk === null}
+				<p class="commit-copy">Checking the worktree…</p>
+			{:else}
+				<p class="commit-copy">{sessions.worktreeAsk}</p>
+				<div class="commit-btns">
+					<button class="btn" type="button" title={CLOSE_WORKTREE_HINTS.keep} onclick={() => closeWorktree('keep')}>
+						Keep
+					</button>
+					<button class="btn" type="button" title={CLOSE_WORKTREE_HINTS.merge} onclick={() => closeWorktree('merge')}>
+						Merge back
+					</button>
+					<button
+						class="btn btn-danger"
+						type="button"
+						title={CLOSE_WORKTREE_HINTS.remove}
+						onclick={() => closeWorktree('remove')}
+					>
+						Remove
+					</button>
+				</div>
+			{/if}
+			<div class="commit-btns">
+				<button class="btn" type="button" onclick={closeRowMenus}>Cancel</button>
+			</div>
+		</div>
+	{/if}
+
+	{#if sessions.refusal !== null && (confirming || moving || menuOpen || closingTree)}
 		<p class="refusal" role="status">{sessions.refusal}</p>
 	{/if}
 </div>
 
 <style>
+	.row-branch {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-1);
+		min-width: 0;
+		color: var(--color-ink-muted);
+		font-family: var(--font-mono);
+		font-size: var(--text-xs);
+	}
+
+	.row-branch-name {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
 	.wrap {
 		display: flex;
 		flex-direction: column;

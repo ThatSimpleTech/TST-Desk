@@ -7,7 +7,7 @@
 import type { AttachmentChip } from "./attachments";
 import type { ResponseMark } from "./chat-retract";
 import type { SentFileRef } from "./sent-files";
-import type { WorkerStep } from "./protocol";
+import type { StopCheck, StopCheckItem, WorkerStep } from "./protocol";
 
 export interface ChatMessage {
   id: string;
@@ -59,11 +59,25 @@ export interface ChatMessage {
   responseMark?: ResponseMark;
 }
 
-/** One ordered entry on an assistant row: a text segment or a tool call.
+/** One ordered entry on an assistant row: a text segment, a tool call, or
+ *  a done-check (TD-5124).
  *  Text splits only at tool boundaries — one part holds everything said
  *  before the tool, the next everything after — so markdown within a
  *  segment renders intact. */
-export type ChatPart = { kind: "text"; text: string } | { kind: "tool"; tool: ToolBlock };
+export type ChatPart =
+  | { kind: "text"; text: string }
+  | { kind: "tool"; tool: ToolBlock }
+  | { kind: "check"; check: CheckBlock };
+
+/** A done-check on the reply it judged (TD-5124): from a `stop_check`
+ *  event, which replays on attach, so the result comes back with the
+ *  transcript. A retry's feedback to the model is never a chat bubble. */
+export interface CheckBlock {
+  outcome: StopCheck["outcome"];
+  attempt: number;
+  maxRetries: number;
+  items: StopCheckItem[];
+}
 
 /** One tool call on an assistant row (TD-1902). `status` is unset while
  *  the call is still running — that is what keeps the disclosure open. */

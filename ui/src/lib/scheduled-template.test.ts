@@ -172,6 +172,7 @@ function row(sessionId: string): SessionRow {
 		preset: "budget",
 		busy: false,
 		machine: null,
+		worktree: null,
 	};
 }
 

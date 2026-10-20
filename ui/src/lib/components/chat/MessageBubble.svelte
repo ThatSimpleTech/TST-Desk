@@ -23,6 +23,7 @@
 	import Markdown from "./Markdown.svelte";
 	import ReasoningBlock from "./ReasoningBlock.svelte";
 	import ToolFold from "./ToolFold.svelte";
+	import CheckFold from "./CheckFold.svelte";
 
 	let {
 		message,
@@ -141,6 +142,8 @@
 					{#if part.kind === "tool"}
 						<ToolFold messageId={message.id} block={part.tool} complete={message.complete} />
 						{#if part.tool.name === "send_file"}<FileCards block={part.tool} live={!message.complete} />{/if}
+					{:else if part.kind === "check"}
+						<CheckFold check={part.check} />
 					{:else if part.text !== ""}
 						<Markdown text={part.text} live={!message.complete && i === lastTextIndex} />
 						<!-- The caret marks the answer being written. Over an

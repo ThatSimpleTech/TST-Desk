@@ -36,7 +36,7 @@ class LiveScheduleSession(Protocol):
     """
 
     @property
-    def workspace_path(self) -> str: ...
+    def project_path(self) -> str: ...
 
     @property
     def preset(self) -> str: ...
@@ -78,7 +78,8 @@ def session_schedule_source(
     does not have stays unset. It is not guessed as native.
     """
     if live is not None:
-        workspace = live.workspace_path
+        # The folder, not a worktree that may be gone by the job's slot (TD-5126).
+        workspace = live.project_path
     elif stored_workspace is not None and stored_workspace.strip():
         workspace = stored_workspace
     else:

@@ -46,6 +46,8 @@ from tstd.boundary_config import (
     BoundarySection,
     CapsSection,
     MemorySection,
+    StopCheckSection,
+    WorktreeSection,
     load_workspace_boundary,
 )
 from tstd.config import (
@@ -66,6 +68,7 @@ from tstd.config import (
     JudgmentsConfig,
     McpConfig,
     McpServerConfig,
+    McpToolSearchConfig,
     MicrosoftConnectorConfig,
     ModelConfig,
     NotifyConfig,
@@ -83,6 +86,7 @@ from tstd.config import (
     TelegramNotifyConfig,
     TierConfig,
     VoiceConfig,
+    WorktreeConfig,
     default_config_yaml,
     load_config,
 )
@@ -238,6 +242,7 @@ _ENGINE_FIELDS = frozenset(EngineConfig.model_fields)
 _VOICE_FIELDS = frozenset(VoiceConfig.model_fields)
 _MCP_FIELDS = frozenset(McpConfig.model_fields)
 _MCP_SERVER_FIELDS = frozenset(McpServerConfig.model_fields)
+_MCP_TOOL_SEARCH_FIELDS = frozenset(McpToolSearchConfig.model_fields)
 _SLACK_NOTIFY_FIELDS = frozenset(SlackNotifyConfig.model_fields)
 _NTFY_NOTIFY_FIELDS = frozenset(NtfyNotifyConfig.model_fields)
 _DISCORD_NOTIFY_FIELDS = frozenset(DiscordNotifyConfig.model_fields)
@@ -253,6 +258,9 @@ _CREDENTIAL_FIELDS = frozenset(CredentialConfig.model_fields)
 _SECTION_FIELDS = frozenset(BoundarySection.model_fields)
 _CAPS_FIELDS = frozenset(CapsSection.model_fields)
 _MEMORY_FIELDS = frozenset(MemorySection.model_fields)
+_WORKTREE_FIELDS = frozenset(WorktreeConfig.model_fields)
+_WORKSPACE_WORKTREE_FIELDS = frozenset(WorktreeSection.model_fields)
+_STOP_CHECK_FIELDS = frozenset(StopCheckSection.model_fields)
 _ATTACHMENT_FIELDS = frozenset(AttachmentLimits.model_fields)
 _POLICY_FIELDS = frozenset(PolicyConfig.model_fields)
 _RULE_FIELDS = frozenset(PolicyRule.model_fields)
@@ -281,6 +289,10 @@ def _check_workspace(data: dict[str, Any], where: str) -> None:
         _check_keys(data["attachments"], _ATTACHMENT_FIELDS, f"{where} attachments")
     if "memory" in data:
         _check_keys(data["memory"], _MEMORY_FIELDS, f"{where} memory")
+    if "worktree" in data:
+        _check_keys(data["worktree"], _WORKSPACE_WORKTREE_FIELDS, f"{where} worktree")
+    if "stop_check" in data:
+        _check_keys(data["stop_check"], _STOP_CHECK_FIELDS, f"{where} stop_check")
     if "policy" in data:
         _check_keys(data["policy"], _POLICY_FIELDS, f"{where} policy")
         for i, rule in enumerate(data["policy"].get("rules", [])):
@@ -387,6 +399,8 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
                 )
         if "speech" in data:
             _check_keys(data["speech"], _SPEECH_FIELDS, f"{where} speech")
+        if "worktree" in data:
+            _check_keys(data["worktree"], _WORKTREE_FIELDS, f"{where} worktree")
         if "autonomy" in data:
             _check_keys(data["autonomy"], _AUTONOMY_FIELDS, f"{where} autonomy")
         if "mcp" in data:
@@ -395,6 +409,9 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
             if isinstance(servers, dict):
                 for sid, body in servers.items():
                     _check_keys(body, _MCP_SERVER_FIELDS, f"{where} mcp.servers.{sid}")
+            search = data["mcp"].get("tool_search")
+            if isinstance(search, dict):
+                _check_keys(search, _MCP_TOOL_SEARCH_FIELDS, f"{where} mcp.tool_search")
         if "credentials" in data:
             for cid, body in data["credentials"].items():
                 _check_keys(body, _CREDENTIAL_FIELDS, f"{where} credentials.{cid}")
@@ -433,6 +450,7 @@ def test_every_config_key_is_documented() -> None:
         | _VOICE_FIELDS
         | _MCP_FIELDS
         | _MCP_SERVER_FIELDS
+        | _MCP_TOOL_SEARCH_FIELDS
         | _SLACK_NOTIFY_FIELDS
         | _NTFY_NOTIFY_FIELDS
         | _DISCORD_NOTIFY_FIELDS
@@ -450,6 +468,9 @@ def test_every_config_key_is_documented() -> None:
         | _SECTION_FIELDS
         | _CAPS_FIELDS
         | _MEMORY_FIELDS
+        | _WORKTREE_FIELDS
+        | _WORKSPACE_WORKTREE_FIELDS
+        | _STOP_CHECK_FIELDS
         | _ATTACHMENT_FIELDS
         | _POLICY_FIELDS
         | _RULE_FIELDS
@@ -477,6 +498,7 @@ def test_documented_defaults_match_the_code() -> None:
         "keep_recent_tool_results": str(ClearToolResultsConfig().keep_recent_tool_results),
         "clear_at_least_tokens": str(ClearToolResultsConfig().clear_at_least_tokens),
         "exclude_tools": "[]",
+        "threshold_percent": f"{McpToolSearchConfig().threshold_percent:g}",
     }
     for key, value in expected.items():
         rows = [line for line in text.split("\n") if line.startswith(f"| `{key}`")]
