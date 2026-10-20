@@ -33,6 +33,9 @@
 		"Copy report",
 		"Re-run"
 	],
+	"done-check": [
+		"Done-check could not run"
+	],
 	"held": [
 		"Remove held message",
 		"Send held message"

@@ -16623,3 +16623,94 @@ it is re-injected were left open. Adam approved the story as written
 - **Native only, parent only.** Delegated worker and research children
   keep their fixed tool lists without `task_list`; the plan is the
   parent's. The Grok engine keeps its own plan.
+
+## 2026-10-20 — TD-5124: a done-check on interactive turns, from the workspace or `/goal` (Class B)
+
+**Context.** The definition-of-done poll (TD-4103) ran only in unattended
+runs with a signed charter, so an interactive turn could stop early, or
+claim it was done, unchecked. Local models do both. The story asks for a
+workspace `stop_check` (a `$` command or a worker-judged statement, reusing
+`autonomy/dod.py`), a failure sent back as a user message up to N times,
+then the turn ending with the failure shown, and `/goal <statement>`
+checked the same way, all without a charter. The shape of the setting, of
+the feedback and of `/goal`, and what the window shows were left open.
+Adam approved the story as written (gap audit decisions, 2026-10-14); the
+open Class C questions below took the most conservative answer that still
+meets it.
+
+**Decision.**
+
+- **Its own section of `.tst/config.yaml`.** `stop_check: {checks,
+  max_retries, timeout_secs}` on the workspace config model, so it loads,
+  reloads on resume and move, and falls back to the defaults exactly like
+  `caps` and `memory`. `checks` takes the charter's DoD shape (one string is
+  one check, up to 10 of 4000 characters); `max_retries` defaults to 3, at
+  most 20, and `0` checks without ever sending the model back;
+  `timeout_secs` (default 300, at most 3600) is passed to the shell tool,
+  whose own 30 s is too short for a test suite. Unknown keys are refused.
+- **A repo's `stop_check` waits for trust (TD-5113).** Class C answered
+  conservatively: a check runs on its own at every turn end, a command
+  through the shell tool or a statement that reaches the model as a user
+  message, which is what a hook does, and decision 3 lets hooks come from a
+  workspace only once it is trusted. So any `stop_check.checks` entry counts
+  as loosening and the trust card lists it. `/goal` is the user's own and
+  needs no trust.
+- **The DoD code, shared.** `poll_definition_of_done`, the GREEN/RED
+  prompt (`dod_worker_prompt`), `parse_dod_verdict`, `shell_exit_zero` and
+  the gate-only dispatch (`dispatch_check_command`: no Class C stop, no
+  ledger entry) are now used by both. Runners may answer `None` for an item
+  they could not judge; `DodItemResult.decided` says so. The unattended
+  runners never do, so a charter's poll still fails toward red. The worker's
+  objective is the user message that started the turn.
+- **A `$` check goes through the normal gate.** Class C answered
+  conservatively: no auto-approval. The classifier, the policy rules and an
+  approval card decide, as for any shell call. Each run logs a `tool_call`
+  and `tool_result` under a `check-` id, so the chat shows the command and
+  its output, the approval card clears, and the audit has it.
+- **What ends a turn.** All green: it ends. Red: the failure goes back and
+  the turn continues, until `max_retries` failures have gone back; the
+  next failure ends the turn with `turn_complete` `failed` and
+  `error_code: stop_check_failed`, so `tst run` exits non-zero and a
+  scheduled run records a failure (not transient, so no retry). An item
+  that could not be judged (declined, refused by policy or the allowlist,
+  could not start, no verdict) ends the turn as `unchecked` and sends
+  nothing back: Class C answered conservatively, since the model could not
+  fix it and a retry would only spend tokens. Stop during a check seals
+  the turn as Stop always does.
+- **The feedback is a user message the window does not number.** It is
+  `ChatMessage(role="user", steer=True, check=True)`: `steer` because it
+  joins the running turn (compaction never cuts at it, in-turn elision
+  reaches past it), and `check` because no `user_turn` showed it, so
+  `window_user_turns` and a summary's turn count skip it and Edit and
+  branch arrows still pick the right turn. `check` is saved with the
+  conversation. A summary labels it "Done-check:". The text names each
+  failing item; a command's output keeps its start and its end, up to
+  2000 characters, since a test run reports at the bottom.
+- **A `stop_check` event, shown on the reply.** `stop_check` carries the
+  outcome (`passed`, `retry`, `failed`, `unchecked`), the attempt, the
+  limit and each item (`source`, `via`, `passed`, `decided`, a capped
+  `detail`). The window adds it to the assistant row as a fold beside the
+  tool folds; `failed` and `unchecked` open on their own. A new turn-failure
+  copy names `stop_check_failed`. `tst run` and `tst attach` print one
+  line on stderr. The feedback itself is never a chat bubble.
+- **`/goal` is the daemon's.** The loop reads it when the turn starts, so
+  it works the same from the window, the phone and `tst run --message`,
+  and never as a skill name. `/goal <statement>` sets the goal and the
+  statement becomes the turn's task (the model gets a short directive;
+  the transcript keeps what was typed). `/goal` alone and `/goal clear`
+  (`off`, `stop`, `none`, `cancel`, `reset`) are answered with no model
+  call: both the typed line and the answer go into the conversation, so
+  turn numbering holds. A goal is checked as a worker-judged statement
+  after the workspace checks, with the same `max_retries`; it clears when a
+  check passes with it and stays set when the turn gives up, so the next
+  message picks it up again. At most 4000 characters. The window palette
+  lists it as a built-in.
+- **The goal survives a restart.** A `session_goal` event (`set`,
+  `cleared`, `met`) records each change; revive takes the newest, and the
+  daemon logs it again when rotation drops it or an attach finds it
+  missing (the TD-5122 task-list pattern). A display-only strip above the
+  composer shows it.
+- **Where it runs.** Every native interactive turn the model ends, on the
+  normal path and when the progress guard's own check answers DONE (both
+  end the turn). Not in unattended runs (the charter's DoD still runs
+  there), delegate children, or Grok-engine sessions.

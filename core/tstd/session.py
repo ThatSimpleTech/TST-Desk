@@ -329,6 +329,11 @@ class Session:
         # TD-5122: the model's task list (``task_list`` tool). Carried into
         # every compaction summary; rebuilt from the log on revive.
         self.task_list: list[TaskListItem] = []
+        # TD-5124: the goal ``/goal`` set, checked when the model ends a
+        # turn until a check passes; rebuilt from the log on revive. And
+        # how many checks have judged it, for ``/goal`` on its own.
+        self.goal: str | None = None
+        self.goal_checks = 0
         # user_index -> sibling snapshots of conversation
         self._branches: dict[int, list[list[ChatMessage]]] = {}
         self._branch_cursor: dict[int, int] = {}

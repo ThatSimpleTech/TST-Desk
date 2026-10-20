@@ -246,6 +246,24 @@ def fallback_notice(event: dict[str, Any]) -> str:
     return f"({tier} endpoint failed: {reason}; asking backup {event.get('fallback', 1)}, {where})"
 
 
+def stop_check_notice(event: dict[str, Any]) -> str:
+    """One line for a done-check on a turn the model ended (TD-5124)."""
+    outcome = event.get("outcome")
+    items = [i for i in event.get("items") or [] if isinstance(i, dict)]
+    open_items = "; ".join(str(i.get("item")) for i in items if not i.get("passed"))
+    tries = event.get("max_retries", 0)
+    if outcome == "passed":
+        return "(done-check passed)"
+    if outcome == "retry":
+        return (
+            f"(done-check failed, try {event.get('attempt', 1)} of {tries}: "
+            f"{open_items}; the agent keeps working)"
+        )
+    if outcome == "failed":
+        return f"(done-check still failing after {tries} tries: {open_items})"
+    return f"(done-check could not run: {open_items})"
+
+
 def _visible_event_line(event: dict[str, Any]) -> str | None:
     """One-line TTY form of a user-visible event. Not a JSON dump."""
     typ = event.get("type")
@@ -253,6 +271,8 @@ def _visible_event_line(event: dict[str, Any]) -> str | None:
         return RETRACT_NOTICE
     if typ == "model_fallback":
         return fallback_notice(event)
+    if typ == "stop_check":
+        return stop_check_notice(event)
     if typ == "turn_complete":
         if event.get("failed"):
             return f"turn failed: {event.get('error_code') or 'turn_failed'}"

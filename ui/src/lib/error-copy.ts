@@ -194,6 +194,13 @@ const TURN_ERROR_COPY: Record<string, NoticeSpec> = {
 	// Before any output it was already retried under provider_retry. After
 	// output began the reply was withdrawn and asked for once more (TD-5159),
 	// unless provider_retry.max_retries is 0.
+	// TD-5124: the done-check still failed after its tries. The reply shows
+	// what failed; the goal, if any, is still set.
+	stop_check_failed: {
+		severity: "toast",
+		title: "Done-check still failing",
+		body: "The agent stopped after the tries stop_check allows. The reply shows what failed. Send a message to keep going, or change stop_check in .tst/config.yaml.",
+	},
 	stream_stalled: {
 		severity: "toast",
 		title: "Provider went quiet",

@@ -1834,8 +1834,8 @@ template whose values are the defaults, so a scaffolded file changes nothing unt
 file is read when a workspace opens and again when a paused session resumes, which is what lets
 you raise a cap and continue without restarting.
 
-Six top-level sections live here, each read by a different part of the daemon: `boundary`,
-`caps`, `attachments`, `policy`, `approved_external_imports`, and `memory`.
+Seven top-level sections live here, each read by a different part of the daemon: `boundary`,
+`caps`, `attachments`, `policy`, `approved_external_imports`, `memory`, and `stop_check`.
 
 **A file that loosens anything waits for your trust (TD-5113).** This file usually arrives with
 a clone, so one that loosens the packaged defaults (an `auto` rule, a network host, a raised
@@ -2544,6 +2544,7 @@ them when:
 | `caps.*`, `attachments.*`, `memory.max_lines` | The value is above the default. For `caps.shell_memory_mb` the default is half of this machine's RAM, so the same file can loosen on a small laptop and not on a big box. |
 | `approved_external_imports` | It lists any path. |
 | `mcp_servers`, `hooks` | The key is set at all. TST Desk does not read either from a workspace yet; they are judged now so a later feature cannot run them untrusted. |
+| `stop_check.checks` | It names any check (TD-5124). A check runs on its own whenever the model ends a turn: a command through the shell tool, or a statement that goes to the model as a message when it fails. |
 
 Tightening never asks: `allowed_commands`, `ask` and `never` rules, `class_c_default: never`,
 an approval timeout, narrower `writable_paths` and lower caps apply as written. A section the
@@ -2576,6 +2577,65 @@ When the file loosens something:
   import lasts for the session only.
 - **Only this computer decides.** A phone or another computer that sends the decision gets
   `loopback_only`. A session on another computer shows the card without its buttons.
+
+### 4.9 `stop_check` — the done-check when the model ends a turn (TD-5124)
+
+Local models often stop early, or say they are done when they are not. A done-check runs every
+time the model ends an interactive turn, and a failure sends the model back to work.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `checks` | list of strings (one string is one check), up to 10 | `[]` | What must hold when the model ends a turn. `$ <command>` runs the command through the shell tool, and it passes when the command exits 0. Anything else is a statement the worker model judges GREEN or RED from the request and the model's last reply. Empty means no check. Up to 4000 characters each. |
+| `max_retries` | int, 0–20 | `3` | How many times in one turn a failure goes back to the model. `0` checks and shows the result, but never sends the model back. |
+| `timeout_secs` | int, 1–3600 | `300` | How long a `$` check may run before it is killed. The shell tool's own 30 seconds is too short for most test suites. |
+
+<!-- verify: workspace -->
+```yaml
+stop_check:
+  checks:
+    - "$ uv run pytest -q"
+    - "The README documents every new flag"
+  max_retries: 2
+  timeout_secs: 900
+```
+
+What happens when the model ends a turn:
+
+- **Every check runs, in order, then your `/goal` if the session has one.** A `$` check goes
+  through the classifier, your policy rules and an approval card like any other shell call, so
+  a command the policy does not allow asks first. It shows in the chat as a shell call with its
+  output. The check runs as TST Desk, not as an agent decision: it is not added to the decision
+  ledger.
+- **All pass:** the turn ends as usual, with "Done-check passed" on the reply. A goal that was
+  part of the check is met, and cleared.
+- **One fails:** the failure (the command's output, start and end kept, up to 2000 characters, or
+  the statement that is not true yet) goes back to the model as a user message, and the turn goes
+  on. The chat shows "Done-check failed · try 1 of 3" on the reply; the message itself is not a
+  chat bubble. After `max_retries` tries the next failure ends the turn with the failure shown:
+  `turn_complete` carries `failed` and `error_code: stop_check_failed`, so `tst run` exits non-zero
+  and a scheduled run records a failure. The goal stays set, so your next message picks it up
+  again.
+- **One cannot be judged:** you declined the command, a policy rule or the allowlist refused it,
+  it could not start, or the worker gave no GREEN or RED. The turn ends, nothing goes back to the
+  model, and the chat says the check could not run.
+- **Stop** during a check ends the turn, as it does anywhere else.
+
+The check also runs when the progress guard's own check (TD-5002, §4.2) finds the work done,
+since that ends the turn too. It does not run in an unattended run, which polls its charter's
+`definition_of_done` instead, or in a delegate child. A Grok-engine session has its own loop and
+no done-check.
+
+**`/goal <statement>` gives one session a goal, checked the same way.** Type it in the composer
+of a native-engine session (or send it with `tst run --message`). The statement becomes the task
+for that turn, so you do not need a second message, and it joins the workspace's checks as a
+statement the worker judges, with the same `max_retries` (3 when the file sets none). The goal
+lasts until a check passes with it, `/goal clear` (or `off`, `stop`, `none`, `cancel`, `reset`)
+clears it, or another `/goal` replaces it. `/goal` on its own shows the goal and how many checks
+have judged it. Neither of those calls the model. A goal is at most 4000 characters, it needs no
+charter, and it survives a restart.
+
+**A repo's `stop_check` waits for your trust (§4.8).** It runs on its own at every turn end, so it
+counts as loosening. Your own `/goal` needs no trust.
 
 ---
 

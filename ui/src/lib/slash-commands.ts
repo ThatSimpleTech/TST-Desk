@@ -32,6 +32,14 @@ export const BUILTIN_SLASH_ITEMS: readonly SlashItem[] = [
 		source: "built-in",
 		body: "/compact ",
 	},
+	{
+		// TD-5124: the daemon reads it. `/goal` alone shows the goal,
+		// `/goal clear` clears it.
+		name: "goal",
+		description: "Keep working until this holds. Checked each time the agent stops.",
+		source: "built-in",
+		body: "/goal ",
+	},
 ];
 
 /** Prefix-match command names. Case-insensitive. */

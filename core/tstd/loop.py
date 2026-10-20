@@ -145,8 +145,15 @@ from .provider import (
 from .reply_retry import StreamResult, stream_reply
 from .router import TierName, TierRouter
 from .session import Session, SessionEventLog
+from .session_goal import (
+    answer_goal_command,
+    goal_provider_content,
+    parse_goal_command,
+    set_goal,
+)
 from .shell_read_only import probe_git
 from .steer import inject_steers
+from .stop_check import TurnStopCheck
 from .task_list import carry_text
 from .tools import ToolDispatcher, ToolRegistry
 from .tools.boundary import PathGuard
@@ -307,8 +314,6 @@ async def _show_progress_note(session: Session, messages: list[ChatMessage], tex
 
 async def _finish_progress_answer(
     session: Session,
-    messages: list[ChatMessage],
-    answer: str,
     tracker: CostTracker,
     tier: TierName,
     turn_start: float,
@@ -317,11 +322,22 @@ async def _finish_progress_answer(
     assembler: PromptAssembler,
     router: TierRouter,
     calibration: CalibrationStore,
+    *,
+    check_failed: bool = False,
 ) -> None:
-    """The progress check answered the user. End the turn with that text."""
-    await _show_progress_note(session, messages, answer)
+    """The progress check answered the user. End the turn on that answer.
+
+    *check_failed* ends it as a failed done-check (TD-5124).
+    """
     router.record_success()
-    await _emit_turn_complete(session, tier, turn_start, tracker)
+    await _emit_turn_complete(
+        session,
+        tier,
+        turn_start,
+        tracker,
+        failed=check_failed,
+        error_code="stop_check_failed" if check_failed else None,
+    )
     await maybe_verify_after_turn(session, config, tracker, client_for, assembler, calibration)
     session.snapshot_branches()
     log.info(
@@ -345,8 +361,13 @@ async def _progress_check_gate(
     assembler: PromptAssembler,
     router: TierRouter,
     calibration: CalibrationStore,
+    stop_check: TurnStopCheck | None = None,
 ) -> Literal["proceed", "pause", "stop"]:
-    """Ask the tool-free question. ``stop`` means the turn is over."""
+    """Ask the tool-free question. ``stop`` means the turn is over.
+
+    A DONE answer ends the turn, so the done-check runs on it (TD-5124):
+    a failure sends the model back to work instead.
+    """
     check_messages = [
         *messages,
         ChatMessage(role="user", content=PROGRESS_CHECK_INSTRUCTION),
@@ -381,10 +402,16 @@ async def _progress_check_gate(
         return "pause"
     kind, detail = interpret_check(content or "", guard.last_continue)
     if kind == "done":
+        await _show_progress_note(session, messages, detail)
+        checked = "end" if stop_check is None else await stop_check.at_turn_end(messages)
+        if checked == "retry":
+            guard.note_reply()
+            return "proceed"
+        if checked == "stopped":
+            await _finish_stopped_turn(session, tier, turn_start, tracker)
+            return "stop"
         await _finish_progress_answer(
             session,
-            messages,
-            detail,
             tracker,
             tier,
             turn_start,
@@ -393,6 +420,7 @@ async def _progress_check_gate(
             assembler,
             router,
             calibration,
+            check_failed=checked == "failed",
         )
         return "stop"
     if kind == "continue":
@@ -418,6 +446,7 @@ async def _interactive_guard(
     assembler: PromptAssembler,
     router: TierRouter,
     calibration: CalibrationStore,
+    stop_check: TurnStopCheck | None = None,
 ) -> bool:
     """True when the loop should call the model. False ends this turn.
 
@@ -443,6 +472,7 @@ async def _interactive_guard(
             assembler,
             router,
             calibration,
+            stop_check,
         )
         if checked == "stop":
             return False
@@ -1802,11 +1832,14 @@ async def agent_loop(
         # TD-5112: a message sent from here to turn_complete joins this
         # turn at its next tool-batch boundary.
         session.open_steering(queued.id)
-        apply_slash_skill(
-            session,
-            queued.display,
-            claude_global_fallback=config.steering.claude_global_fallback,
-        )
+        # TD-5124: ``/goal`` is TST Desk's own command, never a skill's.
+        goal_command = None if session.autonomy else parse_goal_command(queued.display)
+        if goal_command is None:
+            apply_slash_skill(
+                session,
+                queued.display,
+                claude_global_fallback=config.steering.claude_global_fallback,
+            )
 
         # TD-1721: a preset switch while idle is applied on this turn.
         if session.config is not None:
@@ -1831,7 +1864,11 @@ async def agent_loop(
             },
         )
 
-        messages.append(ChatMessage(role="user", content=queued.provider))
+        provider_content = queued.provider
+        if goal_command is not None and goal_command.kind == "set":
+            # The goal is the task: the model gets it as a directive.
+            provider_content = goal_provider_content(goal_command.text, queued.provider)
+        messages.append(ChatMessage(role="user", content=provider_content))
         await session.event_log.add(
             UserTurn(
                 session_id=session.id,
@@ -1841,6 +1878,8 @@ async def agent_loop(
                 seq=1,
             )
         )
+        if goal_command is not None and goal_command.kind == "set":
+            await set_goal(session, goal_command.text, "set")
         await session.conversation_changed()
         # TD-5155: the turn is on disk, so the queue file lets it go.
         await session.user_turn_logged(queued)
@@ -1861,6 +1900,15 @@ async def agent_loop(
         # answered, so they stay out for this turn only; the next turn,
         # whoever sends it, asks again.
         run_refused_imports: set[Path] = set()
+
+        # TD-5124: ``/goal`` alone, ``/goal clear`` or a goal over the
+        # limit is answered here, with no model call.
+        if goal_command is not None and goal_command.kind != "set":
+            note = await answer_goal_command(session, goal_command)
+            await _show_progress_note(session, messages, note)
+            await _emit_turn_complete(session, router.active_tier, turn_start, tracker)
+            session.snapshot_branches()
+            continue
 
         # 1b. Resolve any tier that leaves its slug unset (TD-1805).  This
         #     is the "first use" the story means: not import time, and not
@@ -1906,6 +1954,8 @@ async def agent_loop(
         # user turn, so the next one starts on each tier's own model.
         backups = TurnBackups()
         guard = ProgressGuard()
+        # TD-5124: the done-check when the model ends this turn.
+        stop_check = TurnStopCheck(session, tool_dispatcher, _worker_completion)
         # Model calls this turn has made, and the last tool batch: where a
         # message sent mid-turn joins it (TD-5112).
         turn_step = 0
@@ -2250,6 +2300,7 @@ async def agent_loop(
                 assembler,
                 router,
                 calibration,
+                stop_check,
             ):
                 break
 
@@ -2571,8 +2622,22 @@ async def agent_loop(
                 )
                 await session.conversation_changed()
 
-            # 2h. No tool calls (or no dispatcher) — turn is complete
-            await _emit_turn_complete(session, tier, turn_start, tracker)
+            # 2h. No tool calls (or no dispatcher): the model ended the
+            #     turn. The done-check may send it back to work (TD-5124).
+            checked = await stop_check.at_turn_end(messages)
+            if checked == "retry":
+                continue
+            if checked == "stopped":
+                await _finish_stopped_turn(session, tier, turn_start, tracker)
+                break
+            await _emit_turn_complete(
+                session,
+                tier,
+                turn_start,
+                tracker,
+                failed=checked == "failed",
+                error_code="stop_check_failed" if checked == "failed" else None,
+            )
             await maybe_verify_after_turn(
                 session, config, tracker, client_for, assembler, calibration
             )

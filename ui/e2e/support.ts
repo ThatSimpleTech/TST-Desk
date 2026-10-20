@@ -16,6 +16,8 @@ export interface Runtime {
 	held_session: string;
 	/** The task list seeded in that session, in order (TD-5122). */
 	tasks: string[];
+	/** The done-check seeded on that session's reply (TD-5124). */
+	check: string;
 }
 
 export function runtime(): Runtime {

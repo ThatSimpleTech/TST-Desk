@@ -21,7 +21,15 @@ from pathlib import Path
 from .daemon import Daemon
 from .keychain import KeychainBackend, KeychainError, store_api_key
 from .mock import MockProvider, Script
-from .protocol import AssistantDelta, TaskList, TaskListItem, TurnComplete, UserTurn
+from .protocol import (
+    AssistantDelta,
+    StopCheck,
+    StopCheckItem,
+    TaskList,
+    TaskListItem,
+    TurnComplete,
+    UserTurn,
+)
 from .provider import ChatMessage
 from .session_persist import SessionPersist
 from .session_store import SessionStore
@@ -38,6 +46,9 @@ _TASKS = (
     ("Fix the date parser", "in_progress"),
     ("Run the suite", "pending"),
 )
+# A done-check that could not run on that exchange (TD-5124): the reply
+# shows it open, and the walk folds it.
+_CHECK = "$ npm test"
 
 
 class MemoryKeychain(KeychainBackend):
@@ -111,14 +122,31 @@ async def _seed_held_session(data_dir: Path, workspace: Path) -> None:
     for event in (
         UserTurn(session_id=sid, turn_id="t1", content="Say hello", seq=1),
         AssistantDelta(session_id=sid, delta="Hello.", seq=2),
-        TurnComplete(session_id=sid, tokens=1, cost=0.0, tier="brain", duration=0.1, seq=3),
+        StopCheck(
+            session_id=sid,
+            outcome="unchecked",
+            attempt=1,
+            max_retries=3,
+            items=[
+                StopCheckItem(
+                    item=_CHECK,
+                    source="workspace",
+                    via="shell",
+                    passed=False,
+                    decided=False,
+                    detail="The user declined this command.",
+                )
+            ],
+            seq=3,
+        ),
+        TurnComplete(session_id=sid, tokens=1, cost=0.0, tier="brain", duration=0.1, seq=4),
         TaskList(
             session_id=sid,
             items=[
                 TaskListItem.model_validate({"content": content, "status": status})
                 for content, status in _TASKS
             ],
-            seq=4,
+            seq=5,
         ),
     ):
         persist.append_event(sid, event)
@@ -185,6 +213,7 @@ async def serve(runtime_file: Path) -> None:
             "held": list(_HELD),
             "held_session": _HELD_SESSION,
             "tasks": [content for content, _ in _TASKS],
+            "check": _CHECK,
         }
         await asyncio.to_thread(_write_runtime, runtime_file, payload)
         print(json.dumps(payload), flush=True)

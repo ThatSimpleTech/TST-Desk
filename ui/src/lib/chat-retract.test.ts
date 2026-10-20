@@ -94,7 +94,7 @@ describe("a reply withdrawn after a stall", () => {
 
     const row = reply();
     expect(row.text).toBe("Checking. It says hi.");
-    expect(row.parts?.map((p) => (p.kind === "text" ? p.text : `tool:${p.tool.name}`))).toEqual([
+    expect(row.parts?.map((p) => (p.kind === "text" ? p.text : p.kind === "tool" ? `tool:${p.tool.name}` : p.kind))).toEqual([
       "Checking. ",
       "tool:echo",
       "It says hi.",

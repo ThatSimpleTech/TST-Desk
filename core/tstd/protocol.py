@@ -2291,6 +2291,59 @@ class TaskList(DaemonEvent):
     items: list[TaskListItem] = Field(default_factory=list, max_length=30)
 
 
+StopCheckOutcome = Literal["passed", "retry", "failed", "unchecked"]
+
+
+class StopCheckItem(BaseModel):
+    """One item of a done-check, after it ran (TD-5124)."""
+
+    # The check as configured (``$ ...`` or a statement), or the goal.
+    item: str = Field(min_length=1, max_length=4000)
+    source: Literal["workspace", "goal"]
+    via: Literal["shell", "worker"]
+    passed: bool
+    # False when the check could not be judged: the person declined the
+    # command, a policy refused it, or the worker gave no verdict.
+    decided: bool = True
+    # The shell output's start, or the worker's reply; capped.
+    detail: str = Field(default="", max_length=2000)
+
+
+class StopCheck(DaemonEvent):
+    """The done-check ran because the model ended an interactive turn (TD-5124).
+
+    ``outcome``: ``passed`` (the turn ends), ``retry`` (the failure went
+    back to the model as a user message and the turn goes on),
+    ``failed`` (still failing after ``max_retries`` tries, so the turn
+    ends with ``turn_complete.error_code`` ``stop_check_failed``) or
+    ``unchecked`` (an item could not be judged, so the turn ends and
+    nothing went back). ``attempt`` counts the checks run this turn,
+    from 1. The window shows it on the assistant's reply.
+    """
+
+    type: Literal["stop_check"] = "stop_check"
+    session_id: str
+    outcome: StopCheckOutcome
+    attempt: int = Field(ge=1)
+    max_retries: int = Field(ge=0)
+    items: list[StopCheckItem] = Field(default_factory=list)
+
+
+class SessionGoal(DaemonEvent):
+    """The session's goal after ``/goal`` changed it, or a done-check met it (TD-5124).
+
+    ``goal`` is ``None`` once cleared. ``change`` says why: ``set`` by
+    ``/goal <statement>``, ``cleared`` by ``/goal clear``, ``met`` when a
+    done-check passed with the goal in it. The newest one is the goal; a
+    restart restores it from the log.
+    """
+
+    type: Literal["session_goal"] = "session_goal"
+    session_id: str
+    goal: str | None = Field(default=None, max_length=4000)
+    change: Literal["set", "cleared", "met"]
+
+
 class SteeringReloaded(DaemonEvent):
     """Emitted when steering files are re-resolved after a detected change.
 
@@ -3910,6 +3963,8 @@ DaemonEventT = Annotated[
     | ContextCompacted
     | ContextUsage
     | TaskList
+    | StopCheck
+    | SessionGoal
     | SteeringReloaded
     | RuleActivated
     | TierSwitched
@@ -4125,6 +4180,8 @@ _KNOWN_EVENT_TYPES = frozenset(
         "context_compacted",
         "context_usage",
         "task_list",
+        "stop_check",
+        "session_goal",
         "steering_reloaded",
         "rule_activated",
         "tier_switched",

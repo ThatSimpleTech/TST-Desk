@@ -100,7 +100,7 @@ describe("mergeSlashItems", () => {
 describe("built-in slash items (TD-5109)", () => {
 	it("lists /compact after commands and skills", () => {
 		const items = mergeSlashItems(list, [], BUILTIN_SLASH_ITEMS);
-		expect(items.map((c) => c.name)).toEqual(["review", "ship", "compact"]);
+		expect(items.map((c) => c.name)).toEqual(["review", "ship", "compact", "goal"]);
 		expect(items[2]!.source).toBe("built-in");
 		expect(filterCommands(items, "comp").map((c) => c.name)).toEqual(["compact"]);
 	});
@@ -114,7 +114,16 @@ describe("built-in slash items (TD-5109)", () => {
 	it("gives way to a workspace command of the same name", () => {
 		const own = [{ ...list[0]!, name: "compact", body: "Squash my commits." }];
 		const items = mergeSlashItems(own, [], BUILTIN_SLASH_ITEMS);
-		expect(items).toHaveLength(1);
+		expect(items.map((c) => c.name)).toEqual(["compact", "goal"]);
 		expect(items[0]!.body).toBe("Squash my commits.");
+	});
+
+	it("offers /goal with room for the statement (TD-5124)", () => {
+		const items = mergeSlashItems([], [], BUILTIN_SLASH_ITEMS);
+		const goal = filterCommands(items, "go");
+		expect(goal.map((c) => c.name)).toEqual(["goal"]);
+		const draft = insertCommandBody("/go", goal[0]!.body);
+		expect(draft).toBe("/goal ");
+		expect(slashQuery(draft)).toBeNull();
 	});
 });
