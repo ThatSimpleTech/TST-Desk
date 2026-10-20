@@ -366,6 +366,88 @@ class TestDenyAndContinue:
         assert results[0].error_code == "approval_denied"
         assert not (workspace / ".envrc").exists()
 
+    async def test_a_refused_import_is_asked_about_again_next_run(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        data_dir = tmp_path / "data"
+        workspace = _workspace(tmp_path)
+        external = (tmp_path / "external.md").resolve()
+        external.write_text("External content.")
+        (workspace / "AGENTS.md").write_text(f"Root.\n@{external}")
+        provider = MockProvider(scripts={"test-brain": Script(kind="stream", content="Reply")})
+        daemon, task = await _start(data_dir, provider)
+        try:
+            first = await cli_run.run_turn(
+                workspace,
+                "go",
+                data_dir,
+                permissions=run_permissions([], [], "deny-and-continue"),
+            )
+            sid = await _only_session_id(daemon)
+            refused = _events(daemon, sid, ToolResult)
+            asked_in_run = _events(daemon, sid, ApprovalRequest)
+            err = capsys.readouterr().err
+            second = await cli_run.run_turn(
+                workspace, "go on", data_dir, continue_last=True, output="json"
+            )
+            asked = _events(daemon, sid, ApprovalRequest)
+        finally:
+            await _stop(daemon, task)
+        assert first == EXIT_REFUSED
+        assert asked_in_run == []
+        assert "refused: external_import (approval_denied)" in err
+        # The Denied row names the file, since no card did.
+        assert [r.error_code for r in refused] == ["approval_denied"]
+        assert str(external) in refused[0].output
+        # The run's no held for its own turn: the next one asks a person.
+        assert second == EXIT_APPROVAL_NEEDED
+        assert [(a.tool_name, a.arguments) for a in asked] == [
+            ("external_import", {"path": str(external)})
+        ]
+
+    async def test_a_refused_import_binds_its_turn_only(self, tmp_path: Path) -> None:
+        from tests.test_dispatch import make_config as dispatch_config
+        from tests.test_dispatch import start_loop, wait_for_turn
+        from tstd.router import TierRouter
+
+        workspace = _workspace(tmp_path)
+        external = (tmp_path / "external.md").resolve()
+        external.write_text("External content.")
+        (workspace / "AGENTS.md").write_text(f"Root.\n@{external}")
+        session = Session(str(workspace))
+        mock = MockProvider(scripts={"test-brain": Script(kind="stream", content="Reply")})
+        await start_loop(session, TierRouter(), mock, dispatch_config())
+
+        def prompts() -> list[str]:
+            return [
+                str(m.content)
+                for r in mock.calls
+                for m in r.messages[:1]
+                if m.role == "system" and "Root." in str(m.content)
+            ]
+
+        await session.add_user_message(
+            QueuedUserMessage(display="one", provider="one", run_permissions=DENY_AND_CONTINUE)
+        )
+        await wait_for_turn(session, 1)
+        first = prompts()
+        assert not any(isinstance(e, ApprovalRequest) for e in session.event_log.all_events)
+        assert first and not any("External content." in p for p in first)
+
+        await session.add_user_message("two")
+        request = None
+        for _ in range(150):
+            request = next(
+                (e for e in session.event_log.all_events if isinstance(e, ApprovalRequest)), None
+            )
+            if request is not None:
+                break
+            await asyncio.sleep(0.02)
+        assert request is not None, "the person's turn never asked about the import"
+        assert session.resolve_approval(request.tool_call_id, True)
+        await wait_for_turn(session, 2)
+        assert "External content." in prompts()[-1]
+
 
 class TestClassC:
     @pytest.mark.parametrize("rule", ["*", "fs_write", "fs_write:.envrc"])

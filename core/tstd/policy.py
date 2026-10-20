@@ -124,10 +124,14 @@ class ApprovalOutcome:
 
     ``message`` is the structured denial text returned to the model on a
     non-approval (user denial or timeout); empty when approved.
+    ``unattended`` marks the refusal a ``tst run --on-ask
+    deny-and-continue`` turn gives instead of asking (TD-5118): no person
+    answered, so it binds that turn only and is never remembered as theirs.
     """
 
     approved: bool
     message: str = ""
+    unattended: bool = False
 
 
 # ── Argument summaries ──────────────────────────────────────────────────

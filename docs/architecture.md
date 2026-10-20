@@ -162,7 +162,10 @@ merge. A delegate child's dispatcher reads its parent turn's permissions.
 With `deny_and_continue` the session answers an approval (a tool call, an
 external import, Grok's ACP request) before any `approval_request` is
 logged: an `approval_denied` tool result saying the run answers every
-approval with no, the turn goes on, and the run exits 3. The `user_turn`
+approval with no, the turn goes on, and the run exits 3. A refused
+external import (its result names the file) stays out of that turn only,
+so the next turn asks about it again; an import a person denies stays
+out, unasked, for the rest of the session (TD-505). The `user_turn`
 echoes `run_permissions`; when it does not (a daemon older than the CLI),
 the run sends `stop_turn` and exits 1 with `run_permissions_unsupported`.
 

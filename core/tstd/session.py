@@ -689,7 +689,7 @@ class Session:
         run = self.run_permissions
         if run is None or run.on_ask != "deny_and_continue":
             return None
-        return ApprovalOutcome(False, unattended_denial_message(reason))
+        return ApprovalOutcome(False, unattended_denial_message(reason), unattended=True)
 
     async def request_approval(
         self,
@@ -794,13 +794,17 @@ class Session:
         disconnect leaves it parked.  The ``approval_request`` event carries
         a synthetic ``tool_call_id`` and ``tool_name="external_import"``; the
         class is always C (an untrusted-file-read), so ``always_allow`` is
-        never offered.
+        never offered.  On a deny-and-continue turn (TD-5118) it refuses at
+        once with an ``unattended`` outcome, which the loop keeps for that
+        turn only.
         """
         from .protocol import ApprovalRequest as ApprovalRequestEvent
 
         tool_call_id = f"external-import:{path}"
         reason = "import from outside the workspace"
-        outcome = self.unattended_denial(reason)
+        # No card names the file on a deny-and-continue turn, so the
+        # refusal itself does: it is the timeline's Denied row.
+        outcome = self.unattended_denial(f"{reason}: {path}")
         if outcome is None:
             fut: asyncio.Future[tuple[bool, str | None]] = (
                 asyncio.get_running_loop().create_future()

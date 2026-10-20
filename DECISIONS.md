@@ -16097,7 +16097,11 @@ they last and what the model reads were left open.
   `approval_denied`, with text saying the run answers every approval with
   no, so the window shows "Denied", the audit keeps it like any denial,
   and `tst run` counts it a refusal (exit 3), not approval needed (4). The
-  turn runs to its end. Skip-all still turns every `ask` into `auto`
+  turn runs to its end. A refused external import is left out of that
+  turn's prompt only: the loop keeps it apart from the imports a person
+  denied (which stay out, unasked, for the session, TD-505), so the next
+  turn asks again. With no card to name the file, the refusal's text
+  names it, and `tst run` prints it as `external_import`. Skip-all still turns every `ask` into `auto`
   first, as before; it is the user's machine-wide setting, not a flag.
 - **The daemon echoes them on `user_turn`.** The run checks its own
   `user_turn` carries `run_permissions`. A daemon older than the CLI

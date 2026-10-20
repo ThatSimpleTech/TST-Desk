@@ -1356,7 +1356,8 @@ async def agent_loop(
     embeddings_client = EmbeddingsClient.from_config(config)
 
     # External-import approvals (TD-505): approved paths are durable per
-    # workspace; denied paths are session-scoped and not re-prompted.
+    # workspace; paths a person denied are session-scoped and not
+    # re-prompted.  A deny-and-continue run's refusal is per turn (TD-5118).
     approved_imports = _load_import_approvals(session)
     denied_imports: set[Path] = set()
 
@@ -1676,6 +1677,10 @@ async def agent_loop(
         tracker.begin_turn()
         clear_turn_writes(session)
         turn_start = time.time()
+        # TD-5118: imports a deny-and-continue run refused.  No person
+        # answered, so they stay out for this turn only; the next turn,
+        # whoever sends it, asks again.
+        run_refused_imports: set[Path] = set()
 
         # 1b. Resolve any tier that leaves its slug unset (TD-1805).  This
         #     is the "first use" the story means: not import time, and not
@@ -1821,10 +1826,14 @@ async def agent_loop(
                     memory=memory_block,
                     project_context=project_context if tier == "brain" else None,
                     approved_imports=frozenset(approved_imports),
-                    denied_imports=frozenset(denied_imports),
+                    denied_imports=frozenset(denied_imports | run_refused_imports),
                     loaded_skills=list(session.loaded_skills),
                 )
-                pending = [p for p in assembled.steering.pending_imports if p not in denied_imports]
+                pending = [
+                    p
+                    for p in assembled.steering.pending_imports
+                    if p not in denied_imports and p not in run_refused_imports
+                ]
                 if not pending:
                     break
                 approved_any = False
@@ -1834,13 +1843,17 @@ async def agent_loop(
                         approved_imports.add(path)
                         approved_any = True
                     else:
-                        denied_imports.add(path)
+                        if outcome.unattended:
+                            run_refused_imports.add(path)
+                        else:
+                            denied_imports.add(path)
                         log.warning(
                             "external import denied",
                             extra={
                                 "extra_fields": {
                                     "session_id": session.id,
                                     "path": str(path),
+                                    "unattended": outcome.unattended,
                                 }
                             },
                         )

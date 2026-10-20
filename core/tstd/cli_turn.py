@@ -279,7 +279,12 @@ class _TurnReader:
         code = event.get("error_code")
         if event.get("status") != "error" or code not in REFUSAL_CODES:
             return
-        tool = self.tool_names.get(str(event.get("tool_call_id")), "tool")
+        call_id = str(event.get("tool_call_id"))
+        tool = self.tool_names.get(call_id) or (
+            # An external import has no tool_call; the session names its
+            # result by this synthetic id (TD-505, TD-5118).
+            "external_import" if call_id.startswith("external-import:") else "tool"
+        )
         self.refusals.append(_Refusal(tool=tool, code=str(code)))
         self.end_line()
         print(f"refused: {tool} ({code})", file=sys.stderr)
