@@ -14833,3 +14833,155 @@ private `_request`; `request()` keeps its signature.
 sessions (above); wrapping each stream consumer in `aclosing` instead of
 closing inside the provider (every caller would have to remember it,
 and `retry_stream` would still leak its failed attempts).
+
+---
+
+## 2026-10-19 — TD-5157: the daemon's git stages and restores bytes itself; `.config/git` and cmd redirects are exec-later (Class B)
+
+Follow-ups from TD-5108's recorded residual risk.
+
+**Filter drivers.** The daemon no longer runs `git add`, `git commit` or
+`git checkout-index`. `core/tstd/git_stage.py` stages a file with
+`hash-object -w --no-filters` and `update-index --index-info`, mirroring
+`git add -- <path>`: line endings are normalised by git's own rules redone
+in `core/tstd/git_eol.py` (`convert_attrs`, `crlf_to_git` with the "safer
+autocrlf" index check, `convert_is_binary`), the converted bytes hashed
+from memory and the rest with `--stdin-paths`; a missing tracked path is removed, a folder stages
+what `git add` would under it (tracked plus untracked, not ignored, no
+nested repos or submodules), a symlink is stored as a link, the exec bit
+follows `core.fileMode`, and an untracked ignored path is refused as
+`git add` refuses it. The checkpointer stages into its temp index with
+it. `commit_on_head` does the memory commit and the charter sign: HEAD's
+tree plus the paths in a temp index, `write-tree`, `commit-tree`, the
+user's index updated for those paths, then `update-ref HEAD <new> <old>`
+with a `commit: <subject>` reflog line. Unchanged bytes are "nothing to
+commit" (the memory commit reports `skipped`; the charter is already
+signed). A `MERGE_HEAD`, `CHERRY_PICK_HEAD` or `REVERT_HEAD` refuses, as
+`git commit -- <path>` does. The start gate hashes the charter with
+the same staging code (`worktree_blob_id`, nothing written), matching
+what the sign stores.
+
+`core/tstd/git_restore.py` writes the revert's blobs (`cat-file --batch`)
+itself: through a fresh sibling and a rename, never through a symlink in
+a parent folder or at the target, never into `.git`. It applies the parts
+of a checkout that run no command: git's end-of-line rules
+(`crlf_to_worktree`, attributes from `check-attr --cached` on the
+restored commit's tree), and an LFS pointer on a `filter=lfs` path is filled
+from `<git-common-dir>/lfs/objects` when the object is there with the
+right size and SHA-256. Otherwise the pointer text is written and the path
+is reported (`RevertOutcome.pointers`, logged as `lfs_pointers`).
+
+Three calls cannot avoid the working tree or the user's index: the
+checkpointer's `git status` (the dirty-tree notice), the validator's
+`git diff <since>`, and the index update after a memory or charter commit
+(git hashes a racily clean entry through its filter whenever it writes an
+index; a test shows it). Those get `filter_pins` (`core/tstd/git_raw.py`):
+`git config --get-regexp ^filter\.` just before the call, then
+`-c filter.<name>.clean= -c …smudge= -c …process= -c …required=false`
+for every driver named. A name `-c` cannot carry (one with `=`) fails
+closed: no notice, an empty validator diff, or a failed commit.
+
+**What changes for CRLF and LFS files** (the story's ask). CRLF: nothing.
+The first draft stored raw bytes (`--no-filters` alone), which put CRLF
+blobs on the `tst/…` branches on Windows (`core.autocrlf=true` is Git for
+Windows' default): every touched line then differed from HEAD in the
+review surface and in the validator's `git diff`, whose working-tree side
+git still normalises. So staging and restore redo git's eol rules, and a
+differential test (`test_eol_rules_match_git_itself`) holds both
+directions to `git add` and `cat-file --filters` across `core.autocrlf`,
+nine attribute forms and seven contents. LFS: a checkpoint stores the
+file's content, not a pointer (making the pointer is git-lfs's `clean`),
+so those branches are bigger and not LFS-shaped if pushed; restoring a
+checkpointed blob is byte-exact, and HEAD's pointer is filled from the
+local store. The validator's diff compares an LFS file's content with
+HEAD's pointer, so it shows as a changed binary file. `ident` and
+`working-tree-encoding` are not applied either way.
+
+**Choices the story left open, each the conservative one.** Signing keeps
+parity: `commit-tree` ignores `commit.gpgSign` (git 2.9.1 on), so `-S` is
+passed when it is set, as `git commit` signed before; `gpg.program` stays
+recorded residual risk, not widened. The plain-bytes reading of LFS does
+not fetch: a missing object leaves the pointer and a log line rather than
+a network call. The GitHub connector's `clone` still checks out with the
+user's filters: it is a clone the user asked for, like their own.
+
+**Git's global folder.** `is_exec_later_write` now also matches any path
+with a `.config` segment followed by `git` (so `~/.config/git/config`,
+`attributes`, `ignore` and anything else there), a segment that names
+`XDG_CONFIG_HOME` followed by `git` (`$XDG_CONFIG_HOME`,
+`${XDG_CONFIG_HOME:-$HOME/.config}`, `%XDG_CONFIG_HOME%`), and anything
+whose resolved path is in `~/.config/git` or in the folder the daemon's own
+`XDG_CONFIG_HOME` names, plus `/git`. `~/.config/git` counts whether or not
+`XDG_CONFIG_HOME` is set: git reads it when the variable is unset (the
+usual case), and the agent's shell or the user's own git may not share the
+daemon's environment. The whole folder,
+not three names: `ignore` cannot run anything, but it sits with the two
+that can, and nothing else belongs there for an agent to write.
+
+**cmd redirects.** On a host whose shells include `cmd`
+(`policy_shell.host_dialects()`, i.e. Windows), the write-target table
+also reads the line as cmd.exe does (`core/tstd/autonomy/cmd_targets.py`):
+`"` toggles quoting, `^` escapes outside quotes, `>`, `>>`, `n>` and `>&`
+redirect to the next word with or without a space, and the target's `\`
+become `/`. Where cmd's word end is unclear (`(`, `)`, `;`, `,`, `=`),
+every reading is kept; an extra target can only make a write Class C.
+POSIX hosts are unchanged: there `sh` turns `.git\hooks\x` into a plain
+file named `.githooksx`.
+
+**Second-opinion review (Grok), checked.** Confirmed and fixed: a
+restored name holding `\` or `:` is refused on Windows, where it would be
+read again as a separator, drive or stream (git for Windows refuses it
+too); the LFS object is opened without following links, must be a regular
+file, and is read only up to the pointer's size; when the filter pins
+cannot be built the validator's diff is empty and the watermark does not
+move, so the next check covers those edits; and an exec-later name is
+judged on the path as written as well as the path it resolves to, so a
+redirect to `~/.config/git/config` that links into a dotfiles workspace
+is Class C. Declined: enforcing `core.safecrlf=true` (git add then
+refuses a conversion it cannot round-trip, which used to fail the
+checkpoint; the daemon now converts as under the default `warn`, so the
+write still gets its undo point).
+
+**PR #25 review, checked.** All four findings confirmed and fixed. (1)
+`git status` and `git diff` recurse into submodules, and the child git
+reads the submodule's own config, whose drivers the pins never named, so a
+`sub/.gitattributes` could run one. Both now pass
+`--ignore-submodules=dirty` (a submodule counts only when its commit
+moved, which reads no work tree) and the diff `--submodule=short` (an
+inline submodule diff, `diff.submodule=diff`, runs the submodule's
+`diff.external`). Chosen over `=all`, which would hide a moved submodule
+from the validator, and over pins built from every submodule's config,
+which nest and race. (2) A revert where the agent swapped a file and a
+folder failed: the restore met the folder or file in the way. The paths
+the drift added are now removed first (a file or link, never through a
+link, and the folders that leave empty), then the good blobs written. Not
+`checkout-index -f`'s behaviour in full: it deleted a whole folder in the
+way, and anything else in it is content no checkpoint holds, so a folder
+that is still not empty, or a file where a folder must go, stops the
+revert with an error and the auto-branch is not moved (the conservative
+option; the revert's rule is that user-only dirt is left). (3)
+`restore_blobs` dropped a path the commit did not have, and the revert's
+`git diff --name-status` ran without `-z`, so a name outside ASCII came
+back quoted and was dropped: a silent partial revert reported as
+`reverted`. The diff now runs with `-z`, a failed diff raises, and a path
+the commit lacks raises before anything on disk changes. (4) With
+`XDG_CONFIG_HOME` unset, a workspace that is `~/.config` or
+`~/.config/git` saw only `git/config` or `config`, so the live global
+config was a plain Class A edit; see "Git's global folder" above.
+
+**Residual risk (recorded).** The pins list the drivers config names just
+before each call; a driver added in that moment needs a write to a Class
+C config file (or to a workspace file the user's config already
+includes). `gpg.program` and `core.askPass` are unchanged from TD-5108.
+The fs tools are classified on the resolved path (TD-608, TD-5148), so an
+`fs_write` through a symlink named like a protected path into an ordinary
+workspace file is judged by that file; carrying the written path to the
+classifier is a follow-up.
+
+**Rejected:** pinning drivers for `git add` and `checkout-index` instead
+of plumbing (the story names plumbing, and the pins race where plumbing
+cannot); `--attr-source`/`attr.tree` to ignore in-tree attributes (git
+2.40+, unknown to the git macOS ships, and it would also drop the user's
+`eol` rules); fetching LFS objects on revert (a network call nobody
+asked for); making `cmd` reading apply on POSIX hosts (it would flag
+writes that land in a plain file).

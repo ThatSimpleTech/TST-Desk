@@ -20,9 +20,13 @@ Command-line ``-c`` beats every config file and include, so all three are
 pinned here: fsmonitor off, hooks off, and bare repos only when named
 explicitly. ``fs_grep`` adopted the first and last first (TD-5141).
 
-Not pinned: filter drivers, ``gpg.program`` with ``commit.gpgSign``, and
-``core.askPass``. They run only when a config file names them, and those
-files are Class C to write (DECISIONS.md, TD-5108, residual risk).
+Filter drivers cannot be pinned here: their names are the user's. The
+daemon avoids them instead, staging and restoring bytes itself and
+switching the configured ones off where it must read the working tree
+(``git_raw``, ``git_stage``, ``git_restore``; TD-5157). Not pinned:
+``gpg.program`` with ``commit.gpgSign``, and ``core.askPass``. They run
+only when a config file names them, and those files are Class C to write
+(DECISIONS.md, TD-5108, residual risk).
 """
 
 from __future__ import annotations

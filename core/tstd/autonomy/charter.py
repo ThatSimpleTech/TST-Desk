@@ -35,7 +35,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from ..boundary_config import BoundarySection, CapsSection
 from ..config import ConfigError
+from ..git_raw import GitRawError
 from ..git_safe import git_command
+from ..git_stage import commit_on_head, worktree_blob_id
 from ..proc_lifecycle import finish_subprocess
 
 _GIT_TIMEOUT = 30.0
@@ -336,15 +338,12 @@ async def sign_charter(workspace: str | Path) -> str | None:
                 f"{rel} must be committed before an autonomous run starts, "
                 f"but {ws} is not inside a git repository"
             )
-        rc, _, err = await _git(ws, "add", "--", rel, env=env)
-        if rc != 0:
-            return err.strip() or f"git add failed for {rel}"
-        rc, _, _ = await _git(ws, "diff", "--cached", "--quiet", "--", rel, env=env)
-        if rc == 0:
-            return None
-        rc, out, err = await _git(ws, "commit", "-m", CHARTER_COMMIT_SUBJECT, "--", rel, env=env)
-        if rc != 0:
-            return (err or out).strip() or f"git commit failed for {rel}"
+        # Plumbing with the bytes on disk, not git add/commit: those run the
+        # filter driver an in-tree .gitattributes names (TD-5157). None
+        # means the committed charter already matches: signed.
+        await commit_on_head(ws, [charter_path(ws)], CHARTER_COMMIT_SUBJECT, env=env)
+    except GitRawError as e:
+        return str(e) or f"git commit failed for {rel}"
     except (OSError, TimeoutError) as e:
         return f"git unavailable ({e}); cannot sign {rel}"
     return None
@@ -400,10 +399,13 @@ async def charter_start_error(workspace: str | Path) -> str | None:
             # Tracked in the index but not in any commit: staged-new, or a
             # repository with zero commits.
             return _uncommitted()
-        rc2, disk_blob, err = await _git(ws, "hash-object", "--", tracked_rel, env=env)
-        if rc != 0 or rc2 != 0:
-            return f"git hash check failed for {rel}: {err.strip()} — refusing to start"
-        if disk_blob.strip() != head_blob.strip():
+        # Hashed as the sign stores it, without the clean filter an
+        # in-tree .gitattributes could name (TD-5157).
+        try:
+            disk_blob = await worktree_blob_id(ws, ws / tracked_rel, env)
+        except GitRawError as e:
+            return f"git hash check failed for {rel}: {e} — refusing to start"
+        if disk_blob != head_blob.strip():
             return _uncommitted()
     except (OSError, TimeoutError) as e:
         return f"git unavailable ({e}); cannot verify that {rel} is committed"

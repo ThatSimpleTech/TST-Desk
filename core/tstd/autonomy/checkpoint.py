@@ -15,8 +15,12 @@ Safety model — git plumbing only:
   (or HEAD's tree for the first one) plus the agent-written paths, using
   a temporary index file.  Dirty working-tree changes outside the
   written paths are neither captured nor disturbed.
-- Checkpoints respect ``.gitignore`` (plain ``git add``, never ``-f``),
-  keeping runtime state (§8) out of the undo stack.
+- Checkpoints respect ``.gitignore`` (an untracked ignored path is
+  refused as ``git add`` refuses it, never forced), keeping runtime state
+  (§8) out of the undo stack.
+- Files are staged as the bytes on disk (``git_raw.stage_paths``), so no
+  filter driver an attribute names runs (TD-5157).  A CRLF file is
+  stored with CRLF and a git-lfs file whole, not as a pointer.
 - Git children inherit the shell tool's ``sanitized_env()`` — no API
   keys, tokens, or keychain material reach git (TD-4816).
 
@@ -32,15 +36,14 @@ Degradation (informed once per session, never fatal):
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import os
-import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from ..git_raw import GitRawError, filter_pins, repo_top, temp_index
 from ..git_safe import git_command
+from ..git_stage import stage_paths
 from ..logging import get_logger
 from ..proc_lifecycle import finish_subprocess
 from .classifier import DecisionClass
@@ -322,7 +325,17 @@ class Checkpointer:
         """Report pre-existing uncommitted changes once, at first checkpoint."""
         if DIRTY_BASELINE in self._notified:
             return None
-        rc, out, _ = await self._git("status", "--porcelain")
+        from ..tools.shell import sanitized_env
+
+        # git status hashes stat-dirty files through their filter (TD-5157).
+        # It would also run status inside each submodule, under that
+        # submodule's own config, which the pins do not cover: a submodule
+        # counts only when its commit moved, which reads no work tree.
+        try:
+            pins = await filter_pins(self._workspace, sanitized_env())
+        except GitRawError:
+            return None  # a driver that cannot be switched off: no status run
+        rc, out, _ = await self._git(*pins, "status", "--porcelain", "--ignore-submodules=dirty")
         if rc != 0 or not out.strip():
             return None
         return self._notice_once(
@@ -362,28 +375,19 @@ class Checkpointer:
     ) -> str:
         """Build the snapshot commit with a temp index; update the branch ref."""
         env = self._identity_env()
-        index_fd, index_path = tempfile.mkstemp(prefix="tstd-checkpoint-index-")
-        os.close(index_fd)
-        # Git must create the index itself: a pre-existing zero-byte
-        # file reads as a corrupt index ("smaller than expected").
-        os.unlink(index_path)
-        index_env = {**env, "GIT_INDEX_FILE": index_path}
-        try:
+        top = await repo_top(self._workspace, env)
+        with temp_index("tstd-checkpoint-index-") as index_path:
+            index_env = {**env, "GIT_INDEX_FILE": index_path}
             if parent is not None:
                 rc, _, err = await self._git("read-tree", parent, env=index_env)
                 if rc != 0:
                     raise RuntimeError(f"git read-tree failed: {err.strip()}")
-            for path in paths:
-                rc, _, err = await self._git("add", "--", str(path), env=index_env)
-                if rc != 0:
-                    raise RuntimeError(f"git add failed for {path}: {err.strip()}")
+            # Raw bytes, no filter driver (TD-5157): not `git add`.
+            await stage_paths(top, paths, env=index_env)
             rc, out, err = await self._git("write-tree", env=index_env)
             if rc != 0:
                 raise RuntimeError(f"git write-tree failed: {err.strip()}")
             tree = out.strip()
-        finally:
-            with contextlib.suppress(OSError):
-                os.unlink(index_path)
 
         message = self._message(paths, tool_name, tool_call_id, decision_class, decision_rule)
         args = ["commit-tree", tree]

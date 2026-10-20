@@ -9568,6 +9568,68 @@ filter-driver and `gpg.program` residual risk.
 
 ---
 
+### TD-5157 — Exec-later protection follow-ups
+**Size:** 5 · **Depends on:** TD-5108 · Follow-ups from TD-5108 (PR #13)
+
+TD-5108 recorded three gaps. The daemon's own git still ran filter
+drivers: `clean` on the checkpointer's and memory commit's `git add` and
+on `git status`, `smudge` on the revert's `checkout-index`, so an
+in-tree `.gitattributes` (a Class A write) could route a file through a
+filter the user configured. `>> ~/.gitconfig` was Class C but
+`>> ~/.config/git/config` only the B floor. And on Windows, where the
+interactive shell is cmd.exe, the write-target table tokenized with
+POSIX rules, so `echo x > .git\hooks\pre-commit` was never Class C.
+
+**Acceptance criteria:**
+- [x] The daemon's git calls (memory commit, checkpointer stage and
+      restore in `core/tstd/autonomy`, charter sign) run no filter driver
+      named in a repo's config or `.gitattributes`: staging is
+      `git hash-object -w --no-filters` plus `update-index --index-info`
+      and restore writes the blob bytes itself. Tests plant `clean`,
+      `smudge` and `process` drivers with an in-tree `.gitattributes` and
+      show none runs, including for `git status`, the validator's diff
+      and the write of the user's index after a memory commit
+- [x] Checkpoints still work for CRLF and LFS files, what changes for
+      them is documented (docs/configuration.md, DECISIONS.md), and tests
+      cover both: a round trip through a checkpoint, and a revert that
+      takes HEAD's normalised CRLF blob or LFS pointer
+- [x] Git's XDG global config folder (`.config/git/config`,
+      `.config/git/attributes`, `.config/git/ignore`, and
+      `$XDG_CONFIG_HOME/git/`) is protected like `.gitconfig`, for fs
+      writes and shell redirects
+- [x] On Windows a native cmd redirect into `.git` (`echo x >
+      .git\hooks\pre-commit`) is Class C: cmd lines are tokenized the
+      cmd way
+- [x] docs/configuration.md and DECISIONS.md are kept in step, and the
+      tests fail on the old code
+
+Done (2026-10-19): `core/tstd/git_stage.py` (`stage_paths`,
+`commit_on_head`) mirrors `git add` and `git commit -- <path>` with
+plumbing; `core/tstd/git_restore.py` writes blobs back and fills LFS
+pointers from the local store (no fetch; a missing object leaves the
+pointer and is reported); git's end-of-line rules are redone in
+`core/tstd/git_eol.py` for both, held to git's own output by a
+differential test, so CRLF files come out as before; `filter_pins` in
+`core/tstd/git_raw.py` switches every configured driver off for the
+calls that must read the working tree or write the user's index. An LFS
+file is now stored whole in a checkpoint, not as a pointer. `is_exec_later_write` matches `.config/git`
+and `XDG_CONFIG_HOME` forms; `core/tstd/autonomy/cmd_targets.py` reads
+redirects as cmd.exe does when the host's dialects include `cmd`.
+Class B entry in DECISIONS.md.
+
+Review follow-ups (PR #25, 2026-10-19): `git status` and the validator's
+`git diff` no longer look inside submodules (`--ignore-submodules=dirty`,
+`--submodule=short`), whose own config can name a driver the pins do not
+cover; the revert removes what the drift added before writing, so a file
+and a folder can swap back, and stops with an error rather than delete
+content no checkpoint holds; a path the restore cannot find, or a name
+outside ASCII, fails loudly instead of reporting `reverted`; and
+`~/.config/git` counts by where it is with `XDG_CONFIG_HOME` unset. Tests
+in `core/tests/test_git_no_filters.py` and
+`core/tests/test_exec_later_paths.py`, each failing on the code before.
+
+---
+
 ### TD-5101 — Shell rules: judge every segment of a chained command, deny first
 **Size:** 5 · **Depends on:** none
 

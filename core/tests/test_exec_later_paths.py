@@ -16,7 +16,9 @@ import pytest
 
 from tests.test_security_suite import make_dispatcher
 from tstd.autonomy import Boundary, DecisionClass, DecisionClassifier, DecisionRequest
+from tstd.autonomy import classifier as classifier_module
 from tstd.autonomy.classifier import RULE_TABLE, is_exec_later_write
+from tstd.autonomy.cmd_targets import cmd_write_targets
 from tstd.policy import ApprovalOutcome, PolicyConfig, PolicyRule, propose_always_allow
 from tstd.tools.boundary import PathGuard
 from tstd.tools.dispatch import ToolDispatcher
@@ -55,6 +57,12 @@ PROTECTED = [
     "lefthook.toml",
     "web/.lefthook.json",
     ".tst/memory/.git/config",
+    # git's global folder (TD-5157)
+    ".config/git/config",
+    ".config/git/attributes",
+    ".config/git/ignore",
+    "home/me/.config/git/config",
+    ".CONFIG/Git/attributes",
 ]
 
 NOT_PROTECTED = [
@@ -69,6 +77,10 @@ NOT_PROTECTED = [
     ".vscode-test/out.txt",
     "notes/zshrc.md",
     ".tst/memory/gotchas.md",
+    ".config/gitk",
+    ".config/nvim/init.lua",
+    "config/git/config",
+    "src/git/config.py",
 ]
 
 
@@ -80,6 +92,10 @@ def _classify(request: DecisionRequest, boundary: Boundary | None = None) -> tup
 
 def _write(rel: str) -> DecisionRequest:
     return DecisionRequest(tool_name="fs_write", writes=(WS / rel,), is_mutation=True)
+
+
+def _write_at(path: Path) -> DecisionRequest:
+    return DecisionRequest(tool_name="fs_write", writes=(path,), is_mutation=True)
 
 
 def _shell(command: str) -> DecisionRequest:
@@ -127,6 +143,64 @@ class TestFsWrites:
         assert not is_exec_later_write(boundary, root / "src" / "extension.ts")
         assert is_exec_later_write(boundary, root / ".vscode" / "launch.json")
 
+    def test_git_global_folder_outside_the_workspace(self) -> None:
+        boundary = Boundary(workspace_root=WS)
+        assert is_exec_later_write(boundary, Path("/home/me/.config/git/config"))
+        assert is_exec_later_write(boundary, Path("/home/me/.config/git/attributes"))
+        assert not is_exec_later_write(boundary, Path("/home/me/.config/nvim/init.lua"))
+
+    def test_xdg_config_home_names_the_folder(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        xdg = tmp_path / "xdg"
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+        boundary = Boundary(workspace_root=WS)
+        assert is_exec_later_write(boundary, xdg / "git" / "config")
+        assert is_exec_later_write(boundary, xdg / "git" / "ignore")
+        assert not is_exec_later_write(boundary, xdg / "nvim" / "init.lua")
+
+    @pytest.mark.parametrize("xdg", [None, "elsewhere"])
+    @pytest.mark.parametrize("workspace", [".config", ".config/git"])
+    def test_a_workspace_at_the_default_folder_is_judged_by_where_it_is(
+        self,
+        workspace: str,
+        xdg: str | None,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """XDG_CONFIG_HOME unset is the usual case; git then reads ~/.config/git (PR #25)."""
+        home = tmp_path / "home"
+        (home / ".config" / "git").mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        if xdg is None:
+            monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        else:
+            monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / xdg))
+        ws = home / workspace
+        boundary = Boundary(workspace_root=ws)
+        live = home / ".config" / "git" / "config"
+
+        assert _classify(_write_at(live), boundary) == ("C", "exec-later-write")
+        assert _classify(_write_at(live.with_name("attributes")), boundary)[0] == "C"
+        rel = live.relative_to(ws).as_posix()
+        assert _classify(_shell(f"echo x >> {rel}"), boundary)[0] == "C"
+        if workspace == ".config":
+            assert _classify(_write_at(ws / "nvim" / "init.lua"), boundary)[0] == "A"
+
+    def test_a_dotfiles_symlink_is_judged_by_the_name_written_too(self, tmp_path: Path) -> None:
+        """~/.config/git/config linked into a dotfiles workspace (TD-5157 review)."""
+        ws = tmp_path / "dotfiles"
+        (ws / "git").mkdir(parents=True)
+        (ws / "git" / "config").write_text("[user]\n")
+        link = tmp_path / "home" / ".config" / "git" / "config"
+        link.parent.mkdir(parents=True)
+        link.symlink_to(ws / "git" / "config")
+        boundary = Boundary(workspace_root=ws)
+        assert is_exec_later_write(boundary, link)
+        request = _shell(f"echo '[include] path = x' >> {link}")
+        assert DecisionClassifier(boundary).classify(request).decision_class is DecisionClass.C
+
     @pytest.mark.skipif(not hasattr(Path, "symlink_to"), reason="no symlinks")
     def test_symlink_into_dot_git_is_judged_by_its_target(self, tmp_path: Path) -> None:
         hooks = tmp_path / ".git" / "hooks"
@@ -152,10 +226,20 @@ class TestShellTargets:
             "cat settings.json > .vscode/settings.json",
             "npm test && echo done > sub/.git/HEAD",
             "echo x >! .git/config",
+            # git's global folder (TD-5157): was the B floor, unlike ~/.gitconfig
+            "echo '[include] path = x' >> ~/.config/git/config",
+            "printf '* filter=x' > $XDG_CONFIG_HOME/git/attributes",
+            'echo x >> "${XDG_CONFIG_HOME:-$HOME/.config}/git/config"',
+            "echo '*.py filter=x' | tee -a ~/.config/git/attributes",
+            "echo build > /home/me/.config/git/ignore",
         ],
     )
     def test_redirect_or_tee_into_a_protected_path_is_class_c(self, command: str) -> None:
         assert _classify(_shell(command)) == ("C", "shell-exec-later-write")
+
+    def test_gitconfig_and_the_xdg_config_now_agree(self) -> None:
+        for command in ("echo x >> ~/.gitconfig", "echo x >> ~/.config/git/config"):
+            assert _classify(_shell(command)) == ("C", "shell-exec-later-write")
 
     @pytest.mark.parametrize(
         "command",
@@ -172,6 +256,65 @@ class TestShellTargets:
 
     def test_steering_redirect_still_reports_as_steering(self) -> None:
         assert _classify(_shell("echo x > AGENTS.md")) == ("C", "shell-steering-write")
+
+
+# ── cmd.exe redirects on Windows (TD-5157) ──────────────────────────────
+
+
+@pytest.fixture
+def windows_shell(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The host reads commands as Windows does: ``cmd /c`` and ``sh -c``."""
+    monkeypatch.setattr(classifier_module, "host_dialects", lambda: ("posix", "cmd"), raising=False)
+
+
+class TestCmdRedirects:
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "echo x > .git\\hooks\\pre-commit",
+            "echo x>.git\\hooks\\pre-commit",
+            "echo [core] 1>>.git\\config",
+            'echo x > ".git\\hooks\\pre-commit"',
+            "echo x > .g^it\\hooks\\pre-commit",
+            "(echo {}) > .vscode\\settings.json",
+            "echo a & echo b>>sub\\.envrc",
+            'type nul > "%USERPROFILE%\\.gitconfig"',
+            "echo [include] >> %USERPROFILE%\\.config\\git\\config",
+            "echo x > %XDG_CONFIG_HOME%\\git\\attributes",
+        ],
+    )
+    def test_native_redirect_into_a_protected_path_is_class_c(
+        self, command: str, windows_shell: None
+    ) -> None:
+        assert _classify(_shell(command)) == ("C", "shell-exec-later-write")
+
+    def test_steering_through_cmd_is_steering(self, windows_shell: None) -> None:
+        assert _classify(_shell("echo x > docs\\AGENTS.md")) == ("C", "shell-steering-write")
+
+    @pytest.mark.parametrize(
+        "command", ["echo x > notes.txt", 'echo ".git\\hooks\\x" > notes.txt', "dir 2>&1"]
+    )
+    def test_other_redirects_keep_the_shell_floor(self, command: str, windows_shell: None) -> None:
+        assert _classify(_shell(command)) == ("B", "shell-floor")
+
+    def test_a_posix_host_reads_backslashes_as_escapes(self) -> None:
+        """sh writes ``.githookspre-commit`` here, a plain file: the B floor."""
+        assert _classify(_shell("echo x > .git\\hooks\\pre-commit")) == ("B", "shell-floor")
+
+    @pytest.mark.parametrize(
+        ("command", "targets"),
+        [
+            ("echo a > b.txt", ["b.txt"]),
+            ("echo a ^> .git\\config", []),
+            ('echo ">" .git\\config', []),
+            ('echo a > "x y\\z.txt"', ["x y/z.txt"]),
+            ("echo a 2>&1", ["1"]),
+            ("echo a >>out.log&echo b", ["out.log"]),
+            ("(echo a)>x\\y)", ["x/y)", "x/y"]),
+        ],
+    )
+    def test_cmd_tokenizer(self, command: str, targets: list[str]) -> None:
+        assert cmd_write_targets(command) == targets
 
 
 # ── Rule order ──────────────────────────────────────────────────────────
