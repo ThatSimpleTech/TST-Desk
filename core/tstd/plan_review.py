@@ -28,6 +28,7 @@ from .protocol import (
     PlanReview,
     PlanReviewed,
     ReviewPlan,
+    TierState,
     build_error,
 )
 from .task_list import carry_text as task_carry_text
@@ -172,6 +173,20 @@ def restore_pinned_plan(session: Session, events: Sequence[DaemonEvent]) -> None
     newest = next((e for e in reversed(events) if isinstance(e, PlanPinned)), None)
     if newest is not None:
         session.pinned_plan = newest.plan
+
+
+def restored_plan_mode(saved: bool | None, events: Sequence[DaemonEvent]) -> bool:
+    """Whether a revived session is still planning.
+
+    Plan mode is read-only, so a restart must not quietly end it: only
+    approving a plan or turning it off does. *saved* is the session row's
+    ``plan_mode``. A row written before that field (None) falls back to
+    the newest ``tier_state`` in the log, which every plan change logs.
+    """
+    if saved is not None:
+        return saved
+    newest = next((e for e in reversed(events) if isinstance(e, TierState)), None)
+    return newest is not None and newest.plan
 
 
 async def keep_pinned_plan_visible(session: Session) -> None:

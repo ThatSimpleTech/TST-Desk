@@ -176,7 +176,7 @@ from .notify.slack import schedule as schedule_slack_notify
 from .notify.slack import send as send_slack_notify
 from .notify.telegram import schedule as schedule_telegram_notify
 from .plan_review import answer as answer_plan
-from .plan_review import keep_pinned_plan_visible, restore_pinned_plan
+from .plan_review import keep_pinned_plan_visible, restore_pinned_plan, restored_plan_mode
 from .policy import (
     PolicyConfig,
     add_rule,
@@ -360,6 +360,7 @@ from .protocol import (
     SteeringReject,
     StopTurn,
     TestEmail,
+    TierState,
     Transcribe,
     Transcript,
     TrustWorkspaceConfig,
@@ -2448,6 +2449,10 @@ class Daemon:
             # `tst run --continue` all read updated_at as "used last", and a
             # turn changes no state (TD-5111).
             await self._session_store.touch(event.session_id)
+        elif isinstance(event, TierState):
+            # Every plan-mode change logs tier_state, so this is the one place
+            # the row learns it; a restart reads it back (TD-5123).
+            await self._session_store.set_plan_mode(event.session_id, event.plan)
         announce = self._cu_permissions_session(event)
         if announce is not None:
             first_run = not load_shown(self.data_dir, driver_cu_platform(self.desktop_driver))
@@ -3801,6 +3806,11 @@ class Daemon:
         if loaded.conversation is not None:
             conversation = loaded.conversation
             sess.conversation[:] = repair_cut_conversation(conversation) if cut else conversation
+        # TD-5123: plan mode is read-only, so a restart keeps it. Set before
+        # the loop starts, so no turn and no tier_state sees it off.
+        if restored_plan_mode(record.plan_mode if record is not None else None, loaded.events):
+            sess.router = TierRouter()
+            sess.router.set_plan(True)
         await self._attach_session_runtime(sess)
         if cut:
             await self._seal_cut_turn(sess)

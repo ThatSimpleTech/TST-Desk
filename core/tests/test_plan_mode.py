@@ -34,7 +34,12 @@ from tstd.daemon import Daemon
 from tstd.mock import Script
 from tstd.notify import discord, ntfy, slack, telegram
 from tstd.plan_mode import PLAN_NOTE, with_plan_note
-from tstd.plan_review import carry_for, keep_pinned_plan_visible, restore_pinned_plan
+from tstd.plan_review import (
+    carry_for,
+    keep_pinned_plan_visible,
+    restore_pinned_plan,
+    restored_plan_mode,
+)
 from tstd.policy import PolicyConfig, PolicyRule
 from tstd.protocol import (
     ApprovalRequest,
@@ -49,6 +54,7 @@ from tstd.protocol import (
 )
 from tstd.router import TierRouter
 from tstd.session import Session
+from tstd.session_store import SessionStore
 from tstd.shell_read_only import READ_ONLY_ENTRIES
 from tstd.tools import build_decision_request, create_registry
 from tstd.tools.dispatch import ToolDispatcher
@@ -495,6 +501,85 @@ async def test_a_restart_reads_the_pinned_plan_back(tmp_path: Path) -> None:
     await keep_pinned_plan_visible(session)
     pinned = [e for e in session.event_log.all_events if isinstance(e, PlanPinned)]
     assert [p.plan for p in pinned] == [PLAN]
+
+
+# ── A restart does not end plan mode ────────────────────────────────────
+
+
+async def test_plan_mode_outlives_a_restart_and_writes_stay_refused(tmp_path: Path) -> None:
+    """A deploy's stop and launch must not quietly turn writes back on.
+
+    Plan mode is read-only, so only approving a plan or turning it off ends
+    it: the revived session is still planning, says so on ``tier_state``,
+    and a write the next turn asks for is refused.
+    """
+    data_dir = tmp_path / "data"
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    first = Daemon(data_dir=data_dir, provider=_Steps([]))
+    sid = await _open(first, ws)
+    before = Run(first, _Steps([]), sid, ws)
+    await before.plan()
+    await _shutdown(first, sid)
+
+    provider = _Steps(
+        [_call("fs_write", path="greet.py", content="x"), Script(kind="stream", content="Done.")]
+    )
+    second = Daemon(data_dir=data_dir, provider=provider)
+    await second._restore_sessions()
+    run = Run(second, provider, sid, ws)
+    try:
+        assert run.router.plan_mode
+        assert run.events(TierState)[-1].plan is True
+        await run.message("add greet.py")
+        [result] = await run.finished()
+        assert (result.status, result.error_code) == ("error", "plan_mode")
+        assert not (ws / "greet.py").exists()
+        user = [m for m in provider.calls[0].messages if m.role == "user"][-1]
+        assert user.content == f"add greet.py\n\n{PLAN_NOTE}"
+    finally:
+        await _shutdown(second, sid)
+
+
+async def test_the_row_follows_every_plan_change_and_approving_ends_it(
+    make_run: Any, tmp_path: Path
+) -> None:
+    run: Run = await make_run([_call("exit_plan_mode", plan=PLAN)])
+
+    def on_disk() -> bool | None:
+        record = SessionStore(tmp_path / "data").get(run.sid)
+        assert record is not None
+        return record.plan_mode
+
+    assert on_disk() is False
+    await run.plan()
+    assert on_disk() is True
+    await run.plan(False)
+    assert on_disk() is False
+    await run.plan()
+    review = await run.parked()
+    assert on_disk() is True
+    assert await run.review(review.tool_call_id, decision="approve") is None
+    await run.finished()
+    assert on_disk() is False
+
+
+def test_a_row_from_before_the_field_reads_plan_mode_from_the_log(tmp_path: Path) -> None:
+    (tmp_path / "sessions.json").write_text(
+        json.dumps([{"session_id": "s", "workspace_path": "/w", "state": "idle"}]),
+        encoding="utf-8",
+    )
+    record = SessionStore(tmp_path).get("s")
+    assert record is not None
+    assert record.plan_mode is None
+    on = TierState(session_id="s", tier="brain", plan=True, seq=1)
+    off = TierState(session_id="s", tier="brain", plan=False, seq=2)
+    assert restored_plan_mode(None, [off, on]) is True
+    assert restored_plan_mode(None, [on, off]) is False
+    assert restored_plan_mode(None, []) is False
+    # A row that has the field wins over the log.
+    assert restored_plan_mode(False, [on]) is False
+    assert restored_plan_mode(True, []) is True
 
 
 # ── Who may review, and who hears about it ──────────────────────────────

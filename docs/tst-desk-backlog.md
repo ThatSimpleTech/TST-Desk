@@ -10893,12 +10893,15 @@ phone show `PlanReviewCard.svelte` (Approve, Edit plan / Show plan, Reject,
 a note); `/plan`, `/plan on|off` and `/plan <task>` are handled by the
 window; the composer's Plan chip is TD-4603's. `tst run` exits
 `approval_needed` on a plan, and a `plan_mode` refusal counts as refused.
-OS banners and the ntfy, Slack, Discord and Telegram channels say a plan
+Plan mode outlives a restart: the session row keeps `plan_mode` (written
+on every `tier_state` that changes it) and revive sets it again before the
+loop starts, so only approving or turning it off ends it. OS banners and the ntfy, Slack, Discord and Telegram channels say a plan
 is waiting. Tests: `core/tests/test_plan_mode.py` (every refusal and every
 read in plan mode, the allowlist pinned over all builtins, skip-all plus
 an `auto` rule cannot write, MCP marking from config, the note, approve,
 edit, reject, refusals, Stop, outside plan mode, `delegate kind: worker`,
-compaction carry, revive, peers, channels, `tst run`),
+compaction carry, revive, plan mode kept across a restart with writes
+still refused, peers, channels, `tst run`),
 `ui/src/lib/plan-review.test.ts`, `ui/src/lib/plan-review-component.test.ts`,
 `ui/src/lib/task-list.test.ts` (pinned plan in the Plan pane),
 `ui/src/lib/os-notify.test.ts`, `ui/src/lib/protocol.test.ts`,

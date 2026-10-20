@@ -2265,8 +2265,11 @@ version, or reject it with a note. Approving turns plan mode off and pins the pl
 shows it, and every compaction carries it into its summary. Rejecting keeps plan mode on. Skip
 all approvals never approves a plan, and the review waits like an approval (Stop and
 `approval_timeout_seconds` end it). `tst run` exits `approval_needed` on a plan in every mode; a
-refused call counts as a refusal (`plan_mode`). Plan mode still lasts only until the daemon
-restarts; the pinned plan is read back after a restart.
+refused call counts as a refusal (`plan_mode`). Plan mode outlives a daemon restart (a deploy's
+stop and launch, a crash): only approving a plan or turning it off ends it, so a message held
+across the restart still runs read-only. The session row in `sessions.json` keeps it
+(`plan_mode`), and the pinned plan is read back too. A pinned tier (`set_tier`) still lasts only
+until the restart.
 
 **Reads inside the workspace never ask (TD-5141).** `fs_read`, `fs_list` and `fs_grep` on a
 path inside the workspace are Class A by a fixed rule, so they run without asking and without

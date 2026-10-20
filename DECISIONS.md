@@ -16719,14 +16719,23 @@ mechanism, the MCP marking and the plan's lifetime open.
    plan is reviewed, and maybe edited, on the card. A `plan_mode` refusal
    counts as a refusal (exit 3), so a script that hits a session left in
    plan mode is told instead of exiting 0 having written nothing.
-10. **Kept from TD-4603:** plan mode is still in memory only, so a daemon
-    restart ends it; the pinned plan survives.
+10. **Plan mode outlives a restart (revises TD-4603's "in memory only").**
+    Once plan mode refuses writes it is a safety boundary, not a routing
+    lock: a restart that ended it would let a message held across a deploy
+    (TD-5155) run with writes on although the person never approved a plan
+    or turned planning off. The session row keeps `plan_mode`
+    (`sessions.json`, written whenever a `tier_state` changes it), and
+    revive sets it on the new router before the loop starts. A row written
+    before the field falls back to the newest `tier_state` in the log, so
+    the deploy that ships this keeps a session that was planning. The
+    pinned plan survives as before. A pinned tier (`set_tier`) is still in
+    memory only: it routes, it does not guard.
 
 **Class C answered conservatively:** the allowlist (rather than refusing
 only `mutates` tools), plugins never plan-safe, the server's
 `readOnlyHint` ignored, exact tool names (no globs) in
 `read_only_tools`, `propose_steering_edit` and `delegate kind: worker`
-refused.
+refused, and plan mode kept across a restart (item 10; review of PR #47).
 
 **Alternatives rejected:** a plain Class C rule (skip-all would run it);
 narrowing the offered tool set in plan mode (breaks the prefix cache, and
