@@ -10255,6 +10255,34 @@ through the daemon's redaction. Exit codes: 0 success, 1 error,
 `approval_denied` tool result), 4 approval needed. The machine modes never
 prompt. See DECISIONS.md and architecture.md "`tst run` for scripts".
 
+### TD-5114 — Fetch pages through an isolated extract pass
+**Size:** 3 · **Depends on:** none · Gap audit 2026-10-14
+
+`web_fetch` handed the page's raw text straight to the brain, so a page
+could plant instructions for the agent in its context. Claude Code's fetch
+runs pages through a smaller model with a prompt instead.
+
+**Acceptance criteria:**
+- [x] `web_fetch` takes an optional `question`. The worker tier reads the page and answers it, and only that answer goes to the brain.
+- [x] Raw page text is wrapped and marked as untrusted, and hidden or tag characters are stripped.
+- [x] Long pages can be read in pages with an offset. There is a short-lived local cache.
+
+**Notes:** The worker reads as much of the page as its `context_window`
+holds, through the host the loop binds for `delegate`, and its cost lands
+on the meter as a worker call (`source: web_fetch`). A failed or empty
+worker answer is an error that points at a plain fetch; it never falls
+back to raw text. Without `question` the text comes back in
+`<untrusted_page>` tags under a header that says it is data; any copy of
+either wrapper tag in the page or the worker's answer, nested ones
+included, has its `<` escaped as `&lt;`, so it cannot close the wrapper.
+Hidden characters (tag block, zero-width,
+bidi, other format and control characters, variation selectors) are
+stripped and counted. Windows are `search.fetch_page_chars` (30000),
+shrunk under the result cap, and name the next `offset`; pages stay in
+daemon memory for `search.fetch_cache_seconds` (900, 0 is off), never on
+disk. Classification and approval are unchanged. Tests in
+core/tests/test_web_fetch_pass.py. See DECISIONS.md.
+
 ---
 
 ### TD-5112 — Steer a running turn

@@ -52,8 +52,10 @@ WORKER_CHILD_TOOLS: tuple[str, ...] = (
 class DelegateRuntime:
     """Parent-loop host bound so ``delegate`` can spawn a worker child.
 
-    ``iterations`` is mutated by the parent loop after each parent model
-    call so the child sees remaining ``max_iterations``.
+    ``web_fetch``'s extract pass reaches the worker tier and the result
+    cap through it too (TD-5114).  ``iterations`` is mutated by the parent
+    loop after each parent model call so the child sees remaining
+    ``max_iterations``.
     """
 
     provider_factory: Callable[..., Awaitable[Any]]

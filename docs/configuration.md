@@ -150,7 +150,22 @@ primary only; all empty disables the tool with copy that names this key.
 | `fallback_base_urls` | list of strings | *shipped* | Endpoints tried in order after `base_url` fails. Empty list disables fallback. Every host in the chain must be on the workspace `network` allowlist or the call stays Class C. |
 | `timeout_seconds` | float > 0 | `15` | How long a search or fetch request may run. |
 | `max_results` | int 1–20 | `8` | Default hit count when the tool call omits `max_results`. |
-| `fetch_max_bytes` | int ≥ 1 | `200000` | Cap on a `web_fetch` body. |
+| `fetch_max_bytes` | int ≥ 1 | `200000` | Cap on a `web_fetch` body. A page cut here says so at the end of its last window. |
+| `fetch_page_chars` | int ≥ 1000 | `30000` | Characters of page text in one `web_fetch` window when no `question` is asked. A smaller result cap (a small model's window) shrinks it further; the result names the `offset` to read on from (TD-5114). |
+| `fetch_cache_seconds` | int 0–86400 | `900` | How long a fetched page stays in the daemon's memory, so the next window or question does not download it again. Never written to disk; a restart empties it. `0` turns the cache off. |
+
+`web_fetch` (TD-5114) treats a page as untrusted data. Hidden characters
+(Unicode tag characters, zero-width and bidi controls, other format and
+control characters, variation selectors) are stripped from the text and
+counted. With a `question`, the session's **worker** tier reads the page
+window (as much as its `context_window` holds) and only its answer goes to
+the brain, marked as drawn from untrusted text; the call costs a worker
+call and shows on the meter. Without one, the brain gets a window of the
+text inside `<untrusted_page>` tags under a header that says it is data.
+A copy of the wrapper tag written into the page (or the worker's answer)
+has its `<` escaped as `&lt;`, so the page cannot end the wrapper early.
+Each call is still a `web_fetch` the classifier and your policy judge,
+cached or not.
 
 ### `embeddings`
 
@@ -958,6 +973,8 @@ search:
   timeout_seconds: 15
   max_results: 8
   fetch_max_bytes: 200000
+  fetch_page_chars: 30000
+  fetch_cache_seconds: 900
 embeddings:
   base_url: http://127.0.0.1:8080/v1
   model: nomic-embed-text

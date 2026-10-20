@@ -223,6 +223,10 @@ search:
   timeout_seconds: 15
   max_results: 8
   fetch_max_bytes: 200000
+  # web_fetch reads a long page in windows of this many characters, and
+  # keeps fetched pages in memory (never on disk) this many seconds.
+  fetch_page_chars: 30000
+  fetch_cache_seconds: 900
 
 # Local embeddings sidecar. OpenAI POST /v1/embeddings only — never Ollama
 # /api/embed (that evicts a resident chat model). Empty base_url disables.

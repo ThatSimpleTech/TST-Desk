@@ -15674,3 +15674,78 @@ for a turn of their own. Waiting rows are never saved as draft text.
 own); a daemon event listing waiting messages (only the sender needs it,
 and the `user_turn` already settles it everywhere); injecting into the
 Grok engine (its tool batches are not ours).
+
+---
+
+## 2026-10-20 — TD-5114: `web_fetch` reads pages through an isolated extract pass (Class B)
+
+**Context.** `web_fetch` returned a page's text to the brain as it was, so
+whoever wrote the page could write to the agent (gap audit 2026-10-14). The
+story asks for an optional `question` answered by the worker tier, raw text
+wrapped and marked untrusted with hidden and tag characters stripped, and
+offset paging with a short-lived local cache. Which worker, what happens
+when it fails, what "hidden" covers, and how the windows and the cache are
+sized were left open.
+
+**Decision.**
+
+- **The worker is the session's worker tier, through the host the loop
+  binds for `delegate`** (`DelegateRuntime`: provider factory, config,
+  dispatcher). No second place builds providers, a preset switch reaches
+  it the same way, and the call streams with no timeout resend, as the
+  work check and distill do (TD-5146). Its cost is a worker call on the
+  turn (`source: web_fetch`), shown on the meter. No tools are offered to
+  it, the system prompt says the page is data, and its answer is cleaned
+  the same way, capped at 4000 characters and wrapped in `<page_answer>`
+  under a header that says it is drawn from untrusted text.
+- **A question never falls back to raw text.** No bound worker, a failed
+  call or an empty answer is an error that tells the model to call again
+  without `question`. Falling back silently would hand the brain exactly
+  what the question was meant to keep out; a plain call is visible in the
+  timeline and still goes through approval. The most conservative reading.
+- **"Hidden or tag characters" means characters, not HTML elements.**
+  Stripped: the Unicode tag block (U+E0000-E007F), every format character
+  (category Cf: zero-width, joiners, bidi embeddings and isolates, BOM,
+  soft hyphen), control characters other than tab and newline, and the
+  variation selectors (U+FE00-FE0F, U+E0100-E01EF), which can carry bytes
+  on a visible character. The count is shown in the header. Elements hidden
+  by CSS or `hidden` were left alone: collapsed FAQ answers and menus use
+  the same markup, and dropping them would lose real content.
+- **The wrapper cannot be closed from inside.** In the page window (as the
+  brain or the worker reads it) and in the worker's answer, the `<` that
+  starts any copy of `<untrusted_page>` or `<page_answer>` (open or close,
+  any case, spaces around the slash, nested, or cut short by a cap) is
+  escaped as `&lt;`; the rest of the text is kept. The first version
+  deleted copies in one pass, and review found that nested copies rebuilt
+  a real tag once the inner one was cut out
+  (`</untrusted_<untrusted_page>page>` became `</untrusted_page>`, so a page
+  could end the wrapper and write "instructions" outside it). Escaping was
+  chosen over deleting until nothing changes: it is one linear pass, the
+  replacement holds no `<` so it cannot form a new tag, and the reader
+  still sees what the page wrote. Look-alike characters (full-width `＜`)
+  are not folded; the header and the worker's prompt still say all of it
+  is data.
+- **Windows are characters of the cleaned text.** `search.fetch_page_chars`
+  (default 30000) for a plain call, shrunk to fit under the dispatcher's
+  result cap with room for the header and footer, so the cap never cuts the
+  line that names the next `offset`. With a question, the worker reads as
+  much as its `context_window` holds at three characters a token (page
+  text is denser than prose; undershooting wastes room, overshooting is a
+  400). `search.fetch_max_bytes` still caps the download, and a page cut
+  there says so at the end of its last window.
+- **The cache is in daemon memory only**, keyed by URL without its
+  fragment, 32 pages at most, for `search.fetch_cache_seconds` (default
+  900, the 15 minutes Claude Code documents; 0 turns it off). It holds the
+  cleaned, redacted text, never the raw body, and never an error. It is
+  shared across sessions in the daemon; every call is still classified and
+  approved as before, so a cache hit skips only the download.
+- **Classification is unchanged**: `web_fetch` stays `ask` with the host
+  taken from `url`. A follow-up window or question is a new call the user
+  (or their policy) approves.
+
+**Rejected:** falling back to raw text when the worker fails; a cache on
+disk (pages would outlive the session and land in the data folder);
+stripping CSS-hidden elements; a separate extract model setting (the
+worker tier is what the story names); paging by bytes or by lines (the
+text is already decoded and line breaks are uneven); making a cached read
+Class A.
