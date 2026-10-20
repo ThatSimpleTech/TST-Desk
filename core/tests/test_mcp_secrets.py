@@ -316,6 +316,46 @@ class TestHttpHeaders:
             await alpha.stop()
             await beta.stop()
 
+    async def test_a_proxy_setting_never_sees_the_header(
+        self, memory_keychain: MemoryKeychain, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # httpx honours HTTP_PROXY / ALL_PROXY (and the macOS or Windows
+        # system proxy) for loopback too unless NO_PROXY lists it, and the
+        # proxy can be off the box. The header must still go only to the URL.
+        await keychain_mcp.store_mcp_secret("alpha", "authorization", f"Bearer {HEADER_TOKEN}")
+        alpha, proxy = RecordingMcpHttp(), RecordingMcpHttp()
+        await alpha.start()
+        await proxy.start()
+        proxy_url = f"http://127.0.0.1:{proxy.port}"
+        for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+            monkeypatch.setenv(name, proxy_url)
+            monkeypatch.setenv(name.lower(), proxy_url)
+        monkeypatch.delenv("NO_PROXY", raising=False)
+        monkeypatch.delenv("no_proxy", raising=False)
+        config = McpConfig(
+            servers={
+                "alpha": McpServerConfig(
+                    transport="http",
+                    url=alpha.url,
+                    headers={"Authorization": "keychain:authorization"},
+                )
+            }
+        )
+        supervisor, _, dispatcher = await _load(config)
+        try:
+            assert [row.status for row in supervisor.doctor_rows()] == ["ok"]
+            assert await dispatcher._handlers["alpha__ping"](session=None, tool_call_id="t") == (
+                "pong"
+            )
+            assert proxy.seen == []
+            assert len(alpha.seen) >= 4
+            for headers in alpha.seen:
+                assert headers["authorization"] == f"Bearer {HEADER_TOKEN}"
+        finally:
+            await supervisor.aclose()
+            await alpha.stop()
+            await proxy.stop()
+
 
 @pytest.fixture
 def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:

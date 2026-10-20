@@ -73,9 +73,24 @@ class HttpMcpClient:
         self._next_id = 1
         self._pending: set[asyncio.Task[None]] = set()
 
-    async def start(self) -> None:
+    def _open(self) -> None:
+        """Make the client once.
+
+        The explicit transport is what keeps ``headers`` on the configured
+        URL: given one, httpx skips its proxy lookup (``HTTP_PROXY``,
+        ``ALL_PROXY``, the macOS or Windows system proxy), which covers
+        loopback too unless ``NO_PROXY`` lists it, and the proxy may be off
+        the box (TD-5110). ``trust_env=False`` would do that as well, but it
+        also drops ``SSL_CERT_FILE``, which an https loopback server's own CA
+        may rely on.
+        """
         if self._http is None:
-            self._http = httpx.AsyncClient(timeout=self._timeout + 5.0)
+            self._http = httpx.AsyncClient(
+                timeout=self._timeout + 5.0, transport=httpx.AsyncHTTPTransport()
+            )
+
+    async def start(self) -> None:
+        self._open()
         startup = self._startup_timeout
         await self.request("initialize", initialize_params(), wait_seconds=startup)
         await self.notify("notifications/initialized", wait_seconds=startup)
@@ -102,8 +117,7 @@ class HttpMcpClient:
         *,
         wait_seconds: float | None = None,
     ) -> Any:
-        if self._http is None:
-            self._http = httpx.AsyncClient(timeout=self._timeout + 5.0)
+        self._open()
         payload: dict[str, Any] = {"jsonrpc": "2.0", "id": req_id, "method": method}
         if params is not None:
             payload["params"] = params
@@ -123,8 +137,7 @@ class HttpMcpClient:
         *,
         wait_seconds: float | None = None,
     ) -> None:
-        if self._http is None:
-            self._http = httpx.AsyncClient(timeout=self._timeout + 5.0)
+        self._open()
         payload: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
         if params is not None:
             payload["params"] = params

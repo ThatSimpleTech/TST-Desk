@@ -711,6 +711,9 @@ the daemon's environment, so no other child sees it. A missing or
 unreadable item fails that server with a doctor row that names the item;
 the server does not start without it. `env` on an http server, or
 `headers` on a stdio one, fails the server the same way.
+Requests to an http server never use a proxy: `HTTP_PROXY`,
+`ALL_PROXY` and the macOS or Windows system proxy are ignored for them,
+so a header goes only to the configured loopback URL.
 
 Settings → MCP servers stores a token without ever showing it. Under a
 listed server, name it (an env var for stdio, a header such as

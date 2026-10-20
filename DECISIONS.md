@@ -15019,6 +15019,13 @@ its own POSTs (with `Accept` last so it always wins). Nothing touches
 naming the item and pointing at Settings; the server is never started
 with the value left out, which could make it fall back to an anonymous
 mode the user did not choose.
+The http client is built with an explicit `httpx.AsyncHTTPTransport()`,
+which makes httpx skip its proxy lookup. By default httpx sends a request,
+loopback included unless `NO_PROXY` lists it, through `HTTP_PROXY`,
+`ALL_PROXY` or the macOS or Windows system proxy, which may be off the
+box, and the headers would go with it (found in review of PR #28).
+`trust_env=False` was rejected because it also drops `SSL_CERT_FILE` and
+`SSL_CERT_DIR`, which an https loopback server's own CA may rely on.
 
 **Decision (Settings and the wire).** `set_mcp_server` still refuses
 `env`, `environment` and now `headers`, so nothing typed in Settings can

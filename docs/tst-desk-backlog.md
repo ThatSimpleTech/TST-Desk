@@ -9411,7 +9411,8 @@ sent a token at all: `mcp.servers` had no `env` and no headers.
       runs two children and only one sees the token)
 - [x] `mcp.servers.<id>.headers` does the same for HTTP servers (for
       example `Authorization: keychain:<entry>`; a test checks every
-      request to that server carries it and another server's do not)
+      request to that server carries it and another server's do not, and
+      another that with `HTTP_PROXY` / `ALL_PROXY` set the proxy sees none)
 - [x] No secret value reaches config, logs or the audit DB (directive 2);
       a redaction test covers it (core/tests/test_mcp_secrets.py: the
       value is scrubbed by its exact text from the log file, including the
