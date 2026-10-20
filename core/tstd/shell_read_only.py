@@ -23,8 +23,9 @@ in-tree ``.gitattributes`` routes a file through. So a git entry matches
 only when the workspace root holds its own ``.git`` (a parent repository
 would show files outside the wall) and git is 2.40 or newer, and a
 matching command runs under :func:`run_env`: :data:`GIT_SAFE_CONFIG`'s
-pins, in-tree attributes read from the empty tree, and no optional
-index write.
+pins, no attributes but ``.git/info/attributes`` (in-tree ones read from
+the empty tree, ``core.attributesFile`` pointed at nothing), and no
+optional index write.
 """
 
 from __future__ import annotations
@@ -202,12 +203,14 @@ def run_env(command: str, entries: frozenset[str], env: Mapping[str, str]) -> di
     raw = env.get("GIT_CONFIG_COUNT", "0")
     base = int(raw) if raw.isdigit() else 0
     pairs = [GIT_SAFE_CONFIG[i + 1].split("=", 1) for i in range(0, len(GIT_SAFE_CONFIG), 2)]
+    # The user's attributes file may sit in the workspace (a dotfiles repo,
+    # or a workspace that is the home folder) and route files as well.
+    pairs.append(["core.attributesFile", os.devnull])
     out = {
         "GIT_CONFIG_COUNT": str(base + len(pairs)),
         # In-tree .gitattributes are read from the empty tree: no filter,
-        # textconv or diff driver routing. info/attributes and the user's
-        # own attributes file still apply; both are outside the agent's
-        # reach (TD-5108).
+        # textconv or diff driver routing. Only .git/info/attributes still
+        # applies, and it is Class C to write (TD-5108).
         "GIT_ATTR_SOURCE": _EMPTY_TREE,
         # `git status` refreshes the index when it can; this keeps it a read.
         "GIT_OPTIONAL_LOCKS": "0",

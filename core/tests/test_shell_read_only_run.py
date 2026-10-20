@@ -249,15 +249,16 @@ def test_run_env_pins_only_listed_git() -> None:
     pins = run_env("git status", ALL, {})
     assert pins["GIT_ATTR_SOURCE"] == "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
     assert pins["GIT_OPTIONAL_LOCKS"] == "0"
-    keys = {pins[f"GIT_CONFIG_KEY_{i}"]: pins[f"GIT_CONFIG_VALUE_{i}"] for i in range(3)}
+    keys = {pins[f"GIT_CONFIG_KEY_{i}"]: pins[f"GIT_CONFIG_VALUE_{i}"] for i in range(4)}
     assert keys == {
         "core.fsmonitor": "false",
         "core.hooksPath": os.devnull,
         "safe.bareRepository": "explicit",
+        "core.attributesFile": os.devnull,
     }
-    assert pins["GIT_CONFIG_COUNT"] == "3"
+    assert pins["GIT_CONFIG_COUNT"] == "4"
     shifted = run_env("ls | git log", ALL, {"GIT_CONFIG_COUNT": "2"})
-    assert shifted["GIT_CONFIG_COUNT"] == "5"
+    assert shifted["GIT_CONFIG_COUNT"] == "6"
     assert shifted["GIT_CONFIG_KEY_2"] == "core.fsmonitor"
     assert run_env("ls", ALL, {}) == {}
     assert run_env("git commit -m x", ALL, {}) == {}
@@ -278,9 +279,10 @@ def _script(path: Path, body: str) -> str:
 @needs_git_240
 async def test_listed_git_runs_no_filter_textconv_or_hook(ws: Path, tmp_path: Path) -> None:
     """An in-tree ``.gitattributes`` (a Class A write) routes ``a.txt`` through
-    drivers the user's own config names, and an in-tree hooks folder holds a
-    ``post-index-change`` hook. Run from the list, git runs none of them;
-    with the list off the same commands run all three."""
+    a filter the user's own config names, the user's attributes file, kept
+    in the workspace, routes it through a textconv driver, and an in-tree
+    hooks folder holds a ``post-index-change`` hook. Run from the list, git
+    runs none of them; with the list off the same commands run all three."""
     marks = tmp_path / "marks"
     marks.mkdir()
     _git(ws, "init", "-q")
@@ -291,11 +293,13 @@ async def test_listed_git_runs_no_filter_textconv_or_hook(ws: Path, tmp_path: Pa
         ("filter.mark.clean", _script(marks / "clean.sh", f"touch {marks}/filter; cat")),
         ("diff.mark.textconv", _script(marks / "tc.sh", f'touch {marks}/textconv; cat "$1"')),
         ("core.hooksPath", ".githooks"),
+        ("core.attributesFile", str(ws / "user.attributes")),
     ):
         _git(ws, "config", key, value)
     (ws / ".githooks").mkdir()
     _script(ws / ".githooks" / "post-index-change", f"touch {marks}/hook")
-    (ws / ".gitattributes").write_text("*.txt filter=mark diff=mark\n")
+    (ws / ".gitattributes").write_text("*.txt filter=mark\n")
+    (ws / "user.attributes").write_text("*.txt diff=mark\n")
     _git(ws, "add", ".")
     _git(ws, "commit", "-qm", "base")
     for mark in ("filter", "textconv", "hook"):  # the commit itself ran some

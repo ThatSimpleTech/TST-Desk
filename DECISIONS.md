@@ -15043,9 +15043,10 @@ model judgment still never makes shell A. A user policy rule (`ask`,
    workspace, which can add `--pre`); the version is read
    once off the event loop when a session's loop starts, and until then
    git entries ask. A command the list reads as git runs with
-   `GIT_SAFE_CONFIG`'s three pins through `GIT_CONFIG_COUNT` (after any
-   the user set), `GIT_ATTR_SOURCE` at the empty tree, `GIT_OPTIONAL_LOCKS=0`
-   and `GIT_NO_LAZY_FETCH=1`. The env goes on any such command, whoever
+   `GIT_SAFE_CONFIG`'s three pins plus `core.attributesFile` pointed at
+   nothing (the user's attributes file can live in a dotfiles workspace),
+   through `GIT_CONFIG_COUNT` after any the user set, `GIT_ATTR_SOURCE` at
+   the empty tree, `GIT_OPTIONAL_LOCKS=0` and `GIT_NO_LAZY_FETCH=1`. The env goes on any such command, whoever
    approved it, so it never hangs on a filesystem check made before the
    run. TD-5157 rejected `--attr-source` for the daemon's own git because
    macOS's git 2.39 lacks it and it drops in-tree `eol` rules; here the
@@ -15081,9 +15082,11 @@ closed; the docs say to take the git entries off the list there.
 
 **Residual risk (recorded).** A hard link in the workspace to a file
 outside is read like `fs_read` reads it (TD-5141): only writes check
-link counts. `.git/info/attributes`, the user's own attributes file,
-`diff.external` and `gpg.program` (for `%G` formats) still apply; none is
-an in-tree file. A symlink swapped in by another process between the
+link counts. `.git/info/attributes` (Class C to write) still applies.
+`diff.external` and `gpg.program` (for `%G` formats) from the user's own
+config still run, and no `-c` value turns `diff.external` off; a config
+file the user's config includes from inside the workspace stays TD-5157's
+residual risk. A symlink swapped in by another process between the
 classification and the run is not seen. `GIT_NO_LAZY_FETCH` needs git
 2.44; on 2.40–2.43 a partial clone may still fetch a missing blob from
 its own remote.

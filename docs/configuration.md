@@ -580,14 +580,14 @@ On Windows the list never matches, because commands run through `cmd /c`.
 
 **What a listed git command runs with.** git reads its own config and
 attributes, and both can name a command to run. A git command the list reads
-runs with `core.fsmonitor=false`, `core.hooksPath` pointed at nothing and
-`safe.bareRepository=explicit` (added through `GIT_CONFIG_COUNT`, after any
-you set), in-tree `.gitattributes` read from the empty tree
-(`GIT_ATTR_SOURCE`), `GIT_OPTIONAL_LOCKS=0` so `git status` does not
-rewrite the index, and `GIT_NO_LAZY_FETCH=1`. So an attribute in the tree
-cannot route a file through a filter or textconv driver your own config
-names, and a hook in the tree does not run. `.git/info/attributes` and your
-own attributes file still apply. This holds whoever approved the command,
+runs with `core.fsmonitor=false`, `core.hooksPath` and `core.attributesFile`
+pointed at nothing, and `safe.bareRepository=explicit` (added through
+`GIT_CONFIG_COUNT`, after any you set), in-tree `.gitattributes` read from
+the empty tree (`GIT_ATTR_SOURCE`), `GIT_OPTIONAL_LOCKS=0` so `git status`
+does not rewrite the index, and `GIT_NO_LAZY_FETCH=1`. So no attribute file
+the agent can write routes a file through a filter or textconv driver your
+own config names, and a hook in the tree does not run. Only
+`.git/info/attributes` still applies. This holds whoever approved the command,
 so `git diff` from the list shows raw bytes where a textconv driver would
 have converted them. In a SHA-256 repository the empty tree has another
 name and git refuses with `bad --attr-source`; take the git entries off
