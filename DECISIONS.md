@@ -15041,10 +15041,24 @@ Rejected: a new "any case" label (a protocol field for a display hint).
 daemon opens each folder under the workspace root with `O_NOFOLLOW` and
 creates the temp file and renames it relative to the last one. A folder
 swapped for a symlink fails the write (`steering_write_failed`, card kept)
-instead of following it. Windows keeps the path-based write: a symlink
-there needs a privilege an agent's shell does not have. Rejected:
-re-checking the temp file's real path before the rename (still a window
-between the check and the rename).
+instead of following it.
+
+Windows has no `O_NOFOLLOW` or `dir_fd`, and a junction there needs no
+privilege (`mklink /J`; Developer Mode also allows symlinks), so the
+path-based write checks for links itself (review of PR #30). Each folder
+under the root is `lstat`ed and refused if it is a symlink or a
+name-surrogate reparse point (a junction), before the temp file is made
+and again after; the temp file at its path must then still be the file
+the write holds open, and only then does the user's text go in, through
+that handle. A swap in between leaves at most an empty temp file outside.
+The rename still resolves the path once more, but it can only move a file
+at the temp file's path, so a swap after the check fails it unless the
+agent can already write where the link points. Rejected: a handle-based
+write (directory handles opened without `FILE_SHARE_DELETE` through
+Win32 calls), which would close that last gap but cannot run in CI
+(Linux only); the conservative choice is the stdlib checks, which CI
+runs by forcing the path-based write on Linux. Cloud-file placeholders
+(OneDrive) are reparse points too but name no other place, so they pass.
 
 **Workspace `.tstdesk/commands/` is not proposable.** The command loader
 reads `.tstdesk/commands` only under the home folder. The conservative
@@ -15081,6 +15095,7 @@ during the review."), as TD-5018 seals a turn, so a replay never leaves
 Stop offered. An older window drops the unknown event with a warning.
 
 **Staging hashes what it planned.** Each file is opened with `O_NOFOLLOW`
+(where the OS has it; on Windows the next check alone refuses a link)
 and must still be the device and inode the plan's `lstat` saw; it is then
 hashed from that descriptor (git reads it as stdin) or, for text, from the
 bytes read. That costs one `hash-object` per file instead of one

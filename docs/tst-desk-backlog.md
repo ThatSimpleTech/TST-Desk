@@ -10022,8 +10022,13 @@ code, a docs fix); one that is not, or no longer applies, says why.
       older APK (blank amber rows): docs fix in DECISIONS.md and
       android/README.md Upgrading
 - [x] 11. TD-5140 a directory swapped for a symlink between the check and
-      the write sent the user's text out of the workspace: the write walks
-      the path with `O_NOFOLLOW` and writes relative to the last folder
+      the write sent the user's text out of the workspace: on POSIX the
+      write walks the path with `O_NOFOLLOW` and writes relative to the
+      last folder; on Windows (no `dir_fd`, and a junction needs no
+      privilege) it refuses a symlink or junction on the path before and
+      after making the temp file, and writes the text only into the temp
+      file it still holds at that path (review of PR #30; CI runs this
+      path on Linux)
 - [x] 12. TD-5140 accepting the fresh card a stale Edit produced was logged
       `accepted`: it is logged `edited`
 - [x] 13. TD-5140 workspace `.tstdesk/commands/` was proposable though
@@ -10077,10 +10082,10 @@ code, a docs fix); one that is not, or no longer applies, says why.
 - [x] 33. TD-5157 a file swapped for a symlink while staging was read
       through it: each file is opened with `O_NOFOLLOW`, must be the device
       and inode the plan saw, and is hashed from that descriptor
-- [x] Tests fail on the old code and pass on the new, except two that add
+- [x] Tests fail on the old code and pass on the new, except three that add
       coverage for code that was already right and pass on both (TD-5104's
-      loop-turn test, the walk's held step); ruff, mypy, tsc, vitest and
-      the UI walk pass
+      loop-turn test, the walk's held step, the path-based steering
+      write's plain write); ruff, mypy, tsc, vitest and the UI walk pass
 
 ---
 

@@ -13,8 +13,10 @@ test_steering_decisions.py.
 from __future__ import annotations
 
 import os
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -25,7 +27,7 @@ from tstd.autonomy.classifier import RULE_TABLE, DecisionRequest
 from tstd.policy import ApprovalOutcome, PolicyConfig, PolicyRule
 from tstd.protocol import SteeringProposal
 from tstd.session import Session
-from tstd.steering_proposals import proposable_relative, unified_diff
+from tstd.steering_proposals import _is_link, proposable_relative, unified_diff
 from tstd.tools import ToolDispatcher, build_decision_request
 from tstd.tools.boundary import PathGuard
 from tstd.tools.delegate import WORKER_CHILD_TOOLS
@@ -205,6 +207,27 @@ async def test_a_symlink_is_judged_by_its_target(tmp_path: Path) -> None:
     assert escaped.error_code == "boundary_refusal"
     assert env.proposals() == []
     assert outside.read_text(encoding="utf-8") == "theirs\n"
+
+
+@pytest.mark.parametrize(
+    ("mode", "tag", "link"),
+    [
+        (stat.S_IFLNK | 0o777, 0, True),  # a symlink
+        (stat.S_IFDIR | 0o755, 0xA0000003, True),  # a junction (mklink /J)
+        (stat.S_IFDIR | 0o755, 0xA000000C, True),  # a directory symlink, as lstat tags it
+        (stat.S_IFDIR | 0o755, 0x9000601A, False),  # a OneDrive placeholder folder
+        (stat.S_IFDIR | 0o755, 0, False),
+    ],
+)
+def test_the_path_based_write_counts_junctions_as_links(mode: int, tag: int, link: bool) -> None:
+    """Windows' steering write refuses a junction on the path (TD-5158).
+
+    A junction needs no privilege, and ``lstat`` gives it a folder's mode,
+    so the reparse tag's name-surrogate bit decides; a cloud placeholder
+    is a reparse point too, but names no other place.
+    """
+    info = SimpleNamespace(st_mode=mode, st_reparse_tag=tag)
+    assert _is_link(info) is link  # type: ignore[arg-type]
 
 
 async def test_no_change_and_bad_files_are_refused(tmp_path: Path) -> None:

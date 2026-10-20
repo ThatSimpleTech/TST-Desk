@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import difflib
+import errno
 import os
 import stat
 import tempfile
@@ -288,10 +289,12 @@ def write_steering_file(root: Path, relative: str, text: str) -> None:
     card is open, and a shell command could swap a directory on the
     checked path for a symlink between the check and the write; the user's
     text would then land wherever the link points (TD-5158). A swapped
-    directory now fails the write instead.
+    directory now fails the write instead. Elsewhere (Windows), where a
+    junction needs no privilege, :func:`_write_by_path` checks the folders
+    for links before and after it creates the temp file.
     """
     if not _DIR_FD_WRITES:
-        _write_by_path(root.joinpath(*relative.split("/")), text)
+        _write_by_path(root, relative, text)
         return
     *dirs, name = relative.split("/")
     dir_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
@@ -307,8 +310,9 @@ def write_steering_file(root: Path, relative: str, text: str) -> None:
         os.close(dir_fd)
 
 
-#: ``openat``-style writes: POSIX. Windows takes the path-based write; a
-#: symlink there needs a privilege an agent's shell does not have.
+#: ``openat``-style writes: POSIX. Windows has no ``O_NOFOLLOW`` or
+#: ``dir_fd`` and takes :func:`_write_by_path`, which checks for links
+#: itself: a junction there needs no privilege (``mklink /J``).
 _DIR_FD_WRITES = (
     hasattr(os, "O_NOFOLLOW")
     and hasattr(os, "O_DIRECTORY")
@@ -339,15 +343,62 @@ def _write_in_dir(dir_fd: int, name: str, text: str) -> None:
         raise
 
 
-def _write_by_path(target: Path, text: str) -> None:
+#: ``IsReparseTagNameSurrogate``: a reparse point that names another place
+#: (symlinks and junctions), as opposed to e.g. a cloud-file placeholder.
+_NAME_SURROGATE = 0x20000000
+
+
+def _is_link(info: os.stat_result) -> bool:
+    """A symlink, or on Windows any name-surrogate reparse point (a junction)."""
+    tag = getattr(info, "st_reparse_tag", 0)
+    return stat.S_ISLNK(info.st_mode) or bool(tag & _NAME_SURROGATE)
+
+
+class _LinkOnPath(OSError):
+    pass
+
+
+def _real_folders(root: Path, dirs: Sequence[str], *, create: bool) -> Path:
+    """Walk *dirs* under *root* with ``lstat``; refuse a link or a non-folder."""
+    folder = root
+    for part in dirs:
+        folder = folder / part
+        if create:
+            with contextlib.suppress(FileExistsError):
+                os.mkdir(folder)
+        info = os.lstat(folder)
+        if _is_link(info) or not stat.S_ISDIR(info.st_mode):
+            raise _LinkOnPath(errno.ELOOP, "a folder on its path is a link", str(folder))
+    return folder
+
+
+def _write_by_path(root: Path, relative: str, text: str) -> None:
+    """The write where ``dir_fd`` is missing (Windows): checks, not descriptors.
+
+    Every folder under *root* is checked for a link (a junction needs no
+    privilege on Windows) before the temp file is made, and again after,
+    when the temp file at its path must still be the file this call holds
+    open. Only then does the user's text go into it, through that handle.
+    A folder swapped in between leaves at most an empty temp file. The
+    rename that follows resolves the path once more, but it can only move
+    a file that is at the temp file's path, so a swap after the check
+    fails it unless the agent can already write where the link points.
+    """
+    *dirs, name = relative.split("/")
+    folder = _real_folders(root, dirs, create=True)
+    target = folder / name
     try:
-        mode = stat.S_IMODE(target.stat().st_mode)
+        info = os.lstat(target)
+        mode = stat.S_IMODE(info.st_mode) if stat.S_ISREG(info.st_mode) else 0o644
     except FileNotFoundError:
         mode = 0o644
-    target.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+    fd, tmp = tempfile.mkstemp(prefix=f".{name}.", suffix=".tmp", dir=folder)
+    held = os.fstat(fd)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            _real_folders(root, dirs, create=False)
+            if not _is_held(tmp, held):
+                raise _LinkOnPath(errno.ELOOP, "a folder on its path is a link", tmp)
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
@@ -355,8 +406,17 @@ def _write_by_path(target: Path, text: str) -> None:
         os.replace(tmp, target)
     except BaseException:
         with contextlib.suppress(OSError):
-            os.unlink(tmp)
+            if _is_held(tmp, held):  # never a file someone else put at that path
+                os.unlink(tmp)
         raise
+
+
+def _is_held(path: str, held: os.stat_result) -> bool:
+    try:
+        there = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    return (there.st_dev, there.st_ino) == (held.st_dev, held.st_ino)
 
 
 # ── The tool side ──────────────────────────────────────────────────────

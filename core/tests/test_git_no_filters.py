@@ -869,7 +869,7 @@ def _secret(tmp_path: Path) -> tuple[Path, str]:
     return outside, oid
 
 
-@pytest.mark.skipif(os.name != "posix", reason="symlinks need privileges on Windows")
+@pytest.mark.skipif(os.name != "posix", reason="os.symlink needs a privilege on Windows")
 @pytest.mark.parametrize("swap", ["file", "folder"])
 async def test_a_path_swapped_for_a_symlink_while_staging_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, swap: str
