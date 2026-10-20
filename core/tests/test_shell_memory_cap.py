@@ -143,6 +143,9 @@ class TestContainer:
         )
         assert "--memory=96m" in argv
         assert argv.index("--memory=96m") < argv.index("alpine")
+        # TD-5160: no swap on top, as the host scope's MemorySwapMax=0.
+        assert "--memory-swap=96m" in argv
+        assert argv.index("--memory-swap=96m") < argv.index("alpine")
 
     def test_unset_is_half_of_ram(self, tmp_path: Path) -> None:
         fake = _fake_runtime(tmp_path)
@@ -274,6 +277,11 @@ class TestOutOfMemoryText:
             "memory allocation of 1048576 bytes failed",
             "fatal error: runtime: out of memory",
             "Native memory allocation (mmap) failed to map 1 bytes",
+            # TD-5160: what RLIMIT_AS makes dlopen and a JVM's threads say.
+            "error while loading shared libraries: libz.so.1: failed to map segment "
+            "from shared object",
+            "java.lang.OutOfMemoryError: unable to create native thread: possibly out of memory",
+            "java.lang.OutOfMemoryError: unable to create new native thread",
         ],
     )
     def test_the_usual_runtimes_are_read(self, stderr: str) -> None:
@@ -283,6 +291,11 @@ class TestOutOfMemoryText:
         "stderr",
         [
             "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory",
+            # TD-5160: GPU memory, which the cap does not set.
+            "torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.00 GiB",
+            "RuntimeError: CUDA error: out of memory",
+            "torch.OutOfMemoryError: HIP out of memory. Tried to allocate 20.00 MiB",
+            "RuntimeError: MPS backend out of memory (MPS allocated: 1 GB)",
             "grep: nothing.txt: No such file or directory",
             "",
         ],
@@ -334,9 +347,15 @@ class TestScope:
         monkeypatch.setattr(shell_memory, "_unit_name", _record)
         result = await run_shell(_session(tmp_path, 64), _HOG, timeout_secs=60)
         assert "survived" not in result
+        # Read from the scope's own counters it is certain; once systemd has
+        # collected the scope, Result=oom-kill also counts the system's
+        # killers, so it is the likely cause (TD-5160).
         assert (
-            "memory cap: killed — the command went over its 64 MB memory cap "
-            "(caps.shell_memory_mb)" in result
+            "memory cap: killed — the command went over its 64 MB memory cap (caps.shell_memory_mb)"
+            in result
+            or "under its 64 MB memory cap (caps.shell_memory_mb); going over that cap "
+            "is the usual cause"
+            in result
         )
         # The failed scope is cleared, not left in `systemctl --user --failed`.
         assert _unit_loaded(units[-1]) == "not-found"
@@ -408,6 +427,106 @@ def test_the_scope_description_is_fixed_text_not_the_command() -> None:
     # The command is only ever the scope's payload, never one of its settings.
     assert not any(_SECRET in arg for arg in argv[:split])
     assert argv[split + 1 :] == ["/bin/sh", "-c", command]
+
+
+# ── Review notes (TD-5160): whose kill it was, and a scope that never started
+
+
+class TestScopeVerdict:
+    @staticmethod
+    def _cap() -> ShellMemoryCap:
+        tools = shell_memory._ScopeTools("systemd-run", "systemctl", False, True)
+        return ShellMemoryCap(mb=64, method="scope", unit="u.scope", tools=tools)
+
+    @staticmethod
+    def _state(
+        monkeypatch: pytest.MonkeyPatch, state: dict[str, str], events: tuple[int, int] | None
+    ) -> None:
+        async def _unit(_cap: ShellMemoryCap, _tools: Any) -> dict[str, str]:
+            return state
+
+        async def _quiet(*_args: Any) -> str:
+            return ""
+
+        monkeypatch.setattr(shell_memory, "_unit_state", _unit)
+        monkeypatch.setattr(shell_memory, "_systemctl", _quiet)
+        monkeypatch.setattr(shell_memory, "_cgroup_oom_events", lambda _cg: events)
+
+    async def test_the_scope_reaching_its_cap_is_certain(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._state(monkeypatch, {"ControlGroup": "/u.scope", "ActiveState": "failed"}, (1, 1))
+        note = await cap_note(self._cap(), 137, "Killed")
+        assert note.startswith("memory cap: killed — the command went over its 64 MB")
+
+    async def test_a_kill_without_the_cap_reached_is_not_the_cap(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The system-wide killer or systemd-oomd took it: oom_kill, no oom."""
+        state = {"ControlGroup": "/u.scope", "ActiveState": "failed", "Result": "oom-kill"}
+        self._state(monkeypatch, state, (0, 1))
+        assert await cap_note(self._cap(), 137, "Killed") == ""
+
+    async def test_only_systemds_result_left_is_the_likely_cause(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._state(monkeypatch, {"Result": "oom-kill", "ActiveState": "failed"}, None)
+        note = await cap_note(self._cap(), 137, "Killed")
+        assert note.startswith("memory cap: killed (exit 137) under its 64 MB memory cap")
+        assert "usual cause" in note
+
+    @pytest.mark.parametrize(
+        "stderr",
+        [
+            "Failed to connect to bus: No medium found",
+            "Failed to start transient scope unit: Connection timed out",
+            "Failed to create bus connection: No such file or directory",
+        ],
+    )
+    async def test_a_scope_that_never_started_says_so_and_probes_again(
+        self, monkeypatch: pytest.MonkeyPatch, stderr: str
+    ) -> None:
+        """The user bus went away after the probe: the command did not run."""
+        self._state(monkeypatch, {}, None)
+        shell_memory._probe.done = True
+        shell_memory._probe.tools = self._cap().tools
+        note = await cap_note(self._cap(), 1, stderr)
+        assert note.startswith("memory cap: systemd could not start this command's")
+        assert "did not run" in note
+        assert shell_memory._probe.done is False
+
+    async def test_a_command_that_prints_such_a_line_itself_is_not_mistaken(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._state(monkeypatch, {}, None)
+        assert await cap_note(self._cap(), 0, "Failed to connect to bus: x") == ""
+
+
+class TestProbeRetries:
+    async def test_a_probe_that_found_nothing_runs_again_later(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One timeout at startup must not pin the daemon to RLIMIT_AS."""
+        answers: list[shell_memory._ScopeTools | None] = [
+            None,
+            shell_memory._ScopeTools("systemd-run", "systemctl", True),
+        ]
+
+        async def _probe(_env: dict[str, str]) -> shell_memory._ScopeTools | None:
+            return answers.pop(0)
+
+        now = [1_000.0]
+        monkeypatch.setattr(shell_memory, "_probe_scope_tools", _probe)
+        monkeypatch.setattr(shell_memory, "_is_linux", lambda: True)
+        monkeypatch.setattr(shell_memory.time, "monotonic", lambda: now[0])
+        session = _session(Path("."), 256)
+        first = await plan_cap(session, {})
+        assert first is not None and first.method == "rlimit"
+        assert (await plan_cap(session, {})).method == "rlimit"  # type: ignore[union-attr]
+        now[0] += shell_memory._REPROBE_SECS
+        again = await plan_cap(session, {})
+        assert again is not None and again.method == "scope"
+        assert answers == []
 
 
 # ── systemd before 253: no OOMPolicy, no oom-kill result ────────────────

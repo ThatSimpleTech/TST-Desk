@@ -928,8 +928,9 @@ runtime is Podman; another binary is accepted only if it speaks the
 same `run` argv (`--userns=keep-id`, one bind mount of the workspace
 at `/workspace`, `--network=none` when the charter wall is deny; a
 host allowlist omits that flag so Podman slirp can work, and never
-`--network=host`, and `--memory` at the charter's `caps.shell_memory_mb`,
-else this file's, else half of RAM, TD-5116). The argv never bind-mounts `$HOME`, `~/.ssh`, cloud
+`--network=host`, and `--memory` and `--memory-swap` at the charter's
+`caps.shell_memory_mb`, else this file's, else half of RAM, TD-5116,
+TD-5160). The argv never bind-mounts `$HOME`, `~/.ssh`, cloud
 creds, the OS keychain, or the user-data-dir; there is no extra-mount
 API. Firecracker / EZER is a follow-up, not this key.
 
@@ -1835,7 +1836,7 @@ autonomous session the container's `/workspace` counts as the workspace.
 | `spend_usd` | float ≥ 0 | `25.0` | Session spend, in dollars, that pauses the run. Settings → Budget writes this for the open workspace. Until it is set, the built-in $25 pause still applies and the title bar does not show a budget. |
 | `wall_clock_hours` | float ≥ 0 | `8.0` | Session runtime, in hours, that pauses the run. |
 | `max_iterations` | int ≥ 1 | `200` | Loop iterations that pause the run. |
-| `shell_memory_mb` | int ≥ 64 \| null | `null` | Memory, in MiB, that one shell command may use. `null` is half of the machine's RAM. A command over it is killed; it does not pause the run. See below. |
+| `shell_memory_mb` | int ≥ 64 \| null | `null` | Memory, in MiB, that one shell command may use: all its processes together in a systemd scope or container, but each process on its own under the `ulimit` fallback (TD-5160). `null` is half of the machine's RAM. A command over it is killed; it does not pause the run. See below. |
 
 The first three are checked **before every model call**, in that order, and all three trigger at
 or past the value rather than strictly past it. `spend_usd: 0` is legal and pauses before the first
@@ -1864,10 +1865,18 @@ machine allows:
 - **Other Linux.** The shell sets `ulimit -v` (`RLIMIT_AS`) to the cap and then runs the
   command, so the command and everything it starts inherit the limit and cannot raise it. This
   counts address space, not resident memory: an allocation past it fails and the command dies of
-  its own out-of-memory error. Runtimes that reserve large address ranges up front (sanitizers,
-  some JVM and WebAssembly setups) can fail well below the cap here; raise the cap if they do.
-  A lower limit the daemon already runs under is kept.
-- **Autonomous sessions.** Podman runs get `--memory=<cap>m`. A charter's caps replace this
+  its own out-of-memory error. It is also per process, not per command: each process the command
+  starts gets the whole cap, so `make -j16` or a test runner with workers can use many times it
+  (TD-5160). Runtimes that reserve large address ranges up front fail well below the cap here:
+  sanitizers, JVMs, and anything that runs WebAssembly, which includes Node's built-in `fetch`
+  (it fails with "Cannot allocate Wasm memory" under an 8 GiB `ulimit -v`, so on a machine with
+  up to about 20 GB of RAM the default cap breaks plain `node` scripts that call `fetch`). Raise
+  the cap if they do. A lower limit the daemon already runs under is kept.
+- **Autonomous sessions.** Podman runs get `--memory=<cap>m` and `--memory-swap=<cap>m`, so the
+  container cannot swap on top of the cap, as the scope's `MemorySwapMax=0` (TD-5160). Rootless
+  Podman applies limits only on cgroup v2 with the systemd cgroup manager; elsewhere it ignores
+  or refuses them, so the start button refuses an autonomous run there, naming the fix, rather
+  than run it uncapped or fail at its first command. A charter's caps replace this
   file's for the run, except that a charter which leaves `shell_memory_mb` unset keeps this
   file's value (half of RAM when neither sets it). The Charter column has a **Shell memory (MB)**
   field for it (blank leaves it unset), and the sign card shows it or, when unset, where the
@@ -1878,14 +1887,24 @@ machine allows:
 Which Linux method works is probed once, on the first shell command after the daemon starts: a
 scope with the same settings must start, receive the command text unchanged (systemd 254+ is
 told not to expand `$$` and `${x}` in it), and show the cap in its `memory.max`. It tries the
-settings for systemd 254+, then 253, then 246–252, and uses the first that passes. The answer holds
-until the daemon restarts, so restart it after changing systemd or cgroup setup.
+settings for systemd 254+, then 253, then 246–252, and uses the first that passes. A probe that
+found no usable scope (one that timed out at startup, say) runs again after five minutes. A
+working answer holds until a command's scope fails to start (the user bus went away): that
+command did not run, its result says so (`memory cap: systemd could not start this command's
+memory-capped scope, so the command did not run`), and the next command probes again, falling
+back to `ulimit` if systemd is still unusable (TD-5160). Restart the daemon after changing
+systemd or cgroup setup to pick it up at once.
 
 When the cap stops a command, its result says so plainly, on a line under the exit code:
-`memory cap: killed — the command went over its 2048 MB memory cap (caps.shell_memory_mb).` With
+`memory cap: killed — the command went over its 2048 MB memory cap (caps.shell_memory_mb).` That
+is said only when the scope's own counters show it reached its cap; once systemd has collected
+the scope its `Result=oom-kill` is all that is left, and that also counts kills by the system's
+out-of-memory killer and systemd-oomd, so the line says the cap is the likely cause, and a kill
+the counters show was not the cap gets no line (TD-5160). With
 `ulimit` the line says the command ran out of memory at its cap, read from its error text
-(`MemoryError`, `Cannot allocate memory`, `std::bad_alloc`, `out of memory`, …; a JavaScript
-heap limit is not counted). In a container an exit of 137 (SIGKILL) is reported as the likely
+(`MemoryError`, `Cannot allocate memory`, `std::bad_alloc`, `out of memory`, `failed to map
+segment from shared object`, …; a JavaScript heap limit and GPU memory, such as PyTorch's "CUDA
+out of memory", are not counted). In a container an exit of 137 (SIGKILL) is reported as the likely
 cause. A command the tool itself timed out, cancelled or stopped gets no such line. Each command
 has its own cap; two commands running at once can each use it. A value above half of RAM loosens
 the default, so a repo's config that sets one waits for your trust (§4.8). Skip-all does not
