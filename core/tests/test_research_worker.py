@@ -4,16 +4,22 @@
 holds only fs_read, fs_list, fs_grep, web_search and web_fetch. The
 parent gets a summary capped in tokens; the child's transcript rides on
 the ``delegate`` result event for the window and never reaches the
-parent model. Plan mode sends delegation to this worker.
+parent model. Plan mode makes this worker the default.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
+import httpx
+import pytest
+
+import tstd.tools.web_search as search_mod
 from tests.test_delegate import _bind_runtime, _parent_dispatcher, _workspace
 from tests.test_dispatch import make_config, start_loop, wait_for_turn
+from tstd.config import SearchConfig
 from tstd.context.tokens import HeuristicTokenCounter
 from tstd.mock import MockProvider, Script
 from tstd.protocol import ToolResult as ToolResultEvent
@@ -170,6 +176,54 @@ async def test_summary_is_capped_in_tokens_of_the_worker_tier(tmp_path: Path) ->
     assert summary.endswith(f"capped at {SUMMARY_TOKEN_CAP} tokens]")
 
 
+async def test_research_child_searches_with_the_sessions_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # TD-4843: a session's search endpoints come from its own config, not
+    # the library cache. The child must reach the host the classifier
+    # judged (the registry's resolver closes over the session's block).
+    session_search = SearchConfig(base_url="http://session-search.example/s", fallback_base_urls=[])
+    library_search = SearchConfig(base_url="http://library-search.example/s", fallback_base_urls=[])
+    monkeypatch.setattr(search_mod, "cached_config", lambda: SimpleNamespace(search=library_search))
+    reached: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        reached.append(f"{request.url.scheme}://{request.url.host}{request.url.path}")
+        return httpx.Response(
+            200, json={"results": [{"url": "https://docs.example/a", "title": "Doc A"}]}
+        )
+
+    real_client = httpx.AsyncClient
+
+    def client(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real_client(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(search_mod.httpx, "AsyncClient", client)
+
+    ws = _workspace(tmp_path)
+    parent = Session(str(ws))
+    parent.config = make_config().model_copy(update={"search": session_search})
+    dispatcher = _parent_dispatcher(ws, search=session_search)
+    mock = MockProvider(
+        sequences={
+            "test-worker": [
+                Script(kind="tool_call", tool_name="web_search", tool_arguments='{"query": "tst"}'),
+                Script(kind="text", content="Found Doc A."),
+            ]
+        }
+    )
+    _bind_runtime(parent, dispatcher, mock)
+    steps: list[WorkerStep] = []
+
+    await run_worker_child(parent=parent, task="Search tst", kind="research", transcript=steps)
+
+    assert reached == ["http://session-search.example/s"]
+    results = [s for s in steps if s.kind == "tool_result"]
+    assert [s.status for s in results] == ["success"]
+    assert "Doc A" in results[0].text
+
+
 # ── Transcript ──────────────────────────────────────────────────────────
 
 
@@ -289,23 +343,25 @@ async def test_plan_mode_defaults_delegate_to_research(tmp_path: Path) -> None:
     assert _offered(mock, "test-worker") == [READ_ONLY]
 
 
-async def test_plan_mode_refuses_a_writing_worker(tmp_path: Path) -> None:
+async def test_plan_mode_still_runs_an_explicit_worker(tmp_path: Path) -> None:
+    # Plan mode is TD-4603's brain lock, whose tools still dispatch: only
+    # the default kind moves, an explicit worker is not refused.
     ws = _workspace(tmp_path)
     session = Session(str(ws))
     session.router = TierRouter()
     session.router.set_plan(True)
     dispatcher = _parent_dispatcher(ws)
-    mock = MockProvider(default=Script(kind="text", content="should not run"))
+    mock = MockProvider(sequences={"test-worker": [Script(kind="text", content="edited")]})
     _bind_runtime(session, dispatcher, mock)
 
     result = await dispatcher.dispatch(
         "c1", "delegate", {"task": "Edit notes.md", "kind": "worker"}, session
     )
 
-    assert result.status == "error"
-    assert result.error_code == "delegate_plan_mode"
-    assert "research" in result.output
-    assert mock.calls == []
+    assert result.status == "success"
+    assert result.output == "edited"
+    offered = _offered(mock, "test-worker")
+    assert offered and "fs_write" in offered[0] and "shell" in offered[0]
 
 
 async def test_outside_plan_mode_the_default_is_still_the_writing_worker(tmp_path: Path) -> None:

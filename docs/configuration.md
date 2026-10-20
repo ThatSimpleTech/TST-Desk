@@ -1728,8 +1728,12 @@ classifier and approval gate as the session's own. Either kind hands back a summ
 500 tokens, counted with the worker tier's counter (four characters a token for a local model).
 Only that summary enters the conversation; the child's steps show in the window under the
 `delegate` call (expand it in the chat or the Activity panel), cut to 4,000 characters a step.
-In plan mode `delegate` runs `research` by default and refuses `kind: worker`. There is no key
-for any of this, and `delegate` itself still asks for approval like any Class B call.
+The child reads the session's own config, as the session's tools do: a research child's
+`web_search` goes to the session's `search.base_url` and fallbacks, the hosts `network` and the
+host allowlist judged, and a worker child's shell keeps the session's read-only list. In plan
+mode `delegate` with no `kind` runs `research`; `kind: worker` still runs when asked for, because
+plan mode today only locks the brain (TD-4603). There is no key for any of this, and `delegate`
+itself still asks for approval like any Class B call.
 
 ### 4.3 `attachments` — what a message may carry
 

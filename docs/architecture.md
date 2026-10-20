@@ -468,7 +468,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `attach` | yes | Subscribe to a session, replaying from `from_seq`. |
 | `detach` | yes | Unsubscribe from a session; the session is unaffected. |
 | `set_tier` | yes | Pin the active model tier for the session. |
-| `set_plan` | yes | Turn plan mode (brain lock) on or off. Refused `set_tier` to worker/validator while on (TD-4603). While on, `delegate` runs the read-only research worker by default and refuses `kind: worker` (TD-5117). |
+| `set_plan` | yes | Turn plan mode (brain lock) on or off. Refused `set_tier` to worker/validator while on (TD-4603). While on, `delegate` with no `kind` runs the read-only research worker; `kind: worker` still runs (TD-5117). |
 | `set_session_preset` | yes | Retarget this session at a catalog preset. Refused mid-turn. Does not write Settings. Acked with `session_list` (TD-1721). |
 | `get_instruction_stack` | yes | Ask for the resolved steering stack, token counts, and skills (TD-4502). |
 | `list_instructions` | — | List a workspace's Instructions files (`AGENTS.md` / `CLAUDE.md` fallback, then `.tst/rules/*`). Human path (TD-2802). |

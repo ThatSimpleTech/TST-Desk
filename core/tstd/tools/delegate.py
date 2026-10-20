@@ -11,8 +11,8 @@ so the classifier chokepoint inventory stays in ``loop.py``.
 Two kinds of child (TD-5117): ``worker`` reads, writes and runs shell;
 ``research`` only reads files and the web. Either returns a summary
 capped in tokens, and its transcript goes to the window on the
-``delegate`` result, never into the parent's context. In plan mode only
-``research`` runs, and it is the default.
+``delegate`` result, never into the parent's context. In plan mode
+``research`` is the default; ``kind: worker`` still runs when asked for.
 """
 
 from __future__ import annotations
@@ -101,7 +101,7 @@ def register_delegate_tools(registry: ToolRegistry) -> None:
                 "kind 'worker' (the default) can read, write files and run "
                 "shell. kind 'research' is read-only: fs_read, fs_list, "
                 "fs_grep, web_search and web_fetch. Use research to explore "
-                "code or the web. In plan mode only research runs."
+                "code or the web. In plan mode the default is research."
             ),
             parameters={
                 "type": "object",
@@ -241,6 +241,11 @@ async def run_worker_child(
     child.delegate_depth = 1
     child.parent_id = parent.id
     child.boundary_config = parent.boundary_config
+    # The session's own config, not the library cache (TD-4843): web_search
+    # and web_fetch read their endpoints from it, the registry's host
+    # resolver already closes over the same search block, and the shell's
+    # read-only list (TD-5103) comes from it too.
+    child.config = parent.config
     child.policy = parent.policy
     child.trust_store = parent.trust_store
     child.config_view = parent.config_view

@@ -15541,22 +15541,37 @@ split out to keep `delegate.py` under the file budget.
    step is cut to 4,000 characters and the transcript to about 60,000,
    then one note says the rest is not shown. The window shows it inside
    the existing chat fold and Activity row; no new control.
-3. **Plan mode.** TD-5123's read-only plan mode is not built. Its
-   criterion here is met on the plan flag that exists (TD-4603's, on the
-   router, which TD-5123 will extend): while it is on, `delegate` with no
-   `kind` runs `research`, and `kind: worker` is refused with
-   `delegate_plan_mode` and a message telling the model to use research.
-   Refusing rather than silently running the read-only child keeps the
-   model honest about what it got. Outside plan mode the default stays
+3. **Plan mode: only the default moves.** TD-5123's read-only plan mode
+   is not built. Its criterion here is met on the plan flag that exists
+   (TD-4603's brain lock, on the router, which TD-5123 will extend):
+   while it is on, `delegate` with no `kind` runs `research`. An explicit
+   `kind: worker` still runs. TD-4603 shipped plan mode as a routing lock
+   under which every tool still dispatches, and the brain can still call
+   `fs_write`, `fs_edit` and `shell` itself there, so refusing the
+   writing child would remove a capability without adding safety, and
+   that change to TD-4603 is Adam's call, not this story's. This is the
+   conservative reading (a Class C question the story and the
+   2026-10-14 decisions do not answer). TD-5123 is where writes are
+   refused, the child's included. Outside plan mode the default stays
    `worker`, so existing callers are unchanged.
 4. **Approval.** `delegate` keeps its `ask` floor (Class B) for both
    kinds. The research child's own calls are judged one by one anyway, so
    lowering the floor for research would not have bought safety, only
    fewer cards, and the story did not ask for it.
+5. **The child reads the session's config.** The child gets
+   `child.config = parent.config`, like its boundary config and policy.
+   Without it, `web_search` and `web_fetch` in a research child fell back
+   to the library cache (`cached_config()`, the default user config.yaml)
+   while the registry's host resolver judged the session's search block,
+   so `network: deny` and the host allowlist checked hosts the request
+   never went to: TD-4843's bug again. It also gives a worker child's
+   shell the session's read-only list (TD-5103).
 
 **Alternatives rejected:** child steps as their own timeline events
 (TD-4602's rejection still holds; one field on an existing event is
 enough to show them); a separate `get_delegate_transcript` request
 (state the daemon would have to keep per call); quietly downgrading
-`kind: worker` to research in plan mode; a `delegate.summary_tokens`
+`kind: worker` to research in plan mode; refusing `kind: worker` in plan
+mode (it changed TD-4603's shipped "tools still dispatch" and bought no
+safety while the brain can write itself); a `delegate.summary_tokens`
 config key.

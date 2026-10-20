@@ -16,6 +16,7 @@ from tests.test_dispatch import (
 )
 from tstd.autonomy import Boundary, DecisionClass, DecisionClassifier
 from tstd.boundary_config import CapsSection
+from tstd.config import SearchConfig
 from tstd.context import PromptAssembler
 from tstd.context.tokens import HeuristicTokenCounter
 from tstd.cost import CostTracker
@@ -51,8 +52,8 @@ def _workspace(tmp_path: Path) -> Path:
     return ws
 
 
-def _parent_dispatcher(ws: Path) -> ToolDispatcher:
-    registry = create_registry()
+def _parent_dispatcher(ws: Path, *, search: SearchConfig | None = None) -> ToolDispatcher:
+    registry = create_registry(search=search)
     dispatcher = attach_auto_approver(
         ToolDispatcher(
             registry,
