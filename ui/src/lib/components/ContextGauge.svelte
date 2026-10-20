@@ -8,7 +8,7 @@
 	import { session } from '../session-status.svelte.js';
 	import { chat, requestCompact } from '../chat-store.svelte.js';
 	import { showCancel } from '../chat-store';
-	import { formatTokens, gaugeLabel, gaugeLevel, gaugePercent } from '../context-gauge';
+	import { formatTokens, gaugeLabel, gaugeLevel, gaugePercent, gaugeTierLine } from '../context-gauge';
 
 	let reading = $derived(session.context);
 	let level = $derived(reading === null ? 'ok' : gaugeLevel(reading));
@@ -19,12 +19,14 @@
 			? 0
 			: Math.min(100, Math.round((reading.compact_at / reading.context_window) * 100)),
 	);
-	let slug = $derived(reading === null ? null : (session.modelSlugs[reading.tier] ?? null));
+	// TD-5120: the reading names its own model, a backup's included.
+	let tierLine = $derived(reading === null ? '' : gaugeTierLine(reading, session.modelSlugs));
+	let onBackup = $derived(reading !== null && reading.fallback > 0);
 	let busy = $derived(showCancel(chat.turnState));
 </script>
 
 {#if reading !== null}
-	<div class="gauge gauge--{level}">
+	<div class="gauge gauge--{level}" class:gauge--backup={onBackup}>
 		<button class="label" type="button" title="Context window" aria-haspopup="true">
 			<span class="bar" aria-hidden="true">
 				<span class="fill" style={`width: ${percent}%`}></span>
@@ -51,9 +53,15 @@
 				</div>
 				<div class="row">
 					<dt>Tier</dt>
-					<dd>{reading.tier}{slug !== null ? ` · ${slug}` : ''}</dd>
+					<dd>{tierLine}</dd>
 				</div>
 			</dl>
+			{#if onBackup}
+				<p class="hint hint--backup">
+					The tier's own endpoint failed this turn, so these figures are the backup's. The next
+					turn tries the tier's own model first.
+				</p>
+			{/if}
 			<button
 				class="popover-action"
 				type="button"
@@ -223,5 +231,17 @@
 		margin: var(--space-1) 0 0;
 		font-size: var(--text-xs);
 		color: var(--color-ink-muted);
+	}
+
+	/* TD-5120: a backup answered this turn. The popover is nowrap for its
+	   figures; this sentence wraps at the popover's own width. */
+	.hint--backup {
+		white-space: normal;
+		max-width: 15rem;
+		margin-bottom: var(--space-2);
+	}
+
+	.gauge--backup .label {
+		color: var(--color-warn);
 	}
 </style>

@@ -234,11 +234,23 @@ def _print_error(event: dict[str, Any]) -> None:
 RETRACT_NOTICE = "(the provider went quiet; the reply above was withdrawn and is being asked again)"
 
 
+def fallback_notice(event: dict[str, Any]) -> str:
+    """One line for a turn that moved to a backup endpoint (TD-5120)."""
+    tier = event.get("tier") or "tier"
+    reason = event.get("reason") or "an error"
+    to_model = event.get("to_model") or "its backup"
+    to_host = event.get("to_host")
+    where = f"{to_model} on {to_host}" if to_host else str(to_model)
+    return f"({tier} endpoint failed: {reason}; asking backup {event.get('fallback', 1)}, {where})"
+
+
 def _visible_event_line(event: dict[str, Any]) -> str | None:
     """One-line TTY form of a user-visible event. Not a JSON dump."""
     typ = event.get("type")
     if typ == "assistant_retract":
         return RETRACT_NOTICE
+    if typ == "model_fallback":
+        return fallback_notice(event)
     if typ == "turn_complete":
         if event.get("failed"):
             return f"turn failed: {event.get('error_code') or 'turn_failed'}"

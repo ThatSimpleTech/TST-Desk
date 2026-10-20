@@ -81,6 +81,7 @@ import type {
   SteeringReloaded,
   RuleActivated,
   TierSwitched,
+  ModelFallback,
   InstructionStack,
   SkillStackEntry,
   SessionList,
@@ -967,6 +968,33 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.seq)).toBe(true);
   });
 
+  it("model_fallback, and the gauge and title bar on a backup (TD-5120)", () => {
+    const m = fixtures.model_fallback as ModelFallback;
+    expect(m.type).toBe("model_fallback");
+    expect(m.tier).toBe("brain");
+    expect(isString(m.from_model)).toBe(true);
+    expect(m.from_host).toBe("127.0.0.1:8080");
+    expect(m.to_model).toBe("test-backup-slug");
+    expect(m.to_host).toBe("backup.local");
+    expect(m.fallback).toBe(1);
+    expect(m.reason).toBe("connection_error");
+    expect(isNumber(m.seq)).toBe(true);
+
+    const usage = fixtures.context_usage_fallback as ContextUsage;
+    expect(usage.model).toBe(m.to_model);
+    expect(usage.fallback).toBe(1);
+    // The tier's own model: no backup, and an older daemon's null model.
+    const own = fixtures.context_usage as ContextUsage;
+    expect(own.fallback ?? 0).toBe(0);
+    expect(own.model ?? null).toBeNull();
+
+    const tiers = fixtures.tier_state_fallback as TierState;
+    expect(tiers.fallbacks).toEqual({ brain: 1 });
+    expect(tiers.model_slugs.brain).toBe(m.to_model);
+    expect(tiers.hosts?.brain).toBe(m.to_host);
+    expect((fixtures.tier_state as TierState).fallbacks ?? {}).toEqual({});
+  });
+
   it("setup_state", () => {
     // TD-1101: connection-scoped (no session_id), seq=1 like policy_rules.
     const m = fixtures.setup_state as SetupState;
@@ -1173,6 +1201,7 @@ describe("All fixtures have required shape", () => {
       "shell_output", "tool_progress", "approval_request", "approval_request_always_allow", "decision_logged",
       "checkpoint_notice", "verify_result", "cost_update", "boundary_update", "boundary_update_config_trust", "turn_complete",
       "tier_state", "tier_state_plan", "context_compacted", "context_compacted_manual", "context_compacted_inflight_trim", "context_compacted_clear_stale", "context_usage", "steering_reloaded", "rule_activated", "tier_switched",
+      "model_fallback", "context_usage_fallback", "tier_state_fallback",
       "instruction_stack", "instruction_files", "command_list", "context_pins", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "steering_proposal", "steering_decision", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",

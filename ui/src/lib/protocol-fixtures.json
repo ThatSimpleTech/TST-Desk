@@ -1020,7 +1020,8 @@
       "validator": "mock.local"
     },
     "plan": false,
-    "vision": false
+    "vision": false,
+    "fallbacks": {}
   },
   "tier_state_override": {
     "type": "tier_state",
@@ -1040,7 +1041,8 @@
       "validator": "mock.local"
     },
     "plan": false,
-    "vision": false
+    "vision": false,
+    "fallbacks": {}
   },
   "tier_state_plan": {
     "type": "tier_state",
@@ -1060,7 +1062,8 @@
       "validator": "mock.local"
     },
     "plan": true,
-    "vision": false
+    "vision": false,
+    "fallbacks": {}
   },
   "ping": {
     "type": "ping"
@@ -1340,7 +1343,9 @@
     "tier": "brain",
     "used_tokens": 12345,
     "context_window": 65536,
-    "compact_at": 49152
+    "compact_at": 49152,
+    "model": null,
+    "fallback": 0
   },
   "tier_switched": {
     "type": "tier_switched",
@@ -1348,6 +1353,52 @@
     "session_id": "sess-1",
     "tier": "worker",
     "previous": "brain"
+  },
+  "model_fallback": {
+    "type": "model_fallback",
+    "seq": 20,
+    "session_id": "sess-1",
+    "tier": "brain",
+    "from_model": "test-brain-slug",
+    "from_host": "127.0.0.1:8080",
+    "to_model": "test-backup-slug",
+    "to_host": "backup.local",
+    "fallback": 1,
+    "reason": "connection_error"
+  },
+  "context_usage_fallback": {
+    "type": "context_usage",
+    "seq": 21,
+    "session_id": "sess-1",
+    "tier": "brain",
+    "used_tokens": 12345,
+    "context_window": 32768,
+    "compact_at": 19660,
+    "model": "test-backup-slug",
+    "fallback": 1
+  },
+  "tier_state_fallback": {
+    "type": "tier_state",
+    "seq": 22,
+    "session_id": "sess-1",
+    "tier": "brain",
+    "override": null,
+    "model_slugs": {
+      "brain": "test-backup-slug",
+      "worker": "test-worker-slug",
+      "validator": "test-validator-slug"
+    },
+    "preset": "test",
+    "hosts": {
+      "brain": "backup.local",
+      "worker": "mock.local",
+      "validator": "mock.local"
+    },
+    "plan": false,
+    "vision": false,
+    "fallbacks": {
+      "brain": 1
+    }
   },
   "session_list": {
     "type": "session_list",

@@ -144,6 +144,7 @@ from tstd.protocol import (
     MicrosoftConnect,
     MicrosoftDisconnect,
     MicrosoftStatus,
+    ModelFallback,
     MoveSession,
     OpenArtifact,
     OpenInTerminal,
@@ -964,6 +965,46 @@ FIXTURES = {
         tier="worker",
         previous="brain",
         seq=19,
+    ),
+    # TD-5120: the brain's endpoint was down; the turn moved to its first
+    # backup, and the gauge and title bar name the backup.
+    "model_fallback": ModelFallback(
+        session_id="sess-1",
+        tier="brain",
+        from_model="test-brain-slug",
+        from_host="127.0.0.1:8080",
+        to_model="test-backup-slug",
+        to_host="backup.local",
+        fallback=1,
+        reason="connection_error",
+        seq=20,
+    ),
+    "context_usage_fallback": ContextUsage(
+        session_id="sess-1",
+        tier="brain",
+        used_tokens=12345,
+        context_window=32768,
+        compact_at=19660,
+        model="test-backup-slug",
+        fallback=1,
+        seq=21,
+    ),
+    "tier_state_fallback": TierState(
+        session_id="sess-1",
+        tier="brain",
+        model_slugs={
+            "brain": "test-backup-slug",
+            "worker": "test-worker-slug",
+            "validator": "test-validator-slug",
+        },
+        preset="test",
+        hosts={
+            "brain": "backup.local",
+            "worker": "mock.local",
+            "validator": "mock.local",
+        },
+        fallbacks={"brain": 1},
+        seq=22,
     ),
     "session_list": SessionList(
         sessions=[

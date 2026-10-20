@@ -60,6 +60,12 @@ class StreamResult(NamedTuple):
     # A chunk arrived before the call ended. Past that point the provider
     # no longer retries, and the window may be showing text or thinking.
     began: bool
+    # The provider's own retry flag on the error that ended the call: a
+    # failure of the endpoint, not of the request (TD-5120). False on
+    # success, Stop and cancel.
+    retryable: bool = False
+    # The id this call's deltas carried, so a backup can withdraw them.
+    response_id: str | None = None
 
 
 def new_response_id() -> str:

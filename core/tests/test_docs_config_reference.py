@@ -264,6 +264,13 @@ def _check_keys(mapping: Any, fields: frozenset[str], where: str) -> None:
     assert not unknown, f"{where}: key(s) not in the schema: {', '.join(unknown)}"
 
 
+def _check_tier(data: Any, where: str) -> None:
+    """A tier's keys, and each backup's (TD-5120): a backup is a tier too."""
+    _check_keys(data, _TIER_FIELDS, where)
+    for i, backup in enumerate(data.get("fallbacks") or []):
+        _check_keys(backup, _TIER_FIELDS - {"fallbacks"}, f"{where}.fallbacks[{i}]")
+
+
 def _check_workspace(data: dict[str, Any], where: str) -> None:
     _check_keys(data, WORKSPACE_SECTIONS, where)
     if "boundary" in data:
@@ -293,7 +300,7 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
         return  # a comment-only example declares nothing
 
     if example.kind == "tier":
-        _check_keys(data, _TIER_FIELDS, where)
+        _check_tier(data, where)
     elif example.kind == "model":
         _check_keys(data, _MODEL_FIELDS, where)
         if "search" in data:
@@ -394,7 +401,7 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
         for name, preset in data.get("presets", {}).items():
             _check_keys(preset, _PRESET_FIELDS, f"{where} presets.{name}")
             for tier, body in preset.items():
-                _check_keys(body, _TIER_FIELDS, f"{where} presets.{name}.{tier}")
+                _check_tier(body, f"{where} presets.{name}.{tier}")
     else:
         _check_workspace(data, where)
 

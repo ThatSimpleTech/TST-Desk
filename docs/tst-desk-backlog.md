@@ -10477,6 +10477,53 @@ checked against the journal, the pre-253 probe and note, and a charter run
 through write, sign and reload) and `ui/src/lib/charter.test.ts` (the
 charter's value survives Save and Start). See DECISIONS.md.
 
+
+### TD-5120 — Backup endpoint per tier
+**Size:** 5 · **Depends on:** TD-5106 · Gap audit 2026-10-14
+
+If a tier's endpoint was down, every retry went back to it and the turn
+failed: a llama.cpp restart or a GPU swap on EZER killed turns. The only
+fallback list covered web search.
+
+**Acceptance criteria:**
+- [x] Each tier can list ordered `fallbacks` (model plus provider), in
+      config only. Each backup is a whole tier (slug required, endpoint,
+      credential, prices, window, output cap, timeouts); nothing is
+      inherited, backups do not nest, and a backup's key must be
+      declared. Settings never edits them, its writers leave them alone,
+      and it refuses to delete a key a backup names. A backup on the same
+      host with a second key gets its own client (clients are cached by
+      endpoint, key and timeouts)
+- [x] Connection refused, 5xx, rate limit or idle-watchdog abort moves to
+      the next fallback after the retry budget. Before any output that is
+      every failure `provider_retry` retries; partway through a reply, a
+      stall after TD-5159's one retry, withdrawn first. Each backup gets
+      its own budget, they are tried in order, the last failure ends the
+      turn, and the turn stays on the backup until the next user turn.
+      The timeline and meter show the switch: a `model_fallback` event
+      and a **Backup** timeline row, the context gauge's `· backup` and
+      Tier row, `tier_state.fallbacks` with the backup's slug and host,
+      the composer's `backup N`, and a stderr line from `tst run`
+- [x] Token calibration and the context window follow the model in use:
+      the backup's own calibrated counter, its window and compaction
+      point (the prompt is fitted before it is asked, and
+      `context_usage` names its model), and cost at its prices under its
+      slug
+- [x] docs/configuration.md (tier table, §3.7 with an EZER example),
+      docs/architecture.md (event table) and DECISIONS.md updated
+- [x] Tests in core (`core/tests/test_backup_endpoints.py`,
+      `test_backup_endpoints_config.py`) and ui (`protocol.test.ts`,
+      `timeline.test.ts`, `context-gauge.test.ts`,
+      `session-status.test.ts`, `composer-layout.test.ts`) fail on the
+      old code and pass on the new
+
+Done (2026-10-20): `core/tstd/fallback.py` (the chain, what moves, the
+announcement) and `loop._reply_with_backups`. Only the turn's own model
+call moves; the classifier, DoD polls, a delegated worker, the after-write
+review, memory distill and the extract pass stay on their tier's own
+model. A cut-off reply (`stream_interrupted`) keeps TD-5152's rule. Class
+B entry in DECISIONS.md.
+
 ---
 
 # Epic E52 — Files to the user
