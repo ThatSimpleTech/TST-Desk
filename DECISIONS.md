@@ -17175,3 +17175,49 @@ it. Refused on the Grok engine (`rewind_grok`): Grok writes files with its own
 tools, nothing reaches the branch, and "nothing changed" would be untrue. Refused when a later checkpoint has no `Log-Seq` (`rewind_predates`, an
 older session), rather than guess its order. Shell writes are not restored:
 they were never on the branch, and the dialog says so.
+
+## 2026-10-20 — TD-5132: line comments on the diff view, sent as one message (Class B)
+
+**Decision.** A new client verb, `submit_line_comments {session_id, comments[1..50]}`,
+each comment `{id, path, start_line, end_line, body, lines}`; `user_turn` gains
+an additive `line_comments` (the same anchors without `lines`). The daemon, not
+the window, writes what the model reads (`core/tstd/line_comments.py`).
+
+**Why a verb and not a formatted `user_message`.** The story asks for the
+model to get the code around each comment. The window only has the diff, whose
+context stops at the hunk; the daemon has the file. A verb also lets the daemon
+check the paths against the workspace wall and echo structured anchors on the
+`user_turn`, which is what lets every window (and a replay) show which comments
+were sent and resolve them later without inventing anything.
+
+**What the model reads.** One user turn: a header, then per comment
+`N. <workspace-relative path>, line(s) a-b:` and a code fence of numbered lines
+(commented ones marked `>`, three lines of context each side, a unified diff's
+own context), then `Comment: <body>`. The daemon compares the window's `lines`
+with the file: if they no longer match (a later write or a hand edit) or the
+file cannot be read, the model gets only the reviewed lines with a note
+saying so, never code the comment was not about.
+
+**Resolution.** The window marks a sent comment resolved when a write after
+the comment's `user_turn` removes a line in its range or adds lines inside or
+directly beside it; writes elsewhere in the file carry the range by their net
+line change. It is read only from the daemon's events (the `user_turn` anchors
+and later writes' diffs), so it survives a reload and needs no new event.
+
+**Where comments can be made.** Only on each file's latest write in the Files
+pane: its line numbers are the file as it is now. Older writes stay read-only.
+
+**Conservative answers to questions the story left open (Class C, PR body).**
+- Paths must be inside the session's workspace; one outside refuses the whole
+  submission (`line_comment_outside_workspace`), never part of it.
+- The code around a comment is read only where a built-in `fs_read` of that
+  file would run without asking; a policy rule that makes it ask (TD-5141)
+  keeps the rest of the file out of the message.
+- Limits: 50 comments, 200 lines and 4,000 characters per comment, 200,000
+  characters of message (`line_comments_too_large`).
+- Not a machine-peer or forwarded verb: another computer's session shows its
+  diffs read-only, and a phone on this computer can send them like the window.
+- Drafts live in the window's memory for the bound session and are dropped on
+  a session switch, like the plan-review cards; they stay until the
+  `user_turn` takes them, and a refusal hands them back with the reason.
+

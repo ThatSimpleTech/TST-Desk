@@ -270,6 +270,75 @@ class RemoveQueued(ClientMessage):
     queued_id: str
 
 
+#: Lines one diff comment may span (TD-5132).
+LINE_COMMENT_MAX_LINES = 200
+
+
+class LineCommentAnchor(BaseModel):
+    """Where one diff comment points, and what it says (TD-5132).
+
+    ``path`` is the absolute path the diff's ``+++ b/`` header named.
+    ``start_line`` and ``end_line`` count lines of the file after that
+    write, from 1, both inclusive. ``id`` is the window's own, so it can
+    match the comment it sent to the ``user_turn`` that carried it.
+    """
+
+    id: str = Field(min_length=1, max_length=64)
+    path: str = Field(min_length=1, max_length=4096)
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+    body: str = Field(min_length=1, max_length=4000)
+
+    @model_validator(mode="after")
+    def _ordered(self) -> LineCommentAnchor:
+        if self.end_line < self.start_line:
+            raise ValueError("end_line comes before start_line")
+        if self.end_line - self.start_line + 1 > LINE_COMMENT_MAX_LINES:
+            raise ValueError(f"a comment spans at most {LINE_COMMENT_MAX_LINES} lines")
+        if not self.body.strip():
+            raise ValueError("a comment needs text")
+        return self
+
+
+class LineComment(LineCommentAnchor):
+    """One comment as the window sends it (TD-5132).
+
+    ``lines`` are the commented lines as the diff showed them, one per
+    line of the range. The daemon compares them with the file: when they
+    still match, the model gets the lines around them from the file;
+    when the file has changed since, it gets these, marked as such.
+    """
+
+    lines: list[str] = Field(min_length=1, max_length=LINE_COMMENT_MAX_LINES)
+
+    @model_validator(mode="after")
+    def _one_per_line(self) -> LineComment:
+        if len(self.lines) != self.end_line - self.start_line + 1:
+            raise ValueError("lines must hold one entry per line of the range")
+        if any(len(line) > 4000 for line in self.lines):
+            raise ValueError("a commented line is longer than 4000 characters")
+        return self
+
+
+class SubmitLineComments(ClientMessage):
+    """Send the diff view's comments to the agent as one message (TD-5132).
+
+    The daemon checks every path is inside the session's workspace, reads
+    the code around each comment, and queues one user turn whose text the
+    model reads. That turn's ``user_turn`` carries the comments, so the
+    window can mark each resolved once a later write touches its lines.
+    Refused like ``user_message`` (``session_not_running``,
+    ``message_not_saved``, ``daemon_draining``), and with
+    ``line_comment_outside_workspace`` for a path outside the wall; every
+    refusal names ``in_reply_to``. Not forwarded for another computer's
+    session.
+    """
+
+    type: Literal["submit_line_comments"] = "submit_line_comments"
+    session_id: str
+    comments: list[LineComment] = Field(min_length=1, max_length=50)
+
+
 class ForkFrom(ClientMessage):
     """Replace a past user turn and fork the conversation from there (TD-1708).
 
@@ -1891,6 +1960,10 @@ class UserTurn(DaemonEvent):
     under, as the daemon took them, so the run can tell they were applied
     and a replay shows why a call ran or was refused without asking.
     Additive; ``None`` for a turn with none.
+
+    ``line_comments`` (TD-5132) are the diff comments this message carried,
+    as the daemon took them, so the window can mark each one resolved when
+    a later write touches its lines. Additive; ``None`` for any other turn.
     """
 
     type: Literal["user_turn"] = "user_turn"
@@ -1899,6 +1972,7 @@ class UserTurn(DaemonEvent):
     content: str
     steer: SteerPoint | None = None
     run_permissions: RunPermissions | None = None
+    line_comments: list[LineCommentAnchor] | None = None
 
 
 class QueuedMessageEntry(BaseModel):
@@ -4023,6 +4097,7 @@ ClientMessageT = Annotated[
     | UserMessage
     | SendQueued
     | RemoveQueued
+    | SubmitLineComments
     | Approve
     | Deny
     | AlwaysAllow
@@ -4250,6 +4325,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "user_message",
         "send_queued",
         "remove_queued",
+        "submit_line_comments",
         "approve",
         "deny",
         "always_allow",

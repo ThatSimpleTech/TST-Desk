@@ -16,9 +16,18 @@
 	import { openSessionPath } from '../open-file';
 	import { session } from '../session-status.svelte.js';
 	import DiffPreview from './DiffPreview.svelte';
+	import CommentableDiff from './CommentableDiff.svelte';
+	import ReviewBar from './ReviewBar.svelte';
+	import SentComments from './SentComments.svelte';
 	import Icon from './Icon.svelte';
+	import { sentComments } from '../review-comments';
+	import { isBridged } from '../bridged-id';
 
 	let summary = $derived(foldFileWrites(entries));
+	// TD-5132: comments already sent, with the status the later writes give them.
+	let sent = $derived(sentComments(entries));
+	// Another computer's hub does not forward the verb, so its diffs stay read-only.
+	let commentable = $derived(session.sessionId !== null && !isBridged(session.sessionId));
 	let expanded = $state<string | null>(null);
 
 	function toggle(path: string): void {
@@ -44,6 +53,7 @@
 		<ul class="files">
 			{#each summary.files as file (file.path)}
 				{@const isOpen = expanded === file.path}
+				{@const fileSent = sent.filter((c) => c.path === file.path)}
 				<li class="file">
 					<div class="row">
 						<button
@@ -84,17 +94,28 @@
 							<!-- Unkeyed: the list only ever appends, and one result can
 							     name the same path twice (a move onto itself), so seq is
 							     not unique within a file. -->
-							{#each file.writes as write}
+							{#each file.writes as write, i}
 								<section class="write">
 									<h4 class="write-title">{write.tool ?? 'write'} · +{write.added} -{write.removed}</h4>
-									<DiffPreview diff={write.diff} />
+									<!-- TD-5132: only the latest write takes comments: its line
+									     numbers are the file as it is now. -->
+									{#if i === file.writes.length - 1 && commentable}
+										<CommentableDiff path={file.path} diff={write.diff} />
+									{:else}
+										<DiffPreview diff={write.diff} />
+									{/if}
 								</section>
 							{/each}
 						</div>
 					{/if}
+					{#if fileSent.length > 0}
+						<SentComments comments={fileSent} />
+					{/if}
 				</li>
 			{/each}
 		</ul>
+		<div class="bottom">
+		<ReviewBar />
 		<footer class="totals">
 			<span>
 				{summary.fileCount}
@@ -106,6 +127,7 @@
 				<span class="removed">-{summary.removed}</span>
 			</span>
 		</footer>
+		</div>
 	{/if}
 </div>
 
@@ -258,8 +280,12 @@
 		border-top: var(--border-width) solid var(--color-hairline);
 		font-size: var(--text-sm);
 		color: var(--color-ink-secondary);
+		background: var(--color-lifted);
+	}
+
+	/* The send bar rides above the totals, both pinned to the pane's foot. */
+	.bottom {
 		position: sticky;
 		bottom: 0;
-		background: var(--color-lifted);
 	}
 </style>

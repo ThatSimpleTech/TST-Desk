@@ -11174,6 +11174,37 @@ Filed 2026-10-15. The agent built an APK for Adam and had no way to hand it over
 
 ---
 
+### TD-5132 — Line comments on the diff view go back to the agent
+**Size:** 5 · **Depends on:** none · Gap audit 2026-10-14
+
+The Files pane showed each write's diff (ui/src/lib/components/DiffPreview.svelte)
+but took no comments, so feedback on a line meant retyping its path and number
+in the composer. Claude Code's desktop diff view takes inline comments, which
+gives local models precise, anchored instructions.
+
+**Acceptance criteria:**
+- [x] In the diff view, the user can comment on a line or range, then submit
+      all comments at once as one message, anchored by file and line.
+- [x] The model receives the comments with surrounding code.
+- [x] Comments show as resolved once the next write touches those lines.
+
+Done (2026-10-20): the latest write of each file in the Files pane has a
+gutter of line numbers (the file after that write). A click starts a comment
+on that line, shift-click makes it a range; drafts sit under their lines and
+the pane's review bar sends them all as one `submit_line_comments`
+(`core/tstd/line_comments.py`). The daemon checks every path is inside the
+workspace (all or nothing), reads each file, and writes one user turn: each
+comment numbered with its workspace-relative path and lines, the commented
+lines marked `>` with three lines of code either side, then the comment.
+Where the file changed since the diff, cannot be read, or a policy rule
+makes reading it ask, the model gets only the reviewed lines, marked as
+such. The turn's `user_turn` carries the comments in `line_comments`; the
+pane lists sent comments per file as Open, and as Resolved once a write
+after that turn removes or adds lines in (or right beside) the range,
+carrying the range past writes elsewhere in the file
+(`ui/src/lib/review-comments.ts`). Tests: `core/tests/test_line_comments.py`,
+`ui/src/lib/review-comments.test.ts`, `ui/src/lib/review-comments-component.test.ts`.
+
 ### TD-5143 — The agent sends files to the chat
 **Size:** 5 · **Depends on:** TD-3201, TD-3202, TD-5014, TD-5015
 

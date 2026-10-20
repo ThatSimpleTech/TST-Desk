@@ -97,6 +97,32 @@ export interface RemoveQueued extends ClientMessage {
   queued_id: string;
 }
 
+/** Where one diff comment points, and what it says (TD-5132). `path` is the
+ *  absolute path of the diff's `+++ b/` header; `start_line`..`end_line`
+ *  (from 1, inclusive) count lines of the file after that write. `id` is the
+ *  window's own, echoed on the `user_turn` that carried it. */
+export interface LineCommentAnchor {
+  id: string;
+  path: string;
+  start_line: number;
+  end_line: number;
+  body: string;
+}
+
+/** One comment as the window sends it: `lines` are the commented lines as
+ *  the diff showed them, one per line of the range (TD-5132). */
+export interface LineComment extends LineCommentAnchor {
+  lines: string[];
+}
+
+/** Send the diff view's comments to the agent as one message (TD-5132).
+ *  Refused whole, never in part; every refusal names `in_reply_to`. */
+export interface SubmitLineComments extends ClientMessage {
+  type: "submit_line_comments";
+  session_id: string;
+  comments: LineComment[];
+}
+
 /** Replace a past user turn and fork from there (TD-1708). */
 export interface ForkFrom extends ClientMessage {
   type: "fork_from";
@@ -1053,6 +1079,7 @@ export type ClientMessageUnion =
   | UserMessage
   | SendQueued
   | RemoveQueued
+  | SubmitLineComments
   | ForkFrom
   | CompactContext
   | SetBranch
@@ -1311,6 +1338,9 @@ export interface UserTurn extends DaemonEvent {
   /** The `tst run` rules this turn runs under (TD-5118). Additive: older
    *  daemons omit it, and null is a turn without them. */
   run_permissions?: RunPermissions | null;
+  /** The diff comments this message carried (TD-5132), so the window can
+   *  mark each resolved once a later write touches its lines. Additive. */
+  line_comments?: LineCommentAnchor[] | null;
 }
 
 /** One message a restart left held (TD-5155). `content` is what its user

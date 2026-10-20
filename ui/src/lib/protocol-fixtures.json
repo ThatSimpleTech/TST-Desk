@@ -30,6 +30,23 @@
     "session_id": "sess-1",
     "queued_id": "q-1"
   },
+  "submit_line_comments": {
+    "type": "submit_line_comments",
+    "session_id": "sess-1",
+    "comments": [
+      {
+        "id": "c-1",
+        "path": "/home/user/project/src/app.py",
+        "start_line": 4,
+        "end_line": 5,
+        "body": "Use a constant here",
+        "lines": [
+          "x = 3",
+          "y = 3"
+        ]
+      }
+    ]
+  },
   "fork_from": {
     "type": "fork_from",
     "session_id": "sess-1",
@@ -793,7 +810,8 @@
     "turn_id": "turn-1",
     "content": "Fix the tests",
     "steer": null,
-    "run_permissions": null
+    "run_permissions": null,
+    "line_comments": null
   },
   "user_turn_steer": {
     "type": "user_turn",
@@ -809,7 +827,26 @@
         "tc-2"
       ]
     },
-    "run_permissions": null
+    "run_permissions": null,
+    "line_comments": null
+  },
+  "user_turn_line_comments": {
+    "type": "user_turn",
+    "seq": 12,
+    "session_id": "sess-1",
+    "turn_id": "turn-4",
+    "content": "Review comments on your changes (1 comment).",
+    "steer": null,
+    "run_permissions": null,
+    "line_comments": [
+      {
+        "id": "c-1",
+        "path": "/home/user/project/src/app.py",
+        "start_line": 4,
+        "end_line": 5,
+        "body": "Use a constant here"
+      }
+    ]
   },
   "user_turn_run_permissions": {
     "type": "user_turn",
@@ -832,7 +869,8 @@
         }
       ],
       "on_ask": "deny_and_continue"
-    }
+    },
+    "line_comments": null
   },
   "queued_messages": {
     "type": "queued_messages",
