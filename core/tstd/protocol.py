@@ -186,6 +186,27 @@ class UserMessage(ClientMessage):
     attachments: list[Attachment] = Field(default_factory=list)
 
 
+class SendQueued(ClientMessage):
+    """Send a message a restart left held (TD-5155).
+
+    ``queued_id`` names a row of the session's ``queued_messages``. The
+    message joins the loop's queue as if just sent: it starts a turn when
+    the loop is free, so a drain hold refuses it like ``user_message``.
+    """
+
+    type: Literal["send_queued"] = "send_queued"
+    session_id: str
+    queued_id: str
+
+
+class RemoveQueued(ClientMessage):
+    """Drop a message a restart left held, unsent (TD-5155)."""
+
+    type: Literal["remove_queued"] = "remove_queued"
+    session_id: str
+    queued_id: str
+
+
 class ForkFrom(ClientMessage):
     """Replace a past user turn and fork the conversation from there (TD-1708).
 
@@ -1609,6 +1630,33 @@ class UserTurn(DaemonEvent):
     content: str
 
 
+class QueuedMessageEntry(BaseModel):
+    """One message a restart left held (TD-5155).
+
+    ``content`` is the text the ``user_turn`` will show. ``images_dropped``
+    counts attached images that were not kept: image bytes are never
+    written to the queue file, so a held message goes out without them.
+    """
+
+    queued_id: str
+    content: str
+    images_dropped: int = 0
+
+
+class QueuedMessages(DaemonEvent):
+    """The session's held messages, in order, whole each time (TD-5155).
+
+    A message the daemon accepted but no turn had started when it stopped
+    comes back here instead of being sent: the person picks ``send_queued``
+    or ``remove_queued``. Logged when the list changes and after a restart
+    that left any, so the latest one in a replay is the list.
+    """
+
+    type: Literal["queued_messages"] = "queued_messages"
+    session_id: str
+    messages: list[QueuedMessageEntry] = Field(default_factory=list)
+
+
 class AssistantDelta(DaemonEvent):
     """A streamed chunk of assistant output."""
 
@@ -2611,8 +2659,10 @@ class DrainResult(DaemonEvent):
     """The answer to ``drain`` (TD-5023). Connection-scoped.
 
     ``drained`` is true when no turn on this computer is still open.
-    ``running`` and ``awaiting_approval`` are session ids and nothing
-    else; a turn parked on an approval is listed, not waited on.
+    ``running``, ``paused`` and ``awaiting_approval`` are session ids and
+    nothing else. Only ``running`` turns are still working; a turn paused
+    for the person (the progress guard or a cap, TD-5155) or parked on an
+    approval is waiting on the user, so it is listed, not waited on.
     ``hold_until`` is when new turns are taken again (ISO 8601 UTC), or
     None when no hold is up.
     """
@@ -2621,6 +2671,7 @@ class DrainResult(DaemonEvent):
     seq: int = 1
     drained: bool
     running: list[str] = Field(default_factory=list)
+    paused: list[str] = Field(default_factory=list)
     awaiting_approval: list[str] = Field(default_factory=list)
     hold_until: str | None = None
 
@@ -3355,6 +3406,8 @@ ClientMessageT = Annotated[
     | Pair
     | OpenWorkspace
     | UserMessage
+    | SendQueued
+    | RemoveQueued
     | Approve
     | Deny
     | AlwaysAllow
@@ -3475,6 +3528,7 @@ DaemonEventT = Annotated[
     | SessionState
     | ConversationReset
     | UserTurn
+    | QueuedMessages
     | AssistantDelta
     | AssistantReasoning
     | ToolCall
@@ -3558,6 +3612,8 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "pair",
         "open_workspace",
         "user_message",
+        "send_queued",
+        "remove_queued",
         "approve",
         "deny",
         "always_allow",
@@ -3678,6 +3734,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "session_state",
         "conversation_reset",
         "user_turn",
+        "queued_messages",
         "assistant_delta",
         "assistant_reasoning",
         "tool_call",

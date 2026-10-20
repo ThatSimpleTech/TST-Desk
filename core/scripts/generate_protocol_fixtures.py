@@ -152,12 +152,15 @@ from tstd.protocol import (
     Ping,
     PolicyRules,
     PolicyRuleSummary,
+    QueuedMessageEntry,
+    QueuedMessages,
     ReadArtifactChunk,
     Ready,
     ReconnectMachine,
     RemoteDeviceSummary,
     RemoveMachine,
     RemovePin,
+    RemoveQueued,
     RemoveRemoteDevice,
     RenameSession,
     Resume,
@@ -172,6 +175,7 @@ from tstd.protocol import (
     SaveJobTemplate,
     SaveMemory,
     ScreenFrame,
+    SendQueued,
     SessionJobSource,
     SessionList,
     SessionState,
@@ -259,6 +263,9 @@ FIXTURES = {
     "hello": Hello(token="test-token-abc", version=1, features=["machines"]),
     "open_workspace": OpenWorkspace(path="/home/user/project"),
     "user_message": UserMessage(session_id="sess-1", content="hello world"),
+    # TD-5155: the person's choice on a message a restart left held.
+    "send_queued": SendQueued(session_id="sess-1", queued_id="q-1"),
+    "remove_queued": RemoveQueued(session_id="sess-1", queued_id="q-1"),
     "fork_from": ForkFrom(session_id="sess-1", user_index=0, content="hello again"),
     "set_branch": SetBranch(session_id="sess-1", user_index=0, sibling_index=1),
     # TD-1709: additive field on an existing message, so the plain fixture
@@ -486,6 +493,19 @@ FIXTURES = {
         turn_id="turn-1",
         content="Fix the tests",
         seq=3,
+    ),
+    # TD-5155: messages a restart left held, whole each time.
+    "queued_messages": QueuedMessages(
+        session_id="sess-1",
+        messages=[
+            QueuedMessageEntry(queued_id="q-1", content="Also check b.txt"),
+            QueuedMessageEntry(
+                queued_id="q-2",
+                content="Look at this\n\n[Images attached: shot.png (2048 bytes)]",
+                images_dropped=1,
+            ),
+        ],
+        seq=4,
     ),
     "assistant_delta": AssistantDelta(session_id="sess-1", delta="Hello ", seq=3),
     "assistant_reasoning": AssistantReasoning(session_id="sess-1", delta="Let me think", seq=3),
@@ -984,6 +1004,7 @@ FIXTURES = {
     "drain_result": DrainResult(
         drained=False,
         running=["s1"],
+        paused=["s3"],
         awaiting_approval=["s2"],
         hold_until="2026-10-14T10:47:00+00:00",
     ),

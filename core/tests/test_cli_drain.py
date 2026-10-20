@@ -1,4 +1,8 @@
-"""TD-5023: ``tst drain`` against a real daemon, and with none running."""
+"""TD-5023: ``tst drain`` against a real daemon, and with none running.
+
+TD-5155: a turn paused for the person does not hold a deploy up unless
+``--strict``.
+"""
 
 from __future__ import annotations
 
@@ -10,9 +14,10 @@ from pathlib import Path
 import pytest
 
 from tests.machine_helpers import Fleet, ask, recv_until, window
+from tests.test_queued_restart import _same_read, paused_session
 from tstd import cli
 from tstd.cli import CliError
-from tstd.cli_drain import drain_frame
+from tstd.cli_drain import drain_frame, exit_code
 from tstd.mock import MockProvider, Script
 from tstd.ws import create_port_file_path
 
@@ -41,6 +46,8 @@ class TestParser:
         ns = cli.parse_args(["drain"])
         assert ns.command == "drain"
         assert (ns.timeout, ns.hold, ns.release, ns.json) == (30, 120, False, False)
+        assert ns.strict is False
+        assert cli.parse_args(["drain", "--strict"]).strict is True
 
     def test_frames(self) -> None:
         assert drain_frame(120, 60, False) == {"type": "drain", "timeout_s": 120, "hold_s": 60}
@@ -93,3 +100,49 @@ async def test_turn_outliving_the_timeout_exits_2_with_its_id(
     assert f"{sid}  running" in out
     # Ids only: the message never shows.
     assert "go" not in out.replace(sid, "")
+
+
+class TestExitCode:
+    """Only a running turn holds a deploy up, unless --strict (TD-5155)."""
+
+    def test_waiting_on_the_user_is_0_unless_strict(self) -> None:
+        for waiting in ({"paused": ["s1"]}, {"awaiting_approval": ["s2"]}):
+            result = {"drained": False, "running": [], **waiting}
+            assert exit_code(result, strict=False) == 0
+            assert exit_code(result, strict=True) == 2
+
+    def test_a_running_turn_is_2_either_way(self) -> None:
+        result = {"drained": False, "running": ["s1"], "paused": [], "awaiting_approval": []}
+        assert exit_code(result, strict=False) == 2
+        assert exit_code(result, strict=True) == 2
+
+    def test_an_older_daemon_lists_a_paused_turn_as_running(self) -> None:
+        assert exit_code({"drained": False, "running": ["s1"]}, strict=False) == 2
+
+    def test_drained_is_0_either_way(self) -> None:
+        result = {"drained": True, "running": [], "paused": [], "awaiting_approval": []}
+        assert exit_code(result, strict=False) == 0
+        assert exit_code(result, strict=True) == 0
+
+
+async def test_a_guard_paused_turn_does_not_hold_up_a_deploy(
+    tmp_path: Path, fleet: Fleet, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """2026-10-19: drain called the guard-paused session running, so every deploy waited."""
+    work = tmp_path / "ws"
+    work.mkdir()
+    data_dir = tmp_path / "d"
+    daemon = await fleet.start(data_dir, provider=_same_read(work))
+    flags = ("--timeout", "1", "--hold", "0", "--data-dir", str(data_dir))
+    async with window(daemon) as ws:
+        sid = await paused_session(ws, work)
+        assert await _tst("drain", *flags) == 0
+        out = capsys.readouterr().out
+        assert out.startswith("Drained.")
+        assert f"{sid}  paused, waiting on the user" in out
+        assert f"{sid}  running" not in out
+
+        assert await _tst("drain", "--strict", *flags) == 2
+        out = capsys.readouterr().out
+        assert out.startswith("Still open:")
+        assert f"{sid}  paused, waiting on the user" in out

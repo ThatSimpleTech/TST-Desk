@@ -74,6 +74,22 @@ export interface UserMessage extends ClientMessage {
   attachments?: Attachment[];
 }
 
+/** Send a message a restart left held (TD-5155). `queued_id` names a row of
+ *  the session's latest `queued_messages`. It starts a turn, so a drain hold
+ *  refuses it like `user_message`. */
+export interface SendQueued extends ClientMessage {
+  type: "send_queued";
+  session_id: string;
+  queued_id: string;
+}
+
+/** Drop a message a restart left held, unsent (TD-5155). */
+export interface RemoveQueued extends ClientMessage {
+  type: "remove_queued";
+  session_id: string;
+  queued_id: string;
+}
+
 /** Replace a past user turn and fork from there (TD-1708). */
 export interface ForkFrom extends ClientMessage {
   type: "fork_from";
@@ -944,6 +960,8 @@ export type ClientMessageUnion =
   | Pair
   | OpenWorkspace
   | UserMessage
+  | SendQueued
+  | RemoveQueued
   | ForkFrom
   | CompactContext
   | SetBranch
@@ -1132,6 +1150,24 @@ export interface UserTurn extends DaemonEvent {
   session_id: string;
   turn_id: string;
   content: string;
+}
+
+/** One message a restart left held (TD-5155). `content` is what its user
+ *  turn will show; `images_dropped` counts attached images the daemon did
+ *  not keep, so it goes out without them. */
+export interface QueuedMessageEntry {
+  queued_id: string;
+  content: string;
+  images_dropped: number;
+}
+
+/** The session's held messages, whole each time (TD-5155). A message the
+ *  daemon accepted and no turn had started when it stopped comes back here
+ *  instead of being sent; the latest one in a replay is the list. */
+export interface QueuedMessages extends DaemonEvent {
+  type: "queued_messages";
+  session_id: string;
+  messages: QueuedMessageEntry[];
 }
 
 export interface AssistantDelta extends DaemonEvent {
@@ -1756,6 +1792,9 @@ export interface DrainResult extends DaemonEvent {
   type: "drain_result";
   drained: boolean;
   running: string[];
+  /** Turns paused for the person (progress guard, cap): waiting on the
+   *  user, not working (TD-5155). */
+  paused: string[];
   awaiting_approval: string[];
   hold_until: string | null;
 }
@@ -2332,6 +2371,7 @@ export type DaemonEventUnion =
   | SessionState
   | ConversationReset
   | UserTurn
+  | QueuedMessages
   | AssistantDelta
   | AssistantReasoning
   | ToolCall

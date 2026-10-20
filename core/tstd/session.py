@@ -11,7 +11,7 @@ import contextlib
 import uuid
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast
 
@@ -59,10 +59,27 @@ class QueuedUserMessage:
 
     display: str
     provider: str | list[dict[str, Any]]
+    # TD-5155: the id the message is stored under until its turn starts.
+    # The loop logs it as the user_turn's turn_id, so a restart can tell a
+    # message whose turn began from one that was still waiting.
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    # Images the queue file could not keep (TD-5155); 0 for a live send.
+    images_dropped: int = 0
 
     @classmethod
     def plain(cls, text: str) -> QueuedUserMessage:
         return cls(display=text, provider=text)
+
+    @property
+    def prompt_text(self) -> str:
+        """The text an engine that is sent ``display`` gets instead (TD-5155).
+
+        ``display`` names images a restart did not keep as attached; the
+        held message's ``provider`` text says they were dropped.
+        """
+        if self.images_dropped and isinstance(self.provider, str):
+            return self.provider
+        return self.display
 
 
 class SessionError(Exception):
@@ -259,6 +276,14 @@ class Session:
         # Stop the in-flight turn without ending the session (TD-5003).
         self._stop_turn_event = asyncio.Event()
         self._user_message_queue: asyncio.Queue[QueuedUserMessage] = asyncio.Queue()
+        # TD-5155: what the daemon accepted and no turn has logged yet
+        # (``_waiting``, in queue order), and what a restart brought back
+        # for the person to send or remove (``held_messages``). Both reach
+        # disk through ``_queue_hook`` before a send returns.
+        self._waiting: list[QueuedUserMessage] = []
+        self.held_messages: list[QueuedUserMessage] = []
+        self._queue_hook: Callable[[list[QueuedUserMessage]], Awaitable[None]] | None = None
+        self._queue_lock = asyncio.Lock()
         # The loop's conversation lives here so a fork can truncate it
         # (TD-1708).  The loop aliases this list; it must not rebind.
         self.conversation: list[ChatMessage] = []
@@ -923,10 +948,85 @@ class Session:
         return self._user_message_queue.qsize()
 
     async def add_user_message(self, content: str | QueuedUserMessage) -> None:
-        """Enqueue a user message for the agent loop to process."""
+        """Enqueue a user message for the agent loop to process.
+
+        It is written to the session's queue file before the loop can take
+        it, so a restart before its turn starts keeps it (TD-5155).
+        """
         self._open_turns += 1
         queued = QueuedUserMessage.plain(content) if isinstance(content, str) else content
+        async with self._queue_lock:
+            self._waiting.append(queued)
+            await self._write_queue()
         self._user_message_queue.put_nowait(queued)
+
+    async def user_turn_logged(self, queued: QueuedUserMessage) -> None:
+        """*queued*'s user_turn and conversation are saved: it is not waiting (TD-5155).
+
+        Called after both reach disk, so a stop in between finds the
+        message in the log (the restore drops it by turn_id) or in the
+        queue file, never in neither.
+        """
+        async with self._queue_lock:
+            kept = [m for m in self._waiting if m.id != queued.id]
+            if len(kept) == len(self._waiting):
+                return
+            self._waiting = kept
+            await self._write_queue()
+
+    async def restore_held(self, held: list[QueuedUserMessage]) -> None:
+        """Hold what a restart brought back; nothing is sent (TD-5155)."""
+        async with self._queue_lock:
+            self.held_messages = list(held)
+            await self._write_queue()
+
+    async def send_held(self, queued_id: str) -> bool:
+        """Queue a held message for the loop, as if just sent. False if not held."""
+        async with self._queue_lock:
+            found = next((m for m in self.held_messages if m.id == queued_id), None)
+            if found is None:
+                return False
+            self.held_messages = [m for m in self.held_messages if m.id != queued_id]
+            self._waiting.append(found)
+            self._open_turns += 1
+            await self._write_queue()
+        # The list goes out before the loop can log the turn it starts.
+        await self.log_held_messages()
+        self._user_message_queue.put_nowait(found)
+        return True
+
+    async def remove_held(self, queued_id: str) -> bool:
+        """Drop a held message unsent. False if not held."""
+        async with self._queue_lock:
+            kept = [m for m in self.held_messages if m.id != queued_id]
+            if len(kept) == len(self.held_messages):
+                return False
+            self.held_messages = kept
+            await self._write_queue()
+        await self.log_held_messages()
+        return True
+
+    async def log_held_messages(self) -> None:
+        """Log the held list whole, so the latest one in a replay is the list."""
+        from .protocol import QueuedMessageEntry, QueuedMessages
+
+        await self.event_log.add(
+            QueuedMessages(
+                session_id=self.id,
+                messages=[
+                    QueuedMessageEntry(
+                        queued_id=m.id, content=m.display, images_dropped=m.images_dropped
+                    )
+                    for m in self.held_messages
+                ],
+                seq=1,
+            )
+        )
+
+    async def _write_queue(self) -> None:
+        """Save held then waiting messages. Caller holds ``_queue_lock``."""
+        if self._queue_hook is not None:
+            await self._queue_hook([*self.held_messages, *self._waiting])
 
     async def wait_for_user_message(self) -> QueuedUserMessage | None:
         """Wait for the next user message.
@@ -1090,6 +1190,9 @@ class Session:
         )
 
     def _drain_user_queue(self) -> None:
+        # The queue file follows on the next write: fork_from adds its
+        # message next, and set_branch writes the empty queue itself.
+        self._waiting = []
         while True:
             try:
                 self._user_message_queue.get_nowait()
@@ -1124,6 +1227,8 @@ class Session:
         self._branch_cursor[user_index] = sibling_index
         self.conversation[:] = deepcopy(siblings[sibling_index])
         self._drain_user_queue()
+        async with self._queue_lock:
+            await self._write_queue()
         position = self._find_user_turn(user_index)
         text = (
             ""

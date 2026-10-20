@@ -22,7 +22,6 @@ import asyncio
 import base64
 import json
 import time
-import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -1424,12 +1423,14 @@ async def agent_loop(
         await session.event_log.add(
             UserTurn(
                 session_id=session.id,
-                turn_id=str(uuid.uuid4()),
+                turn_id=queued.id,
                 content=queued.display,
                 seq=1,
             )
         )
         await session.conversation_changed()
+        # TD-5155: the turn is on disk, so the queue file lets it go.
+        await session.user_turn_logged(queued)
 
         # 1a. Open the turn's accumulators (TD-1806).  Both live out here,
         #     at the turn boundary, because a turn is what they measure: a

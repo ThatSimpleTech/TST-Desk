@@ -506,7 +506,7 @@ async def grok_loop(
             # A stop from the previous turn must not abort this one.
             session.acknowledge_stop_turn()
             user_content = queued.display
-            turn_id = str(uuid.uuid4())
+            turn_id = queued.id
             turn_start = time.time()
             session.conversation.append(ChatMessage(role="user", content=user_content))
             await session.event_log.add(
@@ -518,12 +518,14 @@ async def grok_loop(
                 )
             )
             await session.conversation_changed()
+            # TD-5155: the turn is on disk, so the queue file lets it go.
+            await session.user_turn_logged(queued)
             try:
                 await ensure_started()
                 assert grok_id is not None
                 images = list(session.pending_images)
                 session.pending_images = []
-                prompt_text = user_content
+                prompt_text = queued.prompt_text
                 prompt_images: list[tuple[str, bytes, str]] | None = images
                 files: list[tuple[str, str, str]] | None = None
                 # Grok 1.0.13 drops ACP image blocks (image: false). Write

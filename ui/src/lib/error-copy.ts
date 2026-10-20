@@ -309,6 +309,12 @@ export function daemonErrorCopy(code: string, message: string): NoticeSpec {
 			body: "TST Desk is restarting — send it again in a few seconds.",
 		};
 	}
+	if (code === "queued_not_found") {
+		// TD-5155: Send or Remove on a held message another window (or a
+		// second click) already settled. Nothing is lost; the row goes with
+		// the daemon's next list.
+		return { severity: "toast", title: "Already sent or removed", body: message };
+	}
 	if (code === "session_busy") {
 		// TD-1715: Delete or Move aimed at a session mid-turn. The daemon's
 		// message already names the way out (wait, stop, or archive instead),

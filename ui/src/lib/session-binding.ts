@@ -132,6 +132,8 @@ export function applyBind(
   // re-derives it through the store's reducer.
   state.turnState = turnState === "running" ? null : turnState;
   state.messages = [];
+  // Held rows (TD-5155) are the session's; its replay brings its own list.
+  state.held = [];
   ctx.onUnbind?.();
   // Queued text belongs to the session it was composed against; carrying it
   // across would deliver it to a conversation that never asked for it.
