@@ -323,6 +323,10 @@ class ToolDispatcher:
             )
         self._handlers[name] = handler
 
+    def has_handler(self, name: str) -> bool:
+        """Whether a call to *name* would reach a handler."""
+        return name in self._handlers
+
     # ── Single dispatch ───────────────────────────────────────────────
 
     async def dispatch(

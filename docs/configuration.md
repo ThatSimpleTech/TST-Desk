@@ -1076,9 +1076,42 @@ turn the user stops, sends `notifications/cancelled` to the server so it
 can stop its work too. Over `http` there is no progress yet (one JSON
 reply per call), so `timeout_seconds` bounds the whole call.
 
+**Tool search (TD-5127).** Every MCP tool's schema goes into every
+request unless they get too big for the window. Once a tier's MCP tool
+definitions would take more than `tool_search.threshold_percent` of that
+tier's `context_window` (by the same token estimate the context meter
+uses, TD-5007), that tier's requests leave them out and carry the builtin
+`tool_search` instead. Its description names every MCP tool by server
+(names only, about 4,000 characters at most; a server past that is
+named with its tool count). The agent calls it with a few keywords, or
+`select:<name>,<name>` for exact names, and the best matches (five unless
+it asks for up to twenty) load: from the next model call on, their full
+definitions are in the request, after every other tool, and they stay
+for the rest of the session, through compaction. A tool the conversation
+has already called is loaded too, so a session revived after a restart
+keeps the tools it was using; one that was found but never called is
+searched for again. Nothing here needs a provider feature: the request
+is a plain `tools` array, so it works on any OpenAI-compatible endpoint.
+`tool_search` is Class A (§4.4); loading a tool grants it nothing, and
+each call to it is classified as before. Whether a tier defers is decided
+on its first call and kept for the session, so the learned token ratio
+cannot make the tool list come and go. Measured on EZER with six servers
+(70 tools, `core/scripts/measure_mcp_tool_search.py`) on the local 27B's
+tokenizer: the first request of a turn was 15,294 prompt tokens with
+every schema and 8,272 with tool search, and 9,037 after one search
+loaded five tools.
+
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `servers` | mapping of id → server | `{}` | Listed servers. Ids are lowercase slugs `[a-z][a-z0-9-]{0,31}`, same as credentials. Empty or omitted means none — no extra doctor rows. |
+| `tool_search` | mapping | see below | When MCP tool schemas stay out of the request until `tool_search` loads them (TD-5127). |
+
+#### `mcp.tool_search`
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `mode` | `auto`, `always` or `off` | `auto` | `auto` leaves MCP tool schemas out of a tier's requests once they would take more than `threshold_percent` of its `context_window`. `always` leaves them out whatever their size. `off` sends every schema on every call, as before TD-5127, and never offers `tool_search`. |
+| `threshold_percent` | number > 0, ≤ 100 | `10` | The share of a tier's `context_window` the MCP tool definitions may take before `auto` leaves them out. Read when the tier makes its first call of the session. |
 
 #### `mcp.servers.<id>`
 
@@ -1215,6 +1248,9 @@ mcp:
       enabled: true
       headers:
         Authorization: "keychain:authorization"
+  tool_search:
+    mode: auto
+    threshold_percent: 10
 engine:
   kind: native
   binary: ""
@@ -2258,6 +2294,12 @@ read-only shell list (§2 `shell`, TD-5103) off the file: `cat .env`, `grep -r K
 **The task list never asks (TD-5122).** `task_list` changes only the session's own list, never
 a file or a host, so it is Class A by a fixed rule and runs with no card in any mode. A policy
 rule naming `task_list` still wins. An MCP or plugin tool with that name gets no such grant.
+
+**Tool search never asks (TD-5127).** `tool_search` reads only TST Desk's own list of MCP tools
+and changes which definitions the next requests carry, so it is Class A by a fixed rule
+(`tool-search`). A tool it loads is granted nothing: each call to that tool is classified on its
+own, so an MCP tool still asks (§2 `mcp`). A policy rule naming `tool_search` still wins. An MCP
+or plugin tool with that name gets no such grant.
 
 <!-- verify: workspace -->
 ```yaml

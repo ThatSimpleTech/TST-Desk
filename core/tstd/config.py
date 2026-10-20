@@ -1277,12 +1277,33 @@ class McpServerConfig(BaseModel):
         return value.strip()
 
 
+McpToolSearchMode = Literal["auto", "always", "off"]
+
+
+class McpToolSearchConfig(BaseModel):
+    """Leave MCP tool schemas out of the request until searched (TD-5127).
+
+    ``auto`` defers them for a tier once their definitions would take
+    more than ``threshold_percent`` of that tier's ``context_window``;
+    ``always`` defers them whatever their size; ``off`` sends every
+    schema on every call, as before.  A deferred tool loads for the
+    rest of the session when the builtin ``tool_search`` finds it or
+    the model calls it by name.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: McpToolSearchMode = "auto"
+    threshold_percent: float = Field(default=10.0, gt=0, le=100)
+
+
 class McpConfig(BaseModel):
     """User-listed MCP servers. Empty means none — no doctor rows."""
 
     model_config = ConfigDict(extra="forbid")
 
     servers: dict[str, McpServerConfig] = Field(default_factory=dict)
+    tool_search: McpToolSearchConfig = Field(default_factory=McpToolSearchConfig)
 
     @field_validator("servers")
     @classmethod

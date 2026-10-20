@@ -10852,6 +10852,53 @@ disk, a restart finds it and the next compaction still carries it), `ui/src/lib/
 the UI walk (the strip at 375 px and the Plan pane at 1280 px on the
 seeded held session; census gains `tasks`). See DECISIONS.md.
 
+### TD-5127 — On-demand MCP tool search
+**Size:** 5 · **Depends on:** TD-5104 · Gap audit 2026-10-14
+
+Every MCP tool schema went into every request (core/tstd/mcp/loader.py),
+which is costly on a 65k local window. Claude Code documents MCP tool
+search to scale to many servers.
+
+**Acceptance criteria:**
+- [x] Above a threshold (tool tokens as a share of the window), MCP tools
+      are left out of the request. A built-in `tool_search` returns
+      matching tools, which then load for the rest of the session.
+- [x] Works on any OpenAI-compatible endpoint; it needs no provider
+      feature.
+- [x] Measured on EZER: prompt tokens with 5+ servers before and after.
+      Six stdio servers (70 tools; `core/scripts/mcp_catalog_server.py`,
+      catalogs written for the measurement and sized like public tracker,
+      wiki, calendar, mail, SQL and storage servers), counted exactly by
+      the local 27B's vLLM `/tokenize` on EZER with
+      `core/scripts/measure_mcp_tool_search.py`: the first request of a
+      turn was 15,294 prompt tokens with every schema and 8,272 with tool
+      search (-46%), 9,037 after one search loaded five tools. Five
+      servers on a 32k window: 14,132 before, 8,228 after.
+
+Done (2026-10-20): `core/tstd/mcp/deferral.py` decides per call which MCP
+definitions a request carries and `core/tstd/tools/tool_search.py` is the
+tool. `mcp.tool_search.mode` (`auto`, `always`, `off`; default `auto`)
+and `threshold_percent` (default 10) set when a tier defers: once its MCP
+tool definitions would take more than that share of its `context_window`,
+by the calibrated estimate, decided on the tier's first call and kept for
+the session. A deferring tier's requests carry `tool_search`, whose
+description names every MCP tool by server; the agent searches by keyword
+or `select:<names>`, and the matches (five, up to twenty) go to
+`Session.loaded_mcp_tools` and are sent after every other tool from the
+next call on, through compaction. A tool the conversation already called
+is loaded too, so a revived session keeps what it used. The request stays
+a plain `tools` array. `tool_search` is Class A by the static rule
+`tool-search`; a loaded MCP tool still asks. Tests:
+`core/tests/test_mcp_tool_search.py` (ranking, `select:`, the catalog and
+its budget, below/above the threshold, `off`/`always`, the latched
+decision, load order and a byte-identical prefix, history after a revive,
+the handler and its refusal, the rule's shape and order, a real loop turn
+against a strict endpoint mock that searches, loads, calls the tool once
+with one approval and still offers it on the next user turn, the request
+unchanged under the threshold, and the measurement script) and
+`core/tests/test_docs_config_reference.py` (the new keys and default). See
+DECISIONS.md and docs/configuration.md §2 `mcp`.
+
 ---
 
 # Epic E52 — Files to the user

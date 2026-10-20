@@ -16623,3 +16623,75 @@ it is re-injected were left open. Adam approved the story as written
 - **Native only, parent only.** Delegated worker and research children
   keep their fixed tool lists without `task_list`; the plan is the
   parent's. The Grok engine keeps its own plan.
+
+## 2026-10-20 — TD-5127: on-demand MCP tool search (Class B)
+
+**Context.** Every MCP tool schema went into every request
+(`core/tstd/mcp/loader.py` registers them all), which costs a 32k or 65k
+local window several thousand tokens before the conversation starts. The
+gap audit asked for Claude Code's MCP tool search: above a threshold the
+tools leave the request and a built-in search loads the ones the model
+needs, on any OpenAI-compatible endpoint. The story sets the behaviour and
+the threshold's unit (tool tokens as a share of the window); the config
+shape, the search, what a loaded tool means and when the decision is made
+were left open. Adam approved the story as written (gap audit decisions,
+2026-10-14); no Class C question came up. Sized 5, so this entry records
+the approach in place of a sign-off.
+
+**Decision.**
+
+- **Config: `mcp.tool_search.mode` (`auto` | `always` | `off`, default
+  `auto`) and `threshold_percent` (default 10).** Claude Code's
+  `ENABLE_TOOL_SEARCH` has the same three settings and the same 10%
+  default. On by default because the story's first criterion is the
+  default behaviour; `off` gives back the old request byte for byte.
+  Global config only, like the rest of `mcp`.
+- **"Tool tokens" are the MCP tool definitions only**, counted the way the
+  request serializes them, with the tier's calibrated counter (TD-5007),
+  against that tier's `context_window`. Builtins are always sent: they are
+  the loop's own tools and the model cannot search for what it does not
+  know exists.
+- **The decision is latched per tier and window for the life of the
+  loop.** The learned token ratio moves the estimate between calls; a
+  tool list that flipped with it would cost the prompt cache and confuse
+  the model. A backup endpoint with another window (TD-5120) decides for
+  itself.
+- **No provider feature.** A deferred request is a plain `tools` array
+  without the MCP tools, plus `tool_search`. A loaded tool is sent with
+  its full definition from the next call on; nothing like Anthropic's
+  `defer_loading` or `tool_reference` is used, so vLLM, llama.cpp and LM
+  Studio take it as they took the old request. The end-to-end test runs
+  the turn against the strict endpoint mock from TD-5104, which refuses
+  any unknown top-level key or tool field.
+- **`tool_search` is a builtin, offered only while that tier defers.** Its
+  description carries a catalog of the MCP tool names by server (names
+  only, capped at 4,000 characters; a server past the cap is named with
+  its count), built once per session so it never changes as tools load.
+  The query is keywords, ranked over tool names (whole words first, then
+  substrings) and descriptions with a plural-s stem, or `select:<names>`
+  for exact picks. Five results unless the model asks for up to twenty.
+  The result lists each loaded tool's name and one-line description; it
+  does not repeat the schema, which the next request carries anyway.
+  Rejected: an embedding search (needs the embeddings endpoint, which is
+  optional), returning schemas in the result (pays for each one twice).
+- **Loaded means loaded for the session.** Matches go to
+  `Session.loaded_mcp_tools` and are appended after every other tool in
+  load order, so loading one leaves the earlier definitions byte-identical
+  for the provider's cache. A tool the conversation has already called is
+  loaded as well, which keeps a session revived from disk (or a tool the
+  model called by name) consistent with its history. Found-but-never-called
+  tools are not persisted across a restart: the model searches again, as
+  it reloads a skill (TD-4502).
+- **Class A by a fixed rule (`tool-search`).** It reads the daemon's own
+  registry and touches no file, host or server. Loading grants nothing:
+  each call to a loaded MCP tool is classified as before (Class B by the
+  ask floor), which the end-to-end test checks.
+- **Measured on EZER** (`core/scripts/measure_mcp_tool_search.py`, six
+  stdio catalog servers written for the measurement in
+  `core/scripts/mcp_catalog_server.py`, 70 tools, sized like public
+  tracker, wiki, calendar, mail, SQL and storage servers; exact counts
+  from the local 27B's vLLM `/tokenize`, no generation): 15,294 prompt
+  tokens with every schema, 8,272 deferred, 9,037 after one search loaded
+  five tools. Five servers at 32k: 14,132 → 8,228. Five servers at 65k
+  stay under 10% and are sent whole, as designed. No real third-party MCP
+  servers were installed for this; the catalogs are fixtures.

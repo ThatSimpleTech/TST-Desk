@@ -387,7 +387,10 @@ autonomy:
 # no dynamic discovery. HTTP urls must be loopback. A server's env:
 # (stdio) or headers: (http) holds literals that are not secrets, or
 # "keychain:<entry>" — tokens stay in the keychain (TD-5110); Settings →
-# MCP servers stores one without showing it.
+# MCP servers stores one without showing it. Once the MCP tool schemas
+# would take over 10% of a tier's context_window, they stay out of the
+# request and the agent loads the ones it needs with tool_search
+# (TD-5127); tool_search: {mode: auto|always|off, threshold_percent: 10}.
 mcp:
   servers: {}
 

@@ -33,6 +33,7 @@ the *obvious* cases — the ones that must never reach the model:
 - an MCP tool with no declared path or host metadata → B, never A
   (TD-4402; even if ``side_effect_class`` was reset to ``auto``)
 - the builtin ``task_list``, which touches no file or host → A (TD-5122)
+- the builtin ``tool_search``, which only reads the registry → A (TD-5127)
 
 Anything the table cannot decide is left unclassified so the worker-tier
 classifier (TD-703) can handle it, defaulting to **B** — fail toward
@@ -816,6 +817,27 @@ def _rule_ask_user(req: DecisionRequest, _boundary: Boundary) -> bool:
     )
 
 
+def _rule_tool_search(req: DecisionRequest, _boundary: Boundary) -> bool:
+    """``tool_search`` loads deferred MCP tool definitions (TD-5127).
+
+    It reads the daemon's own registry and changes only which definitions
+    the session's next requests carry; no file, host or server is touched.
+    A loaded tool is granted nothing: each call to it is classified on its
+    own. Only the builtin matches: an MCP or plugin tool of that name
+    carries provenance and gets no grant.
+    """
+    return (
+        req.tool_name == "tool_search"
+        and req.provenance is None
+        and req.side_effect_class == "auto"
+        and req.actuates is None
+        and not req.is_mutation
+        and not req.reads
+        and not req.writes
+        and not req.hosts
+    )
+
+
 def _rule_consult(req: DecisionRequest, _boundary: Boundary) -> bool:
     """``consult`` asks the brain or validator one question (TD-5119).
 
@@ -1037,6 +1059,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="consult asks the brain or validator a question; writes nothing",
         decision_class=DecisionClass.A,
         match=_rule_consult,
+    ),
+    Rule(
+        id="tool-search",
+        description="tool_search loads MCP tool definitions; touches no file, host or server",
+        decision_class=DecisionClass.A,
+        match=_rule_tool_search,
     ),
     # GitHub reads have no path or host metadata. A host on the request
     # would be Class C under the default network deny, and a path would
