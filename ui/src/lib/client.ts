@@ -42,6 +42,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "session_state",
   "conversation_reset",
   "user_turn",
+  "queued_messages",
   "assistant_delta",
   "assistant_reasoning", // TD-1901
   "tool_call",

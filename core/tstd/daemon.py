@@ -295,6 +295,7 @@ from .protocol import (
     ReadArtifactChunk,
     RemoteDeviceSummary,
     RemovePin,
+    RemoveQueued,
     RemoveRemoteDevice,
     RenameSession,
     ResetCuPermissions,
@@ -309,6 +310,7 @@ from .protocol import (
     SaveJob,
     SaveJobTemplate,
     SaveMemory,
+    SendQueued,
     SessionJobSource,
     SessionList,
     SessionSummary,
@@ -381,6 +383,7 @@ from .provider import (
     auth_failure_message,
 )
 from .provider_refresh import RefreshingProvider, _close_client
+from .queued_messages import keep_held_visible, queue_rows, restore_queue
 from .remote_attach import (
     bind_spec_when_enabled,
     load_remote_attach,
@@ -569,7 +572,15 @@ DRAINING_MESSAGE = (
 # Every message that starts a new turn on this computer. A drain hold
 # refuses them all, since the restart would cut the turn. Approve, deny,
 # stop and resume only let an open turn finish, so they still pass.
-_TURN_STARTS = (UserMessage, ForkFrom, RunGrokCommand, ApproveGrokPlan, StartAutonomy, RunJob)
+_TURN_STARTS = (
+    UserMessage,
+    SendQueued,
+    ForkFrom,
+    RunGrokCommand,
+    ApproveGrokPlan,
+    StartAutonomy,
+    RunJob,
+)
 
 
 class DrainHold:
@@ -2052,20 +2063,20 @@ class Daemon:
         self._shutdown_event.set()
         self._shutdown_budget.arm(self.data_dir)
 
-    async def _open_local_turns(self) -> tuple[list[str], list[str]]:
-        """``(running, awaiting_approval)``: ids of this computer's open turns.
+    async def _open_local_turns(self) -> tuple[list[str], list[str], list[str]]:
+        """``(running, paused, awaiting_approval)``: ids of this computer's open turns.
 
         The registry holds only local sessions; a bridged row lives in the
-        hub. A paused turn is waiting on the person too, but not on an
-        approval, so it is listed as running.
+        hub. Only a running turn can finish by itself. A paused one (the
+        progress guard or a cap) and one parked on an approval wait on the
+        person, so each is listed apart (TD-5155).
         """
-        running: list[str] = []
-        waiting: list[str] = []
+        groups: dict[str, list[str]] = {"running": [], "paused": [], "awaiting_approval": []}
         for sess in await self.session_registry.list_sessions():
             if not sess.turn_in_flight:
                 continue
-            (waiting if sess.state == "awaiting_approval" else running).append(sess.id)
-        return running, waiting
+            groups.get(sess.state, groups["running"]).append(sess.id)
+        return groups["running"], groups["paused"], groups["awaiting_approval"]
 
     async def _wait_for_open_turns(
         self, seconds: float, *, stop: Callable[[], bool] | None = None
@@ -2113,7 +2124,7 @@ class Daemon:
             for sess in await self.session_registry.list_sessions():
                 if sess.state not in TERMINAL_STATES:
                     await sess.conversation_changed()
-        running, waiting = await self._open_local_turns()
+        running, paused, waiting = await self._open_local_turns()
         log.info(
             "drain released" if release else "drained",
             extra={
@@ -2121,13 +2132,15 @@ class Daemon:
                     "timeout_s": msg.timeout_s,
                     "hold_s": msg.hold_s,
                     "running": len(running),
+                    "paused": len(paused),
                     "awaiting_approval": len(waiting),
                 }
             },
         )
         return DrainResult(
-            drained=not running and not waiting,
+            drained=not running and not paused and not waiting,
             running=running,
+            paused=paused,
             awaiting_approval=waiting,
             hold_until=self._drain.until,
         ).model_dump_json()
@@ -2444,7 +2457,9 @@ class Daemon:
         # open turns can finish.
         if isinstance(msg, _TURN_STARTS) and self._drain.active:
             sid = getattr(msg, "session_id", None)
-            return build_error("daemon_draining", DRAINING_MESSAGE, session_id=sid)
+            return build_error(
+                "daemon_draining", DRAINING_MESSAGE, session_id=sid, in_reply_to=msg.type
+            )
 
         if isinstance(msg, Drain):
             return await self._drain_turns(msg)
@@ -2548,6 +2563,9 @@ class Daemon:
                 },
             )
             return None
+
+        if isinstance(msg, SendQueued | RemoveQueued):
+            return await self._held_message_action(msg)
 
         if isinstance(msg, ForkFrom):
             found = self.session_registry.get(msg.session_id)
@@ -3590,6 +3608,9 @@ class Daemon:
         await self._attach_session_runtime(sess)
         if cut:
             await self._seal_cut_turn(sess)
+        # TD-5155: messages accepted before the stop come back held.
+        rows = await asyncio.to_thread(self._session_persist.load_queue, session_id)
+        await restore_queue(sess, rows, loaded.events)
         # TD-5140: open steering proposals lived in the old process's memory.
         await expire_restored_steering(sess, loaded.events)
         await self._emit_working_context(sess, config_source(sess))
@@ -3625,6 +3646,46 @@ class Daemon:
         )
         await sess.conversation_changed()
         log.info("sealed cut turn", extra={"extra_fields": {"session_id": sess.id}})
+
+    async def _held_message_action(self, msg: SendQueued | RemoveQueued) -> str | None:
+        """Send or drop a message a restart left held (TD-5155).
+
+        Send passes the same liveness check as ``user_message``, and a
+        drain hold already refused it before this. An id that is not held
+        (sent or removed from another window) is ``queued_not_found``.
+        """
+        found = self.session_registry.get(msg.session_id)
+        if found is None:
+            return build_error(
+                "session_not_found",
+                f"Session {msg.session_id!r} not found",
+                in_reply_to=msg.type,
+            )
+        if isinstance(msg, SendQueued):
+            runner = self.session_registry.get_runner(msg.session_id)
+            if found.state in TERMINAL_STATES or runner is None or not runner.is_running:
+                return build_error(
+                    "session_not_running",
+                    f"This session is {found.state} and can no longer run turns; "
+                    "the message was not sent. Start a new session and resend it.",
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
+                )
+            done = await found.send_held(msg.queued_id)
+        else:
+            done = await found.remove_held(msg.queued_id)
+        if not done:
+            return build_error(
+                "queued_not_found",
+                "That queued message is no longer waiting: it was sent or removed.",
+                session_id=msg.session_id,
+                in_reply_to=msg.type,
+            )
+        log.info(
+            "held message sent" if isinstance(msg, SendQueued) else "held message removed",
+            extra={"extra_fields": {"session_id": msg.session_id}},
+        )
+        return None
 
     async def _run_distill(
         self,
@@ -3670,6 +3731,11 @@ class Daemon:
             )
 
         sess._conversation_hook = _snap
+
+        async def _save_queue(messages: list[QueuedUserMessage]) -> None:
+            await asyncio.to_thread(self._session_persist.save_queue, sess.id, queue_rows(messages))
+
+        sess._queue_hook = _save_queue
         sess._overlay_session = self.desktop_driver.set_overlay_session
         router = sess.router if sess.router is not None else TierRouter()
         sess.router = router
@@ -4119,6 +4185,9 @@ class Daemon:
         if superseded is not None and not superseded.done():
             superseded.cancel()
 
+        # TD-5155: held messages whose list the log window trimmed away
+        # are logged again, so this replay shows them.
+        await keep_held_visible(session)
         # Replay from from_seq. A rotated prefix is a typed notice, then
         # the same gap/dup rules over whatever is still in the window.
         earliest = session.event_log.earliest_seq

@@ -38,6 +38,10 @@ TRANSIENT_RULES: tuple[tuple[Literal["exact", "prefix", "contains", "http"], str
     ("exact", "connection_error", True),
     ("exact", "timeout", True),
     ("exact", "timed_out", True),
+    # TD-5106: the provider went quiet past stream_idle_timeout or
+    # read_timeout. The same wait as ``timeout`` (a read timeout mid-stream
+    # is this code now), so a later try is worth it (TD-5154).
+    ("exact", "stream_stalled", True),
     ("exact", "rate_limited", True),
     ("exact", "rate_limit", True),
     ("exact", "server_error", True),

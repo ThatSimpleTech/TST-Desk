@@ -14,7 +14,9 @@ import {
   sendToDaemon,
 } from "./connection-status.svelte.js";
 import type { NewAttachment } from "./attachments";
-import { createChatState, createChatStore, type ChatState } from "./chat-store";
+import { createChatState, createChatStore, showCancel, type ChatState } from "./chat-store";
+import { compactNotSentCopy } from "./context-gauge";
+import { notify } from "./notifications.svelte.js";
 import { bindApprovals } from "./approval-store.svelte.js";
 import { bindDecisions } from "./decisions.svelte.js";
 import { bindMemoryProposal } from "./memory-proposal-store.svelte.js";
@@ -86,11 +88,21 @@ export const forkFrom: (userIndex: number, content: string) => boolean = store.f
 export const setBranch: (userIndex: number, siblingIndex: number) => boolean = store.setBranch;
 export const compactContext: (guidance?: string, userIndex?: number) => boolean =
   store.compactContext;
+/** Compact now (TD-5109) from `/compact`, "Summarize from here" or the
+ *  gauge, with a toast that says why when the request never left (TD-5154). */
+export function requestCompact(guidance = "", userIndex?: number): boolean {
+  if (store.compactContext(guidance, userIndex)) return true;
+  notify("compact", compactNotSentCopy(showCancel(chat.turnState)));
+  return false;
+}
 export const cancelTurn: () => boolean = store.cancelTurn;
 /** Queue actions (TD-1704), bound for the queued-row controls. */
 export const sendQueuedNow: (id: string) => boolean = store.sendQueuedNow;
 export const editQueuedMessage: (id: string, text: string) => void = store.editQueuedMessage;
 export const removeQueuedMessage: (id: string) => void = store.removeQueuedMessage;
+/** Held-message actions (TD-5155): the daemon sends or drops the row. */
+export const sendHeldMessage: (id: string) => boolean = store.sendHeldMessage;
+export const removeHeldMessage: (id: string) => boolean = store.removeHeldMessage;
 /** Rail click target (TD-1701): attach the pane to a session from the list. */
 export const selectSession: (
   sessionId: string,

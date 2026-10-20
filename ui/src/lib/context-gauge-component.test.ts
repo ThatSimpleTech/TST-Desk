@@ -10,13 +10,13 @@ import { flushSync, mount, unmount } from "svelte";
 import type { DaemonEventUnion } from "./protocol";
 
 const mocks = vi.hoisted(() => ({
-	compactContext: vi.fn<(guidance?: string, userIndex?: number) => boolean>(() => true),
+	requestCompact: vi.fn<(guidance?: string, userIndex?: number) => boolean>(() => true),
 	chat: { turnState: "idle" as string | null },
 }));
 
 vi.mock("./chat-store.svelte.js", () => ({
 	chat: mocks.chat,
-	compactContext: mocks.compactContext,
+	requestCompact: mocks.requestCompact,
 }));
 
 import ContextGauge from "./components/ContextGauge.svelte";
@@ -43,7 +43,7 @@ let component: ReturnType<typeof mount> | null = null;
 
 beforeEach(() => {
 	resetSession();
-	mocks.compactContext.mockClear();
+	mocks.requestCompact.mockClear();
 	mocks.chat.turnState = "idle";
 	target = document.createElement("div");
 	document.body.appendChild(target);
@@ -87,7 +87,7 @@ describe("ContextGauge", () => {
 			b.textContent?.includes("Compact now"),
 		)!;
 		button.click();
-		expect(mocks.compactContext).toHaveBeenCalledTimes(1);
+		expect(mocks.requestCompact).toHaveBeenCalledTimes(1);
 
 		unmount(component!);
 		mocks.chat.turnState = "running";

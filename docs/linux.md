@@ -136,13 +136,25 @@ Let open turns finish first, so a restart does not cut one (TD-5023):
 
 `tst drain` waits up to `--timeout` seconds for open turns, then keeps
 refusing new ones for `--hold` seconds (default 120) so the restart lands
-on a quiet daemon. It exits 0 when drained, 2 when a turn is still running
-or waiting on an approval (it prints only the session ids), and 1 when no
-daemon is running; it never starts one. The restarted daemon starts
-without a hold; `tst drain --release` lifts it if you call the deploy off. A turn cut anyway is closed as "Not
-finished" when the daemon comes back (TD-5018), and a second `tstd` on the
-same data dir waits up to 10 s for the first to exit before giving up
-(TD-5022).
+on a quiet daemon. It exits 0 when no turn is still running, 2 when one is,
+and 1 when no daemon is running; it never starts one. It prints only
+session ids, each with how it waits: `running`, `paused, waiting on the
+user` (the progress guard or a cap paused it) or `waiting for approval`.
+
+A paused turn or one parked on an approval never finishes by itself, so by
+default it does not hold the deploy up (TD-5155): `tst drain` lists it
+under "Waiting on the user" and still exits 0. The restart seals it as
+"Cut off by a restart" with a Continue chip (TD-5018), and any message the
+daemon had accepted for that session comes back held above the composer,
+with Send and Remove; nothing is sent by itself. Attached images do not
+survive the restart: a held message keeps its text and says how many
+images it lost. Pass `--strict` to exit 2 for paused and approval turns
+too, when you would rather wait for the person.
+
+The restarted daemon starts without a hold; `tst drain --release` lifts it
+if you call the deploy off. A turn cut anyway is closed as "Not finished"
+when the daemon comes back (TD-5018), and a second `tstd` on the same data
+dir waits up to 10 s for the first to exit before giving up (TD-5022).
 
 ---
 

@@ -22,7 +22,6 @@ import asyncio
 import base64
 import json
 import time
-import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -261,12 +260,13 @@ async def _finish_progress_answer(
     client_for: Callable[..., Awaitable[ProviderLike]],
     assembler: PromptAssembler,
     router: TierRouter,
+    calibration: CalibrationStore,
 ) -> None:
     """The progress check answered the user. End the turn with that text."""
     await _show_progress_note(session, messages, answer)
     router.record_success()
     await _emit_turn_complete(session, tier, turn_start, tracker)
-    await maybe_verify_after_turn(session, config, tracker, client_for, assembler)
+    await maybe_verify_after_turn(session, config, tracker, client_for, assembler, calibration)
     session.snapshot_branches()
     log.info(
         "turn complete",
@@ -288,6 +288,7 @@ async def _progress_check_gate(
     client_for: Callable[..., Awaitable[ProviderLike]],
     assembler: PromptAssembler,
     router: TierRouter,
+    calibration: CalibrationStore,
 ) -> Literal["proceed", "pause", "stop"]:
     """Ask the tool-free question. ``stop`` means the turn is over."""
     check_messages = [
@@ -338,6 +339,7 @@ async def _progress_check_gate(
             client_for,
             assembler,
             router,
+            calibration,
         )
         return "stop"
     if kind == "continue":
@@ -362,6 +364,7 @@ async def _interactive_guard(
     client_for: Callable[..., Awaitable[ProviderLike]],
     assembler: PromptAssembler,
     router: TierRouter,
+    calibration: CalibrationStore,
 ) -> bool:
     """True when the loop should call the model. False ends this turn.
 
@@ -386,6 +389,7 @@ async def _interactive_guard(
             client_for,
             assembler,
             router,
+            calibration,
         )
         if checked == "stop":
             return False
@@ -1419,12 +1423,14 @@ async def agent_loop(
         await session.event_log.add(
             UserTurn(
                 session_id=session.id,
-                turn_id=str(uuid.uuid4()),
+                turn_id=queued.id,
                 content=queued.display,
                 seq=1,
             )
         )
         await session.conversation_changed()
+        # TD-5155: the turn is on disk, so the queue file lets it go.
+        await session.user_turn_logged(queued)
 
         # 1a. Open the turn's accumulators (TD-1806).  Both live out here,
         #     at the turn boundary, because a turn is what they measure: a
@@ -1904,6 +1910,7 @@ async def agent_loop(
                 client_for,
                 assembler,
                 router,
+                calibration,
             ):
                 break
 
@@ -2143,7 +2150,9 @@ async def agent_loop(
 
             # 2h. No tool calls (or no dispatcher) — turn is complete
             await _emit_turn_complete(session, tier, turn_start, tracker)
-            await maybe_verify_after_turn(session, config, tracker, client_for, assembler)
+            await maybe_verify_after_turn(
+                session, config, tracker, client_for, assembler, calibration
+            )
             session.snapshot_branches()
             if session.autonomy and not await advance_autonomy(session):
                 return

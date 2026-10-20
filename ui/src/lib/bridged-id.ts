@@ -42,6 +42,8 @@ export const BRIDGED_VERBS: ReadonlySet<string> = new Set([
   "attach",
   "detach",
   "user_message",
+  "send_queued", // TD-5155: send or drop a message a restart left held
+  "remove_queued",
   "stop_turn",
   "cancel",
   "resume",
@@ -53,6 +55,7 @@ export const BRIDGED_VERBS: ReadonlySet<string> = new Set([
   "new_session",
   "fork_from",
   "set_branch",
+  "compact_context", // TD-5154: /compact and "Summarize from here" on another computer
   "set_tier",
   "set_plan",
   "set_session_preset",

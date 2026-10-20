@@ -158,3 +158,48 @@ describe("chat pane after a restart", () => {
     expect(status?.textContent).not.toContain("Cut off by a restart");
   });
 });
+
+describe("held messages after a restart (TD-5155)", () => {
+  function heldList(messages: { queued_id: string; content: string; images_dropped: number }[]): DaemonEventUnion {
+    return { type: "queued_messages", session_id: "s1", seq: 6, messages };
+  }
+
+  function strip(): HTMLElement | null {
+    return document.querySelector<HTMLElement>("[aria-label='Held messages']");
+  }
+
+  it("shows what the daemon kept, and sends only on Send", () => {
+    app = mount(ChatPane, { target: document.body });
+    flushSync();
+    emit(sessionList());
+    expect(strip()).toBeNull();
+
+    emit(
+      heldList([
+        { queued_id: "q1", content: "also check b.txt", images_dropped: 0 },
+        { queued_id: "q2", content: "what is in this?", images_dropped: 1 },
+      ]),
+    );
+    const rows = strip()?.querySelectorAll("[role='listitem']") ?? [];
+    expect(rows).toHaveLength(2);
+    expect(rows[0].textContent).toContain("also check b.txt");
+    expect(rows[1].textContent).toContain("1 attached image was not kept");
+    // Nothing goes out by itself: only the list request from the mount.
+    const heldVerbs = () => mocks.sent.filter((m) => m.type === "send_queued" || m.type === "remove_queued");
+    expect(heldVerbs()).toEqual([]);
+
+    rows[0].querySelector<HTMLButtonElement>("[aria-label='Send held message']")?.click();
+    flushSync();
+    expect(heldVerbs()).toEqual([{ type: "send_queued", session_id: "s1", queued_id: "q1" }]);
+    expect(userSends()).toEqual([]);
+    expect(rows[0].querySelector<HTMLButtonElement>("[aria-label='Send held message']")?.disabled).toBe(true);
+
+    rows[1].querySelector<HTMLButtonElement>("[aria-label='Remove held message']")?.click();
+    flushSync();
+    expect(heldVerbs().at(-1)).toEqual({ type: "remove_queued", session_id: "s1", queued_id: "q2" });
+
+    emit(heldList([]));
+    expect(strip()).toBeNull();
+  });
+});
+

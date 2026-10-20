@@ -78,6 +78,7 @@ async def test_idle_daemon_drains_at_once(tmp_path: Path, fleet: Fleet) -> None:
         "seq": 1,
         "drained": True,
         "running": [],
+        "paused": [],
         "awaiting_approval": [],
         "hold_until": None,
     }
@@ -112,6 +113,7 @@ async def test_hold_refuses_a_new_turn_and_queues_nothing(tmp_path: Path, fleet:
             "code": "daemon_draining",
             "message": DRAINING_MESSAGE,
             "session_id": sid,
+            "in_reply_to": "user_message",
         }
         forked = await ask(
             ws, {"type": "fork_from", "session_id": sid, "user_index": 0, "content": "x"}
@@ -141,6 +143,7 @@ async def test_turn_parked_on_an_approval_is_listed_not_waited_on(
         assert time.monotonic() - started < 2.0
         assert result["drained"] is False
         assert result["running"] == []
+        assert result["paused"] == []
         assert result["awaiting_approval"] == [sid]
         # Approvals still pass, so the turn can finish.
         deny = {"type": "deny", "session_id": sid, "tool_call_id": request["tool_call_id"]}
@@ -206,6 +209,7 @@ async def test_hold_refuses_every_verb_that_starts_a_turn(tmp_path: Path, fleet:
         ):
             refused = await ask(ws, frame, "error")
             assert refused["code"] == "daemon_draining", frame
+            assert refused["in_reply_to"] == frame["type"], frame
             assert refused.get("session_id") == session_id, frame
         sess = daemon.session_registry.get(sid)
         assert sess is not None and not sess.turn_in_flight

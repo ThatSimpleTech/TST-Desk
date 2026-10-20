@@ -13,12 +13,14 @@
 		cancelTurn,
 		chat,
 		continueTurn,
-		compactContext,
 		editQueuedMessage,
 		initChat,
 		keepDraft,
+		removeHeldMessage,
 		removeQueuedMessage,
+		requestCompact,
 		retryLastUserMessage,
+		sendHeldMessage,
 		sendQueuedNow,
 		sendUserMessage,
 		teardownChat,
@@ -33,12 +35,12 @@
 	import { canSend, formatTurnDuration, showCancel } from "../../chat-store";
 	import type { AttachmentDraft } from "../../attachments";
 	import { parseCompactCommand } from "../../context-gauge";
-	import { notify } from "../../notifications.svelte.js";
 	import { greetingContext, greetingForHour, SUGGESTIONS } from "../../greeting";
 	import { workingVerb } from "../../working-flavor";
 	import Composer from "./Composer.svelte";
 	import MessageList from "./MessageList.svelte";
 	import PlayfulBackground from "../PlayfulBackground.svelte";
+	import HeldMessages from "./HeldMessages.svelte";
 	import QueuedMessages from "./QueuedMessages.svelte";
 	import WakeupCard from "../WakeupCard.svelte";
 	import { bindWakeup, startWakeup } from "../../wakeup.svelte.js";
@@ -103,13 +105,7 @@
 			sendUserMessage(text, attachments);
 			return;
 		}
-		if (!compactContext(compact.guidance)) {
-			notify("compact", {
-				severity: "toast",
-				title: "Not compacted",
-				body: "A turn is running. Compact when it finishes, or stop it first.",
-			});
-		}
+		requestCompact(compact.guidance);
 	}
 
 	// Engine this chat started with, falling back to Settings only when an
@@ -197,6 +193,14 @@
 				<span class="duration">Worked for {formatTurnDuration(chat.lastTurnDuration)}</span>
 			{/if}
 		</div>
+		<!-- TD-5155: what a restart left held, above the pane's own queue.
+		     Renders nothing while nothing is held. -->
+		<HeldMessages
+			held={chat.held}
+			disabled={!sendable}
+			onsend={sendHeldMessage}
+			onremove={removeHeldMessage}
+		/>
 		<!-- TD-1704: sits directly above the composer, between the turn status
 		     and the card, so the rows read as "these go next". Renders nothing
 		     at all while the queue is empty. -->
