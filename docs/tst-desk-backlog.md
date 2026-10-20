@@ -10486,12 +10486,15 @@ from the person. Claude Code documents a structured question tool.
 **Acceptance criteria:**
 - [x] The model can ask one to four questions, each with 2-4 options plus free text. The daemon parks the turn like an approval.
 - [x] The desktop shows options as buttons. The phone shows them as taps.
-- [ ] `tst run` handles them per TD-5118. Done for what is on main: a TTY in
-      text mode answers them, and a non-TTY or `--output json`/`ndjson` run
-      exits 4 (`approval_needed`) with the question waiting for the window,
-      as for an approval. TD-5118's `--on-ask deny-and-continue` is on its
-      own branch; once both are merged, `ask_user` must refuse in such a turn
-      the way it refuses in an unattended run (see Notes).
+- [x] `tst run` handles them per TD-5118. A TTY in text mode answers them,
+      and a non-TTY or `--output json`/`ndjson` run exits 4
+      (`approval_needed`) with the question waiting for the window, as for
+      an approval. In a `--on-ask deny-and-continue` turn the tool refuses
+      (`ask_user_unattended`) without parking, so the run carries on and
+      exits 0. The flag itself is TD-5118 (PR #41, not on main yet); this
+      half was verified on a local merge with that branch (75cdc24e): `tst run
+      --on-ask deny-and-continue` in text and json mode exits 0 with no
+      `question_request`, and exits 4 with the tool before this fix.
 - [x] Answers come back as the tool result, and both question and answer are logged to the audit DB.
 
 Done (2026-10-20): `core/tstd/tools/ask_user.py` (the tool, Class A by the
@@ -10518,10 +10521,18 @@ Slack, Discord and Telegram channels say a question is waiting. Tests:
 `ui/src/lib/question-component.test.ts`. See DECISIONS.md, docs/configuration.md
 §4.4 and docs/architecture.md.
 
-**Notes:** for the TD-5118 merge, `ask_user` should treat a turn whose
-`session.run_permissions.on_ask` is `deny_and_continue` like an unattended
-run (refuse at once, so the model carries on) instead of parking; that
-branch adds `run_permissions`, which main does not have yet.
+Review fixes (2026-10-20): a question whose text the event log's secret
+scrub would change is refused (`ask_user_secret_shaped`), since every
+client shows the scrubbed card and a scrubbed label could never be picked;
+an `ask_user` answer is never cleared as stale tool output
+(`context_clear.ALWAYS_KEPT_TOOLS`); and a turn whose
+`session.run_permissions.on_ask` is `deny_and_continue` (TD-5118) is
+refused like an unattended run. Tests: `core/tests/test_ask_user.py`,
+`core/tests/test_clear_stale_results.py`.
+
+**Notes:** `ask_user` reads `Session.run_permissions` by name
+(`tools/ask_user.denies_every_ask`), so it needs no change when TD-5118
+merges; a later tidy-up may read the attribute directly.
 
 ---
 
