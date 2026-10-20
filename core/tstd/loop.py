@@ -931,6 +931,7 @@ async def _dispatch_and_append_results(
                 error_code=r.error_code,
                 diff=r.diff,
                 allowed_by=list(r.allowed_by),
+                transcript=list(r.transcript),
                 seq=1,
             )
         )

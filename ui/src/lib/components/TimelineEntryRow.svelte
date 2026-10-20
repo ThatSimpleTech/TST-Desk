@@ -6,6 +6,8 @@
 	import Icon from './Icon.svelte';
 	import DiffPreview from './DiffPreview.svelte';
 	import type { TimelineEntry } from '../timeline';
+	import type { WorkerStep } from '../protocol';
+	import { formatWorkerTranscript } from '../worker-transcript';
 	import { KIND_LABELS, entryIcon, entryTone, isQuietEntry, isScalarDetail } from '../entry-view';
 
 	interface Props {
@@ -22,12 +24,18 @@
 	let quiet = $derived(isQuietEntry(entry));
 
 	let diff = $derived(typeof entry.details.diff === 'string' ? (entry.details.diff as string) : null);
+	// A delegate's worker steps (TD-5117), set only when the daemon sent some.
+	let transcript = $derived(
+		Array.isArray(entry.details.transcript)
+			? formatWorkerTranscript(entry.details.transcript as WorkerStep[])
+			: null
+	);
 
-	// Output, diff and name have their own places in the row; the rest is a
-	// key/value grid — scalars inline, structures in a code block.
+	// Output, diff, transcript and name have their own places in the row;
+	// the rest is a key/value grid — scalars inline, structures in a code block.
 	let fields = $derived(
 		Object.entries(entry.details).filter(
-			([key]) => key !== 'output' && key !== 'diff' && key !== 'name'
+			([key]) => key !== 'output' && key !== 'diff' && key !== 'name' && key !== 'transcript'
 		)
 	);
 
@@ -74,6 +82,13 @@
 				<section class="section">
 					<h4 class="section-title">Diff</h4>
 					<DiffPreview {diff} />
+				</section>
+			{/if}
+
+			{#if transcript}
+				<section class="section">
+					<h4 class="section-title">Worker transcript</h4>
+					<pre class="code">{transcript}</pre>
 				</section>
 			{/if}
 

@@ -1217,6 +1217,17 @@ export interface ToolCall extends DaemonEvent {
   decision_class?: "A" | "B" | "C";
 }
 
+/** One step of a delegated worker's run, for display only (TD-5117). The
+ *  parent model gets the capped summary in `output`, never these. */
+export interface WorkerStep {
+  kind: "task" | "reply" | "tool_call" | "tool_result" | "note";
+  text: string;
+  tool?: string | null;
+  status?: "success" | "error" | null;
+  /** The step's text was cut to a few thousand characters. */
+  truncated?: boolean;
+}
+
 export interface ToolResult extends DaemonEvent {
   type: "tool_result";
   session_id: string;
@@ -1228,6 +1239,8 @@ export interface ToolResult extends DaemonEvent {
   diff?: string | null;
   /** Read-only shell list entries that let the call run without asking (TD-5103). */
   allowed_by?: string[];
+  /** A `delegate` call's worker transcript (TD-5117); empty for other tools. */
+  transcript?: WorkerStep[];
 }
 
 export interface ShellOutput extends DaemonEvent {

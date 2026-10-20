@@ -468,7 +468,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `attach` | yes | Subscribe to a session, replaying from `from_seq`. |
 | `detach` | yes | Unsubscribe from a session; the session is unaffected. |
 | `set_tier` | yes | Pin the active model tier for the session. |
-| `set_plan` | yes | Turn plan mode (brain lock) on or off. Refused `set_tier` to worker/validator while on (TD-4603). |
+| `set_plan` | yes | Turn plan mode (brain lock) on or off. Refused `set_tier` to worker/validator while on (TD-4603). While on, `delegate` runs the read-only research worker by default and refuses `kind: worker` (TD-5117). |
 | `set_session_preset` | yes | Retarget this session at a catalog preset. Refused mid-turn. Does not write Settings. Acked with `session_list` (TD-1721). |
 | `get_instruction_stack` | yes | Ask for the resolved steering stack, token counts, and skills (TD-4502). |
 | `list_instructions` | — | List a workspace's Instructions files (`AGENTS.md` / `CLAUDE.md` fallback, then `.tst/rules/*`). Human path (TD-2802). |
@@ -567,7 +567,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `assistant_delta` | session | A streamed chunk of assistant output. |
 | `assistant_reasoning` | session | A streamed chunk of a reasoning model's thinking. Separate from `assistant_delta` because it is not part of the answer: the window folds it behind a disclosure, and it is never replayed to the provider as assistant speech. OpenRouter `reasoning_details` flatten into this event for the UI; the raw array is echoed on the next assistant message after tools, not as speech. |
 | `tool_call` | session | A tool call about to execute, with its decision class. The class is judged on the same workspace-joined paths dispatch uses, so a relative path shows the class the call runs with; `arguments` stay as the model sent them (TD-5148). |
-| `tool_result` | session | The outcome of a tool call, with an error code and diff when applicable. `allowed_by` names the read-only shell list entries that let the call run without asking, and is empty when a policy rule, an approval or any other class default decided (TD-5103). |
+| `tool_result` | session | The outcome of a tool call, with an error code and diff when applicable. `allowed_by` names the read-only shell list entries that let the call run without asking, and is empty when a policy rule, an approval or any other class default decided (TD-5103). `transcript` holds a `delegate` child's steps (task, replies, tool calls and results, notes), for display only: the model gets the capped summary in `output`. It is empty for every other tool (TD-5117). |
 | `shell_output` | session | A streamed chunk of a shell command's stdout or stderr. |
 | `tool_progress` | session | Progress an MCP server reported for a running tool call: count, optional total and message (TD-5105). Thinned to two a second. |
 | `approval_request` | session | A tool call parked for approval, with the summary, the reason, and the rule "always allow" would write (none for class C or a chained shell command, while the workspace config is not trusted, or when it would replace a saved `ask` or `never` rule for the same call, TD-5149). |
@@ -741,7 +741,10 @@ The fields that are easy to get wrong:
 ### Step 2 — write the handler
 
 In `core/tstd/tools/handlers.py`. Handlers are async and receive `session` and `tool_call_id`
-plus the validated arguments, all as keyword arguments, and return a string:
+plus the validated arguments, all as keyword arguments, and return a string. (A handler may
+instead return a `HandlerOutput` from `core/tstd/tools/results.py`: its `text` is the result,
+and its `transcript` goes on the `tool_result` event for the window and never to the model.
+`delegate` uses it for its child's steps, TD-5117.)
 
 <!-- verify: tool-handler -->
 ```python

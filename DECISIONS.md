@@ -15506,3 +15506,57 @@ Python (Python's `[^x]` is not bash's); dynamic filter pins as in
 `git_raw` (an in-tree `diff=` attribute can still route to a configured
 external diff command, which no `-c` value turns off); a column on
 `tool_calls`.
+
+---
+
+## 2026-10-20 — TD-5117: a read-only research kind for `delegate`; its transcript rides on the result (Class B; revises TD-4602)
+
+**Decision:** `delegate` takes an optional `kind`, `worker` or
+`research`. `worker` is TD-4602's child, unchanged: fs reads, `fs_write`,
+`fs_edit`, `shell`. `research` gets `fs_read`, `fs_list`, `fs_grep`,
+`web_search` and `web_fetch` and nothing else; the child registry is built
+from that list, so an MCP, plugin, `send_file` or steering tool in the
+parent never reaches it, and a call to anything else is `unknown_tool`.
+Both kinds run on the worker tier, share the parent's classifier, path
+guard, policy and approval handler (so web calls still ask), and live in
+`core/tstd/tools/delegate_child.py` (kinds, prompt, cap, transcript),
+split out to keep `delegate.py` under the file budget.
+
+1. **Summary cap in tokens.** Both kinds now cap the summary at 500
+   tokens (`SUMMARY_TOKEN_CAP`), counted by `make_token_counter` for the
+   worker tier's slug, and the child's prompt names the budget. The cut
+   keeps the longest prefix that fits beside the marker. Under the
+   heuristic (four characters a token, every local model) this is
+   TD-4602's 2000 characters, so a worker child behaves as before. The
+   cap is a constant, not a config key: the story did not ask for one.
+2. **Transcript out of the context, on the event.** TD-4602 rejected a
+   timeline event per child step. That stands: no new event type. The
+   handler returns `HandlerOutput(text, transcript)` (`tools/results.py`);
+   the dispatcher sends only `text` through the usual cap to the model and
+   puts the steps (`WorkerStep`: task, reply, tool_call, tool_result,
+   note) on the `delegate` call's `tool_result` as a new `transcript`
+   field, empty for every other tool. So the steps are redacted, stored
+   and replayed with the session like any event, and the parent's
+   conversation and its persisted history hold only the summary. Each
+   step is cut to 4,000 characters and the transcript to about 60,000,
+   then one note says the rest is not shown. The window shows it inside
+   the existing chat fold and Activity row; no new control.
+3. **Plan mode.** TD-5123's read-only plan mode is not built. Its
+   criterion here is met on the plan flag that exists (TD-4603's, on the
+   router, which TD-5123 will extend): while it is on, `delegate` with no
+   `kind` runs `research`, and `kind: worker` is refused with
+   `delegate_plan_mode` and a message telling the model to use research.
+   Refusing rather than silently running the read-only child keeps the
+   model honest about what it got. Outside plan mode the default stays
+   `worker`, so existing callers are unchanged.
+4. **Approval.** `delegate` keeps its `ask` floor (Class B) for both
+   kinds. The research child's own calls are judged one by one anyway, so
+   lowering the floor for research would not have bought safety, only
+   fewer cards, and the story did not ask for it.
+
+**Alternatives rejected:** child steps as their own timeline events
+(TD-4602's rejection still holds; one field on an existing event is
+enough to show them); a separate `get_delegate_transcript` request
+(state the daemon would have to keep per call); quietly downgrading
+`kind: worker` to research in plan mode; a `delegate.summary_tokens`
+config key.

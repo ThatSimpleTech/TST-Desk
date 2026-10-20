@@ -161,6 +161,10 @@ export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
           truncated: event.truncated,
           // fs_write/fs_edit results carry a diff for syntax highlighting (AC #3)
           diff: event.diff ?? null,
+          // A delegate's worker steps (TD-5117); absent for every other tool.
+          ...(event.transcript !== undefined && event.transcript.length > 0
+            ? { transcript: event.transcript }
+            : {}),
         },
       };
     case "approval_request":

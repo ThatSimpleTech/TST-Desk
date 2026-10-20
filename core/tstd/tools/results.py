@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from ..autonomy import DecisionClass, Notice
+from ..protocol import WorkerStep
 
 # ── Result types ────────────────────────────────────────────────────────
 
@@ -42,6 +43,8 @@ class ToolResult:
             no verifier is wired or the tool does not actuate.
         allowed_by: The read-only shell list entries that let the call
             run without asking (TD-5103); empty when anything else decided.
+        transcript: A ``delegate`` worker's steps (TD-5117), for display
+            on the event only; never part of ``output``.
     """
 
     tool_call_id: str
@@ -59,6 +62,20 @@ class ToolResult:
     image_png: bytes | None = None
     verification: str | None = None
     allowed_by: tuple[str, ...] = ()
+    transcript: tuple[WorkerStep, ...] = ()
+
+
+@dataclass(frozen=True)
+class HandlerOutput:
+    """A handler's text plus display-only extras (TD-5117).
+
+    ``text`` is what the model gets, capped like any output. The
+    ``transcript`` goes on the ``tool_result`` event for the window and
+    never into the conversation.
+    """
+
+    text: str
+    transcript: tuple[WorkerStep, ...] = ()
 
 
 class HandlerRefusal(Exception):

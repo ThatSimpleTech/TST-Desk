@@ -17,6 +17,7 @@ from tests.test_dispatch import (
 from tstd.autonomy import Boundary, DecisionClass, DecisionClassifier
 from tstd.boundary_config import CapsSection
 from tstd.context import PromptAssembler
+from tstd.context.tokens import HeuristicTokenCounter
 from tstd.cost import CostTracker
 from tstd.mock import MockProvider, Script
 from tstd.protocol import ToolCall as ToolCallEvent
@@ -31,7 +32,7 @@ from tstd.tools import (
 from tstd.tools.boundary import PathGuard
 from tstd.tools.delegate import (
     CHILD_MAX_ITERATIONS,
-    SUMMARY_CHAR_CAP,
+    SUMMARY_TOKEN_CAP,
     DelegateRuntime,
     cap_worker_summary,
     handle_delegate,
@@ -260,11 +261,14 @@ async def test_child_does_not_start_nested_autonomy(tmp_path: Path) -> None:
     assert parent.dod_poller is None
 
 
-def test_summary_is_capped() -> None:
-    long = "x" * (SUMMARY_CHAR_CAP + 50)
+def test_summary_is_capped_in_tokens() -> None:
+    # TD-5117: the cap is tokens, counted by the worker tier's counter.
+    # The heuristic is four characters a token.
+    long = "x" * (SUMMARY_TOKEN_CAP * 4 + 200)
     capped = cap_worker_summary(long)
-    assert len(capped) <= SUMMARY_CHAR_CAP
-    assert "truncated" in capped
+    assert HeuristicTokenCounter().count(capped).count <= SUMMARY_TOKEN_CAP
+    assert f"capped at {SUMMARY_TOKEN_CAP} tokens" in capped
+    assert capped.startswith("x" * 1000)
     assert CHILD_MAX_ITERATIONS == 8
 
 

@@ -31,12 +31,14 @@ from ..logging import get_logger
 from ..memory_commit import MemoryCommitter
 from ..policy import ApprovalOutcome, PolicyConfig, format_summary, resolve_explained
 from ..protocol import DecisionLogged as DecisionLoggedEvent
+from ..protocol import WorkerStep
 from .boundary import PathGuard, RefusalError, windows_unsafe_reason
 from .desktop import peel_screenshot_png
 from .diff import render_diff, snapshot_text
 from .registry import Tool, ToolRegistry, path_values
 from .results import (
     DEFAULT_MAX_RESULT_CHARS,
+    HandlerOutput,
     HandlerRefusal,
     ToolResult,
     ValidationError,
@@ -282,7 +284,7 @@ class ToolDispatcher:
         # then byte-identical to today.
         self.verifier: ActuationVerifier | None = None
         self.state_probe: StateProbe | None = None
-        self._handlers: dict[str, Callable[..., Awaitable[str]]] = {}
+        self._handlers: dict[str, Callable[..., Awaitable[str | HandlerOutput]]] = {}
 
     def _record_class_c(self, reason: str) -> None:
         """Tell an unattended run that this call is Class C (stop)."""
@@ -291,7 +293,9 @@ class ToolDispatcher:
 
     # ── Handler registration ──────────────────────────────────────────
 
-    def register_handler(self, name: str, handler: Callable[..., Awaitable[str]]) -> None:
+    def register_handler(
+        self, name: str, handler: Callable[..., Awaitable[str | HandlerOutput]]
+    ) -> None:
         """Register a handler for a tool.
 
         The handler is an async callable that receives ``session`` and
@@ -517,8 +521,9 @@ class ToolDispatcher:
                     extra={"extra_fields": {"tool_call_id": tool_call_id, "tool": name}},
                 )
 
+        transcript: tuple[WorkerStep, ...] = ()
         try:
-            output = await handler(session=session, tool_call_id=tool_call_id, **arguments)
+            returned = await handler(session=session, tool_call_id=tool_call_id, **arguments)
         except (HandlerRefusal, DesktopError) as e:
             log.info(
                 "tool handler refused",
@@ -558,6 +563,12 @@ class ToolDispatcher:
                 error_code="handler_error",
                 allowed_by=allowed_by,
             )
+        # A delegate's worker transcript is for the window (TD-5117); only
+        # the text reaches the model.
+        if isinstance(returned, HandlerOutput):
+            output, transcript = returned.text, returned.transcript
+        else:
+            output = returned
 
         # 3.2.1 Touch-tracking (TD-503).  The handler ran, so the call's
         #      path targets are genuinely in play: record them on the
@@ -719,6 +730,7 @@ class ToolDispatcher:
             image_png=image_png,
             verification=verification.status if verification is not None else None,
             allowed_by=allowed_by,
+            transcript=transcript,
         )
 
     # ── Batch dispatch ────────────────────────────────────────────────

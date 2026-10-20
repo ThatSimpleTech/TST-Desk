@@ -702,7 +702,8 @@
     "truncated": false,
     "error_code": null,
     "diff": null,
-    "allowed_by": []
+    "allowed_by": [],
+    "transcript": []
   },
   "tool_result_truncated": {
     "type": "tool_result",
@@ -714,7 +715,8 @@
     "truncated": true,
     "error_code": null,
     "diff": null,
-    "allowed_by": []
+    "allowed_by": [],
+    "transcript": []
   },
   "tool_result_diff": {
     "type": "tool_result",
@@ -726,7 +728,8 @@
     "truncated": false,
     "error_code": null,
     "diff": "--- a/test.txt\n+++ b/test.txt\n@@ -1 +1 @@\n-old line\n+new line",
-    "allowed_by": []
+    "allowed_by": [],
+    "transcript": []
   },
   "tool_result_read_only": {
     "type": "tool_result",
@@ -741,6 +744,49 @@
     "allowed_by": [
       "git log",
       "head"
+    ],
+    "transcript": []
+  },
+  "tool_result_delegate": {
+    "type": "tool_result",
+    "seq": 9,
+    "session_id": "sess-1",
+    "tool_call_id": "tc-9",
+    "status": "success",
+    "output": "animals.md names one animal pair.",
+    "truncated": false,
+    "error_code": null,
+    "diff": null,
+    "allowed_by": [],
+    "transcript": [
+      {
+        "kind": "task",
+        "text": "Which pair is in animals.md?",
+        "tool": null,
+        "status": null,
+        "truncated": false
+      },
+      {
+        "kind": "tool_call",
+        "text": "{\"path\": \"animals.md\"}",
+        "tool": "fs_read",
+        "status": null,
+        "truncated": false
+      },
+      {
+        "kind": "tool_result",
+        "text": "pair: zebra-quokka-7731",
+        "tool": "fs_read",
+        "status": "success",
+        "truncated": false
+      },
+      {
+        "kind": "reply",
+        "text": "animals.md names one animal pair.",
+        "tool": null,
+        "status": null,
+        "truncated": false
+      }
     ]
   },
   "tool_result_denied": {
@@ -753,7 +799,8 @@
     "truncated": false,
     "error_code": "approval_denied",
     "diff": null,
-    "allowed_by": []
+    "allowed_by": [],
+    "transcript": []
   },
   "approval_request": {
     "type": "approval_request",
