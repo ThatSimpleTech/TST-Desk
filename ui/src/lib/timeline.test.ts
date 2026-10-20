@@ -635,6 +635,23 @@ describe("in-turn trim vs compaction (TD-5150)", () => {
     expect(row.title).toBe("3 results · 1.2k tokens freed");
   });
 
+  it("shows clearing earlier turns' results as the same quiet row (TD-5115)", () => {
+    const row = eventToEntry(
+      trim({ trigger: "clear_stale", dropped_messages: 5, tokens_before: 23123, tokens_after: 13153 }),
+    )!;
+    expect(row.kind).toBe("trim");
+    expect(row.title).toBe("5 results · 10k tokens freed");
+    expect(row.preview).toBe("Cleared earlier tool results · 23123 → 13153 tokens");
+    expect(row.details).toMatchObject({ trimmed_results: 5, tokens_freed: 9970, trigger: "clear_stale" });
+    expect(row.preview).not.toContain("dropped");
+  });
+
+  it("reads the daemon's clear fixture as a trim, not a compaction", () => {
+    const row = eventToEntry(fixtures.context_compacted_clear_stale as ContextCompacted)!;
+    expect(row.kind).toBe("trim");
+    expect(row.preview.startsWith("Cleared earlier tool results")).toBe(true);
+  });
+
   it("a dozen trims in a turn add no compaction rows", () => {
     const t = bound();
     t.push(trim({ trigger: "auto", dropped_messages: 8, kept_messages: 4, seq: 1 }));

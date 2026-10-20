@@ -59,6 +59,7 @@ import type {
   SessionState,
   AssistantDelta,
   AssistantReasoning,
+  AssistantRetract,
   UserTurn,
   BoundaryUpdate,
   ConfigTrust,
@@ -611,6 +612,16 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isString(m.turn_id)).toBe(true);
     expect(isString(m.content)).toBe(true);
     expect(isNumber(m.seq)).toBe(true);
+    expect(m.steer ?? null).toBeNull();
+  });
+
+  it("user_turn_steer", () => {
+    // TD-5112: a message handed to the running turn after a tool batch.
+    const m = fixtures.user_turn_steer as UserTurn;
+    expect(m.type).toBe("user_turn");
+    expect(m.steer?.turn_id).toBe("turn-1");
+    expect(m.steer?.step).toBe(2);
+    expect(m.steer?.after_tool_call_ids).toEqual(["tc-1", "tc-2"]);
   });
 
   it("assistant_delta", () => {
@@ -625,6 +636,19 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(m.type).toBe("assistant_reasoning");
     expect(isString(m.delta)).toBe(true);
     expect(isNumber(m.seq)).toBe(true);
+  });
+
+  it("assistant_delta_response and assistant_retract (TD-5159)", () => {
+    const d = fixtures.assistant_delta_response as AssistantDelta;
+    expect(d.type).toBe("assistant_delta");
+    expect(d.response_id).toBe("resp-1");
+    // Text the daemon writes itself carries no response id.
+    expect((fixtures.assistant_delta as AssistantDelta).response_id ?? null).toBeNull();
+    const r = fixtures.assistant_retract as AssistantRetract;
+    expect(r.type).toBe("assistant_retract");
+    expect(r.response_id).toBe(d.response_id);
+    expect(r.reason).toBe("stream_stalled");
+    expect(isNumber(r.seq)).toBe(true);
   });
 
   it("tool_call", () => {
@@ -787,6 +811,14 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.attachments?.max_count)).toBe(true);
   });
 
+  it("user_message asks to steer only on Send now mid-turn (TD-5112)", () => {
+    // The default materialises as false in the dump; the client omits it.
+    expect((fixtures.user_message as UserMessage).steer).toBe(false);
+    const steer = fixtures.user_message_steer as UserMessage;
+    expect(steer.type).toBe("user_message");
+    expect(steer.steer).toBe(true);
+  });
+
   it("user_message carries attachments when there are any (TD-1709)", () => {
     const plain = fixtures.user_message as UserMessage;
     // The fixture is a Pydantic dump, so the default materialises as `[]`.
@@ -876,6 +908,16 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(m.guidance).toBe("keep the parser work");
     // The daemon names every trigger; an older one omitted it, which reads as auto.
     expect((fixtures.context_compacted as ContextCompacted).trigger ?? "auto").toBe("auto");
+  });
+
+  it("context_compacted_clear_stale clears earlier turns' results (TD-5115)", () => {
+    const m = fixtures.context_compacted_clear_stale as ContextCompacted;
+    expect(m.type).toBe("context_compacted");
+    expect(m.trigger).toBe("clear_stale");
+    // The fields an older window reads are all still there.
+    expect(isNumber(m.dropped_messages)).toBe(true);
+    expect(isNumber(m.kept_messages)).toBe(true);
+    expect(m.tokens_before).toBeGreaterThan(m.tokens_after);
   });
 
   it("context_compacted_inflight_trim is the in-turn trim (TD-5150)", () => {
@@ -1068,7 +1110,7 @@ describe("Daemon event fixtures match TypeScript types", () => {
 describe("All fixtures have required shape", () => {
   it("every client message has a type field", () => {
     const clientTypes = [
-      "hello", "open_workspace", "user_message", "fork_from", "set_branch", "approve", "deny",
+      "hello", "open_workspace", "user_message", "user_message_steer", "fork_from", "set_branch", "approve", "deny",
       "deny_no_reason", "always_allow", "list_policy_rules", "revoke_policy_rule",
       "trust_workspace_config",
       "set_skip_all_approvals",
@@ -1126,11 +1168,11 @@ describe("All fixtures have required shape", () => {
 
   it("every daemon event has a type and seq field", () => {
     const eventTypes = [
-      "ready", "session_state", "conversation_reset", "user_turn", "assistant_delta", "assistant_reasoning", "tool_call", "tool_result",
+      "ready", "session_state", "conversation_reset", "user_turn", "user_turn_steer", "assistant_delta", "assistant_reasoning", "assistant_delta_response", "assistant_retract", "tool_call", "tool_result",
       "tool_result_truncated", "tool_result_diff", "tool_result_read_only", "tool_result_denied",
       "shell_output", "tool_progress", "approval_request", "approval_request_always_allow", "decision_logged",
       "checkpoint_notice", "verify_result", "cost_update", "boundary_update", "boundary_update_config_trust", "turn_complete",
-      "tier_state", "tier_state_plan", "context_compacted", "context_compacted_manual", "context_compacted_inflight_trim", "context_usage", "steering_reloaded", "rule_activated", "tier_switched",
+      "tier_state", "tier_state_plan", "context_compacted", "context_compacted_manual", "context_compacted_inflight_trim", "context_compacted_clear_stale", "context_usage", "steering_reloaded", "rule_activated", "tier_switched",
       "instruction_stack", "instruction_files", "command_list", "context_pins", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "steering_proposal", "steering_decision", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",

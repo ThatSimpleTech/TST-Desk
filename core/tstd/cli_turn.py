@@ -27,7 +27,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from .cli import _print_error, _recv_event, _send, _turn_timeout_secs, config_trust_notice
+from .cli import (
+    RETRACT_NOTICE,
+    _print_error,
+    _recv_event,
+    _send,
+    _turn_timeout_secs,
+    config_trust_notice,
+)
 from .cli_approvals import prompt_approval
 from .logging import REDACTED
 
@@ -130,7 +137,9 @@ class _TurnReader:
     # session, a turn already queued ahead of ours is not ours to report.
     ours: bool
     content: str | None
-    reply: list[str] = field(default_factory=list)
+    # ``(response_id, text)`` per delta, so a withdrawn response can be
+    # taken back out of the reply (TD-5159).
+    reply: list[tuple[str | None, str]] = field(default_factory=list)
     cost: float = 0.0
     refusals: list[_Refusal] = field(default_factory=list)
     tool_names: dict[str, str] = field(default_factory=dict)
@@ -142,7 +151,7 @@ class _TurnReader:
         return TurnOutcome(
             status=status,
             session_id=self.session_id,
-            reply="".join(self.reply),
+            reply="".join(text for _, text in self.reply),
             cost=self.cost,
             error_code=code,
             error_message=message,
@@ -195,9 +204,13 @@ class _TurnReader:
         if typ == "cost_update":
             self.cost = float(event.get("turn_cost") or 0.0)
             return None
+        if typ == "assistant_retract":
+            self._withdraw(event)
+            return None
         if typ == "assistant_delta":
             delta = str(event.get("delta") or "")
-            self.reply.append(delta)
+            rid = event.get("response_id")
+            self.reply.append((rid if isinstance(rid, str) else None, delta))
             if self.output == "text":
                 sys.stdout.write(delta)
                 sys.stdout.flush()
@@ -206,6 +219,18 @@ class _TurnReader:
         if typ == "turn_complete":
             return self._complete(event)
         return None
+
+    def _withdraw(self, event: dict[str, Any]) -> None:
+        """The provider stalled partway through a response; the daemon asks again.
+
+        The response leaves the reply. Text mode already wrote it, and a
+        pipe cannot take it back, so stderr says the retry follows.
+        """
+        rid = event.get("response_id")
+        self.reply = [(r, text) for r, text in self.reply if r is None or r != rid]
+        if self.output == "text":
+            self.end_line()
+            print(RETRACT_NOTICE, file=sys.stderr)
 
     async def _approval(self, ws: Any, event: dict[str, Any]) -> TurnOutcome | None:
         self.end_line()

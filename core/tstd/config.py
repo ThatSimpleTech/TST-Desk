@@ -250,7 +250,8 @@ class TierConfig(BaseModel):
     # caps one attempt including streaming; ``stream_idle_timeout`` aborts
     # a stream that sends no usable chunk for that long (keep-alive pings
     # do not count). A stall before any output is retried under
-    # ``provider_retry``. null turns either off.
+    # ``provider_retry``; one partway through a turn's reply is withdrawn
+    # and asked once more (TD-5159). null turns either off.
     connect_timeout: float = Field(default=30.0, gt=0)
     read_timeout: float = Field(default=120.0, gt=0)
     total_timeout: float | None = Field(default=None, gt=0)
@@ -457,7 +458,9 @@ class SearchConfig(BaseModel):
     ``fallback_base_urls`` is tried in order when the ones before it fail
     or return nothing parseable. ``web_fetch`` takes a URL the user
     approved. Empty ``base_url`` disables the primary only — fallbacks
-    still run; all empty disables search.
+    still run; all empty disables search. ``fetch_page_chars`` and
+    ``fetch_cache_seconds`` size ``web_fetch``'s windows and its
+    in-memory page cache (TD-5114).
     """
 
     base_url: str = ""
@@ -468,6 +471,10 @@ class SearchConfig(BaseModel):
     timeout_seconds: float = Field(default=15.0, gt=0)
     max_results: int = Field(default=8, ge=1, le=20)
     fetch_max_bytes: int = Field(default=200_000, ge=1)
+    # TD-5114: a page is read in windows of this many characters, and kept
+    # in memory this long so the next window or question skips the download.
+    fetch_page_chars: int = Field(default=30_000, ge=1_000)
+    fetch_cache_seconds: int = Field(default=900, ge=0, le=86_400)
 
 
 class ProjectContextConfig(BaseModel):
@@ -546,6 +553,41 @@ class SessionConfig(BaseModel):
     log_max_events: int = Field(default=DEFAULT_LOG_MAX_EVENTS, ge=1)
     send_file_max_bytes: int = Field(default=536_870_912, ge=1, le=2_147_483_648)
     send_file_session_max_bytes: int = Field(default=4_294_967_296, ge=1)
+
+
+class ClearToolResultsConfig(BaseModel):
+    """Clear stale tool results before whole turns compact (TD-5115).
+
+    Once the prompt is over the compaction budget, the tool results of
+    earlier turns become, in one batch, a one-line placeholder naming the
+    tool, its target and the size that went. The newest
+    ``keep_recent_tool_results`` results and every result of a tool in
+    ``exclude_tools`` stay. A clear that cannot free
+    ``clear_at_least_tokens`` does not happen: rewriting an old result
+    costs a local server its cached prefix, so it has to buy room
+    (see :mod:`tstd.context_clear`).
+    """
+
+    enabled: bool = True
+    keep_recent_tool_results: int = Field(default=3, ge=0)
+    clear_at_least_tokens: int = Field(default=2_000, ge=0)
+    exclude_tools: list[str] = Field(default_factory=list)
+
+    @field_validator("exclude_tools", mode="before")
+    @classmethod
+    def _clean_tool_names(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("exclude_tools must be a list of tool names")
+        names: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ValueError("exclude_tools must be a list of tool names")
+            name = item.strip()
+            if name and name not in names:
+                names.append(name)
+        return names
 
 
 class ShellReadOnlyConfig(BaseModel):
@@ -1215,6 +1257,7 @@ class ModelConfig(BaseModel):
     project_context: ProjectContextConfig = Field(default_factory=ProjectContextConfig)
     steering: SteeringConfig = Field(default_factory=SteeringConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
+    clear_tool_results: ClearToolResultsConfig = Field(default_factory=ClearToolResultsConfig)
     shell: ShellConfig = Field(default_factory=ShellConfig)
     provider_retry: ProviderRetryConfig = Field(default_factory=ProviderRetryConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
@@ -1398,6 +1441,7 @@ def load_config(path: Path | None = None) -> ModelConfig:
         "project_context",
         "steering",
         "session",
+        "clear_tool_results",
         "scheduler",
         "computer_use",
         "remote",

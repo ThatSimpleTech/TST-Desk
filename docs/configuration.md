@@ -68,6 +68,7 @@ no effect.
 | `embeddings` | mapping | see below | Local embeddings sidecar for memory ranking. Omitted in an older user copy is filled from the shipped file at load. Empty `base_url` disables the client. Empty `command` is attach-only — the host never spawns on `base_url` alone. |
 | `computer_use` | mapping | see below | Desktop computer-use sidecar. Omitted in an older user copy is filled from the shipped file at load. Empty `command` is mock-only — the daemon never spawns `mcp/tst-cu-mcp`. Empty `grounding.base_url` leaves click targeting on the intended (x, y). |
 | `session` | mapping | see below | On-disk session event-log window. Omitted in an older user copy is filled from the shipped file at load. Zero is invalid, not unbounded. |
+| `clear_tool_results` | mapping | see below | Clear stale tool results before whole turns are compacted (TD-5115). Omitted in an older user copy is filled from the shipped file at load, which turns it on. |
 | `shell` | mapping | see below | The read-only shell list (TD-5103): commands that run without asking. Omitted in an older user copy means the whole built-in list, on. Config can shrink it or switch it off, never add to it. |
 | `remote` | mapping | see below | Opt-in Tailscale bind. Omitted in an older user copy is filled from the shipped file at load. Empty `bind` is loopback only. |
 | `notify` | mapping | see below | Outbound notification channels. Omitted in an older user copy is filled from the shipped file at load. Slack and ntfy are off until their `enabled` flag is true and a destination URL is stored in the OS keychain. |
@@ -150,7 +151,22 @@ primary only; all empty disables the tool with copy that names this key.
 | `fallback_base_urls` | list of strings | *shipped* | Endpoints tried in order after `base_url` fails. Empty list disables fallback. Every host in the chain must be on the workspace `network` allowlist or the call stays Class C. |
 | `timeout_seconds` | float > 0 | `15` | How long a search or fetch request may run. |
 | `max_results` | int 1–20 | `8` | Default hit count when the tool call omits `max_results`. |
-| `fetch_max_bytes` | int ≥ 1 | `200000` | Cap on a `web_fetch` body. |
+| `fetch_max_bytes` | int ≥ 1 | `200000` | Cap on a `web_fetch` body. A page cut here says so at the end of its last window. |
+| `fetch_page_chars` | int ≥ 1000 | `30000` | Characters of page text in one `web_fetch` window when no `question` is asked. A smaller result cap (a small model's window) shrinks it further; the result names the `offset` to read on from (TD-5114). |
+| `fetch_cache_seconds` | int 0–86400 | `900` | How long a fetched page stays in the daemon's memory, so the next window or question does not download it again. Never written to disk; a restart empties it. `0` turns the cache off. |
+
+`web_fetch` (TD-5114) treats a page as untrusted data. Hidden characters
+(Unicode tag characters, zero-width and bidi controls, other format and
+control characters, variation selectors) are stripped from the text and
+counted. With a `question`, the session's **worker** tier reads the page
+window (as much as its `context_window` holds) and only its answer goes to
+the brain, marked as drawn from untrusted text; the call costs a worker
+call and shows on the meter. Without one, the brain gets a window of the
+text inside `<untrusted_page>` tags under a header that says it is data.
+A copy of the wrapper tag written into the page (or the worker's answer)
+has its `<` escaped as `&lt;`, so the page cannot end the wrapper early.
+Each call is still a `web_fetch` the classifier and your policy judge,
+cached or not.
 
 ### `embeddings`
 
@@ -492,6 +508,69 @@ drop a different prefix than `from_seq`. Zero is a load error, not
 | `send_file_max_bytes` | int 1..2147483648 | `536870912` | Largest file `send_file` copies into the chat (512 MiB). Bigger is refused with `file_too_large`; nothing is copied. |
 | `send_file_session_max_bytes` | int ≥ 1 | `4294967296` | Total of sent files one session may hold (4 GiB). Past it, `session_quota`. |
 
+### `clear_tool_results`
+
+How old tool output leaves a full context window (TD-5115). Compaction
+folds whole earlier turns into a short summary once the prompt passes the
+tier's budget (80% of `context_window` minus `max_output_tokens`). Most of
+what fills a small local window by then is old tool output, such as a file
+read three turns ago that the model has already used. So at the same budget,
+and before anything is compacted, the tool results of earlier turns are
+cleared first: each becomes one line that names the tool, its target (the
+`path`, `url`, `command` or `query` it was called with, cut to 80
+characters) and the size that went, for example
+
+```text
+[Earlier tool result cleared to save context: fs_read "docs/spec.md", 12,000 chars. Run the tool again if you need it.]
+```
+
+The user's messages, the model's answers and the tool calls themselves stay
+verbatim, so the conversation still reads the same; the model calls the tool
+again if it needs the output back.
+
+- The tool results of the turn that is running are never cleared. When they
+  overflow, their middles are trimmed instead (TD-5010). A message sent while
+  a turn runs joins that turn (TD-5112), so the results it got before that
+  message stay too. The check also runs when such a message joins the
+  prompt, before anything is compacted.
+- One clear takes every stale result at once, and only goes ahead when it
+  brings the prompt down to 70% of the budget and frees at least
+  `clear_at_least_tokens`. Otherwise the turn compacts, as it did before.
+  The gap is room for several more turns before the next clear. A clear
+  rewrites the prompt from the oldest result it clears, and a local server
+  such as llama.cpp reads the prompt again from there; between clears
+  nothing earlier changes, and a cleared line is never rewritten, so its
+  prefix cache keeps hitting.
+- Each result is matched to its own call, the one in the model's message just
+  before it, so the line and `exclude_tools` name the right tool even when a
+  server repeats call ids from turn to turn or sends none. A result that
+  cannot be matched to a call there is never cleared.
+- Each clear shows in the Activity panel as a quiet "Trim" row, previewed
+  "Cleared earlier tool results", with the results cleared and the tokens
+  freed (`context_compacted` with the trigger `clear_stale`).
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `enabled` | bool | `true` | `false` goes back to compaction alone. |
+| `keep_recent_tool_results` | int ≥ 0 | `3` | The newest results that are never cleared, counted across the whole conversation, the running turn included. |
+| `clear_at_least_tokens` | int ≥ 0 | `2000` | A clear that would free fewer estimated tokens than this does not happen. Rewriting the prompt costs a local server its cached prefix, so a clear has to buy room. |
+| `exclude_tools` | list of tool names | `[]` | Tools whose results are never cleared, such as an MCP tool whose output the model must keep in view. Names are matched exactly; blanks and repeats are dropped. |
+
+<!-- verify: model -->
+```yaml
+presets:
+  local:
+    brain: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    worker: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    validator: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+active_preset: local
+clear_tool_results:
+  enabled: true
+  keep_recent_tool_results: 5
+  clear_at_least_tokens: 4000
+  exclude_tools: [load_skill]
+```
+
 ### `shell`
 
 The shell commands that run without asking (TD-5103). Every other shell call
@@ -671,9 +750,27 @@ shows "Response interrupted", the partial text is not kept as the
 model's answer, and Retry on the message resends it (TD-5152). The
 after-write review and memory distillation get the same errors.
 
+A stall partway through a turn's reply is different (TD-5159): the
+provider went quiet, it did not report a failure. The daemon withdraws
+what that model response had shown (its text and its thinking, with an
+`assistant_retract` event; the window takes it off the message and says
+"Provider went quiet. Asking again"), waits `initial_delay` (with
+jitter), and sends the same request once more. That is one retry per
+model call whatever `max_retries` says, because each one can wait a
+whole `stream_idle_timeout`; `max_retries: 0` turns it off. Only the
+model call that stalled is redone: tool calls that already ran in the
+turn are not run again, and text from earlier calls in the turn stays.
+A second stall ends the turn as `stream_stalled`, as before. Stop during
+the wait ends the turn with nothing kept. The after-write review and
+memory distillation still return a stall without resending it. A
+window from before this change does not know the event and shows the
+withdrawn text above the retried reply; `tst run --output text` has
+already printed it, so it writes a note to stderr, and `--output json`,
+scheduled-run receipts and mailed replies leave it out.
+
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `max_retries` | int 0–20 | `3` | Retries after the initial attempt. `0` disables retrying; the first failure ends the turn. |
+| `max_retries` | int 0–20 | `3` | Retries after the initial attempt. `0` disables retrying; the first failure ends the turn, and a reply that stalls partway is not asked for again (TD-5159). |
 | `initial_delay` | float > 0 | `1.0` | Base delay before the first retry, in seconds. Each subsequent wait doubles. |
 | `max_delay` | float > 0 | `60.0` | Ceiling on any single wait, in seconds. Bounds the worst case when `max_retries` is high. |
 
@@ -940,6 +1037,8 @@ search:
   timeout_seconds: 15
   max_results: 8
   fetch_max_bytes: 200000
+  fetch_page_chars: 30000
+  fetch_cache_seconds: 900
 embeddings:
   base_url: http://127.0.0.1:8080/v1
   model: nomic-embed-text
@@ -1083,7 +1182,7 @@ three tier definitions. You can pin a tier for a session from the title bar.
 | `connect_timeout` | float > 0 | `30` | Seconds to open the connection to `base_url`. |
 | `read_timeout` | float > 0 | `120` | Longest wait for any bytes from the server, the response headers included. A local model reading a long prompt sends nothing until its first token, so this is the knob for slow prefill — see §3.5. |
 | `total_timeout` | float > 0 or `null` | `null` | Wall-clock cap on one attempt, streaming included. `null` means no cap. A stream cut by it after output began is not retried. Before TD-5106 the client had a field named "total" set to 180; it was only the wait for a free pooled connection and never bounded a request. That wait stays 180 s and is not a key. |
-| `stream_idle_timeout` | float > 0 or `null` | `300` | Aborts a stream that sends no usable chunk for this long. SSE keep-alive comments (`: ping`) do not count, so a server that only pings is caught; `read_timeout` alone never catches it. A stall before any output is retried under `provider_retry`; a stall partway through a reply ends the turn as `stream_stalled`, because a retry would repeat text the window already shows. Reading stops at `data: [DONE]`, so a server that holds the body open after a finished reply is not a stall (TD-5152). `null` turns the watchdog off. |
+| `stream_idle_timeout` | float > 0 or `null` | `300` | Aborts a stream that sends no usable chunk for this long. SSE keep-alive comments (`: ping`) do not count, so a server that only pings is caught; `read_timeout` alone never catches it. A stall before any output is retried under `provider_retry`. A stall partway through a turn's reply withdraws the partial reply from the window and asks once more (TD-5159, see `provider_retry`); a second stall ends the turn as `stream_stalled`. Reading stops at `data: [DONE]`, so a server that holds the body open after a finished reply is not a stall (TD-5152). `null` turns the watchdog off. |
 
 **Prices are per million tokens, and they are yours to keep accurate.** They drive the live
 cost meter, the audit trail, and the spend cap. Nothing verifies them against your provider, so
@@ -1399,7 +1498,9 @@ total_timeout: 3600        # no single reply runs past an hour
 
 A stall before any output is retried under `provider_retry`, so with the default three retries
 a dead server costs up to four waits of `read_timeout` (or `stream_idle_timeout` when the
-server pings). Lower `provider_retry.max_retries` with long timeouts. The after-write review
+server pings). Lower `provider_retry.max_retries` with long timeouts. A stall partway through
+a reply is withdrawn and asked once more (TD-5159), so it costs at most two waits of
+`stream_idle_timeout` per model call. The after-write review
 and memory distillation never resend a stall (TD-5146), so they wait once. A scheduled job
 whose turn ends as `stream_stalled` failed for a transient reason, like a timeout, so a job
 with `retries` tries again after its `retry_delay` (TD-5154).

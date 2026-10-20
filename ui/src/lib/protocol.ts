@@ -72,6 +72,10 @@ export interface UserMessage extends ClientMessage {
   // The daemon vets these against the workspace caps and refuses the whole
   // message if any one fails.
   attachments?: Attachment[];
+  /** Send now mid-turn (TD-5112): join the running turn at its next
+   *  tool-batch boundary. Omitted, or with no turn running, the message
+   *  waits for a turn of its own. Additive: older daemons ignore it. */
+  steer?: boolean;
 }
 
 /** Send a message a restart left held (TD-5155). `queued_id` names a row of
@@ -1168,11 +1172,23 @@ export interface ConversationReset extends DaemonEvent {
   content: string;
 }
 
+/** Where a message sent mid-turn joined the running turn (TD-5112).
+ *  `turn_id` is the running turn's own user_turn id, `step` the model calls
+ *  it had made, `after_tool_call_ids` the batch the model read just before. */
+export interface SteerPoint {
+  turn_id: string;
+  step: number;
+  after_tool_call_ids: string[];
+}
+
 export interface UserTurn extends DaemonEvent {
   type: "user_turn";
   session_id: string;
   turn_id: string;
   content: string;
+  /** Set when the message steered a running turn instead of starting one
+   *  (TD-5112). Additive: older daemons omit it, and null starts a turn. */
+  steer?: SteerPoint | null;
 }
 
 /** One message a restart left held (TD-5155). `content` is what its user
@@ -1197,6 +1213,11 @@ export interface AssistantDelta extends DaemonEvent {
   type: "assistant_delta";
   session_id: string;
   delta: string;
+  /** The model response this text belongs to (TD-5159), so an
+   *  `assistant_retract` can withdraw exactly it. Absent or null on text the
+   *  daemon writes itself (a failure, a progress note) and from older
+   *  daemons; such text is never withdrawn. */
+  response_id?: string | null;
 }
 
 /** A chunk of a reasoning model's thinking (TD-1901). Same shape as
@@ -1206,6 +1227,19 @@ export interface AssistantReasoning extends DaemonEvent {
   type: "assistant_reasoning";
   session_id: string;
   delta: string;
+  /** As on AssistantDelta (TD-5159). */
+  response_id?: string | null;
+}
+
+/** Withdraw one model response's text and thinking (TD-5159). The provider
+ *  went quiet partway through it (`reason`: `stream_stalled`) and the daemon
+ *  asks again under a new id. Tool calls already run, and earlier responses
+ *  in the turn, stay. */
+export interface AssistantRetract extends DaemonEvent {
+  type: "assistant_retract";
+  session_id: string;
+  response_id: string;
+  reason: string;
 }
 
 export interface ToolCall extends DaemonEvent {
@@ -2157,8 +2191,10 @@ export interface ContextCompacted extends DaemonEvent {
   /** What asked for it (TD-5109); older daemons omit it, meaning "auto".
    *  `inflight_trim` is not compaction: the loop trimmed this turn's tool
    *  results, no message left, and `dropped_messages` counts the results
-   *  trimmed (TD-5150). */
-  trigger?: "auto" | "manual" | "from_here" | "inflight_trim";
+   *  trimmed (TD-5150). `clear_stale` is not compaction either: tool
+   *  results from earlier turns became one-line placeholders, no message
+   *  left, and `dropped_messages` counts the results cleared (TD-5115). */
+  trigger?: "auto" | "manual" | "from_here" | "inflight_trim" | "clear_stale";
   guidance?: string | null;
 }
 
@@ -2440,6 +2476,7 @@ export type DaemonEventUnion =
   | QueuedMessages
   | AssistantDelta
   | AssistantReasoning
+  | AssistantRetract
   | ToolCall
   | ToolResult
   | ShellOutput
