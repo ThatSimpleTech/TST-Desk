@@ -17220,15 +17220,19 @@ gap-audit stories.
   conservative three characters a token; over that, the oldest messages
   go first, with a note. Guidance from `/compact` is passed to the worker.
 - **Background.** At fit time, once the estimate passes
-  `background_percent` of the budget, the summary of everything before the
-  last user turn is started as a task. That is the span the next turn's
-  auto compaction folds and the span `/compact` without guidance folds, so
-  both take it ready-made; a mid-turn compaction folds a different span and
-  writes its own (inline, bounded by the timeout). The span is matched by a
+  `background_percent` of the budget, summaries of two spans are kept as
+  tasks: everything before the last two user turns (the span an auto
+  compaction folds now, which is what a mid-turn crossing takes; agentic
+  turns grow with tool results, so that is the common case) and everything
+  before the last user turn (the next turn's fold and `/compact` without
+  guidance). The first span is the second span of the turn before, so the
+  task already running for it is kept rather than restarted: about one
+  worker call per turn, not two. Only a fold of some other span (a third
+  fold within one turn) writes its own, inline and bounded by the timeout. The span is matched by a
   hash of roles, ids, calls and text with tool result text left out,
   because clearing stale results (TD-5115) rewrites those between the
-  prefetch and the fold. One task at a time; a new span cancels the old
-  one, and the loop task's done-callback cancels it at loop end.
+  prefetch and the fold. At most two tasks; one for a span no longer
+  wanted is cancelled, and the loop task's done-callback cancels it at loop end.
 - **Recent files.** `fs_read`, `fs_write` and `fs_edit` paths in the folded
   turns, newest first, minus any the kept turns name. Read from disk now
   (current content), through the session's `PathGuard` (inside the

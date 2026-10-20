@@ -614,13 +614,16 @@ message; `/compact` and "Summarize from here" do the same on request
   prompt's answer only has to be non-empty. Compaction never fails because
   of the worker. `summary: extractive` never calls a model.
 - **In the background.** Once a request passes `background_percent` of the
-  budget, the turns the next compaction will fold (everything before the
-  last user turn) are summarized while the turn runs. When the next turn
-  reaches the budget, or you run `/compact` with no guidance, and the turns
-  to fold are the same, the summary is ready and the turn does not wait for
-  the worker. A compaction that folds other turns (one in the middle of a
-  long turn, say) writes its own. Clearing stale tool results does not
-  count as a change. `0` turns writing ahead off.
+  budget, the turns the next compaction can fold are summarized while the
+  turn runs. There are two such spans: everything before the previous user
+  turn (what a compaction in the middle of this turn folds, the usual case
+  when tool results grow the prompt) and everything before the last user
+  turn (what the next turn's compaction, or `/compact` with no guidance,
+  folds). The first is normally the one already written during the turn
+  before, so this costs about one worker call per turn. When a compaction
+  folds one of those spans, the summary is ready and the turn does not wait
+  for the worker. Clearing stale tool results does not count as a change.
+  `0` turns writing ahead off.
 - **Recent files.** After a compaction, the files read (`fs_read`), written
   (`fs_write`) or edited (`fs_edit`) in the folded turns are read again from
   disk, newest first, and go under the summary, headed

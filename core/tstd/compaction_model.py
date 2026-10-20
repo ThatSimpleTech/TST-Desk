@@ -31,6 +31,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
 from .compaction import (
+    KEEP_USER_TURNS,
     MAX_GUIDANCE_CHARS,
     CompactionStats,
     auto_span,
@@ -193,7 +194,9 @@ class CompactionSummarizer:
         self.worker = worker
         self._complete = complete
         self._access = access
-        self._ahead: _Ahead | None = None
+        # At most two: the span a fold in the middle of this turn takes
+        # and the span the next turn's fold takes.
+        self._ahead: dict[str, _Ahead] = {}
 
     @property
     def enabled(self) -> bool:
@@ -201,9 +204,9 @@ class CompactionSummarizer:
 
     def close(self) -> None:
         """Stop a summary being written ahead; the loop has ended."""
-        if self._ahead is not None:
-            self._ahead.task.cancel()
-            self._ahead = None
+        for ahead in self._ahead.values():
+            ahead.task.cancel()
+        self._ahead.clear()
 
     async def _write(self, dropped: Sequence[ChatMessage], guidance: str) -> str | None:
         settings = self.settings
@@ -249,9 +252,8 @@ class CompactionSummarizer:
         """
         if not self.enabled or not dropped:
             return None
-        ahead = self._ahead
-        if ahead is not None and ahead.key == _fingerprint(dropped, guidance):
-            self._ahead = None
+        ahead = self._ahead.pop(_fingerprint(dropped, guidance), None)
+        if ahead is not None:
             return await ahead.task
         return await self._write(dropped, guidance)
 
@@ -262,12 +264,17 @@ class CompactionSummarizer:
         counter: TokenCounter,
         tools: Sequence[ToolDefinition] | None,
     ) -> bool:
-        """Start writing the next compaction's summary if it is near.
+        """Start writing the next compaction's summaries if it is near.
 
         Near means the prompt is over ``background_percent`` of the
-        compaction budget. The turns are those before the last user turn:
-        what the next turn's compaction, or ``/compact``, folds. Returns
-        True when a summary was started.
+        compaction budget. Two spans can be next: the turns before the
+        last two user turns, which a fold in the middle of this turn takes
+        (agentic turns grow with tool results, so this is the usual
+        crossing), and those before the last user turn, which the next
+        turn's fold, or ``/compact``, takes. The first is usually the
+        second of the request before, so it is already being written.
+        A summary for any other span is stopped. Returns True when a
+        summary was started.
         """
         percent = self.settings.background_percent
         if not self.enabled or percent <= 0:
@@ -275,17 +282,21 @@ class CompactionSummarizer:
         used = estimate_tokens(messages, counter, tools)[0]
         if used * 100 < budget_threshold(tier) * percent:
             return False
-        cut = find_compaction_point(messages, keep_user_turns=1)
-        if cut <= 1:
-            return False
-        dropped = list(messages[1:cut])
-        key = _fingerprint(dropped, "")
-        if self._ahead is not None:
-            if self._ahead.key == key:
-                return False
-            self._ahead.task.cancel()
-        self._ahead = _Ahead(key, asyncio.create_task(self._write(dropped, "")))
-        return True
+        wanted: dict[str, list[ChatMessage]] = {}
+        for keep in (KEEP_USER_TURNS, 1):
+            cut = find_compaction_point(messages, keep_user_turns=keep)
+            if cut > 1:
+                dropped = list(messages[1:cut])
+                wanted[_fingerprint(dropped, "")] = dropped
+        for key in [k for k in self._ahead if k not in wanted]:
+            self._ahead.pop(key).task.cancel()
+        started = False
+        for key, dropped in wanted.items():
+            if key not in self._ahead:
+                task = asyncio.create_task(self._write(dropped, ""))
+                self._ahead[key] = _Ahead(key, task)
+                started = True
+        return started
 
     async def files(
         self,

@@ -11191,9 +11191,11 @@ Code document a model-written summary and what survives it.
       cut-off answer, or an answer without the four headings)
 - [x] It can run in the background before the threshold, so the turn
       doesn't block: from `compaction.background_percent` of the budget the
-      next fold's summary is written while the turn runs, and the fold that
-      matches uses it with no new call (a mid-turn fold of other turns
-      writes its own, bounded by `summary_timeout_seconds`)
+      summaries of both spans a fold can take (mid-turn: before the
+      previous user turn; next turn or `/compact`: before the last user
+      turn) are written while the turn runs, and the fold uses the matching
+      one with no new call, at a turn boundary and in the middle of a turn
+      that makes tool calls
 - [x] Files read or edited recently, and loaded skill bodies, are
       re-injected after compaction within a budget: `fs_read` / `fs_write`
       / `fs_edit` files from the folded turns, newest first, within

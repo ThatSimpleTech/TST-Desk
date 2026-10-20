@@ -10,14 +10,16 @@ turns read or changed, and loaded skill bodies, are back after it.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 from pathlib import Path
 
 import pytest
 
 from tests.test_compaction import pad, tiny_config, tiny_tier
+from tests.test_context_fit import make_dispatcher
 from tests.test_loop import mock_factory, wait_for_turn
-from tstd.compaction import budget_threshold, estimate_tokens
+from tstd.compaction import auto_span, budget_threshold, estimate_tokens
 from tstd.compaction_files import FileAccess, recent_files
 from tstd.compaction_model import (
     DEFAULT_SUMMARY_PROMPT,
@@ -299,6 +301,53 @@ async def test_a_summary_written_ahead_is_used_without_a_second_call() -> None:
     assert len(worker.requests) == 1
 
 
+async def test_a_fold_in_the_middle_of_a_turn_uses_the_summary_written_ahead() -> None:
+    worker = FakeWorker()
+    helper = summarizer(worker)
+    tier = tiny_tier()
+    # Turn 3 has started, still under the budget: both spans a fold can
+    # take are written ahead.
+    three = conversation(2, chars=400)
+    three.append(ChatMessage(role="user", content="turn 3"))
+    assert auto_span(three, tier, COUNTER) is None
+    assert helper.prefetch(three, tier, COUNTER, None)
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert len(worker.requests) == 2
+    # A tool result crosses the budget mid-turn: the fold takes turn 1
+    # only, and that summary is ready.
+    three.append(ChatMessage(role="assistant", content=pad("working", 300)))
+    assert auto_span(three, tier, COUNTER) == (1, 3)
+    compacted, stats = await compact_auto(three, tier, COUNTER, None, carry="", summarizer=helper)
+    assert stats is not None
+    assert "## Goal" in summary_text(compacted)
+    assert len(worker.requests) == 2
+    helper.close()
+
+
+async def test_the_span_of_the_turn_before_is_kept_not_restarted() -> None:
+    worker = FakeWorker()
+    helper = summarizer(worker)
+    tier = tiny_tier()
+    two = conversation(2, chars=400)
+    assert helper.prefetch(two, tier, COUNTER, None)  # before turn 2 only
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert len(worker.requests) == 1
+    # Turn 3 starts: the old span is now the mid-turn fold's, so only the
+    # new one is written, and a fold mid-turn takes the old one.
+    three = [*two, ChatMessage(role="user", content="turn 3")]
+    assert helper.prefetch(three, tier, COUNTER, None)
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert len(worker.requests) == 2
+    three.append(ChatMessage(role="assistant", content=pad("working", 300)))
+    _, stats = await compact_auto(three, tier, COUNTER, None, carry="", summarizer=helper)
+    assert stats is not None
+    assert len(worker.requests) == 2
+    helper.close()
+
+
 async def test_cleared_tool_results_still_match_the_summary_written_ahead() -> None:
     worker = FakeWorker()
     helper = summarizer(worker)
@@ -537,3 +586,76 @@ async def test_a_loaded_skill_body_is_in_the_prompt_after_compaction(tmp_path: P
     sent = [c for c in mock.calls if c.model == "test-brain"][-1].messages
     assert "SKILL-BODY-MARKER" in content_as_text(sent[0].content)
     await runner.cancel()
+
+
+# Tool definitions are most of the prompt; this window puts the budget
+# between turn 3's first request and the one after its file read.
+WINDOW = 11425
+
+
+async def test_the_loop_folds_mid_turn_with_a_summary_written_ahead(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Agentic turns: each reads a file, so the budget is crossed by a tool
+    # result in the middle of a turn, not at a turn boundary.
+    folding: contextvars.ContextVar[bool] = contextvars.ContextVar("folding", default=False)
+    folds_seen: list[int] = []
+    inline: list[int] = []
+    summarize, write = CompactionSummarizer.summarize, CompactionSummarizer._write
+
+    async def spy_summarize(
+        self: CompactionSummarizer, dropped: list[ChatMessage], guidance: str = ""
+    ) -> str | None:
+        token = folding.set(True)  # prefetch tasks made later copy False
+        folds_seen.append(1)
+        try:
+            return await summarize(self, dropped, guidance)
+        finally:
+            folding.reset(token)
+
+    async def spy_write(
+        self: CompactionSummarizer, dropped: list[ChatMessage], guidance: str
+    ) -> str | None:
+        if folding.get():
+            inline.append(1)  # the fold waited on a call of its own
+        return await write(self, dropped, guidance)
+
+    monkeypatch.setattr(CompactionSummarizer, "summarize", spy_summarize)
+    monkeypatch.setattr(CompactionSummarizer, "_write", spy_write)
+    workspace = tmp_path / "ws"
+    _seed_workspace(workspace)
+    (workspace / "notes.txt").write_text(pad("notes", 2400), encoding="utf-8")
+    read = Script(kind="tool_call", tool_name="fs_read", tool_arguments='{"path": "notes.txt"}')
+    reply = Script(kind="stream", content=pad("reply", 200))
+    mock = MockProvider(
+        scripts={"test-worker": Script(kind="stream", content=GOOD)},
+        sequences={"test-brain": [read, reply] * 4},
+    )
+    session = Session(str(workspace))
+    settings = CompactionConfig(summary="model")
+    config = tiny_config(context_window=WINDOW).model_copy(update={"compaction": settings})
+    dispatcher = make_dispatcher(workspace)
+    runner = SessionRunner(
+        session,
+        loop_factory=lambda s: agent_loop(
+            s,
+            TierRouter(lead_turns=10),
+            mock_factory(mock),
+            config,
+            tool_registry=dispatcher.registry,
+            tool_dispatcher=dispatcher,
+        ),
+    )
+    await runner.start()
+    for i in range(1, 5):
+        await session.add_user_message(f"turn{i}")
+        await wait_for_turn(session, i)
+    await runner.cancel()
+    folds = [e for e in session.event_log.all_events if isinstance(e, ContextCompacted)]
+    brain = [c for c in mock.calls if c.model == "test-brain"]
+    assert folds
+    folded = [c for c in brain if c.messages[1].role == "system"]
+    # The first fold came with a tool result: in the middle of a turn.
+    assert folded[0].messages[-1].role == "tool"
+    assert folds_seen
+    assert inline == []
