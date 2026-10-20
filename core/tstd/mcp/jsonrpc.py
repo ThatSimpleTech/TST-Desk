@@ -17,7 +17,7 @@ from jsonschema.validators import validator_for
 
 PROTOCOL_VERSION = "2024-11-05"
 CLIENT_NAME = "tstd"
-CLIENT_VERSION = "0.2.1"
+CLIENT_VERSION = "0.3.0"
 # Handshake / tools/list — doctor and session start must not hang a dead child.
 HANDSHAKE_TIMEOUT = 8.0
 # tools/call after the server is live: the longest a call may go without
