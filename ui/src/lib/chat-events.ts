@@ -6,6 +6,7 @@
 
 import type { BranchSnaps } from "./chat-fork";
 import { applyHeldList, clearHeldPending } from "./chat-held";
+import { markResponse, withdrawResponse } from "./chat-retract";
 import type { ChatMessage, ChatState, ToolBlock } from "./chat-store";
 import type { MessageQueue } from "./chat-queue";
 import { dropSent, prependDraft, refusedSend, returnToDraft, takeSent } from "./draft-store";
@@ -28,7 +29,7 @@ export interface BindHold {
 /** Collaborators the reducer may touch. The store keeps the rest. */
 export interface ChatEventContext {
   state: ChatState;
-  wait: Pick<FirstTokenWait, "end">;
+  wait: Pick<FirstTokenWait, "begin" | "end">;
   queue: Pick<MessageQueue, "flushHead">;
   forks: BranchSnaps;
   allocateId: () => string;
@@ -216,6 +217,7 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       wait.end();
       const last = state.messages[state.messages.length - 1];
       if (last !== undefined && last.role === "assistant" && !last.complete) {
+        markResponse(last, event.response_id);
         last.reasoning = (last.reasoning ?? "") + event.delta;
         last.reasoningStartedAt ??= Date.now();
       } else {
@@ -223,12 +225,15 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
           id: ctx.allocateId(),
           role: "assistant",
           text: "",
-          reasoning: event.delta,
-          reasoningStartedAt: Date.now(),
           complete: false,
           at: Date.now(),
           parts: [],
         });
+        // Marked while still empty, which is where its response began.
+        const row = state.messages[state.messages.length - 1];
+        markResponse(row, event.response_id);
+        row.reasoning = event.delta;
+        row.reasoningStartedAt = Date.now();
       }
       return;
     }
@@ -244,6 +249,7 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       if (last !== undefined && last.role === "assistant" && !last.complete) {
         // Append in place: the message object keeps its identity so the
         // keyed list never re-mounts the row while streaming.
+        markResponse(last, event.response_id);
         appendText(last, event.delta);
         // The first content token seals the thinking phase: stamp the
         // elapsed once, so the disclosure can stop counting (TD-1902).
@@ -254,12 +260,26 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
         state.messages.push({
           id: ctx.allocateId(),
           role: "assistant",
-          text: event.delta,
+          text: "",
           complete: false,
           at: Date.now(),
-          parts: [{ kind: "text", text: event.delta }],
+          parts: [],
         });
+        // Marked while still empty, which is where its response began.
+        const row = state.messages[state.messages.length - 1];
+        markResponse(row, event.response_id);
+        appendText(row, event.delta);
       }
+      return;
+    }
+    case "assistant_retract": {
+      if (event.session_id !== state.sessionId) return;
+      // The provider went quiet partway through this response (TD-5159):
+      // its text comes off the row, and the daemon is asking again. Until
+      // the retry's first token the Working line says so.
+      withdrawResponse(state.messages, event.response_id);
+      state.turnState = "running";
+      wait.begin(true);
       return;
     }
     case "turn_complete": {

@@ -34,6 +34,7 @@ export function entryIcon(entry: TimelineEntry): IconName {
     case 'trim':
       return 'ellipsis';
     case 'steering_reload':
+    case 'retry':
       return 'retry';
     case 'approval':
     case 'error':
@@ -58,6 +59,7 @@ export const KIND_LABELS: Record<EntryKind, string> = {
   trim: 'Trim',
   steering_reload: 'Steering',
   error: 'Error',
+  retry: 'Retry',
   verify: 'Verify'
 };
 
@@ -72,6 +74,8 @@ export function entryTone(entry: TimelineEntry): EntryTone {
       return entry.details.status === 'error' ? 'danger' : 'success';
     case 'compaction':
     case 'approval':
+    // A reply withdrawn and asked again (TD-5159): the turn goes on.
+    case 'retry':
       return 'warning';
     case 'verify':
       if (entry.details.pending) return 'warning';

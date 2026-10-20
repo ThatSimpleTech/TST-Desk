@@ -59,6 +59,7 @@ import type {
   SessionState,
   AssistantDelta,
   AssistantReasoning,
+  AssistantRetract,
   UserTurn,
   BoundaryUpdate,
   ConfigTrust,
@@ -627,6 +628,19 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.seq)).toBe(true);
   });
 
+  it("assistant_delta_response and assistant_retract (TD-5159)", () => {
+    const d = fixtures.assistant_delta_response as AssistantDelta;
+    expect(d.type).toBe("assistant_delta");
+    expect(d.response_id).toBe("resp-1");
+    // Text the daemon writes itself carries no response id.
+    expect((fixtures.assistant_delta as AssistantDelta).response_id ?? null).toBeNull();
+    const r = fixtures.assistant_retract as AssistantRetract;
+    expect(r.type).toBe("assistant_retract");
+    expect(r.response_id).toBe(d.response_id);
+    expect(r.reason).toBe("stream_stalled");
+    expect(isNumber(r.seq)).toBe(true);
+  });
+
   it("tool_call", () => {
     const m = fixtures.tool_call as ToolCall;
     expect(m.type).toBe("tool_call");
@@ -1126,7 +1140,7 @@ describe("All fixtures have required shape", () => {
 
   it("every daemon event has a type and seq field", () => {
     const eventTypes = [
-      "ready", "session_state", "conversation_reset", "user_turn", "assistant_delta", "assistant_reasoning", "tool_call", "tool_result",
+      "ready", "session_state", "conversation_reset", "user_turn", "assistant_delta", "assistant_reasoning", "assistant_delta_response", "assistant_retract", "tool_call", "tool_result",
       "tool_result_truncated", "tool_result_diff", "tool_result_read_only", "tool_result_denied",
       "shell_output", "tool_progress", "approval_request", "approval_request_always_allow", "decision_logged",
       "checkpoint_notice", "verify_result", "cost_update", "boundary_update", "boundary_update_config_trust", "turn_complete",

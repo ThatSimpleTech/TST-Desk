@@ -671,9 +671,27 @@ shows "Response interrupted", the partial text is not kept as the
 model's answer, and Retry on the message resends it (TD-5152). The
 after-write review and memory distillation get the same errors.
 
+A stall partway through a turn's reply is different (TD-5159): the
+provider went quiet, it did not report a failure. The daemon withdraws
+what that model response had shown (its text and its thinking, with an
+`assistant_retract` event; the window takes it off the message and says
+"Provider went quiet. Asking again"), waits `initial_delay` (with
+jitter), and sends the same request once more. That is one retry per
+model call whatever `max_retries` says, because each one can wait a
+whole `stream_idle_timeout`; `max_retries: 0` turns it off. Only the
+model call that stalled is redone: tool calls that already ran in the
+turn are not run again, and text from earlier calls in the turn stays.
+A second stall ends the turn as `stream_stalled`, as before. Stop during
+the wait ends the turn with nothing kept. The after-write review and
+memory distillation still return a stall without resending it. A
+window from before this change does not know the event and shows the
+withdrawn text above the retried reply; `tst run --output text` has
+already printed it, so it writes a note to stderr, and `--output json`,
+scheduled-run receipts and mailed replies leave it out.
+
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `max_retries` | int 0–20 | `3` | Retries after the initial attempt. `0` disables retrying; the first failure ends the turn. |
+| `max_retries` | int 0–20 | `3` | Retries after the initial attempt. `0` disables retrying; the first failure ends the turn, and a reply that stalls partway is not asked for again (TD-5159). |
 | `initial_delay` | float > 0 | `1.0` | Base delay before the first retry, in seconds. Each subsequent wait doubles. |
 | `max_delay` | float > 0 | `60.0` | Ceiling on any single wait, in seconds. Bounds the worst case when `max_retries` is high. |
 
@@ -1083,7 +1101,7 @@ three tier definitions. You can pin a tier for a session from the title bar.
 | `connect_timeout` | float > 0 | `30` | Seconds to open the connection to `base_url`. |
 | `read_timeout` | float > 0 | `120` | Longest wait for any bytes from the server, the response headers included. A local model reading a long prompt sends nothing until its first token, so this is the knob for slow prefill — see §3.5. |
 | `total_timeout` | float > 0 or `null` | `null` | Wall-clock cap on one attempt, streaming included. `null` means no cap. A stream cut by it after output began is not retried. Before TD-5106 the client had a field named "total" set to 180; it was only the wait for a free pooled connection and never bounded a request. That wait stays 180 s and is not a key. |
-| `stream_idle_timeout` | float > 0 or `null` | `300` | Aborts a stream that sends no usable chunk for this long. SSE keep-alive comments (`: ping`) do not count, so a server that only pings is caught; `read_timeout` alone never catches it. A stall before any output is retried under `provider_retry`; a stall partway through a reply ends the turn as `stream_stalled`, because a retry would repeat text the window already shows. Reading stops at `data: [DONE]`, so a server that holds the body open after a finished reply is not a stall (TD-5152). `null` turns the watchdog off. |
+| `stream_idle_timeout` | float > 0 or `null` | `300` | Aborts a stream that sends no usable chunk for this long. SSE keep-alive comments (`: ping`) do not count, so a server that only pings is caught; `read_timeout` alone never catches it. A stall before any output is retried under `provider_retry`. A stall partway through a turn's reply withdraws the partial reply from the window and asks once more (TD-5159, see `provider_retry`); a second stall ends the turn as `stream_stalled`. Reading stops at `data: [DONE]`, so a server that holds the body open after a finished reply is not a stall (TD-5152). `null` turns the watchdog off. |
 
 **Prices are per million tokens, and they are yours to keep accurate.** They drive the live
 cost meter, the audit trail, and the spend cap. Nothing verifies them against your provider, so
@@ -1399,7 +1417,9 @@ total_timeout: 3600        # no single reply runs past an hour
 
 A stall before any output is retried under `provider_retry`, so with the default three retries
 a dead server costs up to four waits of `read_timeout` (or `stream_idle_timeout` when the
-server pings). Lower `provider_retry.max_retries` with long timeouts. The after-write review
+server pings). Lower `provider_retry.max_retries` with long timeouts. A stall partway through
+a reply is withdrawn and asked once more (TD-5159), so it costs at most two waits of
+`stream_idle_timeout` per model call. The after-write review
 and memory distillation never resend a stall (TD-5146), so they wait once. A scheduled job
 whose turn ends as `stream_stalled` failed for a transient reason, like a timeout, so a job
 with `retries` tries again after its `retry_delay` (TD-5154).

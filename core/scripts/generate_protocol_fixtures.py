@@ -33,6 +33,7 @@ from tstd.protocol import (
     ArtifactReady,
     AssistantDelta,
     AssistantReasoning,
+    AssistantRetract,
     Attach,
     Attachment,
     AutonomyStart,
@@ -518,6 +519,13 @@ FIXTURES = {
     ),
     "assistant_delta": AssistantDelta(session_id="sess-1", delta="Hello ", seq=3),
     "assistant_reasoning": AssistantReasoning(session_id="sess-1", delta="Let me think", seq=3),
+    # TD-5159: a model response's text carries its id, and a stall withdraws it.
+    "assistant_delta_response": AssistantDelta(
+        session_id="sess-1", delta="The fix is ", response_id="resp-1", seq=3
+    ),
+    "assistant_retract": AssistantRetract(
+        session_id="sess-1", response_id="resp-1", reason="stream_stalled", seq=4
+    ),
     "tool_call": ToolCall(
         session_id="sess-1",
         tool_call_id="tc-1",

@@ -17,7 +17,8 @@ from typing import Literal, Protocol
 
 from ..config import ModelConfig
 from ..logging import get_logger
-from ..protocol import AssistantDelta, TurnComplete
+from ..protocol import TurnComplete
+from ..reply_retry import shown_deltas
 from ..session import Session
 from .calendar import begin_tick, consider_calendar, note_unreadable, skip_for_calendar
 from .email_delivery import deliver_job, final_assistant_text
@@ -660,10 +661,9 @@ def turn_outcome(session: Session) -> tuple[str, bool, str | None]:
         if isinstance(event, TurnComplete) and event.failed:
             failed_code = event.error_code or "turn_failed"
             break
-    parts = [
-        event.delta for event in session.event_log.all_events if isinstance(event, AssistantDelta)
-    ]
-    text = "".join(parts).strip()
+    # A reply withdrawn after a stall and asked again (TD-5159) is not
+    # part of the summary.
+    text = "".join(shown_deltas(session.event_log.all_events)).strip()
     if text:
         return text, failed_code is not None, failed_code
     if failed_code is not None:
