@@ -562,10 +562,16 @@ the line is one of the entries above, joined by `;`, newlines, `|`, `||` or
   `git branch` only lists: any other option, or a branch name without
   `--list`, `-a`, `-r`, `--contains`, `--merged` or `--points-at`, asks
   (`git branch -v name` would create `name`).
-- Every operand, and every value attached to an option (`--file=x`, the `x`
-  of `-fx`), resolves inside the workspace after symlinks are followed. So
-  `cat /etc/hosts`, `ls ..` and a symlink that leads out of the workspace
-  ask. A pattern that starts with `/` (`rg /api`) asks for the same reason.
+- Every word, and every value an option may carry, resolves inside the
+  workspace after symlinks are followed. So `cat /etc/hosts`, `ls ..` and a
+  symlink that leads out of the workspace ask. A pattern that starts with
+  `/` (`rg /api`) asks for the same reason. A long option's value is the
+  text after `=`. A short option's starts after whichever letter of the
+  cluster takes one, which the list does not guess: in `file -bm/etc/x`
+  both `m/etc/x` and `/etc/x` are checked, so it asks. A cluster longer than
+  256 characters asks. A word that looks like an option is checked as a
+  file too, because BSD tools (macOS) stop reading options at the first
+  operand.
 - The program is found on `PATH` outside the workspace, and `PATH` has no
   empty or relative entry.
 - For a git entry: the workspace root holds its own `.git` (a workspace
@@ -597,6 +603,27 @@ A user policy rule (§4.4) still decides first: an `ask` or `never` rule that
 matches stops a listed command as before. The audit database records the
 entries that let each call run in `allowed_calls` (one row per call, keyed by
 its `tool_calls` row).
+
+**Rules that guard a file guard it here too.** An `ask` or `never` rule for
+`fs_read`, `fs_list` or `fs_grep` (or a glob such as `fs_*` that covers one)
+is a guard: the TD-5141 recipe in §4.4 names `.env` that way. While you have
+any guard, a listed command asks, as any shell call does, when:
+
+- a word names a file a guard matches, compared as written, normalized, and
+  workspace-relative with symlinks followed, ignoring case: `cat .env`,
+  `grep KEY ./.env`, `head link-to-env`, `grep -f.env x a.txt`; or
+- it can print a file that no word names: `grep -r` (and `--recursive`,
+  `-d recurse`, `--directories`), `rg`, `git diff`, `git show`, `git log`,
+  and `git status -v`. Whether one of those would reach a guarded file
+  can't be known before it runs.
+
+`ls`, `find`, `git status` and `git branch`, which print names rather than
+contents, and reads of unguarded files stay on the list as long as no word
+names a guarded file. A command that asks this way runs on your yes, and an unattended
+run takes it without asking, as it takes every Class B call. To refuse it
+outright, add a `shell` rule too, such as
+`{ tool: shell, args: "*.env*", effect: never }`, which refuses any command
+whose text mentions `.env`.
 
 ### `provider_retry`
 
@@ -1736,7 +1763,9 @@ a rule as `exactly app/[id]/page.tsx`, with the saved pattern on hover; a glob s
 **Reads inside the workspace never ask (TD-5141).** `fs_read`, `fs_list` and `fs_grep` on a
 path inside the workspace are Class A by a fixed rule, so they run without asking and without
 a model call to judge them. That includes `.env` and other secret files. A rule still wins, so
-to guard a file, name it for both tools that read contents:
+to guard a file, name it for both tools that read contents. The same rules keep the
+read-only shell list (§2 `shell`, TD-5103) off the file: `cat .env`, `grep -r KEY .` and
+`git show HEAD:.env` ask instead of running.
 
 <!-- verify: workspace -->
 ```yaml
@@ -1752,6 +1781,8 @@ policy:
 
 - `effect: ask` asks instead, but an unattended (autonomy) run treats `ask` as `auto`, so only
   `never` holds there.
+- Through shell, these rules make a listed command ask, not refuse. Add a `shell` rule with
+  `effect: never` (`args: "*.env*"`) to refuse it there too.
 - A rule matches the path the call names. `fs_grep` over a whole folder (`path: .`) isn't caught
   by a `*.env*` rule. In a git repo that search skips `.gitignore`d files, so keep `.env`
   ignored, as most templates already do. `fs_list` shows names only, never contents.

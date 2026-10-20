@@ -9769,9 +9769,13 @@ still decides first. The reader takes plain and quoted words joined by
 substitution, glob, brace, tilde, comment, `&` or wrapper asks. Each
 program's write, exec, file-list and symlink-following flags ask (any
 unique prefix of one too), `git branch` takes only listing options, and
-every operand and attached option value must resolve inside the wall
-with symlinks followed. The program must be found on `PATH` outside the
-workspace. A git entry needs the workspace's own `.git` and git 2.40+,
+every word and every value an option may carry (each tail of a short
+cluster, as in `file -bm/etc/x`) must resolve inside the wall with
+symlinks followed. The program must be found on `PATH` outside the
+workspace. The user's `ask` and `never` rules for `fs_read`, `fs_list`
+and `fs_grep` guard the list too: while one exists, a listed command
+that names a guarded file, or that can print a file no word names
+(recursive grep, `rg`, `git diff|show|log`, `git status -v`), asks. A git entry needs the workspace's own `.git` and git 2.40+,
 and runs with fsmonitor, hooks and in-tree attributes switched off (no
 filter or textconv driver an in-tree `.gitattributes` routes to) and no
 optional index write. Config: `shell.read_only.enabled` and `.commands`

@@ -15024,9 +15024,16 @@ model judgment still never makes shell A. A user policy rule (`ask`,
    `-r`, `--contains`, `--no-contains`, `--merged`, `--no-merged` or
    `--points-at`. Before a git subcommand only `--no-pager`, `-P` and
    `--no-optional-locks` are taken.
-4. **Paths and programs.** Every operand and every attached option value
-   (`--file=x`, the `x` of `-fx`) must resolve inside the workspace with
-   symlinks followed. Patterns are checked as paths too: `rg /api` asks,
+4. **Paths and programs.** Every word and every value an option may
+   carry must resolve inside the workspace with symlinks followed. A long
+   option's value is the text after `=`. A short option's starts after
+   whichever letter of the cluster takes one, and that differs by program
+   and between GNU and BSD, so every tail of a cluster after its first
+   letter is checked (`-bm/etc/x` checks `m/etc/x` and `/etc/x`); a
+   cluster over 256 characters asks rather than cost a path walk per
+   tail. Option-shaped words are checked whole as well, since BSD tools
+   stop reading options at the first operand (`cat a.txt -x` reads a file
+   `-x`). Patterns are checked as paths too: `rg /api` asks,
    which costs a prompt, where guessing which word is the pattern could
    miss a path. The program must be found on `PATH` outside the workspace,
    and a `PATH` with an empty or relative entry (searched from the
@@ -15070,6 +15077,22 @@ model judgment still never makes shell A. A user policy rule (`ask`,
    `tool_calls` (the hand-made v1 file in `test_audit.py`) still migrates.
 8. **Windows.** No match: commands run through `cmd /c`, whose quoting
    and `%VAR%` expansion this reader does not model.
+9. **File guards.** TD-5141 tells users to guard a file with `ask` or
+   `never` rules for `fs_read` and `fs_grep`; those rules name tools, so
+   they never matched `shell`, which was harmless while every shell call
+   asked. The `args` of every `ask` or `never` rule whose tool glob covers
+   `fs_read`, `fs_list` or `fs_grep` are now guards for the list
+   (`policy.read_guards`, read from the live policy on each call, since
+   Always allow and Revoke change it in place). While any guard exists, a
+   listed command asks when a word (as written, normalized, or
+   workspace-relative after symlinks, ignoring case, as `ask` and `never`
+   match) is guarded, or when it can print a file no word names: a
+   recursive grep, `rg`, `git diff`, `git show`, `git log`, `git status
+   -v`. The guard drops the call back to the normal gate (Class B, so it
+   asks); it does not turn the fs rule's `never` into a shell refusal,
+   because a walking command can't be shown to reach the file and the
+   story's own term is "drops back to the normal gate". A `shell` rule
+   refuses outright. Found in review of PR #31.
 
 **Conservative choices** (Class C questions the story left open): every
 redirect asks, `2>/dev/null` and `2>&1` included; wrappers (`timeout`,
@@ -15078,7 +15101,10 @@ checked; `rg -z`, `file -z`, `git log --show-signature` and `--ext-diff`
 ask; git entries ask on git older than 2.40 and in a workspace inside a
 bigger repository; the list is off on Windows. In a SHA-256 repository
 git refuses the SHA-1 empty tree (`bad --attr-source`), which fails
-closed; the docs say to take the git entries off the list there.
+closed; the docs say to take the git entries off the list there. With any
+file guard in force, every entry that can print an unnamed file asks
+(`git log` included, though only its patch options print contents),
+rather than parsing which options print what.
 
 **Residual risk (recorded).** A hard link in the workspace to a file
 outside is read like `fs_read` reads it (TD-5141): only writes check
@@ -15091,7 +15117,10 @@ classification and the run is not seen. `GIT_NO_LAZY_FETCH` needs git
 2.44; on 2.40–2.43 a partial clone may still fetch a missing blob from
 its own remote.
 
-**Rejected:** reusing the TD-5101 split's words (it reads more than runs
+**Rejected:** per-program tables of which short options take a value
+(they differ between GNU and BSD, and one wrong letter reopens the hole
+the cluster tails close); turning a guarded fs `never` into a shell
+`never` (see 9); reusing the TD-5101 split's words (it reads more than runs
 so `never` sees everything; the list needs less); expanding globs in
 Python (Python's `[^x]` is not bash's); dynamic filter pins as in
 `git_raw` (an in-tree `diff=` attribute can still route to a configured

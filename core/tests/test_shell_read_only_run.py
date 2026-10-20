@@ -26,7 +26,7 @@ from tstd.autonomy import AmbiguousClassifier, Boundary, DecisionClassifier
 from tstd.config import ModelConfig, ShellReadOnlyConfig
 from tstd.loop import agent_loop
 from tstd.mock import MockProvider, Script
-from tstd.policy import ApprovalOutcome, PolicyConfig, PolicyRule
+from tstd.policy import ApprovalOutcome, PolicyConfig, PolicyRule, read_guards
 from tstd.protocol import ApprovalRequest
 from tstd.protocol import ToolCall as ToolCallEvent
 from tstd.protocol import ToolResult as ToolResultEvent
@@ -78,7 +78,12 @@ class _Gate:
     def __init__(self, root: Path, policy: PolicyConfig | None = None) -> None:
         self.asked: list[str] = []
         self.worker: list[str] = []
-        boundary = Boundary(workspace_root=root, shell_read_only=ALL)
+        gate_policy = policy if policy is not None else PolicyConfig()
+        boundary = Boundary(
+            workspace_root=root,
+            shell_read_only=ALL,
+            read_guards=lambda: read_guards(gate_policy),
+        )
 
         async def worker(prompt: str) -> str:
             self.worker.append(prompt)
@@ -88,7 +93,7 @@ class _Gate:
             create_registry(),
             classifier=AmbiguousClassifier(static=DecisionClassifier(boundary), call_worker=worker),
             path_guard=PathGuard(boundary),
-            policy=policy if policy is not None else PolicyConfig(),
+            policy=gate_policy,
             workspace=root,
         )
         register_builtin_handlers(self.dispatcher)
@@ -103,6 +108,9 @@ class _Gate:
 
     async def shell(self, command: str):
         return await self.dispatcher.dispatch("tc", "shell", {"command": command}, self.session)
+
+    async def call(self, name: str, arguments: dict[str, object]):
+        return await self.dispatcher.dispatch("tc", name, arguments, self.session)
 
 
 # ── AC1: a listed command runs without asking ───────────────────────────
@@ -142,6 +150,37 @@ async def test_a_policy_rule_still_decides_first(ws: Path) -> None:
     ran = await auto.shell("cat a.txt")
     assert ran.status == "success"
     assert ran.allowed_by == ()  # the user's rule let it run, not the list
+
+
+async def test_the_documented_file_guard_holds_for_the_list(
+    ws: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """docs/configuration.md's TD-5141 recipe: a never rule for fs_read and
+    fs_grep on `*.env*`. The listed commands that would print .env ask, as
+    every shell call did before the list (review of PR #31)."""
+    (ws / ".env").write_text("API_KEY=1\n")
+    (ws / ".git").mkdir()
+    monkeypatch.setattr(shell_read_only, "git_ready", lambda: True)
+    commands = ("cat .env", "grep -r API_KEY .", "git show HEAD:.env")
+    free = _Gate(ws)
+    for command in commands:
+        assert (await free.shell(command)).allowed_by != (), command
+    assert free.asked == []
+
+    rules = [
+        PolicyRule(tool="fs_read", args="*.env*", effect="never"),
+        PolicyRule(tool="fs_grep", args="*.env*", effect="never"),
+    ]
+    gate = _Gate(ws, PolicyConfig(rules=rules))
+    refused = await gate.call("fs_read", {"path": ".env"})
+    assert refused.error_code == "policy_denied"
+    for command in commands:
+        assert (await gate.shell(command)).allowed_by == (), command
+    assert gate.asked == list(commands)
+    ran = await gate.shell("cat a.txt")
+    assert ran.status == "success"
+    assert ran.allowed_by == ("cat",)
+    assert gate.asked == list(commands)
 
 
 # ── AC4: the audit database names the entries ──────────────────────────

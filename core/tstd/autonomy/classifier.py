@@ -222,6 +222,12 @@ class Boundary:
         shell_read_only: The read-only shell list entries in force
             (TD-5103, ``shell.read_only`` in ``config.yaml``). Empty, the
             default, means no shell command is Class A.
+        read_guards: The ``args`` globs of the user's ``ask`` and
+            ``never`` rules for the built-in reads, read on every call so
+            a rule saved mid-session counts (TD-5103,
+            :func:`tstd.policy.read_guards`). A listed shell command that
+            names a file one matches, or that can print a file it does not
+            name, is not Class A while there is one.
     """
 
     workspace_root: Path | None
@@ -229,6 +235,7 @@ class Boundary:
     allowed_hosts: frozenset[str] = frozenset()
     cap_exceeded: bool = False
     shell_read_only: frozenset[str] = frozenset()
+    read_guards: Callable[[], Sequence[str]] = field(default=lambda: (), compare=False)
 
 
 @dataclass(frozen=True)
@@ -641,7 +648,9 @@ def _read_only_entries(req: DecisionRequest, boundary: Boundary) -> tuple[str, .
     command = req.arguments.get("command")
     if req.tool_name != "shell" or req.provenance is not None or not isinstance(command, str):
         return ()
-    return read_only_match(command, boundary.shell_read_only, boundary.workspace_root)
+    return read_only_match(
+        command, boundary.shell_read_only, boundary.workspace_root, boundary.read_guards()
+    )
 
 
 def _rule_shell_floor(req: DecisionRequest, boundary: Boundary) -> bool:

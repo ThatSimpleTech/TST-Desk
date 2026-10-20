@@ -16,6 +16,12 @@ inside it or through a relative ``PATH`` entry, or a line the TD-5101
 scanner cannot split with confidence. On Windows, where commands run
 through ``cmd /c``, nothing matches.
 
+The user's ``ask`` and ``never`` rules for the built-in reads (TD-5141)
+guard files from the list too: while any is in force, a command that
+names a file one of them matches, or that can print a file no word names
+(a recursive grep, ``rg``, ``git diff``, ``show`` or ``log``, ``git
+status -v``), drops back as well.
+
 git reads its own config and attributes, and both can name a command:
 ``core.fsmonitor``, a ``post-index-change`` hook in a ``core.hooksPath``
 folder that sits in the tree, or a filter or textconv driver that an
@@ -31,10 +37,11 @@ optional index write.
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import os
 import re
 import shutil
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -85,6 +92,7 @@ _git_probe: dict[str, bool] = {}
 class _Call:
     entry: str
     checks: tuple[str, ...]
+    walks: bool
 
 
 def _calls(command: str, entries: frozenset[str]) -> list[_Call] | None:
@@ -98,25 +106,25 @@ def _calls(command: str, entries: frozenset[str]) -> list[_Call] | None:
     for argv in segs:
         program, args = argv[0], argv[1:]
         if program == "git":
-            read = git_args(args)
-            if read is None:
+            parsed = git_args(args)
+            if parsed is None:
                 return None
-            entry, checks = f"git {read[0]}", read[1]
+            entry, read = f"git {parsed[0]}", parsed[1]
         elif program == "find":
             entry, found = program, find_args(args)
             if found is None:
                 return None
-            checks = found
+            read = found
         elif program in SPECS:
-            entry, checked = program, option_args(SPECS[program], args)
-            if checked is None:
+            entry, opts = program, option_args(SPECS[program], args)
+            if opts is None:
                 return None
-            checks = checked
+            read = opts
         else:
             return None
         if entry not in entries:
             return None
-        calls.append(_Call(entry, tuple(checks)))
+        calls.append(_Call(entry, read.checks, read.walks))
     return calls
 
 
@@ -126,6 +134,24 @@ def _real(path: str) -> Path:
 
 def _inside(word: str, root: Path, real_root: Path) -> bool:
     return _real(os.path.join(root, word)).is_relative_to(real_root)
+
+
+def _guarded(word: str, guards: Sequence[str], root: Path, real_root: Path) -> bool:
+    """Whether a guard glob matches the file *word* names.
+
+    Matched as written, normalized, and workspace-relative with symlinks
+    resolved, the form an ``fs_read`` rule sees, and ignoring case, as
+    ``ask`` and ``never`` rules match (TD-5141).
+    """
+    forms = {word, os.path.normpath(word)}
+    real = _real(os.path.join(root, word))
+    if real.is_relative_to(real_root):
+        forms.add(real.relative_to(real_root).as_posix())
+    return any(
+        fnmatch.fnmatchcase(form, glob) or fnmatch.fnmatchcase(form.casefold(), glob.casefold())
+        for form in forms
+        for glob in guards
+    )
 
 
 def _program_outside(name: str, real_root: Path) -> bool:
@@ -163,7 +189,9 @@ def _git_ok(root: Path, real_root: Path) -> bool:
     )
 
 
-def match(command: str, entries: frozenset[str], root: Path | None) -> tuple[str, ...]:
+def match(
+    command: str, entries: frozenset[str], root: Path | None, guards: Sequence[str] = ()
+) -> tuple[str, ...]:
     """The list entries that cover every command of *command*, in order.
 
     Empty when the line does not qualify: any command off the list or
@@ -171,6 +199,11 @@ def match(command: str, entries: frozenset[str], root: Path | None) -> tuple[str
     resolved), a program found inside *root*, for git anything
     :func:`_git_ok` refuses, or for rg a config file inside *root* (one
     line of it can add ``--pre``).
+
+    *guards* are the ``args`` globs of the user's ``ask`` and ``never``
+    rules for the built-in reads (:func:`tstd.policy.read_guards`). While
+    there is one, a word one matches, or a command that can print a file
+    no word names, empties the match too.
     """
     calls = _calls(command, entries)
     if calls is None or root is None:
@@ -178,6 +211,8 @@ def match(command: str, entries: frozenset[str], root: Path | None) -> tuple[str
     real_root = _real(str(root))
     for call in calls:
         program = call.entry.split(" ", 1)[0]
+        if guards and call.walks:
+            return ()
         if not _program_outside(program, real_root):
             return ()
         if program == "git" and not _git_ok(root, real_root):
@@ -185,6 +220,8 @@ def match(command: str, entries: frozenset[str], root: Path | None) -> tuple[str
         if program == "rg" and _env_inside("RIPGREP_CONFIG_PATH", root, real_root):
             return ()
         if not all(_inside(word, root, real_root) for word in call.checks):
+            return ()
+        if guards and any(_guarded(word, guards, root, real_root) for word in call.checks):
             return ()
     return tuple(dict.fromkeys(call.entry for call in calls))
 

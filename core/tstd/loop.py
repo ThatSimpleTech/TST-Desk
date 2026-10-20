@@ -94,7 +94,7 @@ from .output_cap import (
     log_output_cap,
     stub_call,
 )
-from .policy import save_approved_imports
+from .policy import read_guards, save_approved_imports
 from .progress_guard import (
     PROGRESS_CHECK_INSTRUCTION,
     ProgressGuard,
@@ -1034,6 +1034,8 @@ def session_boundary(session: Session) -> Boundary:
         shell_read_only=(
             session.config.shell.read_only.entries() if session.config is not None else frozenset()
         ),
+        # Read per call: Always allow and Revoke change the policy in place.
+        read_guards=lambda: read_guards(session.policy),
     )
 
 

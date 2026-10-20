@@ -776,7 +776,9 @@ Worth reading once, because it is the same path for every tool:
 3. **Classify.** `RULE_TABLE` first. A built-in read inside the workspace is Class A by
    `builtin-read` (TD-5141). A shell command is Class B by `shell-floor`, unless every command
    in it is on the fixed read-only list (`shell-read-only`, `core/tstd/shell_read_only.py`,
-   TD-5103), which is Class A. A call no rule decides falls through to the worker-tier
+   TD-5103), which is Class A. The user's `ask` and `never` rules for the built-in reads
+   guard that list too (`Boundary.read_guards`): a listed command that names a guarded file,
+   or can print an unnamed one, stays Class B. A call no rule decides falls through to the worker-tier
    classifier. A call reaching a handler without a classifier attached raises
    `UnclassifiedToolCall` — the chokepoint refuses to execute unclassified actions rather
    than defaulting to permissive.

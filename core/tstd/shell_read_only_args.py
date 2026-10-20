@@ -15,16 +15,26 @@ less than ``sh`` does and refuses everything else:
 
 Each command's options are then checked against the program's write,
 exec and symlink-following flags (:data:`SPECS`, :func:`find_args`,
-:func:`git_args`), and the words that can name a file come back for the
-caller's path check.
+:func:`git_args`), and what it reads comes back as a :class:`Read`: the
+words that can name a file, for the caller's path check, and whether it
+can print a file the line does not name.
 """
 
 from __future__ import annotations
 
 import string
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-__all__ = ["SPECS", "Spec", "branch_args", "find_args", "git_args", "option_args", "segments"]
+__all__ = [
+    "SPECS",
+    "Read",
+    "Spec",
+    "branch_args",
+    "find_args",
+    "git_args",
+    "option_args",
+    "segments",
+]
 
 _BARE = frozenset(string.ascii_letters + string.digits + "_-./:=,+@%")
 _MID_WORD = frozenset("~^")
@@ -104,16 +114,35 @@ def segments(command: str) -> list[list[str]] | None:
 @dataclass(frozen=True)
 class Spec:
     """A program's options that write, run another program, read a list
-    of file names, or follow symlinks out of the wall during a walk.
+    of file names, or follow symlinks out of the wall during a walk, and
+    the ones that make it read files the line does not name.
 
     ``refused_short`` are single letters, refused wherever they sit in a
     cluster (``-laL``). ``refused_long`` are names without the dashes. Any
     long name that is a prefix of a refused one is refused too, because
     GNU ``getopt_long`` and git accept a unique abbreviation (``--deref``).
+    ``walk_short`` and ``walk_long`` (a recursive search) are read the same
+    way, and ``walks`` is set for a program that always may (rg).
     """
 
     refused_short: str = ""
     refused_long: frozenset[str] = frozenset()
+    walk_short: str = ""
+    walk_long: frozenset[str] = frozenset()
+    walks: bool = False
+
+
+@dataclass(frozen=True)
+class Read:
+    """What one command of a line reads.
+
+    ``checks`` are the words that can name a file, for the caller's path
+    check. ``walks`` is true when the program can print the contents of a
+    file that no word names: a recursive grep, rg's walk, git's history.
+    """
+
+    checks: tuple[str, ...]
+    walks: bool = False
 
 
 SPECS: dict[str, Spec] = {
@@ -126,48 +155,70 @@ SPECS: dict[str, Spec] = {
     "file": Spec("CfzZ", frozenset({"compile", "files-from", "uncompress", "uncompress-noreport"})),
     "stat": Spec(),
     # -R follows every symlink in GNU grep; BSD grep (macOS) follows them
-    # with -S, and with -O those named on the command line.
-    "grep": Spec("ROS", frozenset({"dereference-recursive"})),
-    "rg": Spec("Lz", frozenset({"follow", "pre", "pre-glob", "search-zip", "hostname-bin"})),
+    # with -S, and with -O those named on the command line. -d takes an
+    # action, `recurse` among them.
+    "grep": Spec(
+        "ROS",
+        frozenset({"dereference-recursive"}),
+        walk_short="rRd",
+        walk_long=frozenset({"recursive", "dereference-recursive", "directories"}),
+    ),
+    "rg": Spec(
+        "Lz", frozenset({"follow", "pre", "pre-glob", "search-zip", "hostname-bin"}), walks=True
+    ),
     "git": Spec("", frozenset({"output", "ext-diff", "show-signature"})),
 }
 
+# A short-option cluster longer than this is refused: each of its tails
+# is path-checked, and a long one would cost a path walk per tail.
+_MAX_CLUSTER = 256
 
-def _long_refused(spec: Spec, name: str) -> bool:
-    return any(r.startswith(name) for r in spec.refused_long)
+
+def _prefix_of(name: str, names: frozenset[str]) -> bool:
+    return any(n.startswith(name) for n in names)
 
 
-def option_args(spec: Spec, args: list[str]) -> list[str] | None:
-    """The words of *args* to path-check, or None when a refused option is used.
+def option_args(spec: Spec, args: list[str]) -> Read | None:
+    """What *args* read, or None when a refused option is used.
 
-    Operands are checked, and so is any value attached to an option
-    (``--file=x``, the ``x`` of ``-fx``). A value given as the next word is
-    an operand here, so it is checked too: a pattern that starts with ``/``
-    asks, which costs a prompt and nothing else. Options are read after
-    operands as well, as GNU tools read them, until ``--``.
+    Every word is checked: BSD tools stop reading options at the first
+    operand (GNU ones too under ``POSIXLY_CORRECT``), so a later ``-x`` or
+    ``--`` is a file name to them. So is any value attached to an option.
+    A long option's is the text after ``=``. A short option's starts
+    after whichever letter of the cluster takes it, which differs by
+    program and between GNU and BSD: ``-bm/etc/x`` is ``-b``, then ``-m``
+    with ``/etc/x``. So every tail of a cluster after its first letter is
+    checked (``m/etc/x`` and ``/etc/x``), and a refused letter anywhere in
+    it refuses, even one that is really part of a value. A value given as
+    the next word is an operand here, so it is checked too: a pattern
+    that starts with ``/`` asks, which costs a prompt and nothing else.
+    Options are read after operands as well, as GNU tools read them,
+    until ``--``.
     """
     checks: list[str] = []
+    walks = spec.walks
     options = True
     for word in args:
+        checks.append(word)
         if not options or word == "-" or not word.startswith("-"):
-            if word != "-":
-                checks.append(word)
             continue
         if word == "--":
             options = False
             continue
         if word.startswith("--"):
             name, eq, value = word[2:].partition("=")
-            if _long_refused(spec, name):
+            if _prefix_of(name, spec.refused_long):
                 return None
+            walks = walks or _prefix_of(name, spec.walk_long)
             if eq:
                 checks.append(value)
             continue
-        if any(c in spec.refused_short for c in word[1:]):
+        letters = word[1:]
+        if len(word) > _MAX_CLUSTER or any(c in spec.refused_short for c in letters):
             return None
-        if len(word) > 2:
-            checks.append(word[2:])
-    return checks
+        walks = walks or any(c in spec.walk_short for c in letters)
+        checks.extend(word[k:] for k in range(2, len(word)))
+    return Read(tuple(checks), walks)
 
 
 # find's actions that run a program, delete, or write a file, its options
@@ -179,12 +230,14 @@ _FIND_REFUSED = frozenset(
 )
 
 
-def find_args(args: list[str]) -> list[str] | None:
+def find_args(args: list[str]) -> Read | None:
     """``find``'s words to path-check: start points and primaries' operands.
 
     Words starting with ``-`` are primaries or numbers (``-size -5k``) and
     are matched whole, since find does not abbreviate. Everything else is
     checked as a path, patterns included (``-name 'x'`` stays inside).
+    find prints names, never contents, so it never walks in
+    :class:`Read`'s sense.
     """
     checks: list[str] = []
     for word in args:
@@ -193,7 +246,7 @@ def find_args(args: list[str]) -> list[str] | None:
                 return None
             continue
         checks.append(word)
-    return checks
+    return Read(tuple(checks))
 
 
 # `git branch` creates, deletes, renames or re-points with almost any
@@ -212,7 +265,7 @@ _BRANCH_LISTS_LONG = frozenset(
 )
 
 
-def branch_args(args: list[str]) -> list[str] | None:
+def branch_args(args: list[str]) -> Read | None:
     """``git branch``'s words to path-check, or None unless it only lists."""
     checks: list[str] = []
     operands = False
@@ -240,16 +293,24 @@ def branch_args(args: list[str]) -> list[str] | None:
         lists = lists or bool(letters & _BRANCH_LISTS_SHORT)
     if operands and not lists:
         return None
-    return checks
+    return Read(tuple(checks))
 
 
 # Options before the subcommand: only the ones that change nothing it reads.
 _GIT_GLOBAL = frozenset({"--no-pager", "-P", "--no-optional-locks"})
 GIT_SUBCOMMANDS = ("status", "log", "diff", "show", "branch")
+# log, diff and show print file contents from history and the tree, for
+# paths no word need name; `git status -v` prints the staged diff.
+_GIT_SPECS = {
+    "status": replace(SPECS["git"], walk_short="v", walk_long=frozenset({"verbose"})),
+    "log": replace(SPECS["git"], walks=True),
+    "diff": replace(SPECS["git"], walks=True),
+    "show": replace(SPECS["git"], walks=True),
+}
 
 
-def git_args(args: list[str]) -> tuple[str, list[str]] | None:
-    """The subcommand and the words to path-check, or None.
+def git_args(args: list[str]) -> tuple[str, Read] | None:
+    """The subcommand and what it reads, or None.
 
     No global option but :data:`_GIT_GLOBAL` is taken: ``-c`` sets config
     (``core.fsmonitor`` runs a command), and ``-C``, ``--git-dir``,
@@ -261,5 +322,5 @@ def git_args(args: list[str]) -> tuple[str, list[str]] | None:
     if k >= len(args) or args[k] not in GIT_SUBCOMMANDS:
         return None
     sub, rest = args[k], args[k + 1 :]
-    checks = branch_args(rest) if sub == "branch" else option_args(SPECS["git"], rest)
-    return None if checks is None else (sub, checks)
+    read = branch_args(rest) if sub == "branch" else option_args(_GIT_SPECS[sub], rest)
+    return None if read is None else (sub, read)

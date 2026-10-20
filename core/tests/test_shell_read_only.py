@@ -26,6 +26,7 @@ from tstd.autonomy import AmbiguousClassifier, Boundary, DecisionClass, Decision
 from tstd.autonomy.classifier import RULE_TABLE, Classification
 from tstd.config import ConfigError, ShellReadOnlyConfig, default_config_yaml, load_config
 from tstd.loop import session_boundary
+from tstd.policy import PolicyConfig, PolicyRule, adopt_policy, read_guards
 from tstd.session import Session
 from tstd.shell_read_only import READ_ONLY_ENTRIES
 from tstd.tools import build_decision_request, create_registry
@@ -57,14 +58,18 @@ def ws(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def classify(
-    root: Path, command: str, entries: frozenset[str] = ALL, provenance: str | None = None
+    root: Path,
+    command: str,
+    entries: frozenset[str] = ALL,
+    provenance: str | None = None,
+    guards: tuple[str, ...] = (),
 ) -> Classification:
     tool = create_registry().get("shell")
     assert tool is not None
     request = build_decision_request(tool, {"command": command})
     if provenance is not None:
         request = replace(request, provenance=provenance)
-    boundary = Boundary(workspace_root=root, shell_read_only=entries)
+    boundary = Boundary(workspace_root=root, shell_read_only=entries, read_guards=lambda: guards)
     return DecisionClassifier(boundary).classify(request)
 
 
@@ -281,12 +286,40 @@ OUTSIDE = [
     "find . -newer ../outside.txt",
     "git diff --no-index ../outside.txt a.txt",
     "git log -- ../outside.txt",
+    # A value attached after the first letter of a cluster (review of PR
+    # #31): `-bm/etc/passwd` is -b, then -m with /etc/passwd.
+    "file -bm/etc/passwd a.txt",
+    "file -km../outside.txt a.txt",
+    "file -bmlink a.txt",
+    "rg -if/etc/passwd .",
+    "grep -hf/etc/passwd -r .",
+    "grep -hfsrc/../../outside.txt x a.txt",
+    "head -qn5 a.txt -c/etc/passwd",
+    "git log -1O/etc/passwd",
 ]
 
 
 @pytest.mark.parametrize("command", REDIRECTS + OFF_LIST + EXPANSIONS + WRITE_FLAGS + OUTSIDE)
 def test_everything_else_hits_the_floor(ws: Path, command: str) -> None:
     assert_floor(classify(ws, command))
+
+
+def test_an_option_shaped_operand_is_a_path(ws: Path, tmp_path: Path) -> None:
+    """BSD tools read options only up to the first operand (GNU ones too
+    under POSIXLY_CORRECT), so a later `-x` or a lone `-` can be a file."""
+    (ws / "-lnk").symlink_to(tmp_path / "outside.txt")
+    assert_floor(classify(ws, "cat a.txt -lnk"))
+    assert_floor(classify(ws, "cat a.txt -- -lnk"))
+    (ws / "-").symlink_to(tmp_path)
+    assert_floor(classify(ws, "ls -"))
+    assert classify(ws, "cat a.txt -n").decision_class is DecisionClass.A
+
+
+def test_a_long_option_cluster_asks(ws: Path) -> None:
+    """Each tail of a cluster is path-checked, so a long one is refused."""
+    assert classify(ws, f"grep -e{'x' * 200} a.txt").decision_class is DecisionClass.A
+    assert_floor(classify(ws, f"grep -e{'x' * 300} a.txt"))
+    assert classify(ws, f"grep --regexp={'x' * 300} a.txt").decision_class is DecisionClass.A
 
 
 def test_a_program_inside_the_workspace_asks(
@@ -428,3 +461,120 @@ def test_the_session_boundary_reads_the_session_config(tmp_path: Path) -> None:
         }
     )
     assert session_boundary(session).shell_read_only == {"ls"}
+
+
+# ── The built-in reads' ask and never rules guard the list too ─────────
+
+GUARDS = ("*.env*",)
+# Each names a file a guard matches: as written, normalized, through a
+# symlink, in another case, or as an attached value.
+NAMES_A_GUARDED_FILE = [
+    "cat .env",
+    "cat ./.env",
+    "cat src/../.env",
+    "head -n1 envlink",
+    "grep KEY .env",
+    "grep -f.env x a.txt",
+    "grep -hf.env x a.txt",
+    "wc -l a.txt .env",
+    "file .env",
+    "stat .env",
+    "cat a.txt | tail -n1 .env",
+]
+# Each can print a file no word names.
+WALKS = [
+    "grep -r KEY .",
+    "grep -rn needle src",
+    "grep -nr needle src",
+    "grep --recursive KEY .",
+    "grep --rec KEY .",
+    "grep -d recurse KEY .",
+    "grep --directories=recurse KEY .",
+    "rg KEY",
+    "rg -n KEY src",
+    "git diff",
+    "git diff HEAD~1 -- src",
+    "git log -1",
+    "git show HEAD",
+    "git show HEAD:.env",
+    "git status -v",
+    "git status -sv",
+    "git status --verbose",
+    "git status --verb",
+    "cat a.txt | git log -p",
+]
+STILL_LISTED = [
+    ("cat a.txt", ("cat",)),
+    ("grep needle a.txt src/b.py", ("grep",)),
+    ("head -n 5 a.txt", ("head",)),
+    ("ls -la src", ("ls",)),
+    ("find . -name '*.py' -type f", ("find",)),
+    ("git status --short", ("git status",)),
+    ("git branch -a", ("git branch",)),
+    ("pwd", ("pwd",)),
+]
+
+
+@pytest.fixture
+def guarded_ws(ws: Path) -> Path:
+    (ws / ".env").write_text("KEY=1\n")
+    (ws / "envlink").symlink_to(ws / ".env")
+    return ws
+
+
+@pytest.mark.parametrize("command", NAMES_A_GUARDED_FILE + WALKS)
+def test_a_guard_drops_the_call_back_to_the_gate(guarded_ws: Path, command: str) -> None:
+    assert classify(guarded_ws, command).decision_class is DecisionClass.A
+    assert_floor(classify(guarded_ws, command, guards=GUARDS))
+
+
+@pytest.mark.parametrize(("command", "entries"), STILL_LISTED)
+def test_a_guard_leaves_other_reads_listed(
+    guarded_ws: Path, command: str, entries: tuple[str, ...]
+) -> None:
+    decision = classify(guarded_ws, command, guards=GUARDS)
+    assert decision.decision_class is DecisionClass.A
+    assert decision.allowed_by == entries
+
+
+def test_a_guard_ignores_case(guarded_ws: Path) -> None:
+    assert_floor(classify(guarded_ws, "cat .ENV", guards=GUARDS))
+    assert_floor(classify(guarded_ws, "cat .env", guards=("*.ENV*",)))
+
+
+def test_read_guards_are_the_ask_and_never_rules_for_built_in_reads() -> None:
+    config = PolicyConfig(
+        rules=[
+            PolicyRule(tool="fs_read", args="*.env*", effect="never"),
+            PolicyRule(tool="fs_grep", args="*.env*", effect="never"),
+            PolicyRule(tool="fs_*", args="secrets/**", effect="ask"),
+            PolicyRule(tool="fs_list", args="private/**", effect="ask"),
+            PolicyRule(tool="*", args="*.pem", effect="never"),
+            PolicyRule(tool="fs_read", args="docs/**", effect="auto"),
+            PolicyRule(tool="fs_write", args="*.lock", effect="never"),
+            PolicyRule(tool="shell", args="cat *", effect="ask"),
+        ]
+    )
+    assert read_guards(config) == ("*.env*", "secrets/**", "private/**", "*.pem")
+    assert read_guards(PolicyConfig()) == ()
+
+
+def test_the_session_boundary_reads_the_live_policy(guarded_ws: Path) -> None:
+    session = Session(str(guarded_ws))
+    session.config = make_config()
+    boundary = session_boundary(session)
+    tool = create_registry().get("shell")
+    assert tool is not None
+    request = build_decision_request(tool, {"command": "cat .env"})
+    classifier = DecisionClassifier(boundary)
+    assert classifier.classify(request).decision_class is DecisionClass.A
+    # Always allow and Revoke copy the saved policy into this same object.
+    adopt_policy(
+        session.policy,
+        PolicyConfig(rules=[PolicyRule(tool="fs_read", args="*.env*", effect="never")]),
+    )
+    assert tuple(boundary.read_guards()) == ("*.env*",)
+    assert_floor(classifier.classify(request))
+    # A reload replaces it.
+    session.policy = PolicyConfig()
+    assert classifier.classify(request).decision_class is DecisionClass.A
