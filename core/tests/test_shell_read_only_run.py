@@ -316,6 +316,11 @@ def _script(path: Path, body: str) -> str:
 
 
 @needs_git_240
+def _bump_mtime(path: Path) -> None:
+    later = path.stat().st_mtime + 10
+    os.utime(path, (later, later))
+
+
 async def test_listed_git_runs_no_filter_textconv_or_hook(ws: Path, tmp_path: Path) -> None:
     """An in-tree ``.gitattributes`` (a Class A write) routes ``a.txt`` through
     a filter the user's own config names, the user's attributes file, kept
@@ -339,6 +344,7 @@ async def test_listed_git_runs_no_filter_textconv_or_hook(ws: Path, tmp_path: Pa
     _script(ws / ".githooks" / "post-index-change", f"touch {marks}/hook")
     (ws / ".gitattributes").write_text("*.txt filter=mark\n")
     (ws / "user.attributes").write_text("*.txt diff=mark\n")
+    (ws / "same.dat").write_text("unchanged\n")
     _git(ws, "add", ".")
     _git(ws, "commit", "-qm", "base")
     for mark in ("filter", "textconv", "hook"):  # the commit itself ran some
@@ -346,6 +352,7 @@ async def test_listed_git_runs_no_filter_textconv_or_hook(ws: Path, tmp_path: Pa
     (ws / "a.txt").write_text("hello\nthere\n")  # same size, new bytes
     assert sorted(p.name for p in marks.iterdir()) == ["clean.sh", "tc.sh"]
 
+    _bump_mtime(ws / "same.dat")
     await shell_read_only.probe_git()
     session = Session(str(ws))
     session.config = _config()
@@ -355,6 +362,10 @@ async def test_listed_git_runs_no_filter_textconv_or_hook(ws: Path, tmp_path: Pa
     assert "+there" in diff
     assert sorted(p.name for p in marks.iterdir()) == ["clean.sh", "tc.sh"]
 
+    # A newer timestamp on unchanged content makes any git refresh and
+    # rewrite the index, which is what fires post-index-change; without it
+    # older git (CI's) may leave the index alone and the control proves nothing.
+    _bump_mtime(ws / "same.dat")
     session.config = _config(enabled=False)
     await run_shell(session, "git status --short")
     await run_shell(session, "git diff")
