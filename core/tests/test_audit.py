@@ -19,6 +19,12 @@ TSTD_ROOT = Path(__file__).resolve().parent.parent / "tstd"
 # while ignoring prose like "we never update rows".
 _MUTATION_SQL = re.compile(r"\bdelete\s+from\s+\w|\bupdate\s+\w+\s+set\b", re.IGNORECASE)
 
+# Modules that own a different SQLite file and must delete rows from it.
+# TD-5129: the session search index is a rebuildable view of the session
+# logs, in its own file; a deleted session or a withdrawn reply has to
+# leave it. Nothing in it is the audit trail.
+_OWN_DATABASE = {"session_index.py"}
+
 
 @pytest.fixture
 def store(tmp_path: Path) -> Iterator[AuditStore]:
@@ -86,10 +92,23 @@ def test_no_update_or_delete_statements_anywhere_in_tstd() -> None:
     """
     offenders: list[str] = []
     for path in sorted(TSTD_ROOT.rglob("*.py")):
+        if path.parent == TSTD_ROOT and path.name in _OWN_DATABASE:
+            continue
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             if _MUTATION_SQL.search(line):
                 offenders.append(f"{path.name}:{lineno}: {line.strip()}")
     assert offenders == []
+
+
+def test_exempt_modules_never_touch_the_audit_database() -> None:
+    """The exemption above covers another file, never ``audit.db``."""
+    from tstd.audit import audit_db_path
+    from tstd.session_index import INDEX_FILE
+
+    assert INDEX_FILE != audit_db_path(Path("/d")).name
+    for name in _OWN_DATABASE:
+        source = (TSTD_ROOT / name).read_text(encoding="utf-8")
+        assert "audit" not in source.lower()
 
 
 def test_store_exposes_no_update_methods(store: AuditStore) -> None:

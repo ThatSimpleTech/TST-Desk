@@ -17236,6 +17236,13 @@ Sized 5, so this entry records the approach in place of a sign-off.
   session's own model like any `fs_read` output; the index and both
   searches open no socket (tested with `socket` patched to fail).
 
+- **The append-only guard names the exemption.** `test_audit.py` fails
+  on any `DELETE FROM` / `UPDATE ... SET` in `tstd`. The index must
+  delete rows (a deleted session, a withdrawn reply), so
+  `session_index.py` is listed by name as owning a different database,
+  and a test pins that it never names the audit file. Every other module
+  stays under the guard.
+
 **Rejected.** A search inside `events.jsonl` with `grep` at query time:
 the logs are windowed, so old sessions would lose their text, and every
 keystroke would read every log. A vector index: needs an embedding model
