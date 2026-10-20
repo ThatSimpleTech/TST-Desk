@@ -254,6 +254,17 @@ async def run_worker_child(
     child.cost_tracker = tracker
     child.touched_paths = parent.touched_paths
     child.autonomy = False
+    # web_fetch's extract pass (TD-5114) reaches the worker tier and this
+    # child's result cap through the runtime; without one a research
+    # child's question was refused and it read the raw page instead.
+    # delegate_depth still refuses a nested delegate.
+    child.delegate_runtime = DelegateRuntime(
+        provider_factory=runtime.provider_factory,
+        config=runtime.config,
+        dispatcher=child_dispatcher,
+        assembler=runtime.assembler,
+        session_start=runtime.session_start,
+    )
 
     caps = parent.boundary_config.caps
     remaining = max(0, caps.max_iterations - runtime.iterations)

@@ -15908,6 +15908,12 @@ split out to keep `delegate.py` under the file budget.
    so `network: deny` and the host allowlist checked hosts the request
    never went to: TD-4843's bug again. It also gives a worker child's
    shell the session's read-only list (TD-5103).
+6. **The child has its own worker host (merged with TD-5114).** The
+   child session gets a `DelegateRuntime` bound to the child's
+   dispatcher, so `web_fetch` with a `question` runs TD-5114's extract
+   pass and only the answer reaches the child. Without it the question
+   was refused ("no worker model bound") and the child fell back to the
+   raw page. `delegate_depth` still refuses a nested `delegate`.
 
 **Alternatives rejected:** child steps as their own timeline events
 (TD-4602's rejection still holds; one field on an existing event is
