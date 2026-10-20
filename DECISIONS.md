@@ -16623,3 +16623,77 @@ it is re-injected were left open. Adam approved the story as written
 - **Native only, parent only.** Delegated worker and research children
   keep their fixed tool lists without `task_list`; the plan is the
   parent's. The Grok engine keeps its own plan.
+
+## 2026-10-20 — TD-5125: "Restore files to here" from the session branch (Class B)
+
+**Context.** Every agent write already lands on `tst/session/<id>` (TD-705),
+but undo meant copying a `git revert <sha>` out of the decisions list. The gap
+audit asked for a one-click restore of the files to a chosen user turn, with
+the diff shown first, files changed by hand flagged and left alone unless
+confirmed, an offer from Edit and resend, and the phone. The story is sized 5;
+Adam approved it as specified (gap audit decisions, 2026-10-14), so the
+approach is recorded here rather than proposed.
+
+**Decision.**
+
+- **A turn is a point in the session log, and every branch commit says where
+  it falls.** Checkpoint messages gain `Kind:` (`agent`, `preimage`,
+  `restore`) and `Log-Seq:` (the session log's `last_seq` when the commit was
+  made; the loop's checkpointer reads it, and delegate children share the
+  parent's). A user turn is its `user_turn` event's seq, found by `turn_id` in
+  the session's own log; the window never sends a seq or a commit. Rejected:
+  stamping the branch tip on `user_turn` (a git call per turn at three emit
+  sites) and keying by `user_index` (a fork renumbers turns; files move in
+  time, not by branch). Every value in a message is escaped onto one line, so
+  a file name cannot write a trailer.
+- **Pre-images keep the person's own copy.** Before an `fs_edit` or
+  `fs_write`, the dispatcher asks the checkpointer to commit the target as it
+  is on disk when that differs from the branch (`Kind: preimage`). Without it
+  the branch starts from HEAD, and restoring a file that had uncommitted
+  changes before the agent touched it would write HEAD's copy and lose them.
+  Cost: one temp-index build per write when nothing differs, never a failed
+  write. The checkpointer now holds a lock so commits build on each other.
+- **What a file goes back to.** For each file an agent or restore commit
+  changed after the turn: the file as it stood just before the first such
+  commit, which is the pre-image when one was taken. A change made by hand
+  after the turn but before the agent first touched the file comes back with
+  it: it cannot be told apart from one made before the turn, and keeping it is
+  the side that loses nothing.
+- **Hand-edited** means a pre-image commit after the agent's first write since
+  the turn, or the file on disk now differing from the branch tip (or a folder
+  standing where an agent-written file was). Those rows are shown unticked and
+  left as they are unless named in `include_hand_edited`.
+- **The restore is a commit too** (`Kind: restore`), staged from disk after the
+  files are written, so the next restore reads them as the agent's and not as
+  hand edits. `update-ref` moves the branch only if it still names the tip the
+  plan was made from. HEAD, the index and every other ref are never written;
+  files are written by `restore_blobs`, so no filter driver runs (TD-5157).
+- **Preview, then restore what was shown.** `preview_restore_files` answers on
+  that connection with `files_restore_preview` (seq 1, not logged, scrubbed
+  with `redact_secrets` because a direct reply skips the log's scrub). Its
+  `plan_id` hashes the branch tip, the target tree, the tree of the files as
+  they are on disk, and the hand-edited set. `restore_files` makes the plan
+  again and refuses `restore_stale` when the id differs, so a file changed
+  after the preview is never overwritten unseen. The result is logged as
+  `files_restored`, so every window and the phone see it, and the activity
+  timeline gets a "Files restored" row. One restore per session at a time.
+- **Edit and resend** gains a "Restore files to here too" box. With it, Save
+  opens the same dialog; the window sends `fork_from` only after
+  `files_restored` comes back (or on "Resend without restoring"), so a refused
+  restore never forks.
+- **The phone.** The phone runs this same window, so the row button and the
+  dialog are the phone's too (checked at 375 px). Both verbs are machine-peer
+  and forwarded verbs, so a phone on the hub restores a session on another
+  computer; the story needs it and the verb writes only files that session's
+  agent changed, back to how they were.
+- **Diff size.** The shown diff stops at 200,000 characters
+  (`diff_truncated`); the file list is always whole.
+
+**Conservative answers to questions the story left open (Class C, PR body).**
+The conversation is not rewound ("Restore files to here" is files only; Edit
+and resend already forks). Refused while a turn runs. Refused in an autonomous
+run (`rewind_autonomy`): its branch is `tst/auto/<slug>` and drift revert owns
+it. Refused on the Grok engine (`rewind_grok`): Grok writes files with its own
+tools, nothing reaches the branch, and "nothing changed" would be untrue. Refused when a later checkpoint has no `Log-Seq` (`rewind_predates`, an
+older session), rather than guess its order. Shell writes are not restored:
+they were never on the branch, and the dialog says so.
