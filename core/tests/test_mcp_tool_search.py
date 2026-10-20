@@ -662,7 +662,7 @@ async def test_under_the_threshold_the_request_is_unchanged(tmp_path: Path) -> N
     assert TOOL_SEARCH_NAME not in tools
 
 
-# ── The measurement script (run on EZER for the story) ──────────────────
+# ── The measurement script (run on TOWER for the story) ──────────────────
 
 _MEASURE = Path(__file__).resolve().parent.parent / "scripts" / "measure_mcp_tool_search.py"
 

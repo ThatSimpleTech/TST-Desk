@@ -1,7 +1,7 @@
 """M8 exit harness (TD-3904).
 
 Live pass against the shipped ``vllm`` preset's loopback ``/v1`` (vLLM or
-EZER). An absent server — or a machine with no fixture at that URL —
+llama.cpp). An absent server — or a machine with no fixture at that URL —
 skips with explicit copy, heading-match style, rather than failing.
 Off-box URLs are refused before any request leaves. Not
 ``e2e_harness.run``. This harness is the M8 exit criterion.
@@ -31,10 +31,10 @@ _PRESET = "vllm"
 _PROBE_TIMEOUT = 10.0
 _LIVE_BUDGET = 600.0
 _PROMPT = "Reply with the single word: pong. Do not call tools."
-_BINARIES = ("vllm", "ezer")
+_BINARIES = ("vllm", "llama-server")
 
 SKIP_COPY = (
-    "M8 harness skipped: no loopback vLLM/EZER fixture "
+    "M8 harness skipped: no loopback vLLM/llama.cpp fixture "
     "(heading-match style — an absent server is a fact about the machine)"
 )
 
@@ -67,7 +67,7 @@ def shipped_vllm_endpoint() -> str:
 
 
 def fixture_binaries() -> tuple[str, ...]:
-    """``vllm`` / ``ezer`` names found on PATH. Empty means no local binary."""
+    """``vllm`` / ``llama-server`` names found on PATH. Empty means no local binary."""
     return tuple(name for name in _BINARIES if shutil.which(name))
 
 
@@ -154,7 +154,9 @@ async def run_m8(
     result.notes.append(f"preset={_PRESET} endpoint={target}")
 
     found = fixture_binaries()
-    result.notes.append("binaries on PATH: " + (", ".join(found) if found else "none (vllm/ezer)"))
+    result.notes.append(
+        "binaries on PATH: " + (", ".join(found) if found else "none (vllm/llama-server)")
+    )
 
     preflight = await m8_preflight(target)
     if preflight.refusal is not None:
@@ -173,7 +175,7 @@ async def run_m8(
 
     if preflight.skip_copy is not None:
         result.notes.append(preflight.skip_copy)
-        _check(result, "vLLM/EZER fixture", True, preflight.skip_copy)
+        _check(result, "vLLM/llama.cpp fixture", True, preflight.skip_copy)
         _check(result, "m8 exit criterion", True, "skipped heading-match style")
         result.elapsed = time.monotonic() - started
         return result
@@ -183,13 +185,13 @@ async def run_m8(
     result.elapsed = time.monotonic() - started
     _check(result, "live turn", live_ok, detail)
     _check(result, "under budget", result.elapsed < _LIVE_BUDGET, f"{result.elapsed:.1f}s")
-    _check(result, "m8 exit criterion", result.ok, "live vLLM/EZER turn")
+    _check(result, "m8 exit criterion", result.ok, "live vLLM/llama.cpp turn")
     return result
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="M8 exit harness — live vLLM/EZER or heading-match skip (TD-3904)"
+        description="M8 exit harness — live vLLM/llama.cpp or heading-match skip (TD-3904)"
     )
     parser.add_argument("--workspace", type=Path, default=None)
     parser.add_argument("--data-dir", type=Path, default=None)

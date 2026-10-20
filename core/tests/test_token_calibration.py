@@ -3,7 +3,7 @@
 The estimate counts tool definitions and per-message template overhead,
 and learns a per-endpoint ratio from ``usage.prompt_tokens``. Loop tests
 use a MockProvider that reports 1.5x the raw estimate of what it was
-sent, the way EZER's local model ran against the 4 chars/token guess.
+sent, the way TOWER's local model ran against the 4 chars/token guess.
 """
 
 from __future__ import annotations
@@ -57,7 +57,7 @@ from tstd.router import TierRouter
 from tstd.session import Session, SessionRunner
 
 _BASE = HeuristicTokenCounter()
-_KEY = ("http://mock.local/v1", "ezer-forge")
+_KEY = ("http://mock.local/v1", "gateway-model")
 _REPORTED_RATIO = 1.5
 
 
@@ -300,7 +300,7 @@ def _reads(workspace: Path) -> tuple[tuple[str, str], ...]:
 def _two_turns(workspace: Path) -> MockProvider:
     return _ScaledUsageProvider(
         sequences={
-            "ezer-forge": [
+            "gateway-model": [
                 Script(kind="stream", content="hello"),
                 Script(kind="tool_call", tool_batch=_reads(workspace)),
                 Script(kind="stream", content="read them"),
@@ -432,7 +432,7 @@ async def test_a_provider_without_usage_leaves_the_estimate_raw(tmp_path: Path) 
     store = CalibrationStore()
     mock = MockProvider(
         sequences={
-            "ezer-forge": [
+            "gateway-model": [
                 Script(kind="stream", content="hello", prompt_tokens=0),
                 Script(kind="stream", content="again", prompt_tokens=0),
             ]

@@ -55,7 +55,7 @@ workspace → done.
    cheap live call. The key goes into your OS keychain, not a file.
    *Or skip this entirely:* pick the `local` preset instead. It ships pointed at Ollama's
    default loopback port, and for a loopback endpoint no key is asked for and none is sent.
-   (vLLM or EZER: pick the `vllm` preset instead — it ships pointed at
+   (vLLM or llama.cpp: pick the `vllm` preset instead — it ships pointed at
    `http://127.0.0.1:8000/v1`. A different port is a `base_url` edit in `config.yaml`.)
 3. **Pick a preset.** `tst-default`, `budget`, `local`, or `vllm`. Settings' preset is the
    default for *new* sessions. The title bar can retarget the open chat at another catalog
@@ -227,6 +227,10 @@ Linux jobs; five-platform Package runs only on demand or on a new
 App releases tag as `tstdesk-v*` (`TD-4812`) so a package tag like
 `v0.2.0` (the `tst-cu-mcp` server, not the app) cannot fire the app
 workflow. The app also runs from source.
+Every bundle is scanned for the maintainer's private names and hosts
+before it ships (`core/scripts/release_scan.py`, TD-5163; the list is a
+repository secret). The hand-built APK gets the same check before upload:
+`cd core && uv run python scripts/release_scan.py --require ../android/app/build/outputs/apk/release/app-release.apk`.
 
 What works: streaming chat, the three-tier router, the steering assembler and instruction
 inspector, filesystem and shell tools behind a decision classifier and approval cards, path

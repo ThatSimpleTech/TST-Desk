@@ -158,19 +158,19 @@ class TestInteractiveWrite:
         secret = "sk-stdin-only"
         deleted = _allow_delete(monkeypatch)
         script = _Script([(0, b"", b""), (0, b"", b"")]).install(monkeypatch)
-        await MacOSKeychain().set_secret("tst-ezer", secret, _SERVICE)
-        assert deleted == [(_SERVICE, "tst-ezer")]
+        await MacOSKeychain().set_secret("tst-tower", secret, _SERVICE)
+        assert deleted == [(_SERVICE, "tst-tower")]
         assert script.argv[0] == (
             "security",
             "delete-generic-password",
             "-a",
-            "tst-ezer",
+            "tst-tower",
             "-s",
             _SERVICE,
         )
         assert script.argv[1] == ("security", "-i")
         assert script.stdin[1] == keychain_macos.interactive_add_payload(
-            "tst-ezer", secret, _SERVICE
+            "tst-tower", secret, _SERVICE
         )
         assert secret not in repr(script.argv)
         assert secret.encode() in (script.stdin[1] or b"")
@@ -190,13 +190,13 @@ class TestInteractiveWrite:
         ],
     )
     def test_quote_round_trip(self, secret: str) -> None:
-        payload = keychain_macos.interactive_add_payload("tst-ezer", secret, _SERVICE)
+        payload = keychain_macos.interactive_add_payload("tst-tower", secret, _SERVICE)
         assert payload.endswith(b"\n")
         assert payload.count(b"\n") == 1
         args = _split_security_line(payload.decode("utf-8"))
         assert args[args.index("-w") + 1] == secret
-        assert args[args.index("-a") + 1] == "tst-ezer"
-        assert args[args.index("-l") + 1] == "TST Desk tst-ezer"
+        assert args[args.index("-a") + 1] == "tst-tower"
+        assert args[args.index("-l") + 1] == "TST Desk tst-tower"
         assert args[0] == "add-generic-password"
         assert "-U" in args
         assert "-A" not in args
@@ -209,19 +209,19 @@ class TestInteractiveWrite:
     async def test_non_ascii_is_refused(self, secret: str) -> None:
         """``security -w`` prints these as hex. Do not store them."""
         with pytest.raises(KeychainError, match="printable ASCII") as exc:
-            keychain_macos.interactive_add_payload("tst-ezer", secret, _SERVICE)
+            keychain_macos.interactive_add_payload("tst-tower", secret, _SERVICE)
         assert str(exc.value) == "API keys must be printable ASCII"
         with pytest.raises(KeychainError, match="printable ASCII") as exc:
-            await MacOSKeychain().set_secret("tst-ezer", secret)
+            await MacOSKeychain().set_secret("tst-tower", secret)
         assert secret not in str(exc.value)
 
     @pytest.mark.parametrize("secret", ["", " ", "   ", "\t", " \t "])
     async def test_blank_secret_is_refused(self, secret: str) -> None:
         with pytest.raises(KeychainError) as payload_exc:
-            keychain_macos.interactive_add_payload("tst-ezer", secret, _SERVICE)
+            keychain_macos.interactive_add_payload("tst-tower", secret, _SERVICE)
         assert str(payload_exc.value) == "API key is empty"
         with pytest.raises(KeychainError) as store_exc:
-            await MacOSKeychain().set_secret("tst-ezer", secret)
+            await MacOSKeychain().set_secret("tst-tower", secret)
         assert str(store_exc.value) == "API key is empty"
 
     @pytest.mark.parametrize("secret", ["line\nsecret-sentinel", "nul\x00secret-sentinel"])
@@ -229,7 +229,7 @@ class TestInteractiveWrite:
         self, secret: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         with pytest.raises(KeychainError, match="newline or NUL") as exc:
-            await MacOSKeychain().set_secret("tst-ezer", secret)
+            await MacOSKeychain().set_secret("tst-tower", secret)
         assert "secret-sentinel" not in str(exc.value)
         assert "\n" not in str(exc.value)
         assert "\x00" not in str(exc.value)
@@ -237,7 +237,7 @@ class TestInteractiveWrite:
     def test_overlong_secret_is_refused(self) -> None:
         secret = "A" * 5000
         with pytest.raises(KeychainError, match="too long") as exc:
-            keychain_macos.interactive_add_payload("tst-ezer", secret, _SERVICE)
+            keychain_macos.interactive_add_payload("tst-tower", secret, _SERVICE)
         assert "AAAA" not in str(exc.value)
 
     async def test_failed_subcommand_with_exit_zero_is_an_error(
@@ -249,7 +249,7 @@ class TestInteractiveWrite:
         _Script([(0, b"", b""), (0, stderr, stderr)]).install(monkeypatch)
         # returncode 0 on the second step: the failure is the stderr.
         with pytest.raises(KeychainError, match="Failed to store") as exc:
-            await MacOSKeychain().set_secret("tst-ezer", secret)
+            await MacOSKeychain().set_secret("tst-tower", secret)
         assert "sk-stderr-sentinel" not in str(exc.value)
         assert "add-generic-password -U" not in str(exc.value)
 
@@ -259,8 +259,8 @@ class TestInteractiveWrite:
         deleted = _allow_delete(monkeypatch, keychain_macos._ERR_SEC_ITEM_NOT_FOUND)
         not_found = b"security: The specified item could not be found in the keychain.\n"
         script = _Script([(1, b"", not_found), (0, b"", b"")]).install(monkeypatch)
-        await MacOSKeychain().set_secret("tst-ezer", "sk-replaced")
-        assert deleted == [(_SERVICE, "tst-ezer")]
+        await MacOSKeychain().set_secret("tst-tower", "sk-replaced")
+        assert deleted == [(_SERVICE, "tst-tower")]
         assert script.argv[1] == ("security", "-i")
         assert "sk-replaced" not in repr(script.argv)
 
@@ -270,7 +270,7 @@ class TestInteractiveWrite:
             [(1, b"", b"security: The user name or passphrase you entered is not correct.\n")]
         ).install(monkeypatch)
         with pytest.raises(KeychainLockedError, match="login keychain is locked"):
-            await MacOSKeychain().set_secret("tst-ezer", "sk-locked-sentinel")
+            await MacOSKeychain().set_secret("tst-tower", "sk-locked-sentinel")
         assert len(script.argv) == 1
         assert script.argv[0][1] == "delete-generic-password"
 
@@ -311,7 +311,7 @@ class TestInteractiveWrite:
 
         monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
         with pytest.raises(KeychainLockedError, match="did not respond") as exc:
-            await MacOSKeychain().set_secret("tst-ezer", "sk-hung-sentinel")
+            await MacOSKeychain().set_secret("tst-tower", "sk-hung-sentinel")
         assert hung.killed
         assert "sk-hung-sentinel" not in str(exc.value)
 
@@ -329,7 +329,7 @@ class TestReadFallback:
     async def test_hex_password_is_returned_verbatim(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A real key can be all hex. ``-w``'s hex form of non-ASCII is not decoded."""
         _Script([(0, b"61e282ac62\n", b"")]).install(monkeypatch)
-        assert await MacOSKeychain().get_secret("tst-ezer") == "61e282ac62"
+        assert await MacOSKeychain().get_secret("tst-tower") == "61e282ac62"
 
     @pytest.mark.parametrize("stdout", [b"\n", b"   \n", b"\t\n", b" \t \n"])
     async def test_blank_cli_password_is_missing(
@@ -337,9 +337,9 @@ class TestReadFallback:
     ) -> None:
         script = _Script([(0, stdout, b"")]).install(monkeypatch)
         with pytest.raises(KeychainError, match="is empty") as exc:
-            await MacOSKeychain().get_secret("tst-ezer")
+            await MacOSKeychain().get_secret("tst-tower")
         assert str(exc.value) == (
-            "the stored API key for 'tst-ezer' is empty — re-save it in Settings → API keys"
+            "the stored API key for 'tst-tower' is empty — re-save it in Settings → API keys"
         )
         assert len(script.argv) == 1
 
@@ -348,8 +348,8 @@ class TestReadFallback:
         stderr = b"security: User interaction is not allowed.\n"
         _Script([(1, b"", stderr), (0, b"attributes\n", b"")]).install(monkeypatch)
         with pytest.raises(KeychainError, match="is empty") as exc:
-            await MacOSKeychain().get_secret("tst-ezer")
-        assert "tst-ezer" in str(exc.value)
+            await MacOSKeychain().get_secret("tst-tower")
+        assert "tst-tower" in str(exc.value)
         assert "not readable" not in str(exc.value)
 
     async def test_whitespace_framework_copy_is_missing(
@@ -359,21 +359,21 @@ class TestReadFallback:
         stderr = b"security: User interaction is not allowed.\n"
         _Script([(1, b"", stderr), (0, b"attributes\n", b"")]).install(monkeypatch)
         with pytest.raises(KeychainError, match="is empty") as exc:
-            await MacOSKeychain().get_secret("tst-ezer")
+            await MacOSKeychain().get_secret("tst-tower")
         assert "\t" not in str(exc.value)
 
     async def test_cli_success_does_not_copy(self, monkeypatch: pytest.MonkeyPatch) -> None:
         script = _Script([(0, b"from-cli\n", b"")]).install(monkeypatch)
-        assert await MacOSKeychain().get_secret("tst-ezer") == "from-cli"
+        assert await MacOSKeychain().get_secret("tst-tower") == "from-cli"
         assert script.argv == [
-            ("security", "find-generic-password", "-a", "tst-ezer", "-s", _SERVICE, "-w")
+            ("security", "find-generic-password", "-a", "tst-tower", "-s", _SERVICE, "-w")
         ]
 
     async def test_not_found_does_not_copy(self, monkeypatch: pytest.MonkeyPatch) -> None:
         stderr = b"The specified item could not be found in the keychain. sk-leak-sentinel\n"
         _Script([(1, b"", stderr)]).install(monkeypatch)
         with pytest.raises(KeychainError, match="not found") as exc:
-            await MacOSKeychain().get_secret("tst-ezer")
+            await MacOSKeychain().get_secret("tst-tower")
         assert "sk-leak-sentinel" not in str(exc.value)
 
     async def test_acl_denial_falls_back_to_copy(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -391,10 +391,10 @@ class TestReadFallback:
                 (0, b"password: sk-attr-sentinel\n", b""),
             ]
         ).install(monkeypatch)
-        assert await MacOSKeychain().get_secret("tst-ezer") == "from-framework\n"
+        assert await MacOSKeychain().get_secret("tst-tower") == "from-framework\n"
         assert "-w" in script.argv[0]
         assert "-w" not in script.argv[1]
-        assert copied == [(_SERVICE, "tst-ezer")]
+        assert copied == [(_SERVICE, "tst-tower")]
 
     async def test_timeout_then_attributes_then_copy(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(kc_mod, "_CLI_TIMEOUT_SECS", 0.05)
@@ -431,14 +431,14 @@ class TestReadFallback:
             return Ok()
 
         monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-        assert await MacOSKeychain().get_secret("tst-ezer") == "from-framework"
+        assert await MacOSKeychain().get_secret("tst-tower") == "from-framework"
 
     async def test_unreadable_item_says_resave(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(keychain_macos, "_sec_item_copy", lambda *_a: None)
         stderr = b"security: User interaction is not allowed. sk-leak-sentinel\n"
         _Script([(1, b"", stderr), (0, b"attributes\n", b"")]).install(monkeypatch)
         with pytest.raises(KeychainError, match="Re-save the key") as exc:
-            await MacOSKeychain().get_secret("tst-ezer")
+            await MacOSKeychain().get_secret("tst-tower")
         text = str(exc.value)
         assert "Settings" in text
         assert "API keys" in text
@@ -448,7 +448,7 @@ class TestReadFallback:
         locked = b"security: User interaction is not allowed.\n"
         _Script([(1, b"", locked), (1, b"", locked)]).install(monkeypatch)
         with pytest.raises(KeychainLockedError, match="login keychain is locked") as exc:
-            await MacOSKeychain().get_secret("tst-ezer")
+            await MacOSKeychain().get_secret("tst-tower")
         assert "Re-save" not in str(exc.value)
 
 
@@ -464,9 +464,9 @@ class TestPresence:
 
         monkeypatch.setattr(kc_mod, "get_api_key", explode)
         monkeypatch.setattr(MacOSKeychain, "get_secret", explode)
-        assert await api_key_is_stored("ezer") is True
+        assert await api_key_is_stored("tower") is True
         assert script.argv == [
-            ("security", "find-generic-password", "-a", "tst-ezer", "-s", _SERVICE)
+            ("security", "find-generic-password", "-a", "tst-tower", "-s", _SERVICE)
         ]
         assert "-w" not in script.argv[0]
 
@@ -474,7 +474,7 @@ class TestPresence:
         stderr = b"security: The specified item could not be found in the keychain.\n"
         script = _Script([(1, b"", stderr)]).install(monkeypatch)
         monkeypatch.setattr(kc_mod, "_get_backend", lambda: MacOSKeychain())
-        assert await api_key_is_stored("ezer") is False
+        assert await api_key_is_stored("tower") is False
         assert "-w" not in script.argv[0]
 
     async def test_locked_probe_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -482,4 +482,4 @@ class TestPresence:
         _Script([(1, b"", stderr)]).install(monkeypatch)
         monkeypatch.setattr(kc_mod, "_get_backend", lambda: MacOSKeychain())
         with pytest.raises(KeychainLockedError):
-            await api_key_is_stored("ezer")
+            await api_key_is_stored("tower")

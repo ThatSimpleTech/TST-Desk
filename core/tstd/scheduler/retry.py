@@ -1,7 +1,7 @@
 """Retry a scheduled run that failed for a transient reason (TD-3814).
 
 The provider client already retries a single call. This is the later
-try: EZER was down at 7:45, so the job goes again after a few minutes
+try: the GPU server was down at 7:45, so the job goes again after a few minutes
 instead of waiting until tomorrow. Only a scheduled fire does this.
 Run now is one shot the user asked for, and a miss for lateness is not
 a failure.

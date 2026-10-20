@@ -61,7 +61,7 @@ class _Hub:
         self.registry.put(
             MachineRecord(
                 id=MCH,
-                name="ezer",
+                name="tower",
                 host="127.0.0.1",
                 port=remote.port,
                 device_id="dev_000000000001",
@@ -242,7 +242,7 @@ async def test_an_unreachable_computer_answers_at_once(tmp_path: Path, remote: F
         await eventually(lambda: made.bridge.status_of(MCH) == "unreachable", within=3)
         reply = made.forward(_Viewer(), type="user_message", session_id=S1, content="x")
         assert reply is not None and reply["code"] == "machine_unreachable"
-        assert reply["message"] == "ezer isn't reachable right now. Try again when it is."
+        assert reply["message"] == "tower isn't reachable right now. Try again when it is."
         assert reply["in_reply_to"] == "user_message"  # TD-5144
         chunk = made.forward(_Viewer(), **_chunk_read(S1))
         assert chunk is not None and chunk["code"] == "machine_unreachable"
@@ -419,7 +419,7 @@ async def test_a_parked_computer_is_not_woken_by_viewers_or_verbs(
             await asyncio.sleep(0.02)
         sent = made.forward(first, type="user_message", session_id=S1, content="x")
         assert sent is not None and sent["code"] == "machine_unreachable"
-        assert sent["session_id"] == S1 and sent["message"] == LOCKED_MESSAGE.format(name="ezer")
+        assert sent["session_id"] == S1 and sent["message"] == LOCKED_MESSAGE.format(name="tower")
         approve = made.forward(first, type="approve", session_id=S1, tool_call_id="tc-1")
         assert approve is not None and approve["code"] == "machine_unreachable"
         assert made.forward(first, type="attach", session_id=S1, from_seq=1) is None

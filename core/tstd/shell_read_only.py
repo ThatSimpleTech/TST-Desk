@@ -2,7 +2,7 @@
 
 TD-4805 put every shell command at Class B: the static table cannot see
 inside a command string, and a model's reading of one must never be the
-gate on running it. This list is the one exception Adam approved on
+gate on running it. This list is the one exception the owner approved on
 2026-10-14. It is fixed in code and parsed, not judged: a command made only
 of the entries below, read by :mod:`tstd.shell_read_only_args`, is Class A
 by the ``shell-read-only`` rule and runs without asking. Nothing a model

@@ -972,7 +972,7 @@ def _rule_in_workspace_edit(req: DecisionRequest, boundary: Boundary) -> bool:
 def _rule_builtin_read(req: DecisionRequest, boundary: Boundary) -> bool:
     """A built-in read inside the workspace is Class A (TD-5141).
 
-    Adam pre-approved the shipped read tools on 2026-10-14, ``.env``
+    The owner pre-approved the shipped read tools on 2026-10-14, ``.env``
     included: a read changes nothing and the wall already refuses every
     path outside the workspace (``path-outside-workspace`` fired above).
     Before this rule the worker tier judged each read, a model call per

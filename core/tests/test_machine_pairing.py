@@ -43,7 +43,7 @@ from tstd.ws import WebSocketServer
         "100.127.255.254",
         "fd7a:115c:a1e0::1",
         "[fd7a:115c:a1e0::1]",
-        "ezer.tail1.ts.net",
+        "tower.tail1.ts.net",
     ],
 )
 def test_tailscale_hosts_may_be_dialed(host: str) -> None:
@@ -66,7 +66,7 @@ URL_TRICKS = [
     "a@evil.com#.ts.net",
     "evil.com#.ts.net",
     "evil com.tail.ts.net",
-    "-ezer.tail.ts.net",
+    "-tower.tail.ts.net",
     "fd7a:115c:a1e0::1%@evil.com",
 ]
 
@@ -91,7 +91,7 @@ async def test_the_dial_url_must_name_exactly_the_checked_host(host: str) -> Non
     with pytest.raises(PairError) as raised:
         await dial(host, 39079, DialPolicy(allowed=lambda _host: True))
     assert raised.value.code == "not_tailscale"
-    assert checked_url("ezer.tail1.ts.net", 39079) == "ws://ezer.tail1.ts.net:39079"
+    assert checked_url("tower.tail1.ts.net", 39079) == "ws://tower.tail1.ts.net:39079"
     assert checked_url("[fd7a:115c:a1e0::1]", 1, "/phone") == "ws://[fd7a:115c:a1e0::1]:1/phone"
 
 
@@ -114,8 +114,8 @@ def test_the_hello_says_bridge() -> None:
 
 
 def test_a_link_gives_host_port_code_and_name() -> None:
-    target = parse_target(link="tstdesk://pair?h=100.64.1.5&p=39079&c=abcd-2345&n=ezer")
-    assert target == PairTarget(host="100.64.1.5", port=39079, code="ABCD2345", name="ezer")
+    target = parse_target(link="tstdesk://pair?h=100.64.1.5&p=39079&c=abcd-2345&n=tower")
+    assert target == PairTarget(host="100.64.1.5", port=39079, code="ABCD2345", name="tower")
 
 
 def test_a_typed_address_and_code() -> None:

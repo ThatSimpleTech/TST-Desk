@@ -164,7 +164,7 @@ presets:
 
   # ── vllm ─────────────────────────────────────────────────────────────
   # Zero-cost local models on this machine. Targets vLLM's OpenAI-
-  # compatible server (the default port). EZER serves the same /v1
+  # compatible server (the default port). The GPU server serves the same /v1
   # shape — attach it with this preset. If the process listens on
   # another port, edit base_url here; never in Python.
   # A loopback base_url needs no API key at all (TD-1801).
@@ -361,7 +361,7 @@ worktree:
 # tier (loopback URL + optional slug). Brain is unchanged. Empty = never
 # remap. The name is a preset key, not a model slug.
 # max_prompt_images (TD-1730): how many image_url parts a completion may
-# keep. 1 matches ezer-forge / many local VLMs. 0 strips all images.
+# keep. 1 matches gateway-model / many local VLMs. 0 strips all images.
 computer_use:
   command: ""
   browser: mock
