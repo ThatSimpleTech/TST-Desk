@@ -314,6 +314,8 @@ async def test_daemon_explains_an_edit_of_a_summarized_message(tmp_path: Path) -
         assert reply["type"] == "error"
         assert reply["code"] == "user_turn_compacted"
         assert reply["session_id"] == session.id
+        # The window gives a refused edit's text back to the composer (TD-5158).
+        assert reply["in_reply_to"] == payload["type"]
         # Words for the window's toast, not the code with spaces.
         assert reply["message"].startswith("That message was folded into a summary")
 
@@ -325,3 +327,30 @@ async def test_daemon_explains_an_edit_of_a_summarized_message(tmp_path: Path) -
     )
     assert raw is not None
     assert json.loads(raw)["message"] == "That version of the message is no longer available."
+
+
+async def test_refusal_after_summarize_from_here_names_a_way_out_that_exists(
+    tmp_path: Path,
+) -> None:
+    """Retry after "Summarize from here" edits the last user turn (TD-5158).
+
+    The summary runs to the end of the conversation, so no message follows
+    it. The refusal used to say "Edit a message after the summary instead".
+    """
+    daemon = Daemon(data_dir=tmp_path / "data")
+    session = await daemon.session_registry.create(str(tmp_path))
+    session.conversation.extend(_long_session(tmp_path, turns=4).conversation)
+    session.context_meter = ContextMeter("brain", _AUTO_TIER, _COUNTER, None)
+    assert await session.compact_now(user_index=1) is None  # turns 1-3, to the end
+    assert _users(session) == [_q(0)]
+
+    raw = await daemon._handle_message(
+        json.dumps(
+            {"type": "fork_from", "session_id": session.id, "user_index": 3, "content": "x"}
+        ),
+        None,
+    )
+    assert raw is not None
+    message = json.loads(raw)["message"]
+    assert "after the summary" not in message
+    assert "Send a new message" in message

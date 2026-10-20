@@ -151,6 +151,14 @@ survive the restart: a held message keeps its text and says how many
 images it lost. Pass `--strict` to exit 2 for paused and approval turns
 too, when you would rather wait for the person.
 
+The hold refuses only verbs that start a turn. Continue (`resume`),
+Approve and Deny still pass, so a person who clicks one between `tst drain`
+returning 0 and the stop sets that turn running again, and the restart
+then cuts it. Nothing is lost (TD-5018 seals the cut turn and offers
+Continue), but the turn has to be picked up again. Stop the daemon promptly
+after `tst drain` returns, or use `--strict` when someone may be at the
+window (TD-5158).
+
 The restarted daemon starts without a hold; `tst drain --release` lifts it
 if you call the deploy off. A turn cut anyway is closed as "Not finished"
 when the daemon comes back (TD-5018), and a second `tstd` on the same data

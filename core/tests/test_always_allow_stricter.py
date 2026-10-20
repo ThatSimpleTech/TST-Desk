@@ -156,6 +156,11 @@ class TestExactText:
         assert rule_summary(_rule("fs_read", "*.env*", "never")).exact is None
         assert rule_summary(_rule("shell", "npm test", "auto")).exact == "npm test"
 
+    def test_a_guard_is_never_shown_as_exact(self) -> None:
+        """``ask`` and ``never`` rules match in any case too (TD-5141, TD-5158)."""
+        assert rule_summary(_rule("fs_read", ".env", "never")).exact is None
+        assert rule_summary(_rule("fs_read", "app/[[]id]/page.tsx", "ask")).exact is None
+
 
 # ── The daemon: no offer, and a racing click answered as the rule says ─
 

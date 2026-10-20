@@ -291,6 +291,89 @@ class TestOneBadToolNeverFailsARequest:
         assert isinstance(response, ChatCompletionResponse), response
         assert "srv__good" in seen[0] and "fs_grep" in seen[0]
 
+    async def test_a_loop_turn_streams_against_a_strict_endpoint(self, tmp_path: Path) -> None:
+        """The audit's wording: a real turn, which streams (TD-5158).
+
+        The test above sends one non-streaming request carrying the
+        registry's tools; this one runs the loop, so the request is the
+        one a turn builds.
+        """
+        from tests.test_dispatch import attach_auto_approver, make_config, wait_for_turn
+        from tstd.loop import agent_loop
+        from tstd.router import TierRouter
+        from tstd.session import Session, SessionRunner
+
+        script = tmp_path / "server.py"
+        script.write_text(_SCRIPTED_SERVER)
+        config = McpConfig(
+            servers={
+                "srv": McpServerConfig(transport="stdio", command=[sys.executable, str(script)])
+            }
+        )
+        supervisor = McpSupervisor(config, handshake_timeout=10.0, call_timeout=10.0)
+        registry = create_registry()
+        dispatcher = attach_auto_approver(ToolDispatcher(registry))
+        try:
+            await supervisor.ensure_loaded()
+            supervisor.attach(registry, dispatcher)
+        finally:
+            await supervisor.aclose()
+
+        seen: list[list[str]] = []
+        streamed: list[bool] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content)
+            streamed.append(bool(body.get("stream")))
+            tools = body.get("tools") or []
+            seen.append([t["function"]["name"] for t in tools])
+            for tool in tools:
+                problem = _strict_problem(tool)
+                if problem:
+                    return httpx.Response(400, json={"error": {"message": problem}})
+            chunks = [
+                {"id": "c1", "choices": [{"index": 0, "delta": {"content": "done"}}]},
+                {"id": "c1", "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+            ]
+            sse = "".join(f"data: {json.dumps(c)}\n\n" for c in chunks) + "data: [DONE]\n\n"
+            return httpx.Response(
+                200, headers={"content-type": "text/event-stream"}, content=sse.encode()
+            )
+
+        client = ProviderClient(
+            base_url="http://127.0.0.1:9/v1",
+            api_key=None,
+            client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+        )
+
+        async def factory(*_args: object) -> ProviderClient:
+            return client
+
+        session = Session(str(tmp_path))
+        runner = SessionRunner(
+            session,
+            loop_factory=lambda s: agent_loop(
+                s,
+                TierRouter(),
+                factory,
+                make_config(),
+                tool_registry=registry,
+                tool_dispatcher=dispatcher,
+            ),
+        )
+        await runner.start()
+        try:
+            await session.add_user_message("hi")
+            turn = await wait_for_turn(session, 1)
+        finally:
+            await runner.cancel()
+            await client.close()
+
+        assert turn.failed is False, turn.error_code
+        assert streamed and all(streamed)
+        assert "srv__good" in seen[0] and "srv__union" in seen[0]
+        assert "srv__dotted.name" not in seen[0] and "srv__broken" not in seen[0]
+
     async def test_strict_endpoint_really_rejects_a_bad_tool(self) -> None:
         """Guard the guard: the mock must 400 on what we exclude."""
         bad = {"type": "function", "function": {"name": "srv__dotted.name", "parameters": {}}}

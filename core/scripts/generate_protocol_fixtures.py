@@ -235,6 +235,7 @@ from tstd.protocol import (
     UserTurn,
     ValidateApiKey,
     VerifyResult,
+    VerifyStarted,
     build_hello_ack,
     build_pair_ok,
 )
@@ -593,6 +594,7 @@ FIXTURES = {
         message="This workspace has uncommitted changes.",
         seq=10,
     ),
+    "verify_started": VerifyStarted(session_id="sess-1", seq=10),
     "verify_result": VerifyResult(
         session_id="sess-1",
         verdict="pass",
@@ -767,7 +769,18 @@ FIXTURES = {
                 source="workspace",
                 loaded=False,
                 tokens=40,
-            )
+            ),
+            # TD-5107: loaded although its frontmatter asked for things
+            # TST Desk does not do; user-only from disable-model-invocation.
+            SkillStackEntry(
+                name="deploy",
+                description="Deploy to staging",
+                source="claude_workspace",
+                loaded=False,
+                tokens=120,
+                ignored_keys=["context", "model"],
+                user_only=True,
+            ),
         ],
     ),
     "charter": CharterDocument(
@@ -1038,6 +1051,11 @@ FIXTURES = {
             DiagnosticCheck(name="git", status="ok", detail="git version 2.50.0 (/usr/bin/git)"),
             DiagnosticCheck(name="workspace", status="ok", detail="project is writable"),
             DiagnosticCheck(name="steering", status="ok", detail="3 steering source(s) parsed"),
+            DiagnosticCheck(
+                name="skills",
+                status="ok",
+                detail="2 skill(s) found; frontmatter keys ignored: deploy (context, model)",
+            ),
         ]
     ),
     # Usage and cost (TD-1706): one row per bucket kind, each split by tier,

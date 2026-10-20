@@ -31,7 +31,7 @@ from ..logging import get_logger
 from ..memory_commit import MemoryCommitter
 from ..policy import ApprovalOutcome, PolicyConfig, format_summary, resolve_explained
 from ..protocol import DecisionLogged as DecisionLoggedEvent
-from .boundary import PathGuard, RefusalError
+from .boundary import PathGuard, RefusalError, windows_unsafe_reason
 from .desktop import peel_screenshot_png
 from .diff import render_diff, snapshot_text
 from .registry import Tool, ToolRegistry, path_values
@@ -159,7 +159,10 @@ def canonicalize_path_fields(
 
     Absent and malformed values are left alone: ``build_decision_request``
     skips them and the guard refuses the call.  Without a guard nothing is
-    joined (dispatch then refuses a path-bearing tool outright).
+    joined (dispatch then refuses a path-bearing tool outright).  So is a
+    Windows-unsafe form (TD-5158): off Windows ``C:/x`` and ``\\\\srv\\x``
+    are relative, and joining them hid the drive or UNC prefix the guard and
+    the classifier refuse, so they ran as A inside the workspace.
     """
     out = dict(arguments)
     if guard is None:
@@ -168,10 +171,18 @@ def canonicalize_path_fields(
         raw = out.get(field)
         values = path_values(out, field)
         if isinstance(raw, str):
-            out[field] = str(guard.canonicalize(raw))
+            out[field] = _joined_unless_unsafe(guard, raw)
         elif isinstance(raw, list) and values is not None:
-            out[field] = [str(guard.canonicalize(v)) for v in values]
+            out[field] = [_joined_unless_unsafe(guard, v) for v in values]
     return out
+
+
+def _joined_unless_unsafe(guard: PathGuard, raw: str) -> str:
+    """*raw* joined to the workspace, or as written when its form is unsafe."""
+    canonical = guard.canonicalize(raw)
+    if windows_unsafe_reason(raw, canonical) is not None:
+        return raw
+    return str(canonical)
 
 
 def _check_path_field(

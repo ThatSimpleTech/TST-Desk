@@ -1284,6 +1284,13 @@ export interface CheckpointNotice extends DaemonEvent {
   message: string;
 }
 
+/** TD-5158: an after-write review started running; it holds the loop and
+ *  Stop reaches it until its `verify_result`. */
+export interface VerifyStarted extends DaemonEvent {
+  type: "verify_started";
+  session_id: string;
+}
+
 export interface VerifyResult extends DaemonEvent {
   type: "verify_result";
   session_id: string;
@@ -1561,6 +1568,12 @@ export interface SkillStackEntry {
   source: "workspace" | "user" | "claude_workspace" | "claude_user";
   loaded: boolean;
   tokens: number;
+  // Frontmatter keys the skill carried that TST Desk did not act on; the
+  // skill loaded anyway (TD-5107). Absent from an older daemon.
+  ignored_keys?: string[];
+  // `disable-model-invocation`: not in the model's catalog; only the
+  // user's `/name` loads it (TD-5107).
+  user_only?: boolean;
 }
 
 export interface InstructionStack extends DaemonEvent {
@@ -2025,6 +2038,9 @@ export interface Error extends DaemonEvent {
   /** TD-5144: the client message type this error answers, when the sender
    *  knows it (a hub refusing a forwarded verb). Absent from older daemons. */
   in_reply_to?: string | null;
+  /** TD-5158: the steering proposal a refused accept, edit or reject named.
+   *  Absent from older daemons. */
+  proposal_id?: string | null;
 }
 
 /** A browser screenshot written to the session dir (TD-1710). Path, not bytes. */
@@ -2416,6 +2432,7 @@ export type DaemonEventUnion =
   | ApprovalRequest
   | DecisionLogged
   | CheckpointNotice
+  | VerifyStarted
   | VerifyResult
   | CostUpdate
   | BoundaryUpdate

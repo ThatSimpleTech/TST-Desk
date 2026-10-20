@@ -62,6 +62,8 @@ def _skill_entries(
             source=skill.source,
             loaded=skill.name in loaded,
             tokens=skill.tokens,
+            ignored_keys=list(skill.ignored_keys),
+            user_only=skill.user_only,
         )
         for skill in skills
     ]

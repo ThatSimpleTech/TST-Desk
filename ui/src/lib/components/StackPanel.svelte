@@ -16,7 +16,16 @@
 	// editor via tauri-plugin-opener.
 	import EmptyState from './EmptyState.svelte';
 	import { stack } from '../stack-store.svelte.js';
-	import { cacheBadge, cacheLabel, formatTokens, memoryPlaceholderCopy, memoryReasonLabel, warningBadge } from '../stack-store';
+	import {
+		cacheBadge,
+		cacheLabel,
+		formatTokens,
+		memoryPlaceholderCopy,
+		memoryReasonLabel,
+		skillIgnoredBadge,
+		skillIgnoredTitle,
+		warningBadge,
+	} from '../stack-store';
 	import { openSessionPath } from '../open-file';
 	import { session } from '../session-status.svelte.js';
 	import Icon from './Icon.svelte';
@@ -109,8 +118,17 @@
 								<span class="precedence">{skill.source}</span>
 								{#if skill.loaded}
 									<span class="chip chip-on">loaded</span>
+								{:else if skill.user_only}
+									<span class="chip chip-off" title="disable-model-invocation: only /{skill.name} loads it"
+										>slash only</span
+									>
 								{:else}
 									<span class="chip chip-off">catalog</span>
+								{/if}
+								{#if skillIgnoredBadge(skill.ignored_keys)}
+									<span class="chip chip-warn" title={skillIgnoredTitle(skill.ignored_keys ?? [])}
+										><Icon name="alert" size={11} /> {skillIgnoredBadge(skill.ignored_keys)}</span
+									>
 								{/if}
 								{#if skill.description}
 									<span class="globs">{skill.description}</span>

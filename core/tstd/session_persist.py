@@ -233,21 +233,20 @@ class SessionPersist:
         """Replace the queued-message file; an empty queue removes it (TD-5155).
 
         Under the write lock, through a temp file and a rename, 0600 like
-        the conversation. A failed write is logged, as every snapshot is.
+        the conversation.
+
+        Raises:
+            OSError: The file could not be written or removed. Unlike the
+                other snapshots this is not only logged: the session decides,
+                and a send it cannot save is refused (TD-5158).
         """
         path = self.dir_for(session_id)
         path.mkdir(parents=True, exist_ok=True)
         with self._write_lock:
             if entries:
-                self._write_json(path / _QUEUED, entries)
+                _replace_with(path / _QUEUED, json.dumps(entries))
                 return
-            try:
-                (path / _QUEUED).unlink(missing_ok=True)
-            except OSError as e:
-                log.warning(
-                    "failed to clear queued messages",
-                    extra={"extra_fields": {"session_id": session_id, "error": str(e)}},
-                )
+            (path / _QUEUED).unlink(missing_ok=True)
 
     def load_queue(self, session_id: str) -> list[dict[str, Any]]:
         """The queued-message rows on disk, or [] when there are none (TD-5155).

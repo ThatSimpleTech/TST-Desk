@@ -95,8 +95,8 @@ class TestDiscovery:
         )
         assert _discover(ws, home) == ["ship"]
 
-    def test_extra_frontmatter_key_omits_skill(self, tmp_path: Path) -> None:
-        # `license` is ignored since TD-5011; a key outside every list still skips.
+    def test_extra_frontmatter_key_loads_and_is_listed(self, tmp_path: Path) -> None:
+        # TD-4502 and TD-5011 skipped this skill; TD-5107 loads it and lists the key.
         home = tmp_path / "home"
         ws = tmp_path / "ws"
         _write(
@@ -108,7 +108,10 @@ class TestDiscovery:
             _skill_md(description="Ship", when="Ready", body="Ship it.\n"),
         )
         skills = SkillDiscoverer(home_dir=home).discover(ws)
-        assert [s.name for s in skills] == ["ship"]
+        assert [(s.name, s.ignored_keys) for s in skills] == [
+            ("review", ("globs",)),
+            ("ship", ()),
+        ]
 
     def test_missing_required_key_skips(self, tmp_path: Path) -> None:
         # `description` is the one required key; `whenToUse` falls back to it (TD-5011).

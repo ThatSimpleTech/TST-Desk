@@ -257,6 +257,66 @@ class TestInBandErrorEvent:
         assert '"code"' in error.detail
 
 
+class TestReviewNotes:
+    """Low-severity review notes on TD-5152 (TD-5158)."""
+
+    async def test_an_error_after_a_role_only_chunk_is_retried(self) -> None:
+        """The usual opening chunk shows nothing, so the reply has not started."""
+        role = _event(
+            {"id": "c1", "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}}]}
+        )
+        gateway = _Gateway(
+            lambda attempt: (
+                role + _event({"error": {"message": "busy", "code": "503"}})
+                if attempt == 1
+                else role + _answer("hello")
+            )
+        )
+        items = await _stream(gateway.client(retries=2))
+
+        assert not _errors(items)
+        assert _shown(items) == "hello"
+        assert gateway.requests == 2
+
+    async def test_a_role_only_reply_still_ends_as_before(self) -> None:
+        role = _event({"id": "c1", "choices": [{"index": 0, "delta": {"role": "assistant"}}]})
+        gateway = _Gateway(lambda _: role + _DONE)
+        items = await _stream(gateway.client(retries=2))
+
+        assert not _errors(items)
+        assert len(items) == 1
+        assert gateway.requests == 1
+
+    @pytest.mark.parametrize("code", [0, -1, 200, "0", "-5"])
+    async def test_a_code_that_is_no_error_status_is_a_bad_gateway(self, code: object) -> None:
+        gateway = _Gateway(lambda _: _event({"error": {"message": "x", "code": code}}))
+        items = await _stream(gateway.client(retries=1))
+
+        (error,) = _errors(items)
+        assert error.code == "bad_gateway"
+        assert error.status_code == 502
+        assert error.retryable is True
+        assert gateway.requests == 2
+
+    async def test_a_string_window_refusal_is_context_overflow(self) -> None:
+        body = _event(
+            {
+                "error": {
+                    "message": "This model's maximum context length is 8192 tokens",
+                    "code": "context_length_exceeded",
+                }
+            }
+        )
+        gateway = _Gateway(lambda _: body)
+        items = await _stream(gateway.client(retries=2))
+
+        (error,) = items
+        assert isinstance(error, ProviderError)
+        assert error.code == "context_overflow"
+        assert error.retryable is False
+        assert gateway.requests == 1
+
+
 class TestOpenRouterErrorEvent:
     """An ``error`` beside ``choices``, or ``finish_reason: "error"`` (PR #21 review)."""
 

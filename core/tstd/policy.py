@@ -642,10 +642,14 @@ def exact_text(pattern: str) -> str | None:
 
 
 def rule_summary(rule: PolicyRule) -> PolicyRuleSummary:
-    """A rule as clients see it, with its exact text when it has one (TD-5149)."""
-    return PolicyRuleSummary(
-        tool=rule.tool, args=rule.args, effect=rule.effect, exact=exact_text(rule.args)
-    )
+    """A rule as clients see it, with its exact text when it has one (TD-5149).
+
+    Only an ``auto`` rule gets one. ``ask`` and ``never`` rules also match
+    the text in another case (TD-5141), so "exactly .env" would understate
+    what a guard covers; they show as written (TD-5158).
+    """
+    exact = exact_text(rule.args) if rule.effect == "auto" else None
+    return PolicyRuleSummary(tool=rule.tool, args=rule.args, effect=rule.effect, exact=exact)
 
 
 _STRICTNESS: dict[PolicyEffect, int] = {"auto": 0, "ask": 1, "never": 2}

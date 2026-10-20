@@ -14060,7 +14060,9 @@ fails safe. The docs example `git status*` became exact `git status` and
 ## 2026-10-19 — TD-5113: a repo's `.tst/config.yaml` waits for trust before it loosens anything (Class B)
 
 **Decision:** The daemon reads `.tst/config.yaml` once per load (open, revive, move, resume,
-spend cap, trust decision), hashes those bytes with SHA-256 and lists every setting looser than
+spend cap, trust decision; until TD-5158 the wall and the policy each read it, so a file changed
+in between could announce one version and enforce another; a turn's import approvals still take
+their own gated read when the turn loads them), hashes those bytes with SHA-256 and lists every setting looser than
 the packaged defaults. "Looser" is judged on the same validated models the loaders apply:
 `auto` policy rules, a network host list, `writable_paths` entries that are absolute, start
 with `~` or climb out with `..`, any cap, attachment cap or `memory.max_lines` above its default,
@@ -14190,9 +14192,12 @@ then show paths the model never wrote, and the audit row would no
 longer record the call as it was asked.
 
 **Not changed:** A boundary refusal that forces C after the classifier
-said A or B (a hardlink, a Windows-unsafe form) still shows the
-classifier's class on the event, because the event is written before the
-guard runs. Recorded as a follow-up on TD-5148.
+said A or B (an in-place write to a hardlinked file, which only the guard
+can stat) still shows the classifier's class on the event, because the
+event is written before the guard runs. Recorded as a follow-up on TD-5148.
+(TD-5158 corrected this note: it also named Windows-unsafe forms, but the
+classifier and the guard judge the same string, so they never split. What
+was wrong there was that joining hid the form from both; see TD-5158.)
 
 ---
 
@@ -14506,7 +14511,14 @@ row drop the "Compaction" label and the warning colour. Tokens freed is
 
 **Older clients (most conservative option):** An older window still
 parses the event (it has every field it reads) and shows the row as a
-compaction with no title, which is no worse than today. An older daemon's
+compaction with no title. (Corrected by TD-5158: this is worse than
+before, not "no worse than today". Before, the row read "Context
+compacted"; an old window now looks up a title for `inflight_trim`, finds
+none and draws a blank amber row, up to a dozen per tool-heavy turn. It
+matters most on the phone, whose APK bundles the UI: every installed APK
+older than this change shows blank rows against an updated daemon until a
+new APK is built and installed. android/README.md says so under
+Upgrading.) An older daemon's
 hub passes the frame on with a "malformed session frame" warning, as it
 does for any newer event field. A new window gives any trigger it does
 not know the "Context compacted" title, so the next new trigger cannot
@@ -14558,7 +14570,7 @@ it. `busy` in the session list still means a turn is owed, not a review.
 The window shows Stop only while it waits on a turn, so during a review
 with nothing sent Stop is reached by sending a message or from another
 client; a visible "reviewing" state would need a new event and is left
-for a later story. A confirmed ask-mode review still runs inside the
+for a later story. (Done in TD-5158: `verify_started`.) A confirmed ask-mode review still runs inside the
 `run_verify` handler, so a Stop sent on that same socket waits behind it
 (the socket's messages are handled one at a time); no window sends
 `run_verify` yet, and moving it to a task of its own is a follow-up.
@@ -14589,6 +14601,9 @@ not held again. An empty queue removes the file; deleting the session
 removes the directory with it. A failed write is logged, as every session
 snapshot write is, and the message still goes to the loop: refusing a
 send because the disk is full would lose the text in the window instead.
+(Superseded by TD-5158: the window already puts a refused send back in
+the composer, so a window send whose write fails is now refused with
+`message_not_saved`. Background sends still run from memory.)
 
 **Decision (restart).** What the file holds when a session is revived
 comes back *held*: on `Session.held_messages`, logged as
@@ -14834,6 +14849,14 @@ sessions (above); wrapping each stream consumer in `aclosing` instead of
 closing inside the provider (every caller would have to remember it,
 and `retry_stream` would still leak its failed attempts).
 
+(Corrected by TD-5158: closing inside the provider covers failed
+attempts, but a generator cannot close itself when its consumer simply
+stops reading. The turn loop's reader breaks out on Stop or a provider
+error and never called `aclose`, so for every such turn the connection
+stayed open until the reader returned and the finalizer scheduled the
+close. The loop's reader, the one consumer that stops early, now closes
+its stream in a `finally`. The provider-side closing stays.)
+
 ---
 
 ## 2026-10-19 — TD-5157: the daemon's git stages and restores bytes itself; `.config/git` and cmd redirects are exec-later (Class B)
@@ -14985,6 +15008,175 @@ cannot); `--attr-source`/`attr.tree` to ignore in-tree attributes (git
 `eol` rules); fetching LFS objects on revert (a network call nobody
 asked for); making `cmd` reading apply on POSIX hosts (it would flag
 writes that land in a plain file).
+
+---
+
+## 2026-10-20 — TD-5158: low-severity review notes from waves 2-4 (Class B)
+
+33 notes; each was checked against main. The Class B choices:
+
+**Windows-unsafe forms are judged as written.** `canonicalize_path_fields`
+joined every path field to the workspace before the classifier and the
+guard saw it, so off Windows `C:/x.txt` and `\\server\share\x` became
+`<ws>/C:/x.txt` and both prefix rules passed it. A value whose raw form is
+unsafe is now left unjoined; the guard still canonicalizes it for
+containment and refuses it on the raw form, as section 4 of TD-602 says.
+On Windows a drive-absolute path is not unsafe, so it is joined as
+before.
+
+**Refusals name what they answer.** `fork_from` and `set_branch`
+refusals carry `in_reply_to`, and steering refusals also carry the
+proposal they are about (`proposal_id`, a new optional field on `error`,
+absent from older daemons). The window puts a refused edit's text back in
+the composer and shows a steering refusal on its own card, falling back to
+the last card clicked for an older daemon. Rejected: a per-card wait that
+blocks every other card until an answer comes (an answer that never comes
+would wedge them all).
+
+**`exact` only for `auto` rules.** A guard shows as written, so Settings
+never calls `.env` "exactly .env" while the rule also refuses `.ENV`.
+Rejected: a new "any case" label (a protocol field for a display hint).
+
+**The steering write is relative to directory descriptors.** On POSIX the
+daemon opens each folder under the workspace root with `O_NOFOLLOW` and
+creates the temp file and renames it relative to the last one. A folder
+swapped for a symlink fails the write (`steering_write_failed`, card kept)
+instead of following it.
+
+Windows has no `O_NOFOLLOW` or `dir_fd`, and a junction there needs no
+privilege (`mklink /J`; Developer Mode also allows symlinks), so the
+path-based write checks for links itself (review of PR #30). Each folder
+under the root is `lstat`ed and refused if it is a symlink or a
+name-surrogate reparse point (a junction), before the temp file is made
+and again after; the temp file at its path must then still be the file
+the write holds open, and only then does the user's text go in, through
+that handle. A swap in between leaves at most an empty temp file outside.
+The rename still resolves the path once more, but it can only move a file
+at the temp file's path, so a swap after the check fails it unless the
+agent can already write where the link points. Rejected: a handle-based
+write (directory handles opened without `FILE_SHARE_DELETE` through
+Win32 calls), which would close that last gap but cannot run in CI
+(Linux only); the conservative choice is the stdlib checks, which CI
+runs by forcing the path-based write on Linux. Cloud-file placeholders
+(OneDrive) are reparse points too but name no other place, so they pass.
+
+**Workspace `.tstdesk/commands/` is not proposable.** The command loader
+reads `.tstdesk/commands` only under the home folder. The conservative
+option is to stop offering it rather than to start loading a new
+workspace folder of commands.
+
+**In-band stream errors.** Chunks that show nothing (no text, reasoning,
+tool call, finish reason or usage) are held until one that does, so an
+error event right after the usual opening `{"role": "assistant"}` chunk is
+the first item `retry_stream` sees and keeps its retry rule; a reply that
+ends on such chunks still yields them. An embedded `code` counts as a
+status only from 400 to 599. A window refusal named by a string code
+(`context_length_exceeded`) or only in its message is a 400. Rejected:
+only rewording the docs and the message (OpenAI-style gateways open every
+stream with a role-only chunk, so no in-band error from them was ever
+retried).
+
+**A window send that cannot be saved is refused** (`message_not_saved`,
+`in_reply_to: user_message`), which supersedes TD-5155's "log and run from
+memory" for that path: the window already puts a refused send back in the
+composer, so refusing loses nothing and accepted now means saved.
+Scheduler, autonomy and fork sends still run from memory with a warning.
+`add_user_message` raises the open-turn count and queues in one step that
+is undone on any error or cancel, so a session is never left owing a turn
+that will not start.
+
+**`verify_started`.** The window offers Stop during an after-write review
+only if it is told one is running, so the daemon logs `verify_started`
+when a review starts running (not when an ask-mode review is parked). The
+window keeps a flag until the review's finished `verify_result`, a new
+`user_turn`, a bind or its own Stop. A review a restart cut off is sealed
+on restore with an `error` result ("Not reviewed: TST Desk restarted
+during the review."), as TD-5018 seals a turn, so a replay never leaves
+Stop offered. An older window drops the unknown event with a warning.
+
+**Staging hashes what it planned.** Each file is opened with `O_NOFOLLOW`
+(where the OS has it; on Windows the next check alone refuses a link)
+and must still be the device and inode the plan's `lstat` saw; it is then
+hashed from that descriptor (git reads it as stdin) or, for text, from the
+bytes read. That costs one `hash-object` per file instead of one
+`--stdin-paths` call, which is fine for the one or two paths a checkpoint
+stages. Under `core.ignorecase`, an untracked path that the index names in
+another case is staged under the index's spelling (looked up with an
+`:(literal,icase)` pathspec), as `git add` does. A new file in a folder
+the index spells differently is not adjusted (git adjusts the folder
+too); that case was not in the note and is left as is.
+
+**The turn loop closes its stream.** The reader that breaks out on Stop or
+a provider error now closes the provider stream in a `finally`, so the
+hang-up comes before the turn moves on rather than from the finalizer.
+
+---
+
+## 2026-10-20 — TD-5107: skills with frontmatter TST Desk does not act on load and warn (Class B; revises TD-5011)
+
+TD-5011 skipped a skill that carried `model`, `tools`,
+`disallowed-tools`, `hooks`, `context`, `agent`, a non-default
+`disable-model-invocation` or `user-invocable`, or any unknown key, on the
+grounds that a partial skill must not load. The Agent Skills spec asks
+the opposite of clients: load a skill with fields you do not recognise
+and warn. Imported skills vanished with only a log line.
+
+**Decision:** Only a missing or blank `description`, or a `name`,
+`whenToUse` or `when_to_use` that is not text, still skips a skill. Every
+other key loads with it. Keys fall into four groups: read (`name`,
+`description`, `whenToUse`, `when_to_use`, `compatibility`,
+`disable-model-invocation`), labels that pass silently (`license`,
+`version`, `metadata`, `argument-hint`; they describe and ask nothing),
+`user-invocable` at its default (silent), and everything else, which is
+ignored and listed. `allowed-tools` moves from silent to listed: it is a
+grant TST Desk does not apply, and the user should see that. The list is
+`Skill.ignored_keys` (sorted), logged once per file, sent on the
+inspector's `SkillStackEntry.ignored_keys` (additive, default empty, no
+protocol bump) and named in a new Doctor row, `skills`, after `steering`.
+
+**Decision:** `when_to_use` (Claude Code's key) is read like `whenToUse`.
+When both are set and differ, `whenToUse` (ours) wins and `when_to_use`
+is listed as ignored. `compatibility` is shown to the model on the
+catalog line as "(compatibility: ...)", after "(when to use: ...)". A
+non-text `compatibility` is listed as ignored rather than skipping the
+skill, because TD-5011 loaded any value and a story that loads more
+skills must not start skipping one.
+
+**Decision (the conservative option, a Class C question the story left
+open):** `disable-model-invocation` is honored rather than ignored. Any
+value except `false` or blank makes the skill user-only: it is left out
+of the model's catalog, the `load_skill` tool refuses it, and only the
+user's `/name` (or the composer's "Load skill" marker) attaches it. The
+inspector marks it "slash only" via `SkillStackEntry.user_only`. TD-5011
+rejected this mode because skipping was then the strict answer; once the
+skill must load, ignoring the key would let the model start a workflow
+its author marked manual-only, so honoring it is now the strict answer.
+`user-invocable: false` is listed as ignored instead: the user typing
+`/name` is never a safety question.
+
+**Decision:** Doctor's `skills` row is `ok` when discovery runs, with
+"N skill(s) found; frontmatter keys ignored: name (keys); ...". It names
+skills, never paths (TD-1104). It skips with no workspace, like
+`steering`, and fails only when discovery itself raises. Discovery is
+designed not to raise, so, like the `steering` row, the row catches any
+exception, not just `OSError`: an escaped error closed the window's
+connection with 1011 and Doctor showed no report at all. A `SKILL.md`
+that is not UTF-8 (Windows-1252, or UTF-16 from PowerShell 5.1
+`Out-File`) was the case that raised; discovery now skips it and logs
+it once, like an unreadable file, rather than guessing an encoding, so
+prompt assembly and the inspector survive it too (review finding on
+PR #27). The row status set stays ok/fail/skip: a skill that loaded is
+not a failure, and a new "warn" status would change every viewer.
+
+**Rejected:** Enforcing `disallowed-tools` while the skill is loaded
+(tool-pattern semantics TST Desk does not have; every call still goes
+through the classifier). Mapping `allowed-tools` onto policy rules (as
+TD-5011: a skill would widen permissions by being loaded). A "warn"
+doctor status. Listing labels like `license` as ignored (noise on every
+agentskills.io skill). Capping `compatibility` length in the catalog
+(the spec's 500-character limit is the author's to keep).
+
+---
 
 ## 2026-10-20 — TD-5110: keychain-backed env and headers per MCP server (Class B)
 
