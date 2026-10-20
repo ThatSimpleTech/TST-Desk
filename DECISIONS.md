@@ -17175,3 +17175,41 @@ it. Refused on the Grok engine (`rewind_grok`): Grok writes files with its own
 tools, nothing reaches the branch, and "nothing changed" would be untrue. Refused when a later checkpoint has no `Log-Seq` (`rewind_predates`, an
 older session), rather than guess its order. Shell writes are not restored:
 they were never on the branch, and the dialog says so.
+
+## 2026-10-20 — TD-5130: fs_read opens images, PDFs and notebooks (Class B)
+
+Approved as specified in the gap audit. Size 5, so the approach is recorded
+here instead of waiting for sign-off.
+
+- **New dependency: `pypdfium2`.** Python bindings (Apache-2.0 / BSD-3) over
+  PDFium (BSD-3), with wheels that carry the library for every platform we
+  build, so no system package. It gives page text and page rendering, all
+  on the machine. Imported on the first PDF read, not at start. PDFium is
+  not thread-safe and reads run in worker threads, so every call holds one
+  lock. Rejected: `pypdf` (text only, no page images), PyMuPDF (AGPL),
+  shelling out to poppler (a system dependency on every OS).
+- **Page images are PNGs encoded with zlib in the daemon.** The daemon has
+  no imaging library (Pillow ships only with the computer-use sidecar), and
+  a PNG writer is twenty lines. A page is rendered at most 1568 px on its
+  long side (at most 2x), then at half scale if it is over 4 MB.
+- **Who decides vision.** The loop sets `Session.tool_vision` and
+  `tool_max_images` from the tier it just called, before the batch runs, so
+  the results are judged by the model that will read them; after a backup
+  switch that is the backup. A delegate child takes the worker tier's.
+  `fs_read` reads both; a session without them counts as text-only.
+- **How images travel.** `HandlerOutput.images` and `ToolResult.images`
+  carry `ToolImage(mime, bytes)`; `_tool_message_content` puts them after
+  the text as `image_url` parts, like a screenshot (TD-1729). They never go
+  onto an event, into the audit log or into the text, and the existing
+  `max_prompt_images` cap drops the oldest first.
+- **Type from bytes.** Images by magic bytes (the TD-4705 detector), PDFs by
+  `%PDF-` in the head, notebooks by the `.ipynb` suffix and then nbformat 4
+  JSON; anything else reads as text exactly as before.
+
+**Conservative answers to questions the story left open (Class C, PR body).**
+Page images only on request (`page_images: true`), never by default, since
+they cost image tokens and most local tiers keep one image a prompt. An
+image read uses the attachment cap (4 MB) and is sent unresized, like an
+attachment. A `max_prompt_images` of 0 counts as no vision, since the image
+would be dropped before it was sent. Notebook image and HTML-only outputs
+are named, not shown.

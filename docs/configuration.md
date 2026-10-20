@@ -222,7 +222,7 @@ under the user data dir. Playwright missing always falls back to mock.
 | `browser` | `mock` or `playwright` | `mock` | Browser driver. `mock` never launches Chrome. `playwright` uses a persistent profile under the user data dir when Playwright is installed; otherwise the mock. |
 | `grounding` | mapping | see below | Local vision model for click targeting (TD-3902). |
 | `local_worker_preset` | string | `vllm` | After this session has used a `desktop_` or `browser_` tool, the worker *client* uses that named preset's worker tier (loopback URL + optional slug). Brain stays on the active preset. Empty never remaps. The name is a preset key, not a model slug. Lead-turns, `set_tier`, and escalation are unchanged. |
-| `max_prompt_images` | int ≥ 0 | `1` | How many `image_url` parts a completion may keep. Oldest screenshots are dropped first. `1` matches ezer-forge (`--limit-mm-per-prompt image:1`). |
+| `max_prompt_images` | int ≥ 0 | `1` | How many `image_url` parts a completion may keep. Oldest images (screenshots, and images `fs_read` returned) are dropped first. `1` matches ezer-forge (`--limit-mm-per-prompt image:1`). It also caps the page images one PDF read returns (at most 5), and `0` makes `fs_read` treat every tier as text-only (TD-5130). |
 
 #### `computer_use.grounding`
 
@@ -1379,7 +1379,7 @@ three tier definitions. You can pin a tier for a session from the title bar.
 | `cache_read_price` | float ≥ 0 | *required* | Dollars per **million** prompt tokens served from cache. |
 | `context_window` | int > 0 | *required* | The compaction budget — see below. |
 | `max_output_tokens` | int > 0 | *required* | Sent as `max_tokens` on the tier's requests, and the answer reservation subtracted from `context_window` — see below. |
-| `vision` | bool | `false` | When `true`, PNG/JPEG/GIF/WebP attachments are accepted on user turns routed to this tier (TD-4705). Capability is config — never inferred from the slug in code. |
+| `vision` | bool | `false` | When `true`, PNG/JPEG/GIF/WebP attachments are accepted on user turns routed to this tier (TD-4705), and `fs_read` returns an image file, or PDF page images on request, as an image the model sees (TD-5130). Capability is config — never inferred from the slug in code. |
 | `extra_body` | map | none | Extra JSON fields added to every chat request the tier makes: the turn, the progress check, a delegated worker, the after-write review (validator tier), memory distillation (worker tier), and (on the worker tier) the tool-call classifier, DoD polls and judgment calls that run on the worker. They fill in only fields the request did not set itself. For provider-specific settings such as a llama.cpp server's `chat_template_kwargs` — see §3.6. It cannot set `model`, `messages`, `tools`, `tool_choice`, `stream`, `stream_options`, `max_tokens` or `max_completion_tokens`, and its values must be plain JSON; a load error names the problem. Sent as written: never put a key or token here. |
 | `verdict_extra_body` | map | none | Merged over `extra_body` on the worker tier's one-word verdict calls only: the tool-call classifier, DoD polls and judgment calls that run on the worker. Nested maps merge and this map wins a clash. The turn, a delegated worker and memory distillation never send it. Same rules as `extra_body`; it does nothing on the brain and validator tiers. Use it to turn a reasoning model's thinking off for an 8-token answer — see §3.6. |
 | `connect_timeout` | float > 0 | `30` | Seconds to open the connection to `base_url`. |
@@ -2406,6 +2406,21 @@ a model call to judge them. That includes `.env` and other secret files. A rule 
 to guard a file, name it for both tools that read contents. The same rules keep the
 read-only shell list (§2 `shell`, TD-5103) off the file: `cat .env`, `grep -r KEY .` and
 `git show HEAD:.env` ask instead of running.
+
+**`fs_read` opens images, PDFs and notebooks (TD-5130).** The file's type comes from its bytes,
+not its name. The tier that reads the result decides what comes back:
+
+| File | Tier with `vision: true` | Tier without |
+|---|---|---|
+| PNG, JPEG, GIF, WebP (up to 4 MB) | The image, as an image the model sees, after one line naming it | A refusal that says the model does not take images |
+| PDF | Page text under `── page N ──` markers. `page_images: true` adds images of the pages read (at most 5, and at most `computer_use.max_prompt_images`) | Page text; asking for page images says why there are none |
+| `.ipynb` (nbformat 4) | Each cell's source, then its stream, result and error outputs as text (colour codes stripped). Image and HTML-only outputs are named, not shown | Same |
+
+A PDF read takes `pages`: one page (`"3"`) or a range (`"1-5"`). Empty reads the first 10 pages;
+a range is cut to 20 pages and the result names the next range to ask for. A damaged or
+password-locked PDF is an error. PDF text comes from PDFium (`pypdfium2`), on the machine; nothing
+is uploaded. `limit` and `offset` window a notebook's lines as they do a text file's. A notebook
+that is not nbformat 4 JSON, and every other text file, read as before.
 
 **The task list never asks (TD-5122).** `task_list` changes only the session's own list, never
 a file or a host, so it is Class A by a fixed rule and runs with no card in any mode. A policy

@@ -425,6 +425,13 @@ class Session:
         # the turn's ``consult`` calls. ``consult`` reads both.
         self.acting_tier: TierName | None = None
         self.consult_tally = ConsultTally()
+        # TD-5130: whether the model that reads this batch's tool results
+        # takes images, and how many image parts one prompt keeps
+        # (computer_use.max_prompt_images). Set by the loop from the tier
+        # it just called, before the batch runs; a delegate child gets the
+        # worker tier's. ``fs_read`` reads both. False until set.
+        self.tool_vision = False
+        self.tool_max_images = 1
         # Catalog preset this loop is using (TD-1721). Name on the
         # session record; ``config`` is a snapshot of that catalog
         # entry, not a fork written back to Settings.

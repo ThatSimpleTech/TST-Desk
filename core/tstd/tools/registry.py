@@ -288,11 +288,15 @@ def _register_builtins(registry: ToolRegistry, *, search: SearchConfig | None = 
         Tool(
             name="fs_read",
             description=(
-                "Read a text file as numbered lines. path may be workspace-relative "
-                "(docs/foo.md) or absolute. Default window is 2000 lines — that is a "
-                "cap, not the whole file. If the result ends with "
+                "Read a file. path may be workspace-relative (docs/foo.md) or absolute. "
+                "Text comes back as numbered lines. Default window is 2000 lines — that "
+                "is a cap, not the whole file. If the result ends with "
                 "'continue with offset=N', call again with that offset to read the next "
-                "window. Repeat until there is no continuation marker."
+                "window. Repeat until there is no continuation marker. "
+                "Images (PNG, JPEG, GIF, WebP) come back as an image if you take images. "
+                "PDFs come back as page text, 10 pages unless pages names a range "
+                "(at most 20 per call); page_images=true also sends page images if you "
+                "take images. Notebooks (.ipynb) come back as cells and text outputs."
             ),
             parameters={
                 "type": "object",
@@ -313,6 +317,22 @@ def _register_builtins(registry: ToolRegistry, *, search: SearchConfig | None = 
                         "type": "integer",
                         "description": "1-based start line. 0 means the first line.",
                         "default": 0,
+                    },
+                    "pages": {
+                        "type": "string",
+                        "description": (
+                            'PDF only: one page ("3") or a range ("1-5"), counted from 1. '
+                            "Empty reads the first 10 pages."
+                        ),
+                        "default": "",
+                    },
+                    "page_images": {
+                        "type": "boolean",
+                        "description": (
+                            "PDF only: also send images of the pages read (up to 5), "
+                            "for figures and scans. Needs a model that takes images."
+                        ),
+                        "default": False,
                     },
                 },
                 "required": ["path"],

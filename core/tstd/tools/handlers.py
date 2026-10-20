@@ -25,6 +25,7 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ..attachments import DEFAULT_MAX_FILE_BYTES, detect_image_mime, format_bytes
 from ..browser import BrowserDriver, MockBrowserDriver
 from ..context.manifest import _FALLBACK_IGNORE
 from ..context.skills import register_skill_handlers
@@ -38,6 +39,9 @@ from .delegate import register_delegate_handlers
 from .desktop import register_desktop_handlers
 from .dispatch import ToolDispatcher
 from .exit_plan import exit_plan_mode
+from .read_notebook import render_notebook
+from .read_pdf import PDF_MAX_PAGE_IMAGES, PDF_MAX_PAGES, PagesError, looks_like_pdf, read_pdf
+from .results import HandlerOutput, ToolImage
 from .search import DEFAULT_MAX_RESULTS, STOPPED, glob_crosses_folders, glob_matcher, grep
 from .send_file import send_file
 from .shell import ShellPolicy, run_shell
@@ -64,6 +68,146 @@ def _looks_binary(target: Path) -> bool:
     with target.open("rb") as f:
         head = f.read(_BINARY_PROBE)
     return b"\x00" in head
+
+
+#: Largest image file ``fs_read`` sends as a vision part, the same cap
+#: as an attached image (TD-4705). Base64 adds a third on the wire.
+FS_READ_MAX_IMAGE_BYTES = DEFAULT_MAX_FILE_BYTES
+
+
+def _read_head(target: Path) -> bytes:
+    with target.open("rb") as f:
+        return f.read(_BINARY_PROBE)
+
+
+def _read_image(target: Path, mime: str, *, vision: bool) -> str | HandlerOutput:
+    """An image file as a vision part, or a plain refusal (TD-5130)."""
+    size = target.stat().st_size
+    what = f"'{target}' is an image ({mime}, {format_bytes(size)})"
+    if not vision:
+        return (
+            f"Error: {what}, but the model reading this result does not accept "
+            "images, so it was not opened. Set vision: true on a tier whose model "
+            "takes images, or describe what you need from it another way."
+        )
+    if size > FS_READ_MAX_IMAGE_BYTES:
+        return (
+            f"Error: {what}, over the {format_bytes(FS_READ_MAX_IMAGE_BYTES)} "
+            "limit for an image read, so it was not opened."
+        )
+    data = target.read_bytes()
+    # Checked again on the bytes sent: the file may have changed since the probe.
+    if detect_image_mime(data) != mime:
+        return f"Error: '{target}' changed while it was read; read it again."
+    return HandlerOutput(
+        text=f"Image: {target} ({mime}, {format_bytes(size)}). It follows as an image.",
+        images=(ToolImage(mime, data),),
+    )
+
+
+def _read_pdf_file(
+    target: Path, pages: str, page_images: bool, *, vision: bool, vision_slots: int
+) -> str | HandlerOutput:
+    """PDF pages as text, with page images when asked on a vision tier."""
+    slots = vision_slots if page_images and vision else 0
+    try:
+        doc = read_pdf(target, pages, image_slots=slots, max_image_bytes=FS_READ_MAX_IMAGE_BYTES)
+    except PagesError as e:
+        return f"Error: {e}"
+    except OSError as e:
+        return f"Error: could not read PDF '{target}': {e}"
+    if doc.page_count == 0:
+        return f"PDF: {target} has no pages."
+    noun = "page" if doc.page_count == 1 else "pages"
+    head = f"PDF: {target}, {doc.page_count} {noun}; pages {doc.first}-{doc.last} below."
+    body: list[str] = [head]
+    for number, text in doc.texts:
+        body.append(f"── page {number} ──")
+        body.append(text if text.strip() else "(no text on this page; it may be a scan)")
+    if doc.last < doc.page_count:
+        body.append(
+            f"… [pages {doc.first}-{doc.last} of {doc.page_count}; "
+            f'continue with pages="{doc.last + 1}-{min(doc.page_count, doc.last + PDF_MAX_PAGES)}"]'
+        )
+    if page_images:
+        if not vision:
+            body.append(
+                "[page images were not made: the model reading this result does not accept images]"
+            )
+        else:
+            if doc.imaged:
+                listed = ", ".join(str(n) for n in doc.imaged)
+                body.append(f"[images of page {listed} follow, in that order]")
+            if doc.too_large:
+                listed = ", ".join(str(n) for n in doc.too_large)
+                body.append(f"[page {listed} rendered too large to send as an image]")
+            skipped = (doc.last - doc.first + 1) - len(doc.imaged) - len(doc.too_large)
+            if skipped > 0:
+                body.append(
+                    f"[{skipped} more page(s) in the range were not imaged: one result "
+                    f"carries at most {min(PDF_MAX_PAGE_IMAGES, vision_slots)} page image(s)]"
+                )
+    text = "\n".join(body)
+    if doc.images:
+        return HandlerOutput(text=text, images=tuple(doc.images))
+    return text
+
+
+def _window(lines: list[str], limit: int, offset: int, total_note: str) -> str:
+    """Numbered *lines* from *offset*, at most *limit* (default cap)."""
+    total = len(lines)
+    start = offset - 1 if offset > 0 else 0
+    explicit = bool(limit and limit > 0)
+    window = limit if explicit else _MAX_READ_LINES
+    end = min(start + window, total)
+    if start >= total:
+        return "(no lines in range)"
+    rendered = "\n".join(f"{i}: {line}" for i, line in enumerate(lines[start:end], start=start + 1))
+    if end < total:
+        nxt = end + 1
+        if explicit:
+            rendered += (
+                f"\n… [window {start + 1}-{end} of {total} lines; continue with offset={nxt}]"
+            )
+        else:
+            rendered += f"\n… [truncated: {total} lines{total_note}; continue with offset={nxt}]"
+    return rendered
+
+
+def _read_any(
+    target: Path,
+    limit: int,
+    offset: int,
+    pages: str,
+    page_images: bool,
+    *,
+    vision: bool,
+    vision_slots: int,
+) -> str | HandlerOutput:
+    """Route a read by what the file is, from its bytes (TD-5130)."""
+    if not target.exists():
+        return f"Error: file not found: {target}"
+    if target.is_dir():
+        return f"Error: '{target}' is a directory; use fs_list to list it"
+    try:
+        head = _read_head(target)
+    except OSError as e:
+        return f"Error: could not read '{target}': {e}"
+    mime = detect_image_mime(head)
+    if mime is not None:
+        return _read_image(target, mime, vision=vision)
+    if looks_like_pdf(head, target):
+        return _read_pdf_file(target, pages, page_images, vision=vision, vision_slots=vision_slots)
+    if target.suffix.lower() == ".ipynb" and b"\x00" not in head:
+        try:
+            raw = target.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            raw = ""
+        view = render_notebook(raw) if raw else None
+        if view is not None:
+            header, lines = view
+            return header + "\n" + _window(lines, limit, offset, "")
+    return _read_file(target, limit, offset)
 
 
 def _read_file(target: Path, limit: int, offset: int) -> str:
@@ -187,10 +331,36 @@ def _list_dir(
 
 
 async def fs_read(
-    session: object, path: str, limit: int = 0, offset: int = 0, tool_call_id: str = ""
-) -> str:
-    """Read a file with optional line ranges; numbered lines (TD-603)."""
-    return await asyncio.to_thread(_read_file, Path(path), limit, offset)
+    session: object,
+    path: str,
+    limit: int = 0,
+    offset: int = 0,
+    pages: str = "",
+    page_images: bool = False,
+    tool_call_id: str = "",
+) -> str | HandlerOutput:
+    """Read a file (TD-603): text as numbered lines, or media (TD-5130).
+
+    An image goes back as a vision part when the model reading the result
+    takes images; a PDF as page text, plus page images on request; a
+    notebook as cells and text outputs. The session says whether the
+    model has vision (``tool_vision``) and how many images a prompt keeps
+    (``tool_max_images``); a session without them is treated as text-only.
+    """
+    max_images = getattr(session, "tool_max_images", 1)
+    # A negative cap is unlimited; 0 keeps no image, so nothing can be shown.
+    slots = max_images if isinstance(max_images, int) and max_images >= 0 else PDF_MAX_PAGE_IMAGES
+    vision = bool(getattr(session, "tool_vision", False)) and slots > 0
+    return await asyncio.to_thread(
+        _read_any,
+        Path(path),
+        limit,
+        offset,
+        pages,
+        page_images,
+        vision_slots=slots if vision else 0,
+        vision=vision,
+    )
 
 
 async def fs_list(
