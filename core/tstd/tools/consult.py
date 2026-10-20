@@ -11,7 +11,10 @@ Config decides which tiers are offered the tool (``consult.tiers``; the
 worker by default) and how many consults one turn may make
 (``consult.max_per_turn``). A delegate child shares its parent's count.
 Each consult is a call on the tier it asks, recorded on the session's
-cost tracker like any other turn call, so it shows on the meter.
+cost tracker like any other turn call, so it shows on the meter. Stop
+ends a consult in flight, as it ends a shell command or an MCP call
+(TD-5105): the stream is closed and the adviser stops generating. In a
+delegate child, the parent's Stop ends it.
 
 The call writes nothing and reaches only the session's configured model
 endpoints, so the classifier's ``consult`` rule puts it in Class A; a
@@ -20,8 +23,10 @@ policy rule can still make it ask.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-from typing import Any, Literal
+import asyncio
+import contextlib
+from collections.abc import Awaitable, Callable, Coroutine
+from typing import Any, Literal, TypeVar
 
 from ..config import ConsultConfig, ModelConfig, ModelDiscoveryError, TierConfig, TierName
 from ..context.tokens import make_token_counter
@@ -39,6 +44,8 @@ from .registry import Tool, ToolRegistry
 from .results import HandlerRefusal
 
 log = get_logger("tstd.consult")
+
+_R = TypeVar("_R")
 
 ConsultTarget = Literal["brain", "validator"]
 CONSULT_TARGETS: tuple[ConsultTarget, ...] = ("brain", "validator")
@@ -198,7 +205,16 @@ async def handle_consult(
     tally.used += 1
     request = _request(model, target_cfg, target, acting, question, context)
     provider = await _client_for(factory, target_cfg)
-    response = await complete_streamed(provider, request)
+    # A delegate child's runtime meters on the parent session. Stop
+    # reaches the parent, not the child, so watch both.
+    meter = getattr(runtime, "meter", None)
+    watched = [session] if not isinstance(meter, Session) else [session, meter]
+    response = await _unless_stopped(complete_streamed(provider, request), watched)
+    if response is None:
+        raise HandlerRefusal(
+            "consult_stopped",
+            f"Stopped: the user stopped the turn, so the {target} consult was cancelled.",
+        )
     if isinstance(response, ProviderError):
         log.warning(
             "consult call failed",
@@ -211,8 +227,8 @@ async def handle_consult(
         )
     if response.usage is not None and tracker is not None:
         tracker.record(target, response.usage, target_cfg, source="consult")
-        meter = getattr(runtime, "meter", None) or session
-        await meter.event_log.add(tracker.emit_cost_update(meter.id))
+        shown = meter if isinstance(meter, Session) else session
+        await shown.event_log.add(tracker.emit_cost_update(shown.id))
     answer = redact_secrets(content_as_text(response.message.content)).strip()
     if not answer:
         return f"The {target} model returned no answer. Carry on without it."
@@ -253,6 +269,35 @@ def _request(
         max_tokens=cfg.max_output_tokens,
         extra_body=cfg.extra_body,
     )
+
+
+async def _unless_stopped(call: Coroutine[Any, Any, _R], sessions: list[Any]) -> _R | None:
+    """*call*'s result, or ``None`` when one of *sessions* stops its turn first.
+
+    Stop (or a session cancel) cancels the call. A cancelled
+    ``complete_streamed`` closes its stream, which cancels the request
+    upstream, so the adviser stops generating and the rest of its answer
+    is not billed. The same race as an MCP call (``mcp/loader.py``).
+    """
+    work = asyncio.ensure_future(call)
+    aborts = [asyncio.ensure_future(s.wait_for_turn_abort()) for s in sessions]
+    stopped = False
+    try:
+        await asyncio.wait({work, *aborts}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for abort in aborts:
+            abort.cancel()
+        for abort in aborts:
+            with contextlib.suppress(asyncio.CancelledError):
+                await abort
+        # Also when this handler itself is cancelled: the call must not
+        # outlive it.
+        stopped = not work.done()
+        if stopped:
+            work.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await work
+    return None if stopped else work.result()
 
 
 async def _client_for(factory: Callable[..., Awaitable[Any]], cfg: TierConfig) -> Any:

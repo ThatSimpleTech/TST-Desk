@@ -597,6 +597,9 @@ nothing else: not the conversation, not the workspace, and it has no tools.
 - It writes nothing and reaches only the session's own model endpoints, so
   it runs without asking (Class A, the `consult` rule). A `policy` rule can
   still make it ask or refuse it (§4.4).
+- Stop ends a consult in flight, a delegate child's too: the call is
+  cancelled at once and the adviser stops generating. It still counts
+  toward `max_per_turn`.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|

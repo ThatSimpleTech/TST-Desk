@@ -10027,7 +10027,9 @@ a turn's consults are counted wherever they come from; a consult past a
 spend, wall-clock or iteration cap is refused too. Each consult is
 recorded on the asked tier at its price, in the turn and session totals
 and on that tier's meter line, with a `cost_update` at once (a child's
-on the parent's session). The classifier's `consult` rule makes the
+on the parent's session). Stop ends a consult in flight, a child's too
+(the parent's Stop): the stream is closed and the turn ends at once with
+a `consult_stopped` result. The classifier's `consult` rule makes the
 builtin Class A, so it neither asks nor costs a worker judgment; a policy
 rule can still make it ask. Tests: `core/tests/test_consult.py` (config
 default, shipped block and older-copy fill; brain and validator asked
@@ -10036,7 +10038,9 @@ cap, a failed call counted, spend cap; cost on the asked tier and the
 meter; answer cap; Class A rule and no grant to an MCP namesake; policy
 can make it ask; the loop offers it on worker calls only, caps each turn
 and starts a new count next turn; both child kinds consult on the
-parent's count and meter; no tool when the worker is unlisted) and the
+parent's count and meter; no tool when the worker is unlisted; Stop ends
+a consult in flight in the handler, the loop and a child, and closes the
+stream) and the
 updated `core/tests/test_research_worker.py`. See DECISIONS.md.
 
 ---

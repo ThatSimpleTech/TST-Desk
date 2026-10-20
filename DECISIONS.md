@@ -16114,6 +16114,14 @@ in `config.yaml` holds `tiers` (default `[worker]`) and `max_per_turn`
    who wants one can add the rule.
 8. **Same tier refused.** A tier cannot ask itself (`consult_same_tier`);
    a listed brain asks the validator by default.
+9. **Stop ends a consult in flight.** The streamed call races
+   `wait_for_turn_abort()`, as an MCP call and `fs_grep` do (TD-5105);
+   on Stop it is cancelled, which closes the stream, so the adviser stops
+   generating and the turn ends at once with a `consult_stopped` result
+   instead of waiting minutes for a thinking brain. A delegate child's
+   consult also watches the parent session (the runtime's `meter`),
+   since Stop reaches the parent and not the child. The consult stays
+   counted, and no cost is recorded: a cut stream reports no usage.
 
 **Alternatives rejected:** a `consult` key on every preset's tier
 (repeated per preset, and absent from older copies, so off for existing

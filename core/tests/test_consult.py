@@ -9,7 +9,9 @@ the cost meter.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -22,6 +24,7 @@ from tstd.config import ConsultConfig, ModelConfig, default_config_yaml, load_co
 from tstd.mock import MockProvider, Script
 from tstd.policy import PolicyConfig, PolicyRule, resolve
 from tstd.protocol import CostUpdate
+from tstd.protocol import ToolCall as ToolCallEvent
 from tstd.protocol import ToolResult as ToolResultEvent
 from tstd.provider import ChatCompletionRequest
 from tstd.router import TierRouter
@@ -68,6 +71,38 @@ def _worker_session(tmp_path: Path, mock: MockProvider, config: ModelConfig) -> 
     runtime.config = config
     session.acting_tier = "worker"
     return session
+
+
+#: An adviser answer that takes 10 s to stream: Stop must not wait for it.
+SLOW_ANSWER = Script(kind="stream", content="slow " * 40, chunk_delay=0.25)
+
+
+def _track_stream_close(mock: MockProvider) -> list[str]:
+    """Record the model of every stream the caller closed before its end."""
+    closed: list[str] = []
+    real = mock.chat_completion_stream
+
+    def tracked(request: ChatCompletionRequest):  # type: ignore[no-untyped-def]
+        async def stream():  # type: ignore[no-untyped-def]
+            finished = False
+            try:
+                async for item in real(request):
+                    yield item
+                finished = True
+            finally:
+                if not finished:
+                    closed.append(request.model)
+
+        return stream()
+
+    mock.chat_completion_stream = tracked  # type: ignore[method-assign]
+    return closed
+
+
+async def _turn_running(session: Session) -> None:
+    """Put *session* mid-turn, so Stop is not ignored as idle."""
+    await session.set_state("running")
+    await session.add_user_message("Fix the cache key")
 
 
 # ── Config ──────────────────────────────────────────────────────────────
@@ -225,6 +260,44 @@ async def test_no_consult_past_the_spend_cap(tmp_path: Path) -> None:
     assert mock.calls == []
 
 
+async def test_stop_ends_a_consult_in_flight(tmp_path: Path) -> None:
+    mock = MockProvider(sequences={"test-brain": [SLOW_ANSWER]})
+    closed = _track_stream_close(mock)
+    session = _worker_session(tmp_path, mock, _config())
+    await _turn_running(session)
+    call = asyncio.create_task(handle_consult(session=session, question=QUESTION))
+    await asyncio.sleep(0.3)
+    assert not call.done()
+
+    stopped_at = time.monotonic()
+    await session.stop_turn()
+    with pytest.raises(HandlerRefusal) as refused:
+        await asyncio.wait_for(call, 2)
+
+    assert time.monotonic() - stopped_at < 1
+    assert refused.value.code == "consult_stopped"
+    assert "stopped the turn" in refused.value.message
+    # The stream was closed, so the adviser stops generating, and no
+    # answer was recorded.
+    assert closed == ["test-brain"]
+    tracker = session.cost_tracker
+    assert tracker is not None
+    assert not [c for c in tracker.calls if c.source == "consult"]
+
+
+async def test_a_consult_that_finishes_before_stop_is_unaffected(tmp_path: Path) -> None:
+    mock = MockProvider(sequences={"test-brain": [Script(kind="stream", content="Add it.")]})
+    session = _worker_session(tmp_path, mock, _config())
+    await _turn_running(session)
+
+    out = await handle_consult(session=session, question=QUESTION)
+
+    assert "Add it." in out
+    # The race left no watcher behind to fire on a later Stop.
+    await session.stop_turn()
+    assert session.stop_turn_requested
+
+
 async def test_cost_lands_on_the_asked_tier_and_the_meter(tmp_path: Path) -> None:
     mock = MockProvider(sequences={"test-brain": [Script(kind="text", content="ok")]})
     session = _worker_session(tmp_path, mock, _config())
@@ -357,6 +430,54 @@ async def test_loop_offers_consult_on_worker_turns_only_and_caps_each_turn(
     assert [c.source for c in tracker.calls if c.tier == "brain"].count("consult") == 3
 
 
+async def test_stop_during_a_consult_ends_the_turn_at_once(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    session = Session(str(ws))
+    dispatcher = _parent_dispatcher(ws)
+    mock = MockProvider(
+        sequences={
+            "test-brain": [Script(kind="stream", content="Planned."), SLOW_ANSWER],
+            "test-worker": [
+                Script(kind="tool_call", tool_name="consult", tool_arguments=_consult_args()),
+                Script(kind="stream", content="Never reached."),
+            ],
+        }
+    )
+    runner = await start_loop(
+        session,
+        TierRouter(lead_turns=1),
+        mock,
+        make_config(),
+        registry=dispatcher.registry,
+        dispatcher=dispatcher,
+    )
+    try:
+        await session.add_user_message("Plan it")
+        await wait_for_turn(session, 1)
+        await session.add_user_message("Build it")
+        for _ in range(200):
+            if any(
+                isinstance(e, ToolCallEvent) and e.name == "consult"
+                for e in session.event_log.all_events
+            ):
+                break
+            await asyncio.sleep(0.01)
+        await asyncio.sleep(0.3)
+        stopped_at = time.monotonic()
+        await session.stop_turn()
+        done = await wait_for_turn(session, 2, _timeout=2.0)
+        took = time.monotonic() - stopped_at
+    finally:
+        await runner.cancel()
+
+    assert took < 1.5, f"Stop waited {took:.1f}s for the consult"
+    assert done.error_code == "stopped"
+    [result] = [e for e in session.event_log.all_events if isinstance(e, ToolResultEvent)]
+    assert result.error_code == "consult_stopped"
+    # The worker was not called again after Stop.
+    assert [c.model for c in mock.calls].count("test-worker") == 1
+
+
 async def test_loop_with_consult_off_for_the_worker_never_offers_it(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     session = Session(str(ws))
@@ -452,3 +573,33 @@ async def test_delegate_child_without_worker_consult_is_not_offered_it(tmp_path:
     assert _offered(mock, "test-worker") == [
         {"fs_read", "fs_list", "fs_grep", "web_search", "web_fetch"}
     ]
+
+
+async def test_the_parents_stop_ends_a_childs_consult(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    parent = Session(str(ws))
+    dispatcher = _parent_dispatcher(ws)
+    mock = MockProvider(
+        sequences={
+            "test-worker": [
+                Script(kind="tool_call", tool_name="consult", tool_arguments=_consult_args()),
+                Script(kind="text", content="Never reached."),
+            ],
+            "test-brain": [SLOW_ANSWER],
+        }
+    )
+    closed = _track_stream_close(mock)
+    _bind_runtime(parent, dispatcher, mock)
+    await _turn_running(parent)
+    child = asyncio.create_task(run_worker_child(parent=parent, task="Fix the cache key"))
+    await asyncio.sleep(0.3)
+    assert not child.done()
+
+    stopped_at = time.monotonic()
+    await parent.stop_turn()
+    summary = await asyncio.wait_for(child, 2)
+
+    assert time.monotonic() - stopped_at < 1
+    assert summary == "Worker stopped: parent stopped the turn."
+    assert closed == ["test-brain"]
+    assert [c.model for c in mock.calls].count("test-worker") == 1
