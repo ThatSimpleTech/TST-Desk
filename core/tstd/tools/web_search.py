@@ -6,6 +6,10 @@ that call is Class B so the user sees the address. Loopback, link-local,
 and metadata addresses are refused in the handler — that is the wall, not
 an internet allowlist.
 
+The page is untrusted data (TD-5114): it comes back cleaned, wrapped and
+in windows (``web_page``), or, with a ``question``, only as the worker
+tier's answer (``web_extract``).
+
 The wall is checked twice by design (TD-4814): once on the handler's own
 resolution for a fast, friendly refusal, and again at connect time, where
 the guarded transport resolves the host itself, validates every answer,
@@ -33,6 +37,8 @@ import httpx
 from ..config import SearchConfig, cached_config
 from ..logging import redact_secrets
 from .search_bind import bind_search, current_search, reset_search
+from .web_extract import ANSWER_CHAR_CAP, extract_answer
+from .web_page import PAGE_CACHE, FetchedPage, render_page, strip_hidden, window_size
 
 _MAX_BODY = 512_000
 _SCHEMES = ("http://", "https://")
@@ -477,24 +483,68 @@ async def web_search(
 async def web_fetch(
     session: object,
     url: str,
+    question: str = "",
+    offset: int = 0,
     tool_call_id: str = "",
 ) -> str:
-    """Fetch one page and return readable text (TD-610)."""
+    """Fetch one page and return it as untrusted data (TD-610, TD-5114).
+
+    With *question*, the worker tier reads the page and only its answer
+    comes back. Without one, a window of the cleaned text comes back,
+    wrapped and marked untrusted. *offset* starts the window further in.
+    Pages are cached in memory for ``search.fetch_cache_seconds``.
+    """
     target = url.strip()
     if target == "":
         return "Error: url is empty"
+    if offset < 0:
+        return "Error: offset must be 0 or more"
     blocked = _blocked_reason(target)
     if blocked is not None:
         return f"Error: {blocked}"
     token = bind_search(_session_search(session))
     try:
         _base, timeout, _limit, cap = _endpoint()
+        page_chars, cache_seconds = _fetch_window()
     finally:
         reset_search(token)
+    page = PAGE_CACHE.get(target, cache_seconds)
+    if page is None:
+        fetched = await _download(target, timeout, cap)
+        if isinstance(fetched, str):
+            return fetched
+        page = fetched
+        PAGE_CACHE.put(target, page, cache_seconds)
+    if offset and offset >= len(page.text):
+        return (
+            f"Error: offset {offset} is past the end of the page text ({len(page.text)} characters)"
+        )
+    result_cap = _result_cap(session)
+    if question.strip():
+        answer_cap = window_size(ANSWER_CHAR_CAP, result_cap)
+        return await extract_answer(session, page, question.strip(), offset, answer_cap)
+    return render_page(page, offset, window_size(page_chars, result_cap))
+
+
+def _fetch_window() -> tuple[int, int]:
+    """Window size and cache lifetime; apart from :func:`_endpoint`'s seam."""
+    cfg = current_search(_library_search)
+    return cfg.fetch_page_chars, cfg.fetch_cache_seconds
+
+
+def _result_cap(session: object) -> int | None:
+    """The dispatcher's cap on this call's result, when a loop bound one."""
+    runtime = getattr(session, "delegate_runtime", None)
+    cap = getattr(getattr(runtime, "dispatcher", None), "max_result_chars", None)
+    return cap if isinstance(cap, int) else None
+
+
+async def _download(target: str, limit_seconds: float, cap: int) -> FetchedPage | str:
+    """Fetch *target* through the wall; the cleaned page, or an error line."""
     current = target
     try:
         async with httpx.AsyncClient(
-            timeout=timeout, follow_redirects=False, transport=_pinned_transport()
+            timeout=limit_seconds, follow_redirects=False, transport=_pinned_transport()
         ) as client:
             response: httpx.Response | None = None
             for _ in range(_MAX_REDIRECTS):
@@ -522,11 +572,8 @@ async def web_fetch(
     blocked = _blocked_reason(final)
     if blocked is not None:
         return f"Error: {blocked}"
+    cut = len(raw) > cap
+    raw = raw[:cap]
     body = _html_to_text(raw) if "html" in ctype else raw
-    body = redact_secrets(body)
-    if len(raw) > cap:
-        body = body[:cap] + (
-            "\n\n… [truncated: page exceeds cap; web_fetch a more specific URL "
-            "or web_search a narrower query]"
-        )
-    return body
+    body, hidden = strip_hidden(body)
+    return FetchedPage(url=final, text=redact_secrets(body), hidden_removed=hidden, cut=cut)

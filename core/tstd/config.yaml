@@ -223,6 +223,10 @@ search:
   timeout_seconds: 15
   max_results: 8
   fetch_max_bytes: 200000
+  # web_fetch reads a long page in windows of this many characters, and
+  # keeps fetched pages in memory (never on disk) this many seconds.
+  fetch_page_chars: 30000
+  fetch_cache_seconds: 900
 
 # Local embeddings sidecar. OpenAI POST /v1/embeddings only — never Ollama
 # /api/embed (that evicts a resident chat model). Empty base_url disables.
@@ -258,6 +262,18 @@ session:
   # 2 GiB), and the most this session may hold in sent files (4 GiB).
   send_file_max_bytes: 536870912
   send_file_session_max_bytes: 4294967296
+
+# Clear stale tool results (TD-5115). Once the prompt passes the compaction
+# budget, tool results from earlier turns, oldest first, become a one-line
+# placeholder (tool, target, size) before whole turns are compacted. The
+# newest keep_recent_tool_results stay, and so does every result of a tool
+# named in exclude_tools. A clear that cannot free clear_at_least_tokens is
+# skipped. enabled: false goes back to compaction alone.
+clear_tool_results:
+  enabled: true
+  keep_recent_tool_results: 3
+  clear_at_least_tokens: 2000
+  exclude_tools: []
 
 # Shell commands that run without asking (TD-5103). Only these built-in
 # read-only entries can be listed: delete lines to shrink the list, or set

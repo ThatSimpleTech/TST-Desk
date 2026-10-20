@@ -33,6 +33,7 @@ from tstd.protocol import (
     ArtifactReady,
     AssistantDelta,
     AssistantReasoning,
+    AssistantRetract,
     Attach,
     Attachment,
     AutonomyStart,
@@ -218,6 +219,7 @@ from tstd.protocol import (
     SteeringProposal,
     SteeringReject,
     SteeringReloaded,
+    SteerPoint,
     TestEmail,
     TierState,
     TierSwitched,
@@ -283,6 +285,10 @@ FIXTURES = {
             Attachment(name="notes.md", content_b64="IyBUaXRsZQo="),
             Attachment(name="empty.txt"),
         ],
+    ),
+    # TD-5112: Send now mid-turn asks to join the running turn.
+    "user_message_steer": UserMessage(
+        session_id="sess-1", content="Also run the linter", steer=True
     ),
     "approve": Approve(session_id="sess-1", tool_call_id="tc-1"),
     "deny": Deny(session_id="sess-1", tool_call_id="tc-1", reason="not safe"),
@@ -503,6 +509,14 @@ FIXTURES = {
         content="Fix the tests",
         seq=3,
     ),
+    # TD-5112: a message sent mid-turn, handed to that turn after a batch.
+    "user_turn_steer": UserTurn(
+        session_id="sess-1",
+        turn_id="turn-2",
+        content="Also run the linter",
+        steer=SteerPoint(turn_id="turn-1", step=2, after_tool_call_ids=["tc-1", "tc-2"]),
+        seq=9,
+    ),
     # TD-5155: messages a restart left held, whole each time.
     "queued_messages": QueuedMessages(
         session_id="sess-1",
@@ -518,6 +532,13 @@ FIXTURES = {
     ),
     "assistant_delta": AssistantDelta(session_id="sess-1", delta="Hello ", seq=3),
     "assistant_reasoning": AssistantReasoning(session_id="sess-1", delta="Let me think", seq=3),
+    # TD-5159: a model response's text carries its id, and a stall withdraws it.
+    "assistant_delta_response": AssistantDelta(
+        session_id="sess-1", delta="The fix is ", response_id="resp-1", seq=3
+    ),
+    "assistant_retract": AssistantRetract(
+        session_id="sess-1", response_id="resp-1", reason="stream_stalled", seq=4
+    ),
     "tool_call": ToolCall(
         session_id="sess-1",
         tool_call_id="tc-1",
@@ -898,6 +919,17 @@ FIXTURES = {
         tokens_before=30500,
         tokens_after=29300,
         trigger="inflight_trim",
+        seq=18,
+    ),
+    # Clearing earlier turns' tool results (TD-5115): dropped_messages
+    # counts the results cleared, and every message stays.
+    "context_compacted_clear_stale": ContextCompacted(
+        session_id="sess-1",
+        dropped_messages=5,
+        kept_messages=34,
+        tokens_before=23123,
+        tokens_after=13153,
+        trigger="clear_stale",
         seq=18,
     ),
     "context_usage": ContextUsage(

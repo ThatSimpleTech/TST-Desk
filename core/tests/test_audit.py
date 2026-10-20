@@ -32,7 +32,7 @@ def store(tmp_path: Path) -> Iterator[AuditStore]:
 
 
 def test_schema_has_the_audit_tables(store: AuditStore) -> None:
-    """The set grew by the judgments table (TD-708) and allowed_calls (TD-5103)."""
+    """The set grew by judgments (TD-708), allowed_calls (TD-5103) and steers (TD-5112)."""
     rows = store._conn.execute(
         "SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
         " AND name != 'schema_migrations'"
@@ -47,6 +47,7 @@ def test_schema_has_the_audit_tables(store: AuditStore) -> None:
         "model_calls",
         "judgments",
         "allowed_calls",
+        "steers",
     }
     assert views == {"costs"}
 
@@ -61,6 +62,7 @@ def test_indexes_exist_for_ui_queries(store: AuditStore) -> None:
         "idx_model_calls_session",
         "idx_model_calls_ts",
         "idx_judgments_session",
+        "idx_steers_session",
     } <= names
 
 
@@ -94,6 +96,7 @@ def test_store_exposes_no_update_methods(store: AuditStore) -> None:
         "append_judgment",
         "append_model_call",
         "append_session",
+        "append_steer",
         "append_tool_call",
         "append_turn",
         "close",

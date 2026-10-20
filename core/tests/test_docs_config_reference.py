@@ -51,6 +51,7 @@ from tstd.boundary_config import (
 from tstd.config import (
     TIER_NAMES,
     AutonomyConfig,
+    ClearToolResultsConfig,
     ComputerUseConfig,
     ConfigError,
     ConnectorsConfig,
@@ -224,6 +225,7 @@ _EMBEDDINGS_FIELDS = frozenset(EmbeddingsConfig.model_fields)
 _PROJECT_CONTEXT_FIELDS = frozenset(ProjectContextConfig.model_fields)
 _STEERING_FIELDS = frozenset(SteeringConfig.model_fields)
 _SESSION_FIELDS = frozenset(SessionConfig.model_fields)
+_CLEAR_TOOL_RESULTS_FIELDS = frozenset(ClearToolResultsConfig.model_fields)
 _SHELL_FIELDS = frozenset(ShellConfig.model_fields)
 _SHELL_READ_ONLY_FIELDS = frozenset(ShellReadOnlyConfig.model_fields)
 _COMPUTER_USE_FIELDS = frozenset(ComputerUseConfig.model_fields)
@@ -306,6 +308,12 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
             _check_keys(data["steering"], _STEERING_FIELDS, f"{where} steering")
         if "session" in data:
             _check_keys(data["session"], _SESSION_FIELDS, f"{where} session")
+        if "clear_tool_results" in data:
+            _check_keys(
+                data["clear_tool_results"],
+                _CLEAR_TOOL_RESULTS_FIELDS,
+                f"{where} clear_tool_results",
+            )
         if "shell" in data:
             _check_keys(data["shell"], _SHELL_FIELDS, f"{where} shell")
             if "read_only" in data["shell"]:
@@ -405,6 +413,7 @@ def test_every_config_key_is_documented() -> None:
         | _PROJECT_CONTEXT_FIELDS
         | _STEERING_FIELDS
         | _SESSION_FIELDS
+        | _CLEAR_TOOL_RESULTS_FIELDS
         | _SHELL_FIELDS
         | _SHELL_READ_ONLY_FIELDS
         | _COMPUTER_USE_FIELDS
@@ -458,6 +467,9 @@ def test_documented_defaults_match_the_code() -> None:
         "rules": "[]",
         "class_c_default": str(PolicyConfig.model_fields["class_c_default"].default),
         "claude_global_fallback": "false",
+        "keep_recent_tool_results": str(ClearToolResultsConfig().keep_recent_tool_results),
+        "clear_at_least_tokens": str(ClearToolResultsConfig().clear_at_least_tokens),
+        "exclude_tools": "[]",
     }
     for key, value in expected.items():
         rows = [line for line in text.split("\n") if line.startswith(f"| `{key}`")]

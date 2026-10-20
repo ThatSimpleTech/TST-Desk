@@ -15,7 +15,7 @@ import type { ChatMessage } from "./chat-message";
 import { applyChatEvent, type BindHold } from "./chat-events";
 import { createBranchSnaps } from "./chat-fork";
 import { clearHeldPending, type HeldMessage } from "./chat-held";
-import { createMessageQueue, type QueuedMessage } from "./chat-queue";
+import { createMessageQueue, type QueuedMessage, type SendMode } from "./chat-queue";
 import { createDraftStore, noteSent, type DraftStore } from "./draft-store";
 import { createFirstTokenWait } from "./first-token-wait";
 import { resetDisclosures } from "./reasoning-disclosure.svelte.js";
@@ -25,6 +25,7 @@ import type {
   ClientMessageUnion,
   DaemonEventUnion,
   SessionState,
+  UserMessage,
 } from "./protocol";
 
 export type { ChatMessage, ChatPart, ToolBlock } from "./chat-message";
@@ -52,6 +53,9 @@ export interface ChatState {
   /** Epoch ms when the current first-token wait began — the basis of the
    *  Working line's elapsed counter (TD-1713). Null when not waiting. */
   awaitingSince: number | null;
+  /** The current first-token wait is for a reply the daemon withdrew after
+   *  the provider went quiet, and is asking for again (TD-5159). */
+  retryingReply: boolean;
   /** Seconds the last turn took, as measured by the daemon on turn_complete.
    *  The UI never times turns itself (AGENTS §6). Cleared on the next send. */
   lastTurnDuration: number | null;
@@ -141,6 +145,7 @@ export function createChatState(): ChatState {
     awaitingFirstToken: false,
     turnStalled: false,
     awaitingSince: null,
+    retryingReply: false,
     lastTurnDuration: null,
     lastTurnError: null,
     draft: "",
@@ -195,11 +200,15 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
 
   // Closure-level so retryLastUserMessage can call it without `this` —
   // the reactive shell re-exports these methods detached.
-  /** `armWait` false hands the message over without touching the first-token
-   *  clock — see the queue's send-now (TD-1704). */
+  /** `mode` is the queue's (TD-1704, TD-5112). A `steer` asks the daemon to
+   *  hand the message to the running turn at its next tool-batch boundary:
+   *  the first-token clock is left alone and no echo row is added, because
+   *  its user_turn places it in the transcript there, and the queue row shows
+   *  it waiting until then. A `behind` send is echoed but leaves the clock
+   *  alone too: a turn is already streaming. */
   function sendUserMessageToWire(
     text: string,
-    armWait = true,
+    mode: SendMode = "turn",
     attachments: readonly NewAttachment[] = [],
   ): boolean {
     const content = text.trim();
@@ -207,19 +216,15 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     if (state.sessionId === null || (content === "" && attachments.length === 0)) return false;
     // Omitted rather than sent empty when there are none (TD-1709): an
     // attachment-free send stays byte-identical to what it was before this
-    // story, which is what "additive" is supposed to mean.
-    const sent = deps.send(
-      attachments.length === 0
-        ? { type: "user_message", session_id: state.sessionId, content }
-        : {
-            type: "user_message",
-            session_id: state.sessionId,
-            content,
-            attachments: toWireAttachments(attachments),
-          },
-    );
+    // story, which is what "additive" is supposed to mean. `steer` is the
+    // same: only a steer carries it.
+    const message: UserMessage = { type: "user_message", session_id: state.sessionId, content };
+    if (attachments.length > 0) message.attachments = toWireAttachments(attachments);
+    if (mode === "steer") message.steer = true;
+    const sent = deps.send(message);
     if (!sent) return false;
     noteSent(sending, content);
+    if (mode === "steer") return true;
     nextId += 1;
     const userIndex = state.messages.filter((m) => m.role === "user").length;
     state.messages.push({
@@ -233,7 +238,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       siblingIndex: 0,
       siblingCount: 1,
     });
-    if (!armWait) return true;
+    if (mode === "behind") return true;
     // A fresh send restarts the wait and its watchdog even atop one already
     // in flight — the honest clock is from the latest send.
     wait.end();
@@ -269,7 +274,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
   function sendUserMessage(text: string, attachments: readonly NewAttachment[] = []): boolean {
     const content = text.trim();
     if (state.sessionId === null || (content === "" && attachments.length === 0)) return false;
-    if (!showCancel(state.turnState)) return sendUserMessageToWire(content, true, attachments);
+    if (!showCancel(state.turnState)) return sendUserMessageToWire(content, "turn", attachments);
     queue.add(content, attachments);
     return true;
   }

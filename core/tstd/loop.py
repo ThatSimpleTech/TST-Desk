@@ -52,6 +52,7 @@ from .autonomy.wakeup import deliver_wakeup
 from .autonomy.worker import JudgmentAudit
 from .compaction import ContextMeter, budget_threshold, estimate_tokens, maybe_compact
 from .config import (
+    ClearToolResultsConfig,
     ConfigError,
     JudgmentsConfig,
     ModelConfig,
@@ -72,7 +73,8 @@ from .context.embeddings import EmbeddingsClient, load_memory_for_turn
 from .context.manifest import ManifestConfig, manifest_config_for_window
 from .context.skills import apply_slash_skill, list_workspace_skills
 from .context.stack import build_instruction_stack
-from .context.tokens import make_token_counter
+from .context.tokens import TokenCounter, make_token_counter
+from .context_clear import clear_stale_tool_results
 from .context_fit import fit_inflight_turn, tool_result_char_cap, transcript_failure_text
 from .cost import CallRecord, CostTracker
 from .cu_verify import ActuationVerifier
@@ -136,9 +138,11 @@ from .provider import (
 from .provider import (
     ToolDefinition as ProviderToolDefinition,
 )
+from .reply_retry import StreamResult, stream_reply
 from .router import TierName, TierRouter
 from .session import Session, SessionEventLog
 from .shell_read_only import probe_git
+from .steer import inject_steers
 from .tools import ToolDispatcher, ToolRegistry
 from .tools.boundary import PathGuard
 from .tools.dispatch import build_decision_request, canonicalize_path_fields
@@ -243,6 +247,51 @@ def _warn_verdict_cap_once(tier_cfg: TierConfig, base_url: str, model: str) -> N
     )
 
 
+async def _clear_stale_results(
+    session: Session,
+    messages: list[ChatMessage],
+    tier: TierName,
+    tier_cfg: TierConfig,
+    counter: TokenCounter,
+    tool_definitions: list[ProviderToolDefinition] | None,
+    policy: ClearToolResultsConfig,
+) -> None:
+    """Clear earlier turns' tool results in place when over budget (TD-5115).
+
+    Announced like the in-turn trim: ``context_compacted`` with its own
+    trigger, so the window shows a quiet row rather than a compaction.
+    """
+    cleared, stats = clear_stale_tool_results(messages, tier_cfg, counter, policy, tool_definitions)
+    if stats is None:
+        return
+    messages[:] = cleared
+    await session.conversation_changed()
+    await session.event_log.add(
+        ContextCompacted(
+            session_id=session.id,
+            dropped_messages=stats.cleared_results,
+            kept_messages=stats.kept_messages,
+            tokens_before=stats.tokens_before,
+            tokens_after=stats.tokens_after,
+            trigger="clear_stale",
+            seq=1,  # overwritten by the event log
+        )
+    )
+    log.info(
+        "stale tool results cleared",
+        extra={
+            "extra_fields": {
+                "session_id": session.id,
+                "tier": tier,
+                "cleared_results": stats.cleared_results,
+                "tokens_before": stats.tokens_before,
+                "tokens_after": stats.tokens_after,
+                "counter_method": stats.counter_method,
+            }
+        },
+    )
+
+
 async def _show_progress_note(session: Session, messages: list[ChatMessage], text: str) -> None:
     """Put one short assistant line on the transcript and in the chat."""
     messages.append(ChatMessage(role="assistant", content=text))
@@ -305,6 +354,7 @@ async def _progress_check_gate(
         _raw,
         _finish,
         _details,
+        _began,
     ) = await _stream_and_parse(
         provider,
         model_slug,
@@ -585,16 +635,8 @@ async def _stream_and_parse(
     *,
     emit_events: bool = True,
     on_usage: Callable[[Usage], None] | None = None,
-) -> tuple[
-    str,
-    dict[int, dict[str, str | int]],
-    bool,
-    str,
-    str | None,
-    str,
-    str | None,
-    list[dict[str, Any]] | None,
-]:
+    response_id: str | None = None,
+) -> StreamResult:
     """Call the provider, stream deltas, and accumulate tool calls.
 
     The request caps generation at the tier's ``max_output_tokens`` and
@@ -604,9 +646,13 @@ async def _stream_and_parse(
     *on_usage* receives the call's reported usage once the stream closes
     (TD-5007: the main turn call feeds token calibration from it).
 
+    *response_id* stamps every delta and reasoning chunk this call
+    emits, so a stall can withdraw exactly this response (TD-5159).
+
     Returns:
-        A tuple of ``(collected_content, tool_calls, failed, error_msg,
-        error_code, raw_detail, finish_reason, reasoning_details)``.
+        A :class:`StreamResult` of ``(collected_content, tool_calls, failed,
+        error_msg, error_code, raw_detail, finish_reason, reasoning_details,
+        began)``.
         ``error_code`` is the provider's typed code (e.g. ``auth_failed``)
         so clients can key tailored copy off it (TD-1008). ``raw_detail`` is
         the upstream body for the log; it is empty unless the chunk is a
@@ -614,9 +660,11 @@ async def _stream_and_parse(
         reported, or ``None``; ``"length"`` means the reply stopped at
         ``max_output_tokens`` (TD-5008). ``reasoning_details`` is the
         OpenRouter array to echo on the next assistant message (TD-1903),
-        or ``None`` when the stream carried none.
+        or ``None`` when the stream carried none. ``began`` says a chunk
+        arrived, after which the provider no longer retries (TD-5159).
     """
     collected_content = ""
+    began = False
     tool_calls: dict[int, dict[str, str | int]] = {}
     collected_details: list[dict[str, Any]] = []
     failed = False
@@ -656,6 +704,7 @@ async def _stream_and_parse(
                 failed, error_msg, error_code = True, chunk.message, chunk.code
                 raw_detail = chunk.detail
                 break
+            began = True
 
             # Stream reasoning delta (TD-1901).  The plaintext is emitted,
             # never folded into `collected_content`: that string is replayed to
@@ -676,6 +725,7 @@ async def _stream_and_parse(
                     AssistantReasoning(
                         session_id=session.id,
                         delta=thinking,
+                        response_id=response_id,
                         seq=1,
                     )
                 )
@@ -689,6 +739,7 @@ async def _stream_and_parse(
                         AssistantDelta(
                             session_id=session.id,
                             delta=chunk.delta.content,
+                            response_id=response_id,
                             seq=1,
                         )
                     )
@@ -720,7 +771,7 @@ async def _stream_and_parse(
         if on_usage is not None:
             on_usage(usage)
 
-    return (
+    return StreamResult(
         collected_content,
         tool_calls,
         failed,
@@ -729,7 +780,43 @@ async def _stream_and_parse(
         raw_detail,
         finish_reason,
         collected_details or None,
+        began,
     )
+
+
+async def _stream_turn_reply(
+    provider: ProviderLike,
+    model_slug: str,
+    messages: list[ChatMessage],
+    session: Session,
+    tool_definitions: list[ProviderToolDefinition] | None,
+    tracker: CostTracker,
+    tier: TierName,
+    tier_cfg: TierConfig,
+    counter: CalibratedTokenCounter,
+    config: ModelConfig,
+) -> StreamResult:
+    """The turn's own model call. Only it teaches the token ratio (TD-5007).
+
+    A stall after output began is withdrawn from the window and the call
+    is made once more under ``provider_retry`` (TD-5159, reply_retry.py).
+    """
+
+    def attempt(response_id: str) -> Awaitable[StreamResult]:
+        return _stream_and_parse(
+            provider,
+            model_slug,
+            messages,
+            session,
+            tool_definitions,
+            tracker,
+            tier,
+            tier_cfg,
+            on_usage=_calibration_observer(counter, messages, tool_definitions),
+            response_id=response_id,
+        )
+
+    return await stream_reply(attempt, session, config.provider_retry)
 
 
 def _carries_non_text(messages: list[ChatMessage]) -> bool:
@@ -1097,6 +1184,117 @@ def rebind_workspace(session: Session, dispatcher: ToolDispatcher) -> None:
     dispatcher.workspace = workspace
 
 
+async def _fit_prompt(
+    session: Session,
+    messages: list[ChatMessage],
+    tier: TierName,
+    tier_cfg: TierConfig,
+    counter: TokenCounter,
+    tool_definitions: list[ProviderToolDefinition] | None,
+    *,
+    overflow_retried: bool,
+    max_prompt_images: int,
+    clear_policy: ClearToolResultsConfig,
+) -> None:
+    """Bring the prompt *messages* make within the tier's budget, in place.
+
+    Stale tool results first (TD-5115), then compaction (TD-405), then
+    in-turn elision (TD-4839), each announced on the timeline, then the
+    gauge and the image cap. Run before every model call, and again when
+    a message sent mid-turn has just joined the prompt (TD-5112), so its
+    tokens are counted too.
+    """
+    # Old tool results go before whole turns do (TD-5115): over the
+    # same budget, earlier turns' results become one-line placeholders
+    # in one batch that must land at 70% of it or under, so the turns
+    # stay verbatim and the prefix holds until the next batch.
+    # Compaction still runs if over.
+    await _clear_stale_results(
+        session, messages, tier, tier_cfg, counter, tool_definitions, clear_policy
+    )
+    compacted, compaction = maybe_compact(messages, tier_cfg, counter, tool_definitions)
+    if compaction is not None:
+        messages[:] = compacted
+        await session.event_log.add(
+            ContextCompacted(
+                session_id=session.id,
+                dropped_messages=compaction.dropped_messages,
+                kept_messages=compaction.kept_messages,
+                tokens_before=compaction.tokens_before,
+                tokens_after=compaction.tokens_after,
+                seq=1,  # overwritten by the event log
+            )
+        )
+        log.info(
+            "context compacted",
+            extra={
+                "extra_fields": {
+                    "session_id": session.id,
+                    "tier": tier,
+                    "dropped_messages": compaction.dropped_messages,
+                    "tokens_before": compaction.tokens_before,
+                    "tokens_after": compaction.tokens_after,
+                    "counter_method": compaction.counter_method,
+                }
+            },
+        )
+
+    # In-flight tool results sit past the compaction cut (TD-4839).
+    # Once the prompt is over the same budget, or half of it
+    # after a provider context overflow, elide their middles to
+    # 70% of that budget (TD-5010), so the next results fit
+    # without rewriting these. Messages stay, so a tool_calls
+    # group is never split.
+    elide_budget = max(1, budget_threshold(tier_cfg) // 2) if overflow_retried else None
+    fitted, fit = fit_inflight_turn(
+        messages, tier_cfg, counter, budget=elide_budget, tools=tool_definitions
+    )
+    if fit is not None:
+        messages[:] = fitted
+        await session.event_log.add(
+            ContextCompacted(
+                session_id=session.id,
+                dropped_messages=fit.elided_results,
+                kept_messages=fit.kept_messages,
+                tokens_before=fit.tokens_before,
+                tokens_after=fit.tokens_after,
+                # A trim, not a compaction: the window labels it
+                # apart, so a tool-heavy turn does not look like
+                # it is compacting over and over (TD-5150).
+                trigger="inflight_trim",
+                seq=1,  # overwritten by the event log
+            )
+        )
+        log.info(
+            "in-turn context elided",
+            extra={
+                "extra_fields": {
+                    "session_id": session.id,
+                    "tier": tier,
+                    "dropped_messages": fit.elided_results,
+                    "tokens_before": fit.tokens_before,
+                    "tokens_after": fit.tokens_after,
+                    "counter_method": fit.counter_method,
+                }
+            },
+        )
+    # The title-bar gauge (TD-5109): what this request sends.
+    await session.report_context_usage(estimate_tokens(messages, counter, tool_definitions)[0])
+
+    dropped_images = cap_prompt_images(messages, max_prompt_images)
+    if dropped_images:
+        log.info(
+            "capped prompt images",
+            extra={
+                "extra_fields": {
+                    "session_id": session.id,
+                    "dropped": dropped_images,
+                    "max_prompt_images": max_prompt_images,
+                }
+            },
+        )
+
+
 async def agent_loop(
     session: Session,
     router: TierRouter,
@@ -1414,6 +1612,9 @@ async def agent_loop(
         # A stop that landed as the previous turn sealed must not abort
         # this one. A stop after this line belongs to this turn.
         session.acknowledge_stop_turn()
+        # TD-5112: a message sent from here to turn_complete joins this
+        # turn at its next tool-batch boundary.
+        session.open_steering(queued.id)
         apply_slash_skill(
             session,
             queued.display,
@@ -1508,6 +1709,10 @@ async def agent_loop(
         #    loop would clear it on the continue that performs the retry.
         overflow_retried = False
         guard = ProgressGuard()
+        # Model calls this turn has made, and the last tool batch: where a
+        # message sent mid-turn joins it (TD-5112).
+        turn_step = 0
+        last_batch: list[str] = []
         while True:
             if session.cancel_requested:
                 break
@@ -1722,9 +1927,10 @@ async def agent_loop(
 
             # 2b.2 Context window guard (TD-405): when the estimated
             #     prompt approaches the tier's context window, compact
-            #     older turns into a summary.  Cuts land at user-message
-            #     boundaries, so in-flight tool-call pairs are never
-            #     split.  Announced on the timeline, never silent.  The
+            #     older turns into a summary.  Cuts land where a turn
+            #     started, so in-flight tool-call pairs are never split
+            #     (TD-5112: a steer starts no turn).  Announced on the
+            #     timeline, never silent.  The
             #     steering block and manifest were just re-read from
             #     disk at 2b, so instructions survive compaction.
             model_slug = tier_cfg.require_slug()
@@ -1736,89 +1942,17 @@ async def agent_loop(
                 )
                 _token_counters[counter_key] = counter
             session.context_meter = ContextMeter(tier, tier_cfg, counter, tool_definitions)
-            compacted, compaction = maybe_compact(messages, tier_cfg, counter, tool_definitions)
-            if compaction is not None:
-                messages[:] = compacted
-                await session.event_log.add(
-                    ContextCompacted(
-                        session_id=session.id,
-                        dropped_messages=compaction.dropped_messages,
-                        kept_messages=compaction.kept_messages,
-                        tokens_before=compaction.tokens_before,
-                        tokens_after=compaction.tokens_after,
-                        seq=1,  # overwritten by the event log
-                    )
-                )
-                log.info(
-                    "context compacted",
-                    extra={
-                        "extra_fields": {
-                            "session_id": session.id,
-                            "tier": tier,
-                            "dropped_messages": compaction.dropped_messages,
-                            "tokens_before": compaction.tokens_before,
-                            "tokens_after": compaction.tokens_after,
-                            "counter_method": compaction.counter_method,
-                        }
-                    },
-                )
-
-            # In-flight tool results sit past the compaction cut (TD-4839).
-            # Once the prompt is over the same budget, or half of it
-            # after a provider context overflow, elide their middles to
-            # 70% of that budget (TD-5010), so the next results fit
-            # without rewriting these. Messages stay, so a tool_calls
-            # group is never split.
-            elide_budget = max(1, budget_threshold(tier_cfg) // 2) if overflow_retried else None
-            fitted, fit = fit_inflight_turn(
-                messages, tier_cfg, counter, budget=elide_budget, tools=tool_definitions
+            await _fit_prompt(
+                session,
+                messages,
+                tier,
+                tier_cfg,
+                counter,
+                tool_definitions,
+                overflow_retried=overflow_retried,
+                max_prompt_images=config.computer_use.max_prompt_images,
+                clear_policy=config.clear_tool_results,
             )
-            if fit is not None:
-                messages[:] = fitted
-                await session.event_log.add(
-                    ContextCompacted(
-                        session_id=session.id,
-                        dropped_messages=fit.elided_results,
-                        kept_messages=fit.kept_messages,
-                        tokens_before=fit.tokens_before,
-                        tokens_after=fit.tokens_after,
-                        # A trim, not a compaction: the window labels it
-                        # apart, so a tool-heavy turn does not look like
-                        # it is compacting over and over (TD-5150).
-                        trigger="inflight_trim",
-                        seq=1,  # overwritten by the event log
-                    )
-                )
-                log.info(
-                    "in-turn context elided",
-                    extra={
-                        "extra_fields": {
-                            "session_id": session.id,
-                            "tier": tier,
-                            "dropped_messages": fit.elided_results,
-                            "tokens_before": fit.tokens_before,
-                            "tokens_after": fit.tokens_after,
-                            "counter_method": fit.counter_method,
-                        }
-                    },
-                )
-            # The title-bar gauge (TD-5109): what this request sends.
-            await session.report_context_usage(
-                estimate_tokens(messages, counter, tool_definitions)[0]
-            )
-
-            dropped_images = cap_prompt_images(messages, config.computer_use.max_prompt_images)
-            if dropped_images:
-                log.info(
-                    "capped prompt images",
-                    extra={
-                        "extra_fields": {
-                            "session_id": session.id,
-                            "dropped": dropped_images,
-                            "max_prompt_images": config.computer_use.max_prompt_images,
-                        }
-                    },
-                )
 
             log.info(
                 "turn start",
@@ -1938,8 +2072,40 @@ async def agent_loop(
             ):
                 break
 
+            # 2c.6 A message sent while the last batch ran (or while the
+            #     turn sat paused after it) goes in now, before the next
+            #     model call (TD-5112). Stop and cancel were checked above.
+            #     Only at a batch boundary: a retried call is not one.
+            #     The prompt was fitted before the pause; fit it again
+            #     with the steer in, so its tokens are counted and the
+            #     results the turn got before it can still be elided.
+            if last_batch:
+                steered = await inject_steers(
+                    session,
+                    messages,
+                    step=turn_step,
+                    after_tool_call_ids=last_batch,
+                    claude_global_fallback=config.steering.claude_global_fallback,
+                )
+                last_batch = []
+                if steered:
+                    await _fit_prompt(
+                        session,
+                        messages,
+                        tier,
+                        tier_cfg,
+                        counter,
+                        tool_definitions,
+                        overflow_retried=overflow_retried,
+                        max_prompt_images=config.computer_use.max_prompt_images,
+                        clear_policy=config.clear_tool_results,
+                    )
+
             # 2d. Call provider (streaming). Only this call teaches the
-            #     token ratio (TD-5007); the progress check does not.
+            #     token ratio (TD-5007); the progress check does not. A
+            #     stall after output began is withdrawn from the window
+            #     and the call is made once more (TD-5159).
+            turn_step += 1
             (
                 collected_content,
                 tool_calls,
@@ -1949,7 +2115,8 @@ async def agent_loop(
                 raw_detail,
                 finish_reason,
                 reasoning_details,
-            ) = await _stream_and_parse(
+                _began,
+            ) = await _stream_turn_reply(
                 provider,
                 model_slug,
                 messages,
@@ -1958,7 +2125,8 @@ async def agent_loop(
                 tracker,
                 tier,
                 tier_cfg,
-                on_usage=_calibration_observer(counter, messages, tool_definitions),
+                counter,
+                config,
             )
 
             # 2e. Handle failure
@@ -2159,6 +2327,9 @@ async def agent_loop(
                         if not await advance_autonomy(session):
                             return
                         break
+                    # The batch is answered; a message sent while it ran
+                    # joins before the next model call (2c.6, TD-5112).
+                    last_batch = [call.id for call in provider_tool_calls]
                     # Loop back to call the provider again with tool results
                     continue
                 # Without a dispatcher, fall through to emit turn_complete

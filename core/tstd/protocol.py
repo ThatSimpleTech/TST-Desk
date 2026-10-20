@@ -186,12 +186,19 @@ class UserMessage(ClientMessage):
     sends one behaves exactly as it did.  The daemon decodes and vets them
     against the workspace's ``attachments`` caps before the message is
     enqueued, and refuses the whole message if any one fails.
+
+    ``steer`` (TD-5112) asks for the message to join the turn that is
+    running when it arrives, at that turn's next tool-batch boundary: the
+    window's Send now mid-turn sets it. Without it, or with no turn
+    running, the message waits for a turn of its own, as before. Additive:
+    a client that never sends it never steers.
     """
 
     type: Literal["user_message"] = "user_message"
     session_id: str
     content: str
     attachments: list[Attachment] = Field(default_factory=list)
+    steer: bool = False
 
 
 class SendQueued(ClientMessage):
@@ -1659,6 +1666,19 @@ class ConversationReset(DaemonEvent):
     content: str
 
 
+class SteerPoint(BaseModel):
+    """Where a message sent mid-turn joined the running turn (TD-5112).
+
+    ``turn_id`` is the running turn's own ``user_turn`` id. ``step`` counts
+    the model calls that turn had made, and ``after_tool_call_ids`` is the
+    tool batch whose results the model read just before this message.
+    """
+
+    turn_id: str
+    step: int = Field(ge=1)
+    after_tool_call_ids: list[str] = Field(default_factory=list)
+
+
 class UserTurn(DaemonEvent):
     """A user message the loop has accepted (needed for honest replay).
 
@@ -1666,12 +1686,18 @@ class UserTurn(DaemonEvent):
     daemon can replay the user's side of the transcript without inventing
     it. ``turn_id`` lets a live echo and the replayed event be the same
     row rather than a duplicate.
+
+    ``steer`` is set when the message was sent while a turn ran and the
+    loop handed it to that turn at a tool-batch boundary (TD-5112): no
+    new turn starts, and the model reads it before its next step.
+    Additive; ``None`` for a message that starts a turn.
     """
 
     type: Literal["user_turn"] = "user_turn"
     session_id: str
     turn_id: str
     content: str
+    steer: SteerPoint | None = None
 
 
 class QueuedMessageEntry(BaseModel):
@@ -1702,11 +1728,18 @@ class QueuedMessages(DaemonEvent):
 
 
 class AssistantDelta(DaemonEvent):
-    """A streamed chunk of assistant output."""
+    """A streamed chunk of assistant output.
+
+    ``response_id`` (TD-5159, additive) names the model response the text
+    belongs to, so an ``assistant_retract`` can withdraw exactly that
+    response. Lines the daemon writes itself (a failure, a progress note)
+    and older daemons leave it ``None``; such text is never withdrawn.
+    """
 
     type: Literal["assistant_delta"] = "assistant_delta"
     session_id: str
     delta: str
+    response_id: str | None = None
 
 
 class AssistantReasoning(DaemonEvent):
@@ -1722,6 +1755,29 @@ class AssistantReasoning(DaemonEvent):
     type: Literal["assistant_reasoning"] = "assistant_reasoning"
     session_id: str
     delta: str
+    # The model response this thinking belongs to (TD-5159), as on
+    # ``AssistantDelta``.
+    response_id: str | None = None
+
+
+class AssistantRetract(DaemonEvent):
+    """Withdraw one model response's shown text and thinking (TD-5159).
+
+    The provider went quiet partway through the reply (``reason`` is the
+    error code, ``stream_stalled``), and the loop asks again. Every
+    ``assistant_delta`` and ``assistant_reasoning`` carrying this
+    ``response_id`` is no longer part of the reply: a client removes it,
+    and the retry streams under a new id. Nothing else on the row goes:
+    tool calls that already ran, and text from earlier responses in the
+    turn, stay. The partial text never entered the model's conversation.
+    A client that does not know this event drops it and keeps showing the
+    withdrawn text above the retry.
+    """
+
+    type: Literal["assistant_retract"] = "assistant_retract"
+    session_id: str
+    response_id: str
+    reason: str
 
 
 class ToolCall(DaemonEvent):
@@ -2014,7 +2070,13 @@ class ContextCompacted(DaemonEvent):
     shortened the middles of this turn's tool results (TD-5010) and no
     message left the conversation.  ``dropped_messages`` then counts the
     tool results trimmed, and ``kept_messages`` is every message.  The
-    window shows it as a quieter "Trimmed tool output" row."""
+    window shows it as a quieter "Trimmed tool output" row.
+
+    ``trigger: "clear_stale"`` (TD-5115) is not compaction either: tool
+    results from earlier turns were replaced with a one-line placeholder
+    before any turn had to be compacted.  ``dropped_messages`` counts the
+    results cleared and ``kept_messages`` is every message.  The window
+    shows it as the same quiet row, "Cleared earlier tool results"."""
 
     type: Literal["context_compacted"] = "context_compacted"
     session_id: str
@@ -2024,8 +2086,9 @@ class ContextCompacted(DaemonEvent):
     tokens_after: int = Field(ge=0)
     #: What compacted (TD-5109): the budget (``auto``), ``/compact`` or
     #: the gauge (``manual``), or "Summarize from here" (``from_here``).
-    #: ``inflight_trim`` is the in-turn tool-result trim (TD-5150).
-    trigger: Literal["auto", "manual", "from_here", "inflight_trim"] = "auto"
+    #: ``inflight_trim`` is the in-turn tool-result trim (TD-5150), and
+    #: ``clear_stale`` the clearing of earlier turns' results (TD-5115).
+    trigger: Literal["auto", "manual", "from_here", "inflight_trim", "clear_stale"] = "auto"
     guidance: str | None = None
 
 
@@ -3620,6 +3683,7 @@ DaemonEventT = Annotated[
     | QueuedMessages
     | AssistantDelta
     | AssistantReasoning
+    | AssistantRetract
     | ToolCall
     | ToolResult
     | ShellOutput
@@ -3829,6 +3893,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "queued_messages",
         "assistant_delta",
         "assistant_reasoning",
+        "assistant_retract",
         "tool_call",
         "tool_result",
         "shell_output",
