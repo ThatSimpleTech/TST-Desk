@@ -303,6 +303,7 @@ from .protocol import (
     PairingCompleted,
     ParseJob,
     PolicyRules,
+    PreviewRestoreFiles,
     ReadArtifactChunk,
     RemoteDeviceSummary,
     RemovePin,
@@ -310,6 +311,7 @@ from .protocol import (
     RemoveRemoteDevice,
     RenameSession,
     ResetCuPermissions,
+    RestoreFiles,
     Resume,
     ReviewPlan,
     RevokePolicyRule,
@@ -415,6 +417,7 @@ from .remote_devices import (
     RemoteDeviceRegistry,
     pairing_code_event,
 )
+from .rewind_handlers import preview_restore, restore_files
 from .router import TIER_NAMES, TierRouter
 from .scheduler.calendar_path import CalendarPathError, require_calendar_file
 from .scheduler.chain import require_chain
@@ -2761,6 +2764,20 @@ class Daemon:
                 )
             await found.event_log.add(result)
             return None
+
+        if isinstance(msg, PreviewRestoreFiles | RestoreFiles):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
+                )
+            # TD-5125: "Restore files to here", and the preview it shows first.
+            if isinstance(msg, PreviewRestoreFiles):
+                return await preview_restore(found, msg)
+            return await restore_files(found, msg)
 
         if isinstance(msg, CompactContext):
             found = self.session_registry.get(msg.session_id)

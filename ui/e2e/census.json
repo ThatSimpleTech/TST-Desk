@@ -15,6 +15,7 @@
 		"Message composer",
 		"Model tier",
 		"Plan",
+		"Restore files to here",
 		"Retry: resend your last message",
 		"Send message",
 		"Session preset",
@@ -79,6 +80,9 @@
 		"Note for the agent",
 		"Reject plan",
 		"Show plan"
+	],
+	"restore": [
+		"Close"
 	],
 	"scheduled-form": [
 		"/Users/me/holidays.ics",

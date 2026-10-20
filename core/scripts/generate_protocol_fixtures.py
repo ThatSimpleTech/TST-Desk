@@ -82,6 +82,8 @@ from tstd.protocol import (
     EndSession,
     Error,
     ExportUsage,
+    FilesRestored,
+    FilesRestorePreview,
     FocusWindow,
     ForkFrom,
     GetCharter,
@@ -161,6 +163,7 @@ from tstd.protocol import (
     PlanReviewed,
     PolicyRules,
     PolicyRuleSummary,
+    PreviewRestoreFiles,
     Question,
     QuestionAnswer,
     QuestionAnswered,
@@ -177,6 +180,8 @@ from tstd.protocol import (
     RemoveQueued,
     RemoveRemoteDevice,
     RenameSession,
+    RestoreFileEntry,
+    RestoreFiles,
     Resume,
     ReviewPlan,
     RevokePolicyRule,
@@ -296,6 +301,14 @@ FIXTURES = {
     "remove_queued": RemoveQueued(session_id="sess-1", queued_id="q-1"),
     "fork_from": ForkFrom(session_id="sess-1", user_index=0, content="hello again"),
     "set_branch": SetBranch(session_id="sess-1", user_index=0, sibling_index=1),
+    # TD-5125: "Restore files to here" and the preview it shows first.
+    "preview_restore_files": PreviewRestoreFiles(session_id="sess-1", turn_id="turn-1"),
+    "restore_files": RestoreFiles(
+        session_id="sess-1",
+        turn_id="turn-1",
+        plan_id="0123456789abcdef0123",
+        include_hand_edited=["notes.md"],
+    ),
     # TD-1709: additive field on an existing message, so the plain fixture
     # above is also the proof that a client sending none behaves as it did.
     # base64 is the payload because the daemon, not the client, decides
@@ -543,6 +556,34 @@ FIXTURES = {
         sibling_count=2,
         content="hello again",
         seq=2,
+    ),
+    "files_restore_preview": FilesRestorePreview(
+        session_id="sess-1",
+        turn_id="turn-1",
+        plan_id="0123456789abcdef0123",
+        files=[
+            RestoreFileEntry(path="src/app.py", change="modify"),
+            RestoreFileEntry(path="src/new.py", change="delete"),
+            RestoreFileEntry(path="notes.md", change="modify", hand_edited=True),
+            RestoreFileEntry(path="old.txt", change="recreate"),
+        ],
+        diff=(
+            "diff --git a/src/app.py b/src/app.py\n"
+            "--- a/src/app.py\n+++ b/src/app.py\n@@ -1 +1 @@\n-old\n+new\n"
+        ),
+        diff_truncated=False,
+    ),
+    "files_restore_preview_empty": FilesRestorePreview(
+        session_id="sess-1", turn_id="turn-2", plan_id="none"
+    ),
+    "files_restored": FilesRestored(
+        session_id="sess-1",
+        turn_id="turn-1",
+        restored=["src/app.py", "old.txt"],
+        removed=["src/new.py"],
+        left_alone=["notes.md"],
+        lfs_pointers=[],
+        seq=9,
     ),
     "session_state_paused": SessionState(
         session_id="sess-1",

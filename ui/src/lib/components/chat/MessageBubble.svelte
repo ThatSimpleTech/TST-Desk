@@ -15,6 +15,7 @@
 	// stay when the fold collapses (TD-5144).
 	import type { ChatMessage } from "../../chat-store";
 	import { forkFrom, requestCompact, setBranch } from "../../chat-store.svelte.js";
+	import { openRestore, takeUnsentEdit } from "../../rewind-store.svelte.js";
 	import { hasReasoning } from "../../reasoning-disclosure.svelte.js";
 	import Icon from "../Icon.svelte";
 	import AttachmentChips from "./AttachmentChips.svelte";
@@ -40,9 +41,12 @@
 
 	let editing = $state(false);
 	let editDraft = $state("");
+	/** TD-5125: Edit and resend also puts the files back to this turn. */
+	let restoreToo = $state(false);
 
 	function startEdit(): void {
 		editDraft = message.text;
+		restoreToo = false;
 		editing = true;
 	}
 
@@ -53,8 +57,26 @@
 			editing = false;
 			return;
 		}
+		// The restore dialog shows what goes, then resends once the files are back.
+		if (restoreToo && message.turnId !== undefined) {
+			openRestore(message.turnId, message.userIndex, text);
+			editing = false;
+			return;
+		}
 		if (forkFrom(message.userIndex, text)) editing = false;
 	}
+
+	// TD-5125: a restore dialog that closes without resending (cancelled,
+	// refused, or the fork never went out) hands the edited text back here,
+	// with the box still ticked as the person left it.
+	$effect(() => {
+		if (message.turnId === undefined) return;
+		const text = takeUnsentEdit(message.turnId);
+		if (text === null) return;
+		editDraft = text;
+		restoreToo = true;
+		editing = true;
+	});
 
 	let copied = $state(false);
 	let copiedTimer: ReturnType<typeof setTimeout> | null = null;
@@ -190,6 +212,12 @@
 						if (e.key === 'Escape') editing = false;
 					}}
 				></textarea>
+				{#if message.turnId !== undefined}
+					<label class="restore-too">
+						<input type="checkbox" bind:checked={restoreToo} />
+						Restore files to here too
+					</label>
+				{/if}
 				<div class="edit-actions">
 					<button class="action" type="button" onclick={commitEdit}>Save</button>
 					<button class="action" type="button" onclick={() => (editing = false)}>Cancel</button>
@@ -239,6 +267,18 @@
 						title="Swap this message and everything after it for a short summary in the model's context. The chat here still shows them."
 						onclick={() => requestCompact("", message.userIndex)}>Summarize from here</button
 					>
+					<!-- TD-5125: the files only; the conversation stays. The dialog
+					     shows what goes before anything is written. -->
+					{#if message.turnId !== undefined}
+						<button
+							class="action"
+							type="button"
+							disabled={turnLive}
+							title="Put back the files the agent changed after this message. You see what it undoes first."
+							onclick={() => openRestore(message.turnId!, message.userIndex ?? null)}
+							>Restore files to here</button
+						>
+					{/if}
 				</div>
 			{/if}
 			{#if message.attachments !== undefined}
@@ -367,9 +407,19 @@
 	.edit-actions,
 	.branch {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
 		gap: var(--space-1);
 		margin-top: var(--space-2);
+	}
+
+	.restore-too {
+		display: flex;
+		align-items: center;
+		gap: var(--space-1);
+		margin-top: var(--space-2);
+		font-size: var(--text-sm);
+		color: var(--color-ink-secondary);
 	}
 
 	/* Only spaced when there is text above it — an attachment-only message

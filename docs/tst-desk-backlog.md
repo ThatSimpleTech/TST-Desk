@@ -11103,6 +11103,71 @@ DECISIONS.md and docs/configuration.md §2 `mcp`.
 
 ---
 
+### TD-5125 — One-click rewind of files to a turn
+**Size:** 5 · **Depends on:** none · Gap audit 2026-10-14
+
+Undo meant copying a `git revert` command out of the decisions list
+(ui/src/lib/decisions.svelte.ts), although every agent write is already on
+the session branch (core/tstd/autonomy/checkpoint.py). Claude Code's
+checkpointing restores code to a chosen prompt in one step.
+
+**Acceptance criteria:**
+- [x] Each user turn in the timeline offers "Restore files to here". It
+      resets the files the agent touched since then from the checkpoint
+      branch, after showing the diff to be undone.
+- [x] Files the user changed by hand since then are flagged and left alone
+      unless the user confirms.
+- [x] "Edit and resend" offers to restore files too.
+- [x] Works from the phone.
+
+Done (2026-10-20): every user row with a daemon turn id has "Restore files
+to here". It sends `preview_restore_files`; the dialog lists each file
+(undo the agent's changes, delete a file the agent made, bring back one it
+deleted) and the diff from how the file was before that turn to how it is
+now, and writes nothing until Restore. `restore_files` carries the
+preview's `plan_id` and is refused `restore_stale` if anything moved since.
+Every session-branch commit now records `Kind` and `Log-Seq` (the session
+log's seq), so the commits after a turn's `user_turn` are the agent's work
+since then (`core/tstd/file_rewind.py`). Before each `fs_edit` or
+`fs_write` the dispatcher commits the file as it is on disk when it differs
+from the branch (`Kind: preimage`), so uncommitted work from before the
+agent touched a file comes back instead of HEAD's copy, and a change made
+between the agent's writes marks the file hand-edited. Hand-edited files
+(that, or the disk differing from the branch tip) are listed unticked and
+left alone unless ticked. The restore writes blobs without filter drivers,
+commits itself on the branch (`Kind: restore`), never moves HEAD, the index
+or another ref, and logs `files_restored` (a "Files restored" timeline row).
+Edit and resend has a "Restore files to here too" box: Save opens the same
+dialog and the fork goes out once `files_restored` comes back, or on
+"Resend without restoring" (offered on a refusal too); when the dialog
+closes without the fork going out, the edited text goes back to the row's
+edit box. The phone runs this window (row and dialog
+checked at 375 px), and both verbs are machine-peer and forwarded verbs, so
+a phone on the hub restores another computer's session too. Refused
+mid-turn, in an autonomous run, on the Grok engine (it writes files with
+its own tools), outside git, for an unknown turn, and when a later
+checkpoint predates `Log-Seq`. Shell writes are not on the branch
+and are not restored; the dialog says so. Tests:
+`core/tests/test_file_rewind.py` (restore to either turn, delete and
+recreate, HEAD/main/index untouched, hand edit after and between agent
+writes left alone and restored when ticked, uncommitted work from before
+the turn comes back, stale preview, not git, pre-`Log-Seq` refusal, another
+session's branch ignored, trailer injection through every line break
+`str.splitlines()` knows and a record separator in a file name),
+`core/tests/test_rewind_wire.py`
+(a real loop's two turns previewed and restored, a hand edit the agent
+wrote over comes back through the dispatcher's pre-image, mid-turn and
+unknown-turn refusals, the verbs for a phone and a bridged id, and a
+restore through a real hub), `ui/src/lib/rewind.test.ts`,
+`ui/src/lib/rewind-component.test.ts` (row, dialog, ticking, Edit and
+resend with and without the restore, refusal shown in the dialog, the
+edited text back in its box after a refusal, a cancel or an unsent fork),
+`ui/src/lib/timeline.test.ts`, `ui/src/lib/protocol.test.ts` (fixtures),
+and the UI walk (census gains `restore` and the row button). See
+DECISIONS.md.
+
+---
+
 # Epic E52 — Files to the user
 
 Filed 2026-10-15. The agent built an APK for Adam and had no way to hand it over in the chat.

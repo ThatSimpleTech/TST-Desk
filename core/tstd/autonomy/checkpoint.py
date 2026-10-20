@@ -36,7 +36,7 @@ Degradation (informed once per session, never fatal):
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -46,6 +46,7 @@ from ..git_safe import git_command
 from ..git_stage import stage_paths
 from ..logging import get_logger
 from ..proc_lifecycle import finish_subprocess
+from .checkpoint_message import agent_message, preimage_message
 from .classifier import DecisionClass
 
 log = get_logger("tstd.checkpoint")
@@ -71,9 +72,19 @@ GIT_ERROR = "git_error"
 # Fixed agent identity: checkpoints must never depend on the user's git
 # config being present, and they should be visibly agent-authored.
 _AGENT_NAME = "TST Desk"
-_AGENT_EMAIL = "tstdesk@localhost"
+AGENT_EMAIL = "tstdesk@localhost"
 
 _GIT_TIMEOUT = 30.0
+
+
+def agent_identity() -> dict[str, str]:
+    """The fixed author and committer of every session-branch commit."""
+    return {
+        "GIT_AUTHOR_NAME": _AGENT_NAME,
+        "GIT_AUTHOR_EMAIL": AGENT_EMAIL,
+        "GIT_COMMITTER_NAME": _AGENT_NAME,
+        "GIT_COMMITTER_EMAIL": AGENT_EMAIL,
+    }
 
 
 @dataclass(frozen=True)
@@ -197,6 +208,10 @@ class Checkpointer:
     for the session's lifetime.  Interactive runs use
     ``tst/session/<id>``.  Autonomous runs pass ``branch=`` from
     :func:`auto_branch` (TD-4102).
+
+    *log_seq* reads the session log's ``last_seq``; each commit records it
+    as ``Log-Seq`` so "Restore files to here" can tell which commits came
+    after a user turn (TD-5125).
     """
 
     def __init__(
@@ -204,9 +219,13 @@ class Checkpointer:
         workspace: Path,
         session_id: str,
         branch: str | None = None,
+        log_seq: Callable[[], int] | None = None,
     ) -> None:
         self._workspace = workspace
         self._session_id = session_id
+        self._log_seq = log_seq
+        # One commit at a time: each is built on the tip the last one left.
+        self._lock = asyncio.Lock()
         if branch is None:
             self._branch = session_branch(session_id)
         else:
@@ -238,13 +257,14 @@ class Checkpointer:
         because its checkpoint failed.
         """
         try:
-            return await self._checkpoint_inner(
-                paths,
-                tool_name=tool_name,
-                tool_call_id=tool_call_id,
-                decision_class=decision_class,
-                decision_rule=decision_rule,
-            )
+            async with self._lock:
+                return await self._checkpoint_inner(
+                    paths,
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                    decision_class=decision_class,
+                    decision_rule=decision_rule,
+                )
         except Exception as e:  # degradation must not propagate to the write
             log.warning(
                 "checkpoint failed",
@@ -262,6 +282,47 @@ class Checkpointer:
                 reason=str(e),
             )
 
+    async def preimage(self, paths: Sequence[Path], *, tool_name: str, tool_call_id: str) -> None:
+        """Before an agent write: record *paths* as they are on disk, if the branch differs.
+
+        The branch holds the agent's last write of each file (or HEAD's
+        copy). When the file on disk is something else, the person changed
+        it, and the agent's write is about to bury that: this commit keeps
+        it, so a restore puts it back instead of an older copy (TD-5125).
+        Never raises; an equal tree commits nothing.
+        """
+        try:
+            async with self._lock:
+                if self._disabled:
+                    return
+                if not self._probed:
+                    await self._probe()
+                    if self._disabled:
+                        return
+                if await self._rebase_in_progress():
+                    return
+                parent = await self._resolve_parent()
+                rels = [self._rel(path) for path in paths]
+                message = preimage_message(
+                    session_id=self._session_id,
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                    rels=rels,
+                    log_seq=self._seq(),
+                )
+                await self._build_commit(paths, parent, message, only_if_changed=True)
+        except Exception as e:  # a pre-image must never stop the write
+            log.warning(
+                "checkpoint pre-image failed",
+                extra={
+                    "extra_fields": {
+                        "session_id": self._session_id,
+                        "tool_call_id": tool_call_id,
+                        "error": str(e),
+                    }
+                },
+            )
+
     # ── Internals ─────────────────────────────────────────────────────
 
     async def _checkpoint_inner(
@@ -273,16 +334,15 @@ class Checkpointer:
         decision_class: DecisionClass | None,
         decision_rule: str | None,
     ) -> CheckpointOutcome:
-        if self._disabled:
-            return CheckpointOutcome(status="disabled", reason=self._disabled_reason)
         if not self._probed:
             await self._probe()
-            if self._disabled:
-                return CheckpointOutcome(
-                    status="disabled",
-                    notice=self._notice_once(NO_GIT, self._disabled_reason),
-                    reason=self._disabled_reason,
-                )
+        if self._disabled:
+            # Once per session, whether this call or a pre-image probed.
+            return CheckpointOutcome(
+                status="disabled",
+                notice=self._notice_once(NO_GIT, self._disabled_reason),
+                reason=self._disabled_reason,
+            )
 
         if await self._rebase_in_progress():
             return CheckpointOutcome(
@@ -297,9 +357,10 @@ class Checkpointer:
 
         dirty_notice = await self._dirty_baseline_notice()
         parent = await self._resolve_parent()
-        commit = await self._build_commit(
-            paths, parent, tool_name, tool_call_id, decision_class, decision_rule
-        )
+        message = self._message(paths, tool_name, tool_call_id, decision_class, decision_rule)
+        commit = await self._build_commit(paths, parent, message)
+        if commit is None:  # only a pre-image skips an unchanged tree
+            raise RuntimeError("checkpoint produced no commit")
         return CheckpointOutcome(
             status="committed",
             commit=commit,
@@ -368,12 +429,15 @@ class Checkpointer:
         self,
         paths: Sequence[Path],
         parent: str | None,
-        tool_name: str,
-        tool_call_id: str,
-        decision_class: DecisionClass | None,
-        decision_rule: str | None,
-    ) -> str:
-        """Build the snapshot commit with a temp index; update the branch ref."""
+        message: str,
+        *,
+        only_if_changed: bool = False,
+    ) -> str | None:
+        """Build the snapshot commit with a temp index; update the branch ref.
+
+        With *only_if_changed*, a tree equal to the parent's commits nothing
+        and returns None.
+        """
         env = self._identity_env()
         top = await repo_top(self._workspace, env)
         with temp_index("tstd-checkpoint-index-") as index_path:
@@ -383,13 +447,21 @@ class Checkpointer:
                 if rc != 0:
                     raise RuntimeError(f"git read-tree failed: {err.strip()}")
             # Raw bytes, no filter driver (TD-5157): not `git add`.
-            await stage_paths(top, paths, env=index_env)
+            # A pre-image of a file the write will create has nothing to stage.
+            staged = await stage_paths(top, paths, env=index_env, missing_ok=only_if_changed)
             rc, out, err = await self._git("write-tree", env=index_env)
             if rc != 0:
                 raise RuntimeError(f"git write-tree failed: {err.strip()}")
             tree = out.strip()
 
-        message = self._message(paths, tool_name, tool_call_id, decision_class, decision_rule)
+        if only_if_changed:
+            if parent is None and not staged:
+                return None
+            if parent is not None:
+                rc, out, _ = await self._git("rev-parse", f"{parent}^{{tree}}")
+                if rc == 0 and out.strip() == tree:
+                    return None
+
         args = ["commit-tree", tree]
         if parent is not None:
             args += ["-p", parent]
@@ -412,20 +484,18 @@ class Checkpointer:
         decision_class: DecisionClass | None,
         decision_rule: str | None,
     ) -> str:
-        cls = decision_class.value if decision_class is not None else "?"
-        via = decision_rule if decision_rule else "worker-classifier"
-        rel = [self._rel(path) for path in paths]
-        subject = f"checkpoint({cls}): {tool_name} {rel[0]}"
-        body = "\n".join(
-            [
-                "",
-                f"Session: {self._session_id}",
-                f"Tool-Call: {tool_call_id}",
-                f"Decision: class {cls} via {via}",
-                f"Paths: {', '.join(rel)}",
-            ]
+        return agent_message(
+            session_id=self._session_id,
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            decision=decision_class.value if decision_class is not None else "?",
+            via=decision_rule if decision_rule else "worker-classifier",
+            rels=[self._rel(path) for path in paths],
+            log_seq=self._seq(),
         )
-        return subject + body
+
+    def _seq(self) -> int | None:
+        return self._log_seq() if self._log_seq is not None else None
 
     def _rel(self, path: Path) -> str:
         try:
@@ -443,13 +513,7 @@ class Checkpointer:
     def _identity_env() -> dict[str, str]:
         from ..tools.shell import sanitized_env  # local import: no cycle
 
-        return {
-            **sanitized_env(),
-            "GIT_AUTHOR_NAME": _AGENT_NAME,
-            "GIT_AUTHOR_EMAIL": _AGENT_EMAIL,
-            "GIT_COMMITTER_NAME": _AGENT_NAME,
-            "GIT_COMMITTER_EMAIL": _AGENT_EMAIL,
-        }
+        return {**sanitized_env(), **agent_identity()}
 
     async def _git(self, *args: str, env: dict[str, str] | None = None) -> tuple[int, str, str]:
         """Run ``git -C <workspace> <args>``; returns (rc, stdout, stderr).

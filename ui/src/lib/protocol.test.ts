@@ -12,6 +12,10 @@ import type {
   ForkFrom,
   SetBranch,
   ConversationReset,
+  FilesRestorePreview,
+  FilesRestored,
+  PreviewRestoreFiles,
+  RestoreFiles,
   Approve,
   Deny,
   AlwaysAllow,
@@ -1122,6 +1126,40 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isString(m.content)).toBe(true);
   });
 
+  // TD-5125: "Restore files to here".
+  it("preview_restore_files and restore_files", () => {
+    const ask = fixtures.preview_restore_files as PreviewRestoreFiles;
+    expect(ask.type).toBe("preview_restore_files");
+    expect(isString(ask.turn_id)).toBe(true);
+    const go = fixtures.restore_files as RestoreFiles;
+    expect(go.type).toBe("restore_files");
+    expect(isString(go.plan_id)).toBe(true);
+    expect(go.include_hand_edited).toEqual(["notes.md"]);
+  });
+
+  it("files_restore_preview", () => {
+    const m = fixtures.files_restore_preview as FilesRestorePreview;
+    expect(m.type).toBe("files_restore_preview");
+    expect(m.seq).toBe(1);
+    expect(isString(m.plan_id)).toBe(true);
+    expect(m.files.map((f) => f.change).sort()).toEqual(["delete", "modify", "modify", "recreate"]);
+    expect(m.files.filter((f) => f.hand_edited).map((f) => f.path)).toEqual(["notes.md"]);
+    expect(isString(m.diff)).toBe(true);
+    expect(isBoolean(m.diff_truncated)).toBe(true);
+    const empty = fixtures.files_restore_preview_empty as FilesRestorePreview;
+    expect(empty.files).toEqual([]);
+  });
+
+  it("files_restored", () => {
+    const m = fixtures.files_restored as FilesRestored;
+    expect(m.type).toBe("files_restored");
+    expect(isNumber(m.seq)).toBe(true);
+    expect(m.restored).toEqual(["src/app.py", "old.txt"]);
+    expect(m.removed).toEqual(["src/new.py"]);
+    expect(m.left_alone).toEqual(["notes.md"]);
+    expect(m.lfs_pointers).toEqual([]);
+  });
+
   it("api_key_validated", () => {
     const m = fixtures.api_key_validated as ApiKeyValidated;
     expect(m.type).toBe("api_key_validated");
@@ -1216,7 +1254,7 @@ describe("Daemon event fixtures match TypeScript types", () => {
 describe("All fixtures have required shape", () => {
   it("every client message has a type field", () => {
     const clientTypes = [
-      "hello", "open_workspace", "user_message", "user_message_steer", "fork_from", "set_branch", "approve", "deny",
+      "hello", "open_workspace", "user_message", "user_message_steer", "fork_from", "set_branch", "preview_restore_files", "restore_files", "approve", "deny",
       "deny_no_reason", "always_allow", "answer_question", "answer_question_declined", "review_plan", "review_plan_reject", "list_policy_rules", "revoke_policy_rule",
       "trust_workspace_config",
       "set_skip_all_approvals",
@@ -1276,7 +1314,7 @@ describe("All fixtures have required shape", () => {
 
   it("every daemon event has a type and seq field", () => {
     const eventTypes = [
-      "ready", "session_state", "conversation_reset", "user_turn", "user_turn_steer", "user_turn_run_permissions", "assistant_delta", "assistant_reasoning", "assistant_delta_response", "assistant_retract", "tool_call", "tool_result",
+      "ready", "session_state", "conversation_reset", "files_restore_preview", "files_restored", "user_turn", "user_turn_steer", "user_turn_run_permissions", "assistant_delta", "assistant_reasoning", "assistant_delta_response", "assistant_retract", "tool_call", "tool_result",
       "tool_result_truncated", "tool_result_diff", "tool_result_read_only", "tool_result_denied",
       "shell_output", "tool_progress", "approval_request", "approval_request_always_allow", "question_request", "question_answered", "plan_review", "plan_reviewed", "plan_reviewed_rejected", "plan_pinned", "decision_logged",
       "checkpoint_notice", "verify_result", "cost_update", "boundary_update", "boundary_update_config_trust", "turn_complete",

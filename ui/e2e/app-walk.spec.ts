@@ -117,7 +117,8 @@ async function walkModelBar(): Promise<void> {
 	await expect(brain).toHaveText(startLabel);
 }
 
-/** Copy, Retry, Edit and Summarize from here on the first exchange; Retry and Edit fork it. */
+/** Copy, Retry, Edit, Summarize from here and Restore files to here on the first
+ *  exchange; Retry and Edit fork it. */
 async function walkMessageActions(): Promise<void> {
 	const chat = page.getByRole("region", { name: "Chat pane" });
 
@@ -147,10 +148,32 @@ async function walkMessageActions(): Promise<void> {
 	await chat.getByRole("button", { name: "Next branch" }).click();
 	await expect(chat.getByText("3/3", { exact: true })).toBeVisible();
 
+	// TD-5125: Edit and resend offers the restore first. The walk's model
+	// writes no files, so there is nothing to put back and Resend forks.
+	const restore = page.getByRole("dialog", { name: "Restore files to here" });
+	const nothing = restore.getByText("The agent hasn't changed any files since this message.");
+	await edit.click();
+	await chat.locator("textarea.edit").fill("Say hello once more");
+	await chat.getByRole("checkbox", { name: "Restore files to here too" }).check();
+	await chat.getByRole("button", { name: "Save", exact: true }).click();
+	await expect(nothing).toBeVisible();
+	await restore.getByRole("button", { name: "Resend", exact: true }).click();
+	await expect(restore).toHaveCount(0);
+	await expect(chat.getByText("4/4", { exact: true })).toBeVisible();
+	await expect(chat.getByText("Say hello once more")).toBeVisible();
+
 	// TD-5109: the model's copy becomes a summary; this window keeps every row.
 	await chat.getByRole("button", { name: "Summarize from here" }).first().click();
 	await expect(page.getByText("Summarized from a message").first()).toBeAttached();
-	await expect(chat.getByText("Say hello again")).toBeVisible();
+	await expect(chat.getByText("Say hello once more")).toBeVisible();
+
+	// TD-5125: the files only, so a summarized turn still offers it. The git
+	// side, with real writes, is core/tests/test_file_rewind.py.
+	await chat.getByRole("button", { name: "Restore files to here" }).first().click();
+	await expect(nothing).toBeVisible();
+	await snap("restore", restore);
+	await restore.getByRole("button", { name: "Close" }).click();
+	await expect(restore).toHaveCount(0);
 }
 
 /**

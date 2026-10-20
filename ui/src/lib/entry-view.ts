@@ -36,6 +36,7 @@ export function entryIcon(entry: TimelineEntry): IconName {
       return 'ellipsis';
     case 'steering_reload':
     case 'retry':
+    case 'restore':
       return 'retry';
     case 'approval':
     case 'error':
@@ -62,7 +63,8 @@ export const KIND_LABELS: Record<EntryKind, string> = {
   error: 'Error',
   retry: 'Retry',
   fallback: 'Backup',
-  verify: 'Verify'
+  verify: 'Verify',
+  restore: 'Restore'
 };
 
 /** Semantic tone per entry, driving the colored marker (AC #6). */
@@ -90,6 +92,7 @@ export function entryTone(entry: TimelineEntry): EntryTone {
     case 'decision':
     case 'tier_switch':
     case 'steering_reload':
+    case 'restore':
       return 'info';
     case 'turn':
       // A header wears its turn's outcome: stopped is a warning, failed is

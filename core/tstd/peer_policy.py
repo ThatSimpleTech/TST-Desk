@@ -69,6 +69,11 @@ MACHINE_PEER_VERBS: frozenset[str] = frozenset(
         # TD-5154: /compact, "Summarize from here" and the gauge's button.
         # Like fork_from it rewrites only that session's model context.
         "compact_context",
+        # TD-5125: "Restore files to here" and its preview. It writes only
+        # files that session's agent changed, back to how they were, and
+        # leaves a file changed by hand alone unless the person ticks it.
+        "preview_restore_files",
+        "restore_files",
         "set_tier",
         "set_plan",
         "set_session_preset",

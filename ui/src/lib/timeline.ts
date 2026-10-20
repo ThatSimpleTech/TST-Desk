@@ -38,7 +38,8 @@ export type EntryKind =
   | "error"
   | "retry"
   | "fallback"
-  | "verify";
+  | "verify"
+  | "restore";
 
 export interface TimelineEntry {
   /** Stable identity across re-renders: `${kind}:${seq}` (session-scoped). */
@@ -280,6 +281,27 @@ export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
           tokens_after: event.tokens_after,
           trigger,
           guidance,
+        },
+      };
+    }
+    case "files_restored": {
+      // TD-5125: "Restore files to here" put files back, from any window.
+      const changed = event.restored.length + event.removed.length;
+      const left = event.left_alone.length;
+      return {
+        id: `restore:${event.seq}`,
+        kind: "restore",
+        seq: event.seq,
+        title: "Files restored",
+        preview:
+          `${changed} file(s) back to before an earlier message` +
+          (left > 0 ? ` · ${left} changed by hand left alone` : ""),
+        details: {
+          turn_id: event.turn_id,
+          restored: event.restored,
+          removed: event.removed,
+          left_alone: event.left_alone,
+          lfs_pointers: event.lfs_pointers,
         },
       };
     }

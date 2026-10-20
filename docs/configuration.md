@@ -2034,7 +2034,8 @@ file, you can approve the write. An `auto` policy rule cannot pre-approve it (§
 like every other Class C ask (§4.4); an autonomous run stops on them.
 
 Every git command the daemon runs itself (checkpoints, memory commits, the charter sign, the
-workspace manifest, `fs_grep`, the autonomy gate and summary, revert, the GitHub connector) is
+workspace manifest, `fs_grep`, the autonomy gate and summary, revert, Restore files to here,
+the GitHub connector) is
 started with `-c core.fsmonitor=false -c core.hooksPath=/dev/null -c
 safe.bareRepository=explicit` (`nul` on Windows). Command-line settings beat every config file,
 so with or without skip-all the daemon never runs a repo's fsmonitor command or any hook: not
@@ -2123,6 +2124,25 @@ can set. Writes to `/dev`, `nul` or `$null`, `$TMPDIR` (also `${TMPDIR:-/tmp}`),
 `mktemp`, a captured `.log`, git's own `.git/` files, or any path outside the workspace
 (`/tmp/...`, `~/...`, `../...`) get no note. Input redirects (`< file`, `<<<`) are reads. In an
 autonomous session the container's `/workspace` counts as the workspace.
+
+**Restore files to here** (TD-5125). Every message you sent offers it, in the window and on
+the phone. It puts back the files the agent changed after that message, from the session's
+checkpoint branch `tst/session/<id>`, and leaves the conversation as it is. First it shows each
+file (changed, made by the agent and so deleted, or deleted by the agent and so brought back)
+and the diff it takes away. A file that something other than the agent changed after the
+agent's edit (you, an editor, a formatter) is listed as changed by hand and left as it is
+unless you tick it. Your own uncommitted changes from before the agent touched a file come
+back with it: before each `fs_edit` or `fs_write`, the daemon commits the file as it is on disk
+to the session branch when that differs from the branch (`checkpoint(user): before …`). The
+restore itself is a commit on the same branch (`restore: …`). HEAD, your index and every other
+branch are never written. Edit and resend has a "Restore files to here too" box: the same
+dialog, then the edited message is sent once the files are back. What it cannot restore:
+changes made through the shell (never on the branch, see the paragraph above), a session run
+autonomously (its own `tst/auto/<slug>` branch and drift revert), a Grok-engine session (Grok
+writes files with its own tools, so nothing is checkpointed), a workspace that is not a git
+repository, and a turn whose later checkpoints were made before TST Desk recorded when (an
+older session; use the decision's `git revert`). It is refused while a turn runs. There is no
+setting.
 
 ### 4.2 `caps` — when the agent stops and asks
 
