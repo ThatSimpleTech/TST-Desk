@@ -306,7 +306,10 @@ describe("notification routing", () => {
     expect(banners).toHaveLength(0);
     expect(toasts).toHaveLength(1);
     expect(toasts[0].title).toBe("Message not sent");
-    expect(toasts[0].body).toBe(message);
+    // TD-5160: the composer claim is the window's, since only it does that.
+    expect(toasts[0].body).toBe(
+      `${message} The text is back in the composer; add any attachments again.`,
+    );
   });
 
   it("an edit or branch switch on a summarized message is a readable toast (TD-5147)", () => {

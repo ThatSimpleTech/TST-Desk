@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import httpx
 import pytest
@@ -441,3 +442,73 @@ async def test_outside_plan_mode_the_default_is_still_the_writing_worker(tmp_pat
 
     offered = _offered(mock, "test-worker")
     assert offered and "fs_write" in offered[0] and "shell" in offered[0]
+
+
+# ── Review notes (TD-5160) ──────────────────────────────────────────────
+
+
+class _DiesOnSecondCall(MockProvider):
+    """A worker that reads once, then fails with no ProviderError."""
+
+    async def chat_completion(self, request: Any) -> Any:
+        if self.calls:
+            raise RuntimeError("the assembler blew up")
+        return await super().chat_completion(request)
+
+
+async def test_a_child_that_fails_after_working_keeps_its_transcript(tmp_path: Path) -> None:
+    """What the child did before it failed stays viewable in the window."""
+    ws = _workspace(tmp_path)
+    (ws / "animals.md").write_text(f"pair: {MARKER}\n", encoding="utf-8")
+    session = Session(str(ws))
+    dispatcher = _parent_dispatcher(ws)
+    mock = _DiesOnSecondCall(
+        sequences={
+            "test-worker": [
+                Script(
+                    kind="tool_call", tool_name="fs_read", tool_arguments='{"path": "animals.md"}'
+                ),
+            ]
+        }
+    )
+    _bind_runtime(session, dispatcher, mock)
+
+    result = await dispatcher.dispatch(
+        "c1", "delegate", {"task": "What pair?", "kind": "research"}, session
+    )
+
+    assert (result.status, result.error_code) == ("error", "handler_error")
+    assert result.output == "Tool 'delegate' failed: the assembler blew up"
+    assert [s.kind for s in result.transcript] == ["task", "tool_call", "tool_result"]
+    assert MARKER in result.transcript[2].text
+
+
+async def test_the_summary_cap_counts_with_the_worker_tiers_counter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every counter is the heuristic without tiktoken, so this tells the
+    worker's slug apart: only its counter makes each character a token."""
+    import tstd.tools.delegate as delegate_module
+    from tstd.context.tokens import TokenCount
+
+    class _OnePerChar:
+        def count(self, text: str) -> TokenCount:
+            return TokenCount(count=len(text), method="test")
+
+    asked: list[str | None] = []
+
+    def counter_for(slug: str | None) -> Any:
+        asked.append(slug)
+        return _OnePerChar() if slug == "test-worker" else HeuristicTokenCounter()
+
+    monkeypatch.setattr(delegate_module, "make_token_counter", counter_for)
+    ws = _workspace(tmp_path)
+    parent = Session(str(ws))
+    dispatcher = _parent_dispatcher(ws)
+    mock = MockProvider(sequences={"test-worker": [Script(kind="text", content="x" * 1_500)]})
+    _bind_runtime(parent, dispatcher, mock)
+
+    summary = await run_worker_child(parent=parent, task="Explore", kind="research")
+
+    assert asked == ["test-worker"]
+    assert len(summary) <= SUMMARY_TOKEN_CAP

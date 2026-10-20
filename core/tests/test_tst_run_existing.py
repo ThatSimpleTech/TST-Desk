@@ -9,7 +9,9 @@ had ended.
 
 from __future__ import annotations
 
+import asyncio
 import json
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -21,14 +23,15 @@ from tstd.cli_run import ENDED_STATES, RunError, pick_session
 from tstd.cli_turn import EXIT_OK, is_sent_message
 from tstd.logging import redact_secrets
 from tstd.protocol import UserTurn
+from tstd.provider import ChatCompletionRequest, ProviderError, StreamChunk
 from tstd.session import TERMINAL_STATES
 from tstd.session_store import SessionStore
 
-# Secret-shaped by the daemon's patterns, though only the last two are
-# secrets: ``sk-`` has no word boundary, so ordinary names match too.
+# Secret-shaped by the daemon's patterns. Ordinary names such as
+# task-management-dashboard no longer match (TD-5160).
 _REDACTED_MESSAGES = [
-    "rename the task-management-dashboard component",
-    "pin flask-sqlalchemy-migrate and tst-desk-session-survival",
+    "rename the " + "sk-" + "proj-FAKE0dashboard0key component",
+    "pin " + "sk-" + "FAKE0first0key0here and " + "sk-" + "FAKE0second0key0here",
     "rotate ghp_" + "a" * 36 + " today",
     "AKIA" + "B" * 16 + "\n" + "AKIA" + "C" * 16,
 ]
@@ -129,7 +132,7 @@ class TestRedactedMessage:
         assert code == EXIT_OK, result
         assert result["status"] == "success"
         assert result["error"] is None
-        assert result["reply"].startswith("echo: rename the ta")
+        assert result["reply"].startswith("echo: rename the ")
         assert turns == ["first", redact_secrets(message)]
 
     async def test_ndjson_starts_at_the_redacted_user_turn(
@@ -202,3 +205,79 @@ class TestContinueFollowsUse:
         assert code == EXIT_OK, result
         assert result["session_id"] == b
         assert b_turns == ["B first", "B second"]
+
+
+class _Gated(_Echo):
+    """An echo that holds each reply until the test opens the gate."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.gate = asyncio.Event()
+
+    async def chat_completion_stream(
+        self, request: ChatCompletionRequest
+    ) -> AsyncIterator[StreamChunk | ProviderError]:
+        await self.gate.wait()
+        async for chunk in super().chat_completion_stream(request):
+            yield chunk
+
+
+class TestTwoRunsAtOnce:
+    async def test_two_continues_started_together_send_one_message(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """TD-5160: both see the session idle; the daemon lets only one in."""
+        data_dir = tmp_path / "data"
+        workspace = _workspace(tmp_path)
+        provider = _Gated()
+        provider.gate.set()
+        daemon, task = await _start(data_dir, provider)
+        real_open = cli_run._open_existing
+        picked: list[str] = []
+        both_picked = asyncio.Event()
+
+        async def open_then_wait(ws: Any, session_id: str | None, where: Path | None) -> str:
+            # Both runs read session_list before either sends: the race.
+            sid = await real_open(ws, session_id, where)
+            picked.append(sid)
+            if len(picked) == 2:
+                both_picked.set()
+            await both_picked.wait()
+            return sid
+
+        try:
+            assert await cli_run.run_turn(workspace, "first", data_dir) == EXIT_OK
+            (sid,) = await _session_ids(daemon)
+            session = daemon.session_registry.get(sid)
+            assert session is not None
+            provider.gate.clear()
+            monkeypatch.setattr(cli_run, "_open_existing", open_then_wait)
+            capsys.readouterr()
+            runs = [
+                asyncio.create_task(
+                    cli_run.run_turn(
+                        workspace, "same text", data_dir, continue_last=True, output="json"
+                    )
+                )
+                for _ in range(2)
+            ]
+            # Hold the reply until one run has given up or both are queued.
+            for _ in range(400):
+                if any(r.done() for r in runs) or session._open_turns > 1:
+                    break
+                await asyncio.sleep(0.01)
+            provider.gate.set()
+            codes = await asyncio.wait_for(asyncio.gather(*runs), timeout=20)
+            turns = _turns(daemon, sid)
+        finally:
+            await _stop(daemon, task)
+        results = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+        assert sorted((r["status"], r["error"] and r["error"]["code"]) for r in results) == [
+            ("error", "session_busy"),
+            ("success", None),
+        ]
+        assert sorted(codes)[0] == EXIT_OK and sorted(codes)[1] != EXIT_OK
+        assert turns == ["first", "same text"]

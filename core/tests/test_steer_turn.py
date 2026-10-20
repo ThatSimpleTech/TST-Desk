@@ -695,3 +695,30 @@ async def test_every_refused_user_message_names_it(
         assert refused["in_reply_to"] == "user_message"
     finally:
         await window.close()
+
+
+async def test_a_skill_named_in_a_steer_is_in_the_prompt_of_the_step_that_reads_it(
+    tmp_path: Path,
+) -> None:
+    """TD-5160: the prompt was assembled before the steer loaded the skill,
+    so the step reading "/review" went without it."""
+    skill = tmp_path / ".tst" / "skills" / "review" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\ndescription: Review a diff\n---\nREVIEW-SKILL-BODY\n")
+    session = Session(str(tmp_path))
+    held = _HeldTool()
+    runner, mock = await _start(session, _tool_then_text(), held)
+    try:
+        await session.add_user_message("Build it")
+        await asyncio.wait_for(held.started.wait(), 3)
+        await session.add_user_message("/review the diff", steer=True)
+        held.release.set()
+        await wait_for_turn(session, 1)
+    finally:
+        await runner.cancel()
+
+    first, second = _brain(mock)
+    assert "REVIEW-SKILL-BODY" not in str(first.messages[0].content)
+    assert second.messages[0].role == "system"
+    assert "REVIEW-SKILL-BODY" in str(second.messages[0].content)
+    assert session.loaded_skills == ["review"]

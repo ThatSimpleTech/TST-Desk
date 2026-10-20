@@ -54,6 +54,7 @@ from typing import Any
 from ..connectors.github_classify import GITHUB_READ_TOOLS
 from ..policy_shell import host_dialects
 from ..shell_read_only import match as read_only_match
+from ..shell_read_only import probe_repo_config
 from .charter import CHARTER_RELATIVE_PARTS
 from .cmd_targets import cmd_write_targets
 
@@ -651,6 +652,21 @@ def _read_only_entries(req: DecisionRequest, boundary: Boundary) -> tuple[str, .
     return read_only_match(
         command, boundary.shell_read_only, boundary.workspace_root, boundary.read_guards()
     )
+
+
+async def prepare_read_only(req: DecisionRequest, boundary: Boundary) -> None:
+    """Read what the read-only rule needs that only a subprocess can tell (TD-5160).
+
+    The rule is static, so the git config a listed git command will see is
+    read here, just before the call is classified. Without it, git entries
+    ask. It is read with the list off too: the pins, and so the object
+    format, apply to an approved git command as well.
+    """
+    command = req.arguments.get("command")
+    if req.tool_name != "shell" or req.provenance is not None or not isinstance(command, str):
+        return
+    if boundary.workspace_root is not None:
+        await probe_repo_config(command, boundary.workspace_root)
 
 
 def _rule_shell_floor(req: DecisionRequest, boundary: Boundary) -> bool:

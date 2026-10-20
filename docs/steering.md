@@ -927,7 +927,8 @@ What does **not** carry over, and what to do about it:
   A skill body over 4,000 tokens is refused by `load_skill` and `/name`, not truncated, and is
   left out of the catalog so the model does not spend a turn on it. `description` is the one
   required key; a skill without it, or with a `name`, `whenToUse` or `when_to_use` that is not
-  text, is skipped. So is a `SKILL.md` that is not UTF-8 (a Windows-1252 file, or UTF-16 from
+  text, is skipped, and the log names the key once per file (TD-5160). So is a `SKILL.md`
+  that is not UTF-8 (a Windows-1252 file, or UTF-16 from
   PowerShell 5.1 `Out-File`): it is logged once and the other skills load. Save it as UTF-8 to
   bring it back.
   `whenToUse` (or Claude Code's `when_to_use`; ours wins when both are set) is optional and
@@ -936,7 +937,8 @@ What does **not** carry over, and what to do about it:
   description. `name` is accepted, but the directory name is the skill's name: when they
   differ, the directory wins and the mismatch is logged. `license`, `version`, `metadata`
   and `argument-hint` are labels and pass silently. `disable-model-invocation: true` (any
-  value but `false`) is honored: the skill is left out of the model's catalog and
+  value but YAML `false` or no value at all; a quoted `''` or `"false"` counts as set) is
+  honored: the skill is left out of the model's catalog and
   `load_skill` refuses it, so only your `/name` loads it; the inspector marks it "slash
   only".
   Every other key loads with the skill and is ignored (TD-5107; before it, these keys
@@ -987,9 +989,9 @@ and test commands, CI config and layout) and proposes the whole new file.
 - **What you see:** a card with the diff and **Accept**, **Edit** and **Reject**. Edit opens the
   proposed text; **Save** writes what you typed. The tool itself writes nothing and asks
   nothing, so the card is the one approval. The card shows exactly what Accept writes: the
-  session log blanks secret-shaped strings (`sk-…`, `ghp_…`, and ordinary words such as
-  `task-tool-availability` that happen to match), so a proposal whose file name, file or text
-  holds one is refused, and so is a Save of one. Change such a file by hand.
+  session log blanks secret-shaped strings (`sk-…`, `ghp_…` and the like; a word such as
+  `task-tool-availability` is not one), so a proposal whose file name, file or text holds one
+  is refused, and so is a Save of one. Change such a file by hand.
 - **Who writes:** the daemon, on your Accept or Save, never the filesystem tool. If the file
   changed after the proposal (you edited it, or another proposal was accepted), Accept is
   refused with "the file changed since this was proposed" and a fresh diff replaces the card.

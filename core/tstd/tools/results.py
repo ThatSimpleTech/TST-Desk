@@ -83,13 +83,28 @@ class HandlerRefusal(Exception):
 
     Used by desktop computer-use (focus mismatch, kill-switch, E20) so
     dispatch can return ``error_code`` without treating the refusal as a
-    crashed handler.
+    crashed handler. ``transcript`` is what a ``delegate`` child did before
+    the refusal, kept for the window (TD-5160).
     """
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, transcript: tuple[WorkerStep, ...] = ()) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
+        self.transcript = transcript
+
+
+class HandlerFailed(Exception):
+    """A handler crashed after doing visible work (TD-5160).
+
+    Dispatch reports it like any crash (``handler_error``, the original
+    message) and puts ``transcript`` on the result, so a ``delegate``
+    child's writes and commands stay viewable when it ends on an error.
+    """
+
+    def __init__(self, error: Exception, transcript: tuple[WorkerStep, ...]) -> None:
+        super().__init__(str(error))
+        self.transcript = transcript
 
 
 @dataclass

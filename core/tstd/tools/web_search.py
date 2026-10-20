@@ -37,7 +37,7 @@ import httpx
 from ..config import SearchConfig, cached_config
 from ..logging import redact_secrets
 from .search_bind import bind_search, current_search, reset_search
-from .web_extract import ANSWER_CHAR_CAP, extract_answer
+from .web_extract import extract_answer
 from .web_page import PAGE_CACHE, FetchedPage, render_page, strip_hidden, window_size
 
 _MAX_BODY = 512_000
@@ -509,6 +509,8 @@ async def web_fetch(
     finally:
         reset_search(token)
     page = PAGE_CACHE.get(target, cache_seconds)
+    if page is not None and not page.serves(cap):
+        page = None
     if page is None:
         fetched = await _download(target, timeout, cap)
         if isinstance(fetched, str):
@@ -521,9 +523,8 @@ async def web_fetch(
         )
     result_cap = _result_cap(session)
     if question.strip():
-        answer_cap = window_size(ANSWER_CHAR_CAP, result_cap)
-        return await extract_answer(session, page, question.strip(), offset, answer_cap)
-    return render_page(page, offset, window_size(page_chars, result_cap))
+        return await extract_answer(session, page, question.strip(), offset, result_cap)
+    return render_page(page, offset, window_size(page_chars, result_cap), result_cap)
 
 
 def _fetch_window() -> tuple[int, int]:
@@ -576,4 +577,6 @@ async def _download(target: str, limit_seconds: float, cap: int) -> FetchedPage 
     raw = raw[:cap]
     body = _html_to_text(raw) if "html" in ctype else raw
     body, hidden = strip_hidden(body)
-    return FetchedPage(url=final, text=redact_secrets(body), hidden_removed=hidden, cut=cut)
+    return FetchedPage(
+        url=final, text=redact_secrets(body), hidden_removed=hidden, cut=cut, max_bytes=cap
+    )

@@ -96,7 +96,7 @@ from .output_cap import (
     log_output_cap,
     stub_call,
 )
-from .policy import read_guards, save_approved_imports
+from .policy import read_guards, save_approved_imports, with_run_rules
 from .progress_guard import (
     PROGRESS_CHECK_INSTRUCTION,
     ProgressGuard,
@@ -1138,8 +1138,10 @@ def session_boundary(session: Session) -> Boundary:
         shell_read_only=(
             session.config.shell.read_only.entries() if session.config is not None else frozenset()
         ),
-        # Read per call: Always allow and Revoke change the policy in place.
-        read_guards=lambda: read_guards(session.policy),
+        # Read per call: Always allow and Revoke change the policy in place,
+        # and a ``tst run --deny`` over a read guards the turn it came with
+        # (TD-5118).
+        read_guards=lambda: read_guards(with_run_rules(session.policy, session.run_permissions)),
     )
 
 
@@ -1355,7 +1357,8 @@ async def agent_loop(
     embeddings_client = EmbeddingsClient.from_config(config)
 
     # External-import approvals (TD-505): approved paths are durable per
-    # workspace; denied paths are session-scoped and not re-prompted.
+    # workspace; paths a person denied are session-scoped and not
+    # re-prompted.  A deny-and-continue run's refusal is per turn (TD-5118).
     approved_imports = _load_import_approvals(session)
     denied_imports: set[Path] = set()
 
@@ -1508,6 +1511,9 @@ async def agent_loop(
             tool_dispatcher.workspace = Path(session.workspace_path)
         if tool_dispatcher.approval_handler is None:
             tool_dispatcher.approval_handler = session.request_approval
+        # TD-5118: the turn's ``tst run`` rules join the policy gate.
+        if tool_dispatcher.run_permissions_fn is None:
+            tool_dispatcher.run_permissions_fn = lambda: session.run_permissions
 
     # TD-1715: a live move (between turns) rebinds everything above, the
     # prompt assembler and the import approvals to the new root, so the
@@ -1617,6 +1623,8 @@ async def agent_loop(
         # A stop that landed as the previous turn sealed must not abort
         # this one. A stop after this line belongs to this turn.
         session.acknowledge_stop_turn()
+        # TD-5118: this turn's ``tst run`` rules, None for any other turn.
+        session.run_permissions = queued.run_permissions
         # TD-5112: a message sent from here to turn_complete joins this
         # turn at its next tool-batch boundary.
         session.open_steering(queued.id)
@@ -1655,6 +1663,7 @@ async def agent_loop(
                 session_id=session.id,
                 turn_id=queued.id,
                 content=queued.display,
+                run_permissions=queued.run_permissions,
                 seq=1,
             )
         )
@@ -1674,6 +1683,10 @@ async def agent_loop(
         session.consult_tally.used = 0
         clear_turn_writes(session)
         turn_start = time.time()
+        # TD-5118: imports a deny-and-continue run refused.  No person
+        # answered, so they stay out for this turn only; the next turn,
+        # whoever sends it, asks again.
+        run_refused_imports: set[Path] = set()
 
         # 1b. Resolve any tier that leaves its slug unset (TD-1805).  This
         #     is the "first use" the story means: not import time, and not
@@ -1821,10 +1834,14 @@ async def agent_loop(
                     memory=memory_block,
                     project_context=project_context if tier == "brain" else None,
                     approved_imports=frozenset(approved_imports),
-                    denied_imports=frozenset(denied_imports),
+                    denied_imports=frozenset(denied_imports | run_refused_imports),
                     loaded_skills=list(session.loaded_skills),
                 )
-                pending = [p for p in assembled.steering.pending_imports if p not in denied_imports]
+                pending = [
+                    p
+                    for p in assembled.steering.pending_imports
+                    if p not in denied_imports and p not in run_refused_imports
+                ]
                 if not pending:
                     break
                 approved_any = False
@@ -1834,13 +1851,17 @@ async def agent_loop(
                         approved_imports.add(path)
                         approved_any = True
                     else:
-                        denied_imports.add(path)
+                        if outcome.unattended:
+                            run_refused_imports.add(path)
+                        else:
+                            denied_imports.add(path)
                         log.warning(
                             "external import denied",
                             extra={
                                 "extra_fields": {
                                     "session_id": session.id,
                                     "path": str(path),
+                                    "unattended": outcome.unattended,
                                 }
                             },
                         )
@@ -2089,6 +2110,7 @@ async def agent_loop(
             #     with the steer in, so its tokens are counted and the
             #     results the turn got before it can still be elided.
             if last_batch:
+                skills_before = list(session.loaded_skills)
                 steered = await inject_steers(
                     session,
                     messages,
@@ -2097,6 +2119,25 @@ async def agent_loop(
                     claude_global_fallback=config.steering.claude_global_fallback,
                 )
                 last_batch = []
+                if session.loaded_skills != skills_before:
+                    # A /skill in the steer: the prompt was assembled at
+                    # 2b, before it loaded, so the call that reads the
+                    # steer must get the skill too (TD-5160).
+                    assembled = await assembler.assemble(
+                        tier,
+                        task=queued.display if tier == "worker" else None,
+                        matched_paths=set(session.touched_paths),
+                        memory=memory_block,
+                        project_context=project_context if tier == "brain" else None,
+                        approved_imports=frozenset(approved_imports),
+                        denied_imports=frozenset(denied_imports),
+                        loaded_skills=list(session.loaded_skills),
+                    )
+                    system = ChatMessage(role="system", content=assembled.text)
+                    if messages and messages[0].role == "system":
+                        messages[0] = system
+                    else:
+                        messages.insert(0, system)
                 if steered:
                     await _fit_prompt(
                         session,

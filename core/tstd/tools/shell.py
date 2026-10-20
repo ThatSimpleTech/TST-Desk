@@ -526,8 +526,7 @@ def _open_shell_process(
     if not session.autonomy:
         # A git command the read-only list reads runs with git's command
         # hooks pinned off (TD-5103). The container needs none of this.
-        if session.config is not None:
-            env.update(run_env(command, session.config.shell.read_only.entries(), env))
+        env.update(run_env(command, env, Path(session.workspace_path)))
         return asyncio.create_subprocess_shell(
             shell_memory.host_command(cap, command),
             cwd=session.workspace_path,

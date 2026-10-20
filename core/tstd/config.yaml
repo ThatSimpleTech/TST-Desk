@@ -267,8 +267,9 @@ session:
 # budget, tool results from earlier turns, oldest first, become a one-line
 # placeholder (tool, target, size) before whole turns are compacted. The
 # newest keep_recent_tool_results stay, and so does every result of a tool
-# named in exclude_tools. A clear that cannot free clear_at_least_tokens is
-# skipped. enabled: false goes back to compaction alone.
+# named in exclude_tools. A clear that cannot free clear_at_least_tokens, or
+# cannot bring the prompt down to 70% of the budget while compaction has an
+# older turn to fold, is skipped. enabled: false goes back to compaction alone.
 clear_tool_results:
   enabled: true
   keep_recent_tool_results: 3

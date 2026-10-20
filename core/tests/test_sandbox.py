@@ -13,6 +13,7 @@ from tests.test_loop import make_config
 from tstd.autonomy.sandbox import (
     INSTALL_DOWN,
     INSTALL_MISSING,
+    INSTALL_NO_LIMITS,
     INSTALL_ROOTFUL,
     WORKSPACE_DEST,
     RuntimeState,
@@ -51,7 +52,7 @@ def _which_none(_name: str) -> str | None:
     return None
 
 
-def _fake_runtime(tmp_path: Path, *, info_out: str = "true", info_rc: int = 0) -> Path:
+def _fake_runtime(tmp_path: Path, *, info_out: str = "true v2 systemd", info_rc: int = 0) -> Path:
     """An executable that speaks enough of ``podman info`` / ``podman run``.
 
     On ``run``, prints whether a well-known host cred path leaked into
@@ -170,11 +171,23 @@ class TestSandboxStartError:
         assert err is None
 
     async def test_inspects_the_fake_binary(self, tmp_path: Path) -> None:
-        fake = _fake_runtime(tmp_path, info_out="true")
+        fake = _fake_runtime(tmp_path, info_out="true v2 systemd")
         err = await sandbox_start_error(_cfg(), which=_which_for(fake))
         assert err is None
         recorded = (tmp_path / "argv.log").read_text(encoding="utf-8")
         assert recorded.splitlines()[0] == "info"
+
+    @pytest.mark.parametrize("info_out", ["true v1 systemd", "true v2 cgroupfs", "true"])
+    async def test_rootless_without_memory_limits_is_refused_at_start(
+        self, tmp_path: Path, info_out: str
+    ) -> None:
+        """TD-5160: rootless Podman ignores or refuses --memory off cgroup v2
+        with the systemd manager, so an unattended run would have no cap or
+        fail at its first command. Start says why instead."""
+        fake = _fake_runtime(tmp_path, info_out=info_out)
+        err = await sandbox_start_error(_cfg(), which=_which_for(fake))
+        assert err == INSTALL_NO_LIMITS
+        assert "cgroup v2" in err and "caps.shell_memory_mb" in err
 
 
 # ── Argv contract ────────────────────────────────────────────────────────
