@@ -532,18 +532,27 @@ characters) and the size that went, for example
 ```
 
 The user's messages, the model's answers and the tool calls themselves stay
-verbatim, so the conversation still reads the same; the model calls the tool
-again if it needs the output back.
+verbatim, so the conversation still reads the same. Only a built-in read
+(`fs_read`, `fs_list`, `fs_grep`, `web_fetch`, `web_search`, `load_skill`)
+invites the model to run it again for the output. Any other tool's line
+(`shell`, `delegate`, a write, an MCP tool) ends "It already ran; do not run
+it again only to see this output." instead, since with approvals off nothing
+would stop a second run of a side effect (TD-5160).
 
 - The tool results of the turn that is running are never cleared. When they
   overflow, their middles are trimmed instead (TD-5010). A message sent while
   a turn runs joins that turn (TD-5112), so the results it got before that
   message stay too. The check also runs when such a message joins the
   prompt, before anything is compacted.
-- One clear takes every stale result at once, and only goes ahead when it
-  brings the prompt down to 70% of the budget and frees at least
-  `clear_at_least_tokens`. Otherwise the turn compacts, as it did before.
-  The gap is room for several more turns before the next clear. A clear
+- One clear takes every stale result at once, and goes ahead when it
+  frees at least `clear_at_least_tokens` and brings the prompt down to 70%
+  of the budget. Otherwise the turn compacts, as it did before; but when
+  there is no older turn for compaction to fold, a clear that lands above
+  70% still goes ahead (TD-5160). The gap usually leaves room for more
+  turns before the next clear, but does not promise it: this turn's own
+  results push earlier ones out of the newest `keep_recent_tool_results`,
+  and the next request can clear those, so two clears can come back to
+  back. A clear
   rewrites the prompt from the oldest result it clears, and a local server
   such as llama.cpp reads the prompt again from there; between clears
   nothing earlier changes, and a cleared line is never rewritten, so its

@@ -9647,15 +9647,21 @@ client.
 - [x] Clearing happens in batches, with the TD-5010 hysteresis (the gap
       audit says TD-5009): one clear takes every stale result, and goes
       ahead only when it frees `clear_at_least_tokens` and lands at 70% of
-      the budget or under; otherwise the turn compacts as before. Never
-      two clears on consecutive requests in the tests
-- [x] Measured on EZER with a replayed long session through the real loop
-      (MockProvider, 32,768-token tier): 30 turns compacted 4 times with
-      clearing off and never with it on; 60 turns 9 times off and 2 times
-      on (DECISIONS.md, with the prefix-rebuild cost)
-- [ ] Measured on EZER against the live local model in the running app.
-      Not done: it needs this change deployed, which this story does not
-      do
+      the budget or under (or, with no older turn for compaction to fold,
+      above it; TD-5160); otherwise the turn compacts as before. Never
+      two clears on consecutive requests in the tests, though a live turn
+      can produce them (TD-5160 review)
+- [x] Not the story's measurement (TD-5160 review): a replayed long
+      session through the real loop on EZER (MockProvider, 32,768-token
+      tier): 30 turns compacted 4 times with clearing off and never with
+      it on; 60 turns 9 times off and 2 times on (DECISIONS.md, with the
+      prefix-rebuild cost). The scripted model never needs a cleared
+      output, so this cannot show whether clearing causes tool re-runs
+- [ ] Measured on EZER: fewer compactions on a long session, against the
+      live local model in the running app. Not done: it needs this change
+      deployed, which this story does not do
+
+**Status:** Blocked — merged, but the live measurement above (AC3) is not done (TD-5160 review).
 - [x] A clear is announced as `context_compacted` with the trigger
       `clear_stale` (`dropped_messages` counts the results cleared), shown
       as the quiet "Trim" row previewed "Cleared earlier tool results";
