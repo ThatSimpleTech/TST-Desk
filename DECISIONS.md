@@ -15551,7 +15551,12 @@ provider_retry"):
   example), so four of them would hold a turn for 20 to 40 minutes. A
   second stall ends the turn as `stream_stalled`, as before, and its
   partial text stays on screen above the failure line, as before.
-  `provider_retry.max_retries: 0` turns the retry off too.
+  `provider_retry.max_retries: 0` turns the retry off too. (Corrected in
+  TD-5160: the one retry is a fresh request, and a stall before its first
+  chunk is retried under `provider_retry` like any request, so from the
+  mid-reply stall on a model call can wait `max_retries + 2` times, 5 with
+  the defaults, not 2. Only a second stall after output began ends the
+  turn. The docs now say so; the behaviour is unchanged.)
 - Only `stream_stalled`. A cut-off stream (`stream_interrupted`, TD-5152)
   is the gateway reporting a failure or giving up, and `total_timeout`
   (`timeout`) is a cap the user set on one attempt; neither is retried.
