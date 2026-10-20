@@ -14,8 +14,10 @@ user turn (its ``user_turn`` event's seq) splits the branch into before and
 after. A commit made before TD-5125 has no ``Log-Seq``.
 
 Every value is escaped onto one line (:func:`one_line`), so a file name with
-a newline cannot write a trailer of its own. The reader takes the first line
-that starts with each key; the subject never starts with one.
+a line break of any kind (``\n``, ``\r``, U+0085, U+2028, U+2029...) cannot
+write a trailer of its own. The reader splits on ``\n`` only, as git does,
+and takes the first line that starts with each key; the subject never starts
+with one.
 """
 
 from __future__ import annotations
@@ -39,16 +41,25 @@ class Trailers:
 
 
 def one_line(text: str) -> str:
-    """*text* with every control character escaped, so it stays on its line."""
+    """*text* with every non-printable character escaped, so it stays on its line.
+
+    That covers the C0 and C1 controls and the Unicode line and paragraph
+    separators, which ``str.splitlines`` would also break on, as well as the
+    lone surrogates a non-UTF-8 file name decodes to.
+    """
     out: list[str] = []
     for ch in text:
         code = ord(ch)
         if ch == "\\":
             out.append("\\\\")
-        elif code < 0x20 or code == 0x7F:
-            out.append(f"\\x{code:02x}")
-        else:
+        elif ch.isprintable():
             out.append(ch)
+        elif code <= 0xFF:
+            out.append(f"\\x{code:02x}")
+        elif code <= 0xFFFF:
+            out.append(f"\\u{code:04x}")
+        else:
+            out.append(f"\\U{code:08x}")
     return "".join(out)
 
 
@@ -110,7 +121,9 @@ def parse_trailers(message: str) -> Trailers | None:
     A commit from before TD-5125 has no ``Kind``: it was an agent write.
     """
     found: dict[str, str] = {}
-    for line in message.splitlines()[1:]:
+    # Lines as git sees them: str.splitlines() would also break at U+2028 and
+    # friends, letting a value that was one line read as two.
+    for line in message.split("\n")[1:]:
         key, sep, value = line.partition(": ")
         if sep and key in ("Session", "Kind", "Log-Seq") and key not in found:
             found[key] = value

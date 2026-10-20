@@ -16,7 +16,7 @@ import pytest
 from tests.test_checkpoint import _git, make_repo
 from tstd.autonomy import Checkpointer
 from tstd.autonomy.checkpoint import DecisionClass, session_branch
-from tstd.autonomy.checkpoint_message import agent_message, parse_trailers
+from tstd.autonomy.checkpoint_message import Trailers, agent_message, parse_trailers
 from tstd.file_rewind import RewindError, apply_rewind, plan_rewind
 
 SID = "sess-rewind"
@@ -249,19 +249,88 @@ class TestRefusals:
         assert (await plan_rewind(repo, SID, 0)).files == ()
 
 
+#: Every character str.splitlines() breaks a line at, not just "\\n".
+LINE_BREAKS = ["\n", "\r", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"]
+
+
 class TestMessages:
-    def test_a_file_name_cannot_write_a_trailer(self) -> None:
+    @pytest.mark.parametrize("brk", LINE_BREAKS, ids=lambda c: f"U+{ord(c):04X}")
+    def test_a_file_name_cannot_write_a_trailer(self, brk: str) -> None:
         message = agent_message(
             session_id="s1",
             tool_name="fs_write",
             tool_call_id="c1",
             decision="A",
             via="rule",
-            rels=["evil\nLog-Seq: 0\nKind: restore"],
+            rels=[f"evil{brk}Log-Seq: 0{brk}Kind: restore{brk}Session: s2"],
             log_seq=42,
         )
         trailers = parse_trailers(message)
-        assert trailers is not None
-        assert trailers.log_seq == 42
-        assert trailers.kind == "agent"
-        assert all(line.count(": ") >= 1 for line in message.splitlines()[2:])
+        assert trailers == Trailers(session_id="s1", kind="agent", log_seq=42)
+        # Every line break left in the message is one of the message's own.
+        assert message.splitlines() == message.split("\n")
+
+    def test_the_reader_splits_lines_as_git_does(self) -> None:
+        # A subject written before the escaping covered U+2028 still cannot
+        # put a trailer ahead of the real ones.
+        message = (
+            "checkpoint(A): fs_write x\u2028Log-Seq: 0\n\nSession: s1\nKind: agent\nLog-Seq: 50"
+        )
+        assert parse_trailers(message) == Trailers(session_id="s1", kind="agent", log_seq=50)
+
+    def test_a_non_utf8_file_name_is_escaped_too(self) -> None:
+        message = agent_message(
+            session_id="s1",
+            tool_name="fs_write",
+            tool_call_id="c1",
+            decision="A",
+            via="rule",
+            rels=["caf\udce9.txt"],
+            log_seq=1,
+        )
+        assert "caf\\udce9.txt" in message
+        assert message.isascii()
+
+
+class TestOddFileNames:
+    """A file name the agent picks cannot hide its other writes from the plan."""
+
+    @pytest.mark.parametrize("brk", LINE_BREAKS, ids=lambda c: f"U+{ord(c):04X}")
+    async def test_a_line_break_in_a_name_hides_nothing(self, tmp_path: Path, brk: str) -> None:
+        repo = make_repo(tmp_path)
+        agent = Agent(repo)
+        await agent.write("a.txt", "base\n")
+        turn = agent.turn()
+        await agent.write("a.txt", "agent\n")
+        sneaky = f"x{brk}Log-Seq: 0"
+        await agent.write(sneaky, "evil\n")
+        await agent.write("b.txt", "later\n")
+
+        plan = await plan_rewind(repo, SID, turn)
+
+        assert _changes(plan) == {
+            "a.txt": ("modify", False),
+            sneaky: ("delete", False),
+            "b.txt": ("delete", False),
+        }
+
+    async def test_a_record_separator_in_a_name_hides_nothing(self, tmp_path: Path) -> None:
+        # The log's records used to be split on RS (0x1e) alone, and a path
+        # is printed raw, so a name with RS cut the walk short.
+        repo = make_repo(tmp_path)
+        agent = Agent(repo)
+        await agent.write("a.txt", "base\n")
+        turn = agent.turn()
+        await agent.write("a.txt", "agent\n")
+        await agent.write("\x1ey", "evil\n")
+        await agent.write("x\x1e\x1f", "evil\n")
+        await agent.write("b.txt", "later\n")
+
+        plan = await plan_rewind(repo, SID, turn)
+
+        assert set(_changes(plan)) == {"a.txt", "\x1ey", "x\x1e\x1f", "b.txt"}
+        result = await agent.restore(turn)
+        assert result is not None
+        assert _read(repo, "a.txt") == "base\n"
+        for gone in ("\x1ey", "x\x1e\x1f", "b.txt"):
+            assert _read(repo, gone) is None

@@ -46,7 +46,11 @@ Change = Literal["modify", "delete", "recreate"]
 MAX_DIFF_CHARS = 200_000
 _LOG_CHUNK = 200
 _LITERAL = "--literal-pathspecs"
-_LOG_FORMAT = "%x1e%H%x1f%P%x1f%ae%x1f%B%x1f"
+#: Each commit's record opens with NUL NUL RS. With ``-z`` every path is
+#: NUL-terminated and never empty, so two NULs in a row only ever start a
+#: record; RS alone could not frame one, since a file name may contain it.
+_LOG_FORMAT = "%x00%x00%x1e%H%x1f%P%x1f%ae%x1f%B%x1f"
+_LOG_RECORD = b"\0\0\x1e"
 
 
 class RewindError(Exception):
@@ -295,7 +299,7 @@ async def _session_commits(
             "--",
             env=env,
         )
-        records = [r for r in out.split(b"\x1e") if r]
+        records = [r for r in out.split(_LOG_RECORD) if r]
         for record in records:
             commit = _parse_record(record, session_id)
             if commit is None:
