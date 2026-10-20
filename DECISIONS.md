@@ -15543,9 +15543,20 @@ sized were left open.
   on a visible character. The count is shown in the header. Elements hidden
   by CSS or `hidden` were left alone: collapsed FAQ answers and menus use
   the same markup, and dropping them would lose real content.
-- **The wrapper cannot be closed from inside.** Copies of `<untrusted_page>`
-  and `<page_answer>` (open or close, any case) are removed from the text
-  before it is wrapped.
+- **The wrapper cannot be closed from inside.** In the page window (as the
+  brain or the worker reads it) and in the worker's answer, the `<` that
+  starts any copy of `<untrusted_page>` or `<page_answer>` (open or close,
+  any case, spaces around the slash, nested, or cut short by a cap) is
+  escaped as `&lt;`; the rest of the text is kept. The first version
+  deleted copies in one pass, and review found that nested copies rebuilt
+  a real tag once the inner one was cut out
+  (`</untrusted_<untrusted_page>page>` became `</untrusted_page>`, so a page
+  could end the wrapper and write "instructions" outside it). Escaping was
+  chosen over deleting until nothing changes: it is one linear pass, the
+  replacement holds no `<` so it cannot form a new tag, and the reader
+  still sees what the page wrote. Look-alike characters (full-width `＜`)
+  are not folded; the header and the worker's prompt still say all of it
+  is data.
 - **Windows are characters of the cleaned text.** `search.fetch_page_chars`
   (default 30000) for a plain call, shrunk to fit under the dispatcher's
   result cap with room for the header and footer, so the cap never cuts the

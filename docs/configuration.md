@@ -162,6 +162,8 @@ window (as much as its `context_window` holds) and only its answer goes to
 the brain, marked as drawn from untrusted text; the call costs a worker
 call and shows on the meter. Without one, the brain gets a window of the
 text inside `<untrusted_page>` tags under a header that says it is data.
+A copy of the wrapper tag written into the page (or the worker's answer)
+has its `<` escaped as `&lt;`, so the page cannot end the wrapper early.
 Each call is still a `web_fetch` the classifier and your policy judge,
 cached or not.
 

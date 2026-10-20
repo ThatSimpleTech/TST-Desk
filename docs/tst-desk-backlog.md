@@ -10227,8 +10227,10 @@ holds, through the host the loop binds for `delegate`, and its cost lands
 on the meter as a worker call (`source: web_fetch`). A failed or empty
 worker answer is an error that points at a plain fetch; it never falls
 back to raw text. Without `question` the text comes back in
-`<untrusted_page>` tags under a header that says it is data; copies of the
-tag in the page are removed. Hidden characters (tag block, zero-width,
+`<untrusted_page>` tags under a header that says it is data; any copy of
+either wrapper tag in the page or the worker's answer, nested ones
+included, has its `<` escaped as `&lt;`, so it cannot close the wrapper.
+Hidden characters (tag block, zero-width,
 bidi, other format and control characters, variation selectors) are
 stripped and counted. Windows are `search.fetch_page_chars` (30000),
 shrunk under the result cap, and name the next `offset`; pages stay in

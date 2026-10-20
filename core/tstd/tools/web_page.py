@@ -10,8 +10,8 @@ instructions for the agent. Everything here treats it as data:
   variation selectors and control characters other than tab and newline.
 - :func:`render_page` wraps one window of the text in ``<untrusted_page>``
   tags under a header that says it is data, and names the next offset when
-  more remains.  A copy of the tag inside the page is removed so the page
-  cannot close the wrapper early.
+  more remains.  :func:`defang` escapes every copy of a wrapper tag in the
+  text, nested ones included, so the page cannot close the wrapper early.
 - :class:`PageCache` keeps cleaned text in the daemon's memory for a short
   while, so reading a long page in pages, or asking it a second question,
   does not download it again.  Nothing is written to disk.
@@ -37,8 +37,11 @@ WRAPPER_RESERVE_CHARS = 700
 MIN_PAGE_CHARS = 1_000
 
 _TAG = "untrusted_page"
-# Both wrappers: the page's and the worker answer's (web_extract).
-_TAG_IN_TEXT = re.compile(r"<\s*/?\s*(?:untrusted_page|page_answer)\b[^>]*>?", re.IGNORECASE)
+# The "<" that starts a copy of either wrapper tag (the page's, and the
+# worker answer's in web_extract): any case, spaces around the slash, and no
+# word boundary after the name, so a copy cut short by a cap still counts.
+_TAG_START_IN_TEXT = re.compile(r"<(?=\s*/?\s*(?:untrusted_page|page_answer))", re.IGNORECASE)
+_ESCAPED_LT = "&lt;"
 
 # Blocks that are invisible but are not all category Cf: the tag block
 # (E0000 and E0002-E001F are unassigned), and the variation selectors,
@@ -66,8 +69,17 @@ def strip_hidden(text: str) -> tuple[str, int]:
 
 
 def defang(text: str) -> str:
-    """Remove copies of the wrapper tags so the text cannot close them."""
-    return _TAG_IN_TEXT.sub("", text)
+    """Escape every copy of the wrapper tags so the text cannot open or close them.
+
+    The ``<`` that starts a copy becomes ``&lt;``; the rest of the text stays
+    as it was. Deleting copies instead was not safe: cutting the inner copy
+    out of ``</untrusted_<untrusted_page>page>`` joins the outer halves into
+    a real closing tag. Escaping needs one pass and cannot rebuild a tag,
+    because the replacement holds no ``<`` and starts with ``&``, which no
+    tag copy can contain, so every ``<`` left behind is followed by exactly
+    what followed it before.
+    """
+    return _TAG_START_IN_TEXT.sub(_ESCAPED_LT, text)
 
 
 @dataclass(frozen=True)
