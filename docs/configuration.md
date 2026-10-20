@@ -522,10 +522,14 @@ upstream failure partway through a reply as an in-band
 `data: {"error": {...}}` event and then ends the body without
 `data: [DONE]`; OpenRouter sends the same `error` object beside a choice
 whose `finish_reason` is `"error"`. Either shape, and a `finish_reason`
-of `"error"` on its own, counts as the failure. Before anything has streamed, that event is treated as
-the HTTP error its `code` names: a 429 or 5xx is retried as above, and a
-400, 401 or 404 is not. An event without a usable status counts as a
-502. Once part of the reply has streamed, it ends the turn as
+of `"error"` on its own, counts as the failure. Before anything has streamed (an opening chunk
+that only names the role, with no text, reasoning or tool call, does not count), that event is
+treated as the HTTP error its `code` names: a 429 or 5xx is retried as above, and a
+400, 401 or 404 is not. A `code` that is not an HTTP error status (400 to 599), or no `code`,
+counts as a 502. The exception is a window refusal named by a string code such as
+`context_length_exceeded`, or only in its message: it counts as the 400 it is, so it becomes
+`context_overflow` and gets the one retry with a tighter window instead of being resent
+(TD-5158). Once part of the reply has streamed, it ends the turn as
 `stream_interrupted` and is not retried, because a second attempt would
 repeat text the window already shows. A stream that ends with neither a
 `finish_reason` nor `[DONE]` is `stream_interrupted` too. The window
@@ -677,7 +681,7 @@ turns never verify. There is no charter and no auto-revert.
 | `image` | string | `docker.io/library/alpine:3.21` | Image the container execs. Empty is a load error. Pre-pull it; the argv passes `--pull=never` so a start check cannot phone a registry. |
 | `check_every` | int ≥ 1 | `5` | Autonomy turns between validator drift checks (TD-4201, spec §12.6). A Class B decision this turn also checks, even if N is not reached. Interactive sessions ignore this. |
 | `verify` | `off` \| `after_write` \| `ask` | `after_write` | Interactive: after a filesystem write turn, call the validator once (`after_write`), ask first (`ask`), or never (`off`). Autonomy sessions ignore this. The call streams and sends the validator tier's `extra_body`, so ending the session or quitting also ends the server's work; a timed-out attempt is reported as a verify error, not resent (TD-5146). Stop ends a running review although it starts after the turn has ended: the call is cancelled, which hangs up the stream, the timeline shows `Verify stopped.` with no verdict, and the session is free for the next message. A message already queued behind the review still runs. Stop leaves an `ask` review that is waiting for confirmation alone (TD-5151). The review prompt is cut to fit `verify_max_prompt_tokens` first: shell output loses its head (each output keeps its tail), then the oldest diffs go, with `(N earlier lines omitted)` / `(N earlier diffs omitted)` markers where the cuts are, and the verdict's summary ends with what was left out. A prompt that still does not fit, or has no room for any of the diff, is not sent and is reported as a verify error (TD-5153). |
-| `verify_max_prompt_tokens` | int ≥ 1024 \| null | `null` | Most estimated tokens the after-write review's prompt may take: the validator steering, the diffs, the shell output and the instructions together. `null` is 60% of the validator tier's `context_window` (about 39k tokens on a 65,536-token slot, which a local server reading ~390 tokens/s finishes inside the default 120 s `read_timeout`). Never more than `context_window` less `max_output_tokens`, whatever is set. Estimated with the token counter the turn uses, scaled by the ratio learned from the validator endpoint's usage (TD-5007); each review's own usage teaches that ratio too. Lower it when a slow local validator times out; the first chunk arrives only after the whole prompt is read (TD-5153). |
+| `verify_max_prompt_tokens` | int ≥ 1024 \| null | `null` | Most estimated tokens the after-write review's prompt may take: the validator steering, the diffs, the shell output and the instructions together. `null` is 60% of the validator tier's `context_window` (about 39k tokens on a 65,536-token slot, which a local server reading ~390 tokens/s finishes inside the default 120 s `read_timeout`). Never more than `context_window` less `max_output_tokens`, whatever is set. Estimated with the token counter the turn uses, scaled by the ratio learned from the validator endpoint's usage (TD-5007); each review that finishes teaches that ratio too. The 120 s figure holds once that ratio is learned. Before then (a validator endpoint, `base_url` plus slug, that differs from the brain's and has no saved ratio) the flat 4 characters per token can undercount: on a model that reports about 1.6 times the estimate, a full 39k estimate is about 61k real tokens, roughly 156 s at 390 tokens/s, so the first big review there can time out, and a review that times out teaches nothing. Lower it when a slow local validator times out; the first chunk arrives only after the whole prompt is read (TD-5153, TD-5158). |
 
 ### `mcp`
 
@@ -1609,6 +1613,9 @@ the one command, with any `*`, `?` or `[` in it made literal. A read of `app/[id
 saves `args: "app/[[]id]/page.tsx"`, which matches that file and no other, and a file literally
 named `*.env*` saves `"[*].env[*]"`, not a glob over every env file. Settings → Policy shows such
 a rule as `exactly app/[id]/page.tsx`, with the saved pattern on hover; a glob shows as written.
+Only `auto` rules are shown as exact. An `ask` or `never` rule always shows as written, because
+it also matches the text in another case (`.env` catches `.ENV`), and "exactly" would understate
+what it guards (TD-5158).
 
 - Always allow never replaces a rule you wrote. When an `ask` or `never` rule with the same
   `tool` and `args` is saved, the card doesn't offer it. A click sent anyway (a card shown

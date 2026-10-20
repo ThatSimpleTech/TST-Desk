@@ -309,6 +309,12 @@ export function daemonErrorCopy(code: string, message: string): NoticeSpec {
 			body: "TST Desk is restarting — send it again in a few seconds.",
 		};
 	}
+	if (code === "message_not_saved") {
+		// TD-5158: the daemon could not write the message to its queue file,
+		// so it refused it rather than lose it to the next restart. The text
+		// is back in the composer, and the daemon's message names the cause.
+		return { severity: "toast", title: "Message not sent", body: message };
+	}
 	if (code === "queued_not_found") {
 		// TD-5155: Send or Remove on a held message another window (or a
 		// second click) already settled. Nothing is lost; the row goes with

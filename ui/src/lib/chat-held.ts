@@ -32,12 +32,15 @@ export function droppedNote(imagesDropped: number): string | null {
  *  can be clicked again. A send of ours that the daemon held loses its local
  *  echo from the transcript, since the held row is where it now is; the
  *  echo is the text as typed, which an attachment's file block follows in
- *  the daemon's copy. */
+ *  the daemon's copy. Only a row new to this list can be such a send: one
+ *  already held was held before the send, so a fresh send with the same
+ *  text keeps its echo when a later list names that row again (TD-5158). */
 export function applyHeldList(
   state: { held: HeldMessage[]; messages: ChatMessage[] },
   sending: string[],
   event: QueuedMessages,
 ): void {
+  const before = new Set(state.held.map((row) => row.id));
   state.held = event.messages.map((entry) => ({
     id: entry.queued_id,
     text: entry.content,
@@ -45,6 +48,7 @@ export function applyHeldList(
     pending: false,
   }));
   for (const entry of event.messages) {
+    if (before.has(entry.queued_id)) continue;
     const sent = takeSentText(sending, entry.content);
     if (sent === null) continue;
     for (let i = state.messages.length - 1; i >= 0; i--) {

@@ -26,7 +26,8 @@ export const pending = $state<PendingSteeringProposal[]>([]);
 let boundSessionId: string | null = null;
 /** Proposals the log closed (decided or replaced); a replay must not revive them. */
 const closed = new Set<string>();
-/** The card the last decision was sent from: a refusal comes back without an id. */
+/** The card the last decision was sent from. A refusal names its card
+ *  (`proposal_id`, TD-5158); this is the guess for an older daemon's. */
 let lastSent: string | null = null;
 
 const NOT_SENT =
@@ -48,8 +49,8 @@ onDaemonEvent((event) => {
   }
   if (event.type === "error" && STEERING_VERBS.has(event.in_reply_to ?? "")) {
     if (event.session_id != null && event.session_id !== boundSessionId) return;
-    const target = lastSent;
-    lastSent = null;
+    const target = event.proposal_id ?? lastSent;
+    if (target === lastSent) lastSent = null;
     if (target === null) return;
     if (event.code === "no_steering_proposal") {
       // Say so on the card: closing it silently reads as "written".

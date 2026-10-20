@@ -16,7 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -358,6 +358,7 @@ from .protocol import (
     UsageRollup,
     UserMessage,
     ValidateApiKey,
+    VerifyResult,
     build_error,
     parse_client_message,
     scrub_wire_json,
@@ -474,7 +475,13 @@ from .steering_proposals import decide as decide_steering
 from .steering_proposals import expire_restored as expire_restored_steering
 from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
-from .turn_seal import INTERRUPTED_BY_RESTART, open_turn, repair_cut_conversation
+from .turn_seal import (
+    INTERRUPTED_BY_RESTART,
+    REVIEW_CUT_BY_RESTART,
+    open_review,
+    open_turn,
+    repair_cut_conversation,
+)
 from .voice import (
     MAX_AUDIO_BYTES,
     VoiceError,
@@ -518,12 +525,15 @@ _COMPACT_REFUSALS: dict[str, str] = {
 # Why an edit (``fork_from``) or a branch switch (``set_branch``) was refused
 # (TD-5147). A message folded into a summary is gone from the model's
 # context, so it can no longer be edited or switched to another version.
+# The way out names something the user can always do: after "Summarize from
+# here" the summary runs to the end, so there is no later message to edit
+# (TD-5158).
 _BRANCH_REFUSALS: dict[str, str] = {
     "turn_in_progress": "A turn is running. Edit or switch when it finishes, or stop it first.",
     "empty_content": "An edited message can't be empty.",
     "user_turn_compacted": (
         "That message was folded into a summary to free up context, so it can't be "
-        "edited or switched any more. Edit a message after the summary instead."
+        "edited or switched any more. Send a new message to carry on from the summary."
     ),
     "user_turn_not_found": "That message is not in this conversation.",
     "branch_not_found": "That version of the message is no longer available.",
@@ -2204,10 +2214,15 @@ class Daemon:
                 record.session_id, record.workspace_path, final_state
             )
             sess.preset = chosen
+            # A tombstone never gets a runtime, but Resume, a spend cap and
+            # a move still reload its wall: gated too, or a loosening file
+            # read as trusted (TD-5158).
+            sess.trust_store = self.workspace_trust
             if loaded is not None and loaded.events:
                 sess.event_log.replace(loaded.events)
                 # TD-5140: a replay-only session holds no proposal either.
                 await expire_restored_steering(sess, loaded.events)
+                await self._seal_cut_review(sess, loaded.events)
             if final_state != record.state:
                 await self._session_store.update_state(record.session_id, final_state)
             log.info(
@@ -2580,7 +2595,29 @@ class Daemon:
             ]
             display = render_user_content(msg.content, decoded)
             provider = build_provider_user_content(msg.content, decoded)
-            await found.add_user_message(QueuedUserMessage(display=display, provider=provider))
+            try:
+                await found.add_user_message(
+                    QueuedUserMessage(display=display, provider=provider), refuse_unsaved=True
+                )
+            except OSError as e:
+                # Accepted means saved (TD-5155): a send that cannot reach
+                # the queue file is refused, and the window puts the text
+                # back in the composer, instead of being lost to the next
+                # restart without a word (TD-5158).
+                found.pending_images = []
+                log.warning(
+                    "user message not saved; refused",
+                    extra={"extra_fields": {"session_id": msg.session_id, "error": str(e)}},
+                )
+                reason = e.strerror or type(e).__name__
+                return build_error(
+                    "message_not_saved",
+                    f"Couldn't save the message to disk ({reason}), so it was not sent. "
+                    "It is back in the composer; check that TST Desk's data folder is "
+                    "writable, then send it again.",
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
+                )
             # Title from the user's text, not the rendered body — an
             # attachment-only message must stay untitled (TD-3001).
             await self._session_store.maybe_set_title(msg.session_id, msg.content)
@@ -2610,7 +2647,10 @@ class Daemon:
             result = await found.fork_from(msg.user_index, msg.content)
             if isinstance(result, str):
                 return build_error(
-                    result, _BRANCH_REFUSALS.get(result, result), session_id=msg.session_id
+                    result,
+                    _BRANCH_REFUSALS.get(result, result),
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
                 )
             await found.event_log.add(result)
             return None
@@ -2639,7 +2679,10 @@ class Daemon:
             result = await found.set_branch(msg.user_index, msg.sibling_index)
             if isinstance(result, str):
                 return build_error(
-                    result, _BRANCH_REFUSALS.get(result, result), session_id=msg.session_id
+                    result,
+                    _BRANCH_REFUSALS.get(result, result),
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
                 )
             await found.event_log.add(result)
             return None
@@ -3646,6 +3689,7 @@ class Daemon:
         await restore_queue(sess, rows, loaded.events)
         # TD-5140: open steering proposals lived in the old process's memory.
         await expire_restored_steering(sess, loaded.events)
+        await self._seal_cut_review(sess, loaded.events)
         await self._emit_working_context(sess, config_source(sess))
         log.info(
             "revived session",
@@ -3679,6 +3723,21 @@ class Daemon:
         )
         await sess.conversation_changed()
         log.info("sealed cut turn", extra={"extra_fields": {"session_id": sess.id}})
+
+    async def _seal_cut_review(self, sess: Session, events: Sequence[DaemonEvent]) -> None:
+        """End a review the last daemon died during (TD-5158).
+
+        Its ``verify_started`` would otherwise leave the window offering
+        Stop for a review nothing runs.
+        """
+        if not open_review(events):
+            return
+        await sess.event_log.add(
+            VerifyResult(
+                session_id=sess.id, verdict="error", summary=REVIEW_CUT_BY_RESTART, cost=0, seq=1
+            )
+        )
+        log.info("sealed cut review", extra={"extra_fields": {"session_id": sess.id}})
 
     async def _held_message_action(self, msg: SendQueued | RemoveQueued) -> str | None:
         """Send or drop a message a restart left held (TD-5155).
@@ -3784,7 +3843,7 @@ class Daemon:
                 },
             )
 
-        policy_error = reload_session_policy(sess, sess.workspace_path)
+        policy_error = reload_session_policy(sess, sess.workspace_path, view=sess.config_view)
         if policy_error is not None:
             log.warning(
                 "workspace policy config invalid; using defaults",

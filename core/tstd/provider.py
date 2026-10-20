@@ -820,6 +820,19 @@ _OVERFLOW_PHRASES: tuple[str, ...] = (
 )
 
 
+def _shows_nothing(chunk: StreamChunk) -> bool:
+    """A chunk with no text, reasoning, tool call, finish or usage (TD-5158)."""
+    delta = chunk.delta
+    return not (
+        delta.content
+        or delta.reasoning
+        or delta.reasoning_details
+        or delta.tool_calls
+        or chunk.finish_reason
+        or chunk.usage is not None
+    )
+
+
 def is_context_overflow(status: int, body: str) -> bool:
     """True when an HTTP 400 body is a context-window refusal.
 
@@ -1186,6 +1199,12 @@ class ProviderClient:
                     saw_finish = False
                     saw_done = False
                     yielded_any = False
+                    # Chunks that show nothing (the usual opening
+                    # ``{"role": "assistant", "content": ""}``), held until
+                    # one that does. Until then nothing is on screen, so an
+                    # error event is the status it names and retried as
+                    # one (TD-5158), and ``retry_stream`` sees it first.
+                    held: list[StreamChunk] = []
                     events = sse.aiter_sse()
                     loop = asyncio.get_running_loop()
                     total_deadline = (
@@ -1252,13 +1271,19 @@ class ProviderClient:
                                 continue
                             if chunk is None:
                                 continue
+                            if idle_deadline is not None and self.timeout.stream_idle:
+                                idle_deadline = loop.time() + self.timeout.stream_idle
+                            if not yielded_any and _shows_nothing(chunk):
+                                held.append(chunk)
+                                continue
                             if chunk.delta.tool_calls:
                                 in_tool_call = True
                             if chunk.finish_reason:
                                 saw_finish = True
                             yielded_any = True
-                            if idle_deadline is not None and self.timeout.stream_idle:
-                                idle_deadline = loop.time() + self.timeout.stream_idle
+                            for early in held:
+                                yield early
+                            held.clear()
                             yield chunk
                     except httpx.ReadTimeout:
                         # The socket went quiet for ``read`` seconds: the
@@ -1280,6 +1305,13 @@ class ProviderClient:
                         )
                         return
 
+                    if held:
+                        # The stream ended on chunks that showed nothing.
+                        # They are still the reply, as before.
+                        yielded_any = True
+                        for early in held:
+                            yield early
+                        held.clear()
                     if in_tool_call and not saw_finish:
                         yield ProviderError(
                             code="stream_interrupted",
@@ -1505,12 +1537,22 @@ class ProviderClient:
         if not isinstance(err, dict):
             return None
         code = err.get("code")
-        if isinstance(code, bool):  # bool is an int subclass; not a status
-            return 502
-        if isinstance(code, int):
-            return code
-        if isinstance(code, str) and code.lstrip("-").isdigit():
-            return int(code)
+        status: int | None = None
+        if isinstance(code, int) and not isinstance(code, bool):  # a bool is no status
+            status = code
+        elif isinstance(code, str) and code.lstrip("-").isdigit():
+            status = int(code)
+        # Only an error status is one. A 0, a negative or a 2xx would be
+        # classified as the 200 the stream claimed and never retried (TD-5158).
+        if status is not None and 400 <= status <= 599:
+            return status
+        # A window refusal named by a string code (OpenAI's
+        # ``context_length_exceeded``) or only in its message is the 400 an
+        # HTTP reply gives it, so it becomes ``context_overflow`` and the
+        # loop's tighter-window retry runs instead of resending (TD-5158).
+        named = f"{code if isinstance(code, str) else ''} {err.get('message') or ''}"
+        if is_context_overflow(400, named):
+            return 400
         # An error envelope with no usable status is still an error.
         return 502
 

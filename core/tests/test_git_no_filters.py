@@ -785,3 +785,116 @@ def test_remove_never_walks_through_a_link(tmp_path: Path) -> None:
 
     assert (outside / "x").read_text() == "keep\n"
     assert not (top / "link").is_symlink()
+
+
+# ── Review notes (TD-5158) ─────────────────────────────────────────────
+
+
+def _index_env(repo: Path, index: Path) -> tuple[Path, dict[str, str]]:
+    """An index at *index* holding HEAD, and the repository top it belongs to."""
+    env = {**os.environ, "GIT_INDEX_FILE": str(index)}
+    subprocess.run(["git", "-C", str(repo), "read-tree", "HEAD"], env=env, check=True)
+    return repo.resolve(), env
+
+
+def _git_in(repo: Path, index: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "GIT_INDEX_FILE": str(index)}
+    return subprocess.run(["git", "-C", str(repo), *args], env=env, capture_output=True, text=True)
+
+
+async def _stage_into(repo: Path, index: Path, *paths: Path) -> list[git_stage.IndexEntry]:
+    top, env = _index_env(repo, index)
+    return await git_stage.stage_paths(top, list(paths), env=env)
+
+
+def _index_paths(repo: Path, index: Path) -> list[str]:
+    env = {**os.environ, "GIT_INDEX_FILE": str(index)}
+    out = subprocess.run(
+        ["git", "-C", str(repo), "ls-files"], env=env, check=True, capture_output=True, text=True
+    )
+    return out.stdout.split()
+
+
+async def test_ignorecase_stages_under_the_case_the_index_uses(tmp_path: Path) -> None:
+    """As ``git add`` does with core.ignorecase (APFS, NTFS): one entry, not two.
+
+    On Linux two spellings are two files, standing in for one file reached
+    by two spellings on a case-insensitive disk.
+    """
+    repo = make_repo(tmp_path)
+    (repo / "docs").mkdir()
+    (repo / "docs" / "x.md").write_text("old\n")
+    _git(repo, "add", "docs/x.md")
+    _git(repo, "commit", "-q", "-m", "docs")
+    _git(repo, "config", "core.ignorecase", "true")
+    (repo / "Docs").mkdir()
+    (repo / "Docs" / "X.md").write_text("new\n")
+
+    control = tmp_path / "control.index"
+    _index_env(repo, control)
+    assert _git_in(repo, control, "add", "Docs/X.md").returncode == 0
+    ours = tmp_path / "ours.index"
+    [entry] = await _stage_into(repo, ours, repo / "Docs" / "X.md")
+
+    assert _index_paths(repo, ours) == _index_paths(repo, control) == ["a.txt", "docs/x.md"]
+    assert entry.path == "docs/x.md"
+    assert _git(repo, "cat-file", "-p", entry.oid) == "new"
+
+
+async def test_without_ignorecase_another_case_is_another_file(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path)
+    (repo / "docs").mkdir()
+    (repo / "docs" / "x.md").write_text("old\n")
+    _git(repo, "add", "docs/x.md")
+    _git(repo, "commit", "-q", "-m", "docs")
+    _git(repo, "config", "core.ignorecase", "false")
+    (repo / "Docs").mkdir()
+    (repo / "Docs" / "X.md").write_text("new\n")
+    ours = tmp_path / "ours.index"
+    await _stage_into(repo, ours, repo / "Docs" / "X.md")
+    assert _index_paths(repo, ours) == ["Docs/X.md", "a.txt", "docs/x.md"]
+
+
+def _secret(tmp_path: Path) -> tuple[Path, str]:
+    outside = tmp_path / "host"
+    outside.mkdir()
+    secret = outside / "id_rsa"
+    secret.write_bytes(b"-----BEGIN HOST ONLY-----\n")
+    oid = subprocess.run(
+        ["git", "hash-object", "--no-filters", str(secret)],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    return outside, oid
+
+
+@pytest.mark.skipif(os.name != "posix", reason="os.symlink needs a privilege on Windows")
+@pytest.mark.parametrize("swap", ["file", "folder"])
+async def test_a_path_swapped_for_a_symlink_while_staging_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, swap: str
+) -> None:
+    """Planned as a regular file, read through a link: refused, nothing stored."""
+    repo = make_repo(tmp_path)
+    outside, secret_oid = _secret(tmp_path)
+    (repo / "sub").mkdir()
+    target = repo / "sub" / "id_rsa"
+    target.write_bytes(b"workspace file\n")
+    real = git_stage.path_attributes
+
+    async def swap_then_attributes(*args: object, **kwargs: object) -> object:
+        # Between the plan's lstat and the read: the gap a sandboxed
+        # process could use while staging runs its git commands.
+        if swap == "file":
+            target.unlink()
+            target.symlink_to(outside / "id_rsa")
+        else:
+            shutil.rmtree(repo / "sub")
+            (repo / "sub").symlink_to(outside, target_is_directory=True)
+        return await real(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(git_stage, "path_attributes", swap_then_attributes)
+    with pytest.raises(GitRawError, match="changed while it was being staged"):
+        await _stage_into(repo, tmp_path / "ours.index", target)
+    exists = _git_in(repo, tmp_path / "ours.index", "cat-file", "-e", secret_oid)
+    assert exists.returncode != 0, "the host file was written into the object store"

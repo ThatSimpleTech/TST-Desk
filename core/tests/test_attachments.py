@@ -515,11 +515,11 @@ class TestDaemonRefusal:
         captured: list[QueuedUserMessage] = []
         original = sess.add_user_message
 
-        async def spy(content: str | QueuedUserMessage) -> None:
+        async def spy(content: str | QueuedUserMessage, **kwargs: bool) -> None:
             captured.append(
                 QueuedUserMessage.plain(content) if isinstance(content, str) else content
             )
-            await original(content)
+            await original(content, **kwargs)
 
         sess.add_user_message = spy  # type: ignore[method-assign]
 
@@ -548,11 +548,11 @@ class TestDaemonRefusal:
         captured: list[QueuedUserMessage] = []
         original = sess.add_user_message
 
-        async def spy(content: str | QueuedUserMessage) -> None:
+        async def spy(content: str | QueuedUserMessage, **kwargs: bool) -> None:
             captured.append(
                 QueuedUserMessage.plain(content) if isinstance(content, str) else content
             )
-            await original(content)
+            await original(content, **kwargs)
 
         sess.add_user_message = spy  # type: ignore[method-assign]
 
@@ -602,11 +602,11 @@ class TestDaemonRefusal:
         captured: list[QueuedUserMessage] = []
         original = sess.add_user_message
 
-        async def spy(content: str | QueuedUserMessage) -> None:
+        async def spy(content: str | QueuedUserMessage, **kwargs: bool) -> None:
             captured.append(
                 QueuedUserMessage.plain(content) if isinstance(content, str) else content
             )
-            await original(content)
+            await original(content, **kwargs)
 
         sess.add_user_message = spy  # type: ignore[method-assign]
 

@@ -11,6 +11,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -264,6 +265,44 @@ class TestFailedAttemptsHangUp:
         assert isinstance(first, StreamChunk)
         await stream.aclose()  # type: ignore[attr-defined]
         assert log == ["request 1", "hang up 1"]
+        await client.close()
+
+    async def test_the_turn_loop_hangs_up_when_it_stops_reading(self, tmp_path: Path) -> None:
+        """The loop's own reader closes the stream it stops reading (TD-5158).
+
+        It breaks out of ``async for`` on Stop or a provider error and never
+        called ``aclose``, so the hang-up waited for the async-generator
+        finalizer, a task scheduled after the reader had returned.
+        """
+        from tests.test_dispatch import make_config
+        from tstd.cost import CostTracker
+        from tstd.loop import _stream_and_parse
+        from tstd.session import Session
+
+        async def script(attempt: int) -> AsyncIterator[bytes]:
+            for i in range(100):
+                yield _chunk(str(i % 10))
+                await asyncio.sleep(0.01)
+
+        log: list[str] = []
+        client = _client(_logged_endpoint(script, log), TimeoutConfig(stream_idle=1.0))
+        config = make_config()
+        session = Session(str(tmp_path))
+        session._stop_turn_event.set()  # Stop: the reader breaks at the first chunk
+        result = await _stream_and_parse(
+            client,
+            "local",
+            [ChatMessage(role="user", content="hi")],
+            session,
+            None,
+            CostTracker(config),
+            "brain",
+            config.tier("brain"),
+        )
+        # No await between the reader returning and this check: the
+        # finalizer's task has not had a turn yet.
+        assert log == ["request 1", "hang up 1"]
+        assert result[2] is True and result[3] == "stopped"
         await client.close()
 
 

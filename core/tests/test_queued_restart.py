@@ -307,3 +307,75 @@ async def test_held_messages_trimmed_from_the_log_are_logged_again(tmp_path: Pat
     lists = _lists(session)
     assert len(lists) == 1
     assert [m.content for m in lists[0].messages] == ["kept"]
+
+
+# ── Review notes (TD-5158) ──────────────────────────────────────────────
+
+
+async def test_a_send_that_cannot_be_saved_is_refused_not_lost(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Accepted means on disk: a failed queue write refuses the send."""
+    from tests.test_artifacts import _open, _shutdown
+
+    daemon = Daemon(
+        data_dir=tmp_path / "data", provider=MockProvider(default=Script(kind="stream"))
+    )
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    sid = await _open(daemon, ws)
+    session = daemon.session_registry.get(sid)
+    assert session is not None
+
+    def unwritable(session_id: str, entries: list[dict[str, Any]]) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(daemon._session_persist, "save_queue", unwritable)
+    try:
+        reply = await daemon._handle_message(
+            json.dumps({"type": "user_message", "session_id": sid, "content": "keep me"}), None
+        )
+        assert reply is not None
+        frame = json.loads(reply)
+        assert frame["code"] == "message_not_saved"
+        assert frame["in_reply_to"] == "user_message"
+        assert "Permission denied" in frame["message"]
+        assert session.pending_user_messages == 0
+        assert session.turn_in_flight is False
+        assert session._waiting == []
+    finally:
+        await _shutdown(daemon, sid)
+
+
+async def test_a_send_cancelled_during_its_write_leaves_no_open_turn(tmp_path: Path) -> None:
+    """The turn count and the queue move together, or not at all."""
+    session = Session(str(tmp_path))
+    await session.set_state("running")
+    writing = asyncio.Event()
+
+    async def slow(messages: list[QueuedUserMessage]) -> None:
+        writing.set()
+        await asyncio.sleep(10)
+
+    session._queue_hook = slow
+    task = asyncio.create_task(session.add_user_message("x"))
+    await writing.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert session.turn_in_flight is False
+    assert session.pending_user_messages == 0
+    assert session._waiting == []
+
+
+async def test_a_background_send_still_runs_when_the_write_fails(tmp_path: Path) -> None:
+    """Only the window's send is refused; the scheduler's runs from memory."""
+    session = Session(str(tmp_path))
+
+    async def broken(messages: list[QueuedUserMessage]) -> None:
+        raise OSError(28, "No space left on device")
+
+    session._queue_hook = broken
+    await session.add_user_message("scheduled")
+    assert session.pending_user_messages == 1
+    assert session.turn_in_flight is True
