@@ -313,3 +313,105 @@ async def test_stop_ends_a_confirmed_ask_review(tmp_path: Path, monkeypatch: Mon
         confirmed.cancel()
         await runner.cancel()
     assert second.error_code is None
+
+
+# ── Stale stops (TD-5158) ───────────────────────────────────────────────
+
+
+async def _turn_with_a_late_stop(session: Session) -> None:
+    """A turn that wrote, with Stop landing as it ended: accepted, never acknowledged."""
+    await session.set_state("running")
+    await session.add_user_message("write it")
+    await session.stop_turn()
+    await session.event_log.add(
+        TurnComplete(session_id=session.id, tokens=0, cost=0.0, tier="brain", duration=0.1, seq=1)
+    )
+    note_tool_result(session, "fs_write", "success", diff="+hello\n")
+
+
+async def test_a_stale_stop_does_not_swallow_the_users_run(tmp_path: Path) -> None:
+    """The turn's late Stop must not turn a later Run into "Verify stopped."."""
+    session = Session(str(tmp_path))
+    await _turn_with_a_late_stop(session)
+    mock = MockProvider(scripts={"test-validator": _QUICK_REVIEW})
+    config = _config("ask")
+
+    async def client_for(tier: TierConfig) -> Any:
+        del tier
+        return mock
+
+    await maybe_verify_after_turn(
+        session,
+        config,
+        CostTracker(config),
+        client_for,
+        _Assembler(),  # type: ignore[arg-type]
+    )
+    assert any(e.pending for e in _verifies(session))
+    await confirm_pending_verify(session)
+    assert _validator_calls(mock) == 1
+    assert [e.verdict for e in _verifies(session) if not e.pending] == ["pass"]
+    _assert_idle(session)
+
+
+async def test_a_stop_after_the_call_returned_is_not_left_set(tmp_path: Path) -> None:
+    """Stop reached the open review while its result was being written."""
+    session = Session(str(tmp_path))
+    await session.set_state("running")
+    note_tool_result(session, "fs_write", "success", diff="+hello\n")
+    mock = MockProvider(scripts={"test-validator": _QUICK_REVIEW})
+    config = _config()
+    real_add = session.event_log.add
+
+    async def add_then_stop(event: Any) -> Any:
+        if isinstance(event, VerifyResult) and not event.pending:
+            await session.stop_turn()
+        return await real_add(event)
+
+    session.event_log.add = add_then_stop  # type: ignore[method-assign]
+
+    async def client_for(tier: TierConfig) -> Any:
+        del tier
+        return mock
+
+    await maybe_verify_after_turn(
+        session,
+        config,
+        CostTracker(config),
+        client_for,
+        _Assembler(),  # type: ignore[arg-type]
+    )
+    assert [e.verdict for e in _verifies(session)] == ["pass"]
+    _assert_idle(session)
+
+
+async def test_a_stop_while_the_prompt_is_fitted_reads_as_stopped(tmp_path: Path) -> None:
+    """A prompt refused as too big after Stop is a stop, not "Not reviewed"."""
+    session = Session(str(tmp_path))
+    await session.set_state("running")
+    note_tool_result(session, "fs_write", "success", diff="+hello\n")
+    mock = MockProvider(scripts={"test-validator": _QUICK_REVIEW})
+    config = make_config().model_copy(
+        update={"autonomy": AutonomyConfig(verify="after_write", verify_max_prompt_tokens=1024)}
+    )
+
+    class _StoppedWhileFitting:
+        async def assemble(self, name: str, **kwargs: object) -> SimpleNamespace:
+            del kwargs
+            await session.stop_turn()
+            return SimpleNamespace(text=f"You review a {name} diff. " + "rule " * 4_000)
+
+    async def client_for(tier: TierConfig) -> Any:
+        del tier
+        return mock
+
+    await maybe_verify_after_turn(
+        session,
+        config,
+        CostTracker(config),
+        client_for,
+        _StoppedWhileFitting(),  # type: ignore[arg-type]
+    )
+    assert _validator_calls(mock) == 0
+    _assert_stopped(session)
+    _assert_idle(session)
