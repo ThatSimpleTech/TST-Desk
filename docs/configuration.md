@@ -69,6 +69,7 @@ no effect.
 | `computer_use` | mapping | see below | Desktop computer-use sidecar. Omitted in an older user copy is filled from the shipped file at load. Empty `command` is mock-only — the daemon never spawns `mcp/tst-cu-mcp`. Empty `grounding.base_url` leaves click targeting on the intended (x, y). |
 | `session` | mapping | see below | On-disk session event-log window. Omitted in an older user copy is filled from the shipped file at load. Zero is invalid, not unbounded. |
 | `clear_tool_results` | mapping | see below | Clear stale tool results before whole turns are compacted (TD-5115). Omitted in an older user copy is filled from the shipped file at load, which turns it on. |
+| `consult` | mapping | see below | Which tiers get the `consult` tool, which asks the brain or the validator one question mid-task, and how many consults one turn may make (TD-5119). Omitted in an older user copy is filled from the shipped file at load: the worker only, two a turn. |
 | `shell` | mapping | see below | The read-only shell list (TD-5103): commands that run without asking. Omitted in an older user copy means the whole built-in list, on. Config can shrink it or switch it off, never add to it. |
 | `remote` | mapping | see below | Opt-in Tailscale bind. Omitted in an older user copy is filled from the shipped file at load. Empty `bind` is loopback only. |
 | `notify` | mapping | see below | Outbound notification channels. Omitted in an older user copy is filled from the shipped file at load. Slack and ntfy are off until their `enabled` flag is true and a destination URL is stored in the OS keychain. |
@@ -569,6 +570,50 @@ clear_tool_results:
   keep_recent_tool_results: 5
   clear_at_least_tokens: 4000
   exclude_tools: [load_skill]
+```
+
+### `consult`
+
+The `consult` tool (TD-5119) lets the tier doing the work ask a stronger
+one for help without handing it the turn. The model sends one short
+question (up to 2,000 characters) and the context it picks (up to 16,000
+characters: the code, the error, the plan or the options), and gets the
+answer back as the tool result, cut to 800 tokens. The adviser sees
+nothing else: not the conversation, not the workspace, and it has no tools.
+
+- `to` is `brain` (the default) or `validator`. A brain that has the tool
+  asks the validator by default; no tier can ask itself.
+- A tier not listed in `tiers` is never offered the tool, and a call from
+  it is refused. The shipped list is the worker only, so worker turns and
+  `delegate` children have it, both kinds, since every child runs on the
+  worker tier. The brain and the validator do not, unless listed.
+- `max_per_turn` counts every consult of one turn, a delegate child's
+  included. Past it the call is refused and the model is told to decide
+  with what it has. A consult is also refused once a spend, wall-clock or
+  iteration cap (§4.2) is reached.
+- Each consult is a call on the tier it asks, priced at that tier's rates,
+  and lands on the cost meter on that tier's line, in the turn and session
+  totals (`cost_update`), and in the audit trail's model calls for the turn.
+- It writes nothing and reaches only the session's own model endpoints, so
+  it runs without asking (Class A, the `consult` rule). A `policy` rule can
+  still make it ask or refuse it (§4.4).
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `tiers` | list of `brain`, `worker`, `validator` | `[worker]` | The tiers offered `consult`. `[]` turns it off everywhere. Repeats are dropped. |
+| `max_per_turn` | int 1..20 | `2` | Consults one turn may make, delegate children included. |
+
+<!-- verify: model -->
+```yaml
+presets:
+  local:
+    brain: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    worker: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    validator: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+active_preset: local
+consult:
+  tiers: [worker, brain]
+  max_per_turn: 3
 ```
 
 ### `shell`
@@ -1986,6 +2031,18 @@ policy:
     - tool: fs_grep
       args: "*.env*"
       effect: never
+```
+
+**`consult` never asks (TD-5119).** Asking the brain or the validator a question writes nothing
+and reaches only your own model endpoints, so it is Class A by a fixed rule. Its spend is capped
+per turn (§2 `consult`) and by your caps. To approve each one, add a rule:
+
+<!-- verify: workspace -->
+```yaml
+policy:
+  rules:
+    - tool: consult
+      effect: ask
 ```
 
 - `effect: ask` asks instead, but an unattended (autonomy) run treats `ask` as `auto`, so only

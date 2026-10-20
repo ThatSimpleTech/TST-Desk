@@ -16048,3 +16048,76 @@ gone before it could be read); reading `podman inspect` after dropping
   field (blank is unset), the YAML preview and the sign card show it. The
   Charter column is not in the UI walk's census, so the census is
   unchanged.
+
+---
+
+## 2026-10-20 — TD-5119: `consult`, the acting tier asks the brain or the validator (Class B)
+
+**Decision:** a builtin tool, `consult` (`core/tstd/tools/consult.py`),
+takes `question` (up to 2,000 characters), optional `context` (up to
+16,000) and optional `to` (`brain` or `validator`). The handler makes one
+call on the asked tier with a short system prompt and the question plus
+the chosen context, and returns the answer, cut to 800 tokens of the
+asking tier's counter, as the tool result. A top-level `consult:` block
+in `config.yaml` holds `tiers` (default `[worker]`) and `max_per_turn`
+(default 2, 1..20).
+
+1. **Per tier, off unless listed; the worker listed.** The story says
+   "off by default per tier" and "on for worker runs and delegate
+   children". Read together: each tier has its own switch, off unless the
+   tier is in `consult.tiers`, and the shipped list is the worker. A
+   `delegate` child always runs on the worker tier, so it follows the
+   worker's switch; there is no separate child switch. The block is
+   top-level, not a key on each preset's tier: who may escalate is a role
+   of the tier, not a property of whichever model a preset puts there,
+   and an older user copy without the block gets the shipped one at load
+   (pydantic default and the shipped-file fill), so it is on for the
+   worker there too.
+2. **Offered per tier.** The loop offers the registry's tools less
+   `consult` on a model call whose tier is not listed (`offered_tools`),
+   and sets `session.acting_tier` for each call. The handler refuses a
+   call from an unlisted tier too (`consult_off`), so a model that names
+   the tool anyway gets nothing. Each tier's tool set is fixed, so its
+   prompt prefix stays cacheable.
+3. **Both child kinds.** The worker and research children get `consult`
+   added to their registries when the worker tier is listed. This amends
+   TD-5117's "fs_read, fs_list, fs_grep, web_search and web_fetch only"
+   for the research child: `consult` writes nothing, runs nothing and
+   reaches no MCP server or web host, so the child stays read-only. With
+   the worker unlisted the research child is exactly TD-5117's five.
+4. **Capped per turn, the child's included.** `session.consult_tally` is
+   one object the loop zeroes when a turn starts (beside
+   `tracker.begin_turn()`); the child shares the parent's, so a turn's
+   consults are counted wherever they come from. A call is counted
+   before it is sent, so a failing endpoint cannot be retried past the
+   cap. A consult is also refused once a spend, wall-clock or iteration
+   cap is reached (`_cap_violation`, never relaxed by skip-all, as for a
+   child).
+5. **Cost on the meter.** The call is recorded with `tracker.record`
+   on the asked tier at its own price (`source="consult"`), so it is in
+   the turn and session totals and on that tier's `cost_by_tier` line,
+   and a `cost_update` goes out at once. A child's consult goes to the
+   parent's event log (a `meter` session on `DelegateRuntime`), since the
+   child's own log reaches no window.
+6. **The adviser sees only what is sent.** No steering, memory, manifest
+   or conversation is added: the story asks for "a short question plus
+   selected context", and a bare call keeps a consult cheap. The prompt
+   tells it the context is data, not instructions.
+7. **Class A by a fixed rule.** The classifier's `consult` rule grants
+   Class A to the builtin only (no provenance, `auto`, no paths, hosts or
+   writes), so it neither asks nor costs a worker judgment per call. It
+   writes nothing and reaches only the session's own model endpoints,
+   and it is capped per turn and by the spend cap. A policy rule
+   (`tool: consult, effect: ask`) still makes it ask. This is the
+   conservative reading that still meets the story: an approval card per
+   consult would stall the unattended worker runs it is for, and a user
+   who wants one can add the rule.
+8. **Same tier refused.** A tier cannot ask itself (`consult_same_tier`);
+   a listed brain asks the validator by default.
+
+**Alternatives rejected:** a `consult` key on every preset's tier
+(repeated per preset, and absent from older copies, so off for existing
+users); an `ask` floor (a card per consult); sending the session's
+steering or conversation along (cost, and more than the story asks);
+reading files by path inside the tool (a second read path to guard);
+counting a child's consults separately from its parent's turn.

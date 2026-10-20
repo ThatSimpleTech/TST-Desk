@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from .config import ModelConfig
     from .context.memory_loader import MemoryLoad
     from .cost import CostTracker
-    from .router import TierRouter
+    from .router import TierName, TierRouter
     from .steering_proposals import ParkedSteering
     from .tools.registry import Tool
 
@@ -84,6 +84,18 @@ class QueuedUserMessage:
         if self.images_dropped and isinstance(self.provider, str):
             return self.provider
         return self.display
+
+
+@dataclass
+class ConsultTally:
+    """``consult`` calls made in the running turn (TD-5119).
+
+    One object, shared with a delegate child, so the child's consults
+    count against the turn that spawned it. The loop zeroes it when a
+    turn starts.
+    """
+
+    used: int = 0
 
 
 class SessionError(Exception):
@@ -366,6 +378,11 @@ class Session:
         self.parent_id: str | None = None
         # Bound by agent_loop so ``delegate`` can spawn a worker child.
         self.delegate_runtime: Any = None
+        # TD-5119: the tier making the model call whose tools are being
+        # run, set by the loop (a delegate child is always the worker), and
+        # the turn's ``consult`` calls. ``consult`` reads both.
+        self.acting_tier: TierName | None = None
+        self.consult_tally = ConsultTally()
         # Catalog preset this loop is using (TD-1721). Name on the
         # session record; ``config`` is a snapshot of that catalog
         # entry, not a fork written back to Settings.

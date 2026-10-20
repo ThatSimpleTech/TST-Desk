@@ -44,6 +44,10 @@ from tstd.tools.registry import Tool
 from tstd.tools.results import HandlerOutput
 
 READ_ONLY = {"fs_read", "fs_list", "fs_grep", "web_search", "web_fetch"}
+#: What the research child is offered under the default config: consult is
+#: on for the worker tier, which every child runs on (TD-5119). It reads
+#: and writes nothing; it asks the brain one question.
+OFFERED = READ_ONLY | {"consult"}
 #: In a workspace file, never in the worker's summary: if the parent model
 #: ever sees it, the transcript leaked into the parent context.
 MARKER = "zebra-quokka-7731"
@@ -121,7 +125,7 @@ async def test_research_child_runs_on_worker_tier_with_read_only_tools(tmp_path:
 
     assert "hello from notes" in summary
     offered = _offered(mock, "test-worker")
-    assert offered and all(names == READ_ONLY for names in offered)
+    assert offered and all(names == OFFERED for names in offered)
     assert {c.model for c in mock.calls} == {"test-worker"}
     first = mock.calls[0].messages[1].content
     assert isinstance(first, str) and "read-only research worker" in first
@@ -364,7 +368,7 @@ async def test_parent_loop_keeps_transcript_out_of_context_and_on_the_event(
     brain = _brain_text(mock)
     assert "animals.md names one animal pair." in brain
     assert MARKER not in brain
-    assert _offered(mock, "test-worker")[0] == READ_ONLY
+    assert _offered(mock, "test-worker")[0] == OFFERED
 
 
 def test_recorder_caps_each_step_and_the_whole_transcript() -> None:
@@ -401,7 +405,7 @@ async def test_plan_mode_defaults_delegate_to_research(tmp_path: Path) -> None:
     out = await handle_delegate(parent, task="Map the repo")
 
     assert out.text == "explored"
-    assert _offered(mock, "test-worker") == [READ_ONLY]
+    assert _offered(mock, "test-worker") == [OFFERED]
 
 
 async def test_plan_mode_still_runs_an_explicit_worker(tmp_path: Path) -> None:

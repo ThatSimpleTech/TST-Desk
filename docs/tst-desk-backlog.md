@@ -9989,7 +9989,55 @@ refused, web_search on the session's endpoint, token cap, transcript on
 the event and absent from every brain request, plan mode default and
 explicit worker), `core/tests/test_delegate.py` (token cap), and
 `ui/src/lib/worker-transcript.test.ts` (chat fold and Activity row from
-the daemon's fixture). See DECISIONS.md.
+the daemon's fixture). See DECISIONS.md. Later, TD-5119 adds `consult`
+to both kinds while it is on for the worker tier; it writes nothing and
+reaches no web host or MCP server, so the research child stays
+read-only, and with it off the research child has exactly these five.
+
+---
+
+### TD-5119 — `consult` tool: ask a stronger tier mid-task
+**Size:** 3 · **Depends on:** none
+
+From the 2026-10-14 gap audit (docs/gap-audit-2026-10-14.md). The worker
+could only hand the turn back to the brain after repeated failures
+(TD-303's escalation); it had no way to ask one question and carry on,
+and the validator ran only on autonomy's fixed cadence.
+
+**Acceptance criteria:**
+- [x] A tool lets the acting tier send a short question plus selected
+      context to the brain (or the validator), and get an answer back as
+      the tool result.
+- [x] It is capped per turn, and its cost shows in the meter.
+- [x] Off by default per tier. It is on for worker runs and delegate
+      children.
+
+Done (2026-10-20): `consult` (`core/tstd/tools/consult.py`) takes a
+`question` (2,000 characters at most), optional `context` (16,000) and
+optional `to`, `brain` (the default) or `validator`. One call on that
+tier, with a short system prompt and nothing but the question and the
+chosen context, comes back as the tool result, cut to 800 tokens; a tier
+cannot ask itself. A top-level `consult:` block in `config.yaml` holds
+the per-tier switch, `tiers` (default `[worker]`: a tier not listed is
+never offered the tool and a call from it is refused), and
+`max_per_turn` (default 2). Every child of `delegate`, worker or
+research, runs on the worker tier and gets the tool with it. The loop
+zeroes the count when a turn starts and a child shares its parent's, so
+a turn's consults are counted wherever they come from; a consult past a
+spend, wall-clock or iteration cap is refused too. Each consult is
+recorded on the asked tier at its price, in the turn and session totals
+and on that tier's meter line, with a `cost_update` at once (a child's
+on the parent's session). The classifier's `consult` rule makes the
+builtin Class A, so it neither asks nor costs a worker judgment; a policy
+rule can still make it ask. Tests: `core/tests/test_consult.py` (config
+default, shipped block and older-copy fill; brain and validator asked
+with only the question and context; off and same-tier refusals; per-turn
+cap, a failed call counted, spend cap; cost on the asked tier and the
+meter; answer cap; Class A rule and no grant to an MCP namesake; policy
+can make it ask; the loop offers it on worker calls only, caps each turn
+and starts a new count next turn; both child kinds consult on the
+parent's count and meter; no tool when the worker is unlisted) and the
+updated `core/tests/test_research_worker.py`. See DECISIONS.md.
 
 ---
 

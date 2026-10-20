@@ -52,6 +52,10 @@ RESEARCH_CHILD_TOOLS: tuple[str, ...] = (
     "web_fetch",
 )
 
+#: Added to either kind when config offers ``consult`` to the worker tier
+#: (TD-5119). It reads and writes nothing; it asks the brain or validator.
+CONSULT_TOOL_NAME = "consult"
+
 CHILD_TOOLS: dict[DelegateKind, tuple[str, ...]] = {
     "worker": WORKER_CHILD_TOOLS,
     "research": RESEARCH_CHILD_TOOLS,
@@ -109,10 +113,22 @@ def cap_worker_summary(
     *counter* is the worker tier's; the heuristic when not given. The cut
     keeps the longest prefix that still fits beside the marker.
     """
+    return cap_tokens(text, limit, summary_marker(limit), counter)
+
+
+def cap_tokens(
+    text: str,
+    limit: int,
+    marker: str,
+    counter: TokenCounter | None = None,
+) -> str:
+    """Return *text* cut to at most *limit* tokens, *marker* included.
+
+    Shared by the delegate summary and the ``consult`` answer (TD-5119).
+    """
     counter = counter if counter is not None else HeuristicTokenCounter()
     if counter.count(text).count <= limit:
         return text
-    marker = summary_marker(limit)
     budget = limit - counter.count(marker).count
     low, high = 0, len(text)
     while low < high:

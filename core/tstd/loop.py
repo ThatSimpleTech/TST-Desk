@@ -145,6 +145,7 @@ from .shell_read_only import probe_git
 from .steer import inject_steers
 from .tools import ToolDispatcher, ToolRegistry
 from .tools.boundary import PathGuard
+from .tools.consult import offered_tools
 from .tools.dispatch import build_decision_request, canonicalize_path_fields
 from .workspace_trust import trusted_imports
 
@@ -1556,13 +1557,16 @@ async def agent_loop(
         session.event_log.subscribe(_note_class_b)  # type: ignore[arg-type]
         attach_drift_check(session, config=config, client_for=client_for, tracker=tracker)
 
-    # Pre-compute tool definitions if we have a registry
-    tool_definitions: list[ProviderToolDefinition] | None = None
+    # Pre-compute tool definitions if we have a registry. Each model call
+    # offers these less ``consult`` when its tier is not given it (TD-5119).
+    all_tool_definitions: list[ProviderToolDefinition] | None = None
     if tool_registry is not None:
-        tool_definitions = tool_registry.to_provider_definitions()
+        all_tool_definitions = tool_registry.to_provider_definitions()
         if session.delegate_depth >= 1:
-            tool_definitions = [
-                d for d in tool_definitions if d.function is None or d.function.name != "delegate"
+            all_tool_definitions = [
+                d
+                for d in all_tool_definitions
+                if d.function is None or d.function.name != "delegate"
             ]
 
     # Tracks the last steering prefix hash for change detection (TD-509).
@@ -1666,6 +1670,8 @@ async def agent_loop(
         #     accounting is untouched — the ledger row and the cost_update
         #     ride on ``record()``, once per call (TD-1804).
         tracker.begin_turn()
+        # consult's per-turn cap (TD-5119) counts from here.
+        session.consult_tally.used = 0
         clear_turn_writes(session)
         turn_start = time.time()
 
@@ -1722,6 +1728,8 @@ async def agent_loop(
                 break
             # 2a. Determine active tier via router
             tier = router.record_turn_start()
+            session.acting_tier = tier
+            tool_definitions = offered_tools(all_tool_definitions, tier, config.consult)
             cu_heavy = session_is_cu_heavy(session)
             tier_cfg = effective_tier(config, tier, cu_heavy=cu_heavy)
             if tier == "worker" and cu_heavy and tier_cfg.slug is None:
