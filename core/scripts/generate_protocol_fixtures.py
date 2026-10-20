@@ -285,6 +285,10 @@ FIXTURES = {
             Attachment(name="empty.txt"),
         ],
     ),
+    # TD-5112: Send now mid-turn asks to join the running turn.
+    "user_message_steer": UserMessage(
+        session_id="sess-1", content="Also run the linter", steer=True
+    ),
     "approve": Approve(session_id="sess-1", tool_call_id="tc-1"),
     "deny": Deny(session_id="sess-1", tool_call_id="tc-1", reason="not safe"),
     "deny_no_reason": Deny(session_id="sess-1", tool_call_id="tc-1"),

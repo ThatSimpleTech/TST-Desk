@@ -72,6 +72,10 @@ export interface UserMessage extends ClientMessage {
   // The daemon vets these against the workspace caps and refuses the whole
   // message if any one fails.
   attachments?: Attachment[];
+  /** Send now mid-turn (TD-5112): join the running turn at its next
+   *  tool-batch boundary. Omitted, or with no turn running, the message
+   *  waits for a turn of its own. Additive: older daemons ignore it. */
+  steer?: boolean;
 }
 
 /** Send a message a restart left held (TD-5155). `queued_id` names a row of

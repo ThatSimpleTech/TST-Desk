@@ -160,6 +160,28 @@ function sealInFlightAssistant(state: ChatState): void {
   }
 }
 
+/** A refusal of a user_message (TD-5112). Every one names `in_reply_to`; an
+ *  attachment code says so too, for a computer on an older daemon. */
+function refusesSend(event: Extract<DaemonEventUnion, { type: "error" }>): boolean {
+  return event.in_reply_to === "user_message" || event.code.startsWith("attachment_");
+}
+
+/** Any other refused send (an attachment the active tier cannot take, a
+ *  session gone): only a Send now row still waiting for its turn needs the
+ *  window (TD-5112). Left waiting it would hold the queue behind it for good.
+ *  It leaves the strip and its text goes back to the composer, like any
+ *  refused send's. The newest send on its way is the refused one. When the
+ *  refusal crossed turn_complete, no turn is live and the clock started for
+ *  it stops; a turn that is live keeps its own. */
+function giveBackWaiting(ctx: ChatEventContext): void {
+  const { state } = ctx;
+  const newest = ctx.sending[ctx.sending.length - 1];
+  if (newest === undefined || ctx.queue.settle(newest) === undefined) return;
+  refusedSend(ctx.sending);
+  prependDraft(state, newest);
+  if (state.turnState === null) ctx.wait.end();
+}
+
 export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): void {
   const { state, wait } = ctx;
   switch (event.type) {
@@ -293,11 +315,10 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       if (event.error_code === "interrupted_by_restart") return;
       ctx.queue.flushHead();
       // A Send now that no tool batch took (TD-5112) is the daemon's next
-      // turn, and it starts now: the composer queues behind it.
-      if (ctx.queue.hasWaiting()) {
-        state.turnState = "running";
-        wait.begin();
-      }
+      // turn: its first-token clock starts now, as a send's does. Whether a
+      // turn runs is still the daemon's to say (AGENTS §6), so a refusal
+      // that crossed this event cannot leave the window holding one.
+      if (ctx.queue.hasWaiting()) wait.begin();
       return;
     }
     case "session_state": {
@@ -375,6 +396,9 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
         event.code !== "daemon_draining" &&
         event.code !== "message_not_saved"
       ) {
+        if (refusesSend(event) && (event.session_id == null || event.session_id === state.sessionId)) {
+          giveBackWaiting(ctx);
+        }
         return;
       }
       if (event.session_id != null && event.session_id !== state.sessionId) return;

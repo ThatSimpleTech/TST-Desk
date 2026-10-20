@@ -15,7 +15,8 @@
     "type": "user_message",
     "session_id": "sess-1",
     "content": "hello world",
-    "attachments": []
+    "attachments": [],
+    "steer": false
   },
   "send_queued": {
     "type": "send_queued",
@@ -52,7 +53,15 @@
         "name": "empty.txt",
         "content_b64": ""
       }
-    ]
+    ],
+    "steer": false
+  },
+  "user_message_steer": {
+    "type": "user_message",
+    "session_id": "sess-1",
+    "content": "Also run the linter",
+    "attachments": [],
+    "steer": true
   },
   "approve": {
     "type": "approve",

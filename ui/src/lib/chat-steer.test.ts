@@ -85,13 +85,22 @@ function running() {
 
 describe("Send now while a turn runs", () => {
   it("sends the message and keeps the row, waiting and read-only, out of the transcript", () => {
-    const { store, state, userSends } = running();
+    const { store, state, sent, userSends } = running();
     store.sendUserMessage("  also run the linter  ");
     const id = state.queued[0].id;
 
     expect(store.sendQueuedNow(id)).toBe(true);
 
     expect(userSends()).toEqual(["build it", "also run the linter"]);
+    // It asks the daemon to steer; the turn's own send did not.
+    const wire = sent.filter((m) => m.type === "user_message");
+    expect(wire[0]).toEqual({ type: "user_message", session_id: "s1", content: "build it" });
+    expect(wire[1]).toEqual({
+      type: "user_message",
+      session_id: "s1",
+      content: "also run the linter",
+      steer: true,
+    });
     expect(state.queued).toMatchObject([{ id, text: "also run the linter", waiting: true }]);
     // Not in the transcript yet: the model has not read it.
     expect(state.messages.filter((m) => m.role === "user").map((m) => m.text)).toEqual(["build it"]);
@@ -202,9 +211,10 @@ describe("a waiting message no tool batch took", () => {
     store.sendUserMessage("after that");
 
     // The turn ended without another batch: the daemon starts "steer" next.
+    // Its clock starts as a send's does, but only the daemon says a turn runs.
     store.applyEvent(turnComplete());
     expect(userSends()).toEqual(["build it", "steer"]);
-    expect(showCancel(state.turnState)).toBe(true);
+    expect(state.turnState).toBeNull();
     expect(state.awaitingFirstToken).toBe(true);
 
     store.applyEvent(userTurn("t2", "steer"));
@@ -250,5 +260,95 @@ describe("a waiting message no tool batch took", () => {
     } as DaemonEventUnion);
     expect(state.queued).toEqual([]);
     expect(state.draft).toBe("steer");
+  });
+});
+
+describe("a waiting message the daemon refuses", () => {
+  /** A Send now with an image, then a row queued behind it. */
+  function refusedSetup() {
+    const env = running();
+    const { store, state } = env;
+    store.sendUserMessage("see pic", [{ name: "pic.png", size: 3, content_b64: "AAAA" }]);
+    store.sendQueuedNow(state.queued[0].id);
+    store.sendUserMessage("next");
+    return env;
+  }
+
+  function noVision(): DaemonEventUnion {
+    return {
+      type: "error",
+      code: "attachment_no_vision",
+      message: "The active model can't read images.",
+      session_id: "s1",
+      in_reply_to: "user_message",
+      seq: 0,
+    } as DaemonEventUnion;
+  }
+
+  it("leaves the strip and goes back to the composer, whatever the code", () => {
+    const { store, state, userSends } = refusedSetup();
+    store.applyEvent(noVision());
+    expect(state.queued.map((q) => [q.text, q.waiting ?? null])).toEqual([["next", null]]);
+    expect(state.draft).toBe("see pic");
+    // The turn still runs: its Stop stays, and the next row waits for its end.
+    expect(showCancel(state.turnState)).toBe(true);
+
+    store.applyEvent(turnComplete());
+    expect(userSends()).toEqual(["build it", "see pic", "next"]);
+    expect(state.queued).toEqual([]);
+  });
+
+  it("does not leave the window holding a turn when the refusal crosses turn_complete", () => {
+    const { store, state, userSends } = refusedSetup();
+    store.applyEvent(turnComplete());
+    store.applyEvent(noVision());
+
+    expect(state.turnState).toBeNull();
+    expect(state.awaitingFirstToken).toBe(false);
+    expect(state.draft).toBe("see pic");
+    // The row behind it is an ordinary row again, and a new message goes out.
+    expect(state.queued.map((q) => q.text)).toEqual(["next"]);
+    expect(store.sendUserMessage("typed later")).toBe(true);
+    expect(userSends()).toEqual(["build it", "see pic", "typed later"]);
+  });
+
+  it("names a refused send by its code when an older computer leaves in_reply_to out", () => {
+    const { store, state } = refusedSetup();
+    store.applyEvent({ ...noVision(), in_reply_to: undefined } as DaemonEventUnion);
+    expect(state.queued.map((q) => q.text)).toEqual(["next"]);
+    expect(state.draft).toBe("see pic");
+  });
+
+  it("leaves a waiting row alone for an error that refuses no send", () => {
+    const { store, state } = refusedSetup();
+    store.applyEvent({
+      type: "error",
+      code: "queued_not_found",
+      message: "That message is no longer held.",
+      session_id: "s1",
+      in_reply_to: "send_queued",
+      seq: 0,
+    } as DaemonEventUnion);
+    expect(state.queued.map((q) => [q.text, q.waiting ?? null])).toEqual([
+      ["see pic", true],
+      ["next", null],
+    ]);
+    expect(state.draft).toBe("");
+  });
+});
+
+describe("files with no text, sent now while a turn runs", () => {
+  it("are echoed and wait for a turn of their own, so nothing is left waiting", () => {
+    const { store, state, sent } = running();
+    store.sendUserMessage("", [{ name: "notes.txt", size: 5, content_b64: "aGVsbG8=" }]);
+    expect(store.sendQueuedNow(state.queued[0].id)).toBe(true);
+
+    expect(state.queued).toEqual([]);
+    const wire = sent.filter((m) => m.type === "user_message");
+    expect(wire[wire.length - 1]).not.toHaveProperty("steer");
+    const last = state.messages[state.messages.length - 1];
+    expect([last.role, last.attachments]).toEqual(["user", [{ name: "notes.txt", size: 5 }]]);
+    // The running turn's clock is not restaged.
+    expect(state.awaitingFirstToken).toBe(false);
   });
 });

@@ -65,9 +65,10 @@ class QueuedUserMessage:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     # Images the queue file could not keep (TD-5155); 0 for a live send.
     images_dropped: int = 0
-    # TD-5112: sent while a turn ran, so the loop hands it to that turn at
-    # its next tool-batch boundary instead of waiting for the turn to end.
-    steer: bool = False
+    # TD-5112: the running turn this message was sent to steer. The loop
+    # hands it to that turn, and only that turn, at its next tool-batch
+    # boundary. A turn that ends first leaves it a turn of its own.
+    steer_into: str | None = None
 
     @classmethod
     def plain(cls, text: str) -> QueuedUserMessage:
@@ -955,12 +956,20 @@ class Session:
         return self._user_message_queue.qsize()
 
     async def add_user_message(
-        self, content: str | QueuedUserMessage, *, refuse_unsaved: bool = False
+        self,
+        content: str | QueuedUserMessage,
+        *,
+        refuse_unsaved: bool = False,
+        steer: bool = False,
     ) -> None:
         """Enqueue a user message for the agent loop to process.
 
         It is written to the session's queue file before the loop can take
         it, so a restart before its turn starts keeps it (TD-5155).
+
+        With *steer* (TD-5112), a message sent while a turn runs joins that
+        turn at its next tool-batch boundary. Without it, or between turns,
+        it waits for a turn of its own.
 
         Nothing is left half-done (TD-5158): a write that fails with
         *refuse_unsaved*, or a caller cancelled during the write, takes the
@@ -973,8 +982,8 @@ class Session:
                 is logged and the message runs from memory.
         """
         queued = QueuedUserMessage.plain(content) if isinstance(content, str) else content
-        if self._steer_turn is not None:
-            queued = replace(queued, steer=True)
+        if steer and self._steer_turn is not None:
+            queued = replace(queued, steer_into=self._steer_turn)
         self._open_turns += 1
         try:
             async with self._queue_lock:
@@ -1014,8 +1023,10 @@ class Session:
             if found is None:
                 return False
             self.held_messages = [m for m in self.held_messages if m.id != queued_id]
+            # Send on a held row is always a click, so mid-turn it steers,
+            # as Send now does (TD-5112).
             if self._steer_turn is not None:
-                found = replace(found, steer=True)
+                found = replace(found, steer_into=self._steer_turn)
             self._waiting.append(found)
             self._open_turns += 1
             await self._write_queue()
@@ -1072,7 +1083,7 @@ class Session:
     # ── Steering a running turn (TD-5112) ───────────────────────────
 
     def open_steering(self, turn_id: str) -> None:
-        """Messages sent from now until ``turn_complete`` steer turn *turn_id*."""
+        """Messages sent to steer from now until ``turn_complete`` join turn *turn_id*."""
         self._steer_turn = turn_id
 
     @property
@@ -1080,12 +1091,14 @@ class Session:
         """The running turn new messages join, or None between turns."""
         return self._steer_turn
 
-    def take_steers(self) -> list[QueuedUserMessage]:
-        """Take the messages sent while a turn ran off the loop's queue.
+    def take_steers(self, turn_id: str) -> list[QueuedUserMessage]:
+        """Take the messages sent to steer turn *turn_id* off the loop's queue.
 
-        They join the running turn, so each gives up its own open turn:
-        no ``turn_complete`` will ever close it. Anything else waiting
-        stays queued, in order, for a turn of its own.
+        They join that turn, so each gives up its own open turn: no
+        ``turn_complete`` will ever close it. Anything else waiting stays
+        queued, in order, for a turn of its own: a message sent before the
+        turn started, one sent without asking to steer, and one sent to
+        steer an earlier turn that ended before a batch boundary took it.
         """
         taken: list[QueuedUserMessage] = []
         kept: list[QueuedUserMessage] = []
@@ -1094,7 +1107,7 @@ class Session:
                 queued = self._user_message_queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
-            (taken if queued.steer else kept).append(queued)
+            (taken if queued.steer_into == turn_id else kept).append(queued)
         for queued in kept:
             self._user_message_queue.put_nowait(queued)
         self._open_turns = max(0, self._open_turns - len(taken))

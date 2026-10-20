@@ -186,12 +186,19 @@ class UserMessage(ClientMessage):
     sends one behaves exactly as it did.  The daemon decodes and vets them
     against the workspace's ``attachments`` caps before the message is
     enqueued, and refuses the whole message if any one fails.
+
+    ``steer`` (TD-5112) asks for the message to join the turn that is
+    running when it arrives, at that turn's next tool-batch boundary: the
+    window's Send now mid-turn sets it. Without it, or with no turn
+    running, the message waits for a turn of its own, as before. Additive:
+    a client that never sends it never steers.
     """
 
     type: Literal["user_message"] = "user_message"
     session_id: str
     content: str
     attachments: list[Attachment] = Field(default_factory=list)
+    steer: bool = False
 
 
 class SendQueued(ClientMessage):

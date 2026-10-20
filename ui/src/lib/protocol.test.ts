@@ -797,6 +797,14 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.attachments?.max_count)).toBe(true);
   });
 
+  it("user_message asks to steer only on Send now mid-turn (TD-5112)", () => {
+    // The default materialises as false in the dump; the client omits it.
+    expect((fixtures.user_message as UserMessage).steer).toBe(false);
+    const steer = fixtures.user_message_steer as UserMessage;
+    expect(steer.type).toBe("user_message");
+    expect(steer.steer).toBe(true);
+  });
+
   it("user_message carries attachments when there are any (TD-1709)", () => {
     const plain = fixtures.user_message as UserMessage;
     // The fixture is a Pydantic dump, so the default materialises as `[]`.
@@ -1078,7 +1086,7 @@ describe("Daemon event fixtures match TypeScript types", () => {
 describe("All fixtures have required shape", () => {
   it("every client message has a type field", () => {
     const clientTypes = [
-      "hello", "open_workspace", "user_message", "fork_from", "set_branch", "approve", "deny",
+      "hello", "open_workspace", "user_message", "user_message_steer", "fork_from", "set_branch", "approve", "deny",
       "deny_no_reason", "always_allow", "list_policy_rules", "revoke_policy_rule",
       "trust_workspace_config",
       "set_skip_all_approvals",

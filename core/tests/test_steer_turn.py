@@ -22,16 +22,27 @@ from tests.test_dispatch import attach_auto_approver
 from tests.test_loop import make_config, mock_factory, wait_for_turn
 from tstd.audit import AuditStore, audit_db_path
 from tstd.audit_writer import AuditWriter
-from tstd.config import cached_config
+from tstd.compaction import budget_threshold, estimate_tokens, maybe_compact
+from tstd.config import TierConfig, cached_config
+from tstd.context.tokens import HeuristicTokenCounter
+from tstd.context_fit import fit_inflight_turn
 from tstd.daemon import Daemon
 from tstd.loop import agent_loop
 from tstd.mock import MockProvider, Script
 from tstd.policy import PolicyConfig, PolicyRule, save_policy
-from tstd.protocol import PROTOCOL_VERSION, SteerPoint, TurnComplete, UserTurn
+from tstd.protocol import (
+    PROTOCOL_VERSION,
+    ContextCompacted,
+    SteerPoint,
+    TurnComplete,
+    UserTurn,
+)
 from tstd.protocol import ToolResult as ToolResultEvent
-from tstd.provider import ChatMessage
+from tstd.provider import ChatCompletionRequest, ChatMessage, FunctionCall, content_as_text
+from tstd.provider import ToolCall as ProviderToolCall
 from tstd.router import TierRouter
 from tstd.session import Session, SessionRunner
+from tstd.session_persist import chat_message_from_dict, chat_message_to_dict
 from tstd.tools import Tool, ToolDispatcher, ToolRegistry
 
 # ── A loop with a tool the test holds open ──────────────────────────────
@@ -40,14 +51,15 @@ from tstd.tools import Tool, ToolDispatcher, ToolRegistry
 class _HeldTool:
     """A tool that runs until the test lets it finish."""
 
-    def __init__(self) -> None:
+    def __init__(self, result: str = "built") -> None:
         self.started = asyncio.Event()
         self.release = asyncio.Event()
+        self.result = result
 
     async def handler(self, session: Session, tool_call_id: str = "") -> str:
         self.started.set()
         await self.release.wait()
-        return "built"
+        return self.result
 
 
 async def _start(
@@ -109,7 +121,7 @@ async def test_a_message_sent_while_tools_run_joins_the_turn_before_its_next_ste
     try:
         await session.add_user_message("Build it")
         await asyncio.wait_for(held.started.wait(), 3)
-        await session.add_user_message("Also run the linter")
+        await session.add_user_message("Also run the linter", steer=True)
         held.release.set()
         first = await wait_for_turn(session, 1)
         assert first.error_code is None
@@ -160,7 +172,7 @@ async def test_a_message_sent_while_the_turn_sits_paused_after_a_batch_goes_in_o
                 break
             await asyncio.sleep(0.01)
         assert session.state == "paused"
-        await session.add_user_message("Skip the docs build")
+        await session.add_user_message("Skip the docs build", steer=True)
         session.boundary_config.caps.max_iterations = 10
         await session.resume()
         first = await wait_for_turn(session, 1)
@@ -182,7 +194,8 @@ async def test_a_message_sent_before_the_turn_started_still_waits_its_turn() -> 
     runner, mock = await _start(session, scripts, held)
     try:
         await session.add_user_message("Build it")
-        await session.add_user_message("Then tidy up")
+        # Asking to steer does not matter: no turn was running yet.
+        await session.add_user_message("Then tidy up", steer=True)
         await asyncio.wait_for(held.started.wait(), 3)
         held.release.set()
         await wait_for_turn(session, 1)
@@ -208,7 +221,7 @@ async def test_a_turn_with_no_further_tool_batch_leaves_the_message_its_own_turn
             if _brain(mock):
                 break
             await asyncio.sleep(0.01)
-        await session.add_user_message("Shorter please")
+        await session.add_user_message("Shorter please", steer=True)
         await wait_for_turn(session, 1)
         second = await wait_for_turn(session, 2)
         assert second.error_code is None
@@ -228,7 +241,7 @@ async def test_stop_still_ends_the_turn_with_a_message_waiting() -> None:
     try:
         await session.add_user_message("Build it")
         await asyncio.wait_for(held.started.wait(), 3)
-        await session.add_user_message("Use the fast build")
+        await session.add_user_message("Use the fast build", steer=True)
         await session.stop_turn()
         held.release.set()
         first = await wait_for_turn(session, 1)
@@ -263,11 +276,183 @@ async def test_the_queue_file_lets_a_steer_go_once_it_is_logged() -> None:
     try:
         await session.add_user_message("Build it")
         await asyncio.wait_for(held.started.wait(), 3)
-        await session.add_user_message("Also lint")
+        await session.add_user_message("Also lint", steer=True)
         assert saved[-1] == ["Also lint"]
         held.release.set()
         await wait_for_turn(session, 1)
         assert saved[-1] == []
+    finally:
+        await runner.cancel()
+
+
+async def test_a_message_sent_without_asking_to_steer_waits_for_its_own_turn() -> None:
+    """A row the window queued, or a client that does not ask, keeps its turn."""
+    session = Session("/tmp/ws")
+    held = _HeldTool()
+    scripts = [*_tool_then_text("first"), Script(kind="stream", content="second")]
+    runner, mock = await _start(session, scripts, held)
+    try:
+        await session.add_user_message("Build it")
+        await asyncio.wait_for(held.started.wait(), 3)
+        await session.add_user_message("Then tidy up")
+        held.release.set()
+        await wait_for_turn(session, 1)
+        await wait_for_turn(session, 2)
+        assert all(m.content != "Then tidy up" for m in _brain(mock)[1].messages)
+        assert [(t.content, t.steer) for t in _user_turns(session)] == [
+            ("Build it", None),
+            ("Then tidy up", None),
+        ]
+    finally:
+        await runner.cancel()
+
+
+async def test_messages_sent_to_steer_a_turn_that_ended_each_keep_a_turn() -> None:
+    """Sent to steer a turn that ended first, the second does not steer the next."""
+    session = Session("/tmp/ws")
+    held = _HeldTool()
+    held.release.set()
+    scripts = [
+        Script(kind="stream", content="one two three four five", chunk_delay=0.05),
+        *_tool_then_text("first done"),
+        Script(kind="stream", content="second done"),
+    ]
+    runner, mock = await _start(session, scripts, held)
+    try:
+        await session.add_user_message("Explain")
+        for _ in range(100):
+            if _brain(mock):
+                break
+            await asyncio.sleep(0.01)
+        await session.add_user_message("First follow-up", steer=True)
+        await session.add_user_message("Second follow-up", steer=True)
+        third = await wait_for_turn(session, 3)
+        assert third.error_code is None
+        assert [(t.content, t.steer) for t in _user_turns(session)] == [
+            ("Explain", None),
+            ("First follow-up", None),
+            ("Second follow-up", None),
+        ]
+        calls = _brain(mock)
+        assert len(calls) == 4
+        # The first follow-up's turn ran a batch and never read the second.
+        assert all(m.content != "Second follow-up" for m in calls[2].messages)
+        assert calls[3].messages[-1].content == "Second follow-up"
+        assert session.turn_in_flight is False
+    finally:
+        await runner.cancel()
+
+
+# ── Context fitting keeps a steered turn whole ──────────────────────────
+
+
+def _small_tier() -> TierConfig:
+    return TierConfig(
+        slug="ezer-forge",
+        base_url="http://mock.local/v1",
+        input_price=0.0,
+        output_price=0.0,
+        cache_read_price=0.0,
+        context_window=32768,
+        max_output_tokens=4096,
+    )
+
+
+def _batch(call_id: str, body: str) -> list[ChatMessage]:
+    call = ProviderToolCall(
+        id=call_id, type="function", function=FunctionCall(name="fs_read", arguments="{}")
+    )
+    return [
+        ChatMessage(role="assistant", content=None, tool_calls=[call]),
+        ChatMessage(role="tool", content=body, tool_call_id=call_id),
+    ]
+
+
+def _steer(text: str) -> ChatMessage:
+    return ChatMessage(role="user", content=text, steer=True)
+
+
+def test_compaction_keeps_the_running_turn_and_its_request_with_two_steers() -> None:
+    messages = [
+        ChatMessage(role="system", content="sys"),
+        ChatMessage(role="user", content="Oldest"),
+        ChatMessage(role="assistant", content="o" * 40_000),
+        ChatMessage(role="user", content="Earlier"),
+        ChatMessage(role="assistant", content="answered"),
+        ChatMessage(role="user", content="Build it"),
+        *_batch("c1", "r" * 4_000),
+        _steer("steer one"),
+        *_batch("c2", "s" * 4_000),
+        _steer("steer two"),
+        *_batch("c3", "t" * 60_000),
+    ]
+    compacted, stats = maybe_compact(messages, _small_tier(), HeuristicTokenCounter())
+    assert stats is not None
+    users = [m.content for m in compacted if m.role == "user"]
+    # Two whole turns stay: the earlier one and the running one, request first.
+    assert users == ["Earlier", "Build it", "steer one", "steer two"]
+    assert stats.dropped_user_turns == 1
+
+
+def test_in_turn_elision_reaches_results_from_before_a_steer() -> None:
+    tier = _small_tier()
+    counter = HeuristicTokenCounter()
+    messages = [
+        ChatMessage(role="system", content="sys"),
+        ChatMessage(role="user", content="Build it"),
+        *_batch("c1", "P" * 100_000),
+        _steer("use the fast build"),
+        *_batch("c2", "Q" * 2_000),
+    ]
+    fitted, fit = fit_inflight_turn(messages, tier, counter)
+    assert fit is not None
+    assert "chars elided" in content_as_text(fitted[3].content)
+    assert estimate_tokens(fitted, counter)[0] <= budget_threshold(tier)
+    # The steer and the request stay as sent.
+    assert fitted[4] is messages[4]
+    assert fitted[1] is messages[1]
+
+
+def test_a_steer_mark_is_saved_with_the_conversation_and_never_sent() -> None:
+    steer = _steer("also lint")
+    saved = chat_message_to_dict(steer)
+    assert saved["steer"] is True
+    assert chat_message_from_dict(json.loads(json.dumps(saved))).steer is True
+    assert "steer" not in ChatCompletionRequest._message_to_dict(steer)
+    plain = ChatMessage(role="user", content="build it")
+    assert "steer" not in chat_message_to_dict(plain)
+    assert chat_message_from_dict(chat_message_to_dict(plain)).steer is False
+
+
+async def test_a_steer_is_counted_before_the_model_call_that_reads_it() -> None:
+    """The prompt is fitted again once the steer is in, so it stays in budget."""
+    session = Session("/tmp/ws")
+    held = _HeldTool(result="B" * 200_000)
+    runner, mock = await _start(session, _tool_then_text(), held)
+    try:
+        await session.add_user_message("Build it")
+        await asyncio.wait_for(held.started.wait(), 3)
+        await session.add_user_message("S" * 280_000, steer=True)
+        held.release.set()
+        first = await wait_for_turn(session, 1)
+        assert first.error_code is None
+
+        calls = _brain(mock)
+        assert len(calls) == 2
+        sent = calls[1].messages
+        assert sent[-1].content == "S" * 280_000
+        # The result the turn got before the steer was elided to make room.
+        result = next(m for m in sent if m.role == "tool")
+        assert "chars elided" in content_as_text(result.content)
+        tier = make_config().tier("brain")
+        assert estimate_tokens(sent, HeuristicTokenCounter())[0] <= budget_threshold(tier)
+        # Announced on the timeline after the steer went in.
+        events = session.event_log.all_events
+        steer_at = events.index(_user_turns(session)[1])
+        assert any(
+            isinstance(e, ContextCompacted) and e.trigger == "inflight_trim"
+            for e in events[steer_at:]
+        )
     finally:
         await runner.cancel()
 
@@ -286,7 +471,7 @@ async def test_the_audit_database_records_the_injection_point(tmp_path: Path) ->
     try:
         await session.add_user_message("Build it")
         await asyncio.wait_for(held.started.wait(), 3)
-        await session.add_user_message("Also lint")
+        await session.add_user_message("Also lint", steer=True)
         held.release.set()
         await wait_for_turn(session, 1)
         await writer._queue.join()
@@ -355,6 +540,7 @@ async def phone_daemon(tmp_path: Path) -> AsyncIterator[tuple[Daemon, MockProvid
                     tool_arguments=json.dumps({"path": str(target), "content": "hi\n"}),
                 ),
                 Script(kind="stream", content="wrote it, and goodbye"),
+                Script(kind="stream", content="a turn of its own"),
             ]
         }
     )
@@ -393,7 +579,14 @@ async def test_a_paired_phone_steers_a_turn_the_window_started(
         # The write waits for approval: the turn's tools are running.
         request = await _recv_until(phone, "approval_request")
         await phone.send(
-            json.dumps({"type": "user_message", "session_id": sid, "content": "then say goodbye"})
+            json.dumps(
+                {
+                    "type": "user_message",
+                    "session_id": sid,
+                    "content": "then say goodbye",
+                    "steer": True,
+                }
+            )
         )
         await phone.send(
             json.dumps(
@@ -429,4 +622,76 @@ async def test_a_paired_phone_steers_a_turn_the_window_started(
         assert rows == [(steer["turn_id"], 1, json.dumps([request["tool_call_id"]]))]
     finally:
         await phone.close()
+        await window.close()
+
+
+async def test_a_message_that_does_not_ask_to_steer_keeps_its_own_turn(
+    phone_daemon: tuple[Daemon, MockProvider, Path],
+) -> None:
+    """The window's queued row goes out without ``steer``: it waits its turn."""
+    daemon, mock, workspace = phone_daemon
+    port = daemon.ws_server.port
+    window = await _client(port, daemon.ws_server.token, "/")
+    try:
+        await window.send(json.dumps({"type": "open_workspace", "path": str(workspace)}))
+        sid = (await _recv_until(window, "session_state"))["session_id"]
+        await window.send(json.dumps({"type": "attach", "session_id": sid, "from_seq": 1}))
+        await window.send(
+            json.dumps({"type": "user_message", "session_id": sid, "content": "write hello.txt"})
+        )
+        request = await _recv_until(window, "approval_request")
+        await window.send(
+            json.dumps({"type": "user_message", "session_id": sid, "content": "and then this"})
+        )
+        await window.send(
+            json.dumps(
+                {"type": "approve", "session_id": sid, "tool_call_id": request["tool_call_id"]}
+            )
+        )
+        await _recv_until(window, "turn_complete")
+        own = await _recv_until(window, "user_turn", content="and then this")
+        assert own["steer"] is None
+        await _recv_until(window, "turn_complete")
+        # The first turn's step after the write never read it; a turn of its
+        # own started with it.
+        calls = mock.calls
+        assert all(m.content != "and then this" for m in calls[1].messages)
+        assert any(call.messages[-1].content == "and then this" for call in calls[2:])
+    finally:
+        await window.close()
+
+
+async def test_every_refused_user_message_names_it(
+    phone_daemon: tuple[Daemon, MockProvider, Path],
+) -> None:
+    """The window tells a refused send from other errors by in_reply_to."""
+    daemon, _, workspace = phone_daemon
+    port = daemon.ws_server.port
+    window = await _client(port, daemon.ws_server.token, "/")
+    try:
+        await window.send(
+            json.dumps({"type": "user_message", "session_id": "nope", "content": "hi"})
+        )
+        missing = await _recv(window)
+        assert (missing["type"], missing["code"]) == ("error", "session_not_found")
+        assert missing["in_reply_to"] == "user_message"
+
+        await window.send(json.dumps({"type": "open_workspace", "path": str(workspace)}))
+        sid = (await _recv_until(window, "session_state"))["session_id"]
+        await window.send(
+            json.dumps(
+                {
+                    "type": "user_message",
+                    "session_id": sid,
+                    "content": "see the file",
+                    "steer": True,
+                    "attachments": [{"name": "a.txt", "content_b64": "not base64!"}],
+                }
+            )
+        )
+        refused = await _recv(window)
+        assert refused["type"] == "error"
+        assert refused["code"].startswith("attachment_")
+        assert refused["in_reply_to"] == "user_message"
+    finally:
         await window.close()

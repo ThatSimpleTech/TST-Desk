@@ -2576,11 +2576,15 @@ class Daemon:
             return await self._start_session(anchor.workspace_path)
 
         if isinstance(msg, UserMessage):
+            # Every refusal names in_reply_to, so the window can tell a
+            # refused send from any other error and give a Send now row
+            # still waiting for its turn back (TD-5112).
             found = self.session_registry.get(msg.session_id)
             if found is None:
                 return build_error(
                     "session_not_found",
                     f"Session {msg.session_id!r} not found",
+                    in_reply_to=msg.type,
                 )
             # Liveness honesty (TD-1711): a terminal session — or any
             # session whose loop is gone (restored tombstone, cancelled
@@ -2594,6 +2598,7 @@ class Daemon:
                     f"This session is {found.state} and can no longer run turns; "
                     "the message was not delivered. Start a new session and resend it.",
                     session_id=msg.session_id,
+                    in_reply_to=msg.type,
                 )
             # Attachment caps and the text/binary test are enforced here
             # (TD-1709), not in the composer: the client is not trustworthy,
@@ -2620,7 +2625,9 @@ class Daemon:
                         }
                     },
                 )
-                return build_error(e.code, e.message, session_id=msg.session_id)
+                return build_error(
+                    e.code, e.message, session_id=msg.session_id, in_reply_to=msg.type
+                )
 
             found.pending_images = [
                 (item.name, item.data, item.media_type)
@@ -2631,7 +2638,9 @@ class Daemon:
             provider = build_provider_user_content(msg.content, decoded)
             try:
                 await found.add_user_message(
-                    QueuedUserMessage(display=display, provider=provider), refuse_unsaved=True
+                    QueuedUserMessage(display=display, provider=provider),
+                    refuse_unsaved=True,
+                    steer=msg.steer,
                 )
             except OSError as e:
                 # Accepted means saved (TD-5155): a send that cannot reach
@@ -2664,7 +2673,7 @@ class Daemon:
                         "attachment_count": len(decoded),
                         "attachment_bytes": sum(a.size for a in decoded),
                         # TD-5112: joins the running turn at its next step.
-                        "steer": found.steering_turn is not None,
+                        "steer": msg.steer and found.steering_turn is not None,
                     }
                 },
             )

@@ -38,6 +38,14 @@ export function showQueue(queued: readonly QueuedMessage[]): boolean {
   return queued.length > 0;
 }
 
+/** How a message goes out (TD-5112). `turn` starts the next turn: echoed in
+ *  the transcript and timed to its first token. `steer` is Send now while a
+ *  turn runs: the daemon hands it to that turn at its next step, and its
+ *  user_turn places it then. `behind` is Send now of files with no text
+ *  while a turn runs: their user_turn cannot be told from another device's,
+ *  so they are echoed now and wait for a turn of their own, as before. */
+export type SendMode = "turn" | "steer" | "behind";
+
 /** What a waiting row says (TD-5112). The native loop takes it at the next
  *  tool-batch boundary. The Grok engine runs its own tools, so there it
  *  waits for the turn to end. */
@@ -58,9 +66,9 @@ export interface MessageQueue {
    *  order, so everything behind it stays editable while that turn runs.
    *  Not while a sent row waits: the daemon owes that one a turn first. */
   flushHead(): void;
-  /** A waiting row's user_turn arrived, or the daemon held it: it leaves,
-   *  and is returned so its transcript row can keep the chips it was sent
-   *  with. */
+  /** A waiting row's user_turn arrived, or the daemon held or refused it: it
+   *  leaves, and is returned so its transcript row can keep the chips it was
+   *  sent with. */
   settle(text: string): QueuedMessage | undefined;
   /** Whether any sent row still waits for the daemon to take it. */
   hasWaiting(): boolean;
@@ -75,7 +83,7 @@ export interface MessageQueue {
  *  flight" predicate — the queue deliberately does not invent a second. */
 export function createMessageQueue(
   state: { queued: QueuedMessage[] },
-  toWire: (text: string, armWait: boolean, attachments: readonly NewAttachment[]) => boolean,
+  toWire: (text: string, mode: SendMode, attachments: readonly NewAttachment[]) => boolean,
   turnLive: () => boolean,
 ): MessageQueue {
   // Rows carry their own id space: they are not conversation messages and
@@ -103,15 +111,15 @@ export function createMessageQueue(
     sendNow(id: string): boolean {
       const row = find(id);
       if (row === undefined || row.waiting === true) return false;
-      if (!turnLive()) {
-        const sent = toWire(row.text, true, row.attachments);
+      if (!turnLive() || row.text.trim() === "") {
+        const sent = toWire(row.text, turnLive() ? "behind" : "turn", row.attachments);
         if (sent) drop(id);
         return sent;
       }
       // Mid-turn it steers (TD-5112). No echo and no new first-token clock:
       // the running turn's shimmer stays, and the row waits here until the
       // daemon says where the model read it.
-      const sent = toWire(row.text, false, row.attachments);
+      const sent = toWire(row.text, "steer", row.attachments);
       if (sent) {
         row.text = row.text.trim();
         row.waiting = true;
@@ -136,7 +144,7 @@ export function createMessageQueue(
       if (state.queued.some((row) => row.waiting === true)) return;
       const head = state.queued[0];
       if (head === undefined) return;
-      if (toWire(head.text, true, head.attachments)) state.queued.shift();
+      if (toWire(head.text, "turn", head.attachments)) state.queued.shift();
     },
 
     settle(text: string): QueuedMessage | undefined {

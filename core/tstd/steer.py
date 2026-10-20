@@ -34,16 +34,18 @@ async def inject_steers(
     after_tool_call_ids: Sequence[str],
     claude_global_fallback: bool | None = None,
 ) -> int:
-    """Append the messages sent while this turn ran. Returns how many.
+    """Append the messages sent to steer this turn. Returns how many.
 
     Each is logged as a ``user_turn`` with its steer point, then the
     conversation is saved, and only then does the queue file let it go
     (TD-5155), so a stop in between finds it in the log or the file.
+    Each goes in marked as a steer, so context fitting keeps it inside
+    this turn rather than treating it as a turn of its own.
     """
     into = session.steering_turn
     if into is None:
         return 0
-    steers = session.take_steers()
+    steers = session.take_steers(into)
     if not steers:
         return 0
     point = SteerPoint(turn_id=into, step=step, after_tool_call_ids=list(after_tool_call_ids))
@@ -51,7 +53,7 @@ async def inject_steers(
         # A /skill typed mid-turn loads before the next step, as it would
         # at the start of a turn.
         apply_slash_skill(session, queued.display, claude_global_fallback=claude_global_fallback)
-        messages.append(ChatMessage(role="user", content=queued.provider))
+        messages.append(ChatMessage(role="user", content=queued.provider, steer=True))
         await session.event_log.add(
             UserTurn(
                 session_id=session.id,
