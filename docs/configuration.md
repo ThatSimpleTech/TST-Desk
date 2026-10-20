@@ -1091,6 +1091,7 @@ reply per call), so `timeout_seconds` bounds the whole call.
 | `timeout_seconds` | number > 0 | `30` | Longest silence in a tool call: no result and no progress for this long ends the call and sends `notifications/cancelled`. Over http it bounds the whole call. Settings keeps it when it toggles or edits the server. |
 | `startup_timeout_seconds` | number > 0 | `8` | Time allowed for each step of the handshake (`initialize`, then `tools/list`), whatever `timeout_seconds` says. Raise it for a server that loads a model before it answers. |
 | `max_call_seconds` | number > 0 | `600` | Hard cap on one stdio tool call, progress or not. Never below `timeout_seconds`. |
+| `read_only_tools` | list of strings | `[]` | The server's tools, by the name the server gives them (not the `<id>__` name), that only read (TD-5123). Read-only plan mode lets these run and refuses every other tool of the server. Only this list counts: a server's own `readOnlyHint` is not trusted. Names are matched exactly, no globs. It changes nothing outside plan mode: a listed tool still asks like any MCP tool. Settings keeps it when it toggles or edits the server. |
 | `env` | mapping of name → string | `{}` | stdio only. Extra environment for this server's child, on top of the daemon's. Names are `[A-Za-z_][A-Za-z0-9_]*`. A value is a literal or `keychain:<entry>` (entry: lowercase letters, digits, `_` and `-`, at most 64). Numbers become strings; a YAML boolean is refused, so quote it. A value may not hold a line break or NUL. |
 | `headers` | mapping of name → string | `{}` | http only. Extra headers on every request to this server, same value rules as `env`. Names are HTTP field names, one spelling each (case is ignored). `Accept`, `Connection`, `Content-Length`, `Content-Type`, `Host` and `Transfer-Encoding` are TST Desk's own and are refused. |
 
@@ -2247,6 +2248,25 @@ such as `task-runner-integration-v2beta` for a key, and a label shown blanked co
 A `never` rule for `ask_user` turns the tool off in this workspace. Each question and its answer are
 kept in the audit database (`questions`), and an answer is never cleared from the agent's context as
 stale tool output (`clear_tool_results`).
+
+**Read-only plan mode (TD-5123).** The Plan chip in the composer, `/plan` (or `/plan on`, `/plan
+off`, `/plan <task>` to plan one task) and the same chip on the phone turn plan mode on. Every turn
+then runs on the brain tier, and the agent may only read: the classifier refuses `fs_write`,
+`fs_edit`, memory writes, `shell` commands that are not entirely on the read-only list
+(`shell.read_only`; with the list off, every shell command), MCP tools not in their server's
+`read_only_tools`, plugin tools, desktop and browser actuation, the GitHub write tools,
+`propose_steering_edit`, `delegate` with `kind: worker`, and any other tool not known to only read. The refusal comes first, before your `policy` rules, an approval
+card or Skip all approvals, so none of them can run a refused call, and it tells the agent it is
+planning. Reads (`fs_read`, `fs_list`, `fs_grep`, the GitHub reads, screenshots), web search and
+fetch, `load_skill`, `send_file`, `task_list`, `ask_user`, `consult` and `delegate` for research
+still run under the usual rules. The agent ends plan mode with `exit_plan_mode`: its plan
+shows on a card on the window and the phone, where you approve it, edit it and then approve your
+version, or reject it with a note. Approving turns plan mode off and pins the plan: the Plan pane
+shows it, and every compaction carries it into its summary. Rejecting keeps plan mode on. Skip
+all approvals never approves a plan, and the review waits like an approval (Stop and
+`approval_timeout_seconds` end it). `tst run` exits `approval_needed` on a plan in every mode; a
+refused call counts as a refusal (`plan_mode`). Plan mode still lasts only until the daemon
+restarts; the pinned plan is read back after a restart.
 
 **Reads inside the workspace never ask (TD-5141).** `fs_read`, `fs_list` and `fs_grep` on a
 path inside the workspace are Class A by a fixed rule, so they run without asking and without

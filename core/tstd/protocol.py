@@ -371,6 +371,29 @@ class AnswerQuestion(ClientMessage):
     declined: bool = False
 
 
+#: Longest plan ``exit_plan_mode`` may put up for review, and the longest
+#: edit of it (TD-5123). A pinned plan rides in every compaction summary,
+#: so it stays well inside a 32k window.
+PLAN_MAX_CHARS = 12_000
+
+
+class ReviewPlan(ClientMessage):
+    """Approve, edit or reject the plan an ``exit_plan_mode`` call parked (TD-5123).
+
+    ``approve`` ends plan mode and pins the plan; with ``plan`` set, the
+    person's edited text replaces the model's (that is how a plan is
+    edited). ``reject`` keeps plan mode on and hands ``feedback`` to the
+    model. With no review waiting the reply is ``no_pending_plan``.
+    """
+
+    type: Literal["review_plan"] = "review_plan"
+    session_id: str
+    tool_call_id: str
+    decision: Literal["approve", "reject"]
+    plan: str | None = Field(default=None, max_length=PLAN_MAX_CHARS)
+    feedback: str = Field(default="", max_length=4000)
+
+
 class ListPolicyRules(ClientMessage):
     """List the workspace's saved policy rules (TD-803 settings)."""
 
@@ -2033,6 +2056,54 @@ class QuestionAnswered(DaemonEvent):
     tool_call_id: str
     outcome: QuestionOutcomeKind
     answers: list[QuestionAnswer] = Field(default_factory=list, max_length=4)
+
+
+class PlanReview(DaemonEvent):
+    """An ``exit_plan_mode`` call parked its turn on a plan (TD-5123).
+
+    The turn waits like an approval (the session is ``awaiting_approval``)
+    until ``review_plan`` approves or rejects it, Stop, cancel, or the
+    approval timeout. The window and the phone show the plan with
+    Approve, Edit and Reject; the call's ``tool_result`` clears the card.
+    """
+
+    type: Literal["plan_review"] = "plan_review"
+    session_id: str
+    tool_call_id: str
+    plan: str = Field(min_length=1, max_length=PLAN_MAX_CHARS)
+
+
+PlanOutcomeKind = Literal["approved", "rejected", "stopped", "timed_out", "cancelled"]
+
+
+class PlanReviewed(DaemonEvent):
+    """How a parked plan review ended (TD-5123).
+
+    Logged before the call's ``tool_result``. ``plan`` is the plan as
+    approved (the person's edit when ``edited``), empty otherwise;
+    ``feedback`` is what the person said with their decision.
+    """
+
+    type: Literal["plan_reviewed"] = "plan_reviewed"
+    session_id: str
+    tool_call_id: str
+    outcome: PlanOutcomeKind
+    plan: str = Field(default="", max_length=PLAN_MAX_CHARS)
+    edited: bool = False
+    feedback: str = Field(default="", max_length=4000)
+
+
+class PlanPinned(DaemonEvent):
+    """The plan the person approved, pinned to the session (TD-5123).
+
+    The newest one is the pinned plan. The Plan pane shows it, and every
+    compaction carries it into its summary. Logged again when the log
+    window rotates the last one out, and on attach if it is missing.
+    """
+
+    type: Literal["plan_pinned"] = "plan_pinned"
+    session_id: str
+    plan: str = Field(min_length=1, max_length=PLAN_MAX_CHARS)
 
 
 class DecisionLogged(DaemonEvent):
@@ -3769,6 +3840,7 @@ ClientMessageT = Annotated[
     | Deny
     | AlwaysAllow
     | AnswerQuestion
+    | ReviewPlan
     | ListPolicyRules
     | RevokePolicyRule
     | ForkFrom
@@ -3899,6 +3971,9 @@ DaemonEventT = Annotated[
     | ApprovalRequest
     | QuestionRequest
     | QuestionAnswered
+    | PlanReview
+    | PlanReviewed
+    | PlanPinned
     | DecisionLogged
     | CheckpointNotice
     | VerifyStarted
@@ -3984,6 +4059,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "deny",
         "always_allow",
         "answer_question",
+        "review_plan",
         "list_policy_rules",
         "revoke_policy_rule",
         "fork_from",
@@ -4114,6 +4190,9 @@ _KNOWN_EVENT_TYPES = frozenset(
         "approval_request",
         "question_request",
         "question_answered",
+        "plan_review",
+        "plan_reviewed",
+        "plan_pinned",
         "decision_logged",
         "checkpoint_notice",
         "verify_started",

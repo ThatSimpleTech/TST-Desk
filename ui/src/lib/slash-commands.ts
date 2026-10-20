@@ -32,6 +32,12 @@ export const BUILTIN_SLASH_ITEMS: readonly SlashItem[] = [
 		source: "built-in",
 		body: "/compact ",
 	},
+	{
+		name: "plan",
+		description: "Plan mode: read-only research, then a plan you approve. /plan on, /plan off, or /plan <task>.",
+		source: "built-in",
+		body: "/plan ",
+	},
 ];
 
 /** Prefix-match command names. Case-insensitive. */

@@ -33,8 +33,9 @@ BRIDGE_FEATURE = "bridge"
 
 # What another computer's hub may ask of this one. Each was checked for a
 # way to turn approvals off (DECISIONS TD-5015): presets carry only tier
-# configs, set_plan only locks the brain tier, always_allow needs a pending
-# approval and writes the narrowest rule (never class C). The approval
+# configs, set_plan only locks the brain tier and refuses writes (TD-5123),
+# always_allow needs a pending approval and writes the narrowest rule (never
+# class C). The approval
 # switches themselves (set_skip_all_approvals, set_grok_mode,
 # approve_grok_plan, start_autonomy) are not here.
 MACHINE_PEER_VERBS: frozenset[str] = frozenset(
@@ -56,6 +57,10 @@ MACHINE_PEER_VERBS: frozenset[str] = frozenset(
         # TD-5121: the person's answer to an ask_user question. Weaker than
         # approve: it only hands the model words, and changes no setting.
         "answer_question",
+        # TD-5123: approving or rejecting the agent's plan. Approving only
+        # turns plan mode off (which set_plan already may), so normal
+        # approvals apply again; it approves no tool call.
+        "review_plan",
         "run_verify",
         "deny_verify",
         "new_session",
@@ -92,8 +97,10 @@ FORWARDED_VERBS: frozenset[str] = MACHINE_PEER_VERBS - {"remove_remote_device"}
 
 # Approvals are never queued while a lane connects (A.8): a late approve
 # could land after the person stopped expecting it. An answer to a question
-# (TD-5121) is the same kind of decision.
-APPROVAL_VERBS: frozenset[str] = frozenset({"approve", "deny", "always_allow", "answer_question"})
+# (TD-5121) and a plan review (TD-5123) are the same kind of decision.
+APPROVAL_VERBS: frozenset[str] = frozenset(
+    {"approve", "deny", "always_allow", "answer_question", "review_plan"}
+)
 
 # The four machine verbs. ``list_machines`` is also open to viewers.
 MACHINE_VERBS: frozenset[str] = frozenset(

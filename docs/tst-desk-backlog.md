@@ -9999,6 +9999,9 @@ the daemon's fixture). See DECISIONS.md. Later, TD-5119 adds `consult`
 to both kinds while it is on for the worker tier; it writes nothing and
 reaches no web host or MCP server, so the research child stays
 read-only, and with it off the research child has exactly these five.
+Since TD-5123 (2026-10-20) plan mode is read-only: an explicit
+`kind: worker` is refused there (`plan_mode`), and the default stays
+research.
 
 ---
 
@@ -10851,6 +10854,60 @@ disk, a restart finds it and the next compaction still carries it), `ui/src/lib/
 (store, Plan pane, strip), `ui/src/lib/protocol.test.ts` (fixture), and
 the UI walk (the strip at 375 px and the Plan pane at 1280 px on the
 seeded held session; census gains `tasks`). See DECISIONS.md.
+
+### TD-5123 — Read-only plan mode
+**Size:** 5 · **Depends on:** TD-5117 · Gap audit 2026-10-14
+
+TD-4603's plan mode only pinned routing to the brain; writes and shell
+still ran. Claude Code's plan mode analyzes without editing, then puts up
+a plan to approve.
+
+**Acceptance criteria:**
+- [x] In plan mode, the classifier refuses every mutating call (fs_write,
+      fs_edit, shell outside the TD-5103 list, MCP tools not marked
+      read-only). The refusal tells the model it is planning.
+- [x] Plan mode ends with a plan the user approves, rejects or edits.
+      Approving switches to normal mode with the plan pinned.
+- [x] Toggle from the composer, a slash command and the phone.
+
+Done (2026-10-20): the classifier's first rule, `plan-mode` (Class C,
+`refuses`), fires while the router is planning and the call is not
+plan-safe (`autonomy/classifier.plan_mode_allows`): a builtin on
+`PLAN_READ_ONLY_BUILTINS`, capture-only computer use, `shell` made only of
+the read-only list, `delegate` without `kind: worker`, or an MCP tool the
+user listed in the new `mcp.servers.<id>.read_only_tools`. Plugin tools,
+the GitHub writes (which declare no `mutates`) and `propose_steering_edit`
+are refused too. Dispatch returns the refusal (`plan_mode`) before the
+policy gate, so no `auto` rule, approval or skip-all runs it, and its text
+(`plan_mode.planning_refusal`) says the model is planning, why, and to call
+`exit_plan_mode`. A planning turn's message reaches the model with
+`PLAN_NOTE` after it. `exit_plan_mode` (`tools/exit_plan.py`, Class A by
+`exit-plan-mode`) parks the turn on `plan_review` (`plan_review.py`) until
+`review_plan`: approve (with an optional edited `plan`) turns plan mode off
+(`tier_state.plan` false), pins the plan (`plan_pinned`, carried into every
+compaction summary ahead of the task list, shown in the Plan pane, read
+back on revive) and hands the model the approved text; reject keeps plan
+mode on and returns the note. Stop, cancel and the approval timeout end the
+wait; skip-all never reviews; unattended runs refuse. The window and the
+phone show `PlanReviewCard.svelte` (Approve, Edit plan / Show plan, Reject,
+a note); `/plan`, `/plan on|off` and `/plan <task>` are handled by the
+window; the composer's Plan chip is TD-4603's. `tst run` exits
+`approval_needed` on a plan, and a `plan_mode` refusal counts as refused.
+OS banners and the ntfy, Slack, Discord and Telegram channels say a plan
+is waiting. Tests: `core/tests/test_plan_mode.py` (every refusal and every
+read in plan mode, the allowlist pinned over all builtins, skip-all plus
+an `auto` rule cannot write, MCP marking from config, the note, approve,
+edit, reject, refusals, Stop, outside plan mode, `delegate kind: worker`,
+compaction carry, revive, peers, channels, `tst run`),
+`ui/src/lib/plan-review.test.ts`, `ui/src/lib/plan-review-component.test.ts`,
+`ui/src/lib/task-list.test.ts` (pinned plan in the Plan pane),
+`ui/src/lib/os-notify.test.ts`, `ui/src/lib/protocol.test.ts`,
+`ui/src/lib/slash-commands.test.ts`, and the UI walk (at 375 px: the chip,
+`/plan`, `/plan <task>` and `/plan off`, the card's Edit, Show, note,
+Approve edited plan and Reject; then the pinned plan in the Plan pane at
+1280 px; census gains `plan-review` and `plan-review:editing`). The
+phone's APK is not rebuilt here; its WebView shows this UI once it is.
+See DECISIONS.md, docs/configuration.md §4.4 and docs/architecture.md.
 
 ---
 
