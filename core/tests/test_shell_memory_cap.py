@@ -466,6 +466,10 @@ class TestScopeVerdict:
         state = {"ControlGroup": "/u.scope", "ActiveState": "failed", "Result": "oom-kill"}
         self._state(monkeypatch, state, (0, 1))
         assert await cap_note(self._cap(), 137, "Killed") == ""
+        # Nor on systemd before 253, where a bare SIGKILL is otherwise the cue.
+        before_253 = shell_memory._ScopeTools("systemd-run", "systemctl", False, False)
+        old_cap = ShellMemoryCap(mb=64, method="scope", unit="u.scope", tools=before_253)
+        assert await cap_note(old_cap, 137, "Killed") == ""
 
     async def test_only_systemds_result_left_is_the_likely_cause(
         self, monkeypatch: pytest.MonkeyPatch

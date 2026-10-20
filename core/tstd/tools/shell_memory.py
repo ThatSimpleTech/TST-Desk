@@ -402,7 +402,9 @@ def _cgroup_oom_events(cgroup: str) -> tuple[int, int] | None:
     return counts.get("oom", 0), counts.get("oom_kill", 0)
 
 
-ScopeVerdict = Literal["cap", "likely", ""]
+#: ``other``: something was killed, but the scope's counters show the cap
+#: was not reached, so it was another killer's doing.
+ScopeVerdict = Literal["cap", "likely", "other", ""]
 
 
 async def _scope_oom_killed(cap: ShellMemoryCap) -> ScopeVerdict:
@@ -423,7 +425,7 @@ async def _scope_oom_killed(cap: ShellMemoryCap) -> ScopeVerdict:
     events = await asyncio.to_thread(_cgroup_oom_events, state.get("ControlGroup", ""))
     verdict: ScopeVerdict = ""
     if events is not None and events[1] > 0:
-        verdict = "cap" if events[0] > 0 else ""
+        verdict = "cap" if events[0] > 0 else "other"
         killed = True
     else:
         killed = state.get("Result") == "oom-kill"
@@ -487,6 +489,8 @@ async def cap_note(cap: ShellMemoryCap | None, exit_code: int, stderr: str) -> s
         verdict = await _scope_oom_killed(cap)
         if verdict == "likely":
             return _note(cap, likely=True, exit_code=exit_code)
+        if verdict == "other":
+            return ""
         hit = verdict == "cap"
         # systemd before 253 records no oom-kill result for a scope, and has
         # usually collected it by now: the exit status is all there is.
