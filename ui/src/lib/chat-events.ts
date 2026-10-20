@@ -8,7 +8,7 @@ import type { BranchSnaps } from "./chat-fork";
 import { applyHeldList, clearHeldPending } from "./chat-held";
 import type { ChatMessage, ChatState, ToolBlock } from "./chat-store";
 import type { MessageQueue } from "./chat-queue";
-import { refusedSend, returnToDraft, takeSent } from "./draft-store";
+import { dropSent, prependDraft, refusedSend, returnToDraft, takeSent } from "./draft-store";
 import type { FirstTokenWait } from "./first-token-wait";
 import { machineOf } from "./bridged-id";
 import type { DaemonEventUnion, SessionState, SessionSummary } from "./protocol";
@@ -164,6 +164,8 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
   switch (event.type) {
     case "user_turn": {
       if (event.session_id !== state.sessionId) return;
+      // A turn starts only once the loop is free: no review is running.
+      state.reviewRunning = false;
       // The daemon took one of our sends: the composer it emptied is saved
       // now, not after the debounce (TD-5019).
       if (takeSent(ctx.sending, event.content)) ctx.flushDraft();
@@ -334,7 +336,25 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
         if (event.in_reply_to === "send_queued") wait.end();
         return;
       }
-      if (event.code !== "session_not_running" && event.code !== "daemon_draining") return;
+      if (event.in_reply_to === "fork_from") {
+        // An Edit or Retry was refused (TD-5158): a summarized message, a
+        // turn still running, a drain. The editor has closed, so the text
+        // goes to the composer, and the snapshot the send took is dropped.
+        if (event.session_id != null && event.session_id !== state.sessionId) return;
+        wait.end();
+        const fork = ctx.forks.takeRefusedFork();
+        if (fork === null) return;
+        dropSent(ctx.sending, fork.text);
+        prependDraft(state, fork.text);
+        return;
+      }
+      if (
+        event.code !== "session_not_running" &&
+        event.code !== "daemon_draining" &&
+        event.code !== "message_not_saved"
+      ) {
+        return;
+      }
       if (event.session_id != null && event.session_id !== state.sessionId) return;
       wait.end();
       const refused = refusedSend(ctx.sending);
@@ -344,7 +364,8 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       }
       // A drain holds new turns while running ones finish, so a reply may
       // still be streaming here: it is not sealed. The text goes back to
-      // the composer to send again once the restart is done (TD-5019).
+      // the composer to send again once the restart is done (TD-5019), or
+      // once the data folder is writable again (TD-5158).
       if (refused !== null) returnToDraft(state, refused);
       return;
     }
@@ -402,8 +423,17 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       for (const block of copies) addFile(block, ref);
       return;
     }
+    case "verify_started":
+      // The review holds the loop after turn_complete; Stop reaches it
+      // (TD-5151), so the composer offers Stop until its result (TD-5158).
+      if (event.session_id === state.sessionId) state.reviewRunning = true;
+      return;
     case "verify_result":
-      // Timeline only (TD-4204). Never a second assistant bubble.
+      // Timeline only (TD-4204). Never a second assistant bubble. A
+      // pending one is an ask-mode card: nothing runs until Run.
+      if (event.session_id === state.sessionId && event.pending !== true) {
+        state.reviewRunning = false;
+      }
       return;
     default:
       // Cost, approvals, and the rest stay the activity timeline's

@@ -10,6 +10,10 @@ export interface Runtime {
 	token: string;
 	workspace: string;
 	reply: string;
+	/** Messages the walk daemon seeded as held by a restart (TD-5158), and
+	 *  the archived session holding them. */
+	held: string[];
+	held_session: string;
 }
 
 export function runtime(): Runtime {

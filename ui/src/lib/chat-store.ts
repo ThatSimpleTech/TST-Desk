@@ -63,6 +63,10 @@ export interface ChatState {
   /** The composer's text. Here rather than in the pane so each session keeps
    *  its own and a send the daemon refuses can come back to it (TD-5019). */
   draft: string;
+  /** An after-write review is running (TD-5158): `verify_started` with no
+   *  `verify_result` yet. It runs after turn_complete, so the turn state
+   *  says idle, but it holds the loop and Stop ends it (TD-5151). */
+  reviewRunning: boolean;
 }
 
 export interface ChatDeps {
@@ -140,6 +144,7 @@ export function createChatState(): ChatState {
     lastTurnDuration: null,
     lastTurnError: null,
     draft: "",
+    reviewRunning: false,
   };
 }
 
@@ -298,14 +303,18 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     if (state.sessionId === null) return false;
     const text = content.trim();
     if (text === "") return false;
-    if (!forks.has(userIndex)) forks.save(userIndex, 0, state.messages);
+    const saved = !forks.has(userIndex);
+    if (saved) forks.save(userIndex, 0, state.messages);
     const sent = deps.send({
       type: "fork_from",
       session_id: state.sessionId,
       user_index: userIndex,
       content: text,
     });
-    if (sent) noteSent(sending, text);
+    if (sent) {
+      noteSent(sending, text);
+      forks.noteFork({ userIndex, text, saved });
+    }
     return sent;
   }
 
@@ -389,8 +398,12 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       const sent = deps.send({ type: "stop_turn", session_id: state.sessionId });
       // The user said stop waiting: drop the local wait (and its watchdog)
       // immediately — the daemon's turn_complete remains the truth for the
-      // turn itself and lands separately.
-      if (sent) wait.end();
+      // turn itself and lands separately. A review's Stop goes too: its
+      // "Verify stopped." result follows (TD-5158).
+      if (sent) {
+        wait.end();
+        state.reviewRunning = false;
+      }
       return sent;
     },
 

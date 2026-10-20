@@ -52,6 +52,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "approval_request",
   "decision_logged",
   "checkpoint_notice",
+  "verify_started", // TD-5158
   "verify_result",
   "cost_update",
   "boundary_update",

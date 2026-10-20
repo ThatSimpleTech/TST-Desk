@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from .protocol import DaemonEvent, TurnComplete, UserTurn
+from .protocol import DaemonEvent, TurnComplete, UserTurn, VerifyResult, VerifyStarted
 from .provider import ChatMessage
 
 # The tool reply a cut call gets. It says what is known (the call may
@@ -23,6 +23,8 @@ CUT_BY_RESTART = (
     "check before running it again."
 )
 INTERRUPTED_BY_RESTART = "interrupted_by_restart"
+# The result a review a restart cut off gets (TD-5158).
+REVIEW_CUT_BY_RESTART = "Not reviewed: TST Desk restarted during the review."
 
 
 def open_turn(events: Sequence[DaemonEvent]) -> bool:
@@ -35,6 +37,21 @@ def open_turn(events: Sequence[DaemonEvent]) -> bool:
         elif isinstance(event, TurnComplete):
             last_complete = max(last_complete, event.seq)
     return last_user > last_complete
+
+
+def open_review(events: Sequence[DaemonEvent]) -> bool:
+    """True when the last ``verify_started`` has no finished ``verify_result`` after it.
+
+    A pending ``verify_result`` is an ask-mode card, which nothing runs.
+    """
+    started = 0
+    finished = 0
+    for event in events:
+        if isinstance(event, VerifyStarted):
+            started = max(started, event.seq)
+        elif isinstance(event, VerifyResult) and not event.pending:
+            finished = max(finished, event.seq)
+    return started > finished
 
 
 def repair_cut_conversation(messages: Sequence[ChatMessage]) -> list[ChatMessage]:

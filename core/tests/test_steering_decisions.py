@@ -236,6 +236,28 @@ async def test_a_stale_edit_keeps_the_users_text_in_the_fresh_diff(proposed: Run
     assert (fresh.files[0].action, fresh.files[0].after) == ("create", mine)
 
 
+async def test_accepting_the_fresh_card_of_a_stale_edit_is_logged_as_edited(
+    proposed: Run,
+) -> None:
+    """The fresh card carries the user's text; the log must not credit the agent (TD-5158)."""
+    run = proposed
+    [stale] = run.events(SteeringProposal)
+    (run.ws / "AGENTS.md").write_text("# Project\n\n- Changed.\n", encoding="utf-8")
+    mine = "# Mine\n"
+    reply = await run.send("steering_edit", stale.proposal_id, content=mine)
+    assert reply is not None and reply["code"] == "steering_proposal_stale"
+    fresh = run.events(SteeringProposal)[-1]
+    # Changed again, so the fresh card goes stale too and is re-offered.
+    (run.ws / "AGENTS.md").write_text("# Project\n\n- Changed twice.\n", encoding="utf-8")
+    reply = await run.send("steering_accept", fresh.proposal_id)
+    assert reply is not None and reply["code"] == "steering_proposal_stale"
+    again = run.events(SteeringProposal)[-1]
+    assert await run.send("steering_accept", again.proposal_id) is None
+    assert _read(run) == mine
+    [decision] = run.events(SteeringDecision)
+    assert decision.decision == "edited"
+
+
 async def test_a_file_changed_to_what_the_card_would_blank_gets_no_fresh_diff(
     proposed: Run,
 ) -> None:
@@ -254,8 +276,25 @@ async def test_a_file_changed_to_what_the_card_would_blank_gets_no_fresh_diff(
     assert _read(run) == theirs
 
 
-@pytest.mark.skipif(not POSIX, reason="symlinks need privileges on Windows")
-async def test_a_symlink_swapped_in_after_the_proposal_is_refused(tmp_path: Path) -> None:
+# Both write paths run here: the ``dir_fd`` one (POSIX) and the path-based
+# one Windows takes, where a junction (``mklink /J``) needs no privilege.
+# The tests make links with os.symlink, which on Windows needs a privilege
+# or Developer Mode, so they run where CI does: Linux.
+_SYMLINKS = pytest.mark.skipif(not POSIX, reason="os.symlink needs a privilege on Windows")
+
+
+@pytest.fixture(params=["dir_fd", "by_path"])
+def write_path(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
+    from tstd import steering_proposals
+
+    monkeypatch.setattr(steering_proposals, "_DIR_FD_WRITES", request.param == "dir_fd")
+    return str(request.param)
+
+
+@_SYMLINKS
+async def test_a_symlink_swapped_in_after_the_proposal_is_refused(
+    tmp_path: Path, write_path: str
+) -> None:
     steps = [
         _call("propose_steering_edit", path=".tst/rules/style.md", text="# Style\n"),
         Script(kind="stream", content="Proposed."),
@@ -273,6 +312,145 @@ async def test_a_symlink_swapped_in_after_the_proposal_is_refused(tmp_path: Path
         assert reply is not None and reply["code"] == "outside_workspace"
         assert list(outside.iterdir()) == []
         assert event.proposal_id in run.session.steering_proposals
+    finally:
+        await _shutdown(run.daemon, run.sid)
+
+
+@_SYMLINKS
+async def test_a_directory_swapped_between_the_check_and_the_write_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, write_path: str
+) -> None:
+    """The write must not re-resolve a path the agent can change (TD-5158).
+
+    The turn keeps running while the card is open. The path was checked,
+    then the write resolved ``sub/`` again, so a directory swapped for a
+    symlink in between sent the user's text out of the workspace. On the
+    path-based write (Windows) the folders are checked for links again
+    right before the temp file is made.
+    """
+    from tstd import steering_proposals
+
+    steps = [
+        _call("propose_steering_edit", path="sub/CLAUDE.md", text="# Sub\n"),
+        Script(kind="stream", content="Proposed."),
+    ]
+    run = await _run(tmp_path, steps, {"sub/keep.txt": "x\n"})
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    real_read = steering_proposals.read_current
+
+    def read_then_swap(path: Path) -> str | None:
+        current = real_read(path)
+        sub = run.ws / "sub"
+        (sub / "keep.txt").unlink()
+        sub.rmdir()
+        sub.symlink_to(outside, target_is_directory=True)
+        return current
+
+    try:
+        await run.turn()
+        [event] = run.events(SteeringProposal)
+        monkeypatch.setattr(steering_proposals, "read_current", read_then_swap)
+        reply = await run.send("steering_accept", event.proposal_id)
+        assert reply is not None and reply["code"] == "steering_write_failed"
+        # The refusal names its card, so the window shows it there (TD-5158).
+        assert reply["proposal_id"] == event.proposal_id
+        assert list(outside.iterdir()) == []
+        assert event.proposal_id in run.session.steering_proposals
+    finally:
+        await _shutdown(run.daemon, run.sid)
+
+
+async def _sub_proposal(tmp_path: Path) -> tuple[Run, Path]:
+    steps = [
+        _call("propose_steering_edit", path="sub/CLAUDE.md", text="# Sub\n"),
+        Script(kind="stream", content="Proposed."),
+    ]
+    run = await _run(tmp_path, steps, {"sub/keep.txt": "x\n"})
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    await run.turn()
+    return run, outside
+
+
+def _swap_sub(run: Run, outside: Path) -> Path:
+    """Move ``sub/`` aside and put a link to *outside* in its place."""
+    aside = run.ws / "sub-aside"
+    (run.ws / "sub").rename(aside)
+    (run.ws / "sub").symlink_to(outside, target_is_directory=True)
+    return aside
+
+
+@_SYMLINKS
+@pytest.mark.parametrize("swap_back", [False, True], ids=["stays", "swapped-back"])
+async def test_the_path_based_write_refuses_a_swap_around_its_temp_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, swap_back: bool
+) -> None:
+    """Windows' write checks again after making the temp file (TD-5158).
+
+    The folders pass the check, then ``sub/`` becomes a link just before
+    the temp file is made, so it is made outside. Whether the link stays
+    or the folder is put back before the second check, none of the
+    user's text reaches the temp file and nothing is renamed outside.
+    """
+    import tempfile
+
+    from tstd import steering_proposals
+
+    monkeypatch.setattr(steering_proposals, "_DIR_FD_WRITES", False)
+    run, outside = await _sub_proposal(tmp_path)
+    real_mkstemp = tempfile.mkstemp
+
+    def swap_then_mkstemp(*args: Any, **kwargs: Any) -> tuple[int, str]:
+        aside = _swap_sub(run, outside)
+        made = real_mkstemp(*args, **kwargs)
+        if swap_back:
+            (run.ws / "sub").unlink()
+            aside.rename(run.ws / "sub")
+        return made
+
+    try:
+        [event] = run.events(SteeringProposal)
+        monkeypatch.setattr(steering_proposals.tempfile, "mkstemp", swap_then_mkstemp)
+        reply = await run.send("steering_accept", event.proposal_id)
+        assert reply is not None and reply["code"] == "steering_write_failed", reply
+        assert "a folder on its path is a link" in reply["message"]
+        assert event.proposal_id in run.session.steering_proposals
+        assert not (outside / "CLAUDE.md").exists()
+        # At most the empty temp file, and only when the folder came back
+        # (the write never unlinks a file it does not hold).
+        left = list(outside.iterdir())
+        assert len(left) == (1 if swap_back else 0), left
+        assert all(f.read_bytes() == b"" for f in left)
+        assert not (run.ws / "sub" / "CLAUDE.md").exists()
+    finally:
+        await _shutdown(run.daemon, run.sid)
+
+
+async def test_the_path_based_write_makes_missing_folders_and_keeps_the_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tstd import steering_proposals
+
+    monkeypatch.setattr(steering_proposals, "_DIR_FD_WRITES", False)
+    steps = [
+        _call("propose_steering_edit", path="a/b/CLAUDE.md", text="# B\n"),
+        _call("propose_steering_edit", path="AGENTS.md", text="# New\n"),
+        Script(kind="stream", content="Proposed."),
+    ]
+    run = await _run(tmp_path, steps, {"AGENTS.md": "# Old\n"})
+    try:
+        if POSIX:
+            (run.ws / "AGENTS.md").chmod(0o640)
+        await run.turn()
+        new_file, existing = run.events(SteeringProposal)
+        assert await run.send("steering_accept", new_file.proposal_id) is None
+        assert await run.send("steering_accept", existing.proposal_id) is None
+        assert _read(run, "a/b/CLAUDE.md") == "# B\n"
+        assert _read(run) == "# New\n"
+        if POSIX:
+            assert (run.ws / "AGENTS.md").stat().st_mode & 0o777 == 0o640
+        assert [p.name for p in (run.ws / "a" / "b").iterdir()] == ["CLAUDE.md"]
     finally:
         await _shutdown(run.daemon, run.sid)
 

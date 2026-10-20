@@ -608,7 +608,8 @@ export interface SetTierCredential extends ClientMessage {
 }
 
 /** Create or replace one listed MCP server (TD-4403). Command is argv
- *  tokens only — there is no env field. Acked with setup_state. */
+ *  tokens only — there is no env or headers field; the daemon keeps the
+ *  server's existing ones (TD-5110). Acked with setup_state. */
 export interface SetMcpServer extends ClientMessage {
   type: "set_mcp_server";
   id: string;
@@ -622,6 +623,26 @@ export interface SetMcpServer extends ClientMessage {
 export interface DeleteMcpServer extends ClientMessage {
   type: "delete_mcp_server";
   id: string;
+}
+
+/** Store one env var (stdio) or header (http) of a listed MCP server in the
+ *  keychain (TD-5110). config.yaml gets only `keychain:<entry>`; the value
+ *  never comes back in any event. Acked with setup_state. */
+export interface SetMcpSecret extends ClientMessage {
+  type: "set_mcp_secret";
+  server_id: string;
+  target: "env" | "header";
+  name: string;
+  value: string;
+}
+
+/** Remove one env var or header from a listed MCP server, and its keychain
+ *  item (TD-5110). Acked with setup_state. */
+export interface DeleteMcpSecret extends ClientMessage {
+  type: "delete_mcp_secret";
+  server_id: string;
+  target: "env" | "header";
+  name: string;
 }
 
 // TD-1703: name the model one tier of one preset uses. Deliberately narrow
@@ -1037,6 +1058,8 @@ export type ClientMessageUnion =
   | SetTierCredential
   | SetMcpServer
   | DeleteMcpServer
+  | SetMcpSecret
+  | DeleteMcpSecret
   | RunDiagnostics
   | GetUsage
   | ExportUsage
@@ -1259,6 +1282,13 @@ export interface CheckpointNotice extends DaemonEvent {
   session_id: string;
   code: string;
   message: string;
+}
+
+/** TD-5158: an after-write review started running; it holds the loop and
+ *  Stop reaches it until its `verify_result`. */
+export interface VerifyStarted extends DaemonEvent {
+  type: "verify_started";
+  session_id: string;
 }
 
 export interface VerifyResult extends DaemonEvent {
@@ -1538,6 +1568,12 @@ export interface SkillStackEntry {
   source: "workspace" | "user" | "claude_workspace" | "claude_user";
   loaded: boolean;
   tokens: number;
+  // Frontmatter keys the skill carried that TST Desk did not act on; the
+  // skill loaded anyway (TD-5107). Absent from an older daemon.
+  ignored_keys?: string[];
+  // `disable-model-invocation`: not in the model's catalog; only the
+  // user's `/name` loads it (TD-5107).
+  user_only?: boolean;
 }
 
 export interface InstructionStack extends DaemonEvent {
@@ -1828,6 +1864,18 @@ export interface McpServerSummary {
   enabled: boolean;
   /** TD-5104: tools left out at the last load, with reasons. Additive. */
   excluded_tools?: { name: string; reason: string }[];
+  /** TD-5110: env vars (stdio) and headers (http), names only. Additive. */
+  env?: McpValueSummary[];
+  headers?: McpValueSummary[];
+}
+
+/** One env var or header of an MCP server (TD-5110). Never its value.
+ *  `stored` is the keychain item's presence; false for a literal. */
+export interface McpValueSummary {
+  name: string;
+  source: "literal" | "keychain";
+  entry: string;
+  stored: boolean;
 }
 
 export interface CredentialSummary {
@@ -1990,6 +2038,9 @@ export interface Error extends DaemonEvent {
   /** TD-5144: the client message type this error answers, when the sender
    *  knows it (a hub refusing a forwarded verb). Absent from older daemons. */
   in_reply_to?: string | null;
+  /** TD-5158: the steering proposal a refused accept, edit or reject named.
+   *  Absent from older daemons. */
+  proposal_id?: string | null;
 }
 
 /** A browser screenshot written to the session dir (TD-1710). Path, not bytes. */
@@ -2381,6 +2432,7 @@ export type DaemonEventUnion =
   | ApprovalRequest
   | DecisionLogged
   | CheckpointNotice
+  | VerifyStarted
   | VerifyResult
   | CostUpdate
   | BoundaryUpdate

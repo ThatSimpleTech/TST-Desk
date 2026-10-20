@@ -191,6 +191,16 @@ describe("a send refused while the daemon drains for a restart", () => {
     expect(userSends()).toEqual(["deploy notes"]);
   });
 
+  it("a send the daemon could not save comes back the same way (TD-5158)", () => {
+    const { store, state } = bound();
+    store.sendUserMessage("keep me");
+    state.draft = "";
+    store.applyEvent(refusal("message_not_saved"));
+    expect(state.awaitingFirstToken).toBe(false);
+    expect(state.draft).toBe("keep me");
+    expect(state.messages).toEqual([]);
+  });
+
   it("puts a refused text ahead of what was typed since", () => {
     const { store, state } = bound();
     store.sendUserMessage("first");

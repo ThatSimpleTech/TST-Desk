@@ -507,6 +507,19 @@
     "type": "delete_mcp_server",
     "id": "example"
   },
+  "set_mcp_secret": {
+    "type": "set_mcp_secret",
+    "server_id": "example",
+    "target": "env",
+    "name": "GITHUB_TOKEN",
+    "value": "placeholder-value"
+  },
+  "delete_mcp_secret": {
+    "type": "delete_mcp_secret",
+    "server_id": "example",
+    "target": "env",
+    "name": "GITHUB_TOKEN"
+  },
   "run_diagnostics": {
     "type": "run_diagnostics"
   },
@@ -772,6 +785,11 @@
     "code": "dirty_baseline",
     "message": "This workspace has uncommitted changes."
   },
+  "verify_started": {
+    "type": "verify_started",
+    "seq": 10,
+    "session_id": "sess-1"
+  },
   "verify_result": {
     "type": "verify_result",
     "seq": 10,
@@ -947,7 +965,8 @@
     "code": "test",
     "message": "fail",
     "machine": null,
-    "in_reply_to": null
+    "in_reply_to": null,
+    "proposal_id": null
   },
   "error_with_session": {
     "type": "error",
@@ -956,7 +975,8 @@
     "code": "test",
     "message": "fail",
     "machine": null,
-    "in_reply_to": null
+    "in_reply_to": null,
+    "proposal_id": null
   },
   "shell_output": {
     "type": "shell_output",
@@ -1022,7 +1042,21 @@
         "description": "Review a PR",
         "source": "workspace",
         "loaded": false,
-        "tokens": 40
+        "tokens": 40,
+        "ignored_keys": [],
+        "user_only": false
+      },
+      {
+        "name": "deploy",
+        "description": "Deploy to staging",
+        "source": "claude_workspace",
+        "loaded": false,
+        "tokens": 120,
+        "ignored_keys": [
+          "context",
+          "model"
+        ],
+        "user_only": true
       }
     ]
   },
@@ -1323,7 +1357,22 @@
         ],
         "url": "",
         "enabled": true,
-        "excluded_tools": []
+        "excluded_tools": [],
+        "env": [
+          {
+            "name": "GITHUB_TOKEN",
+            "source": "keychain",
+            "entry": "github_token",
+            "stored": true
+          },
+          {
+            "name": "LOG_LEVEL",
+            "source": "literal",
+            "entry": "",
+            "stored": false
+          }
+        ],
+        "headers": []
       }
     ],
     "speech_enabled": false,
@@ -1474,6 +1523,12 @@
         "name": "steering",
         "status": "ok",
         "detail": "3 steering source(s) parsed",
+        "fix": null
+      },
+      {
+        "name": "skills",
+        "status": "ok",
+        "detail": "2 skill(s) found; frontmatter keys ignored: deploy (context, model)",
         "fix": null
       }
     ]

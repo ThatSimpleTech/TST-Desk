@@ -39,6 +39,7 @@ __all__ = [
     "render_loaded_skill",
     "render_loaded_skills",
     "render_skill_catalog",
+    "skills_doctor_detail",
     "slash_skill_name",
     "try_load_skill",
 ]
@@ -53,9 +54,13 @@ def render_skill_catalog(skills: Sequence[Skill]) -> str:
     """Short name+description list for the brain prompt. Not bodies.
 
     A skill over :data:`SKILL_BODY_TOKEN_CAP` is left out: ``load_skill``
-    would refuse it every time, and each try costs the model a turn.
+    would refuse it every time, and each try costs the model a turn.  A
+    ``user_only`` skill is left out too: only the user's ``/name`` may
+    load it (``disable-model-invocation``, TD-5107).
     """
-    loadable = [skill for skill in skills if skill.tokens <= SKILL_BODY_TOKEN_CAP]
+    loadable = [
+        skill for skill in skills if skill.tokens <= SKILL_BODY_TOKEN_CAP and not skill.user_only
+    ]
     for skill in skills:
         if skill.tokens > SKILL_BODY_TOKEN_CAP:
             warn_once(
@@ -77,8 +82,28 @@ def render_skill_catalog(skills: Sequence[Skill]) -> str:
             # A Claude Code skill has no `whenToUse`; its description already
             # says when, so it is not repeated (TD-5011).
             line += f" (when to use: {skill.when_to_use})"
+        if skill.compatibility:
+            # Agent Skills' environment needs, so the model can tell a skill
+            # it cannot run here (TD-5107).
+            line += f" (compatibility: {skill.compatibility})"
         lines.append(line)
     return "\n".join(lines)
+
+
+def skills_doctor_detail(skills: Sequence[Skill]) -> str:
+    """Doctor's ``skills`` row: the count, then each skill's ignored keys.
+
+    Names only, never paths: the row is copied into a pasted report
+    (TD-1104).  A skill with ignored keys loaded; the row says which keys
+    it carried that TST Desk did not act on (TD-5107).
+    """
+    if not skills:
+        return "no skills found"
+    detail = f"{len(skills)} skill(s) found"
+    flagged = [f"{s.name} ({', '.join(s.ignored_keys)})" for s in skills if s.ignored_keys]
+    if flagged:
+        detail += "; frontmatter keys ignored: " + "; ".join(flagged)
+    return detail
 
 
 def render_loaded_skill(skill: Skill) -> str:
@@ -105,12 +130,14 @@ def try_load_skill(
     *,
     home_dir: str | Path | None = None,
     claude_global_fallback: bool | None = None,
+    by_user: bool = False,
 ) -> str:
     """Attach *name* to ``session.loaded_skills`` or return a refusal.
 
     Loading the same name twice is a no-op.  An over-budget body is
-    refused, not truncated.  Unknown names are refused.  A None
-    *claude_global_fallback* reads the session's config.
+    refused, not truncated.  Unknown names are refused.  A ``user_only``
+    skill is refused unless *by_user* (the user's ``/name``, TD-5107).
+    A None *claude_global_fallback* reads the session's config.
     """
     workspace = getattr(session, "workspace_path", None)
     if not isinstance(workspace, str):
@@ -128,6 +155,11 @@ def try_load_skill(
     skill = {s.name: s for s in found}.get(name)
     if skill is None:
         return f"Error: unknown skill `{name}`"
+    if skill.user_only and not by_user:
+        return (
+            f"Error: skill `{name}` sets disable-model-invocation; "
+            f"only the user can load it, with /{name}."
+        )
     if skill.tokens > SKILL_BODY_TOKEN_CAP:
         return (
             f"Error: skill `{name}` is over budget "
@@ -180,7 +212,11 @@ def apply_slash_skill(
     if name not in {s.name for s in found}:
         return None
     return try_load_skill(
-        session, name, home_dir=home_dir, claude_global_fallback=claude_global_fallback
+        session,
+        name,
+        home_dir=home_dir,
+        claude_global_fallback=claude_global_fallback,
+        by_user=True,
     )
 
 

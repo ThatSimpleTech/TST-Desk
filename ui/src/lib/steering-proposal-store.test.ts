@@ -159,6 +159,24 @@ describe("decisions", () => {
     expect(pending[0]?.notice).toBe("Only the computer itself can do that.");
   });
 
+  it("a refusal lands on the card it names, not the last one clicked (TD-5158)", () => {
+    emit(proposal());
+    emit(proposal({ proposal_id: "sp-2", files: [{ ...proposal().files[0]!, path: "CLAUDE.md" }] }));
+    accept(pending[0]!);
+    accept(pending[1]!); // the user moves on before sp-1's answer is back
+    emit({
+      ...refusal("steering_write_failed", "Couldn't write AGENTS.md: Permission denied"),
+      proposal_id: "sp-1",
+    });
+    expect(pending.find((p) => p.proposalId === "sp-1")?.notice).toBe(
+      "Couldn't write AGENTS.md: Permission denied",
+    );
+    expect(pending.find((p) => p.proposalId === "sp-2")?.notice).toBeNull();
+    // sp-2 was not closed by sp-1's "no longer held".
+    emit({ ...refusal("no_steering_proposal", "Not open."), proposal_id: "sp-1" });
+    expect(pending.find((p) => p.proposalId === "sp-2")?.open).toBe(true);
+  });
+
   it("a refusal from the peer gate with no session id still lands", () => {
     emit(proposal());
     accept(pending[0]!);

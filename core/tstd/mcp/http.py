@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -48,7 +49,8 @@ class HttpMcpClient:
     """One JSON-RPC session as POST-to-configured-URL.
 
     Not SSE and not Streamable-HTTP session ids — one JSON object out,
-    one JSON object back. The URL is the only host this module dials.
+    one JSON object back. The URL is the only host this module dials, so
+    ``headers`` (this server's own values, TD-5110) go nowhere else.
     """
 
     def __init__(
@@ -57,9 +59,12 @@ class HttpMcpClient:
         *,
         timeout: float = CALL_TIMEOUT,
         startup_timeout: float | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> None:
         assert_loopback_http_url(url)
         self._url = url
+        # Accept last: the client's own header always wins.
+        self._headers = {**dict(headers or {}), "Accept": "application/json"}
         self._timeout = timeout
         # The handshake (initialize, initialized, tools/list) answers in its
         # own time, which may be longer than a call's (TD-5105).
@@ -68,9 +73,24 @@ class HttpMcpClient:
         self._next_id = 1
         self._pending: set[asyncio.Task[None]] = set()
 
-    async def start(self) -> None:
+    def _open(self) -> None:
+        """Make the client once.
+
+        The explicit transport is what keeps ``headers`` on the configured
+        URL: given one, httpx skips its proxy lookup (``HTTP_PROXY``,
+        ``ALL_PROXY``, the macOS or Windows system proxy), which covers
+        loopback too unless ``NO_PROXY`` lists it, and the proxy may be off
+        the box (TD-5110). ``trust_env=False`` would do that as well, but it
+        also drops ``SSL_CERT_FILE``, which an https loopback server's own CA
+        may rely on.
+        """
         if self._http is None:
-            self._http = httpx.AsyncClient(timeout=self._timeout + 5.0)
+            self._http = httpx.AsyncClient(
+                timeout=self._timeout + 5.0, transport=httpx.AsyncHTTPTransport()
+            )
+
+    async def start(self) -> None:
+        self._open()
         startup = self._startup_timeout
         await self.request("initialize", initialize_params(), wait_seconds=startup)
         await self.notify("notifications/initialized", wait_seconds=startup)
@@ -97,8 +117,7 @@ class HttpMcpClient:
         *,
         wait_seconds: float | None = None,
     ) -> Any:
-        if self._http is None:
-            self._http = httpx.AsyncClient(timeout=self._timeout + 5.0)
+        self._open()
         payload: dict[str, Any] = {"jsonrpc": "2.0", "id": req_id, "method": method}
         if params is not None:
             payload["params"] = params
@@ -118,8 +137,7 @@ class HttpMcpClient:
         *,
         wait_seconds: float | None = None,
     ) -> None:
-        if self._http is None:
-            self._http = httpx.AsyncClient(timeout=self._timeout + 5.0)
+        self._open()
         payload: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
         if params is not None:
             payload["params"] = params
@@ -198,7 +216,7 @@ class HttpMcpClient:
             response = await self._http.post(
                 self._url,
                 json=payload,
-                headers={"Accept": "application/json"},
+                headers=self._headers,
                 timeout=(wait_seconds or self._timeout) + 5.0,
             )
             response.raise_for_status()

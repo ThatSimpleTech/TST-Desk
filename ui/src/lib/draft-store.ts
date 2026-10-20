@@ -193,6 +193,18 @@ export function returnToDraft(state: Pick<ChatState, "draft" | "messages">, text
       break;
     }
   }
+  prependDraft(state, text);
+}
+
+/** Put *text* in the composer ahead of anything typed since. */
+export function prependDraft(state: Pick<ChatState, "draft">, text: string): void {
   if (text === "") return;
   state.draft = state.draft.trim() === "" ? text : `${text}\n\n${state.draft}`;
+}
+
+/** Forget the newest copy of *text* among the sends on their way: the
+ *  daemon refused it, and it will never come back as a user_turn. */
+export function dropSent(sending: string[], text: string): void {
+  const index = sending.lastIndexOf(text);
+  if (index >= 0) sending.splice(index, 1);
 }

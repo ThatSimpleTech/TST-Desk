@@ -3,8 +3,9 @@
 TD-4502 skipped a skill with any key besides ``description`` and
 ``whenToUse``, so every Claude Code skill (each has ``name`` and none has
 ``whenToUse``) was dropped.  The directory name still wins over ``name``.
-Keys that only label a skill or grant it something are ignored; a key
-that would restrict or reroute it still skips the skill.  The skills here
+Keys that only label a skill pass silently.  Since TD-5107 a key TST Desk
+does not act on no longer skips the skill: it loads, and the key is
+logged and listed in ``ignored_keys``.  The skills here
 sit in ``~/.claude/skills``, so each test opts into that tree with
 ``claude_global_fallback`` (off by default, see test_skill_gate.py).
 """
@@ -147,20 +148,22 @@ class TestOtherClaudeKeys:
             "metadata: {author: someone, tags: [a]}",
             "compatibility: claude-code",
             "argument-hint: '[topic]'",
-            "allowed-tools: Read, Grep, Bash(git:*)",
             "disable-model-invocation: false",
             "user-invocable: true",
         ],
     )
-    def test_ignored_key_loads(self, dirs: tuple[Path, Path], line: str) -> None:
+    def test_label_or_default_loads_with_nothing_ignored(
+        self, dirs: tuple[Path, Path], line: str
+    ) -> None:
         ws, home = dirs
         _claude_skill(home, "s", f"name: s\ndescription: Summarize\n{line}")
-        assert _names(ws, home) == ["s"]
+        skills = SkillDiscoverer(home_dir=home, claude_global_fallback=True).discover(ws)
+        assert [(s.name, s.ignored_keys) for s in skills] == [("s", ())]
 
     @pytest.mark.parametrize(
         "line",
         [
-            "disable-model-invocation: true",
+            "allowed-tools: Read, Grep, Bash(git:*)",
             "user-invocable: false",
             "user-invocable: 'true'",
             "model: haiku",
@@ -172,15 +175,18 @@ class TestOtherClaudeKeys:
             "globs: '*.py'",
         ],
     )
-    def test_key_it_cannot_honor_skips(
+    def test_key_it_does_not_act_on_loads_and_is_listed(
         self, dirs: tuple[Path, Path], line: str, caplog: pytest.LogCaptureFixture
     ) -> None:
+        # TD-5011 skipped these skills; TD-5107 loads them and warns.
         ws, home = dirs
         _claude_skill(home, "s", f"name: s\ndescription: Summarize\n{line}")
-        with caplog.at_level(logging.WARNING, logger="tstd.skills"):
-            assert _names(ws, home) == []
         key = line.split(":", 1)[0]
-        assert any(r.__dict__.get("extra_fields", {}).get("keys") == [key] for r in caplog.records)
+        with caplog.at_level(logging.WARNING, logger="tstd.skills"):
+            skills = SkillDiscoverer(home_dir=home, claude_global_fallback=True).discover(ws)
+        assert [(s.name, s.ignored_keys) for s in skills] == [("s", (key,))]
+        record = next(r for r in caplog.records if "keys ignored" in r.getMessage())
+        assert record.__dict__["extra_fields"]["keys"] == [key]
 
 
 class TestCatalog:

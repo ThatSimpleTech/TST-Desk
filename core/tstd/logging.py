@@ -86,14 +86,42 @@ def log_directory(data_dir: Path) -> Path:
     return data_dir / "logs"
 
 
+#: Exact secret texts this process has read or stored (TD-5110), longest
+#: first. A token in an MCP server's env or header can have any shape, so
+#: the patterns above may miss it; its exact text never will. Rebound as a
+#: whole tuple, so a reader on another thread sees the old or the new one.
+_KNOWN_SECRETS: tuple[str, ...] = ()
+
+#: Shorter texts would also match ordinary words.
+MIN_KNOWN_SECRET_CHARS = 8
+
+
+def register_secret_value(value: str) -> None:
+    """Scrub *value* from every output path for the life of the process.
+
+    A header such as ``Bearer <token>`` also registers each long
+    whitespace-separated part, so the bare token is caught too. Nothing is
+    ever unregistered: a rotated token is still worth hiding.
+    """
+    global _KNOWN_SECRETS
+    parts = {value.strip(), *value.split()}
+    fresh = {p for p in parts if len(p) >= MIN_KNOWN_SECRET_CHARS} - set(_KNOWN_SECRETS)
+    if fresh:
+        _KNOWN_SECRETS = tuple(sorted({*_KNOWN_SECRETS, *fresh}, key=len, reverse=True))
+
+
 def redact_secrets(text: str) -> str:
     """Replace known credential patterns in *text* with ``[REDACTED]``.
 
     This is the single redaction implementation shared by every output
     path — logs (SecretsRedactionFilter), the audit store (TD-901), and
     the event pipeline (TD-1405) — so a pattern added here protects all
-    of them at once.
+    of them at once. Secrets registered with :func:`register_secret_value`
+    are replaced by their exact text first.
     """
+    for known in _KNOWN_SECRETS:
+        if known in text:
+            text = text.replace(known, REDACTED)
     for pattern in SECRET_PATTERNS:
         text = pattern.sub(REDACTED, text)
     return text
@@ -143,7 +171,9 @@ class JSONFormatter(logging.Formatter):
             "ts": f"{record.created:.3f}",
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            # The filter scrubs msg and string args; an arg whose str() holds
+            # a secret only shows up once the message is built (TD-5110).
+            "message": redact_secrets(record.getMessage()),
         }
         if record.exc_info and record.exc_info[0]:
             # Tracebacks can carry secrets in exception messages and local

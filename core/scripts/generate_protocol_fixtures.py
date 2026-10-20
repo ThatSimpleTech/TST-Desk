@@ -62,6 +62,7 @@ from tstd.protocol import (
     DeleteCredential,
     DeleteJob,
     DeleteJobTemplate,
+    DeleteMcpSecret,
     DeleteMcpServer,
     DeleteSession,
     Deny,
@@ -130,6 +131,7 @@ from tstd.protocol import (
     MachineList,
     MachineSummary,
     McpServerSummary,
+    McpValueSummary,
     MemoryAccept,
     MemoryEdit,
     MemoryFileDiff,
@@ -191,6 +193,7 @@ from tstd.protocol import (
     SetGrokMode,
     SetJudgments,
     SetLoadGlobalMemory,
+    SetMcpSecret,
     SetMcpServer,
     SetPlan,
     SetPreset,
@@ -232,6 +235,7 @@ from tstd.protocol import (
     UserTurn,
     ValidateApiKey,
     VerifyResult,
+    VerifyStarted,
     build_hello_ack,
     build_pair_ok,
 )
@@ -442,6 +446,11 @@ FIXTURES = {
         enabled=True,
     ),
     "delete_mcp_server": DeleteMcpServer(id="example"),
+    # TD-5110: the value is a placeholder, never a real token.
+    "set_mcp_secret": SetMcpSecret(
+        server_id="example", target="env", name="GITHUB_TOKEN", value="placeholder-value"
+    ),
+    "delete_mcp_secret": DeleteMcpSecret(server_id="example", target="env", name="GITHUB_TOKEN"),
     # Diagnostics (TD-1104 doctor)
     "run_diagnostics": RunDiagnostics(),
     # Usage and cost (TD-1706)
@@ -585,6 +594,7 @@ FIXTURES = {
         message="This workspace has uncommitted changes.",
         seq=10,
     ),
+    "verify_started": VerifyStarted(session_id="sess-1", seq=10),
     "verify_result": VerifyResult(
         session_id="sess-1",
         verdict="pass",
@@ -759,7 +769,18 @@ FIXTURES = {
                 source="workspace",
                 loaded=False,
                 tokens=40,
-            )
+            ),
+            # TD-5107: loaded although its frontmatter asked for things
+            # TST Desk does not do; user-only from disable-model-invocation.
+            SkillStackEntry(
+                name="deploy",
+                description="Deploy to staging",
+                source="claude_workspace",
+                loaded=False,
+                tokens=120,
+                ignored_keys=["context", "model"],
+                user_only=True,
+            ),
         ],
     ),
     "charter": CharterDocument(
@@ -954,6 +975,12 @@ FIXTURES = {
                 command=["python", "-m", "some_mcp"],
                 url="",
                 enabled=True,
+                env=[
+                    McpValueSummary(
+                        name="GITHUB_TOKEN", source="keychain", entry="github_token", stored=True
+                    ),
+                    McpValueSummary(name="LOG_LEVEL", source="literal"),
+                ],
             )
         ],
         speech_enabled=False,
@@ -1024,6 +1051,11 @@ FIXTURES = {
             DiagnosticCheck(name="git", status="ok", detail="git version 2.50.0 (/usr/bin/git)"),
             DiagnosticCheck(name="workspace", status="ok", detail="project is writable"),
             DiagnosticCheck(name="steering", status="ok", detail="3 steering source(s) parsed"),
+            DiagnosticCheck(
+                name="skills",
+                status="ok",
+                detail="2 skill(s) found; frontmatter keys ignored: deploy (context, model)",
+            ),
         ]
     ),
     # Usage and cost (TD-1706): one row per bucket kind, each split by tier,

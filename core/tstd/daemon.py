@@ -16,7 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -25,6 +25,7 @@ from typing import Any, Literal, cast
 import websockets.exceptions
 from pydantic import ValidationError
 
+from . import keychain_mcp
 from .artifacts import ArtifactError, ArtifactRecord, ArtifactStore, artifact_ready_for, to_entry
 from .attachments import (
     AttachmentError,
@@ -96,7 +97,7 @@ from .context.instructions import (
 )
 from .context.memory_loader import list_workspace_memory
 from .context.prompt import PromptAssembler
-from .context.skills import list_workspace_skills_async
+from .context.skills import list_workspace_skills_async, skills_doctor_detail
 from .context.stack import build_instruction_stack
 from .context_pins import PinOutsideError, add_pin, list_pin_cards, project_capacity, remove_pin
 from .coworker import load_coworker, save_coworker
@@ -148,6 +149,12 @@ from .logging import get_logger, log_directory, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop, brain_manifest_config
 from .machine_pairing import DialPolicy
 from .mcp.loader import McpSupervisor
+from .mcp_settings import (
+    delete_mcp_secret,
+    forget_server_secrets,
+    set_mcp_secret,
+    value_summaries,
+)
 from .memory_commit import MemoryCommitter
 from .memory_pref import load_global_memory, save_global_memory
 from .memory_store import (
@@ -215,6 +222,7 @@ from .protocol import (
     DeleteCredential,
     DeleteJob,
     DeleteJobTemplate,
+    DeleteMcpSecret,
     DeleteMcpServer,
     DeleteSession,
     Deny,
@@ -326,6 +334,7 @@ from .protocol import (
     SetGrokMode,
     SetJudgments,
     SetLoadGlobalMemory,
+    SetMcpSecret,
     SetMcpServer,
     SetPlan,
     SetPreset,
@@ -359,6 +368,7 @@ from .protocol import (
     UserMessage,
     UserTurn,
     ValidateApiKey,
+    VerifyResult,
     build_error,
     parse_client_message,
     scrub_wire_json,
@@ -475,7 +485,13 @@ from .steering_proposals import decide as decide_steering
 from .steering_proposals import expire_restored as expire_restored_steering
 from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
-from .turn_seal import INTERRUPTED_BY_RESTART, open_turn, repair_cut_conversation
+from .turn_seal import (
+    INTERRUPTED_BY_RESTART,
+    REVIEW_CUT_BY_RESTART,
+    open_review,
+    open_turn,
+    repair_cut_conversation,
+)
 from .voice import (
     MAX_AUDIO_BYTES,
     VoiceError,
@@ -519,12 +535,15 @@ _COMPACT_REFUSALS: dict[str, str] = {
 # Why an edit (``fork_from``) or a branch switch (``set_branch``) was refused
 # (TD-5147). A message folded into a summary is gone from the model's
 # context, so it can no longer be edited or switched to another version.
+# The way out names something the user can always do: after "Summarize from
+# here" the summary runs to the end, so there is no later message to edit
+# (TD-5158).
 _BRANCH_REFUSALS: dict[str, str] = {
     "turn_in_progress": "A turn is running. Edit or switch when it finishes, or stop it first.",
     "empty_content": "An edited message can't be empty.",
     "user_turn_compacted": (
         "That message was folded into a summary to free up context, so it can't be "
-        "edited or switched any more. Edit a message after the summary instead."
+        "edited or switched any more. Send a new message to carry on from the summary."
     ),
     "user_turn_not_found": "That message is not in this conversation.",
     "branch_not_found": "That version of the message is no longer available.",
@@ -1246,6 +1265,8 @@ class Daemon:
                         McpExcludedToolSummary(name=item.name, reason=item.reason)
                         for item in excluded_by_server.get(sid, ())
                     ],
+                    env=await value_summaries(sid, spec.env, self._mcp_secret_is_stored),
+                    headers=await value_summaries(sid, spec.headers, self._mcp_secret_is_stored),
                 )
                 for sid, spec in sorted(self.config.mcp.servers.items())
             ],
@@ -1341,6 +1362,23 @@ class Daemon:
 
     def _invalidate_stored_probe(self) -> None:
         self._stored_probe_cache.clear()
+
+    async def _mcp_secret_is_stored(self, server_id: str, entry: str) -> bool:
+        """Presence of one MCP value's item (TD-5110), cached like a credential's.
+
+        The cache key is the account name; it has a ``.`` that no credential
+        id has, so the two never collide.
+        """
+        account = f"{keychain_mcp.ACCOUNT_PREFIX}{server_id}.{entry}"
+        cached = self._stored_probe_cache.get(account)
+        if cached is not None:
+            return cached
+        try:
+            stored = await keychain_mcp.mcp_secret_is_stored(server_id, entry)
+        except (KeychainError, FileNotFoundError):
+            stored = False
+        self._stored_probe_cache[account] = stored
+        return stored
 
     async def _credential_summaries(self) -> list[CredentialSummary]:
         """Catalog rows plus the implicit openrouter slot, never secrets."""
@@ -1663,11 +1701,11 @@ class Daemon:
     async def _diagnostics_report(self) -> DiagnosticsReport:
         """Run the doctor checks (TD-1104) and return the report.
 
-        Rows in display order: daemon → key → provider → git → workspace →
-        steering → optional ``mcp:<id>`` (only when ``mcp.servers`` is
-        non-empty).  Blocking filesystem calls ride worker threads; the live
-        provider probe is the only slow row (one token, worst case the
-        provider timeout).
+        Rows in display order: daemon → key → provider → git → grok_cli →
+        workspace → steering → skills → optional ``mcp:<id>`` (only when
+        ``mcp.servers`` is non-empty).  Blocking filesystem calls ride
+        worker threads; the live provider probe is the only slow row (one
+        token, worst case the provider timeout).
         """
         checks: list[DiagnosticCheck] = [
             # The reply itself proves reachability; the row carries versions
@@ -1730,9 +1768,13 @@ class Daemon:
             checks.append(
                 DiagnosticCheck(name="steering", status="skip", detail="no workspace open yet")
             )
+            checks.append(
+                DiagnosticCheck(name="skills", status="skip", detail="no workspace open yet")
+            )
         else:
             checks.append(await asyncio.to_thread(_check_writable, workspace))
             checks.append(await self._check_steering(workspace))
+            checks.append(await self._check_skills(workspace))
 
         if self.config.mcp.servers:
             try:
@@ -1851,6 +1893,35 @@ class Daemon:
                 assembled.notices,
             ),
         )
+
+    async def _check_skills(self, workspace: Path) -> DiagnosticCheck:
+        """Skills found, and the frontmatter keys each one ignored (TD-5107).
+
+        A skill with keys TST Desk does not act on still loads, so the row
+        stays ok; it names those keys so the user sees what was dropped.
+        """
+        try:
+            skills = await list_workspace_skills_async(
+                workspace,
+                claude_global_fallback=self.config.steering.claude_global_fallback,
+            )
+        except OSError as e:
+            return DiagnosticCheck(
+                name="skills",
+                status="fail",
+                detail=_relativize_paths(f"skill discovery failed: {e}", workspace),
+                fix="Make the named skills folder readable and re-run Doctor.",
+            )
+        except Exception as e:  # discovery is designed not to raise; report if it does
+            # One bad skill must cost this row, never the whole report: an
+            # escaped error closes the window's connection with no report.
+            return DiagnosticCheck(
+                name="skills",
+                status="fail",
+                detail=_relativize_paths(f"skill discovery failed: {e}", workspace),
+                fix="Fix or remove the skill file that discovery stopped on and re-run Doctor.",
+            )
+        return DiagnosticCheck(name="skills", status="ok", detail=skills_doctor_detail(skills))
 
     async def run(self) -> None:
         """Start the daemon and run until shutdown is requested."""
@@ -2172,10 +2243,15 @@ class Daemon:
                 record.session_id, record.workspace_path, final_state
             )
             sess.preset = chosen
+            # A tombstone never gets a runtime, but Resume, a spend cap and
+            # a move still reload its wall: gated too, or a loosening file
+            # read as trusted (TD-5158).
+            sess.trust_store = self.workspace_trust
             if loaded is not None and loaded.events:
                 sess.event_log.replace(loaded.events)
                 # TD-5140: a replay-only session holds no proposal either.
                 await expire_restored_steering(sess, loaded.events)
+                await self._seal_cut_review(sess, loaded.events)
             if final_state != record.state:
                 await self._session_store.update_state(record.session_id, final_state)
             log.info(
@@ -2553,7 +2629,29 @@ class Daemon:
             ]
             display = render_user_content(msg.content, decoded)
             provider = build_provider_user_content(msg.content, decoded)
-            await found.add_user_message(QueuedUserMessage(display=display, provider=provider))
+            try:
+                await found.add_user_message(
+                    QueuedUserMessage(display=display, provider=provider), refuse_unsaved=True
+                )
+            except OSError as e:
+                # Accepted means saved (TD-5155): a send that cannot reach
+                # the queue file is refused, and the window puts the text
+                # back in the composer, instead of being lost to the next
+                # restart without a word (TD-5158).
+                found.pending_images = []
+                log.warning(
+                    "user message not saved; refused",
+                    extra={"extra_fields": {"session_id": msg.session_id, "error": str(e)}},
+                )
+                reason = e.strerror or type(e).__name__
+                return build_error(
+                    "message_not_saved",
+                    f"Couldn't save the message to disk ({reason}), so it was not sent. "
+                    "It is back in the composer; check that TST Desk's data folder is "
+                    "writable, then send it again.",
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
+                )
             # Title from the user's text, not the rendered body — an
             # attachment-only message must stay untitled (TD-3001).
             await self._session_store.maybe_set_title(msg.session_id, msg.content)
@@ -2583,7 +2681,10 @@ class Daemon:
             result = await found.fork_from(msg.user_index, msg.content)
             if isinstance(result, str):
                 return build_error(
-                    result, _BRANCH_REFUSALS.get(result, result), session_id=msg.session_id
+                    result,
+                    _BRANCH_REFUSALS.get(result, result),
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
                 )
             await found.event_log.add(result)
             return None
@@ -2612,7 +2713,10 @@ class Daemon:
             result = await found.set_branch(msg.user_index, msg.sibling_index)
             if isinstance(result, str):
                 return build_error(
-                    result, _BRANCH_REFUSALS.get(result, result), session_id=msg.session_id
+                    result,
+                    _BRANCH_REFUSALS.get(result, result),
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
                 )
             await found.event_log.add(result)
             return None
@@ -3460,6 +3564,7 @@ class Daemon:
             try:
                 # Settings sends no timeouts; keep the ones already set (TD-5105).
                 prior = self.config.mcp.servers.get(msg.id)
+                kept = prior is not None and prior.transport == msg.transport
                 spec = McpServerConfig(
                     transport=msg.transport,
                     command=msg.command,
@@ -3468,10 +3573,17 @@ class Daemon:
                     timeout_seconds=prior.timeout_seconds if prior else None,
                     startup_timeout_seconds=prior.startup_timeout_seconds if prior else None,
                     max_call_seconds=prior.max_call_seconds if prior else None,
+                    # Nor env or headers (TD-5110): only set_mcp_secret edits
+                    # those. A new transport cannot use the old ones.
+                    env=dict(prior.env) if prior and kept else {},
+                    headers=dict(prior.headers) if prior and kept else {},
                 )
                 save_mcp_server(msg.id, spec, self.config_path)
             except (ConfigError, ValidationError) as e:
                 return build_error("bad_request", str(e))
+            if prior is not None and not kept:
+                await forget_server_secrets(msg.id, prior)
+                self._invalidate_stored_probe()
             try:
                 self._reload_user_config()
             except ConfigError as e:
@@ -3481,10 +3593,14 @@ class Daemon:
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, DeleteMcpServer):
+            removed = self.config.mcp.servers.get(msg.id)
             try:
                 delete_mcp_server_entry(msg.id, self.config_path)
             except ConfigError as e:
                 return build_error("bad_request", str(e))
+            if removed is not None:
+                await forget_server_secrets(msg.id, removed)
+                self._invalidate_stored_probe()
             try:
                 self._reload_user_config()
             except ConfigError as e:
@@ -3492,6 +3608,9 @@ class Daemon:
             await self._mcp.reload(self.config.mcp)
             log.info("mcp server removed", extra={"extra_fields": {"server_id": msg.id}})
             return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, SetMcpSecret | DeleteMcpSecret):
+            return await self._handle_mcp_secret(msg)
 
         # ── Diagnostics (TD-1104 doctor) ─────────────────────────────
         if isinstance(msg, RunDiagnostics):
@@ -3619,6 +3738,7 @@ class Daemon:
         await restore_queue(sess, rows, loaded.events)
         # TD-5140: open steering proposals lived in the old process's memory.
         await expire_restored_steering(sess, loaded.events)
+        await self._seal_cut_review(sess, loaded.events)
         await self._emit_working_context(sess, config_source(sess))
         log.info(
             "revived session",
@@ -3652,6 +3772,21 @@ class Daemon:
         )
         await sess.conversation_changed()
         log.info("sealed cut turn", extra={"extra_fields": {"session_id": sess.id}})
+
+    async def _seal_cut_review(self, sess: Session, events: Sequence[DaemonEvent]) -> None:
+        """End a review the last daemon died during (TD-5158).
+
+        Its ``verify_started`` would otherwise leave the window offering
+        Stop for a review nothing runs.
+        """
+        if not open_review(events):
+            return
+        await sess.event_log.add(
+            VerifyResult(
+                session_id=sess.id, verdict="error", summary=REVIEW_CUT_BY_RESTART, cost=0, seq=1
+            )
+        )
+        log.info("sealed cut review", extra={"extra_fields": {"session_id": sess.id}})
 
     async def _held_message_action(self, msg: SendQueued | RemoveQueued) -> str | None:
         """Send or drop a message a restart left held (TD-5155).
@@ -3757,7 +3892,7 @@ class Daemon:
                 },
             )
 
-        policy_error = reload_session_policy(sess, sess.workspace_path)
+        policy_error = reload_session_policy(sess, sess.workspace_path, view=sess.config_view)
         if policy_error is not None:
             log.warning(
                 "workspace policy config invalid; using defaults",
@@ -4680,6 +4815,43 @@ class Daemon:
             reset_email_sender(token)
             self._in_flight.release(job.id)
             await self._push_job_list()
+
+    async def _handle_mcp_secret(self, msg: SetMcpSecret | DeleteMcpSecret) -> str:
+        """Store or drop one MCP server value (TD-5110). Never logs the value."""
+        verb = "store" if isinstance(msg, SetMcpSecret) else "remove"
+        try:
+            if isinstance(msg, SetMcpSecret):
+                await set_mcp_secret(self.config.mcp, self.config_path, msg)
+            else:
+                await delete_mcp_secret(self.config.mcp, self.config_path, msg)
+        except KeychainLockedError as e:
+            return build_error("keychain_locked", str(e), in_reply_to=msg.type)
+        except (KeychainError, NotImplementedError) as e:
+            return build_error(
+                "key_store_failed" if verb == "store" else "key_delete_failed",
+                f"Could not {verb} the MCP server value: {e}",
+                in_reply_to=msg.type,
+            )
+        except ConfigError as e:
+            return build_error("bad_request", str(e), in_reply_to=msg.type)
+        finally:
+            self._invalidate_stored_probe()
+        try:
+            self._reload_user_config()
+        except ConfigError as e:
+            return build_error("bad_request", f"Saved, but the config no longer loads: {e}")
+        await self._mcp.reload(self.config.mcp)
+        log.info(
+            "mcp server value stored" if verb == "store" else "mcp server value removed",
+            extra={
+                "extra_fields": {
+                    "server_id": msg.server_id,
+                    "target": msg.target,
+                    "name": msg.name,
+                }
+            },
+        )
+        return (await self._setup_state_event()).model_dump_json()
 
     async def _handle_set_email_notify(self, msg: SetEmailNotify) -> str:
         from .notify.email import EmailNotifyError

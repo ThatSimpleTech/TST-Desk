@@ -215,7 +215,7 @@
 		{/if}
 		<Composer
 			disabled={!sendable}
-			running={showCancel(chat.turnState) || chat.awaitingFirstToken}
+			running={showCancel(chat.turnState) || chat.awaitingFirstToken || chat.reviewRunning}
 			bind:value={chat.draft}
 			limits={session.attachmentLimits}
 			allowImages={session.vision}

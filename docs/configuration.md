@@ -71,7 +71,7 @@ no effect.
 | `remote` | mapping | see below | Opt-in Tailscale bind. Omitted in an older user copy is filled from the shipped file at load. Empty `bind` is loopback only. |
 | `notify` | mapping | see below | Outbound notification channels. Omitted in an older user copy is filled from the shipped file at load. Slack and ntfy are off until their `enabled` flag is true and a destination URL is stored in the OS keychain. |
 | `autonomy` | mapping | see below | Rootless container for autonomous runs (TD-4301) and interactive verify after writes (TD-4204). Interactive sessions ignore `runtime` and `image`. Omitted in an older user copy is filled from the shipped file at load. A missing or rootful runtime refuses start with install copy. |
-| `mcp` | mapping | empty servers | User-listed MCP servers (TD-4401). Omitted in an older user copy defaults to no servers. Empty `servers` adds no doctor rows. HTTP `url` must be loopback; off-box is refused before dial. No `env` map — tokens stay in the keychain. |
+| `mcp` | mapping | empty servers | User-listed MCP servers (TD-4401). Omitted in an older user copy defaults to no servers. Empty `servers` adds no doctor rows. HTTP `url` must be loopback; off-box is refused before dial. A server's token is `keychain:<entry>` in its `env` or `headers`, never the value (TD-5110). |
 | `engine` | mapping | see below | Which agent loop new sessions use. `native` is the TST 3-tier OpenAI-compatible loop. `grok` spawns the installed Grok Build CLI over ACP. Omitted in an older user copy is filled from the shipped file at load. |
 | `steering` | mapping | see below | User-global steering (TD-4845). Omitted in an older user copy is filled from the shipped file at load. |
 
@@ -522,10 +522,14 @@ upstream failure partway through a reply as an in-band
 `data: {"error": {...}}` event and then ends the body without
 `data: [DONE]`; OpenRouter sends the same `error` object beside a choice
 whose `finish_reason` is `"error"`. Either shape, and a `finish_reason`
-of `"error"` on its own, counts as the failure. Before anything has streamed, that event is treated as
-the HTTP error its `code` names: a 429 or 5xx is retried as above, and a
-400, 401 or 404 is not. An event without a usable status counts as a
-502. Once part of the reply has streamed, it ends the turn as
+of `"error"` on its own, counts as the failure. Before anything has streamed (an opening chunk
+that only names the role, with no text, reasoning or tool call, does not count), that event is
+treated as the HTTP error its `code` names: a 429 or 5xx is retried as above, and a
+400, 401 or 404 is not. A `code` that is not an HTTP error status (400 to 599), or no `code`,
+counts as a 502. The exception is a window refusal named by a string code such as
+`context_length_exceeded`, or only in its message: it counts as the 400 it is, so it becomes
+`context_overflow` and gets the one retry with a tighter window instead of being resent
+(TD-5158). Once part of the reply has streamed, it ends the turn as
 `stream_interrupted` and is not retried, because a second attempt would
 repeat text the window already shows. A stream that ends with neither a
 `finish_reason` nor `[DONE]` is `stream_interrupted` too. The window
@@ -677,14 +681,14 @@ turns never verify. There is no charter and no auto-revert.
 | `image` | string | `docker.io/library/alpine:3.21` | Image the container execs. Empty is a load error. Pre-pull it; the argv passes `--pull=never` so a start check cannot phone a registry. |
 | `check_every` | int ≥ 1 | `5` | Autonomy turns between validator drift checks (TD-4201, spec §12.6). A Class B decision this turn also checks, even if N is not reached. Interactive sessions ignore this. |
 | `verify` | `off` \| `after_write` \| `ask` | `after_write` | Interactive: after a filesystem write turn, call the validator once (`after_write`), ask first (`ask`), or never (`off`). Autonomy sessions ignore this. The call streams and sends the validator tier's `extra_body`, so ending the session or quitting also ends the server's work; a timed-out attempt is reported as a verify error, not resent (TD-5146). Stop ends a running review although it starts after the turn has ended: the call is cancelled, which hangs up the stream, the timeline shows `Verify stopped.` with no verdict, and the session is free for the next message. A message already queued behind the review still runs. Stop leaves an `ask` review that is waiting for confirmation alone (TD-5151). The review prompt is cut to fit `verify_max_prompt_tokens` first: shell output loses its head (each output keeps its tail), then the oldest diffs go, with `(N earlier lines omitted)` / `(N earlier diffs omitted)` markers where the cuts are, and the verdict's summary ends with what was left out. A prompt that still does not fit, or has no room for any of the diff, is not sent and is reported as a verify error (TD-5153). |
-| `verify_max_prompt_tokens` | int ≥ 1024 \| null | `null` | Most estimated tokens the after-write review's prompt may take: the validator steering, the diffs, the shell output and the instructions together. `null` is 60% of the validator tier's `context_window` (about 39k tokens on a 65,536-token slot, which a local server reading ~390 tokens/s finishes inside the default 120 s `read_timeout`). Never more than `context_window` less `max_output_tokens`, whatever is set. Estimated with the token counter the turn uses, scaled by the ratio learned from the validator endpoint's usage (TD-5007); each review's own usage teaches that ratio too. Lower it when a slow local validator times out; the first chunk arrives only after the whole prompt is read (TD-5153). |
+| `verify_max_prompt_tokens` | int ≥ 1024 \| null | `null` | Most estimated tokens the after-write review's prompt may take: the validator steering, the diffs, the shell output and the instructions together. `null` is 60% of the validator tier's `context_window` (about 39k tokens on a 65,536-token slot, which a local server reading ~390 tokens/s finishes inside the default 120 s `read_timeout`). Never more than `context_window` less `max_output_tokens`, whatever is set. Estimated with the token counter the turn uses, scaled by the ratio learned from the validator endpoint's usage (TD-5007); each review that finishes teaches that ratio too. The 120 s figure holds once that ratio is learned. Before then (a validator endpoint, `base_url` plus slug, that differs from the brain's and has no saved ratio) the flat 4 characters per token can undercount: on a model that reports about 1.6 times the estimate, a full 39k estimate is about 61k real tokens, roughly 156 s at 390 tokens/s, so the first big review there can time out, and a review that times out teaches nothing. Lower it when a slow local validator times out; the first chunk arrives only after the whole prompt is read (TD-5153, TD-5158). |
 
 ### `mcp`
 
 User-listed MCP servers (TD-4401). The user names each server in
 user-data-dir `config.yaml` — that listing is the load, not dynamic
 discovery (TD-601). Interactive and autonomy sessions both load them.
-A dead or refused server is a doctor row (`mcp:<id>` after `steering`),
+A dead or refused server is a doctor row (`mcp:<id>` after `skills`),
 not a dead daemon. Builtins stay registered. The computer-use sidecar
 (`computer_use.command` → `mcp/tst-cu-mcp`) is a different product.
 A packaged sidecar with empty `command` serves `tstd --cu-mcp` (TD-1725).
@@ -692,12 +696,42 @@ A packaged sidecar with empty `command` serves `tstd --cu-mcp` (TD-1725).
 Tool names are prefixed `{server_id}__{remote_name}` so an MCP tool
 named `fs_read` cannot replace the builtin. Registry provenance is
 `mcp:<server_id>`. The approval floor is `ask` (TD-4402 classifies
-path/host fields). No free-form `env` map — a token pasted here would
-land on disk; Settings (TD-4403) keeps paste-a-token in the keychain.
-Settings persist add / disable / remove through `set_mcp_server` and
-`delete_mcp_server`; the write is surgical so teaching comments survive.
-There is no `env` field on those messages. Live sessions keep the tool
-set they attached with until a new session.
+path/host fields). Settings persist add / disable / remove through
+`set_mcp_server` and `delete_mcp_server`; the write is surgical so
+teaching comments survive. There is no `env` or `headers` field on those
+messages: a rewrite keeps the server's existing ones, unless it changes
+the transport, which drops them and deletes their keychain items. Live
+sessions keep the tool set they attached with until a new session.
+
+**Tokens per server (TD-5110).** A stdio server's `env` and an http
+server's `headers` map names to values. A value is either a literal,
+which is not a secret because it sits in this file, or
+`keychain:<entry>`. A reference names the OS keychain item
+`tst-mcp.<server id>.<entry>` (service `com.thatsimpletech.tstdesk`), so
+a server can only reach its own items. The daemon reads each item when
+it starts that server and gives it to that child's environment, on top
+of the daemon's own, or to that server's requests. It never goes into
+the daemon's environment, so no other child sees it. A missing or
+unreadable item fails that server with a doctor row that names the item;
+the server does not start without it. `env` on an http server, or
+`headers` on a stdio one, fails the server the same way.
+Requests to an http server never use a proxy: `HTTP_PROXY`,
+`ALL_PROXY` and the macOS or Windows system proxy are ignored for them,
+so a header goes only to the configured loopback URL.
+
+Settings → MCP servers stores a token without ever showing it. Under a
+listed server, name it (an env var for stdio, a header such as
+`Authorization` for http, whose value is the whole header, for example
+`Bearer …`) and save. The value goes to the keychain under the name
+lowercased (`GITHUB_TOKEN` → `github_token`) and this file gets only the
+reference. Saving a name that already has an entry replaces the value
+there. Remove drops the name from this file and deletes its item;
+removing the server deletes all of its items. A stored value must be
+one line of printable ASCII and at least 8 characters. Every value the
+daemon reads or stores is scrubbed by its exact text from the log, the
+audit DB and the events from then on, whatever its shape. Settings
+lists each name with where it lives (keychain, stored or not, or this
+file); it never shows a value, literal or not.
 
 Strict OpenAI-compatible servers (vLLM, llama.cpp, LM Studio) reject the
 whole request when one tool is malformed, so each listed tool is checked
@@ -732,6 +766,8 @@ reply per call), so `timeout_seconds` bounds the whole call.
 | `timeout_seconds` | number > 0 | `30` | Longest silence in a tool call: no result and no progress for this long ends the call and sends `notifications/cancelled`. Over http it bounds the whole call. Settings keeps it when it toggles or edits the server. |
 | `startup_timeout_seconds` | number > 0 | `8` | Time allowed for each step of the handshake (`initialize`, then `tools/list`), whatever `timeout_seconds` says. Raise it for a server that loads a model before it answers. |
 | `max_call_seconds` | number > 0 | `600` | Hard cap on one stdio tool call, progress or not. Never below `timeout_seconds`. |
+| `env` | mapping of name → string | `{}` | stdio only. Extra environment for this server's child, on top of the daemon's. Names are `[A-Za-z_][A-Za-z0-9_]*`. A value is a literal or `keychain:<entry>` (entry: lowercase letters, digits, `_` and `-`, at most 64). Numbers become strings; a YAML boolean is refused, so quote it. A value may not hold a line break or NUL. |
+| `headers` | mapping of name → string | `{}` | http only. Extra headers on every request to this server, same value rules as `env`. Names are HTTP field names, one spelling each (case is ignored). `Accept`, `Connection`, `Content-Length`, `Content-Type`, `Host` and `Transfer-Encoding` are TST Desk's own and are refused. |
 
 <!-- verify: model -->
 ```yaml
@@ -843,10 +879,15 @@ mcp:
       timeout_seconds: 120
       startup_timeout_seconds: 30
       max_call_seconds: 1800
+      env:
+        RENDER_TOKEN: "keychain:render_token"
+        RENDER_QUALITY: "draft"
     loop:
       transport: http
       url: http://127.0.0.1:9
       enabled: true
+      headers:
+        Authorization: "keychain:authorization"
 engine:
   kind: native
   binary: ""
@@ -1609,6 +1650,9 @@ the one command, with any `*`, `?` or `[` in it made literal. A read of `app/[id
 saves `args: "app/[[]id]/page.tsx"`, which matches that file and no other, and a file literally
 named `*.env*` saves `"[*].env[*]"`, not a glob over every env file. Settings → Policy shows such
 a rule as `exactly app/[id]/page.tsx`, with the saved pattern on hover; a glob shows as written.
+Only `auto` rules are shown as exact. An `ask` or `never` rule always shows as written, because
+it also matches the text in another case (`.env` catches `.ENV`), and "exactly" would understate
+what it guards (TD-5158).
 
 - Always allow never replaces a rule you wrote. When an `ask` or `never` rule with the same
   `tool` and `args` is saved, the card doesn't offer it. A click sent anyway (a card shown

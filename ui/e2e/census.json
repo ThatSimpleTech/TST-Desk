@@ -33,6 +33,10 @@
 		"Copy report",
 		"Re-run"
 	],
+	"held": [
+		"Remove held message",
+		"Send held message"
+	],
 	"more-views": [
 		"Plan",
 		"Preview",
@@ -173,11 +177,15 @@
 	"settings:MCP servers": [
 		"Add argument",
 		"Add server",
+		"GITHUB_TOKEN",
+		"Paste token",
 		"Remove",
+		"Save to keychain",
 		"example",
 		"http",
 		"npx",
-		"stdio"
+		"stdio",
+		"toggle"
 	],
 	"settings:Model": [
 		"OpenRouter"

@@ -21,8 +21,16 @@ from pathlib import Path
 from .daemon import Daemon
 from .keychain import KeychainBackend, KeychainError, store_api_key
 from .mock import MockProvider, Script
+from .protocol import AssistantDelta, TurnComplete, UserTurn
+from .provider import ChatMessage
+from .session_persist import SessionPersist
+from .session_store import SessionStore
 
 _REPLY = "E2E reply from the mock model."
+# Two messages a restart left held (TD-5155), so the walk shows the strip
+# with its Send and Remove (TD-5158).
+_HELD = ("Also list the files", "And say goodbye")
+_HELD_SESSION = "e2e-held"
 
 
 class MemoryKeychain(KeychainBackend):
@@ -82,6 +90,39 @@ def _prepare_workspace(workspace: Path) -> None:
     git("commit", "-q", "-m", "baseline")
 
 
+async def _seed_held_session(data_dir: Path, workspace: Path) -> None:
+    """A finished exchange plus two queued messages, as a restart leaves them."""
+    sid = _HELD_SESSION
+    store = SessionStore(data_dir)
+    await store.upsert(sid, str(workspace), "idle")
+    await store.maybe_set_title(sid, "Held through a restart")
+    # Archived, so the window never binds it by itself and the walk's own
+    # session runs as it always did; the walk unarchives it at the end.
+    await store.set_archived(sid, True)
+    persist = SessionPersist(data_dir)
+    persist.prepare(sid)
+    for event in (
+        UserTurn(session_id=sid, turn_id="t1", content="Say hello", seq=1),
+        AssistantDelta(session_id=sid, delta="Hello.", seq=2),
+        TurnComplete(session_id=sid, tokens=1, cost=0.0, tier="brain", duration=0.1, seq=3),
+    ):
+        persist.append_event(sid, event)
+    persist.save_conversation(
+        sid,
+        [
+            ChatMessage(role="user", content="Say hello"),
+            ChatMessage(role="assistant", content="Hello."),
+        ],
+    )
+    persist.save_queue(
+        sid,
+        [
+            {"id": f"q{n}", "display": text, "provider": text, "images_dropped": 0}
+            for n, text in enumerate(_HELD, start=1)
+        ],
+    )
+
+
 def _write_runtime(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -110,6 +151,7 @@ async def serve(runtime_file: Path) -> None:
     data_dir = root / "data"
     data_dir.mkdir()
     _prepare_workspace(workspace)
+    await _seed_held_session(data_dir, workspace)
     _install_keychain()
     await store_api_key("sk-e2e-not-a-real-key")
 
@@ -125,6 +167,8 @@ async def serve(runtime_file: Path) -> None:
             "token": info["token"],
             "workspace": str(workspace),
             "reply": _REPLY,
+            "held": list(_HELD),
+            "held_session": _HELD_SESSION,
         }
         await asyncio.to_thread(_write_runtime, runtime_file, payload)
         print(json.dumps(payload), flush=True)
