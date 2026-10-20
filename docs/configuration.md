@@ -1896,9 +1896,13 @@ way. There are two kinds (TD-5117). `worker`, the default, can read, write files
 `research` is read-only: `fs_read`, `fs_list`, `fs_grep`, `web_search` and `web_fetch`, and
 nothing else, no MCP or plugin tool included. Either kind's calls go through the same
 classifier and approval gate as the session's own. Either kind hands back a summary of at most
-500 tokens, counted with the worker tier's counter (four characters a token for a local model).
+500 tokens, counted with the token counter for the worker tier's model: four characters a token
+unless tiktoken knows the slug (it is not installed with TST Desk), and not scaled by the ratio
+the turn loop learns from an endpoint's usage (TD-5160).
 Only that summary enters the conversation; the child's steps show in the window under the
 `delegate` call (expand it in the chat or the Activity panel), cut to 4,000 characters a step.
+A child that fails partway (an error that ends the call) keeps the steps it took on the failed
+result too (TD-5160).
 The child reads the session's own config, as the session's tools do: a research child's
 `web_search` goes to the session's `search.base_url` and fallbacks, the hosts `network` and the
 host allowlist judged, and a worker child's shell keeps the session's read-only list. In plan

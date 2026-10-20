@@ -38,6 +38,7 @@ from .diff import render_diff, snapshot_text
 from .registry import Tool, ToolRegistry, path_values
 from .results import (
     DEFAULT_MAX_RESULT_CHARS,
+    HandlerFailed,
     HandlerOutput,
     HandlerRefusal,
     ToolResult,
@@ -543,6 +544,7 @@ class ToolDispatcher:
                 error_code=e.code,
                 decision_class=decision_class,
                 allowed_by=allowed_by,
+                transcript=e.transcript if isinstance(e, HandlerRefusal) else (),
             )
         except Exception as e:
             log.exception(
@@ -562,6 +564,7 @@ class ToolDispatcher:
                 output=f"Tool '{name}' failed: {e}",
                 error_code="handler_error",
                 allowed_by=allowed_by,
+                transcript=e.transcript if isinstance(e, HandlerFailed) else (),
             )
         # A delegate's worker transcript is for the window (TD-5117); only
         # the text reaches the model.
