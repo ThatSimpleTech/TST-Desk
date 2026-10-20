@@ -566,6 +566,13 @@ def _parse_tool_call_stream(
             entry["arguments"] = args + tc.function_arguments
 
 
+async def _close_stream(stream: AsyncIterator[StreamChunk | ProviderError]) -> None:
+    """Close *stream* now, if it can be closed (an async generator can)."""
+    close = getattr(stream, "aclose", None)
+    if close is not None:
+        await close()
+
+
 async def _stream_and_parse(
     provider: ProviderLike,
     model_slug: str,
@@ -638,60 +645,68 @@ async def _stream_and_parse(
         max_tokens=tier_cfg.max_output_tokens,
         extra_body=tier_cfg.extra_body,
     )
-    async for chunk in stream:
-        if session.cancel_requested or session.stop_turn_requested:
-            failed = True
-            error_msg = "cancelled" if session.cancel_requested else "stopped"
-            break
+    try:
+        async for chunk in stream:
+            if session.cancel_requested or session.stop_turn_requested:
+                failed = True
+                error_msg = "cancelled" if session.cancel_requested else "stopped"
+                break
 
-        if isinstance(chunk, ProviderError):
-            failed, error_msg, error_code = True, chunk.message, chunk.code
-            raw_detail = chunk.detail
-            break
+            if isinstance(chunk, ProviderError):
+                failed, error_msg, error_code = True, chunk.message, chunk.code
+                raw_detail = chunk.detail
+                break
 
-        # Stream reasoning delta (TD-1901).  The plaintext is emitted,
-        # never folded into `collected_content`: that string is replayed to
-        # the provider as assistant speech, and feeding a model its own
-        # scratchpad back as something it said is both wrong and paid for.
-        # A reasoning model spends minutes here, so this is also the only
-        # sign of life the window gets before the answer starts.
-        # `reasoning_details` is different: OpenRouter requires the raw
-        # array back on the next assistant message, so it is kept apart
-        # (TD-1903).
-        if chunk.delta.reasoning_details:
-            merge_reasoning_details(collected_details, chunk.delta.reasoning_details)
-        thinking = chunk.delta.reasoning
-        if thinking is None and chunk.delta.reasoning_details:
-            thinking = flatten_reasoning_details(chunk.delta.reasoning_details)
-        if thinking and emit_events:
-            await session.event_log.add(
-                AssistantReasoning(
-                    session_id=session.id,
-                    delta=thinking,
-                    seq=1,
-                )
-            )
-
-        # Stream content delta. A progress check turns emission off so a
-        # BLOCKED line does not land in the chat as if it were the answer.
-        if chunk.delta.content:
-            collected_content += chunk.delta.content
-            if emit_events:
+            # Stream reasoning delta (TD-1901).  The plaintext is emitted,
+            # never folded into `collected_content`: that string is replayed to
+            # the provider as assistant speech, and feeding a model its own
+            # scratchpad back as something it said is both wrong and paid for.
+            # A reasoning model spends minutes here, so this is also the only
+            # sign of life the window gets before the answer starts.
+            # `reasoning_details` is different: OpenRouter requires the raw
+            # array back on the next assistant message, so it is kept apart
+            # (TD-1903).
+            if chunk.delta.reasoning_details:
+                merge_reasoning_details(collected_details, chunk.delta.reasoning_details)
+            thinking = chunk.delta.reasoning
+            if thinking is None and chunk.delta.reasoning_details:
+                thinking = flatten_reasoning_details(chunk.delta.reasoning_details)
+            if thinking and emit_events:
                 await session.event_log.add(
-                    AssistantDelta(
+                    AssistantReasoning(
                         session_id=session.id,
-                        delta=chunk.delta.content,
+                        delta=thinking,
                         seq=1,
                     )
                 )
 
-        # Accumulate tool call deltas
-        _parse_tool_call_stream(tool_calls, chunk)
+            # Stream content delta. A progress check turns emission off so a
+            # BLOCKED line does not land in the chat as if it were the answer.
+            if chunk.delta.content:
+                collected_content += chunk.delta.content
+                if emit_events:
+                    await session.event_log.add(
+                        AssistantDelta(
+                            session_id=session.id,
+                            delta=chunk.delta.content,
+                            seq=1,
+                        )
+                    )
 
-        if chunk.usage is not None:
-            usage = chunk.usage
-        if chunk.finish_reason:
-            finish_reason = chunk.finish_reason
+            # Accumulate tool call deltas
+            _parse_tool_call_stream(tool_calls, chunk)
+
+            if chunk.usage is not None:
+                usage = chunk.usage
+            if chunk.finish_reason:
+                finish_reason = chunk.finish_reason
+    finally:
+        # A generator cannot close itself when its consumer stops reading
+        # (Stop, a provider error): left to the async-generator finalizer,
+        # the connection stayed open until this function returned and a
+        # task was scheduled to close it, and the server kept generating
+        # meanwhile. Closing here hangs up before the turn moves on (TD-5158).
+        await _close_stream(stream)
 
     # Tokens the provider reported are recorded even when the call ended
     # badly — they were spent either way, and a cancelled or failed call

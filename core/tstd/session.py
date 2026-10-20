@@ -947,18 +947,36 @@ class Session:
         """
         return self._user_message_queue.qsize()
 
-    async def add_user_message(self, content: str | QueuedUserMessage) -> None:
+    async def add_user_message(
+        self, content: str | QueuedUserMessage, *, refuse_unsaved: bool = False
+    ) -> None:
         """Enqueue a user message for the agent loop to process.
 
         It is written to the session's queue file before the loop can take
         it, so a restart before its turn starts keeps it (TD-5155).
+
+        Nothing is left half-done (TD-5158): a write that fails with
+        *refuse_unsaved*, or a caller cancelled during the write, takes the
+        message back off the queue and the open-turn count, so the session
+        is not left owing a turn that will never start.
+
+        Raises:
+            OSError: With *refuse_unsaved*, the queue file could not be
+                written; the message was not queued. Without it, the failure
+                is logged and the message runs from memory.
         """
-        self._open_turns += 1
         queued = QueuedUserMessage.plain(content) if isinstance(content, str) else content
-        async with self._queue_lock:
-            self._waiting.append(queued)
-            await self._write_queue()
-        self._user_message_queue.put_nowait(queued)
+        self._open_turns += 1
+        try:
+            async with self._queue_lock:
+                self._waiting.append(queued)
+                await self._write_queue(strict=refuse_unsaved)
+                self._user_message_queue.put_nowait(queued)
+        except BaseException:
+            self._open_turns -= 1
+            if queued in self._waiting:
+                self._waiting.remove(queued)
+            raise
 
     async def user_turn_logged(self, queued: QueuedUserMessage) -> None:
         """*queued*'s user_turn and conversation are saved: it is not waiting (TD-5155).
@@ -1023,10 +1041,22 @@ class Session:
             )
         )
 
-    async def _write_queue(self) -> None:
-        """Save held then waiting messages. Caller holds ``_queue_lock``."""
-        if self._queue_hook is not None:
+    async def _write_queue(self, *, strict: bool = False) -> None:
+        """Save held then waiting messages. Caller holds ``_queue_lock``.
+
+        A failed write is logged, or raised when *strict*.
+        """
+        if self._queue_hook is None:
+            return
+        try:
             await self._queue_hook([*self.held_messages, *self._waiting])
+        except OSError as e:
+            if strict:
+                raise
+            log.warning(
+                "failed to save queued messages",
+                extra={"extra_fields": {"session_id": self.id, "error": str(e)}},
+            )
 
     async def wait_for_user_message(self) -> QueuedUserMessage | None:
         """Wait for the next user message.

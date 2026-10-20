@@ -232,6 +232,7 @@ from tstd.protocol import (
     UserTurn,
     ValidateApiKey,
     VerifyResult,
+    VerifyStarted,
     build_hello_ack,
     build_pair_ok,
 )
@@ -593,6 +594,7 @@ FIXTURES = {
         message="This workspace has uncommitted changes.",
         seq=10,
     ),
+    "verify_started": VerifyStarted(session_id="sess-1", seq=10),
     "verify_result": VerifyResult(
         session_id="sess-1",
         verdict="pass",

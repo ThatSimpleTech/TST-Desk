@@ -123,6 +123,19 @@ describe("held messages", () => {
     expect(state.held.map((r) => r.text)).toEqual(["also check b"]);
   });
 
+  it("a fresh send that matches a row already held keeps its echo (TD-5158)", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(held([{ queued_id: "q1", content: "yes" }, { queued_id: "q2", content: "no" }]));
+    store.applyEvent({ type: "session_state", session_id: "s1", state: "paused", seq: 2 });
+    expect(store.sendUserMessage("yes")).toBe(true);
+    // Another window removes "no"; the daemon logs the list again.
+    store.applyEvent(held([{ queued_id: "q1", content: "yes" }]));
+    expect(state.messages.map((m) => m.text)).toEqual(["yes"]);
+    // The send is still ours: its user_turn adopts the echo row.
+    store.applyEvent({ type: "user_turn", session_id: "s1", turn_id: "t1", content: "yes", seq: 3 });
+    expect(state.messages.filter((m) => m.role === "user").map((m) => m.turnId)).toEqual(["t1"]);
+  });
+
   it("an attachment send the daemon held loses its echo too", () => {
     const { store, state } = boundStore();
     store.applyEvent({ type: "session_state", session_id: "s1", state: "paused", seq: 2 });

@@ -28,7 +28,7 @@ from tstd.autonomy.verify import (
 from tstd.config import AutonomyConfig, ModelConfig, TierConfig
 from tstd.cost import CostTracker
 from tstd.mock import MockProvider, Script
-from tstd.protocol import TurnComplete, VerifyResult
+from tstd.protocol import TurnComplete, VerifyResult, VerifyStarted
 from tstd.provider import ProviderClient, RetryConfig
 from tstd.router import TierRouter
 from tstd.session import Session, SessionRunner
@@ -313,3 +313,196 @@ async def test_stop_ends_a_confirmed_ask_review(tmp_path: Path, monkeypatch: Mon
         confirmed.cancel()
         await runner.cancel()
     assert second.error_code is None
+
+
+# ── Stale stops (TD-5158) ───────────────────────────────────────────────
+
+
+async def _turn_with_a_late_stop(session: Session) -> None:
+    """A turn that wrote, with Stop landing as it ended: accepted, never acknowledged."""
+    await session.set_state("running")
+    await session.add_user_message("write it")
+    await session.stop_turn()
+    await session.event_log.add(
+        TurnComplete(session_id=session.id, tokens=0, cost=0.0, tier="brain", duration=0.1, seq=1)
+    )
+    note_tool_result(session, "fs_write", "success", diff="+hello\n")
+
+
+async def test_a_stale_stop_does_not_swallow_the_users_run(tmp_path: Path) -> None:
+    """The turn's late Stop must not turn a later Run into "Verify stopped."."""
+    session = Session(str(tmp_path))
+    await _turn_with_a_late_stop(session)
+    mock = MockProvider(scripts={"test-validator": _QUICK_REVIEW})
+    config = _config("ask")
+
+    async def client_for(tier: TierConfig) -> Any:
+        del tier
+        return mock
+
+    await maybe_verify_after_turn(
+        session,
+        config,
+        CostTracker(config),
+        client_for,
+        _Assembler(),  # type: ignore[arg-type]
+    )
+    assert any(e.pending for e in _verifies(session))
+    await confirm_pending_verify(session)
+    assert _validator_calls(mock) == 1
+    assert [e.verdict for e in _verifies(session) if not e.pending] == ["pass"]
+    _assert_idle(session)
+
+
+async def test_a_stop_after_the_call_returned_is_not_left_set(tmp_path: Path) -> None:
+    """Stop reached the open review while its result was being written."""
+    session = Session(str(tmp_path))
+    await session.set_state("running")
+    note_tool_result(session, "fs_write", "success", diff="+hello\n")
+    mock = MockProvider(scripts={"test-validator": _QUICK_REVIEW})
+    config = _config()
+    real_add = session.event_log.add
+
+    async def add_then_stop(event: Any) -> Any:
+        if isinstance(event, VerifyResult) and not event.pending:
+            await session.stop_turn()
+        return await real_add(event)
+
+    session.event_log.add = add_then_stop  # type: ignore[method-assign]
+
+    async def client_for(tier: TierConfig) -> Any:
+        del tier
+        return mock
+
+    await maybe_verify_after_turn(
+        session,
+        config,
+        CostTracker(config),
+        client_for,
+        _Assembler(),  # type: ignore[arg-type]
+    )
+    assert [e.verdict for e in _verifies(session)] == ["pass"]
+    _assert_idle(session)
+
+
+async def test_a_stop_while_the_prompt_is_fitted_reads_as_stopped(tmp_path: Path) -> None:
+    """A prompt refused as too big after Stop is a stop, not "Not reviewed"."""
+    session = Session(str(tmp_path))
+    await session.set_state("running")
+    note_tool_result(session, "fs_write", "success", diff="+hello\n")
+    mock = MockProvider(scripts={"test-validator": _QUICK_REVIEW})
+    config = make_config().model_copy(
+        update={"autonomy": AutonomyConfig(verify="after_write", verify_max_prompt_tokens=1024)}
+    )
+
+    class _StoppedWhileFitting:
+        async def assemble(self, name: str, **kwargs: object) -> SimpleNamespace:
+            del kwargs
+            await session.stop_turn()
+            return SimpleNamespace(text=f"You review a {name} diff. " + "rule " * 4_000)
+
+    async def client_for(tier: TierConfig) -> Any:
+        del tier
+        return mock
+
+    await maybe_verify_after_turn(
+        session,
+        config,
+        CostTracker(config),
+        client_for,
+        _StoppedWhileFitting(),  # type: ignore[arg-type]
+    )
+    assert _validator_calls(mock) == 0
+    _assert_stopped(session)
+    _assert_idle(session)
+
+
+# ── The window's Stop during a review (TD-5158) ─────────────────────────
+
+
+async def test_a_running_review_is_announced_before_its_result(tmp_path: Path) -> None:
+    """The window offers Stop from verify_started until the verify_result."""
+    session = Session(str(tmp_path))
+    await session.set_state("running")
+    note_tool_result(session, "fs_write", "success", diff="+hello\n")
+    mock = MockProvider(scripts={"test-validator": _QUICK_REVIEW})
+    config = _config()
+
+    async def client_for(tier: TierConfig) -> Any:
+        del tier
+        return mock
+
+    await maybe_verify_after_turn(
+        session,
+        config,
+        CostTracker(config),
+        client_for,
+        _Assembler(),  # type: ignore[arg-type]
+    )
+    kinds = [
+        e.type for e in session.event_log.all_events if isinstance(e, VerifyStarted | VerifyResult)
+    ]
+    assert kinds == ["verify_started", "verify_result"]
+
+
+async def test_an_ask_review_is_announced_only_when_it_runs(tmp_path: Path) -> None:
+    session = Session(str(tmp_path))
+    await session.set_state("running")
+    note_tool_result(session, "fs_write", "success", diff="+hello\n")
+    mock = MockProvider(scripts={"test-validator": _QUICK_REVIEW})
+    config = _config("ask")
+
+    async def client_for(tier: TierConfig) -> Any:
+        del tier
+        return mock
+
+    await maybe_verify_after_turn(
+        session,
+        config,
+        CostTracker(config),
+        client_for,
+        _Assembler(),  # type: ignore[arg-type]
+    )
+    assert not [e for e in session.event_log.all_events if isinstance(e, VerifyStarted)]
+    await confirm_pending_verify(session)
+    assert len([e for e in session.event_log.all_events if isinstance(e, VerifyStarted)]) == 1
+
+
+async def test_a_review_a_restart_cut_off_is_sealed(tmp_path: Path) -> None:
+    """Restored with verify_started last, the window would offer Stop forever."""
+    from tstd.daemon import Daemon
+    from tstd.protocol import UserTurn
+    from tstd.provider import ChatMessage
+    from tstd.session_persist import SessionPersist
+    from tstd.session_store import SessionStore
+    from tstd.turn_seal import REVIEW_CUT_BY_RESTART
+
+    data_dir = tmp_path / "data"
+    workspace = tmp_path / "ws"
+    data_dir.mkdir()
+    workspace.mkdir()
+    await SessionStore(data_dir).upsert("rev-1", str(workspace), "running")
+    persist = SessionPersist(data_dir)
+    persist.prepare("rev-1")
+    for event in (
+        UserTurn(session_id="rev-1", turn_id="t1", content="write it", seq=1),
+        TurnComplete(session_id="rev-1", tokens=0, cost=0.0, tier="brain", duration=0.1, seq=2),
+        VerifyStarted(session_id="rev-1", seq=3),
+    ):
+        persist.append_event("rev-1", event)
+    persist.save_conversation(
+        "rev-1",
+        [ChatMessage(role="user", content="write it"), ChatMessage(role="assistant", content="ok")],
+    )
+
+    daemon = Daemon(data_dir=data_dir, provider=MockProvider(default=_QUICK_REVIEW))
+    await daemon._restore_sessions()
+    session = daemon.session_registry.get("rev-1")
+    assert session is not None
+    try:
+        sealed = [e for e in _verifies(session) if not e.pending]
+        assert [(e.verdict, e.summary) for e in sealed] == [("error", REVIEW_CUT_BY_RESTART)]
+    finally:
+        runner = daemon.session_registry.get_runner("rev-1")
+        if runner is not None:
+            await runner.cancel()

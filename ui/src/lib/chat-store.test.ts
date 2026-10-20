@@ -317,6 +317,58 @@ describe("sending and cancelling", () => {
   });
 });
 
+describe("a review after the turn (TD-5158)", () => {
+  const started = (sessionId = "s1"): DaemonEventUnion => ({
+    type: "verify_started",
+    session_id: sessionId,
+    seq: 20,
+  });
+  const result = (pending: boolean, sessionId = "s1"): DaemonEventUnion => ({
+    type: "verify_result",
+    session_id: sessionId,
+    verdict: "error",
+    summary: pending ? "Confirm to review this write." : "Verify stopped.",
+    cost: 0,
+    pending,
+    seq: 21,
+  });
+
+  it("offers Stop while the review runs, although the turn is over", () => {
+    const { store, state, sent } = boundStore();
+    store.sendUserMessage("write it");
+    store.applyEvent(turnComplete("s1"));
+    expect(showCancel(state.turnState)).toBe(false);
+    store.applyEvent(started());
+    expect(state.reviewRunning).toBe(true);
+    expect(store.cancelTurn()).toBe(true);
+    expect(sent[sent.length - 1]).toEqual({ type: "stop_turn", session_id: "s1" });
+    expect(state.reviewRunning).toBe(false);
+  });
+
+  it("ends with the review's result, not with an ask-mode card", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(result(true));
+    expect(state.reviewRunning).toBe(false);
+    store.applyEvent(started());
+    store.applyEvent(result(true));
+    expect(state.reviewRunning).toBe(true);
+    store.applyEvent(result(false));
+    expect(state.reviewRunning).toBe(false);
+  });
+
+  it("ignores another session's review, and a new turn or a bind clears it", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(started("other"));
+    expect(state.reviewRunning).toBe(false);
+    store.applyEvent(started());
+    store.applyEvent(userTurn("s1", "t2", "next"));
+    expect(state.reviewRunning).toBe(false);
+    store.applyEvent(started());
+    store.selectSession("s2", null);
+    expect(state.reviewRunning).toBe(false);
+  });
+});
+
 describe("retry (TD-1606)", () => {
   it("retries the last user turn as a fork, not a third row", () => {
     const { store, sent } = boundStore();
@@ -1541,6 +1593,75 @@ describe("fork (TD-1708)", () => {
     const before = sent.length;
     expect(store.compactContext()).toBe(false);
     expect(sent.length).toBe(before);
+  });
+
+  it("a refused edit goes back to the composer and drops its snapshot (TD-5158)", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("first");
+    store.applyEvent(userTurn("s1", "t1", "first"));
+    store.applyEvent(delta("s1", "one"));
+    store.applyEvent(turnComplete("s1"));
+    state.draft = "typed since";
+    expect(store.forkFrom(0, "first, edited")).toBe(true);
+    store.applyEvent({
+      type: "error",
+      code: "user_turn_compacted",
+      message: "That message was folded into a summary.",
+      session_id: "s1",
+      in_reply_to: "fork_from",
+    } as DaemonEventUnion);
+    // The inline editor closed when the frame went out; the text is not lost.
+    expect(state.draft).toBe("first, edited\n\ntyped since");
+    expect(state.messages.filter((m) => m.role === "user").map((m) => m.text)).toEqual(["first"]);
+
+    // The transcript moves on. A later accepted fork of the same row must
+    // snapshot it as it is now, not as it was at the refused edit.
+    store.sendUserMessage("second");
+    store.applyEvent(userTurn("s1", "t2", "second"));
+    store.applyEvent(delta("s1", "two"));
+    store.applyEvent(turnComplete("s1"));
+    expect(store.forkFrom(0, "first, again")).toBe(true);
+    const reset = (sibling: number, content: string): DaemonEventUnion => ({
+      type: "conversation_reset",
+      session_id: "s1",
+      seq: 9,
+      user_index: 0,
+      sibling_index: sibling,
+      sibling_count: 2,
+      content,
+    });
+    store.applyEvent(reset(1, "first, again"));
+    store.applyEvent(reset(0, "first"));
+    expect(state.messages.filter((m) => m.role === "user").map((m) => m.text)).toEqual([
+      "first",
+      "second",
+    ]);
+  });
+
+  it("a refused fork claims only its own text, not a send after it (TD-5158)", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("first");
+    store.applyEvent(userTurn("s1", "t1", "first"));
+    store.applyEvent(turnComplete("s1"));
+    expect(store.forkFrom(0, "edited")).toBe(true);
+    store.applyEvent({
+      type: "error",
+      code: "turn_in_progress",
+      message: "A turn is running.",
+      session_id: "s1",
+      in_reply_to: "fork_from",
+    } as DaemonEventUnion);
+    expect(state.draft).toBe("edited");
+    // A refusal for another session leaves this pane alone.
+    expect(store.forkFrom(0, "again")).toBe(true);
+    store.applyEvent({
+      type: "error",
+      code: "turn_in_progress",
+      message: "A turn is running.",
+      session_id: "other",
+      in_reply_to: "fork_from",
+    } as DaemonEventUnion);
+    expect(state.draft).toBe("edited");
   });
 
   it("forkFrom sends fork_from", () => {

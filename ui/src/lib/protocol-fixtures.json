@@ -791,6 +791,11 @@
     "code": "dirty_baseline",
     "message": "This workspace has uncommitted changes."
   },
+  "verify_started": {
+    "type": "verify_started",
+    "seq": 10,
+    "session_id": "sess-1"
+  },
   "verify_result": {
     "type": "verify_result",
     "seq": 10,
@@ -966,7 +971,8 @@
     "code": "test",
     "message": "fail",
     "machine": null,
-    "in_reply_to": null
+    "in_reply_to": null,
+    "proposal_id": null
   },
   "error_with_session": {
     "type": "error",
@@ -975,7 +981,8 @@
     "code": "test",
     "message": "fail",
     "machine": null,
-    "in_reply_to": null
+    "in_reply_to": null,
+    "proposal_id": null
   },
   "shell_output": {
     "type": "shell_output",
