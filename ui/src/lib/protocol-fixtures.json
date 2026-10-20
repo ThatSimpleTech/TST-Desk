@@ -507,6 +507,19 @@
     "type": "delete_mcp_server",
     "id": "example"
   },
+  "set_mcp_secret": {
+    "type": "set_mcp_secret",
+    "server_id": "example",
+    "target": "env",
+    "name": "GITHUB_TOKEN",
+    "value": "placeholder-value"
+  },
+  "delete_mcp_secret": {
+    "type": "delete_mcp_secret",
+    "server_id": "example",
+    "target": "env",
+    "name": "GITHUB_TOKEN"
+  },
   "run_diagnostics": {
     "type": "run_diagnostics"
   },
@@ -1344,7 +1357,22 @@
         ],
         "url": "",
         "enabled": true,
-        "excluded_tools": []
+        "excluded_tools": [],
+        "env": [
+          {
+            "name": "GITHUB_TOKEN",
+            "source": "keychain",
+            "entry": "github_token",
+            "stored": true
+          },
+          {
+            "name": "LOG_LEVEL",
+            "source": "literal",
+            "entry": "",
+            "stored": false
+          }
+        ],
+        "headers": []
       }
     ],
     "speech_enabled": false,

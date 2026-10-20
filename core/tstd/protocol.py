@@ -16,7 +16,15 @@ import re
 import secrets
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from .attachments import AttachmentLimits
 from .autonomy.charter import Charter
@@ -1084,14 +1092,28 @@ class SetTierCredential(ClientMessage):
     credential: str = ""
 
 
+def _refuse_mcp_values(value: Any) -> Any:
+    """Keep typed values off the server messages; they would land in config."""
+    if isinstance(value, dict):
+        for key in ("env", "environment", "headers"):
+            if key in value:
+                raise ValueError(
+                    "MCP server messages cannot carry env or headers; tokens stay in "
+                    "the keychain (use set_mcp_secret)"
+                )
+    return value
+
+
 class SetMcpServer(ClientMessage):
     """Create or replace one listed MCP server (TD-4403).
 
-    Command is argv tokens only. There is no ``env`` field — a token
-    pasted here would land in ``config.yaml``. Extra keys are forbidden
-    so ``env`` / ``environment`` cannot sneak in later. Acked with
-    ``setup_state``. Live sessions keep their previous tool set until a
-    new session; hot-attach is out of scope.
+    Command is argv tokens only. There is no ``env`` or ``headers`` field —
+    a value typed here would land in ``config.yaml``. Extra keys are
+    forbidden so they cannot sneak in later; ``set_mcp_secret`` puts a
+    value in the keychain instead (TD-5110), and the server's existing
+    ``env`` / ``headers`` are kept. Acked with ``setup_state``. Live
+    sessions keep their previous tool set until a new session; hot-attach
+    is out of scope.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -1106,13 +1128,7 @@ class SetMcpServer(ClientMessage):
     @model_validator(mode="before")
     @classmethod
     def _refuse_env(cls, value: Any) -> Any:
-        if isinstance(value, dict):
-            for key in ("env", "environment"):
-                if key in value:
-                    raise ValueError(
-                        "MCP server messages cannot carry env; tokens stay in the keychain"
-                    )
-        return value
+        return _refuse_mcp_values(value)
 
     @field_validator("command", mode="before")
     @classmethod
@@ -1137,13 +1153,41 @@ class DeleteMcpServer(ClientMessage):
     @model_validator(mode="before")
     @classmethod
     def _refuse_env(cls, value: Any) -> Any:
-        if isinstance(value, dict):
-            for key in ("env", "environment"):
-                if key in value:
-                    raise ValueError(
-                        "MCP server messages cannot carry env; tokens stay in the keychain"
-                    )
-        return value
+        return _refuse_mcp_values(value)
+
+
+class SetMcpSecret(ClientMessage):
+    """Store one env var or header of a listed MCP server in the keychain (TD-5110).
+
+    ``target`` is ``env`` for a stdio server and ``header`` for an http
+    one. The value goes to the keychain item ``tst-mcp.<server_id>.<entry>``
+    and ``config.yaml`` gets only ``keychain:<entry>``; a name that already
+    names an entry keeps it. The value never appears in any event, log or
+    audit record. Acked with ``setup_state``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["set_mcp_secret"] = "set_mcp_secret"
+    server_id: str = Field(min_length=1)
+    target: Literal["env", "header"]
+    name: str = Field(min_length=1)
+    value: str = Field(min_length=1, repr=False)
+
+
+class DeleteMcpSecret(ClientMessage):
+    """Remove one env var or header from a listed MCP server (TD-5110).
+
+    Drops the name from ``config.yaml`` and, when it named a keychain
+    entry, deletes that item. Acked with ``setup_state``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["delete_mcp_secret"] = "delete_mcp_secret"
+    server_id: str = Field(min_length=1)
+    target: Literal["env", "header"]
+    name: str = Field(min_length=1)
 
 
 class RunDiagnostics(ClientMessage):
@@ -2419,6 +2463,20 @@ class McpExcludedToolSummary(BaseModel):
     reason: str
 
 
+class McpValueSummary(BaseModel):
+    """One env var or header of a listed MCP server (TD-5110). Never its value.
+
+    ``source`` is ``keychain`` for a ``keychain:<entry>`` reference, with
+    ``stored`` a presence probe of that item, or ``literal`` for a value
+    written in ``config.yaml`` (not shown here; ``stored`` is false).
+    """
+
+    name: str
+    source: Literal["literal", "keychain"]
+    entry: str = ""
+    stored: bool = False
+
+
 class McpServerSummary(BaseModel):
     """One listed MCP server as shown in settings (TD-4403). Never a secret."""
 
@@ -2429,6 +2487,9 @@ class McpServerSummary(BaseModel):
     enabled: bool = True
     #: Tools left out at the last load (TD-5104). Empty until the server loads.
     excluded_tools: list[McpExcludedToolSummary] = Field(default_factory=list)
+    #: Names only (TD-5110). Additive; an older client ignores them.
+    env: list[McpValueSummary] = Field(default_factory=list)
+    headers: list[McpValueSummary] = Field(default_factory=list)
 
 
 class RemoteDeviceSummary(BaseModel):
@@ -2591,7 +2652,7 @@ class SetupState(DaemonEvent):
     judgments_typesafe_credential: str = "typesafe"
     judgments_typesafe_key_stored: bool = False
     # TD-4403: listed MCP servers. Additive, default empty. Never a secret;
-    # there is no env map. An older client ignores the field.
+    # env and headers are names only (TD-5110). An older client ignores it.
     mcp_servers: list[McpServerSummary] = Field(default_factory=list)
     # TD-4701: hold-to-talk. Additive, default off. ``speech_ready`` is
     # enabled plus a configured base_url — the URL itself never leaves
@@ -3503,6 +3564,8 @@ ClientMessageT = Annotated[
     | SetTierCredential
     | SetMcpServer
     | DeleteMcpServer
+    | SetMcpSecret
+    | DeleteMcpSecret
     | RunDiagnostics
     | GetUsage
     | ExportUsage
@@ -3711,6 +3774,8 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_tier_credential",
         "set_mcp_server",
         "delete_mcp_server",
+        "set_mcp_secret",
+        "delete_mcp_secret",
         "run_diagnostics",
         "get_usage",
         "export_usage",
@@ -3850,6 +3915,12 @@ def _check_known_type(data: dict[str, Any], known_types: frozenset[str]) -> None
         raise UnknownMessageTypeError(msg_type)
 
 
+#: Messages whose input may hold an MCP server's token (TD-5110).
+_MCP_VALUE_VERBS = frozenset(
+    {"set_mcp_server", "delete_mcp_server", "set_mcp_secret", "delete_mcp_secret"}
+)
+
+
 def parse_client_message(raw: str) -> ClientMessageT:
     """Parse a raw JSON string into a typed client message.
 
@@ -3880,6 +3951,13 @@ def parse_client_message(raw: str) -> ClientMessageT:
             raise HandshakeError(
                 "bad_request", "Malformed set_email_notify: check the email settings fields."
             ) from None
+        if data["type"] in _MCP_VALUE_VERBS and isinstance(e, ValidationError):
+            # The reasons without the input, which may be a token (TD-5110).
+            reasons = "; ".join(
+                f"{'.'.join(str(part) for part in err['loc'][1:]) or 'message'}: {err['msg']}"
+                for err in e.errors(include_url=False, include_input=False, include_context=False)
+            )
+            raise HandshakeError("bad_request", f"Malformed {data['type']}: {reasons}") from None
         raise HandshakeError("bad_request", str(e)) from e
 
 

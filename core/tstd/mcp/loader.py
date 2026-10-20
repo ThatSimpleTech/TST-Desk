@@ -19,6 +19,7 @@ from ..tools.dispatch import ToolDispatcher
 from ..tools.registry import Tool, ToolRegistry
 from .errors import McpError
 from .http import HttpMcpClient, assert_loopback_http_url
+from .inject import server_values
 from .jsonrpc import (
     CALL_TIMEOUT,
     HANDSHAKE_TIMEOUT,
@@ -276,11 +277,14 @@ class McpSupervisor:
             )
         client: StdioMcpClient | None = None
         try:
+            # Read now, for this child only (TD-5110).
+            env = await server_values(server_id, spec)
             client = StdioMcpClient(
                 spec.command,
                 timeout=spec.timeout_seconds or self._call_timeout,
                 max_call_seconds=spec.max_call_seconds or MAX_CALL_SECONDS,
                 startup_timeout=self._startup_timeout(spec),
+                env=env,
             )
             return await self._handshake(server_id, client, spec)
         except Exception as e:
@@ -332,10 +336,13 @@ class McpSupervisor:
             )
         client: HttpMcpClient | None = None
         try:
+            # Read now, for this server's requests only (TD-5110).
+            headers = await server_values(server_id, spec)
             client = HttpMcpClient(
                 spec.url,
                 timeout=spec.timeout_seconds or self._call_timeout,
                 startup_timeout=self._startup_timeout(spec),
+                headers=headers,
             )
             return await self._handshake(server_id, client, spec)
         except Exception as e:

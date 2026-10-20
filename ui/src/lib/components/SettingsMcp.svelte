@@ -1,18 +1,44 @@
 <script lang="ts">
 	// MCP servers (TD-4403). The list is daemon truth from setup_state.
-	// Command is argv tokens — there is no env editor.
+	// Command is argv tokens. A token goes to the keychain (TD-5110): the
+	// value field is write-only and is cleared once it is sent.
 	import {
 		settings,
 		saveMcpServer,
 		setMcpServerEnabled,
 		deleteMcpServer,
+		saveMcpSecret,
+		deleteMcpSecret,
 		type McpServerRow,
+		type McpValueRow,
 	} from "../settings.svelte.js";
 
 	let draftId = $state("");
 	let draftTransport = $state<"stdio" | "http">("stdio");
 	let draftCommand = $state<string[]>([""]);
 	let draftUrl = $state("");
+	let secretNames = $state<Record<string, string>>({});
+	let secretValues = $state<Record<string, string>>({});
+
+	function canSaveSecret(id: string): boolean {
+		return (secretNames[id] ?? "").trim() !== "" && (secretValues[id] ?? "").trim() !== "";
+	}
+
+	function saveSecret(id: string): void {
+		if (!canSaveSecret(id)) return;
+		saveMcpSecret(id, secretNames[id] ?? "", secretValues[id] ?? "");
+		secretNames[id] = "";
+		secretValues[id] = "";
+	}
+
+	function valueLabel(server: McpServerRow): string {
+		return server.transport === "stdio" ? "env" : "header";
+	}
+
+	function valueState(value: McpValueRow): string {
+		if (value.source === "literal") return "set in config.yaml";
+		return value.stored ? "in the keychain" : "not stored — save it again";
+	}
 
 	function addArg(): void {
 		draftCommand = [...draftCommand, ""];
@@ -58,8 +84,10 @@
 </script>
 
 <p class="hint">
-	Listed servers load from your config.yaml. Command is argv tokens only — there is no env editor.
-	API keys stay in the keychain. Changes apply to new sessions.
+	Listed servers load from your config.yaml. Command is argv tokens only. A server's API key or
+	token goes in the keychain: name it (an env var for stdio, a header such as Authorization for
+	http) and save. Only that server gets it, and the value is never shown again. Removing a server
+	deletes its stored values. Changes apply to new sessions.
 </p>
 
 {#if settings.mcpServers.length === 0}
@@ -80,6 +108,42 @@
 		{#each server.excludedTools ?? [] as tool (tool.name)}
 			<p class="excluded">Left out {tool.name}: {tool.reason}</p>
 		{/each}
+		{#each server.values ?? [] as value (value.name)}
+			<div class="value">
+				<p class="meta">
+					{valueLabel(server)}
+					{value.name} · {valueState(value)}
+				</p>
+				<button
+					class="btn btn--danger"
+					type="button"
+					aria-label={`Remove ${value.name} from ${server.id}`}
+					onclick={() => deleteMcpSecret(server.id, value.name)}>Remove</button
+				>
+			</div>
+		{/each}
+		<label class="field">
+			<span class="field-name">{server.transport === "stdio" ? "Env var" : "Header"}</span>
+			<input
+				class="input"
+				type="text"
+				autocomplete="off"
+				value={secretNames[server.id] ?? ""}
+				placeholder={server.transport === "stdio" ? "GITHUB_TOKEN" : "Authorization"}
+				oninput={(e) => (secretNames[server.id] = e.currentTarget.value)}
+			/>
+		</label>
+		<label class="field">
+			<span class="field-name">Value</span>
+			<input
+				class="input"
+				type="password"
+				autocomplete="off"
+				value={secretValues[server.id] ?? ""}
+				placeholder={server.transport === "stdio" ? "Paste token" : "Bearer …"}
+				oninput={(e) => (secretValues[server.id] = e.currentTarget.value)}
+			/>
+		</label>
 		<div class="actions">
 			<button
 				class="btn"
@@ -89,6 +153,12 @@
 				aria-checked={server.enabled}
 				onclick={() => setMcpServerEnabled(server.id, !server.enabled)}
 				>{server.enabled ? "On" : "Off"}</button
+			>
+			<button
+				class="btn"
+				type="button"
+				disabled={!canSaveSecret(server.id)}
+				onclick={() => saveSecret(server.id)}>Save to keychain</button
 			>
 			<button class="btn btn--danger" type="button" onclick={() => deleteMcpServer(server.id)}
 				>Remove</button
@@ -187,6 +257,13 @@
 		color: var(--color-ink-secondary);
 		margin: var(--space-1) 0 0;
 		overflow-wrap: anywhere;
+	}
+
+	.value {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-2);
 	}
 
 	.excluded {
