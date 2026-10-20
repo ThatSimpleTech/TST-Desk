@@ -11174,6 +11174,38 @@ Filed 2026-10-15. The agent built an APK for Adam and had no way to hand it over
 
 ---
 
+### TD-5128 — Model-written compaction summary that keeps recent files
+**Size:** 5 · **Depends on:** TD-5109 · Gap audit 2026-10-14
+
+Compaction kept the last two user turns plus a 2,000-character extractive
+summary (core/tstd/compaction.py), so on a 32k-65k window the goal, the
+decisions and the files went within a couple of compactions, and the agent
+read the same files again one call at a time. Anthropic's API and Claude
+Code document a model-written summary and what survives it.
+
+**Acceptance criteria:**
+- [x] Compaction asks the worker tier for a structured summary (goal,
+      decisions, files touched, open items), using a summary prompt the
+      user can configure (`compaction.summary_prompt`). If that fails, it
+      falls back to today's extractive summary (worker error, timeout,
+      cut-off answer, or an answer without the four headings)
+- [x] It can run in the background before the threshold, so the turn
+      doesn't block: from `compaction.background_percent` of the budget the
+      next fold's summary is written while the turn runs, and the fold that
+      matches uses it with no new call (a mid-turn fold of other turns
+      writes its own, bounded by `summary_timeout_seconds`)
+- [x] Files read or edited recently, and loaded skill bodies, are
+      re-injected after compaction within a budget: `fs_read` / `fs_write`
+      / `fs_edit` files from the folded turns, newest first, within
+      `reinject_files`, `reinject_tokens` and half the headroom left, through
+      the path guard and read rules; skill bodies stay in the system prompt,
+      which compaction never folds
+- [x] `/compact` and "Summarize from here" use the worker too, with the
+      guidance passed to it, and drop the result if a turn started meanwhile
+- [x] docs/configuration.md `compaction`, docs/architecture.md and
+      DECISIONS.md updated
+- [x] Tests in core/tests/test_compaction_model.py
+
 ### TD-5143 — The agent sends files to the chat
 **Size:** 5 · **Depends on:** TD-3201, TD-3202, TD-5014, TD-5015
 

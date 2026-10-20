@@ -17175,3 +17175,83 @@ it. Refused on the Grok engine (`rewind_grok`): Grok writes files with its own
 tools, nothing reaches the branch, and "nothing changed" would be untrue. Refused when a later checkpoint has no `Log-Seq` (`rewind_predates`, an
 older session), rather than guess its order. Shell writes are not restored:
 they were never on the branch, and the dialog says so.
+
+## 2026-10-20 — TD-5128: model-written compaction summary that keeps recent files (Class B; revises TD-405 and TD-5109)
+
+**Context.** TD-405 chose a deterministic extractive summary so compaction
+never spent a model call, and TD-5109 kept guidance model-free for the same
+reason. On 32k-65k local windows that summary (200 characters a message,
+2,000 in all) loses the goal, the decisions and the files within a couple
+of compactions. The gap audit asked for a worker-written structured summary
+with a prompt the user can set, falling back to the extractive one; for it
+to run in the background before the threshold; and for recent files and
+loaded skill bodies to come back after compaction within a budget. Story
+sized 5; approach recorded here per Adam's 2026-10-14 approval of the
+gap-audit stories.
+
+**Decision.**
+- **Shape.** A new `compaction:` block in config.yaml: `summary`
+  (`model` | `extractive`), `summary_prompt`, `summary_max_tokens`,
+  `summary_timeout_seconds`, `background_percent`, `reinject_files`,
+  `reinject_tokens`. The shipped file sets `summary: model`, and an older
+  user copy without the block gets it from the shipped file at load, so
+  users get the worker summary. A config built in code, or a block without
+  the key, is `extractive`: nothing spends a model call it did not ask for
+  (and every existing scripted loop test stays byte-identical).
+- **Layering.** `compaction.py` stays synchronous and model-free: it takes an
+  optional worker `body` and `files` text. `compaction_text.py` owns the
+  summary text (header, core, `[Kept across compaction]`,
+  `[Recent files, read again after compaction]`); a later fold keeps only
+  the core, so old carries and old file copies are never re-summarized.
+  `compaction_model.py` holds the worker call, validation, background
+  prefetch and the async `compact_auto` / `compact_manual` the loop and
+  `/compact` call. `compaction_files.py` picks and reads the files.
+- **Validation and fallback.** The built-in prompt asks for exactly four
+  headings (`## Goal`, `## Decisions`, `## Files touched`, `## Open items`);
+  an answer without all four in order is not a summary. A custom prompt's
+  answer need only be non-empty, since the user chose its shape. Inline
+  `<think>` blocks are stripped. A provider error, a timeout, a cut-off
+  (`finish_reason: length`), or any exception before the call (a keychain
+  error, say) falls back to the extractive summary with a warning in the
+  log. Compaction never fails, and never waits past the timeout.
+- **What the worker sees.** The folded turns: user and assistant text (4,000
+  characters each), tool calls with their arguments (300), tool results
+  (1,500), a prior summary's core whole. Sized for the worker's window at a
+  conservative three characters a token; over that, the oldest messages
+  go first, with a note. Guidance from `/compact` is passed to the worker.
+- **Background.** At fit time, once the estimate passes
+  `background_percent` of the budget, the summary of everything before the
+  last user turn is started as a task. That is the span the next turn's
+  auto compaction folds and the span `/compact` without guidance folds, so
+  both take it ready-made; a mid-turn compaction folds a different span and
+  writes its own (inline, bounded by the timeout). The span is matched by a
+  hash of roles, ids, calls and text with tool result text left out,
+  because clearing stale results (TD-5115) rewrites those between the
+  prefetch and the fold. One task at a time; a new span cancels the old
+  one, and the loop task's done-callback cancels it at loop end.
+- **Recent files.** `fs_read`, `fs_write` and `fs_edit` paths in the folded
+  turns, newest first, minus any the kept turns name. Read from disk now
+  (current content), through the session's `PathGuard` (inside the
+  workspace, symlinks resolved), skipping anything an `ask`/`never` rule
+  over the built-in reads matches, and anything not UTF-8 text. Budget:
+  `reinject_files`, and `min(reinject_tokens, half the headroom left under
+  the budget after the fold)`, so the files cannot push the next request
+  back over it. The last file that fits is cut with a note.
+- **Skill bodies** already survive: they are rendered into the system
+  prompt from `session.loaded_skills` on every request, and compaction never
+  folds index 0. A loop test pins it; no new mechanism.
+- **Cost.** Summary calls are worker calls off the turn
+  (`record_off_turn(..., source="compaction")`, as distill), with a cost
+  update so the meter shows them.
+- **`/compact` with a worker call** can take a while, so it folds a copy of
+  the conversation and drops the result with `turn_in_progress` if a turn
+  started or the conversation changed meanwhile.
+
+**Conservative answers to questions the story left open (Class C, PR body).**
+No new protocol event or field: `context_compacted` is unchanged, and the
+window does not say which summary was used (the summary text shows it). No
+UI control. A mid-turn fold does not wait on a background task for a
+different span. Files are never re-read for a path outside the workspace or
+behind a read rule, even if the model was allowed to read it at the time.
+Re-reading is not a tool call: it is the daemon restoring text the agent
+already had, through the same guard the read tool uses.
