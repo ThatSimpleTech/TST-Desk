@@ -456,6 +456,7 @@ from .session import (
     SessionRunner,
 )
 from .session_lifecycle import (
+    BUSY_CODE,
     apply_workspace_config,
     archive_session,
     boundary_update_event,
@@ -2613,6 +2614,17 @@ class Daemon:
                     session_id=msg.session_id,
                     in_reply_to=msg.type,
                 )
+            # Checked with no await before add_user_message counts the turn,
+            # so of two sends that both saw the session idle only one gets
+            # in (TD-5160: `tst run --continue` races its own list_sessions).
+            if msg.only_if_idle and found.turn_in_flight:
+                return build_error(
+                    BUSY_CODE,
+                    "This session is running a turn. Let it finish, or answer its "
+                    "approval in the TST Desk window, then send again.",
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
+                )
             # Attachment caps and the text/binary test are enforced here
             # (TD-1709), not in the composer: the client is not trustworthy,
             # so a UI-only gate is no gate at all. A refusal drops the whole
@@ -2661,7 +2673,9 @@ class Daemon:
                 # Accepted means saved (TD-5155): a send that cannot reach
                 # the queue file is refused, and the window puts the text
                 # back in the composer, instead of being lost to the next
-                # restart without a word (TD-5158).
+                # restart without a word (TD-5158). The text claims nothing
+                # about the composer: older windows and every installed APK
+                # show it as is and do not give the text back (TD-5160).
                 found.pending_images = []
                 log.warning(
                     "user message not saved; refused",
@@ -2671,8 +2685,7 @@ class Daemon:
                 return build_error(
                     "message_not_saved",
                     f"Couldn't save the message to disk ({reason}), so it was not sent. "
-                    "It is back in the composer; check that TST Desk's data folder is "
-                    "writable, then send it again.",
+                    "Check that TST Desk's data folder is writable, then send it again.",
                     session_id=msg.session_id,
                     in_reply_to=msg.type,
                 )
@@ -4086,10 +4099,17 @@ class Daemon:
         return self.config.active_preset
 
     def _bind_session_preset(self, sess: Session, name: str) -> str:
-        """Point *sess* at a catalog snapshot. Does not write Settings."""
+        """Point *sess* at a catalog snapshot. Does not write Settings.
+
+        The new snapshot also carries the live ``shell.read_only`` list, so
+        a running loop rebinds its wall to it (TD-5160): the classifier
+        must not auto-run from a list the user has since shrunk.
+        """
         chosen = self._resolved_preset(name)
         sess.preset = chosen
         sess.config = self.config.model_copy(update={"active_preset": chosen})
+        if sess.on_config_reloaded is not None:
+            sess.on_config_reloaded()
         return chosen
 
     async def _handle_trust_workspace_config(self, msg: TrustWorkspaceConfig) -> str | None:

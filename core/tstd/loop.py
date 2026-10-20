@@ -2102,6 +2102,7 @@ async def agent_loop(
             #     with the steer in, so its tokens are counted and the
             #     results the turn got before it can still be elided.
             if last_batch:
+                skills_before = list(session.loaded_skills)
                 steered = await inject_steers(
                     session,
                     messages,
@@ -2110,6 +2111,25 @@ async def agent_loop(
                     claude_global_fallback=config.steering.claude_global_fallback,
                 )
                 last_batch = []
+                if session.loaded_skills != skills_before:
+                    # A /skill in the steer: the prompt was assembled at
+                    # 2b, before it loaded, so the call that reads the
+                    # steer must get the skill too (TD-5160).
+                    assembled = await assembler.assemble(
+                        tier,
+                        task=queued.display if tier == "worker" else None,
+                        matched_paths=set(session.touched_paths),
+                        memory=memory_block,
+                        project_context=project_context if tier == "brain" else None,
+                        approved_imports=frozenset(approved_imports),
+                        denied_imports=frozenset(denied_imports),
+                        loaded_skills=list(session.loaded_skills),
+                    )
+                    system = ChatMessage(role="system", content=assembled.text)
+                    if messages and messages[0].role == "system":
+                        messages[0] = system
+                    else:
+                        messages.insert(0, system)
                 if steered:
                     await _fit_prompt(
                         session,

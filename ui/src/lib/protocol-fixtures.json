@@ -17,7 +17,8 @@
     "content": "hello world",
     "attachments": [],
     "steer": false,
-    "run_permissions": null
+    "run_permissions": null,
+    "only_if_idle": false
   },
   "send_queued": {
     "type": "send_queued",
@@ -56,7 +57,8 @@
       }
     ],
     "steer": false,
-    "run_permissions": null
+    "run_permissions": null,
+    "only_if_idle": false
   },
   "user_message_steer": {
     "type": "user_message",
@@ -64,7 +66,8 @@
     "content": "Also run the linter",
     "attachments": [],
     "steer": true,
-    "run_permissions": null
+    "run_permissions": null,
+    "only_if_idle": false
   },
   "approve": {
     "type": "approve",

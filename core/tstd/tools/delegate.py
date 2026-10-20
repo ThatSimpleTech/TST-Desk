@@ -50,7 +50,7 @@ from .delegate_child import (
 )
 from .dispatch import ToolDispatcher
 from .registry import Tool, ToolRegistry
-from .results import HandlerOutput, HandlerRefusal
+from .results import HandlerFailed, HandlerOutput, HandlerRefusal
 
 # The child's kinds, tools and cap live in ``delegate_child``; they are
 # re-exported so callers keep one import path.
@@ -176,9 +176,16 @@ async def handle_delegate(
     router = session.router
     resolved = resolve_kind(kind, plan_mode=router is not None and router.plan_mode)
     steps: list[WorkerStep] = []
-    summary = await run_worker_child(
-        parent=session, task=task, context=context, kind=resolved, transcript=steps
-    )
+    try:
+        summary = await run_worker_child(
+            parent=session, task=task, context=context, kind=resolved, transcript=steps
+        )
+    except HandlerRefusal as e:
+        raise HandlerRefusal(e.code, e.message, tuple(steps)) from e
+    except Exception as e:
+        # A child that wrote files or ran commands before it failed still
+        # shows them in the window (TD-5160).
+        raise HandlerFailed(e, tuple(steps)) from e
     return HandlerOutput(text=summary, transcript=tuple(steps))
 
 

@@ -284,8 +284,8 @@ async def test_a_loop_turn_runs_and_records_the_entry(ws: Path, tmp_path: Path) 
 # ── git runs with its command hooks pinned off ──────────────────────────
 
 
-def test_run_env_pins_only_listed_git() -> None:
-    pins = run_env("git status", ALL, {})
+def test_run_env_pins_only_listed_git(tmp_path: Path) -> None:
+    pins = run_env("git status", {}, tmp_path)
     assert pins["GIT_ATTR_SOURCE"] == "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
     assert pins["GIT_OPTIONAL_LOCKS"] == "0"
     keys = {pins[f"GIT_CONFIG_KEY_{i}"]: pins[f"GIT_CONFIG_VALUE_{i}"] for i in range(4)}
@@ -296,13 +296,20 @@ def test_run_env_pins_only_listed_git() -> None:
         "core.attributesFile": os.devnull,
     }
     assert pins["GIT_CONFIG_COUNT"] == "4"
-    shifted = run_env("ls | git log", ALL, {"GIT_CONFIG_COUNT": "2"})
+    shifted = run_env("ls | git log", {"GIT_CONFIG_COUNT": "2"}, tmp_path)
     assert shifted["GIT_CONFIG_COUNT"] == "6"
     assert shifted["GIT_CONFIG_KEY_2"] == "core.fsmonitor"
-    assert run_env("ls", ALL, {}) == {}
-    assert run_env("git commit -m x", ALL, {}) == {}
-    assert run_env("git status", frozenset({"git log"}), {}) == {}
-    assert run_env("git status > x", ALL, {}) == {}
+    assert run_env("ls", {}, tmp_path) == {}
+    assert run_env("git commit -m x", {}, tmp_path) == {}
+    assert run_env("git status > x", {}, tmp_path) == {}
+
+
+def test_run_env_pins_whatever_the_configured_list_says(tmp_path: Path) -> None:
+    """TD-5160: the classifier's copy of the list can be older than the
+    session's, so the pins never depend on it: a git command it still
+    auto-runs from a stale list runs pinned."""
+    assert run_env("git status", {}, tmp_path)["GIT_ATTR_SOURCE"]
+    assert run_env("git diff", {}, tmp_path)["GIT_CONFIG_COUNT"] == "4"
 
 
 def _git(root: Path, *args: str) -> None:
@@ -362,12 +369,93 @@ async def test_listed_git_runs_no_filter_textconv_or_hook(ws: Path, tmp_path: Pa
     assert "+there" in diff
     assert sorted(p.name for p in marks.iterdir()) == ["clean.sh", "tc.sh"]
 
-    # A newer timestamp on unchanged content makes any git refresh and
-    # rewrite the index, which is what fires post-index-change; without it
-    # older git (CI's) may leave the index alone and the control proves nothing.
+    # The list off still pins a command it would read (TD-5160).
     _bump_mtime(ws / "same.dat")
     session.config = _config(enabled=False)
     await run_shell(session, "git status --short")
     await run_shell(session, "git diff")
+    assert sorted(p.name for p in marks.iterdir()) == ["clean.sh", "tc.sh"]
+
+    # A newer timestamp on unchanged content makes any git refresh and
+    # rewrite the index, which is what fires post-index-change; without it
+    # older git (CI's) may leave the index alone and the control proves nothing.
+    # The control: `-c` is a form the list never reads, so nothing is pinned.
+    _bump_mtime(ws / "same.dat")
+    await run_shell(session, "git -c color.ui=false status --short")
+    await run_shell(session, "git -c color.ui=false diff")
     ran = {p.name for p in marks.iterdir()} - {"clean.sh", "tc.sh"}
     assert ran == {"filter", "textconv", "hook"}
+
+
+# ── Review notes (TD-5160) ──────────────────────────────────────────────
+
+
+def _committed_repo(ws: Path, *init: str) -> None:
+    _git(ws, "init", "-q", *init)
+    for key, value in (
+        ("user.email", "t@example.com"),
+        ("user.name", "t"),
+        ("commit.gpgSign", "false"),
+    ):
+        _git(ws, "config", key, value)
+    _git(ws, "add", "a.txt")
+    _git(ws, "commit", "-qm", "base")
+    (ws / "a.txt").write_text("hello\nworld\nagain\n")
+
+
+@needs_git_240
+async def test_a_program_the_git_config_names_makes_its_entry_ask(ws: Path, tmp_path: Path) -> None:
+    """The user's config includes an in-tree file, which a Class A write can
+    fill: ``diff.external`` there would run on a plain ``git diff``, and
+    signature checks would run the gpg program. Those entries ask."""
+    await shell_read_only.probe_git()
+    _committed_repo(ws)
+    marks = tmp_path / "marks"
+    marks.mkdir()
+    tool = _script(ws / "d.sh", f"touch {marks}/ran")
+    _git(ws, "config", "include.path", "../devtools.cfg")
+    gate = _Gate(ws)
+
+    (ws / "devtools.cfg").write_text(f"[diff]\n\texternal = {tool}\n")
+    for command in ("git status --short", "git log -1 --oneline", "git show --stat"):
+        await gate.shell(command)
+    assert gate.asked == []
+    assert list(marks.iterdir()) == []
+    await gate.shell("git diff")
+    assert gate.asked == ["git diff"]
+
+    gate.asked.clear()
+    for cfg in ("[log]\n\tshowSignature = true\n", "[pretty]\n\tsig = %h %G?\n"):
+        (ws / "devtools.cfg").write_text(cfg)
+        for command in ("git log -1", "git show --stat"):
+            await gate.shell(command)
+        assert gate.asked == ["git log -1", "git show --stat"], cfg
+        gate.asked.clear()
+
+    (ws / "devtools.cfg").write_text("")
+    for command in (
+        "git log -1 --format=%G?",
+        "git show --pretty=format:%GS",
+        "git branch --format=%(signature)",
+    ):
+        await gate.shell(command)
+    await gate.shell("git log -1 --format=%h")
+    assert gate.asked == [
+        "git log -1 --format=%G?",
+        "git show --pretty=format:%GS",
+        "git branch --format=%(signature)",
+    ]
+
+
+@needs_git_240
+async def test_a_sha256_repository_diffs_from_the_list(ws: Path) -> None:
+    """The SHA-1 empty tree is no name in a SHA-256 repository, so every
+    pinned git diff, log -p or show failed there, approved or not."""
+    await shell_read_only.probe_git()
+    _committed_repo(ws, "--object-format=sha256")
+    gate = _Gate(ws)
+    diff = await gate.shell("git diff")
+    show = await gate.shell("git show --stat")
+    assert gate.asked == []
+    assert "+again" in diff.output, diff.output
+    assert "a.txt" in show.output, show.output

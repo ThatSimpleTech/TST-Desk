@@ -332,6 +332,10 @@ async def _turn(
     sent: dict[str, Any] = {"type": "user_message", "session_id": sid, "content": message}
     if permissions is not None:
         sent["run_permissions"] = permissions
+    if existing:
+        # pick_session read a snapshot; the daemon re-checks as it queues,
+        # so a run started alongside this one cannot slip in behind it.
+        sent["only_if_idle"] = True
     await _send(ws, sent)
     return await stream_turn(
         ws,

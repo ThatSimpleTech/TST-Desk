@@ -483,6 +483,89 @@ class TestSettings:
         assert daemon.config_path.read_bytes() == before
         assert memory_keychain._secrets == {}
 
+    async def test_a_keychain_failure_leaves_file_memory_and_keychain_agreeing(
+        self,
+        isolated_home: Path,
+        tmp_path: Path,
+        memory_keychain: MemoryKeychain,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """TD-5160: a failed Remove must not drop the name and leave the item."""
+        ensure_user_config()
+        cached_config.cache_clear()
+        daemon = Daemon(data_dir=tmp_path / "data")
+        path = daemon.config_path
+        await _send(
+            daemon,
+            {"type": "set_mcp_server", "id": "alpha", "transport": "stdio", "command": ["true"]},
+        )
+
+        def _secret(name: str) -> dict[str, str]:
+            return {
+                "type": "set_mcp_secret",
+                "server_id": "alpha",
+                "target": "env",
+                "name": name,
+                "value": SECRET,
+            }
+
+        await _send(daemon, _secret("A_TOKEN"))
+
+        async def locked(*_: Any) -> None:
+            raise keychain.KeychainLockedError("the keychain is locked")
+
+        monkeypatch.setattr(keychain_mcp, "delete_mcp_secret", locked)
+        monkeypatch.setattr(keychain_mcp, "mcp_secret_is_stored", locked)
+        removal = {"type": "delete_mcp_secret", "server_id": "alpha", "target": "env"}
+        reply = await _send(daemon, {**removal, "name": "A_TOKEN"})
+        assert reply["code"] == "keychain_locked"
+        a_ref = {"A_TOKEN": "keychain:a_token"}
+        assert _server_row(path, "alpha")["env"] == a_ref
+        assert dict(daemon.config.mcp.servers["alpha"].env) == a_ref
+        monkeypatch.setattr(keychain_mcp, "delete_mcp_secret", _REAL_SEAMS["delete_mcp_secret"])
+        monkeypatch.setattr(
+            keychain_mcp, "mcp_secret_is_stored", _REAL_SEAMS["mcp_secret_is_stored"]
+        )
+        assert await keychain_mcp.mcp_secret_is_stored("alpha", "a_token")
+
+        # Retried, Remove takes the name and the item together.
+        assert (await _send(daemon, {**removal, "name": "A_TOKEN"}))["type"] == "setup_state"
+        await _send(daemon, _secret("B_TOKEN"))
+        assert _server_row(path, "alpha")["env"] == {"B_TOKEN": "keychain:b_token"}
+        assert not await keychain_mcp.mcp_secret_is_stored("alpha", "a_token")
+
+    async def test_a_failed_file_write_takes_the_new_item_back(
+        self,
+        isolated_home: Path,
+        tmp_path: Path,
+        memory_keychain: MemoryKeychain,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """TD-5160: Save stores the item first; a file that will not write must not orphan it."""
+        from tstd import mcp_settings
+
+        ensure_user_config()
+        cached_config.cache_clear()
+        daemon = Daemon(data_dir=tmp_path / "data")
+        await _send(
+            daemon,
+            {"type": "set_mcp_server", "id": "alpha", "transport": "stdio", "command": ["true"]},
+        )
+        before = daemon.config_path.read_bytes()
+
+        def unwritable(*_: Any) -> None:
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(mcp_settings, "save_mcp_server", unwritable)
+        with pytest.raises(OSError):
+            await mcp_settings.set_mcp_secret(
+                daemon.config.mcp,
+                daemon.config_path,
+                SetMcpSecret(server_id="alpha", target="env", name="TOKEN", value=SECRET),
+            )
+        assert daemon.config_path.read_bytes() == before
+        assert memory_keychain._secrets == {}
+
     async def test_removing_the_server_deletes_its_items(
         self, isolated_home: Path, tmp_path: Path, memory_keychain: MemoryKeychain
     ) -> None:
@@ -591,6 +674,22 @@ class TestRedaction:
         assert redact_secrets(f"sent {value}") == "sent [REDACTED]"
         assert redact_secrets("token td5110-charlie-Kp2sN8wQ") == "token [REDACTED]"
         assert redact_secrets("Bearer is a word") == "Bearer is a word"
+
+    async def test_a_short_token_after_a_scheme_is_refused(
+        self, memory_keychain: MemoryKeychain
+    ) -> None:
+        """TD-5160: only parts of 8+ are scrubbed alone, so a shorter token is refused."""
+        for value in ("Bearer x7Kq2Zp", "Basic   ab12cd ", "token 1234567"):
+            with pytest.raises(keychain.KeychainError, match="part of at least 8"):
+                await keychain_mcp.store_mcp_secret("alpha", "authorization", value)
+            # A value that was stored by hand still fails when read.
+            await memory_keychain.set_secret(keychain_mcp.mcp_secret_account("alpha", "a"), value)
+            with pytest.raises(keychain.KeychainError, match="part of at least 8"):
+                await keychain_mcp.get_mcp_secret("alpha", "a")
+        assert not await keychain_mcp.mcp_secret_is_stored("alpha", "authorization")
+        accepted = "Bearer td5160-Kp2sN8wQ"
+        await keychain_mcp.store_mcp_secret("alpha", "authorization", accepted)
+        assert redact_secrets("echo td5160-Kp2sN8wQ") == "echo [REDACTED]"
 
     async def test_logs_and_audit_never_hold_the_value(
         self,

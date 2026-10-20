@@ -128,4 +128,8 @@ def check_secret(value: str) -> str | None:
         return "must be one line of printable ASCII"
     if len(value.strip()) < MIN_SECRET_CHARS:
         return f"must be at least {MIN_SECRET_CHARS} characters"
+    # The scrub registers only parts this long, so a short token after a
+    # scheme ("Bearer abc1234") would be hidden only as a whole (TD-5160).
+    if len(value.split()[-1]) < MIN_SECRET_CHARS:
+        return f"must end in a part of at least {MIN_SECRET_CHARS} characters (the token)"
     return None

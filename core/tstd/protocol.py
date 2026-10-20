@@ -227,6 +227,11 @@ class UserMessage(ClientMessage):
     ``run_permissions`` (TD-5118, ``tst run``) hold for the turn this
     message starts and no other. Additive. A message carrying them always
     starts its own turn, so it may not also ``steer``.
+
+    ``only_if_idle`` (TD-5160) refuses the message with ``session_busy``
+    when the session already owes a turn, checked in the same step that
+    queues it, so two ``tst run --continue`` started together cannot both
+    get in. Additive: a client that never sends it queues as before.
     """
 
     type: Literal["user_message"] = "user_message"
@@ -235,6 +240,7 @@ class UserMessage(ClientMessage):
     attachments: list[Attachment] = Field(default_factory=list)
     steer: bool = False
     run_permissions: RunPermissions | None = None
+    only_if_idle: bool = False
 
     @model_validator(mode="after")
     def _own_turn(self) -> UserMessage:

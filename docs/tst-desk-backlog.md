@@ -9647,15 +9647,21 @@ client.
 - [x] Clearing happens in batches, with the TD-5010 hysteresis (the gap
       audit says TD-5009): one clear takes every stale result, and goes
       ahead only when it frees `clear_at_least_tokens` and lands at 70% of
-      the budget or under; otherwise the turn compacts as before. Never
-      two clears on consecutive requests in the tests
-- [x] Measured on EZER with a replayed long session through the real loop
-      (MockProvider, 32,768-token tier): 30 turns compacted 4 times with
-      clearing off and never with it on; 60 turns 9 times off and 2 times
-      on (DECISIONS.md, with the prefix-rebuild cost)
-- [ ] Measured on EZER against the live local model in the running app.
-      Not done: it needs this change deployed, which this story does not
-      do
+      the budget or under (or, with no older turn for compaction to fold,
+      above it; TD-5160); otherwise the turn compacts as before. Never
+      two clears on consecutive requests in the tests, though a live turn
+      can produce them (TD-5160 review)
+- [x] Not the story's measurement (TD-5160 review): a replayed long
+      session through the real loop on EZER (MockProvider, 32,768-token
+      tier): 30 turns compacted 4 times with clearing off and never with
+      it on; 60 turns 9 times off and 2 times on (DECISIONS.md, with the
+      prefix-rebuild cost). The scripted model never needs a cleared
+      output, so this cannot show whether clearing causes tool re-runs
+- [ ] Measured on EZER: fewer compactions on a long session, against the
+      live local model in the running app. Not done: it needs this change
+      deployed, which this story does not do
+
+**Status:** Blocked — merged, but the live measurement above (AC3) is not done (TD-5160 review).
 - [x] A clear is announced as `context_compacted` with the trigger
       `clear_stale` (`dropped_messages` counts the results cleared), shown
       as the quiet "Trim" row previewed "Cleared earlier tool results";
@@ -10322,10 +10328,135 @@ code, a docs fix); one that is not, or no longer applies, says why.
 - [x] 33. TD-5157 a file swapped for a symlink while staging was read
       through it: each file is opened with `O_NOFOLLOW`, must be the device
       and inode the plan saw, and is hashed from that descriptor
-- [x] Tests fail on the old code and pass on the new, except three that add
+- [x] Tests fail on the old code and pass on the new, except six that add
       coverage for code that was already right and pass on both (TD-5104's
       loop-turn test, the walk's held step, the path-based steering
-      write's plain write); ruff, mypy, tsc, vitest and the UI walk pass
+      write's plain write, and, found by the TD-5160 review against
+      merge-base 9dab946: `test_without_ignorecase_another_case_is_another_file`,
+      `TestReviewNotes::test_a_role_only_reply_still_ends_as_before` and the
+      `C:x.txt` case of `test_windows_unsafe_form_is_refused_not_joined`,
+      which the old code already refused); ruff, mypy, tsc, vitest and the
+      UI walk pass
+
+### TD-5160 — Low-severity review notes from waves 5-6
+**Size:** 3 · **Depends on:** TD-5103, TD-5107, TD-5110, TD-5111, TD-5112, TD-5114, TD-5115, TD-5116, TD-5117, TD-5158, TD-5159
+
+The reviewers of waves 5-6 left 32 low-severity notes, each with evidence,
+plus one bug two reviews hit (the session-log scrub's `sk-` pattern). Each
+was checked against main. A real one is fixed with a test that fails on the
+old code (or, where the note is about docs disagreeing with the code, a docs
+fix); one that is not, or no longer applies, says why.
+
+**Acceptance criteria:**
+- [x] 1. TD-5107 a skill skipped for a non-text `name`, `whenToUse` or
+      `when_to_use` (or no description) left no log line: the skip now
+      logs the key once per file
+- [x] 2. TD-5107 docs said "any value but false" / "false or blank" for
+      `disable-model-invocation`: steering.md and DECISIONS.md now say YAML
+      `false` or no value, and that a quoted `''` counts as set (docs fix;
+      the strict reading is kept)
+- [x] 3. TD-5110 a keychain failure during Remove left config.yaml, the
+      daemon's config and the keychain disagreeing (and a later Save wrote
+      the deleted name back): the item is deleted first, the name second;
+      Save deletes the item it stored if the file write fails
+- [x] 4. TD-5110 `Bearer <7-char token>` was accepted but its bare token
+      never scrubbed: a stored value's last part must be 8+ characters too
+- [x] 5. TD-5111 two `tst run --continue` started together could both get
+      in: `user_message` takes `only_if_idle`, checked by the daemon in the
+      step that queues, so the second ends with `session_busy`
+- [x] 6. TD-5158 the "fail on the old code" criterion was ticked though
+      three more new tests pass on the old code: verified against
+      merge-base 9dab946 and the criterion now names them (docs fix)
+- [x] 7. TD-5158 `message_not_saved` told older windows and APKs the text
+      was back in the composer: the daemon's text no longer claims it, the
+      new window's toast does (and says to add attachments again), and
+      android/README.md's Upgrading note covers older ones
+- [x] 8. TD-5158 a file saved by temp file and rename during staging
+      failed its checkpoint: on POSIX every folder on the path is opened
+      with `O_NOFOLLOW` and the new bytes are staged; Windows keeps the
+      inode check
+- [x] 9. TD-5103 `diff.external` and gpg programs (from an in-tree file the
+      user's config includes) ran on auto-run `git diff` / `git log`: the
+      daemon reads the git config before classifying, and those entries ask
+- [x] 10. TD-5103 the classifier's frozen list and `run_env`'s live one
+      could differ after a preset switch: a preset bind rebinds the wall,
+      and the pins apply to any git command the built-in list reads
+- [x] 11. TD-5103 `enable: false` or `readonly:` was ignored, leaving all
+      16 entries on: `shell` and `shell.read_only` refuse unknown keys
+- [x] 12. TD-5103 every pinned git diff/log/show failed in a SHA-256
+      repository: the pin uses the repository's own empty tree
+- [x] 13. TD-5111/TD-5140 the `sk-` scrub blanked words such as
+      `task-tool-availability`: straight after a lowercase letter a match
+      is let go only when what follows `sk-` reads as words, so keys
+      after an ANSI colour code, a JSON escape, `\n`, a `%XX` or any
+      other letter are still caught (tests both ways, including 500
+      seeded keys glued to every lowercase letter)
+- [x] 14. TD-5114 a long final URL on a tight cap pushed `web_fetch` over
+      it and the offset footer was cut: the shown URL is capped and the
+      window or answer shrinks until the result fits
+- [x] 15. TD-5114 the final URL went into the result unredacted: it goes
+      through `redact_secrets`
+- [x] 16. TD-5114 the extract pass never checked the session caps: it does,
+      before its worker call
+- [x] 17. TD-5114 a page cut at one session's smaller `fetch_max_bytes`
+      served another's larger one from the cache: it is downloaded again
+- [x] 18. TD-5114 the worker window assumed 3 characters a token and
+      overshot on CJK pages: non-ASCII characters count a token each
+- [x] 19. TD-5117 plan mode asked to approve a `kind: worker` delegate and
+      then refused it: already fixed on main (86be95f0, plan mode moves
+      only the default; an explicit worker runs once approved)
+- [x] 20. TD-5117 a child that raised dropped its transcript: refusals and
+      crashes carry the steps onto the error result (a cancelled call has
+      no result for any tool, so nothing to carry them)
+- [x] 21. TD-5117 nothing showed the summary cap uses the worker tier's
+      counter, and the docs implied a calibrated one: a test pins the worker
+      slug's counter (it passes on the old code too: coverage) and
+      configuration.md says it is uncalibrated
+- [x] 22. TD-5115 docs promised "several more turns" between clears: they
+      now say back-to-back clears can happen (docs fix)
+- [x] 23. TD-5115 docs said a clear "only goes ahead" at 70%: they and the
+      shipped config.yaml comment state the no-older-turn exception (docs
+      fix)
+- [x] 24. TD-5115 AC3 was ticked as a reworded MockProvider replay: the
+      replay is labelled as not the story's measurement, AC3 is open and
+      the story is marked Blocked on it (docs fix)
+- [x] 25. TD-5115 every placeholder invited a re-run, shell and delegate
+      included: only built-in reads do; other tools' say not to run again
+- [x] 26. TD-5159 a retract cut only the newest row of a response a Send
+      now had split: every row of it is cut, and an earlier row it alone
+      filled is dropped (reachable today through an attachment-only Send
+      now; a text Send now steers without an echo since TD-5112)
+- [x] 27. TD-5159 docs said a mid-reply stall costs at most two waits: the
+      bound is `max_retries + 2` (5 by default), and docs and DECISIONS.md
+      say so (docs fix)
+- [x] 28. TD-5112 a `/skill` sent as a steer missed the system prompt of
+      the step that read it: the prompt is assembled again when a steer
+      loads a skill
+- [x] 29. TD-5116 docs called the cap per command; under the ulimit
+      fallback it is per process, and WebAssembly (Node's `fetch`) fails at
+      the default cap on smaller hosts: docs fix
+- [x] 30. TD-5116 the probe's answer held for the daemon's life: a scope that
+      fails to start says the command did not run and resets the probe; a
+      probe that found nothing is tried again after five minutes
+- [x] 31. TD-5116 kill detection blamed the cap for GPU and system OOM kills
+      and missed `failed to map segment`: GPU text is excluded, the scope's
+      own `oom` counter decides, `Result=oom-kill` alone is "likely" (the
+      native-thread case was already matched, by `memoryerror`)
+- [x] 32. TD-5116 Podman got `--memory` with no `--memory-swap`, and rootless
+      Podman without cgroup v2 and the systemd manager cannot cap: the swap
+      flag is added, and the start check refuses such a host with the fix
+      (conservative choice; not run against a real Podman)
+- [x] Second-opinion review of this branch: a hard link swapped in while
+      staging is refused (a new inode passes only with one link); the
+      worker window has no floor past its token budget; a scope-start
+      failure counts only as systemd-run's lone line with exit 1. Its
+      claim that `git show`, `git log -p` and `git status -v` run
+      `diff.external` was checked against git 2.53 and is false (only
+      `git diff` does)
+- [x] Tests fail on the old code and pass on the new, except coverage tests
+      for code that was already right (note 21's counter test, the key
+      framings in note 13, the native-thread lines in note 31); ruff, mypy,
+      tsc and vitest pass; DECISIONS.md has the TD-5160 entry
 
 ### TD-5111 — `tst run` for scripts
 **Size:** 3 · **Depends on:** none · Gap audit 2026-10-14
