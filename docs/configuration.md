@@ -69,6 +69,7 @@ no effect.
 | `computer_use` | mapping | see below | Desktop computer-use sidecar. Omitted in an older user copy is filled from the shipped file at load. Empty `command` is mock-only — the daemon never spawns `mcp/tst-cu-mcp`. Empty `grounding.base_url` leaves click targeting on the intended (x, y). |
 | `session` | mapping | see below | On-disk session event-log window. Omitted in an older user copy is filled from the shipped file at load. Zero is invalid, not unbounded. |
 | `clear_tool_results` | mapping | see below | Clear stale tool results before whole turns are compacted (TD-5115). Omitted in an older user copy is filled from the shipped file at load, which turns it on. |
+| `consult` | mapping | see below | Which tiers get the `consult` tool, which asks the brain or the validator one question mid-task, and how many consults one turn may make (TD-5119). Omitted in an older user copy is filled from the shipped file at load: the worker only, two a turn. |
 | `shell` | mapping | see below | The read-only shell list (TD-5103): commands that run without asking. Omitted in an older user copy means the whole built-in list, on. Config can shrink it or switch it off, never add to it. |
 | `remote` | mapping | see below | Opt-in Tailscale bind. Omitted in an older user copy is filled from the shipped file at load. Empty `bind` is loopback only. |
 | `notify` | mapping | see below | Outbound notification channels. Omitted in an older user copy is filled from the shipped file at load. Slack and ntfy are off until their `enabled` flag is true and a destination URL is stored in the OS keychain. |
@@ -151,7 +152,7 @@ primary only; all empty disables the tool with copy that names this key.
 | `fallback_base_urls` | list of strings | *shipped* | Endpoints tried in order after `base_url` fails. Empty list disables fallback. Every host in the chain must be on the workspace `network` allowlist or the call stays Class C. |
 | `timeout_seconds` | float > 0 | `15` | How long a search or fetch request may run. |
 | `max_results` | int 1–20 | `8` | Default hit count when the tool call omits `max_results`. |
-| `fetch_max_bytes` | int ≥ 1 | `200000` | Cap on a `web_fetch` body. A page cut here says so at the end of its last window. |
+| `fetch_max_bytes` | int ≥ 1 | `200000` | Cap on a `web_fetch` body. A page cut here says so at the end of its last window. The page cache is shared by every session, so a page another session cut at a smaller cap is downloaded again rather than read cut (TD-5160). |
 | `fetch_page_chars` | int ≥ 1000 | `30000` | Characters of page text in one `web_fetch` window when no `question` is asked. A smaller result cap (a small model's window) shrinks it further; the result names the `offset` to read on from (TD-5114). |
 | `fetch_cache_seconds` | int 0–86400 | `900` | How long a fetched page stays in the daemon's memory, so the next window or question does not download it again. Never written to disk; a restart empties it. `0` turns the cache off. |
 
@@ -159,10 +160,17 @@ primary only; all empty disables the tool with copy that names this key.
 (Unicode tag characters, zero-width and bidi controls, other format and
 control characters, variation selectors) are stripped from the text and
 counted. With a `question`, the session's **worker** tier reads the page
-window (as much as its `context_window` holds) and only its answer goes to
-the brain, marked as drawn from untrusted text; the call costs a worker
-call and shows on the meter. Without one, the brain gets a window of the
+window (as much as its `context_window` holds, counting three ASCII
+characters a token and a whole token for any other character, since
+Chinese, Japanese or Korean text runs about one character a token) and
+only its answer goes to the brain, marked as drawn from untrusted text; the
+call costs a worker call and shows on the meter, and like any model call it
+is refused once the session is over a cap (`caps.spend_usd` and the rest;
+TD-5160). Without one, the brain gets a window of the
 text inside `<untrusted_page>` tags under a header that says it is data.
+The header names the page's final URL, redacted and cut to 300
+characters, and the window or answer shrinks until the whole result fits
+the result cap, so the `offset` to read on from is never cut off (TD-5160).
 A copy of the wrapper tag written into the page (or the worker's answer)
 has its `<` escaped as `&lt;`, so the page cannot end the wrapper early.
 Each call is still a `web_fetch` the classifier and your policy judge,
@@ -525,18 +533,27 @@ characters) and the size that went, for example
 ```
 
 The user's messages, the model's answers and the tool calls themselves stay
-verbatim, so the conversation still reads the same; the model calls the tool
-again if it needs the output back.
+verbatim, so the conversation still reads the same. Only a built-in read
+(`fs_read`, `fs_list`, `fs_grep`, `web_fetch`, `web_search`, `load_skill`)
+invites the model to run it again for the output. Any other tool's line
+(`shell`, `delegate`, a write, an MCP tool) ends "It already ran; do not run
+it again only to see this output." instead, since with approvals off nothing
+would stop a second run of a side effect (TD-5160).
 
 - The tool results of the turn that is running are never cleared. When they
   overflow, their middles are trimmed instead (TD-5010). A message sent while
   a turn runs joins that turn (TD-5112), so the results it got before that
   message stay too. The check also runs when such a message joins the
   prompt, before anything is compacted.
-- One clear takes every stale result at once, and only goes ahead when it
-  brings the prompt down to 70% of the budget and frees at least
-  `clear_at_least_tokens`. Otherwise the turn compacts, as it did before.
-  The gap is room for several more turns before the next clear. A clear
+- One clear takes every stale result at once, and goes ahead when it
+  frees at least `clear_at_least_tokens` and brings the prompt down to 70%
+  of the budget. Otherwise the turn compacts, as it did before; but when
+  there is no older turn for compaction to fold, a clear that lands above
+  70% still goes ahead (TD-5160). The gap usually leaves room for more
+  turns before the next clear, but does not promise it: this turn's own
+  results push earlier ones out of the newest `keep_recent_tool_results`,
+  and the next request can clear those, so two clears can come back to
+  back. A clear
   rewrites the prompt from the oldest result it clears, and a local server
   such as llama.cpp reads the prompt again from there; between clears
   nothing earlier changes, and a cleared line is never rewritten, so its
@@ -571,12 +588,61 @@ clear_tool_results:
   exclude_tools: [load_skill]
 ```
 
+### `consult`
+
+The `consult` tool (TD-5119) lets the tier doing the work ask a stronger
+one for help without handing it the turn. The model sends one short
+question (up to 2,000 characters) and the context it picks (up to 16,000
+characters: the code, the error, the plan or the options), and gets the
+answer back as the tool result, cut to 800 tokens. The adviser sees
+nothing else: not the conversation, not the workspace, and it has no tools.
+
+- `to` is `brain` (the default) or `validator`. A brain that has the tool
+  asks the validator by default; no tier can ask itself.
+- A tier not listed in `tiers` is never offered the tool, and a call from
+  it is refused. The shipped list is the worker only, so worker turns and
+  `delegate` children have it, both kinds, since every child runs on the
+  worker tier. The brain and the validator do not, unless listed.
+- `max_per_turn` counts every consult of one turn, a delegate child's
+  included. Past it the call is refused and the model is told to decide
+  with what it has. A consult is also refused once a spend, wall-clock or
+  iteration cap (§4.2) is reached.
+- Each consult is a call on the tier it asks, priced at that tier's rates,
+  and lands on the cost meter on that tier's line, in the turn and session
+  totals (`cost_update`), and in the audit trail's model calls for the turn.
+- It writes nothing and reaches only the session's own model endpoints, so
+  it runs without asking (Class A, the `consult` rule). A `policy` rule can
+  still make it ask or refuse it (§4.4).
+- Stop ends a consult in flight, a delegate child's too: the call is
+  cancelled at once and the adviser stops generating. It still counts
+  toward `max_per_turn`.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `tiers` | list of `brain`, `worker`, `validator` | `[worker]` | The tiers offered `consult`. `[]` turns it off everywhere. Repeats are dropped. |
+| `max_per_turn` | int 1..20 | `2` | Consults one turn may make, delegate children included. |
+
+<!-- verify: model -->
+```yaml
+presets:
+  local:
+    brain: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    worker: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    validator: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+active_preset: local
+consult:
+  tiers: [worker, brain]
+  max_per_turn: 3
+```
+
 ### `shell`
 
 The shell commands that run without asking (TD-5103). Every other shell call
 asks, as in §4.1. The list is fixed in the daemon: `shell.read_only` can drop
 entries or switch the whole list off, and naming anything that is not built in
-is a load error, so this file can never widen what auto-runs. Changes apply to
+is a load error, so this file can never widen what auto-runs. So is a key it does
+not know (TD-5160): a misspelt `enable: false` or `readonly:` would otherwise
+leave every entry on without a word. Changes apply to
 sessions opened after the daemon reads the file; restart the daemon after
 editing it.
 
@@ -658,6 +724,16 @@ the line is one of the entries above, joined by `;`, newlines, `|`, `||` or
   2.40 or newer, `GIT_DIR` and `GIT_WORK_TREE` are unset, and neither
   `GIT_CONFIG_GLOBAL` nor `GIT_CONFIG_SYSTEM` names a file inside the
   workspace.
+- Some git config names a program the pins below cannot switch off. As each
+  git command is classified, the daemon reads the config that command will
+  see (`git config`, includes followed, so an in-tree file your config
+  includes counts) and the affected entries ask (TD-5160): `git diff` while
+  `diff.external` is set (or `GIT_EXTERNAL_DIFF` is in the daemon's
+  environment), and `git log` and `git show` while signature checks would run
+  the gpg program (`log.showSignature` on, or `format.pretty` or a
+  `pretty.<name>` holding `%G`). A `%G` format word (`--format=%G?`), or
+  `%(signature` for `git branch`, asks as well. If that read fails, git
+  entries ask.
 - For `rg`: `RIPGREP_CONFIG_PATH` does not name a file inside the
   workspace, since one line of it can add `--pre`.
 
@@ -673,10 +749,11 @@ does not rewrite the index, and `GIT_NO_LAZY_FETCH=1`. So no attribute file
 the agent can write routes a file through a filter or textconv driver your
 own config names, and a hook in the tree does not run. Only
 `.git/info/attributes` still applies. This holds whoever approved the command,
-so `git diff` from the list shows raw bytes where a textconv driver would
-have converted them. In a SHA-256 repository the empty tree has another
-name and git refuses with `bad --attr-source`; take the git entries off
-the list there.
+and whether or not the list is on (TD-5160), so `git diff` from the shell
+shows raw bytes where a textconv driver would have converted them; a form the
+list never reads (`git -c … diff`) is not pinned. The empty tree is the one
+for the repository's object format, so SHA-256 repositories work too
+(TD-5160).
 
 A user policy rule (§4.4) still decides first: an `ask` or `never` rule that
 matches stops a listed command as before. The audit database records the
@@ -765,10 +842,12 @@ what that model response had shown (its text and its thinking, with an
 "Provider went quiet. Asking again"), waits `initial_delay` (with
 jitter), and sends the same request once more. That is one retry per
 model call whatever `max_retries` says, because each one can wait a
-whole `stream_idle_timeout`; `max_retries: 0` turns it off. Only the
+whole `stream_idle_timeout`; `max_retries: 0` turns it off. The repeat is
+a fresh request, so if it stalls before its first chunk it is retried
+under `max_retries` like any request (TD-5160). Only the
 model call that stalled is redone: tool calls that already ran in the
 turn are not run again, and text from earlier calls in the turn stays.
-A second stall ends the turn as `stream_stalled`, as before. Stop during
+A second stall after output began ends the turn as `stream_stalled`, as before. Stop during
 the wait ends the turn with nothing kept. The after-write review and
 memory distillation still return a stall without resending it. A
 window from before this change does not know the event and shows the
@@ -905,8 +984,9 @@ runtime is Podman; another binary is accepted only if it speaks the
 same `run` argv (`--userns=keep-id`, one bind mount of the workspace
 at `/workspace`, `--network=none` when the charter wall is deny; a
 host allowlist omits that flag so Podman slirp can work, and never
-`--network=host`, and `--memory` at the charter's `caps.shell_memory_mb`,
-else this file's, else half of RAM, TD-5116). The argv never bind-mounts `$HOME`, `~/.ssh`, cloud
+`--network=host`, and `--memory` and `--memory-swap` at the charter's
+`caps.shell_memory_mb`, else this file's, else half of RAM, TD-5116,
+TD-5160). The argv never bind-mounts `$HOME`, `~/.ssh`, cloud
 creds, the OS keychain, or the user-data-dir; there is no extra-mount
 API. Firecracker / EZER is a follow-up, not this key.
 
@@ -967,7 +1047,9 @@ lowercased (`GITHUB_TOKEN` → `github_token`) and this file gets only the
 reference. Saving a name that already has an entry replaces the value
 there. Remove drops the name from this file and deletes its item;
 removing the server deletes all of its items. A stored value must be
-one line of printable ASCII and at least 8 characters. Every value the
+one line of printable ASCII and at least 8 characters, and its last part
+must be 8 or more too (the token in `Bearer <token>`, which is also
+scrubbed on its own; TD-5160). Every value the
 daemon reads or stores is scrubbed by its exact text from the log, the
 audit DB and the events from then on, whatever its shape. Settings
 lists each name with where it lives (keychain, stored or not, or this
@@ -1191,7 +1273,7 @@ three tier definitions. You can pin a tier for a session from the title bar.
 | `connect_timeout` | float > 0 | `30` | Seconds to open the connection to `base_url`. |
 | `read_timeout` | float > 0 | `120` | Longest wait for any bytes from the server, the response headers included. A local model reading a long prompt sends nothing until its first token, so this is the knob for slow prefill — see §3.5. |
 | `total_timeout` | float > 0 or `null` | `null` | Wall-clock cap on one attempt, streaming included. `null` means no cap. A stream cut by it after output began is not retried. Before TD-5106 the client had a field named "total" set to 180; it was only the wait for a free pooled connection and never bounded a request. That wait stays 180 s and is not a key. |
-| `stream_idle_timeout` | float > 0 or `null` | `300` | Aborts a stream that sends no usable chunk for this long. SSE keep-alive comments (`: ping`) do not count, so a server that only pings is caught; `read_timeout` alone never catches it. A stall before any output is retried under `provider_retry`. A stall partway through a turn's reply withdraws the partial reply from the window and asks once more (TD-5159, see `provider_retry`); a second stall ends the turn as `stream_stalled`. Reading stops at `data: [DONE]`, so a server that holds the body open after a finished reply is not a stall (TD-5152). `null` turns the watchdog off. |
+| `stream_idle_timeout` | float > 0 or `null` | `300` | Aborts a stream that sends no usable chunk for this long. SSE keep-alive comments (`: ping`) do not count, so a server that only pings is caught; `read_timeout` alone never catches it. A stall before any output is retried under `provider_retry`. A stall partway through a turn's reply withdraws the partial reply from the window and asks once more (TD-5159, see `provider_retry`), a fresh request whose own stalls before output are retried too; a second stall after output began ends the turn as `stream_stalled`. Reading stops at `data: [DONE]`, so a server that holds the body open after a finished reply is not a stall (TD-5152). `null` turns the watchdog off. |
 | `fallbacks` | list of tiers | `[]` | Backup endpoints, tried in order when this tier's own endpoint is down: a refused connection, a 5xx, a rate limit or a stall, once `provider_retry` is spent (TD-5120). Each entry is a whole tier with its own `slug` (required), `base_url`, `credential`, prices, `context_window`, `max_output_tokens` and timeouts; nothing is inherited. Config only — see §3.7. |
 
 **Prices are per million tokens, and they are yours to keep accurate.** They drive the live
@@ -1509,8 +1591,10 @@ total_timeout: 3600        # no single reply runs past an hour
 A stall before any output is retried under `provider_retry`, so with the default three retries
 a dead server costs up to four waits of `read_timeout` (or `stream_idle_timeout` when the
 server pings). Lower `provider_retry.max_retries` with long timeouts. A stall partway through
-a reply is withdrawn and asked once more (TD-5159), so it costs at most two waits of
-`stream_idle_timeout` per model call. The after-write review
+a reply is withdrawn and asked once more (TD-5159). That repeat is a fresh request, so a
+stall before its first chunk is retried too: from the mid-reply stall on, one model call can
+wait up to `max_retries` + 2 times (5 with the default three retries), on top of any stalls
+before the first attempt's first chunk (TD-5160). The after-write review
 and memory distillation never resend a stall (TD-5146), so they wait once. A scheduled job
 whose turn ends as `stream_stalled` failed for a transient reason, like a timeout, so a job
 with `retries` tries again after its `retry_delay` (TD-5154).
@@ -1780,8 +1864,9 @@ Accept and Save are only taken from this computer's own window (`loopback_only` 
 or another computer); Reject works from a phone. Every accepted, edited or rejected proposal
 goes in the session log as `steering_decision` with its diff. The card shows exactly what
 Accept writes. The session log blanks secret-shaped strings (a long run of letters, digits,
-`-` or `_` after `sk-`, `ghp_` and the like; ordinary words such as `task-tool-availability`
-can match too), so a proposal whose file name, current file or new text holds one is refused
+`-` or `_` after `sk-`, `ghp_` and the like; an `sk-` straight after a lowercase letter
+followed only by words, as in `task-tool-availability`, is left alone), so a proposal whose file name, current
+file or new text holds one is refused
 (`steering_secret_shaped`), and so is a Save of one; change that file by hand. Open proposals live in the daemon's memory, so a restart closes them: the daemon logs
 each one as `steering_decision` `expired` when it restores the session, its card does not
 come back, and the agent has to propose it again. A card the daemon no longer holds says
@@ -1919,7 +2004,7 @@ autonomous session the container's `/workspace` counts as the workspace.
 | `spend_usd` | float ≥ 0 | `25.0` | Session spend, in dollars, that pauses the run. Settings → Budget writes this for the open workspace. Until it is set, the built-in $25 pause still applies and the title bar does not show a budget. |
 | `wall_clock_hours` | float ≥ 0 | `8.0` | Session runtime, in hours, that pauses the run. |
 | `max_iterations` | int ≥ 1 | `200` | Loop iterations that pause the run. |
-| `shell_memory_mb` | int ≥ 64 \| null | `null` | Memory, in MiB, that one shell command may use. `null` is half of the machine's RAM. A command over it is killed; it does not pause the run. See below. |
+| `shell_memory_mb` | int ≥ 64 \| null | `null` | Memory, in MiB, that one shell command may use: all its processes together in a systemd scope or container, but each process on its own under the `ulimit` fallback (TD-5160). `null` is half of the machine's RAM. A command over it is killed; it does not pause the run. See below. |
 
 The first three are checked **before every model call**, in that order, and all three trigger at
 or past the value rather than strictly past it. `spend_usd: 0` is legal and pauses before the first
@@ -1948,10 +2033,18 @@ machine allows:
 - **Other Linux.** The shell sets `ulimit -v` (`RLIMIT_AS`) to the cap and then runs the
   command, so the command and everything it starts inherit the limit and cannot raise it. This
   counts address space, not resident memory: an allocation past it fails and the command dies of
-  its own out-of-memory error. Runtimes that reserve large address ranges up front (sanitizers,
-  some JVM and WebAssembly setups) can fail well below the cap here; raise the cap if they do.
-  A lower limit the daemon already runs under is kept.
-- **Autonomous sessions.** Podman runs get `--memory=<cap>m`. A charter's caps replace this
+  its own out-of-memory error. It is also per process, not per command: each process the command
+  starts gets the whole cap, so `make -j16` or a test runner with workers can use many times it
+  (TD-5160). Runtimes that reserve large address ranges up front fail well below the cap here:
+  sanitizers, JVMs, and anything that runs WebAssembly, which includes Node's built-in `fetch`
+  (it fails with "Cannot allocate Wasm memory" under an 8 GiB `ulimit -v`, so on a machine with
+  up to about 20 GB of RAM the default cap breaks plain `node` scripts that call `fetch`). Raise
+  the cap if they do. A lower limit the daemon already runs under is kept.
+- **Autonomous sessions.** Podman runs get `--memory=<cap>m` and `--memory-swap=<cap>m`, so the
+  container cannot swap on top of the cap, as the scope's `MemorySwapMax=0` (TD-5160). Rootless
+  Podman applies limits only on cgroup v2 with the systemd cgroup manager; elsewhere it ignores
+  or refuses them, so the start button refuses an autonomous run there, naming the fix, rather
+  than run it uncapped or fail at its first command. A charter's caps replace this
   file's for the run, except that a charter which leaves `shell_memory_mb` unset keeps this
   file's value (half of RAM when neither sets it). The Charter column has a **Shell memory (MB)**
   field for it (blank leaves it unset), and the sign card shows it or, when unset, where the
@@ -1962,14 +2055,25 @@ machine allows:
 Which Linux method works is probed once, on the first shell command after the daemon starts: a
 scope with the same settings must start, receive the command text unchanged (systemd 254+ is
 told not to expand `$$` and `${x}` in it), and show the cap in its `memory.max`. It tries the
-settings for systemd 254+, then 253, then 246–252, and uses the first that passes. The answer holds
-until the daemon restarts, so restart it after changing systemd or cgroup setup.
+settings for systemd 254+, then 253, then 246–252, and uses the first that passes. A probe that
+found no usable scope (one that timed out at startup, say) runs again after five minutes. A
+working answer holds until a command's scope fails to start (the user bus went away): that
+command did not run, its result says so (`memory cap: systemd-run reported that it could not
+start this command's memory-capped scope …`, when systemd-run's lone error line is all of stderr
+and the exit is 1), and the next command probes again, falling back to `ulimit` if systemd is
+still unusable (TD-5160). Restart the daemon after changing
+systemd or cgroup setup to pick it up at once.
 
 When the cap stops a command, its result says so plainly, on a line under the exit code:
-`memory cap: killed — the command went over its 2048 MB memory cap (caps.shell_memory_mb).` With
+`memory cap: killed — the command went over its 2048 MB memory cap (caps.shell_memory_mb).` That
+is said only when the scope's own counters show it reached its cap; once systemd has collected
+the scope its `Result=oom-kill` is all that is left, and that also counts kills by the system's
+out-of-memory killer and systemd-oomd, so the line says the cap is the likely cause, and a kill
+the counters show was not the cap gets no line (TD-5160). With
 `ulimit` the line says the command ran out of memory at its cap, read from its error text
-(`MemoryError`, `Cannot allocate memory`, `std::bad_alloc`, `out of memory`, …; a JavaScript
-heap limit is not counted). In a container an exit of 137 (SIGKILL) is reported as the likely
+(`MemoryError`, `Cannot allocate memory`, `std::bad_alloc`, `out of memory`, `failed to map
+segment from shared object`, …; a JavaScript heap limit and GPU memory, such as PyTorch's "CUDA
+out of memory", are not counted). In a container an exit of 137 (SIGKILL) is reported as the likely
 cause. A command the tool itself timed out, cancelled or stopped gets no such line. Each command
 has its own cap; two commands running at once can each use it. A value above half of RAM loosens
 the default, so a repo's config that sets one waits for your trust (§4.8). Skip-all does not
@@ -1993,9 +2097,13 @@ way. There are two kinds (TD-5117). `worker`, the default, can read, write files
 `research` is read-only: `fs_read`, `fs_list`, `fs_grep`, `web_search` and `web_fetch`, and
 nothing else, no MCP or plugin tool included. Either kind's calls go through the same
 classifier and approval gate as the session's own. Either kind hands back a summary of at most
-500 tokens, counted with the worker tier's counter (four characters a token for a local model).
+500 tokens, counted with the token counter for the worker tier's model: four characters a token
+unless tiktoken knows the slug (it is not installed with TST Desk), and not scaled by the ratio
+the turn loop learns from an endpoint's usage (TD-5160).
 Only that summary enters the conversation; the child's steps show in the window under the
 `delegate` call (expand it in the chat or the Activity panel), cut to 4,000 characters a step.
+A child that fails partway (an error that ends the call) keeps the steps it took on the failed
+result too (TD-5160).
 The child reads the session's own config, as the session's tools do: a research child's
 `web_search` goes to the session's `search.base_url` and fallbacks, the hosts `network` and the
 host allowlist judged, and a worker child's shell keeps the session's read-only list. In plan
@@ -2066,6 +2174,24 @@ call is downgraded to `class_c_default` — you can loosen approvals for ordinar
 riskiest calls always come back to you (or are refused). "Always allow this in this workspace"
 in the approval card writes a rule here for you, and keeps the file trusted (§4.8).
 
+**Rules for one `tst run` (TD-5118).** `tst run --allow RULE` and `--deny RULE` add rules for
+the one turn that run starts, and nothing is written here. A rule is `TOOL` or `TOOL:ARGS`, with
+the same globs as `tool` and `args` above (`--allow "shell:npm test*"`, `--deny fs_write`); each
+flag repeats. An allow is `auto` and a deny is `never`, judged beside this file's rules deny
+first, so a rule here that asks or refuses still wins over an allow, and an allow never makes a
+Class C call run. `--on-ask deny-and-continue` answers every approval that turn would ask for
+with a refusal the model reads, and the turn carries on: nothing waits for the window, and the
+run exits 3 (refused) if anything was refused. The next turn, from the window or another run,
+is back to this file alone. With skip-all on, nothing asks, so `--on-ask` changes nothing. Only
+`tst run` on this computer can set these, for this computer's own sessions: a phone or another
+computer approves call by call. A Grok session takes `--on-ask` but refuses `--allow` and
+`--deny`, because Grok's own tools never reach these rules.
+
+```bash
+tst run --workspace . --allow "shell:npm test*" --deny "shell:git push*" \
+  --on-ask deny-and-continue --message "fix the failing test" --output json
+```
+
 **Always allow saves a rule for that one call (TD-5149).** The rule names the exact path, or
 the one command, with any `*`, `?` or `[` in it made literal. A read of `app/[id]/page.tsx`
 saves `args: "app/[[]id]/page.tsx"`, which matches that file and no other, and a file literally
@@ -2106,6 +2232,18 @@ policy:
     - tool: fs_grep
       args: "*.env*"
       effect: never
+```
+
+**`consult` never asks (TD-5119).** Asking the brain or the validator a question writes nothing
+and reaches only your own model endpoints, so it is Class A by a fixed rule. Its spend is capped
+per turn (§2 `consult`) and by your caps. To approve each one, add a rule:
+
+<!-- verify: workspace -->
+```yaml
+policy:
+  rules:
+    - tool: consult
+      effect: ask
 ```
 
 - `effect: ask` asks instead, but an unattended (autonomy) run treats `ask` as `auto`, so only

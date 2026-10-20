@@ -51,7 +51,8 @@ async def inject_steers(
     point = SteerPoint(turn_id=into, step=step, after_tool_call_ids=list(after_tool_call_ids))
     for queued in steers:
         # A /skill typed mid-turn loads before the next step, as it would
-        # at the start of a turn.
+        # at the start of a turn; the loop re-assembles the system prompt
+        # when one does, so that very step sees it (TD-5160).
         apply_slash_skill(session, queued.display, claude_global_fallback=claude_global_fallback)
         messages.append(ChatMessage(role="user", content=queued.provider, steer=True))
         await session.event_log.add(

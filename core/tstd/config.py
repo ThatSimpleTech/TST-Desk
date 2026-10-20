@@ -630,14 +630,44 @@ class ClearToolResultsConfig(BaseModel):
         return names
 
 
+def _default_consult_tiers() -> list[TierName]:
+    return ["worker"]
+
+
+class ConsultConfig(BaseModel):
+    """The ``consult`` tool (TD-5119): the acting tier asks a stronger one.
+
+    ``tiers`` names the tiers offered the tool; any tier not listed is off.
+    The default lists only the worker, so worker turns and delegate
+    children (which run on the worker tier) have it and the brain and the
+    validator do not. ``max_per_turn`` caps the consults of one user turn,
+    a delegate child's included.
+    """
+
+    tiers: list[TierName] = Field(default_factory=_default_consult_tiers)
+    max_per_turn: int = Field(default=2, ge=1, le=20)
+
+    @field_validator("tiers")
+    @classmethod
+    def _dedupe_tiers(cls, value: list[TierName]) -> list[TierName]:
+        return list(dict.fromkeys(value))
+
+    def allows(self, tier: str | None) -> bool:
+        """Whether *tier* is offered ``consult``."""
+        return tier in self.tiers
+
+
 class ShellReadOnlyConfig(BaseModel):
     """The read-only shell list (TD-5103): commands that run without asking.
 
     The list is fixed in code (``READ_ONLY_ENTRIES``). Config can drop
     entries or switch the whole list off with ``enabled: false``; an entry
     that is not built in is a load error, so a config file can never grow
-    what auto-runs.
+    what auto-runs. A misspelt key (``enable: false``) is a load error too
+    (TD-5160): ignored, it would leave every entry on.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
     commands: list[str] = Field(default_factory=lambda: list(READ_ONLY_ENTRIES))
@@ -659,7 +689,13 @@ class ShellReadOnlyConfig(BaseModel):
 
 
 class ShellConfig(BaseModel):
-    """The shell tool's user-level settings (TD-5103)."""
+    """The shell tool's user-level settings (TD-5103).
+
+    Unknown keys are refused (TD-5160): ``readonly:`` for ``read_only:``
+    would otherwise keep the whole list on without a word.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     read_only: ShellReadOnlyConfig = Field(default_factory=ShellReadOnlyConfig)
 
@@ -1298,6 +1334,7 @@ class ModelConfig(BaseModel):
     steering: SteeringConfig = Field(default_factory=SteeringConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
     clear_tool_results: ClearToolResultsConfig = Field(default_factory=ClearToolResultsConfig)
+    consult: ConsultConfig = Field(default_factory=ConsultConfig)
     shell: ShellConfig = Field(default_factory=ShellConfig)
     provider_retry: ProviderRetryConfig = Field(default_factory=ProviderRetryConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
@@ -1498,6 +1535,7 @@ def load_config(path: Path | None = None) -> ModelConfig:
         "steering",
         "session",
         "clear_tool_results",
+        "consult",
         "scheduler",
         "computer_use",
         "remote",

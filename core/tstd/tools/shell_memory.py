@@ -28,18 +28,23 @@ the workspace config, half of RAM when unset:
 macOS does not enforce ``RLIMIT_AS`` and Windows has neither mechanism, so
 the host shell runs uncapped there; the container cap still applies.
 
-The host probe runs once per daemon, with the same scope properties a
-command gets, and its answer holds until the daemon restarts (as Claude
-Code holds its cgroup setup until relaunch).
+The host probe runs with the same scope properties a command gets. A
+working scope holds until a command's scope fails to start (the user bus
+went away, say): that command did not run, its result says so, and the next
+command probes again. A probe that found no usable scope is tried again
+after a few minutes, so one timeout at startup does not pin the daemon to
+``RLIMIT_AS`` (TD-5160).
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import shlex
 import shutil
 import sys
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Literal
@@ -84,7 +89,9 @@ _PROBE_SCRIPT = (
 
 # Out-of-memory messages from the runtimes a shell command usually runs,
 # matched case-insensitively on stderr. ENOMEM's own text covers C, shells
-# and most tools.
+# and most tools. Under ``RLIMIT_AS`` a shared library that cannot be
+# mapped, or a thread whose stack cannot be, fails with its own words
+# (TD-5160).
 _OOM_SIGNATURES = (
     "cannot allocate memory",
     "out of memory",
@@ -92,11 +99,32 @@ _OOM_SIGNATURES = (
     "std::bad_alloc",
     "memory allocation of",
     "native memory allocation",
+    "failed to map segment from shared object",
+    "unable to create native thread",
+    "unable to create new native thread",
 )
-# Out-of-memory messages about a runtime's own heap limit, which a command
-# hits whatever the cap is. Removed before matching so they do not read as
-# the cap.
-_OWN_HEAP_LIMITS = ("javascript heap out of memory",)
+# Out-of-memory messages about a limit the cap does not set: a runtime's
+# own heap limit, and a GPU's memory (PyTorch's "CUDA out of memory", ROCm's
+# "HIP", Apple's "MPS"), which a command hits whatever the cap is. Removed
+# before matching so they do not read as the cap.
+_OWN_HEAP_LIMITS = (
+    "javascript heap out of memory",
+    "torch.outofmemoryerror",
+    "cuda out of memory",
+    "cuda error: out of memory",
+    "hip out of memory",
+    "mps backend out of memory",
+)
+# What systemd-run prints, alone, when it cannot start the scope; it then
+# exits 1 without running the command (TD-5160). A command that runs
+# systemctl can print the same line, so only a lone line counts, and the
+# note does not claim more than systemd-run said.
+_SCOPE_START_FAILED = re.compile(
+    r"Failed to (?:start transient scope unit"
+    r"|connect to (?:user scope )?bus|create bus connection)[^\n]*"
+)
+# A probe that found no usable scope is tried again after this long.
+_REPROBE_SECS = 300.0
 
 
 @dataclass(frozen=True)
@@ -125,6 +153,8 @@ _PROBE_VARIANTS = ((True, True), (False, True), (False, False))
 class _Probe:
     done: bool = False
     tools: _ScopeTools | None = None
+    #: ``time.monotonic()`` after which a probe that found nothing runs again.
+    retry_at: float = 0.0
 
 
 _probe = _Probe()
@@ -157,6 +187,7 @@ def reset_scope_probe() -> None:
     """Forget the probe's answer, so the next command probes again."""
     _probe.done = False
     _probe.tools = None
+    _probe.retry_at = 0.0
 
 
 def _scope_args(
@@ -240,10 +271,12 @@ async def _probe_scope_tools(env: dict[str, str]) -> _ScopeTools | None:
 
 
 async def _scope_tools(env: dict[str, str]) -> _ScopeTools | None:
-    if not _probe.done:
+    stale = _probe.done and _probe.tools is None and time.monotonic() >= _probe.retry_at
+    if not _probe.done or stale:
         tools = await _probe_scope_tools(env)
         _probe.tools = tools
         _probe.done = True
+        _probe.retry_at = time.monotonic() + _REPROBE_SECS
     return _probe.tools
 
 
@@ -350,39 +383,56 @@ async def _unit_state(cap: ShellMemoryCap, tools: _ScopeTools) -> dict[str, str]
     return state
 
 
-def _cgroup_oom_kills(cgroup: str) -> int:
-    """The kernel's ``oom_kill`` count for *cgroup*, 0 when unreadable."""
+def _cgroup_oom_events(cgroup: str) -> tuple[int, int] | None:
+    """``(oom, oom_kill)`` from *cgroup*'s ``memory.events``; None when unreadable.
+
+    ``oom`` counts the times the cgroup hit its own limit; ``oom_kill``
+    counts its processes any out-of-memory killer took, the system-wide one
+    and systemd-oomd included (TD-5160).
+    """
     if not cgroup:
-        return 0
+        return None
+    counts: dict[str, int] = {}
     try:
         with open(f"/sys/fs/cgroup{cgroup}/memory.events", encoding="ascii") as f:
             for line in f:
                 name, _, count = line.partition(" ")
-                if name == "oom_kill":
-                    return int(count)
+                counts[name] = int(count)
     except (OSError, ValueError):
-        return 0
-    return 0
+        return None
+    return counts.get("oom", 0), counts.get("oom_kill", 0)
 
 
-async def _scope_oom_killed(cap: ShellMemoryCap) -> bool:
-    """True when the kernel killed something in the command's scope.
+#: ``other``: something was killed, but the scope's counters show the cap
+#: was not reached, so it was another killer's doing.
+ScopeVerdict = Literal["cap", "likely", "other", ""]
 
-    systemd records ``Result=oom-kill`` once it has seen the kill. Until
-    then the scope's cgroup still exists and its ``memory.events`` already
-    counts it, so neither order loses the answer. A confirmed kill leaves a
-    failed unit, which is cleared so it does not pile up in ``--failed``.
+
+async def _scope_oom_killed(cap: ShellMemoryCap) -> ScopeVerdict:
+    """Whether the command's own cap killed something in its scope.
+
+    While the scope's cgroup still exists, its ``memory.events`` says: a
+    kill (``oom_kill``) with the cap reached (``oom``) is the cap, and a
+    kill without it was the system's out-of-memory killer or systemd-oomd,
+    not the cap. Once systemd has collected the scope, ``Result=oom-kill``
+    is all that is left, and it counts those other killers too, so it is
+    only ``likely`` (TD-5160). A kill leaves a failed unit, which is
+    cleared so it does not pile up in ``--failed``.
     """
     tools = cap.tools
     if tools is None:
-        return False
+        return ""
     state = await _unit_state(cap, tools)
-    killed = state.get("Result") == "oom-kill"
+    events = await asyncio.to_thread(_cgroup_oom_events, state.get("ControlGroup", ""))
+    verdict: ScopeVerdict = ""
+    if events is not None and events[1] > 0:
+        verdict = "cap" if events[0] > 0 else "other"
+        killed = True
+    else:
+        killed = state.get("Result") == "oom-kill"
+        verdict = "likely" if killed else ""
     if not killed:
-        kills = await asyncio.to_thread(_cgroup_oom_kills, state.get("ControlGroup", ""))
-        killed = kills > 0
-    if not killed:
-        return False
+        return ""
     for _ in range(_SETTLE_POLLS):
         if state.get("ActiveState") in ("failed", "inactive", ""):
             break
@@ -390,7 +440,7 @@ async def _scope_oom_killed(cap: ShellMemoryCap) -> bool:
         state = await _unit_state(cap, tools)
     if state.get("ActiveState") == "failed":
         await _systemctl(tools, "reset-failed", cap.unit)
-    return True
+    return verdict
 
 
 def _killed_by_sigkill(exit_code: int) -> bool:
@@ -420,12 +470,33 @@ def _note(cap: ShellMemoryCap, *, likely: bool = False, exit_code: int = _SIGKIL
     )
 
 
+_SCOPE_NOT_STARTED = (
+    "memory cap: systemd-run reported that it could not start this command's "
+    "memory-capped scope (stderr), in which case the command did not run. The next "
+    "command checks systemd again and falls back to a ulimit cap if it is still unusable."
+)
+
+
+def _scope_not_started(exit_code: int, stderr: str) -> bool:
+    return exit_code == 1 and _SCOPE_START_FAILED.fullmatch(stderr.strip()) is not None
+
+
 async def cap_note(cap: ShellMemoryCap | None, exit_code: int, stderr: str) -> str:
     """One line for the result when the cap stopped the command, else ``""``."""
     if cap is None:
         return ""
     if cap.method == "scope":
-        hit = await _scope_oom_killed(cap)
+        if _scope_not_started(exit_code, stderr):
+            # The user bus or manager went away since the probe: the next
+            # command probes again rather than fail the same way (TD-5160).
+            reset_scope_probe()
+            return _SCOPE_NOT_STARTED
+        verdict = await _scope_oom_killed(cap)
+        if verdict == "likely":
+            return _note(cap, likely=True, exit_code=exit_code)
+        if verdict == "other":
+            return ""
+        hit = verdict == "cap"
         # systemd before 253 records no oom-kill result for a scope, and has
         # usually collected it by now: the exit status is all there is.
         old_systemd = cap.tools is not None and not cap.tools.oom_policy

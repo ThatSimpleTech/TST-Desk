@@ -76,6 +76,9 @@ export interface UserMessage extends ClientMessage {
    *  tool-batch boundary. Omitted, or with no turn running, the message
    *  waits for a turn of its own. Additive: older daemons ignore it. */
   steer?: boolean;
+  /** TD-5160: refuse with `session_busy` instead of queueing when the
+   *  session already owes a turn (`tst run` sets it; the window does not). */
+  only_if_idle?: boolean;
 }
 
 /** Send a message a restart left held (TD-5155). `queued_id` names a row of
@@ -1184,6 +1187,21 @@ export interface SteerPoint {
   after_tool_call_ids: string[];
 }
 
+/** One `tst run --allow` or `--deny` rule (TD-5118): the globs of a
+ *  `policy.rules` entry. */
+export interface RunRule {
+  tool: string;
+  args: string;
+}
+
+/** The `tst run` permissions a turn ran under (TD-5118). The window never
+ *  sends these; it only sees them echoed on a `user_turn`. */
+export interface RunPermissions {
+  allow: RunRule[];
+  deny: RunRule[];
+  on_ask: "prompt" | "deny_and_continue";
+}
+
 export interface UserTurn extends DaemonEvent {
   type: "user_turn";
   session_id: string;
@@ -1192,6 +1210,9 @@ export interface UserTurn extends DaemonEvent {
   /** Set when the message steered a running turn instead of starting one
    *  (TD-5112). Additive: older daemons omit it, and null starts a turn. */
   steer?: SteerPoint | null;
+  /** The `tst run` rules this turn runs under (TD-5118). Additive: older
+   *  daemons omit it, and null is a turn without them. */
+  run_permissions?: RunPermissions | null;
 }
 
 /** One message a restart left held (TD-5155). `content` is what its user

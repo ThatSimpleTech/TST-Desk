@@ -625,6 +625,17 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(m.steer?.after_tool_call_ids).toEqual(["tc-1", "tc-2"]);
   });
 
+  it("user_turn_run_permissions", () => {
+    // TD-5118: a tst run turn echoes the rules it runs under; a plain turn
+    // carries null.
+    expect((fixtures.user_turn as UserTurn).run_permissions ?? null).toBeNull();
+    const m = fixtures.user_turn_run_permissions as UserTurn;
+    expect(m.type).toBe("user_turn");
+    expect(m.run_permissions?.allow).toEqual([{ tool: "shell", args: "npm test*" }]);
+    expect(m.run_permissions?.deny).toEqual([{ tool: "fs_write", args: "**" }]);
+    expect(m.run_permissions?.on_ask).toBe("deny_and_continue");
+  });
+
   it("assistant_delta", () => {
     const m = fixtures.assistant_delta as AssistantDelta;
     expect(m.type).toBe("assistant_delta");
@@ -1196,7 +1207,7 @@ describe("All fixtures have required shape", () => {
 
   it("every daemon event has a type and seq field", () => {
     const eventTypes = [
-      "ready", "session_state", "conversation_reset", "user_turn", "user_turn_steer", "assistant_delta", "assistant_reasoning", "assistant_delta_response", "assistant_retract", "tool_call", "tool_result",
+      "ready", "session_state", "conversation_reset", "user_turn", "user_turn_steer", "user_turn_run_permissions", "assistant_delta", "assistant_reasoning", "assistant_delta_response", "assistant_retract", "tool_call", "tool_result",
       "tool_result_truncated", "tool_result_diff", "tool_result_read_only", "tool_result_denied",
       "shell_output", "tool_progress", "approval_request", "approval_request_always_allow", "decision_logged",
       "checkpoint_notice", "verify_result", "cost_update", "boundary_update", "boundary_update_config_trust", "turn_complete",

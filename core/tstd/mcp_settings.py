@@ -86,8 +86,9 @@ async def set_mcp_secret(mcp: McpConfig, path: Path, msg: SetMcpSecret) -> str:
     """Store the value, then point config at it. Returns the entry.
 
     The keychain write comes first, so a failure leaves config.yaml as it
-    was. A name that already names an entry keeps it and config is not
-    rewritten.
+    was; if the file write then fails, the new item is deleted again, so
+    no item is left that nothing names (TD-5160). A name that already
+    names an entry keeps it and config is not rewritten.
 
     Raises:
         ConfigError: Unknown server, wrong target, bad name or value.
@@ -111,12 +112,21 @@ async def set_mcp_secret(mcp: McpConfig, path: Path, msg: SetMcpSecret) -> str:
     await keychain_mcp.store_mcp_secret(msg.server_id, entry, msg.value)
     if rewrite:
         mapping[name] = keychain_ref(entry)
-        save_mcp_server(msg.server_id, _with(spec, kind, mapping), path)
+        try:
+            save_mcp_server(msg.server_id, _with(spec, kind, mapping), path)
+        except Exception:
+            await _forget_item(msg.server_id, entry)
+            raise
     return entry
 
 
 async def delete_mcp_secret(mcp: McpConfig, path: Path, msg: DeleteMcpSecret) -> None:
-    """Drop the name from config, then delete the keychain item it named.
+    """Delete the keychain item the name points at, then drop the name.
+
+    The item goes first (TD-5160): if it will not delete, config.yaml
+    still names it, so the file, the daemon's copy and the keychain agree
+    and Remove can be tried again. The other order left an item nothing
+    names, which removing the server never cleans up.
 
     Raises:
         ConfigError: Unknown server or name.
@@ -129,9 +139,9 @@ async def delete_mcp_secret(mcp: McpConfig, path: Path, msg: DeleteMcpSecret) ->
     if name is None:
         raise ConfigError(f"MCP server {msg.server_id!r} has no {label(kind, msg.name)}")
     entry = keychain_entry(mapping.pop(name))
-    save_mcp_server(msg.server_id, _with(spec, kind, mapping), path)
     if entry is not None:
         await _delete_item(msg.server_id, entry)
+    save_mcp_server(msg.server_id, _with(spec, kind, mapping), path)
 
 
 async def _delete_item(server_id: str, entry: str) -> None:
@@ -143,19 +153,23 @@ async def _delete_item(server_id: str, entry: str) -> None:
             raise
 
 
+async def _forget_item(server_id: str, entry: str) -> None:
+    """Best effort: an item nothing names is deleted, or logged if it stays."""
+    try:
+        await _delete_item(server_id, entry)
+    except KeychainError as e:
+        log.warning(
+            "mcp keychain item left behind",
+            extra={"extra_fields": {"server_id": server_id, "entry": entry, "error": str(e)}},
+        )
+
+
 async def forget_server_secrets(server_id: str, spec: McpServerConfig) -> None:
     """Best effort after a server is removed: its items are now unreachable."""
     for value in (*spec.env.values(), *spec.headers.values()):
         entry = keychain_entry(value)
-        if entry is None:
-            continue
-        try:
-            await _delete_item(server_id, entry)
-        except KeychainError as e:
-            log.warning(
-                "mcp keychain item left behind",
-                extra={"extra_fields": {"server_id": server_id, "entry": entry, "error": str(e)}},
-            )
+        if entry is not None:
+            await _forget_item(server_id, entry)
 
 
 async def value_summaries(

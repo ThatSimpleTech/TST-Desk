@@ -173,6 +173,8 @@ from tstd.protocol import (
     RunDiagnostics,
     RunGrokCommand,
     RunJob,
+    RunPermissions,
+    RunRule,
     RunVerify,
     SaveCharter,
     SaveJob,
@@ -518,6 +520,18 @@ FIXTURES = {
         content="Also run the linter",
         steer=SteerPoint(turn_id="turn-1", step=2, after_tool_call_ids=["tc-1", "tc-2"]),
         seq=9,
+    ),
+    # TD-5118: a tst run turn echoes the permissions it runs under.
+    "user_turn_run_permissions": UserTurn(
+        session_id="sess-1",
+        turn_id="turn-3",
+        content="Run the tests",
+        run_permissions=RunPermissions(
+            allow=[RunRule(tool="shell", args="npm test*")],
+            deny=[RunRule(tool="fs_write")],
+            on_ask="deny_and_continue",
+        ),
+        seq=12,
     ),
     # TD-5155: messages a restart left held, whole each time.
     "queued_messages": QueuedMessages(

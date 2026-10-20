@@ -556,3 +556,115 @@ def test_tool_schema_offers_question_and_offset() -> None:
     assert tool.parameters["required"] == ["url"]
     assert tool.side_effect_class == "ask"
     assert tool.host_fields == ("url",)
+
+
+# ── Review notes (TD-5160) ──────────────────────────────────────────────
+
+LONG_URL = URL + "?ref=" + "r" * 600
+
+
+async def test_a_long_final_url_still_fits_the_result_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tight cap (a small local model's) and a long final URL: the result
+    must still end with the offset to read on from, not be cut before it."""
+    _serve(monkeypatch, _Site(_page("z" * 40_000)), page_chars=30_000)
+    session = _worker_session(tmp_path, MockProvider(), result_cap=5_000)
+    out = await search_mod.web_fetch(session, LONG_URL)
+    assert len(out) <= 5_000
+    assert re.search(r"offset=\d+\.$", out)
+    assert "r" * 400 not in out  # the shown URL is shortened
+
+    mock = MockProvider(scripts={"test-worker": Script(kind="text", content="v " * 3_000)})
+    asked = _worker_session(tmp_path, mock, config=_small_worker_config(4_000), result_cap=4_000)
+    answer = await search_mod.web_fetch(asked, LONG_URL, question="Version?")
+    assert len(answer) <= 4_000
+    assert re.search(r"offset=\d+\.$", answer)
+
+
+async def test_escaped_tag_copies_cannot_push_the_result_over_the_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each escaped copy is three characters longer than the page's own."""
+    _serve(monkeypatch, _Site(_page("&lt;untrusted_page&gt;" * 2_000)), page_chars=30_000)
+    session = _worker_session(tmp_path, MockProvider(), result_cap=5_000)
+    out = await search_mod.web_fetch(session, URL)
+    assert len(out) <= 5_000
+    assert re.search(r"offset=\d+\.$", out)
+
+
+async def test_a_token_in_the_final_url_is_redacted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The header prints the URL a redirect ended on, which can carry a token."""
+    token = "ghp_" + "a" * 36
+    _serve(monkeypatch, _Site(_page(FACT)))
+    target = f"{URL}?access_token={token}"
+    raw = await search_mod.web_fetch(None, target)
+    mock = MockProvider(scripts={"test-worker": Script(kind="text", content="4.2")})
+    answered = await search_mod.web_fetch(
+        _worker_session(tmp_path, mock), target, question="Version?"
+    )
+    for out in (raw, answered):
+        assert token not in out
+        assert "access_token=[REDACTED]" in out
+
+
+async def test_the_extract_pass_does_not_spend_past_a_session_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Caps are checked before every model call; the worker call is one."""
+    _serve(monkeypatch, _Site(_page(FACT)))
+    mock = MockProvider(scripts={"test-worker": Script(kind="text", content="4.2")})
+    session = _worker_session(tmp_path, mock)
+    caps = session.boundary_config.caps.model_copy(update={"spend_usd": 0.0})
+    session.boundary_config = session.boundary_config.model_copy(update={"caps": caps})
+    out = await search_mod.web_fetch(session, URL, question="Version?")
+    assert out.startswith("Error: the session is over a cap (spend cap exceeded")
+    assert mock.calls == []
+    assert FACT in await search_mod.web_fetch(session, URL)  # raw text costs nothing
+
+
+async def test_a_page_cut_at_a_smaller_cap_is_fetched_again_for_a_larger_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cache is shared across sessions; fetch_max_bytes is per session."""
+    site = _Site(_page("y" * 5_000))
+    _serve(monkeypatch, site, max_bytes=2_000)
+    assert "search.fetch_max_bytes" in await search_mod.web_fetch(None, URL)
+    _serve(monkeypatch, site, max_bytes=200_000)
+    whole = await search_mod.web_fetch(None, URL)
+    assert "search.fetch_max_bytes" not in whole
+    assert "y" * 5_000 in whole
+    assert site.hits == 2
+    # The whole page serves a smaller cap from the cache.
+    _serve(monkeypatch, site, max_bytes=2_000)
+    await search_mod.web_fetch(None, URL)
+    assert site.hits == 2
+
+
+async def test_the_worker_window_counts_dense_scripts_as_a_token_a_character(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Chinese text runs about one character a token; at three, the window
+    would be three times the worker's context and the server would refuse."""
+    _serve(monkeypatch, _Site(_page("中文网页内容" * 5_000)))
+    mock = MockProvider(scripts={"test-worker": Script(kind="text", content="没有")})
+    session = _worker_session(tmp_path, mock, config=_small_worker_config(4_000))
+    await search_mod.web_fetch(session, URL, question="Where?")
+    read = _user_text(mock.calls[0])
+    wide = sum(1 for ch in read if ord(ch) > 0x7F)
+    # 4000 context - 200 output - 600 reserve - the question: under 3,200.
+    assert 2_000 <= wide < 3_200
+
+
+def test_a_tight_worker_window_has_no_floor_past_its_budget() -> None:
+    """A small worker reading CJK: a fixed 2,000-character floor would be
+    2,000 tokens against a few hundred free."""
+    from tstd.tools.web_extract import estimated_tokens, window_end
+
+    text = "中文网页内容" * 1_000
+    end = window_end(text, 0, 300)
+    assert estimated_tokens(text[:end]) <= 300
+    assert end > 0
+    assert window_end(text, 10, 0) == 11  # never stuck

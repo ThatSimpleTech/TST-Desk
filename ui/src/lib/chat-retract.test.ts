@@ -57,7 +57,7 @@ function bound() {
     expect(rows).toHaveLength(1);
     return rows[0];
   };
-  return { state, apply, reply };
+  return { state, store, apply, reply };
 }
 
 describe("a reply withdrawn after a stall", () => {
@@ -147,4 +147,24 @@ describe("a reply withdrawn after a stall", () => {
     expect(entry?.details).toMatchObject({ reason: "stream_stalled", response_id: "r1" });
     if (entry) expect(entryTone(entry)).toBe("warning");
   });
+
+  it("is taken off both rows when a Send now split it (TD-5160)", () => {
+    // Send now of files with no text, mid-stream, is echoed at once (the
+    // `behind` mode), so the stalled response's later deltas open a second
+    // assistant row after that user row.
+    const { state, store, apply } = bound();
+    apply(delta("The fix is ", "r1"));
+    store.sendUserMessage("", [{ name: "log.txt", size: 3, content_b64: "YWJj" }]);
+    const queued = state.queued[0];
+    expect(queued).toBeDefined();
+    expect(store.sendQueuedNow(queued.id)).toBe(true);
+    apply(delta("to dele", "r1"));
+    expect(state.messages.filter((m) => m.role === "assistant")).toHaveLength(2);
+    apply(retract("r1"), delta("Done.", "r2"));
+
+    const shown = state.messages.map((m) => `${m.role}:${m.text}`);
+    expect(shown).toEqual(["user:fix it", "user:", "assistant:Done."]);
+    expect(state.messages.some((m) => m.text.includes("The fix is"))).toBe(false);
+  });
 });
+

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import httpx
 import pytest
@@ -44,6 +45,10 @@ from tstd.tools.registry import Tool
 from tstd.tools.results import HandlerOutput
 
 READ_ONLY = {"fs_read", "fs_list", "fs_grep", "web_search", "web_fetch"}
+#: What the research child is offered under the default config: consult is
+#: on for the worker tier, which every child runs on (TD-5119). It reads
+#: and writes nothing; it asks the brain one question.
+OFFERED = READ_ONLY | {"consult"}
 #: In a workspace file, never in the worker's summary: if the parent model
 #: ever sees it, the transcript leaked into the parent context.
 MARKER = "zebra-quokka-7731"
@@ -121,7 +126,7 @@ async def test_research_child_runs_on_worker_tier_with_read_only_tools(tmp_path:
 
     assert "hello from notes" in summary
     offered = _offered(mock, "test-worker")
-    assert offered and all(names == READ_ONLY for names in offered)
+    assert offered and all(names == OFFERED for names in offered)
     assert {c.model for c in mock.calls} == {"test-worker"}
     first = mock.calls[0].messages[1].content
     assert isinstance(first, str) and "read-only research worker" in first
@@ -364,7 +369,7 @@ async def test_parent_loop_keeps_transcript_out_of_context_and_on_the_event(
     brain = _brain_text(mock)
     assert "animals.md names one animal pair." in brain
     assert MARKER not in brain
-    assert _offered(mock, "test-worker")[0] == READ_ONLY
+    assert _offered(mock, "test-worker")[0] == OFFERED
 
 
 def test_recorder_caps_each_step_and_the_whole_transcript() -> None:
@@ -401,7 +406,7 @@ async def test_plan_mode_defaults_delegate_to_research(tmp_path: Path) -> None:
     out = await handle_delegate(parent, task="Map the repo")
 
     assert out.text == "explored"
-    assert _offered(mock, "test-worker") == [READ_ONLY]
+    assert _offered(mock, "test-worker") == [OFFERED]
 
 
 async def test_plan_mode_still_runs_an_explicit_worker(tmp_path: Path) -> None:
@@ -437,3 +442,73 @@ async def test_outside_plan_mode_the_default_is_still_the_writing_worker(tmp_pat
 
     offered = _offered(mock, "test-worker")
     assert offered and "fs_write" in offered[0] and "shell" in offered[0]
+
+
+# ── Review notes (TD-5160) ──────────────────────────────────────────────
+
+
+class _DiesOnSecondCall(MockProvider):
+    """A worker that reads once, then fails with no ProviderError."""
+
+    async def chat_completion(self, request: Any) -> Any:
+        if self.calls:
+            raise RuntimeError("the assembler blew up")
+        return await super().chat_completion(request)
+
+
+async def test_a_child_that_fails_after_working_keeps_its_transcript(tmp_path: Path) -> None:
+    """What the child did before it failed stays viewable in the window."""
+    ws = _workspace(tmp_path)
+    (ws / "animals.md").write_text(f"pair: {MARKER}\n", encoding="utf-8")
+    session = Session(str(ws))
+    dispatcher = _parent_dispatcher(ws)
+    mock = _DiesOnSecondCall(
+        sequences={
+            "test-worker": [
+                Script(
+                    kind="tool_call", tool_name="fs_read", tool_arguments='{"path": "animals.md"}'
+                ),
+            ]
+        }
+    )
+    _bind_runtime(session, dispatcher, mock)
+
+    result = await dispatcher.dispatch(
+        "c1", "delegate", {"task": "What pair?", "kind": "research"}, session
+    )
+
+    assert (result.status, result.error_code) == ("error", "handler_error")
+    assert result.output == "Tool 'delegate' failed: the assembler blew up"
+    assert [s.kind for s in result.transcript] == ["task", "tool_call", "tool_result"]
+    assert MARKER in result.transcript[2].text
+
+
+async def test_the_summary_cap_counts_with_the_worker_tiers_counter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every counter is the heuristic without tiktoken, so this tells the
+    worker's slug apart: only its counter makes each character a token."""
+    import tstd.tools.delegate as delegate_module
+    from tstd.context.tokens import TokenCount
+
+    class _OnePerChar:
+        def count(self, text: str) -> TokenCount:
+            return TokenCount(count=len(text), method="test")
+
+    asked: list[str | None] = []
+
+    def counter_for(slug: str | None) -> Any:
+        asked.append(slug)
+        return _OnePerChar() if slug == "test-worker" else HeuristicTokenCounter()
+
+    monkeypatch.setattr(delegate_module, "make_token_counter", counter_for)
+    ws = _workspace(tmp_path)
+    parent = Session(str(ws))
+    dispatcher = _parent_dispatcher(ws)
+    mock = MockProvider(sequences={"test-worker": [Script(kind="text", content="x" * 1_500)]})
+    _bind_runtime(parent, dispatcher, mock)
+
+    summary = await run_worker_child(parent=parent, task="Explore", kind="research")
+
+    assert asked == ["test-worker"]
+    assert len(summary) <= SUMMARY_TOKEN_CAP
