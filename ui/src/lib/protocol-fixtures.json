@@ -701,7 +701,8 @@
     "output": "file content",
     "truncated": false,
     "error_code": null,
-    "diff": null
+    "diff": null,
+    "allowed_by": []
   },
   "tool_result_truncated": {
     "type": "tool_result",
@@ -712,7 +713,8 @@
     "output": "too long",
     "truncated": true,
     "error_code": null,
-    "diff": null
+    "diff": null,
+    "allowed_by": []
   },
   "tool_result_diff": {
     "type": "tool_result",
@@ -723,7 +725,23 @@
     "output": "wrote 12 bytes; overwrote test.txt",
     "truncated": false,
     "error_code": null,
-    "diff": "--- a/test.txt\n+++ b/test.txt\n@@ -1 +1 @@\n-old line\n+new line"
+    "diff": "--- a/test.txt\n+++ b/test.txt\n@@ -1 +1 @@\n-old line\n+new line",
+    "allowed_by": []
+  },
+  "tool_result_read_only": {
+    "type": "tool_result",
+    "seq": 8,
+    "session_id": "sess-1",
+    "tool_call_id": "tc-1",
+    "status": "success",
+    "output": "exit 0",
+    "truncated": false,
+    "error_code": null,
+    "diff": null,
+    "allowed_by": [
+      "git log",
+      "head"
+    ]
   },
   "tool_result_denied": {
     "type": "tool_result",
@@ -734,7 +752,8 @@
     "output": "Denied by user: not safe",
     "truncated": false,
     "error_code": "approval_denied",
-    "diff": null
+    "diff": null,
+    "allowed_by": []
   },
   "approval_request": {
     "type": "approval_request",

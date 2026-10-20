@@ -37,10 +37,10 @@ ToolCallStatus = Literal["success", "error", "refused"]
 # ── Schema ─────────────────────────────────────────────────────────────
 #
 # Schema objects: sessions, turns, tool_calls, decisions, model_calls,
-# judgments (TD-708) — and `costs`, which is a VIEW over model_calls,
-# not a table. Rollup rows would duplicate truth in a store that can
-# never correct them; a view aggregates on read instead (TD-903 queries
-# it).
+# judgments (TD-708), allowed_calls (TD-5103) — and `costs`, which is a
+# VIEW over model_calls, not a table. Rollup rows would duplicate truth in
+# a store that can never correct them; a view aggregates on read instead
+# (TD-903 queries it).
 #
 # Timestamps are REAL seconds since the Unix epoch (UTC) — sortable, and
 # groupable by local day via datetime(ts, 'unixepoch', 'localtime').
@@ -169,9 +169,21 @@ CREATE TABLE judgments (
 CREATE INDEX idx_judgments_session ON judgments(session_id, ts);
 """
 
+# v4 records which read-only shell list entries let a call run without
+# asking (TD-5103): one row per such call, keyed by its tool_calls row,
+# "git log, head" for `git log | head`. A call a policy rule, an approval
+# or another class default decided has no row. A table of its own, not a
+# column, so no tool_calls row is ever rewritten.
+_SCHEMA_V4 = """
+CREATE TABLE allowed_calls (
+    tool_call INTEGER PRIMARY KEY REFERENCES tool_calls(id),
+    allowed_by TEXT NOT NULL
+);
+"""
+
 # Ordered migration steps; index + 1 is the schema version that step
 # produces. Every release that changes the schema appends one entry.
-MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3)
+MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3, _SCHEMA_V4)
 
 
 # ── Scrubbing ──────────────────────────────────────────────────────────
@@ -344,8 +356,14 @@ class AuditStore:
         status: ToolCallStatus,
         result_output: str | None = None,
         ts: float | None = None,
+        allowed_by: Sequence[str] = (),
     ) -> int:
-        """Record a tool call and its outcome. Arguments are scrubbed first."""
+        """Record a tool call and its outcome. Arguments are scrubbed first.
+
+        ``allowed_by`` names the read-only shell list entries that let the
+        call run without asking (TD-5103). They go in ``allowed_calls`` in
+        the same transaction, against this row's id.
+        """
         scrubbed = redact_structure(dict(arguments))
         cur = self._conn.execute(
             "INSERT INTO tool_calls (session_id, tool_call_id, name, arguments,"
@@ -361,6 +379,11 @@ class AuditStore:
                 ts or time.time(),
             ),
         )
+        if allowed_by:
+            self._conn.execute(
+                "INSERT INTO allowed_calls (tool_call, allowed_by) VALUES (?, ?)",
+                (cur.lastrowid, ", ".join(allowed_by)),
+            )
         self._conn.commit()
         return int(cur.lastrowid or 0)
 

@@ -1,0 +1,326 @@
+"""How the read-only shell list reads a command line (TD-5103).
+
+The list auto-runs a command with no approval, so its reader accepts far
+less than ``sh`` does and refuses everything else:
+
+- words made of ``A-Z a-z 0-9 _ - . / : = , + @ %`` (not ``=`` first;
+  ``~`` and ``^`` inside a word, not after ``=`` or ``:``), single
+  quotes, and double quotes with no ``$``, backtick or ``\\`` inside. So
+  no expansion, substitution, glob, brace, tilde, comment, redirect,
+  subshell, background ``&`` or escape is ever read, and the words are
+  exactly what the program receives
+- the separators ``;``, newline, ``|``, ``||`` and ``&&`` between simple
+  commands. Every command must be on the list, so what a separator does
+  never matters
+
+Each command's options are then checked against the program's write,
+exec and symlink-following flags (:data:`SPECS`, :func:`find_args`,
+:func:`git_args`), and what it reads comes back as a :class:`Read`: the
+words that can name a file, for the caller's path check, and whether it
+can print a file the line does not name.
+"""
+
+from __future__ import annotations
+
+import string
+from dataclasses import dataclass, replace
+
+__all__ = [
+    "SPECS",
+    "Read",
+    "Spec",
+    "branch_args",
+    "find_args",
+    "git_args",
+    "option_args",
+    "segments",
+]
+
+_BARE = frozenset(string.ascii_letters + string.digits + "_-./:=,+@%")
+_MID_WORD = frozenset("~^")
+# Never inside double quotes: the shell expands `$` and backticks there,
+# and `\` escapes. A newline, CR or NUL is refused in any quote.
+_DQUOTE_REFUSED = frozenset("$`\\\n\r\0")
+_SQUOTE_REFUSED = frozenset("\n\r\0")
+
+
+def segments(command: str) -> list[list[str]] | None:
+    """The simple commands of *command* as the words each program receives.
+
+    None when the line uses anything outside the subset in the module
+    docstring. Empty commands (a trailing ``;``, a blank line) are dropped:
+    the shell runs nothing for them or refuses the line.
+    """
+    segs: list[list[str]] = []
+    words: list[str] = []
+    word: list[str] | None = None
+    i, n = 0, len(command)
+
+    def close_word() -> None:
+        nonlocal word
+        if word is not None:
+            words.append("".join(word))
+            word = None
+
+    def close_seg() -> None:
+        nonlocal words
+        close_word()
+        if words:
+            segs.append(words)
+        words = []
+
+    while i < n:
+        c = command[i]
+        if c in " \t":
+            close_word()
+            i += 1
+        elif c in ";\n":
+            close_seg()
+            i += 1
+        elif command.startswith(("&&", "||"), i):
+            close_seg()
+            i += 2
+        elif c == "|":
+            if command.startswith("|&", i):
+                return None
+            close_seg()
+            i += 1
+        elif c in "'\"":
+            end = command.find(c, i + 1)
+            if end < 0:
+                return None
+            body = command[i + 1 : end]
+            refused = _SQUOTE_REFUSED if c == "'" else _DQUOTE_REFUSED
+            if any(ch in refused for ch in body):
+                return None
+            word = (word or []) + [body]
+            i = end + 1
+        elif c in _BARE:
+            if word is None and c == "=":
+                return None  # zsh's `=cmd` names a program by path
+            word = (word or []) + [c]
+            i += 1
+        elif c in _MID_WORD and word and word[-1][-1:] not in ("", "=", ":"):
+            # `HEAD~1`, `HEAD^`: literal mid-word. A leading `~`, or one
+            # after `=` or `:`, is a home directory to bash.
+            word.append(c)
+            i += 1
+        else:
+            return None
+    close_seg()
+    return segs or None
+
+
+@dataclass(frozen=True)
+class Spec:
+    """A program's options that write, run another program, read a list
+    of file names, or follow symlinks out of the wall during a walk, and
+    the ones that make it read files the line does not name.
+
+    ``refused_short`` are single letters, refused wherever they sit in a
+    cluster (``-laL``). ``refused_long`` are names without the dashes. Any
+    long name that is a prefix of a refused one is refused too, because
+    GNU ``getopt_long`` and git accept a unique abbreviation (``--deref``).
+    ``walk_short`` and ``walk_long`` (a recursive search) are read the same
+    way, and ``walks`` is set for a program that always may (rg).
+    """
+
+    refused_short: str = ""
+    refused_long: frozenset[str] = frozenset()
+    walk_short: str = ""
+    walk_long: frozenset[str] = frozenset()
+    walks: bool = False
+
+
+@dataclass(frozen=True)
+class Read:
+    """What one command of a line reads.
+
+    ``checks`` are the words that can name a file, for the caller's path
+    check. ``walks`` is true when the program can print the contents of a
+    file that no word names: a recursive grep, rg's walk, git's history.
+    """
+
+    checks: tuple[str, ...]
+    walks: bool = False
+
+
+SPECS: dict[str, Spec] = {
+    "ls": Spec("L", frozenset({"dereference"})),
+    "pwd": Spec(),
+    "cat": Spec(),
+    "head": Spec(),
+    "tail": Spec(),
+    "wc": Spec("", frozenset({"files0-from"})),
+    "file": Spec("CfzZ", frozenset({"compile", "files-from", "uncompress", "uncompress-noreport"})),
+    "stat": Spec(),
+    # -R follows every symlink in GNU grep; BSD grep (macOS) follows them
+    # with -S, and with -O those named on the command line. -d takes an
+    # action, `recurse` among them.
+    "grep": Spec(
+        "ROS",
+        frozenset({"dereference-recursive"}),
+        walk_short="rRd",
+        walk_long=frozenset({"recursive", "dereference-recursive", "directories"}),
+    ),
+    "rg": Spec(
+        "Lz", frozenset({"follow", "pre", "pre-glob", "search-zip", "hostname-bin"}), walks=True
+    ),
+    "git": Spec("", frozenset({"output", "ext-diff", "show-signature"})),
+}
+
+# A short-option cluster longer than this is refused: each of its tails
+# is path-checked, and a long one would cost a path walk per tail.
+_MAX_CLUSTER = 256
+
+
+def _prefix_of(name: str, names: frozenset[str]) -> bool:
+    return any(n.startswith(name) for n in names)
+
+
+def option_args(spec: Spec, args: list[str]) -> Read | None:
+    """What *args* read, or None when a refused option is used.
+
+    Every word is checked: BSD tools stop reading options at the first
+    operand (GNU ones too under ``POSIXLY_CORRECT``), so a later ``-x`` or
+    ``--`` is a file name to them. So is any value attached to an option.
+    A long option's is the text after ``=``. A short option's starts
+    after whichever letter of the cluster takes it, which differs by
+    program and between GNU and BSD: ``-bm/etc/x`` is ``-b``, then ``-m``
+    with ``/etc/x``. So every tail of a cluster after its first letter is
+    checked (``m/etc/x`` and ``/etc/x``), and a refused letter anywhere in
+    it refuses, even one that is really part of a value. A value given as
+    the next word is an operand here, so it is checked too: a pattern
+    that starts with ``/`` asks, which costs a prompt and nothing else.
+    Options are read after operands as well, as GNU tools read them,
+    until ``--``.
+    """
+    checks: list[str] = []
+    walks = spec.walks
+    options = True
+    for word in args:
+        checks.append(word)
+        if not options or word == "-" or not word.startswith("-"):
+            continue
+        if word == "--":
+            options = False
+            continue
+        if word.startswith("--"):
+            name, eq, value = word[2:].partition("=")
+            if _prefix_of(name, spec.refused_long):
+                return None
+            walks = walks or _prefix_of(name, spec.walk_long)
+            if eq:
+                checks.append(value)
+            continue
+        letters = word[1:]
+        if len(word) > _MAX_CLUSTER or any(c in spec.refused_short for c in letters):
+            return None
+        walks = walks or any(c in spec.walk_short for c in letters)
+        checks.extend(word[k:] for k in range(2, len(word)))
+    return Read(tuple(checks), walks)
+
+
+# find's actions that run a program, delete, or write a file, its options
+# that follow symlinks during the walk, and GNU 4.9's list of start points.
+_FIND_REFUSED = frozenset(
+    {"-exec", "-execdir", "-ok", "-okdir", "-delete"}
+    | {"-fprint", "-fprint0", "-fprintf", "-fls"}
+    | {"-L", "-follow", "-files0-from"}
+)
+
+
+def find_args(args: list[str]) -> Read | None:
+    """``find``'s words to path-check: start points and primaries' operands.
+
+    Words starting with ``-`` are primaries or numbers (``-size -5k``) and
+    are matched whole, since find does not abbreviate. Everything else is
+    checked as a path, patterns included (``-name 'x'`` stays inside).
+    find prints names, never contents, so it never walks in
+    :class:`Read`'s sense.
+    """
+    checks: list[str] = []
+    for word in args:
+        if word.startswith("-"):
+            if word in _FIND_REFUSED:
+                return None
+            continue
+        checks.append(word)
+    return Read(tuple(checks))
+
+
+# `git branch` creates, deletes, renames or re-points with almost any
+# option, and with a bare name: only these list, and a name is allowed
+# only when one of _BRANCH_LISTS forces list mode (`git branch -v x`
+# creates x).
+_BRANCH_SHORT = frozenset("lavqri")
+_BRANCH_LONG = frozenset(
+    {"list", "all", "remotes", "contains", "no-contains", "merged", "no-merged", "points-at"}
+    | {"verbose", "quiet", "abbrev", "no-abbrev", "color", "no-color", "column", "no-column"}
+    | {"sort", "format", "ignore-case", "omit-empty", "show-current"}
+)
+_BRANCH_LISTS_SHORT = frozenset("lar")
+_BRANCH_LISTS_LONG = frozenset(
+    {"list", "all", "remotes", "contains", "no-contains", "merged", "no-merged", "points-at"}
+)
+
+
+def branch_args(args: list[str]) -> Read | None:
+    """``git branch``'s words to path-check, or None unless it only lists."""
+    checks: list[str] = []
+    operands = False
+    lists = False
+    options = True
+    for word in args:
+        if not options or not word.startswith("-") or word == "-":
+            checks.append(word)
+            operands = True
+            continue
+        if word == "--":
+            options = False
+            continue
+        if word.startswith("--"):
+            name, eq, value = word[2:].partition("=")
+            if name not in _BRANCH_LONG:
+                return None
+            lists = lists or name in _BRANCH_LISTS_LONG
+            if eq:
+                checks.append(value)
+            continue
+        letters = set(word[1:])
+        if not letters <= _BRANCH_SHORT:
+            return None
+        lists = lists or bool(letters & _BRANCH_LISTS_SHORT)
+    if operands and not lists:
+        return None
+    return Read(tuple(checks))
+
+
+# Options before the subcommand: only the ones that change nothing it reads.
+_GIT_GLOBAL = frozenset({"--no-pager", "-P", "--no-optional-locks"})
+GIT_SUBCOMMANDS = ("status", "log", "diff", "show", "branch")
+# log, diff and show print file contents from history and the tree, for
+# paths no word need name; `git status -v` prints the staged diff.
+_GIT_SPECS = {
+    "status": replace(SPECS["git"], walk_short="v", walk_long=frozenset({"verbose"})),
+    "log": replace(SPECS["git"], walks=True),
+    "diff": replace(SPECS["git"], walks=True),
+    "show": replace(SPECS["git"], walks=True),
+}
+
+
+def git_args(args: list[str]) -> tuple[str, Read] | None:
+    """The subcommand and what it reads, or None.
+
+    No global option but :data:`_GIT_GLOBAL` is taken: ``-c`` sets config
+    (``core.fsmonitor`` runs a command), and ``-C``, ``--git-dir``,
+    ``--work-tree`` and ``--exec-path`` move what git reads or runs.
+    """
+    k = 0
+    while k < len(args) and args[k] in _GIT_GLOBAL:
+        k += 1
+    if k >= len(args) or args[k] not in GIT_SUBCOMMANDS:
+        return None
+    sub, rest = args[k], args[k + 1 :]
+    read = branch_args(rest) if sub == "branch" else option_args(_GIT_SPECS[sub], rest)
+    return None if read is None else (sub, read)

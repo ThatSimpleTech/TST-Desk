@@ -40,6 +40,8 @@ class ToolResult:
         verification: Actuation verification status (TD-709, dev) —
             ``verified`` / ``refuted`` / ``unavailable``; ``None`` when
             no verifier is wired or the tool does not actuate.
+        allowed_by: The read-only shell list entries that let the call
+            run without asking (TD-5103); empty when anything else decided.
     """
 
     tool_call_id: str
@@ -56,6 +58,7 @@ class ToolResult:
     diff: str | None = None
     image_png: bytes | None = None
     verification: str | None = None
+    allowed_by: tuple[str, ...] = ()
 
 
 class HandlerRefusal(Exception):

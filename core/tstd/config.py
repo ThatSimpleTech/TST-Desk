@@ -37,6 +37,7 @@ from pydantic import (
 from .logging import get_logger, user_data_dir
 from .mcp_values import coerce_map
 from .provider import TimeoutConfig
+from .shell_read_only import READ_ONLY_ENTRIES
 
 TierName = Literal["brain", "worker", "validator"]
 TIER_NAMES: tuple[TierName, ...] = ("brain", "worker", "validator")
@@ -545,6 +546,40 @@ class SessionConfig(BaseModel):
     log_max_events: int = Field(default=DEFAULT_LOG_MAX_EVENTS, ge=1)
     send_file_max_bytes: int = Field(default=536_870_912, ge=1, le=2_147_483_648)
     send_file_session_max_bytes: int = Field(default=4_294_967_296, ge=1)
+
+
+class ShellReadOnlyConfig(BaseModel):
+    """The read-only shell list (TD-5103): commands that run without asking.
+
+    The list is fixed in code (``READ_ONLY_ENTRIES``). Config can drop
+    entries or switch the whole list off with ``enabled: false``; an entry
+    that is not built in is a load error, so a config file can never grow
+    what auto-runs.
+    """
+
+    enabled: bool = True
+    commands: list[str] = Field(default_factory=lambda: list(READ_ONLY_ENTRIES))
+
+    @field_validator("commands")
+    @classmethod
+    def _only_built_in(cls, value: list[str]) -> list[str]:
+        unknown = [c for c in value if c not in READ_ONLY_ENTRIES]
+        if unknown:
+            raise ValueError(
+                f"not on the built-in read-only list, which config can only shrink: "
+                f"{', '.join(repr(c) for c in unknown)}"
+            )
+        return list(dict.fromkeys(value))
+
+    def entries(self) -> frozenset[str]:
+        """The entries in force: none when the list is off."""
+        return frozenset(self.commands) if self.enabled else frozenset()
+
+
+class ShellConfig(BaseModel):
+    """The shell tool's user-level settings (TD-5103)."""
+
+    read_only: ShellReadOnlyConfig = Field(default_factory=ShellReadOnlyConfig)
 
 
 class EmbeddingsConfig(BaseModel):
@@ -1180,6 +1215,7 @@ class ModelConfig(BaseModel):
     project_context: ProjectContextConfig = Field(default_factory=ProjectContextConfig)
     steering: SteeringConfig = Field(default_factory=SteeringConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
+    shell: ShellConfig = Field(default_factory=ShellConfig)
     provider_retry: ProviderRetryConfig = Field(default_factory=ProviderRetryConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)

@@ -9802,6 +9802,54 @@ evaluates later from inside quotes (an array subscript given to
 `[ -v ]`, `PS4` with `set -x`) is still data to the scanner, like a
 command spelled through a variable.
 
+### TD-5103 — Static read-only command list for shell
+**Size:** 5 · **Depends on:** TD-5101
+
+From the 2026-10-14 gap audit (docs/gap-audit-2026-10-14.md, Adam's
+decision 2: "TD-4805 is reversed only for the static parsed list; model
+judgment still never auto-approves shell"). Every `ls`, `git status` and
+`cat` asked, because every shell call was Class B.
+
+**Acceptance criteria:**
+- [x] A fixed, parsed list of read-only commands auto-runs without a model
+      verdict. Starting list: `ls`, `pwd`, `cat`, `head`, `tail`, `wc`,
+      `file`, `stat`, `git status|log|diff|show|branch`, `rg`, `grep`, and
+      `find` without `-exec`/`-delete`.
+- [x] Any redirect, chain segment that isn't on the list, write flag, or
+      path outside the wall drops the call back to the normal gate.
+- [x] The list lives in config with a packaged default. Users can shrink
+      it, or turn it off with one key.
+- [x] The audit DB records which list entry allowed each call.
+
+Done (2026-10-20): `core/tstd/shell_read_only.py` and
+`shell_read_only_args.py`. A new static rule, `shell-read-only`, makes a
+line Class A when every command in it is a list entry, with no worker
+call; `shell-floor` stands aside only for those lines, and a policy rule
+still decides first. The reader takes plain and quoted words joined by
+`;`, newlines, `|`, `||` and `&&`, and nothing else: a redirect, `$`,
+substitution, glob, brace, tilde, comment, `&` or wrapper asks. Each
+program's write, exec, file-list and symlink-following flags ask (any
+unique prefix of one too), `git branch` takes only listing options, and
+every word and every value an option may carry (each tail of a short
+cluster, as in `file -bm/etc/x`) must resolve inside the wall with
+symlinks followed. The program must be found on `PATH` outside the
+workspace. The user's `ask` and `never` rules for `fs_read`, `fs_list`
+and `fs_grep` guard the list too: while one exists, a listed command
+that names a guarded file, or that can print a file no word names
+(recursive grep, `rg`, `git diff|show|log`, `git status -v`), asks. A git entry needs the workspace's own `.git` and git 2.40+,
+and runs with fsmonitor, hooks and in-tree attributes switched off (no
+filter or textconv driver an in-tree `.gitattributes` routes to) and no
+optional index write. Config: `shell.read_only.enabled` and `.commands`
+in `config.yaml`, shrink only; an unknown entry is a load error. Audit:
+`tool_result.allowed_by` and the `allowed_calls` table (schema v4), set
+only when the list, not a rule or an approval, let the call run. On
+Windows the list never matches. Tests: `core/tests/test_shell_read_only.py`
+(classification, config), `test_shell_read_only_run.py` (dispatch,
+policy, audit, a loop turn, and real git with a planted filter, textconv
+driver and hook that run with the list off and not with it on), and
+`test_shell_read_only_differential.py` (the reader against bash, `bash
+--posix`, dash, `sh` and busybox ash). See DECISIONS.md.
+
 ---
 
 ### TD-5140 — Agent-proposed steering edits, written only on approval

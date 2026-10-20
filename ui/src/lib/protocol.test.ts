@@ -656,6 +656,10 @@ describe("Daemon event fixtures match TypeScript types", () => {
     const m4 = fixtures.tool_result_denied as ToolResult;
     expect(m4.status).toBe("error");
     expect(m4.error_code).toBe("approval_denied");
+    // a call the read-only shell list let run names its entries (TD-5103)
+    const m5 = fixtures.tool_result_read_only as ToolResult;
+    expect(m5.allowed_by).toEqual(["git log", "head"]);
+    expect(m.allowed_by).toEqual([]);
   });
 
   it("tool_progress", () => {
@@ -1123,7 +1127,7 @@ describe("All fixtures have required shape", () => {
   it("every daemon event has a type and seq field", () => {
     const eventTypes = [
       "ready", "session_state", "conversation_reset", "user_turn", "assistant_delta", "assistant_reasoning", "tool_call", "tool_result",
-      "tool_result_truncated", "tool_result_diff", "tool_result_denied",
+      "tool_result_truncated", "tool_result_diff", "tool_result_read_only", "tool_result_denied",
       "shell_output", "tool_progress", "approval_request", "approval_request_always_allow", "decision_logged",
       "checkpoint_notice", "verify_result", "cost_update", "boundary_update", "boundary_update_config_trust", "turn_complete",
       "tier_state", "tier_state_plan", "context_compacted", "context_compacted_manual", "context_compacted_inflight_trim", "context_usage", "steering_reloaded", "rule_activated", "tier_switched",

@@ -74,6 +74,8 @@ from tstd.config import (
     RemoteConfig,
     SearchConfig,
     SessionConfig,
+    ShellConfig,
+    ShellReadOnlyConfig,
     SlackNotifyConfig,
     SpeechConfig,
     SteeringConfig,
@@ -222,6 +224,8 @@ _EMBEDDINGS_FIELDS = frozenset(EmbeddingsConfig.model_fields)
 _PROJECT_CONTEXT_FIELDS = frozenset(ProjectContextConfig.model_fields)
 _STEERING_FIELDS = frozenset(SteeringConfig.model_fields)
 _SESSION_FIELDS = frozenset(SessionConfig.model_fields)
+_SHELL_FIELDS = frozenset(ShellConfig.model_fields)
+_SHELL_READ_ONLY_FIELDS = frozenset(ShellReadOnlyConfig.model_fields)
 _COMPUTER_USE_FIELDS = frozenset(ComputerUseConfig.model_fields)
 _GROUNDING_FIELDS = frozenset(GroundingConfig.model_fields)
 _JUDGMENTS_FIELDS = frozenset(JudgmentsConfig.model_fields)
@@ -302,6 +306,12 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
             _check_keys(data["steering"], _STEERING_FIELDS, f"{where} steering")
         if "session" in data:
             _check_keys(data["session"], _SESSION_FIELDS, f"{where} session")
+        if "shell" in data:
+            _check_keys(data["shell"], _SHELL_FIELDS, f"{where} shell")
+            if "read_only" in data["shell"]:
+                _check_keys(
+                    data["shell"]["read_only"], _SHELL_READ_ONLY_FIELDS, f"{where} shell.read_only"
+                )
         if "engine" in data:
             _check_keys(data["engine"], _ENGINE_FIELDS, f"{where} engine")
         if "voice" in data:
@@ -395,6 +405,8 @@ def test_every_config_key_is_documented() -> None:
         | _PROJECT_CONTEXT_FIELDS
         | _STEERING_FIELDS
         | _SESSION_FIELDS
+        | _SHELL_FIELDS
+        | _SHELL_READ_ONLY_FIELDS
         | _COMPUTER_USE_FIELDS
         | _GROUNDING_FIELDS
         | _JUDGMENTS_FIELDS

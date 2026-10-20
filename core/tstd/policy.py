@@ -165,6 +165,30 @@ def summarize_each(
     return [summarize_arguments(tool, arguments, workspace)]
 
 
+# ── Read guards (TD-5103) ───────────────────────────────────────────────
+
+#: The built-in reads that run without asking inside the workspace (TD-5141).
+READ_TOOLS = ("fs_read", "fs_list", "fs_grep")
+
+
+def read_guards(config: PolicyConfig) -> tuple[str, ...]:
+    """The ``args`` of every ``ask`` or ``never`` rule over a built-in read.
+
+    The read-only shell list (TD-5103) reads the same files, so these
+    rules guard it too: a listed command that names a file one matches,
+    or that can print a file it does not name, asks as any shell call
+    does. ``auto`` rules and rules for other tools are not guards.
+    """
+    return tuple(
+        dict.fromkeys(
+            rule.args
+            for rule in config.rules
+            if rule.effect != "auto"
+            and any(fnmatch.fnmatchcase(name, rule.tool) for name in READ_TOOLS)
+        )
+    )
+
+
 # ── Resolution ──────────────────────────────────────────────────────────
 
 

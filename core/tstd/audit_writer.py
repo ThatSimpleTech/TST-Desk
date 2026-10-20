@@ -270,6 +270,7 @@ class AuditWriter:
                 status=status,
                 result_output=output,
                 ts=time.time(),
+                allowed_by=tuple(event.allowed_by),
             ),
         )
 

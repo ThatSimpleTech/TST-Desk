@@ -65,6 +65,7 @@ from ..proc_lifecycle import (
 )
 from ..protocol import ShellOutput
 from ..session import Session
+from ..shell_read_only import run_env
 from .shell_writes import SHELL_WRITE_NOTE, writes_workspace_files
 
 # Read chunk size for draining stdout/stderr.
@@ -503,6 +504,10 @@ def _open_shell_process(session: Session, command: str) -> Awaitable[asyncio.sub
     """Host shell for interactive sessions; container argv when autonomous."""
     env = sanitized_env()
     if not session.autonomy:
+        # A git command the read-only list reads runs with git's command
+        # hooks pinned off (TD-5103). The container needs none of this.
+        if session.config is not None:
+            env.update(run_env(command, session.config.shell.read_only.entries(), env))
         return asyncio.create_subprocess_shell(
             command,
             cwd=session.workspace_path,

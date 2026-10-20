@@ -567,7 +567,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `assistant_delta` | session | A streamed chunk of assistant output. |
 | `assistant_reasoning` | session | A streamed chunk of a reasoning model's thinking. Separate from `assistant_delta` because it is not part of the answer: the window folds it behind a disclosure, and it is never replayed to the provider as assistant speech. OpenRouter `reasoning_details` flatten into this event for the UI; the raw array is echoed on the next assistant message after tools, not as speech. |
 | `tool_call` | session | A tool call about to execute, with its decision class. The class is judged on the same workspace-joined paths dispatch uses, so a relative path shows the class the call runs with; `arguments` stay as the model sent them (TD-5148). |
-| `tool_result` | session | The outcome of a tool call, with an error code and diff when applicable. |
+| `tool_result` | session | The outcome of a tool call, with an error code and diff when applicable. `allowed_by` names the read-only shell list entries that let the call run without asking, and is empty when a policy rule, an approval or any other class default decided (TD-5103). |
 | `shell_output` | session | A streamed chunk of a shell command's stdout or stderr. |
 | `tool_progress` | session | Progress an MCP server reported for a running tool call: count, optional total and message (TD-5105). Thinned to two a second. |
 | `approval_request` | session | A tool call parked for approval, with the summary, the reason, and the rule "always allow" would write (none for class C or a chained shell command, while the workspace config is not trusted, or when it would replace a saved `ask` or `never` rule for the same call, TD-5149). |
@@ -801,10 +801,15 @@ Worth reading once, because it is the same path for every tool:
 
 1. **Resolve.** Unknown name → a structured error the model can correct from.
 2. **Validate.** Arguments against the tool's JSON Schema.
-3. **Classify.** `RULE_TABLE` first. A read inside the workspace matches no static rule, so it
-   falls through to the worker-tier classifier. A call reaching a handler without a classifier
-   attached raises `UnclassifiedToolCall` — the chokepoint refuses to execute unclassified
-   actions rather than defaulting to permissive.
+3. **Classify.** `RULE_TABLE` first. A built-in read inside the workspace is Class A by
+   `builtin-read` (TD-5141). A shell command is Class B by `shell-floor`, unless every command
+   in it is on the fixed read-only list (`shell-read-only`, `core/tstd/shell_read_only.py`,
+   TD-5103), which is Class A. The user's `ask` and `never` rules for the built-in reads
+   guard that list too (`Boundary.read_guards`): a listed command that names a guarded file,
+   or can print an unnamed one, stays Class B. A call no rule decides falls through to the worker-tier
+   classifier. A call reaching a handler without a classifier attached raises
+   `UnclassifiedToolCall` — the chokepoint refuses to execute unclassified actions rather
+   than defaulting to permissive.
 4. **Guard.** Every `path_fields` argument is canonicalised and checked. Reads are checked
    against the workspace wall; writes additionally against `writable_paths`, the steering-file
    ban, and hardlinks.
@@ -819,6 +824,8 @@ Worth reading once, because it is the same path for every tool:
 6. **Execute.** Your handler runs. An exception becomes a `handler_error` result, not a dead turn.
 7. **Record.** Touched paths go on the session, so path-scoped steering rules can activate.
    Mutations get a diff and a checkpoint commit. Class A and B decisions append to the ledger.
+   A call the read-only shell list let run carries the entries on its result, and the audit
+   database keeps them in `allowed_calls`.
 
 Steps 3 through 5 are why a new tool inherits the entire trust surface for free, and why
 bypassing the dispatcher is never the right shortcut.

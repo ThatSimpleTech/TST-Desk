@@ -15363,3 +15363,146 @@ viewer sent between the list and ours would be reported as this run's);
 a new `last_turn_at` field on `session_list` rows (a protocol addition,
 and the window's own "newest" would still be wrong); tightening the `sk-`
 pattern here (that is the redaction's own scope, TD-1405).
+
+---
+
+## 2026-10-20 — TD-5103: a static, parsed read-only list for shell (Class B)
+
+**Decision:** TD-4805's "shell is never Class A" is reversed only for a
+fixed list Adam approved on 2026-10-14 (`core/tstd/shell_read_only.py`):
+`ls`, `pwd`, `cat`, `head`, `tail`, `wc`, `file`, `stat`, `git status`,
+`git log`, `git diff`, `git show`, `git branch`, `rg`, `grep`, `find`. A
+line whose every command is a list entry, read as below, is Class A by a
+new static rule, `shell-read-only`; the worker tier is never asked and
+model judgment still never makes shell A. A user policy rule (`ask`,
+`never`, `auto`) still decides first, as for every class default.
+
+1. **Placement.** The grant sits with the other A grants, after
+   `mcp-undeclared-fields`, and `shell-floor` stands aside only for a line
+   the list covers. Putting the grant ahead of the floor would have broken
+   the invariant that no A rule precedes the MCP floor; this keeps it, and
+   keeps every C rule ahead of it. Only the builtin `shell` qualifies: a
+   tool of that name with provenance hits the floor.
+2. **A reader of its own, stricter than TD-5101's split.** The split
+   exists to see every command a line could run, for `never`; the list
+   needs the exact words a program gets. So `shell_read_only_args.segments`
+   accepts plain words (`A-Z a-z 0-9 _ - . / : = , + @ %`, with `~` and
+   `^` only mid-word), single quotes, and double quotes with no `$`,
+   backtick or `\`, joined by `;`, newline, `|`, `||` or `&&`, and refuses
+   the rest, so no expansion, glob, brace, tilde, redirect, substitution,
+   comment, subshell, `&` or escape ever reaches a match. The TD-5101
+   split must also call the line complete. A differential test runs a
+   seeded corpus under bash, `bash --posix`, dash, `sh` and busybox ash
+   and requires every argv that ran to be one the reader returned.
+3. **Flags.** Each program has refused options (`core/tstd/shell_read_only_args.py`
+   `SPECS`): ones that write, run a program, read a list of file names, or
+   follow symlinks during a walk. A long option that is a prefix of a
+   refused one is refused too, since GNU `getopt_long` and git accept
+   unique abbreviations. `find` primaries are matched whole. `git branch`
+   is an allowlist, because a bare name creates a branch even with `-v`
+   (checked against git 2.53); a name is only taken with `--list`, `-a`,
+   `-r`, `--contains`, `--no-contains`, `--merged`, `--no-merged` or
+   `--points-at`. Before a git subcommand only `--no-pager`, `-P` and
+   `--no-optional-locks` are taken.
+4. **Paths and programs.** Every word and every value an option may
+   carry must resolve inside the workspace with symlinks followed. A long
+   option's value is the text after `=`. A short option's starts after
+   whichever letter of the cluster takes one, and that differs by program
+   and between GNU and BSD, so every tail of a cluster after its first
+   letter is checked (`-bm/etc/x` checks `m/etc/x` and `/etc/x`); a
+   cluster over 256 characters asks rather than cost a path walk per
+   tail. Option-shaped words are checked whole as well, since BSD tools
+   stop reading options at the first operand (`cat a.txt -x` reads a file
+   `-x`). Patterns are checked as paths too: `rg /api` asks,
+   which costs a prompt, where guessing which word is the pattern could
+   miss a path. The program must be found on `PATH` outside the workspace,
+   and a `PATH` with an empty or relative entry (searched from the
+   workspace, the shell's cwd) disables the list.
+5. **git.** git reads config and attributes that can name commands
+   (`core.fsmonitor`, a `post-index-change` hook in an in-tree
+   `core.hooksPath`, filter and textconv drivers routed by an in-tree
+   `.gitattributes`, the TD-5157 hole). A git entry matches only when the
+   workspace root holds its own `.git` (a parent repository would list
+   files outside the wall), `GIT_DIR` and `GIT_WORK_TREE` are unset, no
+   `GIT_CONFIG_GLOBAL` or `GIT_CONFIG_SYSTEM` file lies inside the
+   workspace (it could name `diff.external`), and git is 2.40 or newer
+   (an `rg` entry likewise refuses a `RIPGREP_CONFIG_PATH` inside the
+   workspace, which can add `--pre`); the version is read
+   once off the event loop when a session's loop starts, and until then
+   git entries ask. A command the list reads as git runs with
+   `GIT_SAFE_CONFIG`'s three pins plus `core.attributesFile` pointed at
+   nothing (the user's attributes file can live in a dotfiles workspace),
+   through `GIT_CONFIG_COUNT` after any the user set, `GIT_ATTR_SOURCE` at
+   the empty tree, `GIT_OPTIONAL_LOCKS=0` and `GIT_NO_LAZY_FETCH=1`. The env goes on any such command, whoever
+   approved it, so it never hangs on a filesystem check made before the
+   run. TD-5157 rejected `--attr-source` for the daemon's own git because
+   macOS's git 2.39 lacks it and it drops in-tree `eol` rules; here the
+   gate makes old git ask instead, and the cost is display only (`git
+   status` or `git diff` from the list may show an eol-only change, and
+   `git diff` shows bytes a textconv driver would have converted). The
+   attribute source reaches submodules too (tested), so a submodule's
+   in-tree attributes are off as well.
+6. **Config.** `shell.read_only.enabled` and `.commands` in the user
+   `config.yaml`, defaulting to the whole list, not in the workspace
+   `.tst/config.yaml`, which a cloned repo can supply. An entry that is
+   not built in is a load error, so config can only shrink the list.
+   The list is read when a session's classifier is built, so an edit
+   applies to sessions opened after the daemon reloads its config.
+7. **Audit.** The entries ride on the dispatcher's result and the
+   `tool_result` event as `allowed_by` (additive, no protocol bump), set
+   only when the list decided: effect `auto` from the class default with
+   no policy rule. The audit store gets a table, `allowed_calls(tool_call
+   → tool_calls.id, allowed_by)`, migration v4, rather than a new column:
+   no `tool_calls` row is rewritten, and a database built without
+   `tool_calls` (the hand-made v1 file in `test_audit.py`) still migrates.
+8. **Windows.** No match: commands run through `cmd /c`, whose quoting
+   and `%VAR%` expansion this reader does not model.
+9. **File guards.** TD-5141 tells users to guard a file with `ask` or
+   `never` rules for `fs_read` and `fs_grep`; those rules name tools, so
+   they never matched `shell`, which was harmless while every shell call
+   asked. The `args` of every `ask` or `never` rule whose tool glob covers
+   `fs_read`, `fs_list` or `fs_grep` are now guards for the list
+   (`policy.read_guards`, read from the live policy on each call, since
+   Always allow and Revoke change it in place). While any guard exists, a
+   listed command asks when a word (as written, normalized, or
+   workspace-relative after symlinks, ignoring case, as `ask` and `never`
+   match) is guarded, or when it can print a file no word names: a
+   recursive grep, `rg`, `git diff`, `git show`, `git log`, `git status
+   -v`. The guard drops the call back to the normal gate (Class B, so it
+   asks); it does not turn the fs rule's `never` into a shell refusal,
+   because a walking command can't be shown to reach the file and the
+   story's own term is "drops back to the normal gate". A `shell` rule
+   refuses outright. Found in review of PR #31.
+
+**Conservative choices** (Class C questions the story left open): every
+redirect asks, `2>/dev/null` and `2>&1` included; wrappers (`timeout`,
+`env`, `FOO=1`) ask; unquoted globs ask rather than being expanded and
+checked; `rg -z`, `file -z`, `git log --show-signature` and `--ext-diff`
+ask; git entries ask on git older than 2.40 and in a workspace inside a
+bigger repository; the list is off on Windows. In a SHA-256 repository
+git refuses the SHA-1 empty tree (`bad --attr-source`), which fails
+closed; the docs say to take the git entries off the list there. With any
+file guard in force, every entry that can print an unnamed file asks
+(`git log` included, though only its patch options print contents),
+rather than parsing which options print what.
+
+**Residual risk (recorded).** A hard link in the workspace to a file
+outside is read like `fs_read` reads it (TD-5141): only writes check
+link counts. `.git/info/attributes` (Class C to write) still applies.
+`diff.external` and `gpg.program` (for `%G` formats) from the user's own
+config still run, and no `-c` value turns `diff.external` off; a config
+file the user's config includes from inside the workspace stays TD-5157's
+residual risk. A symlink swapped in by another process between the
+classification and the run is not seen. `GIT_NO_LAZY_FETCH` needs git
+2.44; on 2.40–2.43 a partial clone may still fetch a missing blob from
+its own remote.
+
+**Rejected:** per-program tables of which short options take a value
+(they differ between GNU and BSD, and one wrong letter reopens the hole
+the cluster tails close); turning a guarded fs `never` into a shell
+`never` (see 9); reusing the TD-5101 split's words (it reads more than runs
+so `never` sees everything; the list needs less); expanding globs in
+Python (Python's `[^x]` is not bash's); dynamic filter pins as in
+`git_raw` (an in-tree `diff=` attribute can still route to a configured
+external diff command, which no `-c` value turns off); a column on
+`tool_calls`.
