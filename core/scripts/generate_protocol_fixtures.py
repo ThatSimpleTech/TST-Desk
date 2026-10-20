@@ -21,6 +21,7 @@ from tstd.protocol import (
     AddMachine,
     AddPin,
     AlwaysAllow,
+    AnswerQuestion,
     ApiKeyValidated,
     ApprovalRequest,
     Approve,
@@ -144,6 +145,7 @@ from tstd.protocol import (
     MicrosoftConnect,
     MicrosoftDisconnect,
     MicrosoftStatus,
+    ModelFallback,
     MoveSession,
     OpenArtifact,
     OpenInTerminal,
@@ -155,6 +157,11 @@ from tstd.protocol import (
     Ping,
     PolicyRules,
     PolicyRuleSummary,
+    Question,
+    QuestionAnswer,
+    QuestionAnswered,
+    QuestionOption,
+    QuestionRequest,
     QueuedMessageEntry,
     QueuedMessages,
     ReadArtifactChunk,
@@ -172,6 +179,8 @@ from tstd.protocol import (
     RunDiagnostics,
     RunGrokCommand,
     RunJob,
+    RunPermissions,
+    RunRule,
     RunVerify,
     SaveCharter,
     SaveJob,
@@ -297,6 +306,17 @@ FIXTURES = {
     "deny": Deny(session_id="sess-1", tool_call_id="tc-1", reason="not safe"),
     "deny_no_reason": Deny(session_id="sess-1", tool_call_id="tc-1"),
     "always_allow": AlwaysAllow(session_id="sess-1", tool_call_id="tc-1"),
+    "answer_question": AnswerQuestion(
+        session_id="sess-1",
+        tool_call_id="tc-q",
+        answers=[
+            QuestionAnswer(selected=["Postgres"]),
+            QuestionAnswer(selected=["Auth", "Billing"], text="and audit logs"),
+        ],
+    ),
+    "answer_question_declined": AnswerQuestion(
+        session_id="sess-1", tool_call_id="tc-q", declined=True
+    ),
     "list_policy_rules": ListPolicyRules(session_id="sess-1"),
     "revoke_policy_rule": RevokePolicyRule(session_id="sess-1", tool="shell", args="rm *"),
     # TD-5113: the hash the trust card showed. A placeholder, not a real file's.
@@ -520,6 +540,18 @@ FIXTURES = {
         steer=SteerPoint(turn_id="turn-1", step=2, after_tool_call_ids=["tc-1", "tc-2"]),
         seq=9,
     ),
+    # TD-5118: a tst run turn echoes the permissions it runs under.
+    "user_turn_run_permissions": UserTurn(
+        session_id="sess-1",
+        turn_id="turn-3",
+        content="Run the tests",
+        run_permissions=RunPermissions(
+            allow=[RunRule(tool="shell", args="npm test*")],
+            deny=[RunRule(tool="fs_write")],
+            on_ask="deny_and_continue",
+        ),
+        seq=12,
+    ),
     # TD-5155: messages a restart left held, whole each time.
     "queued_messages": QueuedMessages(
         session_id="sess-1",
@@ -606,6 +638,43 @@ FIXTURES = {
         output="Denied by user: not safe",
         seq=20,
         error_code="approval_denied",
+    ),
+    "question_request": QuestionRequest(
+        session_id="sess-1",
+        tool_call_id="tc-q",
+        questions=[
+            Question(
+                question="Which database?",
+                header="Database",
+                options=[
+                    QuestionOption(label="Postgres", description="Already in docker-compose"),
+                    QuestionOption(label="SQLite"),
+                ],
+            ),
+            Question(
+                question="Which features first?",
+                options=[
+                    QuestionOption(label="Auth"),
+                    QuestionOption(label="Billing"),
+                    QuestionOption(label="Search"),
+                ],
+                multi_select=True,
+            ),
+        ],
+        seq=7,
+    ),
+    "question_answered": QuestionAnswered(
+        session_id="sess-1",
+        tool_call_id="tc-q",
+        outcome="answered",
+        answers=[
+            QuestionAnswer(selected=["Postgres"]),
+            QuestionAnswer(selected=["Auth", "Billing"], text="and audit logs"),
+        ],
+        seq=8,
+    ),
+    "question_answered_declined": QuestionAnswered(
+        session_id="sess-1", tool_call_id="tc-q", outcome="declined", seq=8
     ),
     "approval_request": ApprovalRequest(
         session_id="sess-1",
@@ -975,6 +1044,46 @@ FIXTURES = {
         tier="worker",
         previous="brain",
         seq=19,
+    ),
+    # TD-5120: the brain's endpoint was down; the turn moved to its first
+    # backup, and the gauge and title bar name the backup.
+    "model_fallback": ModelFallback(
+        session_id="sess-1",
+        tier="brain",
+        from_model="test-brain-slug",
+        from_host="127.0.0.1:8080",
+        to_model="test-backup-slug",
+        to_host="backup.local",
+        fallback=1,
+        reason="connection_error",
+        seq=20,
+    ),
+    "context_usage_fallback": ContextUsage(
+        session_id="sess-1",
+        tier="brain",
+        used_tokens=12345,
+        context_window=32768,
+        compact_at=19660,
+        model="test-backup-slug",
+        fallback=1,
+        seq=21,
+    ),
+    "tier_state_fallback": TierState(
+        session_id="sess-1",
+        tier="brain",
+        model_slugs={
+            "brain": "test-backup-slug",
+            "worker": "test-worker-slug",
+            "validator": "test-validator-slug",
+        },
+        preset="test",
+        hosts={
+            "brain": "backup.local",
+            "worker": "mock.local",
+            "validator": "mock.local",
+        },
+        fallbacks={"brain": 1},
+        seq=22,
     ),
     "session_list": SessionList(
         sessions=[

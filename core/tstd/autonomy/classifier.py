@@ -55,6 +55,7 @@ from typing import Any
 from ..connectors.github_classify import GITHUB_READ_TOOLS
 from ..policy_shell import host_dialects
 from ..shell_read_only import match as read_only_match
+from ..shell_read_only import probe_repo_config
 from .charter import CHARTER_RELATIVE_PARTS
 from .cmd_targets import cmd_write_targets
 
@@ -654,6 +655,21 @@ def _read_only_entries(req: DecisionRequest, boundary: Boundary) -> tuple[str, .
     )
 
 
+async def prepare_read_only(req: DecisionRequest, boundary: Boundary) -> None:
+    """Read what the read-only rule needs that only a subprocess can tell (TD-5160).
+
+    The rule is static, so the git config a listed git command will see is
+    read here, just before the call is classified. Without it, git entries
+    ask. It is read with the list off too: the pins, and so the object
+    format, apply to an approved git command as well.
+    """
+    command = req.arguments.get("command")
+    if req.tool_name != "shell" or req.provenance is not None or not isinstance(command, str):
+        return
+    if boundary.workspace_root is not None:
+        await probe_repo_config(command, boundary.workspace_root)
+
+
 def _rule_shell_floor(req: DecisionRequest, boundary: Boundary) -> bool:
     """Every shell command is at least Class B (TD-4805), unless the
     static read-only list covers it (TD-5103).
@@ -774,6 +790,47 @@ def _rule_task_list(req: DecisionRequest, _boundary: Boundary) -> bool:
         req.tool_name == "task_list"
         and req.provenance is None
         and req.side_effect_class == "auto"
+        and not req.is_mutation
+        and not req.reads
+        and not req.writes
+        and not req.hosts
+    )
+
+
+def _rule_ask_user(req: DecisionRequest, _boundary: Boundary) -> bool:
+    """``ask_user`` asks the person a question and changes nothing (TD-5121).
+
+    The question parks the turn like an approval, so asking for approval
+    first would put two prompts on one question. Only the builtin, with no
+    path, host or write: an MCP or plugin tool of that name carries
+    provenance and gets no grant.
+    """
+    return (
+        req.tool_name == "ask_user"
+        and req.provenance is None
+        and req.side_effect_class == "auto"
+        and not req.is_mutation
+        and not req.reads
+        and not req.writes
+        and not req.hosts
+    )
+
+
+def _rule_consult(req: DecisionRequest, _boundary: Boundary) -> bool:
+    """``consult`` asks the brain or validator one question (TD-5119).
+
+    It writes nothing, runs nothing and reaches only the session's own
+    model endpoints, and config caps it per turn on top of the spend
+    cap. Asking on each one would defeat a worker run that consults
+    mid-task. Only the builtin matches, with no path or host on the
+    request: an MCP or plugin tool of that name carries provenance and
+    gets no grant. A policy rule can still make it ask.
+    """
+    return (
+        req.tool_name == "consult"
+        and req.provenance is None
+        and req.side_effect_class == "auto"
+        and req.actuates is None
         and not req.is_mutation
         and not req.reads
         and not req.writes
@@ -968,6 +1025,18 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="task_list updates the session's own task list; touches no file or host",
         decision_class=DecisionClass.A,
         match=_rule_task_list,
+    ),
+    Rule(
+        id="ask-user",
+        description="ask_user asks the person; the question is the one prompt",
+        decision_class=DecisionClass.A,
+        match=_rule_ask_user,
+    ),
+    Rule(
+        id="consult",
+        description="consult asks the brain or validator a question; writes nothing",
+        decision_class=DecisionClass.A,
+        match=_rule_consult,
     ),
     # GitHub reads have no path or host metadata. A host on the request
     # would be Class C under the default network deny, and a path would

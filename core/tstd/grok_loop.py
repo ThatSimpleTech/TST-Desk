@@ -505,6 +505,9 @@ async def grok_loop(
                 break
             # A stop from the previous turn must not abort this one.
             session.acknowledge_stop_turn()
+            # TD-5118: only --on-ask reaches a Grok turn; the daemon refuses
+            # rules there, since Grok's own tools never meet TST Desk's policy.
+            session.run_permissions = queued.run_permissions
             user_content = queued.display
             turn_id = queued.id
             turn_start = time.time()
@@ -514,6 +517,7 @@ async def grok_loop(
                     session_id=session.id,
                     turn_id=turn_id,
                     content=user_content,
+                    run_permissions=queued.run_permissions,
                     seq=1,
                 )
             )

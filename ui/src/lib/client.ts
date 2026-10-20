@@ -51,6 +51,8 @@ const KNOWN_EVENT_TYPES = new Set([
   "shell_output",
   "tool_progress", // TD-5105
   "approval_request",
+  "question_request",
+  "question_answered",
   "decision_logged",
   "checkpoint_notice",
   "verify_started", // TD-5158
@@ -65,6 +67,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "steering_reloaded",
   "rule_activated",
   "tier_switched",
+  "model_fallback", // TD-5120
   "instruction_stack",
   "instruction_files",
   "command_list",

@@ -179,6 +179,37 @@ class Attachment(BaseModel):
     content_b64: str = ""
 
 
+class RunRule(BaseModel):
+    """One ``tst run --allow`` or ``--deny`` rule (TD-5118).
+
+    The same ``tool`` and ``args`` globs as a ``policy.rules`` entry in
+    ``.tst/config.yaml``; the list it sits in gives the effect.
+    """
+
+    tool: str = Field(min_length=1, max_length=200)
+    args: str = Field(default="**", min_length=1, max_length=4096)
+
+
+OnAsk = Literal["prompt", "deny_and_continue"]
+
+
+class RunPermissions(BaseModel):
+    """Permissions for the one turn a ``user_message`` starts (TD-5118).
+
+    ``allow`` rules are ``auto`` and ``deny`` rules ``never``, beside the
+    workspace's own rules for that turn only: deny first as ever, so a
+    workspace ``ask`` or ``never`` still wins over an allow, and a Class C
+    call never runs without asking whatever the rules say. ``on_ask``
+    ``deny_and_continue`` answers every approval the turn would ask for
+    with a refusal the model reads, so nothing waits for a person.
+    ``prompt`` (the default) asks as any turn does.
+    """
+
+    allow: list[RunRule] = Field(default_factory=list, max_length=100)
+    deny: list[RunRule] = Field(default_factory=list, max_length=100)
+    on_ask: OnAsk = "prompt"
+
+
 class UserMessage(ClientMessage):
     """A user message to the current session.
 
@@ -192,6 +223,15 @@ class UserMessage(ClientMessage):
     window's Send now mid-turn sets it. Without it, or with no turn
     running, the message waits for a turn of its own, as before. Additive:
     a client that never sends it never steers.
+
+    ``run_permissions`` (TD-5118, ``tst run``) hold for the turn this
+    message starts and no other. Additive. A message carrying them always
+    starts its own turn, so it may not also ``steer``.
+
+    ``only_if_idle`` (TD-5160) refuses the message with ``session_busy``
+    when the session already owes a turn, checked in the same step that
+    queues it, so two ``tst run --continue`` started together cannot both
+    get in. Additive: a client that never sends it queues as before.
     """
 
     type: Literal["user_message"] = "user_message"
@@ -199,6 +239,14 @@ class UserMessage(ClientMessage):
     content: str
     attachments: list[Attachment] = Field(default_factory=list)
     steer: bool = False
+    run_permissions: RunPermissions | None = None
+    only_if_idle: bool = False
+
+    @model_validator(mode="after")
+    def _own_turn(self) -> UserMessage:
+        if self.steer and self.run_permissions is not None:
+            raise ValueError("run_permissions start a turn of their own; they cannot steer")
+        return self
 
 
 class SendQueued(ClientMessage):
@@ -294,6 +342,33 @@ class AlwaysAllow(ClientMessage):
     type: Literal["always_allow"] = "always_allow"
     session_id: str
     tool_call_id: str
+
+
+class QuestionAnswer(BaseModel):
+    """The answer to one ``ask_user`` question (TD-5121).
+
+    ``selected`` holds the option labels picked (at most one unless the
+    question allows several); ``text`` is the person's own words, which
+    may stand alone or go with a pick.
+    """
+
+    selected: list[str] = Field(default_factory=list, max_length=4)
+    text: str = Field(default="", max_length=4000)
+
+
+class AnswerQuestion(ClientMessage):
+    """Answer the questions an ``ask_user`` call parked (TD-5121).
+
+    One answer per question, in order. ``declined`` skips them all: the
+    model hears the person chose not to answer and carries on. A bad
+    answer is refused with ``bad_answer`` and the questions stay parked.
+    """
+
+    type: Literal["answer_question"] = "answer_question"
+    session_id: str
+    tool_call_id: str
+    answers: list[QuestionAnswer] = Field(default_factory=list, max_length=4)
+    declined: bool = False
 
 
 class ListPolicyRules(ClientMessage):
@@ -1691,6 +1766,11 @@ class UserTurn(DaemonEvent):
     loop handed it to that turn at a tool-batch boundary (TD-5112): no
     new turn starts, and the model reads it before its next step.
     Additive; ``None`` for a message that starts a turn.
+
+    ``run_permissions`` (TD-5118) are the ``tst run`` rules this turn runs
+    under, as the daemon took them, so the run can tell they were applied
+    and a replay shows why a call ran or was refused without asking.
+    Additive; ``None`` for a turn with none.
     """
 
     type: Literal["user_turn"] = "user_turn"
@@ -1698,6 +1778,7 @@ class UserTurn(DaemonEvent):
     turn_id: str
     content: str
     steer: SteerPoint | None = None
+    run_permissions: RunPermissions | None = None
 
 
 class QueuedMessageEntry(BaseModel):
@@ -1905,6 +1986,55 @@ class ApprovalRequest(DaemonEvent):
     proposed_always_allow: PolicyRuleSummary | None = None
 
 
+class QuestionOption(BaseModel):
+    """One choice on an ``ask_user`` question (TD-5121)."""
+
+    label: str = Field(min_length=1, max_length=80)
+    description: str = Field(default="", max_length=300)
+
+
+class Question(BaseModel):
+    """One ``ask_user`` question: 2-4 options, plus the person's own words."""
+
+    question: str = Field(min_length=1, max_length=1000)
+    header: str = Field(default="", max_length=40)
+    options: list[QuestionOption] = Field(min_length=2, max_length=4)
+    multi_select: bool = False
+
+
+class QuestionRequest(DaemonEvent):
+    """An ``ask_user`` call parked its turn on questions (TD-5121).
+
+    The turn waits like an approval (the session is ``awaiting_approval``)
+    until ``answer_question`` answers or declines, Stop, cancel, or the
+    approval timeout. The ``tool_result`` for the same ``tool_call_id``
+    clears the card.
+    """
+
+    type: Literal["question_request"] = "question_request"
+    session_id: str
+    tool_call_id: str
+    questions: list[Question] = Field(min_length=1, max_length=4)
+
+
+QuestionOutcomeKind = Literal["answered", "declined", "stopped", "timed_out", "cancelled"]
+
+
+class QuestionAnswered(DaemonEvent):
+    """How a parked ``ask_user`` call ended, with the answers (TD-5121).
+
+    Logged before the call's ``tool_result``; the audit database records
+    the questions and this answer in ``questions``. ``answers`` is empty
+    unless ``outcome`` is ``answered``.
+    """
+
+    type: Literal["question_answered"] = "question_answered"
+    session_id: str
+    tool_call_id: str
+    outcome: QuestionOutcomeKind
+    answers: list[QuestionAnswer] = Field(default_factory=list, max_length=4)
+
+
 class DecisionLogged(DaemonEvent):
     """A decision appended to the autonomy ledger."""
 
@@ -2005,6 +2135,11 @@ class TierState(DaemonEvent):
     plan: bool = False
     # Active tier accepts image attachments (TD-4705). Default false.
     vision: bool = False
+    # Tiers this turn moved to a backup endpoint (TD-5120): tier name →
+    # 1-based position in its ``fallbacks`` list. ``model_slugs`` and
+    # ``hosts`` already name the backup for those tiers. Empty when every
+    # tier is on its own model; the next turn starts there again.
+    fallbacks: dict[str, int] = Field(default_factory=dict)
 
 
 class LoosenedSetting(BaseModel):
@@ -2126,6 +2261,12 @@ class ContextUsage(DaemonEvent):
     used_tokens: int = Field(ge=0)
     context_window: int = Field(gt=0)
     compact_at: int = Field(ge=0)
+    # The model the figures are for (TD-5120, additive). On a backup
+    # endpoint the window and the estimate are the backup's, and
+    # ``fallback`` is its 1-based position in the tier's list; 0 is the
+    # tier's own model. ``None`` from an older daemon.
+    model: str | None = None
+    fallback: int = Field(default=0, ge=0)
 
 
 TaskStatus = Literal["pending", "in_progress", "done"]
@@ -2183,6 +2324,30 @@ class RuleActivated(DaemonEvent):
     type: Literal["rule_activated"] = "rule_activated"
     session_id: str
     rule_path: str  # workspace-relative path of the rule file
+
+
+class ModelFallback(DaemonEvent):
+    """A tier's endpoint failed and the turn moved to a backup (TD-5120).
+
+    Sent once the retry budget for ``from_model`` on ``from_host`` is spent
+    and the failure is one a backup can help with (``reason`` is its error
+    code: a refused connection, a 5xx, a rate limit, a timeout or a stalled
+    stream). The same request goes to ``to_model`` on ``to_host``, which is
+    ``fallback`` (1-based) in the tier's ``fallbacks`` list. Hosts are
+    hostname:port, as on ``TierState``. Text the failed call had shown was
+    withdrawn first with an ``assistant_retract``. Every later call in the
+    turn stays on the backup; the next turn starts on the tier's own model.
+    """
+
+    type: Literal["model_fallback"] = "model_fallback"
+    session_id: str
+    tier: TierName
+    from_model: str
+    from_host: str
+    to_model: str
+    to_host: str
+    fallback: int = Field(ge=1)
+    reason: str
 
 
 class TierSwitched(DaemonEvent):
@@ -3603,6 +3768,7 @@ ClientMessageT = Annotated[
     | Approve
     | Deny
     | AlwaysAllow
+    | AnswerQuestion
     | ListPolicyRules
     | RevokePolicyRule
     | ForkFrom
@@ -3731,6 +3897,8 @@ DaemonEventT = Annotated[
     | ShellOutput
     | ToolProgress
     | ApprovalRequest
+    | QuestionRequest
+    | QuestionAnswered
     | DecisionLogged
     | CheckpointNotice
     | VerifyStarted
@@ -3745,6 +3913,7 @@ DaemonEventT = Annotated[
     | SteeringReloaded
     | RuleActivated
     | TierSwitched
+    | ModelFallback
     | InstructionStack
     | InstructionFiles
     | CommandList
@@ -3814,6 +3983,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "approve",
         "deny",
         "always_allow",
+        "answer_question",
         "list_policy_rules",
         "revoke_policy_rule",
         "fork_from",
@@ -3942,6 +4112,8 @@ _KNOWN_EVENT_TYPES = frozenset(
         "shell_output",
         "tool_progress",
         "approval_request",
+        "question_request",
+        "question_answered",
         "decision_logged",
         "checkpoint_notice",
         "verify_started",
@@ -3956,6 +4128,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "steering_reloaded",
         "rule_activated",
         "tier_switched",
+        "model_fallback",
         "instruction_stack",
         "instruction_files",
         "command_list",

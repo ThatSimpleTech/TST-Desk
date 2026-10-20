@@ -9,7 +9,8 @@ leaves it running; it is not the host, so it does not pass
 ``run`` (TD-5111, in ``cli_run``) sends one message to a new or existing
 session and prints the turn. ``attach`` follows a
 session the daemon already owns: replay + live text, detach on SIGINT.
-A TTY can answer ``approval_request``; a non-TTY does not hang on stdin.
+A TTY can answer ``approval_request`` and ``question_request`` (TD-5121);
+a non-TTY does not hang on stdin.
 ``pair`` and ``devices`` (TD-5014) live in ``cli_pairing``; ``machines``
 (TD-5015) in ``cli_machines``.
 """
@@ -32,6 +33,7 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
 from .cli_approvals import prompt_approval
+from .cli_questions import prompt_questions
 from .config import DEFAULT_MAX_RUN_SECONDS
 from .logging import user_data_dir
 from .protocol import PROTOCOL_VERSION
@@ -234,11 +236,23 @@ def _print_error(event: dict[str, Any]) -> None:
 RETRACT_NOTICE = "(the provider went quiet; the reply above was withdrawn and is being asked again)"
 
 
+def fallback_notice(event: dict[str, Any]) -> str:
+    """One line for a turn that moved to a backup endpoint (TD-5120)."""
+    tier = event.get("tier") or "tier"
+    reason = event.get("reason") or "an error"
+    to_model = event.get("to_model") or "its backup"
+    to_host = event.get("to_host")
+    where = f"{to_model} on {to_host}" if to_host else str(to_model)
+    return f"({tier} endpoint failed: {reason}; asking backup {event.get('fallback', 1)}, {where})"
+
+
 def _visible_event_line(event: dict[str, Any]) -> str | None:
     """One-line TTY form of a user-visible event. Not a JSON dump."""
     typ = event.get("type")
     if typ == "assistant_retract":
         return RETRACT_NOTICE
+    if typ == "model_fallback":
+        return fallback_notice(event)
     if typ == "turn_complete":
         if event.get("failed"):
             return f"turn failed: {event.get('error_code') or 'turn_failed'}"
@@ -331,6 +345,13 @@ async def _stream_attached(ws: Any, session_id: str) -> int:
                 reply = await prompt_approval(event, session_id)
                 if reply is not None:
                     await _send(ws, reply)
+                continue
+            if typ == "question_request":
+                _finish_assistant_line(printed)
+                printed = False
+                answer = await prompt_questions(event, session_id)
+                if answer is not None:
+                    await _send(ws, answer)
                 continue
             if typ == "assistant_delta":
                 sys.stdout.write(str(event.get("delta") or ""))

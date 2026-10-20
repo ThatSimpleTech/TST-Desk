@@ -15,7 +15,16 @@ only what the mode promises.
 
 The machine modes never prompt: an approval request ends the run with
 ``approval_needed`` and the turn waits for the window, the same as a
-text run without a TTY.
+text run without a TTY. An ``ask_user`` question (TD-5121) is asked the
+same way: answered on a TTY in text mode, otherwise ``approval_needed``.
+Under ``--on-ask deny-and-continue`` the daemon refuses instead of asking
+(TD-5118), and ``ask_user`` refuses its question too, so no request
+reaches the run.
+
+A run that sent ``run_permissions`` checks that its ``user_turn`` carries
+them back. A daemon that does not (one older than the CLI) would run the
+turn without them, a ``--deny`` included, so the run stops that turn and
+fails with ``run_permissions_unsupported``.
 """
 
 from __future__ import annotations
@@ -34,8 +43,11 @@ from .cli import (
     _send,
     _turn_timeout_secs,
     config_trust_notice,
+    fallback_notice,
 )
 from .cli_approvals import prompt_approval
+from .cli_questions import prompt_questions
+from .cli_questions import summary as question_summary
 from .logging import REDACTED
 
 Status = Literal["success", "refused", "approval_needed", "error"]
@@ -63,6 +75,12 @@ EXIT_CODES: dict[Status, int] = {
 REFUSAL_CODES = frozenset({"boundary_refusal", "policy_denied", "approval_denied"})
 
 APPROVAL_NEEDED = "approval_needed"
+
+RUN_PERMISSIONS_UNSUPPORTED = "run_permissions_unsupported"
+RUN_PERMISSIONS_UNSUPPORTED_MESSAGE = (
+    "The TST Desk daemon did not apply --allow, --deny or --on-ask to this turn "
+    "(it is older than this tst), so the turn was stopped. Restart TST Desk, then run again."
+)
 
 
 @dataclass
@@ -137,6 +155,9 @@ class _TurnReader:
     # session, a turn already queued ahead of ours is not ours to report.
     ours: bool
     content: str | None
+    # TD-5118: this run sent ``run_permissions``; its user_turn must echo them.
+    permissions_sent: bool = False
+    turn_checked: bool = False
     # ``(response_id, text)`` per delta, so a withdrawn response can be
     # taken back out of the reply (TD-5159).
     reply: list[tuple[str | None, str]] = field(default_factory=list)
@@ -187,6 +208,10 @@ class _TurnReader:
                 return None
             self.ours = True
         self.emit(event)
+        if typ == "user_turn" and not self.turn_checked:
+            self.turn_checked = True
+            if self.permissions_sent and event.get("run_permissions") is None:
+                return await self._unsupported(ws)
         if typ == "boundary_update":
             notice = config_trust_notice(event)
             if notice is not None:
@@ -195,6 +220,8 @@ class _TurnReader:
             return None
         if typ == "approval_request":
             return await self._approval(ws, event)
+        if typ == "question_request":
+            return await self._question(ws, event)
         if typ == "tool_call":
             self.tool_names[str(event.get("tool_call_id"))] = str(event.get("name") or "tool")
             return None
@@ -206,6 +233,13 @@ class _TurnReader:
             return None
         if typ == "assistant_retract":
             self._withdraw(event)
+            return None
+        if typ == "model_fallback":
+            # TD-5120: stderr, so stdout stays the reply. NDJSON carries
+            # the event itself.
+            if self.output == "text":
+                self.end_line()
+                print(fallback_notice(event), file=sys.stderr)
             return None
         if typ == "assistant_delta":
             delta = str(event.get("delta") or "")
@@ -219,6 +253,17 @@ class _TurnReader:
         if typ == "turn_complete":
             return self._complete(event)
         return None
+
+    async def _unsupported(self, ws: Any) -> TurnOutcome:
+        """The daemon ignored this run's permissions: stop the turn, don't trust it."""
+        self.end_line()
+        await _send(ws, {"type": "stop_turn", "session_id": self.session_id})
+        print(
+            f"{RUN_PERMISSIONS_UNSUPPORTED}: {RUN_PERMISSIONS_UNSUPPORTED_MESSAGE}", file=sys.stderr
+        )
+        return self.outcome(
+            "error", RUN_PERMISSIONS_UNSUPPORTED, RUN_PERMISSIONS_UNSUPPORTED_MESSAGE
+        )
 
     def _withdraw(self, event: dict[str, Any]) -> None:
         """The provider stalled partway through a response; the daemon asks again.
@@ -245,11 +290,29 @@ class _TurnReader:
         await _send(ws, reply)
         return None
 
+    async def _question(self, ws: Any, event: dict[str, Any]) -> TurnOutcome | None:
+        """An ``ask_user`` question waits like an approval (TD-5121)."""
+        self.end_line()
+        waiting = f"the agent asked {question_summary(event)!r}; answer it in the TST Desk window"
+        if self.output != "text":
+            print(f"{APPROVAL_NEEDED}: {waiting}", file=sys.stderr)
+            return self.outcome("approval_needed", APPROVAL_NEEDED, waiting)
+        reply = await prompt_questions(event, self.session_id)
+        if reply is None:
+            return self.outcome("approval_needed", APPROVAL_NEEDED, waiting)
+        await _send(ws, reply)
+        return None
+
     def _note_refusal(self, event: dict[str, Any]) -> None:
         code = event.get("error_code")
         if event.get("status") != "error" or code not in REFUSAL_CODES:
             return
-        tool = self.tool_names.get(str(event.get("tool_call_id")), "tool")
+        call_id = str(event.get("tool_call_id"))
+        tool = self.tool_names.get(call_id) or (
+            # An external import has no tool_call; the session names its
+            # result by this synthetic id (TD-505, TD-5118).
+            "external_import" if call_id.startswith("external-import:") else "tool"
+        )
         self.refusals.append(_Refusal(tool=tool, code=str(code)))
         self.end_line()
         print(f"refused: {tool} ({code})", file=sys.stderr)
@@ -275,6 +338,7 @@ async def stream_turn(
     *,
     output: Output = "text",
     content: str | None = None,
+    run_permissions: bool = False,
 ) -> TurnOutcome:
     """Follow *session_id* until its turn completes, fails or needs approval.
 
@@ -282,9 +346,16 @@ async def stream_turn(
     existed: events before the ``user_turn`` carrying it (redacted as the
     daemon logs it; see :func:`is_sent_message`) belong to an earlier turn
     and are skipped. ``None`` (a session this run opened) takes every
-    event of the session.
+    event of the session. *run_permissions* says this run sent some, so
+    its ``user_turn`` must carry them back.
     """
-    reader = _TurnReader(session_id, output, ours=content is None, content=content)
+    reader = _TurnReader(
+        session_id,
+        output,
+        ours=content is None,
+        content=content,
+        permissions_sent=run_permissions,
+    )
     deadline = time.monotonic() + _turn_timeout_secs(data_dir, budget)
     while time.monotonic() < deadline:
         remaining = max(0.1, deadline - time.monotonic())

@@ -785,7 +785,9 @@ class TestDaemonCache:
             assert not isinstance(client, RefreshingProvider)
             assert client.api_key is None
             url = "http://127.0.0.1:11434/v1"
-            assert daemon._clients[(url, "")] is client
+            # Keyed by endpoint, key and timeouts (TD-5120).
+            timeouts = daemon.config.tier("brain").timeout_key()
+            assert daemon._clients[(url, "", timeouts)] is client
         finally:
             assert isinstance(client, ProviderClient)
             await client.close()

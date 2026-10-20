@@ -9647,15 +9647,21 @@ client.
 - [x] Clearing happens in batches, with the TD-5010 hysteresis (the gap
       audit says TD-5009): one clear takes every stale result, and goes
       ahead only when it frees `clear_at_least_tokens` and lands at 70% of
-      the budget or under; otherwise the turn compacts as before. Never
-      two clears on consecutive requests in the tests
-- [x] Measured on EZER with a replayed long session through the real loop
-      (MockProvider, 32,768-token tier): 30 turns compacted 4 times with
-      clearing off and never with it on; 60 turns 9 times off and 2 times
-      on (DECISIONS.md, with the prefix-rebuild cost)
-- [ ] Measured on EZER against the live local model in the running app.
-      Not done: it needs this change deployed, which this story does not
-      do
+      the budget or under (or, with no older turn for compaction to fold,
+      above it; TD-5160); otherwise the turn compacts as before. Never
+      two clears on consecutive requests in the tests, though a live turn
+      can produce them (TD-5160 review)
+- [x] Not the story's measurement (TD-5160 review): a replayed long
+      session through the real loop on EZER (MockProvider, 32,768-token
+      tier): 30 turns compacted 4 times with clearing off and never with
+      it on; 60 turns 9 times off and 2 times on (DECISIONS.md, with the
+      prefix-rebuild cost). The scripted model never needs a cleared
+      output, so this cannot show whether clearing causes tool re-runs
+- [ ] Measured on EZER: fewer compactions on a long session, against the
+      live local model in the running app. Not done: it needs this change
+      deployed, which this story does not do
+
+**Status:** Blocked — merged, but the live measurement above (AC3) is not done (TD-5160 review).
 - [x] A clear is announced as `context_compacted` with the trigger
       `clear_stale` (`dropped_messages` counts the results cleared), shown
       as the quiet "Trim" row previewed "Cleared earlier tool results";
@@ -9989,7 +9995,59 @@ refused, web_search on the session's endpoint, token cap, transcript on
 the event and absent from every brain request, plan mode default and
 explicit worker), `core/tests/test_delegate.py` (token cap), and
 `ui/src/lib/worker-transcript.test.ts` (chat fold and Activity row from
-the daemon's fixture). See DECISIONS.md.
+the daemon's fixture). See DECISIONS.md. Later, TD-5119 adds `consult`
+to both kinds while it is on for the worker tier; it writes nothing and
+reaches no web host or MCP server, so the research child stays
+read-only, and with it off the research child has exactly these five.
+
+---
+
+### TD-5119 — `consult` tool: ask a stronger tier mid-task
+**Size:** 3 · **Depends on:** none
+
+From the 2026-10-14 gap audit (docs/gap-audit-2026-10-14.md). The worker
+could only hand the turn back to the brain after repeated failures
+(TD-303's escalation); it had no way to ask one question and carry on,
+and the validator ran only on autonomy's fixed cadence.
+
+**Acceptance criteria:**
+- [x] A tool lets the acting tier send a short question plus selected
+      context to the brain (or the validator), and get an answer back as
+      the tool result.
+- [x] It is capped per turn, and its cost shows in the meter.
+- [x] Off by default per tier. It is on for worker runs and delegate
+      children.
+
+Done (2026-10-20): `consult` (`core/tstd/tools/consult.py`) takes a
+`question` (2,000 characters at most), optional `context` (16,000) and
+optional `to`, `brain` (the default) or `validator`. One call on that
+tier, with a short system prompt and nothing but the question and the
+chosen context, comes back as the tool result, cut to 800 tokens; a tier
+cannot ask itself. A top-level `consult:` block in `config.yaml` holds
+the per-tier switch, `tiers` (default `[worker]`: a tier not listed is
+never offered the tool and a call from it is refused), and
+`max_per_turn` (default 2). Every child of `delegate`, worker or
+research, runs on the worker tier and gets the tool with it. The loop
+zeroes the count when a turn starts and a child shares its parent's, so
+a turn's consults are counted wherever they come from; a consult past a
+spend, wall-clock or iteration cap is refused too. Each consult is
+recorded on the asked tier at its price, in the turn and session totals
+and on that tier's meter line, with a `cost_update` at once (a child's
+on the parent's session). Stop ends a consult in flight, a child's too
+(the parent's Stop): the stream is closed and the turn ends at once with
+a `consult_stopped` result. The classifier's `consult` rule makes the
+builtin Class A, so it neither asks nor costs a worker judgment; a policy
+rule can still make it ask. Tests: `core/tests/test_consult.py` (config
+default, shipped block and older-copy fill; brain and validator asked
+with only the question and context; off and same-tier refusals; per-turn
+cap, a failed call counted, spend cap; cost on the asked tier and the
+meter; answer cap; Class A rule and no grant to an MCP namesake; policy
+can make it ask; the loop offers it on worker calls only, caps each turn
+and starts a new count next turn; both child kinds consult on the
+parent's count and meter; no tool when the worker is unlisted; Stop ends
+a consult in flight in the handler, the loop and a child, and closes the
+stream) and the
+updated `core/tests/test_research_worker.py`. See DECISIONS.md.
 
 ---
 
@@ -10322,10 +10380,135 @@ code, a docs fix); one that is not, or no longer applies, says why.
 - [x] 33. TD-5157 a file swapped for a symlink while staging was read
       through it: each file is opened with `O_NOFOLLOW`, must be the device
       and inode the plan saw, and is hashed from that descriptor
-- [x] Tests fail on the old code and pass on the new, except three that add
+- [x] Tests fail on the old code and pass on the new, except six that add
       coverage for code that was already right and pass on both (TD-5104's
       loop-turn test, the walk's held step, the path-based steering
-      write's plain write); ruff, mypy, tsc, vitest and the UI walk pass
+      write's plain write, and, found by the TD-5160 review against
+      merge-base 9dab946: `test_without_ignorecase_another_case_is_another_file`,
+      `TestReviewNotes::test_a_role_only_reply_still_ends_as_before` and the
+      `C:x.txt` case of `test_windows_unsafe_form_is_refused_not_joined`,
+      which the old code already refused); ruff, mypy, tsc, vitest and the
+      UI walk pass
+
+### TD-5160 — Low-severity review notes from waves 5-6
+**Size:** 3 · **Depends on:** TD-5103, TD-5107, TD-5110, TD-5111, TD-5112, TD-5114, TD-5115, TD-5116, TD-5117, TD-5158, TD-5159
+
+The reviewers of waves 5-6 left 32 low-severity notes, each with evidence,
+plus one bug two reviews hit (the session-log scrub's `sk-` pattern). Each
+was checked against main. A real one is fixed with a test that fails on the
+old code (or, where the note is about docs disagreeing with the code, a docs
+fix); one that is not, or no longer applies, says why.
+
+**Acceptance criteria:**
+- [x] 1. TD-5107 a skill skipped for a non-text `name`, `whenToUse` or
+      `when_to_use` (or no description) left no log line: the skip now
+      logs the key once per file
+- [x] 2. TD-5107 docs said "any value but false" / "false or blank" for
+      `disable-model-invocation`: steering.md and DECISIONS.md now say YAML
+      `false` or no value, and that a quoted `''` counts as set (docs fix;
+      the strict reading is kept)
+- [x] 3. TD-5110 a keychain failure during Remove left config.yaml, the
+      daemon's config and the keychain disagreeing (and a later Save wrote
+      the deleted name back): the item is deleted first, the name second;
+      Save deletes the item it stored if the file write fails
+- [x] 4. TD-5110 `Bearer <7-char token>` was accepted but its bare token
+      never scrubbed: a stored value's last part must be 8+ characters too
+- [x] 5. TD-5111 two `tst run --continue` started together could both get
+      in: `user_message` takes `only_if_idle`, checked by the daemon in the
+      step that queues, so the second ends with `session_busy`
+- [x] 6. TD-5158 the "fail on the old code" criterion was ticked though
+      three more new tests pass on the old code: verified against
+      merge-base 9dab946 and the criterion now names them (docs fix)
+- [x] 7. TD-5158 `message_not_saved` told older windows and APKs the text
+      was back in the composer: the daemon's text no longer claims it, the
+      new window's toast does (and says to add attachments again), and
+      android/README.md's Upgrading note covers older ones
+- [x] 8. TD-5158 a file saved by temp file and rename during staging
+      failed its checkpoint: on POSIX every folder on the path is opened
+      with `O_NOFOLLOW` and the new bytes are staged; Windows keeps the
+      inode check
+- [x] 9. TD-5103 `diff.external` and gpg programs (from an in-tree file the
+      user's config includes) ran on auto-run `git diff` / `git log`: the
+      daemon reads the git config before classifying, and those entries ask
+- [x] 10. TD-5103 the classifier's frozen list and `run_env`'s live one
+      could differ after a preset switch: a preset bind rebinds the wall,
+      and the pins apply to any git command the built-in list reads
+- [x] 11. TD-5103 `enable: false` or `readonly:` was ignored, leaving all
+      16 entries on: `shell` and `shell.read_only` refuse unknown keys
+- [x] 12. TD-5103 every pinned git diff/log/show failed in a SHA-256
+      repository: the pin uses the repository's own empty tree
+- [x] 13. TD-5111/TD-5140 the `sk-` scrub blanked words such as
+      `task-tool-availability`: straight after a lowercase letter a match
+      is let go only when what follows `sk-` reads as words, so keys
+      after an ANSI colour code, a JSON escape, `\n`, a `%XX` or any
+      other letter are still caught (tests both ways, including 500
+      seeded keys glued to every lowercase letter)
+- [x] 14. TD-5114 a long final URL on a tight cap pushed `web_fetch` over
+      it and the offset footer was cut: the shown URL is capped and the
+      window or answer shrinks until the result fits
+- [x] 15. TD-5114 the final URL went into the result unredacted: it goes
+      through `redact_secrets`
+- [x] 16. TD-5114 the extract pass never checked the session caps: it does,
+      before its worker call
+- [x] 17. TD-5114 a page cut at one session's smaller `fetch_max_bytes`
+      served another's larger one from the cache: it is downloaded again
+- [x] 18. TD-5114 the worker window assumed 3 characters a token and
+      overshot on CJK pages: non-ASCII characters count a token each
+- [x] 19. TD-5117 plan mode asked to approve a `kind: worker` delegate and
+      then refused it: already fixed on main (86be95f0, plan mode moves
+      only the default; an explicit worker runs once approved)
+- [x] 20. TD-5117 a child that raised dropped its transcript: refusals and
+      crashes carry the steps onto the error result (a cancelled call has
+      no result for any tool, so nothing to carry them)
+- [x] 21. TD-5117 nothing showed the summary cap uses the worker tier's
+      counter, and the docs implied a calibrated one: a test pins the worker
+      slug's counter (it passes on the old code too: coverage) and
+      configuration.md says it is uncalibrated
+- [x] 22. TD-5115 docs promised "several more turns" between clears: they
+      now say back-to-back clears can happen (docs fix)
+- [x] 23. TD-5115 docs said a clear "only goes ahead" at 70%: they and the
+      shipped config.yaml comment state the no-older-turn exception (docs
+      fix)
+- [x] 24. TD-5115 AC3 was ticked as a reworded MockProvider replay: the
+      replay is labelled as not the story's measurement, AC3 is open and
+      the story is marked Blocked on it (docs fix)
+- [x] 25. TD-5115 every placeholder invited a re-run, shell and delegate
+      included: only built-in reads do; other tools' say not to run again
+- [x] 26. TD-5159 a retract cut only the newest row of a response a Send
+      now had split: every row of it is cut, and an earlier row it alone
+      filled is dropped (reachable today through an attachment-only Send
+      now; a text Send now steers without an echo since TD-5112)
+- [x] 27. TD-5159 docs said a mid-reply stall costs at most two waits: the
+      bound is `max_retries + 2` (5 by default), and docs and DECISIONS.md
+      say so (docs fix)
+- [x] 28. TD-5112 a `/skill` sent as a steer missed the system prompt of
+      the step that read it: the prompt is assembled again when a steer
+      loads a skill
+- [x] 29. TD-5116 docs called the cap per command; under the ulimit
+      fallback it is per process, and WebAssembly (Node's `fetch`) fails at
+      the default cap on smaller hosts: docs fix
+- [x] 30. TD-5116 the probe's answer held for the daemon's life: a scope that
+      fails to start says the command did not run and resets the probe; a
+      probe that found nothing is tried again after five minutes
+- [x] 31. TD-5116 kill detection blamed the cap for GPU and system OOM kills
+      and missed `failed to map segment`: GPU text is excluded, the scope's
+      own `oom` counter decides, `Result=oom-kill` alone is "likely" (the
+      native-thread case was already matched, by `memoryerror`)
+- [x] 32. TD-5116 Podman got `--memory` with no `--memory-swap`, and rootless
+      Podman without cgroup v2 and the systemd manager cannot cap: the swap
+      flag is added, and the start check refuses such a host with the fix
+      (conservative choice; not run against a real Podman)
+- [x] Second-opinion review of this branch: a hard link swapped in while
+      staging is refused (a new inode passes only with one link); the
+      worker window has no floor past its token budget; a scope-start
+      failure counts only as systemd-run's lone line with exit 1. Its
+      claim that `git show`, `git log -p` and `git status -v` run
+      `diff.external` was checked against git 2.53 and is false (only
+      `git diff` does)
+- [x] Tests fail on the old code and pass on the new, except coverage tests
+      for code that was already right (note 21's counter test, the key
+      framings in note 13, the native-thread lines in note 31); ruff, mypy,
+      tsc and vitest pass; DECISIONS.md has the TD-5160 entry
 
 ### TD-5111 — `tst run` for scripts
 **Size:** 3 · **Depends on:** none · Gap audit 2026-10-14
@@ -10476,6 +10659,155 @@ review: the fixed description, read back from inside a real scope and
 checked against the journal, the pre-253 probe and note, and a charter run
 through write, sign and reload) and `ui/src/lib/charter.test.ts` (the
 charter's value survives Save and Start). See DECISIONS.md.
+
+### TD-5118 — Per-run permissions for unattended runs
+**Size:** 3 · **Depends on:** TD-5111 · Gap audit 2026-10-14
+
+A `tst run` turn that needed approval stopped the run and left the call
+parked for the window, and a script had no way to widen or narrow what
+ran short of editing `.tst/config.yaml`.
+
+**Acceptance criteria:**
+- [x] `tst run --allow <rule>` and `--deny <rule>` add rules for one run only.
+- [x] `--on-ask deny-and-continue` turns an approval request into a refusal the model
+      sees, instead of failing the run.
+- [x] The classifier still runs on every call. Class C is never auto-approved by a flag.
+
+Done (2026-10-20): a rule is `TOOL` or `TOOL:ARGS`, the globs of a
+`policy.rules` entry; both flags repeat. They ride on the `user_message`
+as `run_permissions` and the daemon applies them at the dispatch gate,
+beside the workspace's rules for the one turn that message starts
+(`turn_complete` clears them): allow is `auto`, deny is `never`, deny
+first, so the workspace's `ask` and `never` still win over an allow and a
+Class C call is demoted to `class_c_default` whatever the rule. A deny over
+a read guards the read-only shell list too, and a delegate child keeps its
+parent turn's rules. `--on-ask deny-and-continue` answers every approval
+the turn would ask for (tool calls, external imports, Grok's) with an
+`approval_denied` result saying so: no card, nothing parked, the turn runs
+on and the run exits 3. A refused external import stays out of that turn
+only and names its file in the result; the next turn asks a person again,
+where a person's own deny lasts the session. `user_turn` echoes the permissions; a daemon that
+drops them has its turn stopped (`run_permissions_unsupported`). A message
+with them cannot steer, a Grok session refuses allow and deny
+(`run_rules_unsupported`), only this computer may send them for its own
+sessions (`loopback_only` from a phone or another computer), and a restart
+never keeps them on a held message. Tests: `core/tests/test_tst_run_permissions.py` (flags, the merge
+against workspace rules, Class C under every allow, one run only, deny,
+deny-and-continue in all three outputs, the daemon's refusals, the echo
+check, import and Grok approvals, a refused import asked about again on
+the next turn, delegate children, the classifier
+counting every allowed call, the read-only list). See DECISIONS.md and
+architecture.md "`tst run` for scripts".
+
+### TD-5120 — Backup endpoint per tier
+**Size:** 5 · **Depends on:** TD-5106 · Gap audit 2026-10-14
+
+If a tier's endpoint was down, every retry went back to it and the turn
+failed: a llama.cpp restart or a GPU swap on EZER killed turns. The only
+fallback list covered web search.
+
+**Acceptance criteria:**
+- [x] Each tier can list ordered `fallbacks` (model plus provider), in
+      config only. Each backup is a whole tier (slug required, endpoint,
+      credential, prices, window, output cap, timeouts); nothing is
+      inherited, backups do not nest, and a backup's key must be
+      declared. Settings never edits them, its writers leave them alone,
+      and it refuses to delete a key a backup names. A backup on the same
+      host with a second key gets its own client (clients are cached by
+      endpoint, key and timeouts)
+- [x] Connection refused, 5xx, rate limit or idle-watchdog abort moves to
+      the next fallback after the retry budget. Before any output that is
+      every failure `provider_retry` retries, including a connection that
+      drops after the `200` headers (now `request_error`, retried);
+      partway through a reply, a dropped connection or an in-band 429/5xx
+      (`stream_interrupted` marked `endpoint_failed`, never resent to the
+      same endpoint) and a stall after TD-5159's one retry, each withdrawn
+      first. A stream that just ends, a 4xx and `total_timeout` partway
+      stay on the tier (TD-5152). Each backup gets
+      its own budget, they are tried in order, the last failure ends the
+      turn, and the turn stays on the backup until the next user turn.
+      The timeline and meter show the switch: a `model_fallback` event
+      and a **Backup** timeline row, the context gauge's `· backup` and
+      Tier row, `tier_state.fallbacks` with the backup's slug and host,
+      the composer's `backup N`, and a stderr line from `tst run`
+- [x] Token calibration and the context window follow the model in use:
+      the backup's own calibrated counter, its window and compaction
+      point (the prompt is fitted before it is asked, and
+      `context_usage` names its model), and cost at its prices under its
+      slug
+- [x] docs/configuration.md (tier table, §3.7 with an EZER example),
+      docs/architecture.md (event table) and DECISIONS.md updated
+- [x] Tests in core (`core/tests/test_backup_endpoints.py`,
+      `test_backup_endpoints_config.py`) and ui (`protocol.test.ts`,
+      `timeline.test.ts`, `context-gauge.test.ts`,
+      `session-status.test.ts`, `composer-layout.test.ts`) fail on the
+      old code and pass on the new
+
+Done (2026-10-20): `core/tstd/fallback.py` (the chain, what moves, the
+announcement) and `loop._reply_with_backups`. Only the turn's own model
+call moves; the classifier, DoD polls, a delegated worker, the after-write
+review, memory distill and the extract pass stay on their tier's own
+model. A reply the endpoint cuts off partway moves after its text is
+withdrawn; one that just ends keeps TD-5152's rule. Review fix (PR #40):
+a connection dropped after the headers is retried before output and moves
+after it. Class B entry in DECISIONS.md.
+
+### TD-5121 — `ask_user` tool
+**Size:** 5 · **Depends on:** none · Gap audit 2026-10-14
+
+The model could only end its turn with prose when it needed a decision
+from the person. Claude Code documents a structured question tool.
+
+**Acceptance criteria:**
+- [x] The model can ask one to four questions, each with 2-4 options plus free text. The daemon parks the turn like an approval.
+- [x] The desktop shows options as buttons. The phone shows them as taps.
+- [x] `tst run` handles them per TD-5118. A TTY in text mode answers them,
+      and a non-TTY or `--output json`/`ndjson` run exits 4
+      (`approval_needed`) with the question waiting for the window, as for
+      an approval. In a `--on-ask deny-and-continue` turn the tool refuses
+      (`ask_user_unattended`) without parking, so the run carries on and
+      exits 0. The flag itself is TD-5118 (PR #41, not on main yet); this
+      half was verified on a local merge with that branch (75cdc24e): `tst run
+      --on-ask deny-and-continue` in text and json mode exits 0 with no
+      `question_request`, and exits 4 with the tool before this fix.
+- [x] Answers come back as the tool result, and both question and answer are logged to the audit DB.
+
+Done (2026-10-20): `core/tstd/tools/ask_user.py` (the tool, Class A by the
+static rule `ask-user`), `core/tstd/questions.py` (parking, answer checks,
+the result text) and `core/tstd/cli_questions.py` (`tst run` and `tst
+attach` on a TTY). Protocol: `question_request`, `question_answered`
+(`answered`, `declined`, `stopped`, `timed_out`, `cancelled`) and
+`answer_question` (answers, or `declined`; `bad_answer` and
+`no_pending_question` refusals). The session waits in `awaiting_approval`
+(reason "waiting for your answer") in `Session.pending_questions`; Stop,
+cancel and `policy.approval_timeout_seconds` end the wait, skip-all never
+answers. An unattended run is refused (`ask_user_unattended`), and neither
+delegate child has the tool. Audit migration v6 adds `questions` (the
+questions and the answers as scrubbed JSON, with the outcome). The window
+shows `QuestionCard.svelte` in a footer bar: options as buttons, a box for
+the person's own words, Skip (Esc) and Send; one single-choice question
+sends on a tap, and on a phone or narrow window each option is a full-width
+tap target. The phone's WebView shows the same card once its APK is built
+from this UI (not built or installed here). `answer_question` is forwarded
+for bridged ids and never queued, like `approve`. OS banners and the ntfy,
+Slack, Discord and Telegram channels say a question is waiting. Tests:
+`core/tests/test_ask_user.py`, `core/tests/test_tst_questions.py`,
+`ui/src/lib/question.test.ts`, `ui/src/lib/question-store.test.ts`,
+`ui/src/lib/question-component.test.ts`. See DECISIONS.md, docs/configuration.md
+§4.4 and docs/architecture.md.
+
+Review fixes (2026-10-20): a question whose text the event log's secret
+scrub would change is refused (`ask_user_secret_shaped`), since every
+client shows the scrubbed card and a scrubbed label could never be picked;
+an `ask_user` answer is never cleared as stale tool output
+(`context_clear.ALWAYS_KEPT_TOOLS`); and a turn whose
+`session.run_permissions.on_ask` is `deny_and_continue` (TD-5118) is
+refused like an unattended run. Tests: `core/tests/test_ask_user.py`,
+`core/tests/test_clear_stale_results.py`.
+
+**Notes:** `ask_user` reads `Session.run_permissions` by name
+(`tools/ask_user.denies_every_ask`), so it needs no change when TD-5118
+merges; a later tidy-up may read the attribute directly.
 
 ### TD-5122 — Task list tool for the native loop
 **Size:** 5 · **Depends on:** none · Gap audit 2026-10-14

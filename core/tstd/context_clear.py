@@ -13,7 +13,11 @@ The clearing policy is ``clear_tool_results`` in config.yaml:
   what the model is working from; ``context_fit`` trims their middles
   when they overflow (TD-4839, TD-5010).
 * The newest ``keep_recent_tool_results`` results stay, whatever turn
-  they are in, and so does every result of a tool in ``exclude_tools``.
+  they are in, and so does every result of a tool in ``exclude_tools``
+  or ``ALWAYS_KEPT_TOOLS``. An ``ask_user`` result is the person's own
+  answer (TD-5121), the user's words, so it is never cleared whatever
+  the config says: a placeholder telling the model to run the tool
+  again would have it ask the person again, or guess.
 * Clearing triggers at the compaction budget, like the in-turn trim,
   and one clear takes every stale result at once. It has to land at or
   under the trim's target, 70% of the budget (the TD-5010 hysteresis),
@@ -55,6 +59,16 @@ CLEARED_PREFIX = "[Earlier tool result cleared to save context"
 # named without a target.
 _TARGET_KEYS = ("path", "file_path", "url", "command", "query", "pattern", "task", "target")
 _TARGET_MAX_CHARS = 80
+#: Tools whose results are never cleared, beside ``exclude_tools``: an
+#: ``ask_user`` result is the person's answer, not tool output (TD-5121).
+ALWAYS_KEPT_TOOLS = frozenset({"ask_user"})
+#: Built-in tools that only read, so running one again changes nothing.
+#: Every other tool (shell, delegate, a write, any MCP tool) may have done
+#: something, and its placeholder does not invite a second run (TD-5160):
+#: with approvals off nothing would stop it.
+RERUN_SAFE_TOOLS = frozenset(
+    {"fs_read", "fs_list", "fs_grep", "web_fetch", "web_search", "load_skill"}
+)
 
 
 @dataclass(frozen=True)
@@ -155,7 +169,11 @@ def cleared_placeholder(tool: str, target: str, chars: int, images: int = 0) -> 
     size = f"{chars:,} chars"
     if images:
         size += f" and {images} image{'' if images == 1 else 's'}"
-    return f"{CLEARED_PREFIX}: {what}, {size}. Run the tool again if you need it.]"
+    if tool in RERUN_SAFE_TOOLS:
+        advice = "Run the tool again if you need it."
+    else:
+        advice = "It already ran; do not run it again only to see this output."
+    return f"{CLEARED_PREFIX}: {what}, {size}. {advice}]"
 
 
 def _placeholder_for(message: ChatMessage, call: tuple[str, str]) -> str:
@@ -173,14 +191,15 @@ def stale_tool_indexes(
     in flight; a message sent mid-turn that joined it, TD-5112, starts
     none), outside the newest ``keep_recent_tool_results`` results, not
     already cleared, paired with a call of their own (see
-    ``_calls_by_result``), and not from a tool in ``exclude_tools``.
+    ``_calls_by_result``), and not from a tool in ``exclude_tools`` or
+    ``ALWAYS_KEPT_TOOLS``.
     """
     turn_start = turn_start_index(messages)
     tool_indexes = [i for i, m in enumerate(messages) if m.role == "tool"]
     keep = policy.keep_recent_tool_results
     recent = set(tool_indexes[-keep:]) if keep > 0 else set()
     calls = _calls_by_result(messages)
-    excluded = set(policy.exclude_tools)
+    excluded = set(policy.exclude_tools) | ALWAYS_KEPT_TOOLS
     return [
         index
         for index in tool_indexes

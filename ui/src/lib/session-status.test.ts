@@ -180,6 +180,60 @@ describe("tier state", () => {
     expect(session.tierOverride).toBe("validator");
   });
 
+  it("follows a tier's backup from tier_state and context_usage (TD-5120)", () => {
+    ingestEvent(sessionState("s1"));
+    ingestEvent({
+      type: "tier_state",
+      session_id: "s1",
+      tier: "brain",
+      override: null,
+      model_slugs: { brain: "backup-slug", worker: "w-slug", validator: "v-slug" },
+      hosts: { brain: "backup.local" },
+      fallbacks: { brain: 1 },
+      seq: 2,
+    } as DaemonEventUnion);
+    expect(session.fallbacks).toEqual({ brain: 1 });
+    expect(session.modelSlugs.brain).toBe("backup-slug");
+
+    ingestEvent({
+      type: "context_usage",
+      session_id: "s1",
+      tier: "brain",
+      used_tokens: 1000,
+      context_window: 32768,
+      compact_at: 20000,
+      model: "backup-slug",
+      fallback: 1,
+      seq: 3,
+    } as DaemonEventUnion);
+    expect(session.context).toMatchObject({ model: "backup-slug", fallback: 1, context_window: 32768 });
+
+    // The next turn is back on the tier's own model; an older daemon sends
+    // neither field, which reads as no backup.
+    ingestEvent({
+      type: "tier_state",
+      session_id: "s1",
+      tier: "brain",
+      override: null,
+      model_slugs: { brain: "b-slug" },
+      seq: 4,
+    } as DaemonEventUnion);
+    expect(session.fallbacks).toEqual({});
+    ingestEvent({
+      type: "context_usage",
+      session_id: "s1",
+      tier: "brain",
+      used_tokens: 1000,
+      context_window: 65536,
+      compact_at: 40000,
+      seq: 5,
+    } as DaemonEventUnion);
+    expect(session.context).toMatchObject({ model: null, fallback: 0 });
+
+    resetSession();
+    expect(session.fallbacks).toEqual({});
+  });
+
   it("follows plan from tier_state and sends set_plan", () => {
     ingestEvent(sessionState("s1"));
     expect(session.planMode).toBe(false);
@@ -440,6 +494,9 @@ describe("context gauge (TD-5109)", () => {
       used_tokens: 2000,
       context_window: 65536,
       compact_at: 49152,
+      // An event with no model or backup reads as the tier's own (TD-5120).
+      model: null,
+      fallback: 0,
     });
   });
 

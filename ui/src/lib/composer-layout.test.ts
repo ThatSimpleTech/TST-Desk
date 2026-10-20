@@ -12,4 +12,10 @@ describe("tierMenuLabel", () => {
 		expect(tierMenuLabel("worker", "  ")).toBe("worker");
 		expect(tierMenuLabel("validator", undefined)).toBe("validator");
 	});
+
+	it("says when a tier is on a backup endpoint this turn (TD-5120)", () => {
+		expect(tierMenuLabel("brain", "backup/model", 1)).toBe("brain (backup/model, backup 1)");
+		expect(tierMenuLabel("brain", "own/model", 0)).toBe("brain (own/model)");
+		expect(tierMenuLabel("brain", null, 2)).toBe("brain (backup 2)");
+	});
 });

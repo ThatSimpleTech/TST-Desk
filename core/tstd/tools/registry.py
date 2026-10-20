@@ -601,13 +601,18 @@ def _register_builtins(registry: ToolRegistry, *, search: SearchConfig | None = 
 def create_registry(
     *, candidate_selection: bool = False, search: SearchConfig | None = None
 ) -> ToolRegistry:
-    """Create a registry: builtins, skills, delegate, send_file, steering, task list, plugins.
+    """Registry of builtins, skills, delegate, consult, send_file, steering, and plugins.
+
+    The native loop's own tools come before plugins too: ``task_list``
+    (TD-5122) and ``ask_user`` (TD-5121).
 
     ``candidate_selection`` (judgments.candidate_selection, TD-711) adds
     ``browser_pick`` to the tool surface.
     """
     from ..context.skills import register_skill_tools
+    from .ask_user import register_ask_user_tool
     from .browser import register_browser_tools
+    from .consult import register_consult_tool
     from .delegate import register_delegate_tools
     from .desktop import register_desktop_tools
     from .plugins import load_plugins
@@ -621,9 +626,11 @@ def create_registry(
     register_browser_tools(registry, candidate_selection=candidate_selection)
     register_skill_tools(registry)
     register_delegate_tools(registry)
+    register_consult_tool(registry)
     register_send_file_tool(registry)
     register_steering_edit_tool(registry)
     register_task_list_tool(registry)
+    register_ask_user_tool(registry)
     # Before plugins so a plugin cannot take a GitHub tool name (TD-4852).
     from ..connectors.github_tools import register_github_tools
 

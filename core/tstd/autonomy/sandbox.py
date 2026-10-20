@@ -42,6 +42,13 @@ INSTALL_ROOTFUL = (
     "The container runtime is running rootful. Autonomy requires rootless "
     "Podman. Interactive sessions do not need this."
 )
+INSTALL_NO_LIMITS = (
+    "Rootless Podman here cannot cap a container's memory "
+    "(caps.shell_memory_mb): that needs cgroup v2 and the systemd cgroup "
+    'manager (cgroup_manager = "systemd" in containers.conf). Without '
+    "them an unattended run would have no memory cap. Interactive sessions "
+    "do not need this."
+)
 
 WhichFn = Callable[[str], str | None]
 
@@ -53,6 +60,9 @@ class RuntimeState(StrEnum):
     DOWN = "down"
     ROOTFUL = "rootful"
     ROOTLESS = "rootless"
+    #: Rootless, but on cgroup v1 or the cgroupfs manager, where Podman
+    #: ignores or refuses ``--memory`` (TD-5160).
+    NO_LIMITS = "no_limits"
 
 
 InspectFn = Callable[[str], Awaitable[RuntimeState]]
@@ -96,17 +106,19 @@ def resolve_runtime(runtime: str, *, which: WhichFn) -> Path | None:
 
 
 async def inspect_runtime(binary: str) -> RuntimeState:
-    """Ask ``binary info`` whether the engine is up and rootless.
+    """Ask ``binary info`` whether the engine is up, rootless, and can cap memory.
 
     The format string is Podman's. An empty, unknown, or failing reply is
-    ``down`` — a state we cannot prove rootless is not live.
+    ``down`` — a state we cannot prove rootless is not live. Rootless
+    Podman sets resource limits only on cgroup v2 with the systemd cgroup
+    manager; elsewhere ``--memory`` is ignored or refused (TD-5160).
     """
     try:
         proc = await asyncio.create_subprocess_exec(
             binary,
             "info",
             "--format",
-            "{{.Host.Security.Rootless}}",
+            "{{.Host.Security.Rootless}} {{.Host.CgroupsVersion}} {{.Host.CgroupManager}}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -118,12 +130,14 @@ async def inspect_runtime(binary: str) -> RuntimeState:
         return RuntimeState.DOWN
     if proc.returncode != 0:
         return RuntimeState.DOWN
-    token = out.decode("utf-8", errors="replace").strip().strip('"').lower()
-    if token == "true":
-        return RuntimeState.ROOTLESS
-    if token == "false":
+    tokens = out.decode("utf-8", errors="replace").strip().strip('"').lower().split()
+    if tokens[:1] == ["false"]:
         return RuntimeState.ROOTFUL
-    return RuntimeState.DOWN
+    if tokens[:1] != ["true"]:
+        return RuntimeState.DOWN
+    if tokens[1:] != ["v2", "systemd"]:
+        return RuntimeState.NO_LIMITS
+    return RuntimeState.ROOTLESS
 
 
 def _which(which: WhichFn | None) -> WhichFn:
@@ -163,6 +177,8 @@ async def sandbox_start_error(
         return INSTALL_DOWN
     if state is RuntimeState.ROOTFUL:
         return INSTALL_ROOTFUL
+    if state is RuntimeState.NO_LIMITS:
+        return INSTALL_NO_LIMITS
     return None
 
 
@@ -225,7 +241,10 @@ def container_argv(
     if memory_mb is not None:
         if memory_mb < 1:
             raise SandboxError("container memory cap must be at least 1 MB")
-        argv.append(f"--memory={memory_mb}m")
+        # Swap equal to the cap is no swap, as the host scope's
+        # MemorySwapMax=0: Podman's default lets a container swap as much
+        # again, which is the slow death the cap exists to stop (TD-5160).
+        argv.extend([f"--memory={memory_mb}m", f"--memory-swap={memory_mb}m"])
     argv.extend(
         [
             "--userns=keep-id",

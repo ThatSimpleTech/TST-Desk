@@ -239,6 +239,7 @@ _WORKS_IMPORTS: tuple[tuple[str, str], ...] = (
     ("charter editor", "tstd.autonomy.charter_io"),
     ("sends files to the chat", "tstd.tools.send_file"),
     ("steering edits the agent", "tstd.tools.steering_edit"),
+    ("questions the agent asks you", "tstd.tools.ask_user"),
 )
 
 # Not-built leftovers that are stories, not milestone exits. If Status

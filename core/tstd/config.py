@@ -256,6 +256,24 @@ class TierConfig(BaseModel):
     read_timeout: float = Field(default=120.0, gt=0)
     total_timeout: float | None = Field(default=None, gt=0)
     stream_idle_timeout: float | None = Field(default=300.0, gt=0)
+    # Backup endpoints, tried in order when this tier's own endpoint is
+    # down (TD-5120). Each is a whole tier of its own: model, endpoint,
+    # key, prices, window and timeouts. Nothing is inherited, so a paid
+    # backup can never be priced as the free local model it stands in for.
+    fallbacks: list[TierConfig] = Field(default_factory=list)
+
+    def timeout_key(self) -> tuple[float, float, float | None, float | None]:
+        """The timeouts a provider client is built with, as a cache key.
+
+        A client carries its timeouts, so two tiers, or a tier and its
+        backup (TD-5120), may share one only when these match too.
+        """
+        return (
+            self.connect_timeout,
+            self.read_timeout,
+            self.total_timeout,
+            self.stream_idle_timeout,
+        )
 
     def timeouts(self) -> TimeoutConfig:
         """This tier's timeouts for :class:`~tstd.provider.ProviderClient`."""
@@ -318,6 +336,28 @@ class TierConfig(BaseModel):
                 f"{info.field_name} must be plain JSON ({error}). Quote dates, times and "
                 "other values YAML would read as something else"
             ) from error
+        return value
+
+    @field_validator("fallbacks")
+    @classmethod
+    def _fallbacks_are_flat_and_named(cls, value: list[TierConfig]) -> list[TierConfig]:
+        """A backup names its model and has no backups of its own (TD-5120).
+
+        Discovery asks a server which model it serves, and a backup is
+        only asked for when a server is failing, so it must say. One flat,
+        ordered list is the whole chain: a nested one would hide an order.
+        """
+        for index, backup in enumerate(value):
+            if backup.fallbacks:
+                raise ValueError(
+                    f"fallbacks[{index}] cannot list fallbacks of its own; "
+                    "put every backup in the tier's list, in the order to try them"
+                )
+            if backup.slug is None:
+                raise ValueError(
+                    f"fallbacks[{index}] must name its model (slug); a backup is only "
+                    "used when a server is failing, so it is never asked which model it serves"
+                )
         return value
 
     @model_validator(mode="after")
@@ -562,7 +602,8 @@ class ClearToolResultsConfig(BaseModel):
     earlier turns become, in one batch, a one-line placeholder naming the
     tool, its target and the size that went. The newest
     ``keep_recent_tool_results`` results and every result of a tool in
-    ``exclude_tools`` stay. A clear that cannot free
+    ``exclude_tools`` stay, and so does every ``ask_user`` answer
+    (``context_clear.ALWAYS_KEPT_TOOLS``, TD-5121). A clear that cannot free
     ``clear_at_least_tokens`` does not happen: rewriting an old result
     costs a local server its cached prefix, so it has to buy room
     (see :mod:`tstd.context_clear`).
@@ -590,14 +631,44 @@ class ClearToolResultsConfig(BaseModel):
         return names
 
 
+def _default_consult_tiers() -> list[TierName]:
+    return ["worker"]
+
+
+class ConsultConfig(BaseModel):
+    """The ``consult`` tool (TD-5119): the acting tier asks a stronger one.
+
+    ``tiers`` names the tiers offered the tool; any tier not listed is off.
+    The default lists only the worker, so worker turns and delegate
+    children (which run on the worker tier) have it and the brain and the
+    validator do not. ``max_per_turn`` caps the consults of one user turn,
+    a delegate child's included.
+    """
+
+    tiers: list[TierName] = Field(default_factory=_default_consult_tiers)
+    max_per_turn: int = Field(default=2, ge=1, le=20)
+
+    @field_validator("tiers")
+    @classmethod
+    def _dedupe_tiers(cls, value: list[TierName]) -> list[TierName]:
+        return list(dict.fromkeys(value))
+
+    def allows(self, tier: str | None) -> bool:
+        """Whether *tier* is offered ``consult``."""
+        return tier in self.tiers
+
+
 class ShellReadOnlyConfig(BaseModel):
     """The read-only shell list (TD-5103): commands that run without asking.
 
     The list is fixed in code (``READ_ONLY_ENTRIES``). Config can drop
     entries or switch the whole list off with ``enabled: false``; an entry
     that is not built in is a load error, so a config file can never grow
-    what auto-runs.
+    what auto-runs. A misspelt key (``enable: false``) is a load error too
+    (TD-5160): ignored, it would leave every entry on.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
     commands: list[str] = Field(default_factory=lambda: list(READ_ONLY_ENTRIES))
@@ -619,7 +690,13 @@ class ShellReadOnlyConfig(BaseModel):
 
 
 class ShellConfig(BaseModel):
-    """The shell tool's user-level settings (TD-5103)."""
+    """The shell tool's user-level settings (TD-5103).
+
+    Unknown keys are refused (TD-5160): ``readonly:`` for ``read_only:``
+    would otherwise keep the whole list on without a word.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     read_only: ShellReadOnlyConfig = Field(default_factory=ShellReadOnlyConfig)
 
@@ -1258,6 +1335,7 @@ class ModelConfig(BaseModel):
     steering: SteeringConfig = Field(default_factory=SteeringConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
     clear_tool_results: ClearToolResultsConfig = Field(default_factory=ClearToolResultsConfig)
+    consult: ConsultConfig = Field(default_factory=ConsultConfig)
     shell: ShellConfig = Field(default_factory=ShellConfig)
     provider_retry: ProviderRetryConfig = Field(default_factory=ProviderRetryConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
@@ -1296,13 +1374,29 @@ class ModelConfig(BaseModel):
         for preset_name, preset in self.presets.items():
             for tier_name in TIER_NAMES:
                 tier = getattr(preset, tier_name)
-                cid = tier.credential
-                if cid is not None and cid not in known:
-                    raise ValueError(
-                        f"presets.{preset_name}.{tier_name}.credential "
-                        f"{cid!r} is not a declared credential"
-                    )
+                bound = [(f"presets.{preset_name}.{tier_name}", tier.credential)]
+                bound += [
+                    (f"presets.{preset_name}.{tier_name}.fallbacks[{i}]", backup.credential)
+                    for i, backup in enumerate(tier.fallbacks)
+                ]
+                for where, cid in bound:
+                    if cid is not None and cid not in known:
+                        raise ValueError(f"{where}.credential {cid!r} is not a declared credential")
         return self
+
+    def fallback_bindings(self, credential_id: str) -> list[str]:
+        """Where a backup endpoint uses *credential_id* (TD-5120).
+
+        Settings can unbind a key from a tier, but backups live in the
+        file only, so a key a backup names must not be deleted under it.
+        """
+        return [
+            f"presets.{preset_name}.{tier_name}.fallbacks[{i}]"
+            for preset_name, preset in self.presets.items()
+            for tier_name in TIER_NAMES
+            for i, backup in enumerate(getattr(preset, tier_name).fallbacks)
+            if backup.credential == credential_id
+        ]
 
     def tier(self, name: TierName) -> TierConfig:
         """Get the tier config for the active preset."""
@@ -1442,6 +1536,7 @@ def load_config(path: Path | None = None) -> ModelConfig:
         "steering",
         "session",
         "clear_tool_results",
+        "consult",
         "scheduler",
         "computer_use",
         "remote",

@@ -173,7 +173,10 @@ class SkillDiscoverer:
             return None
         metadata, body = parse_frontmatter(raw)
         fields = _read_frontmatter(metadata)
-        if fields is None:
+        if isinstance(fields, str):
+            # Named, so a skill that vanishes from the inspector and Doctor
+            # leaves a trace (TD-5160).
+            warn_once("skill skipped; frontmatter key missing or not text", path, key=fields)
             return None
         raw_name = metadata.get("name")
         if isinstance(raw_name, str) and raw_name.strip() != name:
@@ -236,8 +239,8 @@ class _Frontmatter:
     ignored_keys: tuple[str, ...]
 
 
-def _read_frontmatter(metadata: dict[Any, Any]) -> _Frontmatter | None:
-    """The fields a skill uses, or None when the skill cannot load.
+def _read_frontmatter(metadata: dict[Any, Any]) -> _Frontmatter | str:
+    """The fields a skill uses, or the key that stops it loading.
 
     Only a missing description, or a ``name`` or when-to-use that is not a
     string, refuses the skill.  Anything else present but not acted on is
@@ -245,14 +248,15 @@ def _read_frontmatter(metadata: dict[Any, Any]) -> _Frontmatter | None:
     """
     raw_desc = metadata.get("description")
     if not isinstance(raw_desc, str) or not raw_desc.strip():
-        return None
+        return "description"
     raw_name = metadata.get("name")
     if raw_name is not None and not isinstance(raw_name, str):
-        return None
+        return "name"
     ours = metadata.get("whenToUse")
     claude = metadata.get("when_to_use")
-    if any(v is not None and not isinstance(v, str) for v in (ours, claude)):
-        return None
+    for key, value in (("whenToUse", ours), ("when_to_use", claude)):
+        if value is not None and not isinstance(value, str):
+            return key
     ours_text = ours.strip() if isinstance(ours, str) else ""
     claude_text = claude.strip() if isinstance(claude, str) else ""
     ignored: list[str] = []
@@ -274,8 +278,9 @@ def _read_frontmatter(metadata: dict[Any, Any]) -> _Frontmatter | None:
         description=raw_desc.strip(),
         when_to_use=ours_text or claude_text,
         compatibility=compatibility,
-        # The strict reading: any value but false (or blank) keeps the
-        # skill out of the model's reach.
+        # The strict reading: any value but YAML false or no value at all
+        # keeps the skill out of the model's reach. A quoted '' or "false"
+        # is a value, so it counts (TD-5160 aligned the docs to this).
         user_only=not (dmi is False or dmi is None),
         ignored_keys=tuple(sorted(ignored)),
     )

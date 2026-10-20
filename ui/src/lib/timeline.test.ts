@@ -4,6 +4,7 @@ import { describe, it, expect } from "vitest";
 import { Timeline, eventToEntry, formatProgress, summarizeArguments, type TimelineEntry } from "./timeline";
 import type { ContextCompacted, DaemonEventUnion } from "./protocol";
 import fixtures from "./protocol-fixtures.json";
+import { KIND_LABELS, entryIcon, entryTone } from "./entry-view";
 
 function evt(e: DaemonEventUnion): DaemonEventUnion {
   return e;
@@ -156,6 +157,26 @@ describe("eventToEntry", () => {
     expect(entry!.kind).toBe("decision");
     expect(entry!.title).toBe("Class A");
     expect(entry!.details.why).toBe("ruff format");
+  });
+
+  it("maps model_fallback to a Backup row that names both ends (TD-5120)", () => {
+    const entry = eventToEntry(evt(fixtures.model_fallback as DaemonEventUnion));
+    expect(entry).not.toBeNull();
+    expect(entry!.kind).toBe("fallback");
+    expect(entry!.id).toBe("fallback:20");
+    expect(entry!.title).toBe("brain → test-backup-slug");
+    expect(entry!.preview).toBe(
+      "test-brain-slug on 127.0.0.1:8080 failed (connection_error); " +
+        "backup 1, test-backup-slug on backup.local, answers for the rest of this turn.",
+    );
+    expect(entry!.details).toMatchObject({ fallback: 1, reason: "connection_error", from_host: "127.0.0.1:8080" });
+    expect(KIND_LABELS.fallback).toBe("Backup");
+    expect(entryTone(entry!)).toBe("warning");
+    expect(entryIcon(entry!)).toBe("layers");
+
+    const t = bound("sess-1");
+    t.push(evt(fixtures.model_fallback as DaemonEventUnion));
+    expect(t.entries.map((e) => e.kind)).toContain("fallback");
   });
 
   it("maps tier_switched, context_compacted, steering_reloaded, and error", () => {

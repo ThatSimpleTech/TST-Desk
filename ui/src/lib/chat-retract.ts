@@ -43,18 +43,33 @@ export function markResponse(row: ChatMessage, responseId: string | null | undef
   };
 }
 
-/** Cut the newest row that holds `responseId` back to where it began.
+/** Cut every row that holds `responseId` back to where it began. A Send
+ *  now while the response streamed (TD-1704) puts a user row in the middle,
+ *  so its later deltas open a second row: both are withdrawn (TD-5160).
  *  False when no row does: the deltas were never seen, or already gone. */
 export function withdrawResponse(messages: ChatMessage[], responseId: string): boolean {
+  let found = false;
   for (let i = messages.length - 1; i >= 0; i--) {
     const row = messages[i];
     if (row.role !== "assistant") continue;
     const mark = row.responseMark;
     if (mark === undefined || mark.id !== responseId) continue;
     cutBack(row, mark);
-    return true;
+    found = true;
+    // An earlier row the response alone filled would stay as an empty
+    // bubble; the newest one is where the retry's text arrives.
+    if (i < messages.length - 1 && isBlank(row)) messages.splice(i, 1);
   }
-  return false;
+  return found;
+}
+
+function isBlank(row: ChatMessage): boolean {
+  return (
+    row.text === "" &&
+    row.reasoning === undefined &&
+    (row.parts === undefined || row.parts.length === 0) &&
+    (row.tools === undefined || row.tools.length === 0)
+  );
 }
 
 function cutBack(row: ChatMessage, mark: ResponseMark): void {
