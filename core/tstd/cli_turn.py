@@ -15,8 +15,11 @@ only what the mode promises.
 
 The machine modes never prompt: an approval request ends the run with
 ``approval_needed`` and the turn waits for the window, the same as a
-text run without a TTY. Under ``--on-ask deny-and-continue`` the daemon
-refuses instead of asking (TD-5118), so no request reaches the run.
+text run without a TTY. An ``ask_user`` question (TD-5121) is asked the
+same way: answered on a TTY in text mode, otherwise ``approval_needed``.
+Under ``--on-ask deny-and-continue`` the daemon refuses instead of asking
+(TD-5118), and ``ask_user`` refuses its question too, so no request
+reaches the run.
 
 A run that sent ``run_permissions`` checks that its ``user_turn`` carries
 them back. A daemon that does not (one older than the CLI) would run the
@@ -43,6 +46,8 @@ from .cli import (
     fallback_notice,
 )
 from .cli_approvals import prompt_approval
+from .cli_questions import prompt_questions
+from .cli_questions import summary as question_summary
 from .logging import REDACTED
 
 Status = Literal["success", "refused", "approval_needed", "error"]
@@ -215,6 +220,8 @@ class _TurnReader:
             return None
         if typ == "approval_request":
             return await self._approval(ws, event)
+        if typ == "question_request":
+            return await self._question(ws, event)
         if typ == "tool_call":
             self.tool_names[str(event.get("tool_call_id"))] = str(event.get("name") or "tool")
             return None
@@ -278,6 +285,19 @@ class _TurnReader:
             print(f"{APPROVAL_NEEDED}: {waiting}", file=sys.stderr)
             return self.outcome("approval_needed", APPROVAL_NEEDED, waiting)
         reply = await prompt_approval(event, self.session_id)
+        if reply is None:
+            return self.outcome("approval_needed", APPROVAL_NEEDED, waiting)
+        await _send(ws, reply)
+        return None
+
+    async def _question(self, ws: Any, event: dict[str, Any]) -> TurnOutcome | None:
+        """An ``ask_user`` question waits like an approval (TD-5121)."""
+        self.end_line()
+        waiting = f"the agent asked {question_summary(event)!r}; answer it in the TST Desk window"
+        if self.output != "text":
+            print(f"{APPROVAL_NEEDED}: {waiting}", file=sys.stderr)
+            return self.outcome("approval_needed", APPROVAL_NEEDED, waiting)
+        reply = await prompt_questions(event, self.session_id)
         if reply is None:
             return self.outcome("approval_needed", APPROVAL_NEEDED, waiting)
         await _send(ws, reply)

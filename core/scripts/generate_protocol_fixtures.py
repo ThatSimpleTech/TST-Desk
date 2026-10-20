@@ -21,6 +21,7 @@ from tstd.protocol import (
     AddMachine,
     AddPin,
     AlwaysAllow,
+    AnswerQuestion,
     ApiKeyValidated,
     ApprovalRequest,
     Approve,
@@ -156,6 +157,11 @@ from tstd.protocol import (
     Ping,
     PolicyRules,
     PolicyRuleSummary,
+    Question,
+    QuestionAnswer,
+    QuestionAnswered,
+    QuestionOption,
+    QuestionRequest,
     QueuedMessageEntry,
     QueuedMessages,
     ReadArtifactChunk,
@@ -298,6 +304,17 @@ FIXTURES = {
     "deny": Deny(session_id="sess-1", tool_call_id="tc-1", reason="not safe"),
     "deny_no_reason": Deny(session_id="sess-1", tool_call_id="tc-1"),
     "always_allow": AlwaysAllow(session_id="sess-1", tool_call_id="tc-1"),
+    "answer_question": AnswerQuestion(
+        session_id="sess-1",
+        tool_call_id="tc-q",
+        answers=[
+            QuestionAnswer(selected=["Postgres"]),
+            QuestionAnswer(selected=["Auth", "Billing"], text="and audit logs"),
+        ],
+    ),
+    "answer_question_declined": AnswerQuestion(
+        session_id="sess-1", tool_call_id="tc-q", declined=True
+    ),
     "list_policy_rules": ListPolicyRules(session_id="sess-1"),
     "revoke_policy_rule": RevokePolicyRule(session_id="sess-1", tool="shell", args="rm *"),
     # TD-5113: the hash the trust card showed. A placeholder, not a real file's.
@@ -619,6 +636,43 @@ FIXTURES = {
         output="Denied by user: not safe",
         seq=20,
         error_code="approval_denied",
+    ),
+    "question_request": QuestionRequest(
+        session_id="sess-1",
+        tool_call_id="tc-q",
+        questions=[
+            Question(
+                question="Which database?",
+                header="Database",
+                options=[
+                    QuestionOption(label="Postgres", description="Already in docker-compose"),
+                    QuestionOption(label="SQLite"),
+                ],
+            ),
+            Question(
+                question="Which features first?",
+                options=[
+                    QuestionOption(label="Auth"),
+                    QuestionOption(label="Billing"),
+                    QuestionOption(label="Search"),
+                ],
+                multi_select=True,
+            ),
+        ],
+        seq=7,
+    ),
+    "question_answered": QuestionAnswered(
+        session_id="sess-1",
+        tool_call_id="tc-q",
+        outcome="answered",
+        answers=[
+            QuestionAnswer(selected=["Postgres"]),
+            QuestionAnswer(selected=["Auth", "Billing"], text="and audit logs"),
+        ],
+        seq=8,
+    ),
+    "question_answered_declined": QuestionAnswered(
+        session_id="sess-1", tool_call_id="tc-q", outcome="declined", seq=8
     ),
     "approval_request": ApprovalRequest(
         session_id="sess-1",

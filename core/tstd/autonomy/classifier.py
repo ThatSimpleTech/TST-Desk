@@ -776,6 +776,25 @@ def _rule_steering_proposal(req: DecisionRequest, boundary: Boundary) -> bool:
     )
 
 
+def _rule_ask_user(req: DecisionRequest, _boundary: Boundary) -> bool:
+    """``ask_user`` asks the person a question and changes nothing (TD-5121).
+
+    The question parks the turn like an approval, so asking for approval
+    first would put two prompts on one question. Only the builtin, with no
+    path, host or write: an MCP or plugin tool of that name carries
+    provenance and gets no grant.
+    """
+    return (
+        req.tool_name == "ask_user"
+        and req.provenance is None
+        and req.side_effect_class == "auto"
+        and not req.is_mutation
+        and not req.reads
+        and not req.writes
+        and not req.hosts
+    )
+
+
 def _rule_consult(req: DecisionRequest, _boundary: Boundary) -> bool:
     """``consult`` asks the brain or validator one question (TD-5119).
 
@@ -979,6 +998,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="propose_steering_edit parks a diff for the user; writes nothing",
         decision_class=DecisionClass.A,
         match=_rule_steering_proposal,
+    ),
+    Rule(
+        id="ask-user",
+        description="ask_user asks the person; the question is the one prompt",
+        decision_class=DecisionClass.A,
+        match=_rule_ask_user,
     ),
     Rule(
         id="consult",

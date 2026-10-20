@@ -317,7 +317,8 @@ function applyTurnEvidence(event: DaemonEventUnion): boolean {
 		event.type === "assistant_retract" ||
 		event.type === "model_fallback" ||
 		event.type === "tool_call" ||
-		event.type === "approval_request"
+		event.type === "approval_request" ||
+		event.type === "question_request"
 	) {
 		setRowBusy(event.session_id, true);
 		return true;

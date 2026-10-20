@@ -16425,3 +16425,124 @@ budget on every call); a cool-down that keeps later turns on the backup
 (turns would silently change model and price); inheriting fields
 selectively (endpoint fields versus model fields is a rule users would
 have to learn to read their own config).
+
+---
+
+## 2026-10-20 — TD-5121: the `ask_user` tool parks the turn on questions like an approval (Class B)
+
+**Context.** The model could only end its turn with prose when it needed a
+decision from the person (gap audit 2026-10-14). The story fixes the shape
+(one to four questions, 2-4 options each plus free text), that the turn
+parks like an approval, that the desktop shows buttons, the phone taps and
+`tst run` handles them per TD-5118, and that question and answer reach the
+audit database. Size 5, so the approach is recorded here rather than
+waiting for sign-off.
+
+**Decision.**
+
+- **Protocol.** One event pair and one client message, mirroring the
+  approval: `question_request` (tool call id, questions: `question`,
+  optional `header` ≤ 40, `options` of `{label ≤ 80, description ≤ 300}`,
+  `multi_select`), `question_answered` (`outcome`: `answered`, `declined`,
+  `stopped`, `timed_out`, `cancelled`, and the answers) logged before the
+  call's `tool_result`, and `answer_question` (one `{selected, text}` per
+  question in order, or `declined: true`). The daemon checks the answer
+  against the parked questions (known labels, one pick unless
+  `multi_select`, something in every answer) and refuses with `bad_answer`,
+  leaving the question parked; nothing waiting is `no_pending_question`.
+- **Parking.** `Session.pending_questions` holds one future per call, owned
+  by the session (directive 5), beside `_pending_approvals`. The session
+  goes to the existing `awaiting_approval` state (reason "waiting for your
+  answer") rather than a new state: every surface that shows "needs you"
+  (rail, coworker badge, notifications, `tst run`'s `approval_needed`,
+  bridged rows, older phone APKs) already keys on it, and a new state would
+  touch the state machine, persisted sessions and every client. `running`
+  returns only when no approval and no question is parked. Stop ends the
+  wait as `stopped`, cancel as `cancelled`, and
+  `policy.approval_timeout_seconds` applies as it does to an approval
+  (`timed_out`); the model gets a typed error for each and is told to
+  carry on with its best judgment.
+- **Class A by a static rule (`ask-user`)**, for the builtin only (no
+  provenance, no path, host or write). The question is the prompt; an
+  approval card first would ask twice. A `never` policy rule still turns
+  it off.
+- **Audit.** Tool results are stored as hashes, so the answer would not be
+  in the audit database. Migration v6 adds `questions` (tool call id,
+  questions JSON, outcome, answers JSON, both scrubbed as tool arguments
+  are). The writer records a row on `question_answered`, taking the
+  questions from the `question_request` it saw.
+- **The window and the phone** use one `QuestionCard` in a footer bar like
+  the approval bar: each option a button (`aria-pressed`), a box for the
+  person's own words, Skip (Esc) and Send. One single-choice question
+  sends on the tap. On a coarse pointer or a narrow window each option is
+  a full-width 44 px tap target; the phone's WebView shows this same card.
+  The card stays until the daemon says the question ended, so a
+  `bad_answer` comes back to it as a notice. The OS banner says a question
+  is waiting (no buttons), and so do the ntfy, Slack, Discord and Telegram
+  channels.
+- **`tst run` / `tst attach`.** A TTY in text mode answers each question
+  (option numbers, comma-separated for multi-select, or typed words); the
+  machine modes and a non-TTY never read stdin and end with
+  `approval_needed` (exit 4) while the question waits for the window,
+  exactly as an approval does under TD-5111. Under TD-5118's `--on-ask
+  deny-and-continue` the daemon refuses instead (see the review fixes
+  below), so no question reaches the run.
+
+**Conservative choices for questions the story leaves open (Class C,
+answered the narrow way):**
+
+- **Unattended runs and delegate children cannot ask.** An autonomy run has
+  nobody to answer, so the tool refuses (`ask_user_unattended`) and tells
+  the model to decide and say what it assumed; it is not in either child
+  tool list. Parking an unattended run on a question that only a person
+  can answer would stall it until the wall-clock cap.
+- **Skip-all never answers a question.** It approves tool calls; an answer
+  is the person's words, which nothing can supply for them.
+- **Answering is open to the same peers as `approve`**: any attached
+  client, a paired phone, and another computer's hub for a bridged id.
+  `answer_question` is in `MACHINE_PEER_VERBS` and `APPROVAL_VERBS`, so
+  like an approval it is never queued while a lane connects. It is weaker
+  than `approve`: it hands the model words and changes no setting.
+- **A daemon restart drops the parked question.** The future lived in the
+  old process; revive seals the cut turn (TD-5018), and the window clears
+  the card on that `turn_complete`.
+
+**Review fixes (2026-10-20, PR #42), all Class B:**
+
+- **A question the event log's secret scrub would change is refused**
+  (`ask_user_secret_shaped`), the way a steering proposal is (TD-5140).
+  Every client draws the card from the scrubbed `question_request`, while
+  the parked question kept the model's text, so a label the scrub changed
+  could never be picked (`bad_answer` every time, on the window, the phone
+  and `tst run`), and two labels that scrubbed alike crashed the card's
+  keyed option list. The `sk-` pattern has no word boundary; TD-5160 now
+  lets a run after `sk-` go when it reads as words, but a hyphenated name
+  with a segment that does not, such as "Keep the
+  task-runner-integration-v2beta branch", is still hit, not only keys. Checking answers against the scrubbed labels instead was
+  rejected: two labels can scrub to the same text, and the person would
+  still pick something other than what the model asked. The check covers
+  the question, header, labels and descriptions, and the refusal names the
+  part so the model can reword it.
+- **An `ask_user` answer is never cleared as stale tool output**
+  (`context_clear.ALWAYS_KEPT_TOOLS`), whatever `exclude_tools` says. It is
+  the person's words, which TD-5115 keeps verbatim; its placeholder would
+  tell the model to run the tool again, that is, ask again or guess. A
+  fixed set rather than a default `exclude_tools` entry, so a workspace that
+  lists its own tools cannot drop it by accident.
+- **`tst run --on-ask deny-and-continue` (TD-5118) refuses `ask_user`**
+  (`ask_user_unattended`) instead of parking. That flag promises the run
+  never waits for a person; TD-5118 applies it in the approval path, and
+  `ask_user` is Class A and never asks for approval, so without this the
+  run would park on the question and exit `approval_needed`. The tool reads
+  the turn's `Session.run_permissions` by name, so it needs no change when
+  TD-5118 merges, and no turn has any before then. Declining from the CLI
+  (`decline_message`, now removed) was rejected: the model would hear "the
+  user chose not to answer" when nobody was asked, and a question card
+  would flash on every window first.
+
+**Rejected:** a new `awaiting_answer` session state (see above); letting a
+single-select question take both a pick and an "Other" exclusive choice
+(words may go with a pick, which loses nothing); storing the answer only in
+the tool result (hashed in the audit DB); answering from skip-all or in an
+autonomy run with the recommended option (that is the model's own choice,
+which it can make without asking).

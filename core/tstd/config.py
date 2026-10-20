@@ -602,7 +602,8 @@ class ClearToolResultsConfig(BaseModel):
     earlier turns become, in one batch, a one-line placeholder naming the
     tool, its target and the size that went. The newest
     ``keep_recent_tool_results`` results and every result of a tool in
-    ``exclude_tools`` stay. A clear that cannot free
+    ``exclude_tools`` stay, and so does every ``ask_user`` answer
+    (``context_clear.ALWAYS_KEPT_TOOLS``, TD-5121). A clear that cannot free
     ``clear_at_least_tokens`` does not happen: rewriting an old result
     costs a local server its cached prefix, so it has to buy room
     (see :mod:`tstd.context_clear`).

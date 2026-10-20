@@ -31,6 +31,7 @@ from ..context.skills import register_skill_handlers
 from ..cu_verify import DriverStateProbe
 from ..desktop import DesktopDriver, MockDesktopDriver
 from ..desktop.grounding_client import GroundingLocator
+from .ask_user import ask_user
 from .browser import register_browser_handlers
 from .consult import handle_consult
 from .delegate import register_delegate_handlers
@@ -319,6 +320,7 @@ def register_builtin_handlers(
     dispatcher.register_handler("consult", handle_consult)
     dispatcher.register_handler("send_file", partial(send_file, service=sent_files))
     dispatcher.register_handler("propose_steering_edit", propose_steering_edit)
+    dispatcher.register_handler("ask_user", ask_user)
     from ..connectors.github_tools import register_github_handlers
 
     register_github_handlers(dispatcher)

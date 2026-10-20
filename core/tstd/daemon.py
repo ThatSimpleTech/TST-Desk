@@ -193,6 +193,7 @@ from .port_file import release_port_file
 from .protocol import (
     AddPin,
     AlwaysAllow,
+    AnswerQuestion,
     ApiKeyValidated,
     Approve,
     ApproveGrokPlan,
@@ -394,6 +395,7 @@ from .provider import (
     auth_failure_message,
 )
 from .provider_refresh import RefreshingProvider, _close_client
+from .questions import answer as answer_question
 from .queued_messages import keep_held_visible, queue_rows, restore_queue
 from .remote_attach import (
     bind_spec_when_enabled,
@@ -2941,6 +2943,18 @@ class Daemon:
                     f"No pending approval {msg.tool_call_id!r} in session {msg.session_id!r}",
                 )
             return None
+
+        if isinstance(msg, AnswerQuestion):
+            # TD-5121: like approve, any attached client may answer; the
+            # session owns the parked question, not the connection.
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                    in_reply_to=msg.type,
+                )
+            return answer_question(found, msg)
 
         if isinstance(msg, AlwaysAllow):
             found = self.session_registry.get(msg.session_id)

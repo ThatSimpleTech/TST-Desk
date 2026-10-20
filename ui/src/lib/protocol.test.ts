@@ -15,6 +15,9 @@ import type {
   Approve,
   Deny,
   AlwaysAllow,
+  AnswerQuestion,
+  QuestionRequest,
+  QuestionAnswered,
   ListPolicyRules,
   RevokePolicyRule,
   Resume,
@@ -234,6 +237,18 @@ describe("Client message fixtures match TypeScript types", () => {
     expect(m.type).toBe("always_allow");
     expect(isString(m.session_id)).toBe(true);
     expect(isString(m.tool_call_id)).toBe(true);
+  });
+
+  it("answer_question (TD-5121)", () => {
+    const m = fixtures.answer_question as AnswerQuestion;
+    expect(m.type).toBe("answer_question");
+    expect(isString(m.tool_call_id)).toBe(true);
+    expect(m.answers.map((a) => a.selected)).toEqual([["Postgres"], ["Auth", "Billing"]]);
+    expect(m.answers[1]?.text).toBe("and audit logs");
+    expect(m.declined).toBe(false);
+    const skipped = fixtures.answer_question_declined as AnswerQuestion;
+    expect(skipped.declined).toBe(true);
+    expect(skipped.answers).toEqual([]);
   });
 
   it("list_policy_rules", () => {
@@ -728,6 +743,24 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.seq)).toBe(true);
   });
 
+  it("question_request and question_answered (TD-5121)", () => {
+    const m = fixtures.question_request as QuestionRequest;
+    expect(m.type).toBe("question_request");
+    expect(isNumber(m.seq)).toBe(true);
+    const [first, second] = m.questions;
+    expect(first?.header).toBe("Database");
+    expect(first?.multi_select).toBe(false);
+    expect(first?.options.map((o) => o.label)).toEqual(["Postgres", "SQLite"]);
+    expect(first?.options[1]?.description).toBe("");
+    expect(second?.multi_select).toBe(true);
+    const answered = fixtures.question_answered as QuestionAnswered;
+    expect(answered.outcome).toBe("answered");
+    expect(answered.answers).toHaveLength(2);
+    const declined = fixtures.question_answered_declined as QuestionAnswered;
+    expect(declined.outcome).toBe("declined");
+    expect(declined.answers).toEqual([]);
+  });
+
   it("approval_request carries the always-allow proposal", () => {
     const m = fixtures.approval_request_always_allow as ApprovalRequest;
     expect(m.type).toBe("approval_request");
@@ -1150,7 +1183,7 @@ describe("All fixtures have required shape", () => {
   it("every client message has a type field", () => {
     const clientTypes = [
       "hello", "open_workspace", "user_message", "user_message_steer", "fork_from", "set_branch", "approve", "deny",
-      "deny_no_reason", "always_allow", "list_policy_rules", "revoke_policy_rule",
+      "deny_no_reason", "always_allow", "answer_question", "answer_question_declined", "list_policy_rules", "revoke_policy_rule",
       "trust_workspace_config",
       "set_skip_all_approvals",
       "set_load_global_memory",
@@ -1209,7 +1242,7 @@ describe("All fixtures have required shape", () => {
     const eventTypes = [
       "ready", "session_state", "conversation_reset", "user_turn", "user_turn_steer", "user_turn_run_permissions", "assistant_delta", "assistant_reasoning", "assistant_delta_response", "assistant_retract", "tool_call", "tool_result",
       "tool_result_truncated", "tool_result_diff", "tool_result_read_only", "tool_result_denied",
-      "shell_output", "tool_progress", "approval_request", "approval_request_always_allow", "decision_logged",
+      "shell_output", "tool_progress", "approval_request", "approval_request_always_allow", "question_request", "question_answered", "decision_logged",
       "checkpoint_notice", "verify_result", "cost_update", "boundary_update", "boundary_update_config_trust", "turn_complete",
       "tier_state", "tier_state_plan", "context_compacted", "context_compacted_manual", "context_compacted_inflight_trim", "context_compacted_clear_stale", "context_usage", "steering_reloaded", "rule_activated", "tier_switched",
       "model_fallback", "context_usage_fallback", "tier_state_fallback",

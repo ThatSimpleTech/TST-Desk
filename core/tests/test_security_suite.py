@@ -1195,6 +1195,15 @@ def _synth(annotation: Any, *, canary: bool) -> Any:
     return None
 
 
+def _to_floor(field: Any, value: Any) -> Any:
+    """Repeat a synthesized list up to the field's ``min_length`` (``ask_user``'s
+    2-4 options, TD-5121)."""
+    floor = max((getattr(m, "min_length", None) or 0 for m in field.metadata), default=0)
+    if isinstance(value, list) and value and len(value) < floor:
+        return value + [value[0]] * (floor - len(value))
+    return value
+
+
 def _canary_kwargs(cls: type[BaseModel]) -> dict[str, Any]:
     """Constructor kwargs with PLANTED in every string field that accepts it.
 
@@ -1202,7 +1211,7 @@ def _canary_kwargs(cls: type[BaseModel]) -> dict[str, Any]:
     it cannot carry a secret — and excludes itself.
     """
     kwargs = {
-        name: _synth(field.annotation, canary=False)
+        name: _to_floor(field, _synth(field.annotation, canary=False))
         for name, field in cls.model_fields.items()
         if field.is_required()
     }
@@ -1210,7 +1219,7 @@ def _canary_kwargs(cls: type[BaseModel]) -> dict[str, Any]:
     for name, field in cls.model_fields.items():
         if not _carries_text(field.annotation):
             continue
-        probe = {**kwargs, name: _synth(field.annotation, canary=True)}
+        probe = {**kwargs, name: _to_floor(field, _synth(field.annotation, canary=True))}
         try:
             cls(**probe)
         except ValidationError:

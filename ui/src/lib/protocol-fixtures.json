@@ -91,6 +91,34 @@
     "session_id": "sess-1",
     "tool_call_id": "tc-1"
   },
+  "answer_question": {
+    "type": "answer_question",
+    "session_id": "sess-1",
+    "tool_call_id": "tc-q",
+    "answers": [
+      {
+        "selected": [
+          "Postgres"
+        ],
+        "text": ""
+      },
+      {
+        "selected": [
+          "Auth",
+          "Billing"
+        ],
+        "text": "and audit logs"
+      }
+    ],
+    "declined": false
+  },
+  "answer_question_declined": {
+    "type": "answer_question",
+    "session_id": "sess-1",
+    "tool_call_id": "tc-q",
+    "answers": [],
+    "declined": true
+  },
   "list_policy_rules": {
     "type": "list_policy_rules",
     "session_id": "sess-1"
@@ -873,6 +901,78 @@
     "diff": null,
     "allowed_by": [],
     "transcript": []
+  },
+  "question_request": {
+    "type": "question_request",
+    "seq": 7,
+    "session_id": "sess-1",
+    "tool_call_id": "tc-q",
+    "questions": [
+      {
+        "question": "Which database?",
+        "header": "Database",
+        "options": [
+          {
+            "label": "Postgres",
+            "description": "Already in docker-compose"
+          },
+          {
+            "label": "SQLite",
+            "description": ""
+          }
+        ],
+        "multi_select": false
+      },
+      {
+        "question": "Which features first?",
+        "header": "",
+        "options": [
+          {
+            "label": "Auth",
+            "description": ""
+          },
+          {
+            "label": "Billing",
+            "description": ""
+          },
+          {
+            "label": "Search",
+            "description": ""
+          }
+        ],
+        "multi_select": true
+      }
+    ]
+  },
+  "question_answered": {
+    "type": "question_answered",
+    "seq": 8,
+    "session_id": "sess-1",
+    "tool_call_id": "tc-q",
+    "outcome": "answered",
+    "answers": [
+      {
+        "selected": [
+          "Postgres"
+        ],
+        "text": ""
+      },
+      {
+        "selected": [
+          "Auth",
+          "Billing"
+        ],
+        "text": "and audit logs"
+      }
+    ]
+  },
+  "question_answered_declined": {
+    "type": "question_answered",
+    "seq": 8,
+    "session_id": "sess-1",
+    "tool_call_id": "tc-q",
+    "outcome": "declined",
+    "answers": []
   },
   "approval_request": {
     "type": "approval_request",
@@ -2369,6 +2469,7 @@
   },
   "forwarded_verbs": [
     "always_allow",
+    "answer_question",
     "approve",
     "archive_session",
     "attach",
