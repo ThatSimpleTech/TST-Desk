@@ -219,6 +219,31 @@ async def test_escape_still_class_c_and_refused(
     assert (tmp_path / "outside.txt").read_text(encoding="utf-8") == "secret\n"
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "C:/x.txt",  # drive-absolute: relative off Windows, so it was joined
+        "C:x.txt",  # drive-relative
+        "\\\\server\\share\\x.txt",  # UNC: one long relative name off Windows
+    ],
+)
+async def test_windows_unsafe_form_is_refused_not_joined(tmp_path: Path, path: str) -> None:
+    """DECISIONS (TD-602 §4): Windows-unsafe forms are refused on every platform.
+
+    Joining the raw value to the workspace hid its drive or UNC prefix, so
+    the guard and the classifier both passed ``<ws>/C:/x.txt`` and the write
+    ran as A (TD-5158).
+    """
+    event, result, ran, row, ws = await _one_call(
+        tmp_path, "fs_write", {"path": path, "content": "x\n"}
+    )
+    assert result.status == "error" and result.error_code == "boundary_refusal", result.output
+    assert ran == "C"
+    assert event.decision_class == ran
+    assert row[:2] == ("C", "refused")
+    assert sorted(p.name for p in ws.iterdir()) == ["a.txt"]
+
+
 # ── The shared helper ───────────────────────────────────────────────────
 
 
@@ -253,3 +278,14 @@ def test_helper_leaves_absent_malformed_and_unguarded_values(tmp_path: Path) -> 
     malformed = {"path": 7, "files": ["ok", 3]}
     assert canonicalize_path_fields(tool, malformed, guard) == malformed
     assert canonicalize_path_fields(tool, {"path": "a.txt"}, None) == {"path": "a.txt"}
+
+
+def test_helper_keeps_a_windows_unsafe_form_as_written(tmp_path: Path) -> None:
+    guard = PathGuard(Boundary(workspace_root=tmp_path))
+    tool = _path_tool("path", "files")
+    raw = {"path": "C:x.txt", "files": ["\\\\srv\\share\\y", "ok.txt"]}
+    out = canonicalize_path_fields(tool, raw, guard)
+    assert out == {
+        "path": "C:x.txt",
+        "files": ["\\\\srv\\share\\y", str(tmp_path.resolve() / "ok.txt")],
+    }
