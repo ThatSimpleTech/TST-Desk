@@ -27,8 +27,14 @@ REDACTED = "[REDACTED]"
 SECRET_PATTERNS: list[re.Pattern[str]] = [
     # OpenAI / OpenRouter / Anthropic key. Dashed forms (sk-or-v1-…,
     # sk-proj-…, sk-ant-…) are the shapes the shipped presets actually
-    # hold; the UI belt in ui/src/lib/redact.ts uses the same shape.
-    re.compile(r"(sk-[a-zA-Z0-9][a-zA-Z0-9_-]{15,})"),
+    # hold. Not straight after a lowercase letter (TD-5160): "task-tool-…"
+    # and "tst-desk-gap-…" are words, not keys. A key glued to an escape
+    # ("\nsk-…") or a percent-encoding ("%3dsk-…") still counts. The UI
+    # belt in ui/src/lib/redact.ts stays wider: it only feeds diagnostics.
+    re.compile(
+        r"((?:(?<![a-z])|(?<=\\[a-z])|(?<=%[0-9A-Fa-f]{2}))"
+        r"sk-[a-zA-Z0-9][a-zA-Z0-9_-]{15,})"
+    ),
     re.compile(r"(github_pat_[a-zA-Z0-9_]{36,})"),  # GitHub fine-grained PAT
     re.compile(r"(ghp_[a-zA-Z0-9]{36,})"),  # GitHub classic PAT
     re.compile(r"(ghu_[A-Za-z0-9_]{20,})"),  # GitHub user-to-server token

@@ -42,7 +42,13 @@ from tstd.autonomy import (
     DecisionRequest,
 )
 from tstd.autonomy.classifier import RULE_TABLE, is_steering_write
-from tstd.logging import SECRET_PATTERNS, JSONFormatter, SecretsRedactionFilter
+from tstd.logging import (
+    REDACTED,
+    SECRET_PATTERNS,
+    JSONFormatter,
+    SecretsRedactionFilter,
+    redact_secrets,
+)
 from tstd.mock import MockProvider, Script
 from tstd.protocol import DaemonEvent, ShellOutput, build_error, scrub_wire_json
 from tstd.protocol import ToolCall as ToolCallEvent
@@ -687,6 +693,50 @@ def test_clean_log_message_not_redacted() -> None:
     logger, buf = capture_logger("test.security.clean")
     logger.info("reading config.yaml, 42 entries")
     assert json.loads(buf.getvalue())["message"] == "reading config.yaml, 42 entries"
+
+
+# TD-5160: words that end in "sk" before a hyphen are not keys. All of
+# these came out partly [REDACTED] in transcripts and steering cards.
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Check task-tool-availability first.",
+        "See docs/tst-desk-gap-audit-2026-10-14.md",
+        "pin flask-sqlalchemy-migrate and tst-desk-session-survival",
+        "rename the task-management-dashboard component",
+        "a risk-assessment-framework-v2 doc",
+    ],
+)
+def test_a_word_ending_in_sk_is_not_a_key(text: str) -> None:
+    assert redact_secrets(text) == text
+
+
+_SK_KEYS = [s for s in FAKE_SECRETS if s.startswith("sk-")]
+
+
+# The boundary must not let a real key through wherever one is written.
+@pytest.mark.parametrize(
+    "framing",
+    [
+        "{}",
+        "key={}",
+        "'{}'",
+        "Bearer {}",
+        "--api-key={}",
+        "OPENAI_API_KEY={}",
+        "line one\\n{}",  # an escaped newline as text, as in a repr
+        "cb?k%3D{}",  # percent-encoded "="
+        "cb?k%3d{}",
+        "x-api-key:{}",
+        "keys: [{}]",
+    ],
+)
+@pytest.mark.parametrize("key", _SK_KEYS)
+def test_an_sk_key_is_redacted_however_it_is_framed(framing: str, key: str) -> None:
+    text = framing.format(key)
+    scrubbed = redact_secrets(text)
+    assert key not in scrubbed
+    assert scrubbed == framing.format(REDACTED)
 
 
 PLANTED = FAKE_SECRETS[0]

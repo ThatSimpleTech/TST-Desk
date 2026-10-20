@@ -987,9 +987,9 @@ and test commands, CI config and layout) and proposes the whole new file.
 - **What you see:** a card with the diff and **Accept**, **Edit** and **Reject**. Edit opens the
   proposed text; **Save** writes what you typed. The tool itself writes nothing and asks
   nothing, so the card is the one approval. The card shows exactly what Accept writes: the
-  session log blanks secret-shaped strings (`sk-…`, `ghp_…`, and ordinary words such as
-  `task-tool-availability` that happen to match), so a proposal whose file name, file or text
-  holds one is refused, and so is a Save of one. Change such a file by hand.
+  session log blanks secret-shaped strings (`sk-…`, `ghp_…` and the like; a word such as
+  `task-tool-availability` is not one), so a proposal whose file name, file or text holds one
+  is refused, and so is a Save of one. Change such a file by hand.
 - **Who writes:** the daemon, on your Accept or Save, never the filesystem tool. If the file
   changed after the proposal (you edited it, or another proposal was accepted), Accept is
   refused with "the file changed since this was proposed" and a fresh diff replaces the card.

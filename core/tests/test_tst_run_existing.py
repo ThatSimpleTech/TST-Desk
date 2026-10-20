@@ -24,11 +24,11 @@ from tstd.protocol import UserTurn
 from tstd.session import TERMINAL_STATES
 from tstd.session_store import SessionStore
 
-# Secret-shaped by the daemon's patterns, though only the last two are
-# secrets: ``sk-`` has no word boundary, so ordinary names match too.
+# Secret-shaped by the daemon's patterns. Ordinary names such as
+# task-management-dashboard no longer match (TD-5160).
 _REDACTED_MESSAGES = [
-    "rename the task-management-dashboard component",
-    "pin flask-sqlalchemy-migrate and tst-desk-session-survival",
+    "rename the " + "sk-" + "proj-FAKE0dashboard0key component",
+    "pin " + "sk-" + "FAKE0first0key0here and " + "sk-" + "FAKE0second0key0here",
     "rotate ghp_" + "a" * 36 + " today",
     "AKIA" + "B" * 16 + "\n" + "AKIA" + "C" * 16,
 ]
@@ -129,7 +129,7 @@ class TestRedactedMessage:
         assert code == EXIT_OK, result
         assert result["status"] == "success"
         assert result["error"] is None
-        assert result["reply"].startswith("echo: rename the ta")
+        assert result["reply"].startswith("echo: rename the ")
         assert turns == ["first", redact_secrets(message)]
 
     async def test_ndjson_starts_at_the_redacted_user_turn(

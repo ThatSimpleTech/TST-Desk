@@ -959,7 +959,9 @@ lowercased (`GITHUB_TOKEN` → `github_token`) and this file gets only the
 reference. Saving a name that already has an entry replaces the value
 there. Remove drops the name from this file and deletes its item;
 removing the server deletes all of its items. A stored value must be
-one line of printable ASCII and at least 8 characters. Every value the
+one line of printable ASCII and at least 8 characters, and its last part
+must be 8 or more too (the token in `Bearer <token>`, which is also
+scrubbed on its own; TD-5160). Every value the
 daemon reads or stores is scrubbed by its exact text from the log, the
 audit DB and the events from then on, whatever its shape. Settings
 lists each name with where it lives (keychain, stored or not, or this
@@ -1660,8 +1662,9 @@ Accept and Save are only taken from this computer's own window (`loopback_only` 
 or another computer); Reject works from a phone. Every accepted, edited or rejected proposal
 goes in the session log as `steering_decision` with its diff. The card shows exactly what
 Accept writes. The session log blanks secret-shaped strings (a long run of letters, digits,
-`-` or `_` after `sk-`, `ghp_` and the like; ordinary words such as `task-tool-availability`
-can match too), so a proposal whose file name, current file or new text holds one is refused
+`-` or `_` after `sk-`, `ghp_` and the like; an `sk-` straight after a lowercase letter, as in
+`task-tool-availability`, is a word and is left alone), so a proposal whose file name, current
+file or new text holds one is refused
 (`steering_secret_shaped`), and so is a Save of one; change that file by hand. Open proposals live in the daemon's memory, so a restart closes them: the daemon logs
 each one as `steering_decision` `expired` when it restores the session, its card does not
 come back, and the agent has to propose it again. A card the daemon no longer holds says
