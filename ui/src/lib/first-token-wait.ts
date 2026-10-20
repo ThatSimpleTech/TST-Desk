@@ -16,6 +16,9 @@ export interface FirstTokenWaitState {
   awaitingFirstToken: boolean;
   turnStalled: boolean;
   awaitingSince: number | null;
+  /** This wait is for a reply the daemon withdrew and is asking for again
+   *  (TD-5159), not for a send: the Working line says so. */
+  retryingReply: boolean;
 }
 
 /** First-token watchdog (TD-1713): a wait this long with no assistant_delta
@@ -25,8 +28,9 @@ export interface FirstTokenWaitState {
 export const STALL_TIMEOUT_MS = 25_000;
 
 export interface FirstTokenWait {
-  /** Start waiting for the first token, unless a wait is already running. */
-  begin(): void;
+  /** Start waiting for the first token, unless a wait is already running.
+   *  `retrying` marks a wait for a withdrawn reply asked again (TD-5159). */
+  begin(retrying?: boolean): void;
   /** Stop waiting — the token landed, the turn resolved, or the session the
    *  wait belonged to went away. Drops the stall flag with it. */
   end(): void;
@@ -64,11 +68,15 @@ export function createFirstTokenWait(state: FirstTokenWaitState): FirstTokenWait
     /** Stamps the elapsed basis and arms the watchdog. A wait already in
      *  progress keeps its original stamp — a replayed "running" must not
      *  restart the user's clock. */
-    begin(): void {
-      if (state.awaitingFirstToken) return;
+    begin(retrying = false): void {
+      if (state.awaitingFirstToken) {
+        if (retrying) state.retryingReply = true;
+        return;
+      }
       state.awaitingFirstToken = true;
       state.turnStalled = false;
       state.awaitingSince = Date.now();
+      state.retryingReply = retrying;
       arm();
     },
 
@@ -76,6 +84,7 @@ export function createFirstTokenWait(state: FirstTokenWaitState): FirstTokenWait
       state.awaitingFirstToken = false;
       state.turnStalled = false;
       state.awaitingSince = null;
+      state.retryingReply = false;
       clearStallTimer();
     },
 

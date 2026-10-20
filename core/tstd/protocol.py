@@ -1702,11 +1702,18 @@ class QueuedMessages(DaemonEvent):
 
 
 class AssistantDelta(DaemonEvent):
-    """A streamed chunk of assistant output."""
+    """A streamed chunk of assistant output.
+
+    ``response_id`` (TD-5159, additive) names the model response the text
+    belongs to, so an ``assistant_retract`` can withdraw exactly that
+    response. Lines the daemon writes itself (a failure, a progress note)
+    and older daemons leave it ``None``; such text is never withdrawn.
+    """
 
     type: Literal["assistant_delta"] = "assistant_delta"
     session_id: str
     delta: str
+    response_id: str | None = None
 
 
 class AssistantReasoning(DaemonEvent):
@@ -1722,6 +1729,29 @@ class AssistantReasoning(DaemonEvent):
     type: Literal["assistant_reasoning"] = "assistant_reasoning"
     session_id: str
     delta: str
+    # The model response this thinking belongs to (TD-5159), as on
+    # ``AssistantDelta``.
+    response_id: str | None = None
+
+
+class AssistantRetract(DaemonEvent):
+    """Withdraw one model response's shown text and thinking (TD-5159).
+
+    The provider went quiet partway through the reply (``reason`` is the
+    error code, ``stream_stalled``), and the loop asks again. Every
+    ``assistant_delta`` and ``assistant_reasoning`` carrying this
+    ``response_id`` is no longer part of the reply: a client removes it,
+    and the retry streams under a new id. Nothing else on the row goes:
+    tool calls that already ran, and text from earlier responses in the
+    turn, stay. The partial text never entered the model's conversation.
+    A client that does not know this event drops it and keeps showing the
+    withdrawn text above the retry.
+    """
+
+    type: Literal["assistant_retract"] = "assistant_retract"
+    session_id: str
+    response_id: str
+    reason: str
 
 
 class ToolCall(DaemonEvent):
@@ -3620,6 +3650,7 @@ DaemonEventT = Annotated[
     | QueuedMessages
     | AssistantDelta
     | AssistantReasoning
+    | AssistantRetract
     | ToolCall
     | ToolResult
     | ShellOutput
@@ -3829,6 +3860,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "queued_messages",
         "assistant_delta",
         "assistant_reasoning",
+        "assistant_retract",
         "tool_call",
         "tool_result",
         "shell_output",

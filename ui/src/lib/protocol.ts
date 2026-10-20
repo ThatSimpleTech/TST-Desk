@@ -1197,6 +1197,11 @@ export interface AssistantDelta extends DaemonEvent {
   type: "assistant_delta";
   session_id: string;
   delta: string;
+  /** The model response this text belongs to (TD-5159), so an
+   *  `assistant_retract` can withdraw exactly it. Absent or null on text the
+   *  daemon writes itself (a failure, a progress note) and from older
+   *  daemons; such text is never withdrawn. */
+  response_id?: string | null;
 }
 
 /** A chunk of a reasoning model's thinking (TD-1901). Same shape as
@@ -1206,6 +1211,19 @@ export interface AssistantReasoning extends DaemonEvent {
   type: "assistant_reasoning";
   session_id: string;
   delta: string;
+  /** As on AssistantDelta (TD-5159). */
+  response_id?: string | null;
+}
+
+/** Withdraw one model response's text and thinking (TD-5159). The provider
+ *  went quiet partway through it (`reason`: `stream_stalled`) and the daemon
+ *  asks again under a new id. Tool calls already run, and earlier responses
+ *  in the turn, stay. */
+export interface AssistantRetract extends DaemonEvent {
+  type: "assistant_retract";
+  session_id: string;
+  response_id: string;
+  reason: string;
 }
 
 export interface ToolCall extends DaemonEvent {
@@ -2427,6 +2445,7 @@ export type DaemonEventUnion =
   | QueuedMessages
   | AssistantDelta
   | AssistantReasoning
+  | AssistantRetract
   | ToolCall
   | ToolResult
   | ShellOutput

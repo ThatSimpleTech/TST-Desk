@@ -52,6 +52,9 @@ export interface ChatState {
   /** Epoch ms when the current first-token wait began — the basis of the
    *  Working line's elapsed counter (TD-1713). Null when not waiting. */
   awaitingSince: number | null;
+  /** The current first-token wait is for a reply the daemon withdrew after
+   *  the provider went quiet, and is asking for again (TD-5159). */
+  retryingReply: boolean;
   /** Seconds the last turn took, as measured by the daemon on turn_complete.
    *  The UI never times turns itself (AGENTS §6). Cleared on the next send. */
   lastTurnDuration: number | null;
@@ -141,6 +144,7 @@ export function createChatState(): ChatState {
     awaitingFirstToken: false,
     turnStalled: false,
     awaitingSince: null,
+    retryingReply: false,
     lastTurnDuration: null,
     lastTurnError: null,
     draft: "",
