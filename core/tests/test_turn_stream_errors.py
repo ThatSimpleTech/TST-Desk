@@ -80,6 +80,18 @@ def _answer(text: str) -> bytes:
     return _text(text) + _text("", finish="stop") + _DONE
 
 
+_ROLE = _event(
+    {"id": "c1", "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}}]}
+)
+
+
+async def _drops_after(*chunks: bytes) -> AsyncIterator[bytes]:
+    """A ``200`` stream whose connection drops after *chunks*: a server restart."""
+    for chunk in chunks:
+        yield chunk
+    raise httpx.RemoteProtocolError("peer closed connection without sending complete message body")
+
+
 Reply = Callable[[int], bytes | AsyncIterator[bytes]]
 
 
@@ -149,6 +161,17 @@ class TestInBandErrorEvent:
         assert "upstream failed" in error.message
         assert "partial reply was discarded" in error.message
         assert gateway.requests == 1
+        # Not resent here, but the endpoint's failure: a backup can answer
+        # instead (TD-5120).
+        assert error.endpoint_failed is True
+
+    @pytest.mark.parametrize("code", ["400", "401", "404"])
+    async def test_after_output_a_client_error_is_not_the_endpoints(self, code: str) -> None:
+        gateway = _Gateway(lambda _: _text("The answer is ") + _litellm_error("refused", code))
+        items = await _stream(gateway.client(retries=3))
+
+        (error,) = _errors(items)
+        assert (error.code, error.endpoint_failed) == ("stream_interrupted", False)
 
     async def test_after_a_tool_call_starts_it_is_stream_interrupted(self) -> None:
         call = _event(
@@ -342,6 +365,7 @@ class TestOpenRouterErrorEvent:
         assert error.status_code == 502
         assert "Provider disconnected unexpectedly" in error.message
         assert gateway.requests == 1
+        assert error.endpoint_failed is True
 
     async def test_before_output_it_keeps_its_retry_rule(self) -> None:
         gateway = _Gateway(
@@ -430,6 +454,9 @@ class TestStreamEnd:
         assert error.code == "stream_interrupted"
         assert error.retryable is False
         assert gateway.requests == 1
+        # A body that just ends names no failure of the endpoint, so it
+        # does not move a turn to a backup either (TD-5120).
+        assert error.endpoint_failed is False
 
     async def test_done_without_a_finish_reason_is_a_finished_reply(self) -> None:
         """A server that leaves ``finish_reason`` off still says ``[DONE]``."""
@@ -459,6 +486,57 @@ class TestStreamEnd:
 
         assert not _errors(items)
         assert any(isinstance(i, StreamChunk) and i.usage is not None for i in items)
+
+
+class TestDroppedConnection:
+    """The connection drops inside a ``200`` stream (TD-5120 review).
+
+    A llama.cpp or vLLM restart while it reads a long prompt: the headers
+    arrived, nothing was shown, then the socket closed.
+    """
+
+    @pytest.mark.parametrize("opening", [b"", _ROLE], ids=["no-bytes", "role-only"])
+    async def test_before_output_it_is_retried_like_a_refused_connection(
+        self, opening: bytes
+    ) -> None:
+        gateway = _Gateway(
+            lambda attempt: _drops_after(opening) if attempt == 1 else _answer("Back again.")
+        )
+        items = await _stream(gateway.client(retries=2))
+
+        # Before the fix: stream_interrupted, not retryable, one request,
+        # so a restart while the server read the prompt failed the turn.
+        assert not _errors(items)
+        assert _shown(items) == "Back again."
+        assert gateway.requests == 2
+
+    async def test_before_output_the_last_drop_is_a_request_error(self) -> None:
+        gateway = _Gateway(lambda _: _drops_after())
+        items = await _stream(gateway.client(retries=2))
+
+        (error,) = items
+        assert isinstance(error, ProviderError)
+        assert (error.code, error.retryable, error.endpoint_failed) == (
+            "request_error",
+            True,
+            False,
+        )
+        assert "dropped before the reply began" in error.message
+        assert gateway.requests == 3  # first try plus provider_retry's two
+
+    async def test_after_output_it_is_interrupted_and_the_endpoints_failure(self) -> None:
+        gateway = _Gateway(lambda _: _drops_after(_text("Half ")))
+        items = await _stream(gateway.client(retries=2))
+
+        assert _shown(items) == "Half "
+        (error,) = _errors(items)
+        assert items[-1] is error
+        assert (error.code, error.retryable, error.endpoint_failed) == (
+            "stream_interrupted",
+            False,
+            True,
+        )
+        assert gateway.requests == 1
 
 
 class TestIdleWatchdog:

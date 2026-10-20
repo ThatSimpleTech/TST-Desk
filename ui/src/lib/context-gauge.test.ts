@@ -8,6 +8,7 @@ import {
 	gaugeLabel,
 	gaugeLevel,
 	gaugePercent,
+	gaugeTierLine,
 	parseCompactCommand,
 	type ContextReading,
 } from "./context-gauge";
@@ -17,6 +18,8 @@ const reading = (used: number, window = 65536, compactAt = 49152): ContextReadin
 	used_tokens: used,
 	context_window: window,
 	compact_at: compactAt,
+	model: null,
+	fallback: 0,
 });
 
 describe("parseCompactCommand", () => {
@@ -81,6 +84,22 @@ describe("gauge", () => {
 		expect(gaugeLevel(reading(37_000))).toBe("near");
 		expect(gaugeLevel(reading(49_152))).toBe("over");
 		expect(gaugeLevel(reading(5, 100, 0))).toBe("ok");
+	});
+});
+
+describe("gauge on a backup endpoint (TD-5120)", () => {
+	const onBackup: ContextReading = { ...reading(12_000, 32_768, 19_660), model: "backup/model", fallback: 1 };
+
+	it("marks the label, so the window shown reads as the backup's", () => {
+		expect(gaugeLabel(onBackup)).toBe("12k / 32k · backup");
+		expect(gaugeLabel(reading(12_000))).toBe("12k / 64k");
+	});
+
+	it("names the model the figures were measured for, over the title bar's slug", () => {
+		expect(gaugeTierLine(onBackup, { brain: "own/model" })).toBe("brain · backup/model (backup 1)");
+		expect(gaugeTierLine(reading(12_000), { brain: "own/model" })).toBe("brain · own/model");
+		expect(gaugeTierLine({ ...reading(12_000), model: "own/model" }, {})).toBe("brain · own/model");
+		expect(gaugeTierLine(reading(12_000), {})).toBe("brain");
 	});
 });
 

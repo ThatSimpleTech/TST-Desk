@@ -70,6 +70,9 @@ export const session = $state({
   preset: "" as string,
   /** Tier → hostname:port the daemon will call (TD-1720). */
   hosts: {} as Record<string, string>,
+  /** Tiers on a backup endpoint this turn → its 1-based position (TD-5120).
+   *  `modelSlugs` and `hosts` already name the backup. */
+  fallbacks: {} as Record<string, number>,
   /** Plan mode (TD-4603). False until a tier_state says otherwise. */
   planMode: false,
   /** Active tier accepts image attachments (TD-4705). False until tier_state. */
@@ -106,6 +109,7 @@ export function resetSession(): void {
   session.engine = null;
   session.preset = "";
   session.hosts = {};
+  session.fallbacks = {};
   session.planMode = false;
   session.vision = false;
   session.turnActive = false;
@@ -166,6 +170,7 @@ export function ingestEvent(event: DaemonEventUnion): void {
       session.modelSlugs = event.model_slugs;
       session.preset = event.preset ?? "";
       session.hosts = event.hosts ?? {};
+      session.fallbacks = event.fallbacks ?? {};
       session.planMode = event.plan ?? false;
       session.vision = event.vision ?? false;
       break;
@@ -181,6 +186,8 @@ export function ingestEvent(event: DaemonEventUnion): void {
         used_tokens: event.used_tokens,
         context_window: event.context_window,
         compact_at: event.compact_at,
+        model: event.model ?? null,
+        fallback: event.fallback ?? 0,
       };
       break;
     case "cost_update":
@@ -245,6 +252,7 @@ export function focusSession(
   session.engine = null;
   session.preset = "";
   session.hosts = {};
+  session.fallbacks = {};
   session.planMode = false;
   session.vision = false;
   session.turnActive = false;

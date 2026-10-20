@@ -16,6 +16,8 @@ from dataclasses import asdict, replace
 from itertools import pairwise
 from pathlib import Path
 
+import pytest
+
 from tests.test_context_fit import _forge_config, _tier
 from tests.test_loop import mock_factory, wait_for_turn
 from tests.test_read_tools import make_dispatcher
@@ -619,3 +621,24 @@ async def test_a_long_session_compacts_less_and_its_prompt_changes_only_in_batch
     cleared, wrong = _misnamed_placeholders(after_requests)
     assert cleared > 0
     assert wrong == []
+
+
+@pytest.mark.parametrize(
+    ("tool", "target"),
+    [
+        ("shell", "rm -rf build && make"),
+        ("delegate", "Fix the tests"),
+        ("fs_write", "a.py"),
+        ("github__create_issue", ""),
+        ("", ""),
+    ],
+)
+def test_a_tool_that_may_have_done_something_is_not_invited_to_run_again(
+    tool: str, target: str
+) -> None:
+    """TD-5160: with approvals off, "run it again" would re-run a side effect."""
+    line = cleared_placeholder(tool, target, 1_234)
+    assert "Run the tool again" not in line
+    assert line.endswith("It already ran; do not run it again only to see this output.]")
+    for read in ("fs_read", "fs_grep", "web_fetch"):
+        assert cleared_placeholder(read, "x", 1).endswith("Run the tool again if you need it.]")

@@ -28,6 +28,7 @@ export function entryIcon(entry: TimelineEntry): IconName {
     case 'decision':
       return 'scroll';
     case 'tier_switch':
+    case 'fallback':
       return 'layers';
     case 'compaction':
       return 'archive';
@@ -60,6 +61,7 @@ export const KIND_LABELS: Record<EntryKind, string> = {
   steering_reload: 'Steering',
   error: 'Error',
   retry: 'Retry',
+  fallback: 'Backup',
   verify: 'Verify'
 };
 
@@ -76,6 +78,8 @@ export function entryTone(entry: TimelineEntry): EntryTone {
     case 'approval':
     // A reply withdrawn and asked again (TD-5159): the turn goes on.
     case 'retry':
+    // A tier's endpoint was down and a backup answered (TD-5120).
+    case 'fallback':
       return 'warning';
     case 'verify':
       if (entry.details.pending) return 'warning';

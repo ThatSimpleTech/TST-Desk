@@ -307,9 +307,10 @@ async def test_a_repeated_option_is_refused_without_asking(tmp_path: Path) -> No
 # ── What the card shows is what the person can pick ───────────────────
 
 
-# Ordinary words the event log's scrub takes for an ``sk-`` key, and two
+# A hyphenated name the event log's scrub still takes for an ``sk-`` key
+# (TD-5160 lets a run that reads as words go; "v2beta" does not), and two
 # labels that differ only in a real-looking key.
-_MANGLED = "Keep the task-runner-integration branch"
+_MANGLED = "Keep the task-runner-integration-v2beta branch"
 _KEY_A = "Use sk-proj-" + "A" * 24
 _KEY_B = "Use sk-proj-" + "B" * 24
 

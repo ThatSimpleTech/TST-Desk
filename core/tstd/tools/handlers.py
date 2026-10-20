@@ -33,6 +33,7 @@ from ..desktop import DesktopDriver, MockDesktopDriver
 from ..desktop.grounding_client import GroundingLocator
 from .ask_user import ask_user
 from .browser import register_browser_handlers
+from .consult import handle_consult
 from .delegate import register_delegate_handlers
 from .desktop import register_desktop_handlers
 from .dispatch import ToolDispatcher
@@ -316,6 +317,7 @@ def register_builtin_handlers(
     )
     register_skill_handlers(dispatcher)
     register_delegate_handlers(dispatcher)
+    dispatcher.register_handler("consult", handle_consult)
     dispatcher.register_handler("send_file", partial(send_file, service=sent_files))
     dispatcher.register_handler("propose_steering_edit", propose_steering_edit)
     dispatcher.register_handler("ask_user", ask_user)

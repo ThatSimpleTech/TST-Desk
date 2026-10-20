@@ -38,6 +38,7 @@ from ..provider import ChatCompletionRequest, ChatMessage, ProviderError, ToolCa
 from ..session import Session
 from .delegate_child import (
     CHILD_TOOLS,
+    CONSULT_TOOL_NAME,
     DELEGATE_KINDS,
     RESEARCH_CHILD_TOOLS,
     SUMMARY_TOKEN_CAP,
@@ -50,7 +51,7 @@ from .delegate_child import (
 )
 from .dispatch import ToolDispatcher
 from .registry import Tool, ToolRegistry
-from .results import HandlerOutput, HandlerRefusal
+from .results import HandlerFailed, HandlerOutput, HandlerRefusal
 
 # The child's kinds, tools and cap live in ``delegate_child``; they are
 # re-exported so callers keep one import path.
@@ -89,6 +90,10 @@ class DelegateRuntime:
     assembler: PromptAssembler
     session_start: float
     iterations: int = 0
+    # The session whose meter shows this runtime's spend. A delegate
+    # child's ``consult`` (TD-5119) lands on the parent's ``cost_update``;
+    # ``None`` is the session the runtime is bound to.
+    meter: Session | None = None
 
 
 def register_delegate_tools(registry: ToolRegistry) -> None:
@@ -102,7 +107,8 @@ def register_delegate_tools(registry: ToolRegistry) -> None:
                 "summary, so its reading stays out of your context. "
                 "kind 'worker' (the default) can read, write files and run "
                 "shell. kind 'research' is read-only: fs_read, fs_list, "
-                "fs_grep, web_search and web_fetch. Use research to explore "
+                "fs_grep, web_search and web_fetch. Either may also consult "
+                "when it is on for the worker tier. Use research to explore "
                 "code or the web. In plan mode the default is research."
             ),
             parameters={
@@ -142,10 +148,17 @@ def register_delegate_handlers(dispatcher: ToolDispatcher) -> None:
     dispatcher.register_handler("delegate", handle_delegate)
 
 
-def worker_child_registry(parent: ToolRegistry, kind: DelegateKind = "worker") -> ToolRegistry:
-    """Copy *kind*'s tools from *parent*. Never includes ``delegate``."""
+def worker_child_registry(
+    parent: ToolRegistry, kind: DelegateKind = "worker", *, consult: bool = False
+) -> ToolRegistry:
+    """Copy *kind*'s tools from *parent*. Never includes ``delegate``.
+
+    *consult* adds ``consult`` (TD-5119): config offers it to the worker
+    tier, which every child runs on.
+    """
     child = ToolRegistry()
-    for name in CHILD_TOOLS[kind]:
+    names = (*CHILD_TOOLS[kind], CONSULT_TOOL_NAME) if consult else CHILD_TOOLS[kind]
+    for name in names:
         tool = parent.get(name)
         if tool is not None:
             child.register(tool)
@@ -176,9 +189,16 @@ async def handle_delegate(
     router = session.router
     resolved = resolve_kind(kind, plan_mode=router is not None and router.plan_mode)
     steps: list[WorkerStep] = []
-    summary = await run_worker_child(
-        parent=session, task=task, context=context, kind=resolved, transcript=steps
-    )
+    try:
+        summary = await run_worker_child(
+            parent=session, task=task, context=context, kind=resolved, transcript=steps
+        )
+    except HandlerRefusal as e:
+        raise HandlerRefusal(e.code, e.message, tuple(steps)) from e
+    except Exception as e:
+        # A child that wrote files or ran commands before it failed still
+        # shows them in the window (TD-5160).
+        raise HandlerFailed(e, tuple(steps)) from e
     return HandlerOutput(text=summary, transcript=tuple(steps))
 
 
@@ -218,7 +238,9 @@ async def run_worker_child(
         parent.cost_tracker = tracker
 
     parent_dispatcher = runtime.dispatcher
-    child_registry = worker_child_registry(parent_dispatcher.registry, kind)
+    child_registry = worker_child_registry(
+        parent_dispatcher.registry, kind, consult=runtime.config.consult.allows("worker")
+    )
     child_dispatcher = ToolDispatcher(
         child_registry,
         max_result_chars=parent_dispatcher.max_result_chars,
@@ -233,6 +255,7 @@ async def run_worker_child(
     )
     child_dispatcher.skip_all_fn = parent_dispatcher.skip_all_fn
     child_dispatcher.autonomy_fn = parent_dispatcher.autonomy_fn
+    child_dispatcher.run_permissions_fn = parent_dispatcher.run_permissions_fn
     child_dispatcher.on_class_c = parent_dispatcher.on_class_c
     for tool in child_registry.list_tools():
         handler = parent_dispatcher._handlers.get(tool.name)
@@ -254,6 +277,10 @@ async def run_worker_child(
     child.cost_tracker = tracker
     child.touched_paths = parent.touched_paths
     child.autonomy = False
+    # TD-5119: the child acts as the worker tier, and its consults count
+    # against the parent's turn.
+    child.acting_tier = "worker"
+    child.consult_tally = parent.consult_tally
     # web_fetch's extract pass (TD-5114) reaches the worker tier and this
     # child's result cap through the runtime; without one a research
     # child's question was refused and it read the raw page instead.
@@ -264,6 +291,10 @@ async def run_worker_child(
         dispatcher=child_dispatcher,
         assembler=runtime.assembler,
         session_start=runtime.session_start,
+        # The parent's count, so a consult in the child checks the
+        # iteration cap the parent is under.
+        iterations=runtime.iterations,
+        meter=runtime.meter or parent,
     )
 
     caps = parent.boundary_config.caps

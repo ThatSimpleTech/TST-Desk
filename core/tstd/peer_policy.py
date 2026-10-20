@@ -159,6 +159,19 @@ def check(msg: ClientMessage, peer: PeerView, *, bridged: bool) -> str | None:
         return build_error(
             "loopback_only", "Only the computer itself can do that.", in_reply_to=msg.type
         )
+    # TD-5118: a turn's own allow rules switch approvals off for it, so they
+    # come only from ``tst run`` on this computer, for its own sessions; a
+    # phone or another computer still approves call by call.
+    if getattr(msg, "run_permissions", None) is not None and (
+        peer.remote or peer.machine or bridged
+    ):
+        return build_error(
+            "loopback_only",
+            "Only tst run on this computer can set a turn's permissions, and only for "
+            "this computer's own sessions.",
+            session_id=sid,
+            in_reply_to=msg.type,
+        )
     if peer.machine:
         if msg.type not in MACHINE_PEER_VERBS:
             return build_error(

@@ -178,7 +178,7 @@ async def test_save_of_text_the_log_would_blank_is_refused_and_the_proposal_stay
     """The logged decision must show what was written, so Save refuses it."""
     run = proposed
     [event] = run.events(SteeringProposal)
-    mine = "# Project\n\n- Use uv.\n- Check task-tool-availability first.\n"
+    mine = "# Project\n\n- Use uv.\n- Export KEY=" + "sk-" + "proj-FAKE0save0would0blank first.\n"
     reply = await run.send("steering_edit", event.proposal_id, content=mine)
     assert reply is not None and reply["code"] == "steering_secret_shaped"
     assert "change the file by hand" in reply["message"]
@@ -263,7 +263,7 @@ async def test_a_file_changed_to_what_the_card_would_blank_gets_no_fresh_diff(
 ) -> None:
     run = proposed
     [stale] = run.events(SteeringProposal)
-    theirs = "# Project\n\nSee docs/tst-desk-gap-audit-2026-10-14.md first.\n"
+    theirs = "# Project\n\nExport KEY=" + "sk-" + "proj-FAKE0file0would0blank first.\n"
     (run.ws / "AGENTS.md").write_text(theirs, encoding="utf-8")
     reply = await run.send("steering_accept", stale.proposal_id)
     assert reply is not None and reply["code"] == "steering_secret_shaped"

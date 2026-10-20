@@ -268,13 +268,25 @@ session:
 # placeholder (tool, target, size) before whole turns are compacted. The
 # newest keep_recent_tool_results stay, and so does every result of a tool
 # named in exclude_tools and every ask_user answer (the person's own words).
-# A clear that cannot free clear_at_least_tokens is skipped. enabled: false
-# goes back to compaction alone.
+# A clear that cannot free clear_at_least_tokens, or cannot bring the prompt
+# down to 70% of the budget while compaction has an older turn to fold, is
+# skipped. enabled: false goes back to compaction alone.
 clear_tool_results:
   enabled: true
   keep_recent_tool_results: 3
   clear_at_least_tokens: 2000
   exclude_tools: []
+
+# The consult tool (TD-5119): the tier doing the work asks the brain (or
+# the validator) one short question with the context it picks, and gets the
+# answer back as the tool result. A tier not listed in tiers is off. The
+# worker is listed, so worker turns and delegate children (which run on the
+# worker tier) have it; the brain and the validator do not. max_per_turn
+# caps the consults of one turn. Each one is a call on the tier it asks and
+# shows on the meter there.
+consult:
+  tiers: [worker]
+  max_per_turn: 2
 
 # Shell commands that run without asking (TD-5103). Only these built-in
 # read-only entries can be listed: delete lines to shrink the list, or set

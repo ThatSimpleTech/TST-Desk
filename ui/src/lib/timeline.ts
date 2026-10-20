@@ -19,7 +19,7 @@
 // the chat conversation, not an activity record. The AC enumerates exactly the
 // activity kinds shown here.
 
-import type { ContextCompacted, DaemonEventUnion, SessionState, TurnComplete, UserTurn } from "./protocol";
+import type { ContextCompacted, DaemonEventUnion, ModelFallback, SessionState, TurnComplete, UserTurn } from "./protocol";
 import { formatTokens } from "./context-gauge";
 
 /** Presentation category driving visually distinct treatment (AC #6).
@@ -37,6 +37,7 @@ export type EntryKind =
   | "steering_reload"
   | "error"
   | "retry"
+  | "fallback"
   | "verify";
 
 export interface TimelineEntry {
@@ -76,6 +77,16 @@ export function formatProgress(event: { progress: number; total?: number | null;
     amount = String(progress);
   }
   return message ? `${amount} · ${truncate(message, 80)}` : amount;
+}
+
+/** "qwen on 127.0.0.1:8080 failed (connection_error); backup 1, gpt on
+ *  api.example.com, answers for the rest of this turn." (TD-5120) */
+export function fallbackPreview(event: ModelFallback): string {
+  const on = (model: string, host: string) => (host ? `${model} on ${host}` : model);
+  return (
+    `${on(event.from_model, event.from_host)} failed (${event.reason}); ` +
+    `backup ${event.fallback}, ${on(event.to_model, event.to_host)}, answers for the rest of this turn.`
+  );
 }
 
 /** Collapse an arguments object into a scannable one-liner. */
@@ -230,6 +241,25 @@ export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
         title: `${event.previous ?? "default"} → ${event.tier}`,
         preview: `Routing switched to ${event.tier}`,
         details: { tier: event.tier, previous: event.previous ?? null },
+      };
+    case "model_fallback":
+      // TD-5120: the tier's endpoint was down; the turn went to a backup.
+      // The title leads with where it went, for a narrow activity pane.
+      return {
+        id: `fallback:${event.seq}`,
+        kind: "fallback",
+        seq: event.seq,
+        title: `${event.tier} → ${event.to_model}`,
+        preview: fallbackPreview(event),
+        details: {
+          tier: event.tier,
+          from_model: event.from_model,
+          from_host: event.from_host,
+          to_model: event.to_model,
+          to_host: event.to_host,
+          fallback: event.fallback,
+          reason: event.reason,
+        },
       };
     case "context_compacted": {
       // TD-5109: say who asked, and what the summary was told to keep.

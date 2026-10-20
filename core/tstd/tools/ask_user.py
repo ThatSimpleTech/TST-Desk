@@ -97,8 +97,8 @@ SECRET_SHAPED = "ask_user_secret_shaped"
 _SECRET_SHAPED_MESSAGE = (
     "Question {number}'s {part} has a string shaped like a secret (a long run of letters, "
     "digits, '-' or '_' after a token prefix such as sk-, ghp_ or github_pat_, an AWS key "
-    "id, or a private-key header; ordinary words such as task-runner-integration can match "
-    "too). The card would blank it, so the user couldn't see or pick it as you wrote it. "
+    "id, or a private-key header; a hyphenated name such as task-runner-integration-v2beta "
+    "can match too). The card would blank it, so the user couldn't see or pick it as you wrote it. "
     "Reword it and ask again."
 )
 

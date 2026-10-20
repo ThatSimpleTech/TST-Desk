@@ -66,6 +66,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "steering_reloaded",
   "rule_activated",
   "tier_switched",
+  "model_fallback", // TD-5120
   "instruction_stack",
   "instruction_files",
   "command_list",

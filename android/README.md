@@ -41,6 +41,8 @@ Install with `adb install -r` that file, or copy it to the phone and open it. Un
 
 An APK bundles the UI, so it only understands the events its own UI knew. Against a newer daemon (TD-5150 or later), an older APK draws each in-flight trim of old tool results as an amber compaction row with a blank title, up to a dozen per tool-heavy turn. Nothing is wrong with the session. Build and install a new APK to get the "Trim" rows, which show how many results were trimmed and how many tokens that freed.
 
+The same holds for a send the daemon could not save to disk (TD-5158, `message_not_saved`). A window or APK built before TD-5158 shows "Daemon error: message_not_saved" with the daemon's reason, leaves the message in the transcript as if sent and does not put the text back in the composer, so copy it before you send again. A newer APK puts the text back; attachments are never kept, so add them again.
+
 Questions the agent asks with `ask_user` (TD-5121) show as a card of buttons to tap, in an APK built from a UI that has it. An older APK drops the question: the session still shows as waiting and a notification channel still says a question is waiting, so answer it on the computer or build a new APK.
 
 0.1.10 (TD-5145) adds the "install unknown apps" permission and a private file provider, so a file the agent sends can be downloaded, opened, saved to Downloads, or (an APK) installed. It installs over 0.1.9 with the same debug keystore. The first 0.1.10 goes on with `adb install -r`, since 0.1.9 cannot receive files.

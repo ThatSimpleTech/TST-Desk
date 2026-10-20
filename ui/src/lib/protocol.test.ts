@@ -84,6 +84,7 @@ import type {
   SteeringReloaded,
   RuleActivated,
   TierSwitched,
+  ModelFallback,
   InstructionStack,
   SkillStackEntry,
   SessionList,
@@ -639,6 +640,17 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(m.steer?.after_tool_call_ids).toEqual(["tc-1", "tc-2"]);
   });
 
+  it("user_turn_run_permissions", () => {
+    // TD-5118: a tst run turn echoes the rules it runs under; a plain turn
+    // carries null.
+    expect((fixtures.user_turn as UserTurn).run_permissions ?? null).toBeNull();
+    const m = fixtures.user_turn_run_permissions as UserTurn;
+    expect(m.type).toBe("user_turn");
+    expect(m.run_permissions?.allow).toEqual([{ tool: "shell", args: "npm test*" }]);
+    expect(m.run_permissions?.deny).toEqual([{ tool: "fs_write", args: "**" }]);
+    expect(m.run_permissions?.on_ask).toBe("deny_and_continue");
+  });
+
   it("assistant_delta", () => {
     const m = fixtures.assistant_delta as AssistantDelta;
     expect(m.type).toBe("assistant_delta");
@@ -1000,6 +1012,33 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.seq)).toBe(true);
   });
 
+  it("model_fallback, and the gauge and title bar on a backup (TD-5120)", () => {
+    const m = fixtures.model_fallback as ModelFallback;
+    expect(m.type).toBe("model_fallback");
+    expect(m.tier).toBe("brain");
+    expect(isString(m.from_model)).toBe(true);
+    expect(m.from_host).toBe("127.0.0.1:8080");
+    expect(m.to_model).toBe("test-backup-slug");
+    expect(m.to_host).toBe("backup.local");
+    expect(m.fallback).toBe(1);
+    expect(m.reason).toBe("connection_error");
+    expect(isNumber(m.seq)).toBe(true);
+
+    const usage = fixtures.context_usage_fallback as ContextUsage;
+    expect(usage.model).toBe(m.to_model);
+    expect(usage.fallback).toBe(1);
+    // The tier's own model: no backup, and an older daemon's null model.
+    const own = fixtures.context_usage as ContextUsage;
+    expect(own.fallback ?? 0).toBe(0);
+    expect(own.model ?? null).toBeNull();
+
+    const tiers = fixtures.tier_state_fallback as TierState;
+    expect(tiers.fallbacks).toEqual({ brain: 1 });
+    expect(tiers.model_slugs.brain).toBe(m.to_model);
+    expect(tiers.hosts?.brain).toBe(m.to_host);
+    expect((fixtures.tier_state as TierState).fallbacks ?? {}).toEqual({});
+  });
+
   it("setup_state", () => {
     // TD-1101: connection-scoped (no session_id), seq=1 like policy_rules.
     const m = fixtures.setup_state as SetupState;
@@ -1201,11 +1240,12 @@ describe("All fixtures have required shape", () => {
 
   it("every daemon event has a type and seq field", () => {
     const eventTypes = [
-      "ready", "session_state", "conversation_reset", "user_turn", "user_turn_steer", "assistant_delta", "assistant_reasoning", "assistant_delta_response", "assistant_retract", "tool_call", "tool_result",
+      "ready", "session_state", "conversation_reset", "user_turn", "user_turn_steer", "user_turn_run_permissions", "assistant_delta", "assistant_reasoning", "assistant_delta_response", "assistant_retract", "tool_call", "tool_result",
       "tool_result_truncated", "tool_result_diff", "tool_result_read_only", "tool_result_denied",
       "shell_output", "tool_progress", "approval_request", "approval_request_always_allow", "question_request", "question_answered", "decision_logged",
       "checkpoint_notice", "verify_result", "cost_update", "boundary_update", "boundary_update_config_trust", "turn_complete",
       "tier_state", "tier_state_plan", "context_compacted", "context_compacted_manual", "context_compacted_inflight_trim", "context_compacted_clear_stale", "context_usage", "steering_reloaded", "rule_activated", "tier_switched",
+      "model_fallback", "context_usage_fallback", "tier_state_fallback",
       "instruction_stack", "instruction_files", "command_list", "context_pins", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "steering_proposal", "steering_decision", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",

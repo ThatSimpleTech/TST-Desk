@@ -62,6 +62,13 @@ _TARGET_MAX_CHARS = 80
 #: Tools whose results are never cleared, beside ``exclude_tools``: an
 #: ``ask_user`` result is the person's answer, not tool output (TD-5121).
 ALWAYS_KEPT_TOOLS = frozenset({"ask_user"})
+#: Built-in tools that only read, so running one again changes nothing.
+#: Every other tool (shell, delegate, a write, any MCP tool) may have done
+#: something, and its placeholder does not invite a second run (TD-5160):
+#: with approvals off nothing would stop it.
+RERUN_SAFE_TOOLS = frozenset(
+    {"fs_read", "fs_list", "fs_grep", "web_fetch", "web_search", "load_skill"}
+)
 
 
 @dataclass(frozen=True)
@@ -162,7 +169,11 @@ def cleared_placeholder(tool: str, target: str, chars: int, images: int = 0) -> 
     size = f"{chars:,} chars"
     if images:
         size += f" and {images} image{'' if images == 1 else 's'}"
-    return f"{CLEARED_PREFIX}: {what}, {size}. Run the tool again if you need it.]"
+    if tool in RERUN_SAFE_TOOLS:
+        advice = "Run the tool again if you need it."
+    else:
+        advice = "It already ran; do not run it again only to see this output."
+    return f"{CLEARED_PREFIX}: {what}, {size}. {advice}]"
 
 
 def _placeholder_for(message: ChatMessage, call: tuple[str, str]) -> str:

@@ -328,6 +328,10 @@ echo "and now the tests" | uv run tst run --workspace /path/to/folder --continue
 # (--session <id> picks a session; --output ndjson streams its events;
 #  exit 0 success, 1 error, 3 a tool call was refused, 4 approval needed)
 
+# Unattended: rules for this run only, and refuse (not wait on) anything that asks
+uv run tst run --workspace /path/to/folder --allow "shell:npm test*" --deny fs_write \
+  --on-ask deny-and-continue --message "run the tests and report"
+
 # Follow a session already running on that daemon (Ctrl+C detaches)
 uv run tst attach <session_id>
 ```

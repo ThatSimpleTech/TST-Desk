@@ -76,6 +76,9 @@ export interface UserMessage extends ClientMessage {
    *  tool-batch boundary. Omitted, or with no turn running, the message
    *  waits for a turn of its own. Additive: older daemons ignore it. */
   steer?: boolean;
+  /** TD-5160: refuse with `session_busy` instead of queueing when the
+   *  session already owes a turn (`tst run` sets it; the window does not). */
+  only_if_idle?: boolean;
 }
 
 /** Send a message a restart left held (TD-5155). `queued_id` names a row of
@@ -1203,6 +1206,21 @@ export interface SteerPoint {
   after_tool_call_ids: string[];
 }
 
+/** One `tst run --allow` or `--deny` rule (TD-5118): the globs of a
+ *  `policy.rules` entry. */
+export interface RunRule {
+  tool: string;
+  args: string;
+}
+
+/** The `tst run` permissions a turn ran under (TD-5118). The window never
+ *  sends these; it only sees them echoed on a `user_turn`. */
+export interface RunPermissions {
+  allow: RunRule[];
+  deny: RunRule[];
+  on_ask: "prompt" | "deny_and_continue";
+}
+
 export interface UserTurn extends DaemonEvent {
   type: "user_turn";
   session_id: string;
@@ -1211,6 +1229,9 @@ export interface UserTurn extends DaemonEvent {
   /** Set when the message steered a running turn instead of starting one
    *  (TD-5112). Additive: older daemons omit it, and null starts a turn. */
   steer?: SteerPoint | null;
+  /** The `tst run` rules this turn runs under (TD-5118). Additive: older
+   *  daemons omit it, and null is a turn without them. */
+  run_permissions?: RunPermissions | null;
 }
 
 /** One message a restart left held (TD-5155). `content` is what its user
@@ -1427,6 +1448,10 @@ export interface TierState extends DaemonEvent {
   plan?: boolean;
   /** Active tier accepts images (TD-4705). Omitted by older daemons — treat as off. */
   vision?: boolean;
+  /** Tiers this turn moved to a backup endpoint (TD-5120): tier → 1-based
+   *  position in its `fallbacks`. `model_slugs` and `hosts` already name the
+   *  backup. Omitted by older daemons — treat as none. */
+  fallbacks?: Record<string, number>;
 }
 
 /** One setting a workspace config loosens (TD-5113). */
@@ -2261,6 +2286,12 @@ export interface ContextUsage extends DaemonEvent {
   used_tokens: number;
   context_window: number;
   compact_at: number;
+  /** The model the figures are for (TD-5120). Null or absent from an older
+   *  daemon. */
+  model?: string | null;
+  /** 1-based position of the backup endpoint in use, 0 (or absent) for the
+   *  tier's own model (TD-5120). */
+  fallback?: number;
 }
 
 export interface TierSwitched extends DaemonEvent {
@@ -2268,6 +2299,21 @@ export interface TierSwitched extends DaemonEvent {
   session_id: string;
   tier: "brain" | "worker" | "validator";
   previous?: "brain" | "worker" | "validator" | null;
+}
+
+/** A tier's endpoint failed after its retry budget and the turn moved to the
+ *  next backup in its `fallbacks` (TD-5120). `reason` is the error code.
+ *  Hosts are hostname:port. Later calls in the turn stay on the backup. */
+export interface ModelFallback extends DaemonEvent {
+  type: "model_fallback";
+  session_id: string;
+  tier: "brain" | "worker" | "validator";
+  from_model: string;
+  from_host: string;
+  to_model: string;
+  to_host: string;
+  fallback: number;
+  reason: string;
 }
 
 /** One persisted job on job_list (TD-3805). */
@@ -2549,6 +2595,7 @@ export type DaemonEventUnion =
   | SteeringReloaded
   | RuleActivated
   | TierSwitched
+  | ModelFallback
   | InstructionStack
   | InstructionFiles
   | CommandList

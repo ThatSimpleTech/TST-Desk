@@ -254,13 +254,34 @@ class TestWhenToUseKeys:
         assert [(s.when_to_use, s.ignored_keys) for s in skills] == [("Do", ())]
         assert "when to use" not in render_skill_catalog(skills)
 
-    def test_non_string_skips_like_when_to_use_does(self, dirs: tuple[Path, Path]) -> None:
+    @pytest.mark.parametrize(
+        ("line", "key"),
+        [
+            ("when_to_use: [a, b]", "when_to_use"),
+            ("whenToUse: 3", "whenToUse"),
+            ("name: {a: b}", "name"),
+        ],
+    )
+    def test_non_string_skips_and_names_the_key(
+        self, dirs: tuple[Path, Path], line: str, key: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """TD-5160: a skipped skill vanishes from the inspector, so the log names why."""
         ws, home = dirs
-        _write(
-            ws / ".tst" / "skills" / "s" / "SKILL.md",
-            "---\ndescription: Do\nwhen_to_use: [a, b]\n---\nx\n",
-        )
-        assert SkillDiscoverer(home_dir=home).discover(ws) == []
+        path = ws / ".tst" / "skills" / "s" / "SKILL.md"
+        _write(path, f"---\ndescription: Do\n{line}\n---\nx\n")
+        with caplog.at_level(logging.WARNING, logger="tstd.skills"):
+            assert SkillDiscoverer(home_dir=home).discover(ws) == []
+        [warning] = [r for r in caplog.records if "skill skipped" in r.getMessage()]
+        assert warning.extra_fields == {"path": str(path), "key": key}  # type: ignore[attr-defined]
+
+    def test_a_missing_description_is_named_too(
+        self, dirs: tuple[Path, Path], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        ws, home = dirs
+        _write(ws / ".tst" / "skills" / "s" / "SKILL.md", "---\nwhenToUse: Do\n---\nx\n")
+        with caplog.at_level(logging.WARNING, logger="tstd.skills"):
+            assert SkillDiscoverer(home_dir=home).discover(ws) == []
+        assert [r.extra_fields["key"] for r in caplog.records] == ["description"]  # type: ignore[attr-defined]
 
 
 class TestCompatibilityValues:

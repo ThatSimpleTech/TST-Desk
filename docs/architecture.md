@@ -125,7 +125,9 @@ and `--continue` send `list_sessions`, pick the row (the named id, or the
 local, unarchived session of `--workspace` that has not ended, newest by
 `updated_at`, which the daemon moves when a turn starts), refuse it while
 `busy`, then `attach` from `event_count + 1` so no earlier turn replays,
-and send `user_message`. The turn is the events from the `user_turn`
+and send `user_message` with `only_if_idle: true`, so the daemon refuses it
+with `session_busy` if another run got a turn in after that list (TD-5160).
+The turn is the events from the `user_turn`
 carrying that message to its `turn_complete`; a `[REDACTED]` in that
 `user_turn` stands for the secret-shaped text the daemon scrubbed. The message comes
 from `--message`, or from stdin for `--message -` or no `--message` (a
@@ -142,8 +144,32 @@ window. Exit codes:
 | 0 | `success` | The turn completed and no tool call was refused |
 | 1 | `error` | The turn failed, the daemon refused the message, or the run timed out or lost the daemon |
 | 2 | — | Usage error (argparse, or no message) |
-| 3 | `refused` | The turn completed, but a gate refused a tool call: `boundary_refusal`, `policy_denied` or `approval_denied` |
+| 3 | `refused` | The turn completed, but a gate refused a tool call: `boundary_refusal`, `policy_denied` or `approval_denied` (a `--deny` rule, and a `--on-ask deny-and-continue` refusal, count here) |
 | 4 | `approval_needed` | A call is waiting for approval that this run could not give |
+
+**Per-run permissions (TD-5118).** `--allow RULE` and `--deny RULE` (each
+repeatable; a rule is `TOOL` or `TOOL:ARGS`, the globs of a `policy.rules`
+entry, split at the first colon) and `--on-ask prompt|deny-and-continue`
+ride on the `user_message` as `run_permissions: {allow, deny, on_ask}`,
+sent only when one is set. The daemon keeps them on the session for the
+one turn that message starts: the loop sets them as it takes the message
+and `turn_complete` clears them, and the queue file never keeps them, so a
+held message a restart brings back runs under the workspace's rules. At
+the dispatch gate allow rules are `auto` and deny rules `never`, beside
+the workspace's (`with_run_rules`): deny first, so a workspace `ask` or
+`never` still wins over an allow, and a Class C call is demoted to
+`class_c_default` whatever the rule. The classifier has already run by
+then, and the read guards of the read-only shell list read the same
+merge. A delegate child's dispatcher reads its parent turn's permissions.
+With `deny_and_continue` the session answers an approval (a tool call, an
+external import, Grok's ACP request) before any `approval_request` is
+logged: an `approval_denied` tool result saying the run answers every
+approval with no, the turn goes on, and the run exits 3. A refused
+external import (its result names the file) stays out of that turn only,
+so the next turn asks about it again; an import a person denies stays
+out, unasked, for the rest of the session (TD-505). The `user_turn`
+echoes `run_permissions`; when it does not (a daemon older than the CLI),
+the run sends `stop_turn` and exits 1 with `run_permissions_unsupported`.
 
 **`tst attach` (TD-3102)** is the same door in follow mode. Same port file and
 `hello`. It sends `attach{session_id, from_seq}` (default 1), prints assistant
@@ -449,7 +475,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `hello` | — | Opening handshake: auth token plus protocol version. |
 | `pair` | — | First frame from a phone redeeming a pairing code, instead of `hello`: code, device name, protocol version. Remote peers only (loopback gets `bad_request`). Optional `replaces`: the phone's current key, whose entry is retired. Success is a bare `pair_ok` with the device's own key, then close 1000; failure is `pair_failed` or `pair_locked`, then close 1008 (TD-5014). |
 | `open_workspace` | — | Open a workspace directory as a new session. |
-| `user_message` | yes | Queue a user turn for the session's loop. With `steer: true` (additive; the window's Send now mid-turn), sent while a native-engine turn runs, it joins that turn at its next tool-batch boundary instead (TD-5112). The message is written to the session's `queued.json` before the handler returns and leaves it once its `user_turn` is saved, so a restart before the turn starts brings it back held (TD-5155). A message that cannot be written is refused with `message_not_saved` and not queued; the window puts it back in the composer (TD-5158). Every refusal names `in_reply_to: user_message`, so the window can give back a Send now row still waiting for its turn (TD-5112). |
+| `user_message` | yes | Queue a user turn for the session's loop. With `steer: true` (additive; the window's Send now mid-turn), sent while a native-engine turn runs, it joins that turn at its next tool-batch boundary instead (TD-5112). The message is written to the session's `queued.json` before the handler returns and leaves it once its `user_turn` is saved, so a restart before the turn starts brings it back held (TD-5155). A message that cannot be written is refused with `message_not_saved` and not queued; a window from TD-5158 on puts its text back in the composer, and the daemon's text makes no such claim, since older windows and APKs do not (TD-5160). With `only_if_idle: true` (additive; `tst run` into an existing session sets it) a session that already owes a turn refuses it with `session_busy`, checked in the same step that queues it (TD-5160). Every refusal names `in_reply_to: user_message`, so the window can give back a Send now row still waiting for its turn (TD-5112). `run_permissions` (additive, `tst run`, TD-5118) are `{allow, deny, on_ask}` for the turn this message starts only; with `steer` the message is refused (`bad_request`), allow or deny rules for a Grok session are refused with `run_rules_unsupported`, and the field from a phone, another computer or for a bridged session is refused `loopback_only`. |
 | `send_queued` | yes | Send a message a restart left held, named by its `queued_id` from `queued_messages` (TD-5155). It joins the loop's queue as if just sent, so a drain hold refuses it with `daemon_draining`; a session that can no longer run turns refuses it with `session_not_running`; an id that is no longer held is `queued_not_found`. Each refusal names `in_reply_to`. |
 | `remove_queued` | yes | Drop a message a restart left held, unsent (TD-5155). An id that is no longer held is `queued_not_found`. |
 | `fork_from` | yes | Replace a past user turn and fork a sibling from there. `user_index` counts user turns from the start of the session and is mapped through compaction summaries; a turn inside one is refused with `user_turn_compacted` (TD-5147). Refused mid-turn. Every refusal names `in_reply_to`, so the window can give the edited text back to the composer (TD-5158). |
@@ -579,7 +605,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 |---|---|---|
 | `ready` | connection | Daemon and protocol versions. Declared and parseable, but not emitted in v0.1. |
 | `session_state` | session | A session state transition, with an optional reason. Additive `engine` (`native` \| `grok`) names the loop this session started with. |
-| `user_turn` | session | A user message the loop accepted, so replay can show the user's side without inventing it. `turn_id` is the queued message's own id (TD-5155). `steer` is set when a message sent mid-turn joined the running turn at a tool-batch boundary instead of starting one (TD-5112): `turn_id` (the running turn's), `step` (its model calls so far) and `after_tool_call_ids` (the batch the model read just before it); the audit database records the same point in `steers`. Logging it moves the session's `updated_at`, so `session_list` orders by use (TD-5111). |
+| `user_turn` | session | A user message the loop accepted, so replay can show the user's side without inventing it. `turn_id` is the queued message's own id (TD-5155). `steer` is set when a message sent mid-turn joined the running turn at a tool-batch boundary instead of starting one (TD-5112): `turn_id` (the running turn's), `step` (its model calls so far) and `after_tool_call_ids` (the batch the model read just before it); the audit database records the same point in `steers`. Logging it moves the session's `updated_at`, so `session_list` orders by use (TD-5111). `run_permissions` echoes the `tst run` rules the turn runs under (TD-5118), `null` for a turn without them. |
 | `queued_messages` | session | The messages a restart left held, in order, whole each time (TD-5155): `queued_id`, `content` (what the `user_turn` will show) and `images_dropped` (attached images the queue file did not keep). Logged after a restart that left any and on every `send_queued` or `remove_queued`, and logged again when the log window trimmed the last one away, so the latest in a replay is the list. Nothing in it is sent until the person picks Send. |
 | `conversation_reset` | session | The conversation forked or a sibling was selected. The viewer drops rows after that user turn and replaces it. |
 | `assistant_delta` | session | A streamed chunk of assistant output. Additive `response_id` names the model response it belongs to (TD-5159); text the daemon writes itself (a failure, a progress note) has none. |
@@ -596,15 +622,16 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `checkpoint_notice` | session | A one-time notice that checkpointing is degraded. |
 | `verify_started` | session | An after-write review started running (TD-5158). It runs after `turn_complete` and holds the loop until its `verify_result`, so the window shows Stop in that span (Stop ends it, TD-5151). Not in the timeline. A review a restart cut off gets a `verify_result` (`error`, "Not reviewed: TST Desk restarted during the review.") on restore. |
 | `verify_result` | session | Interactive validator review of a write turn. Timeline only; not a chat bubble (TD-4204). |
-| `cost_update` | session | Accrued spend: this turn, this session, all time, by tier, and the classifier separately. |
+| `cost_update` | session | Accrued spend: this turn, this session, all time, by tier, and the classifier separately. A `consult` call (TD-5119) counts on the tier it asked, in the turn that made it; a delegate child's lands on its parent's session. |
 | `boundary_update` | session | The resolved workspace boundary and caps, and where they came from. Additive `config_trust` (TD-5113) is set when the workspace config loosens anything: `state` (`pending`, `trusted` or `declined`), its `sha256`, and each loosened setting with its default. Pending and declined run on packaged defaults. |
 | `turn_complete` | session | A finished turn: tokens, cost, tier, duration, and any failure code. A turn a restart cut is sealed once at revive with `failed`, zeros and `error_code: interrupted_by_restart` (TD-5018). |
-| `tier_state` | session | The active tier, any pinned override, slugs, preset, hosts (TD-1720), and plan-mode lock (TD-4603). Native-engine sessions only. |
+| `tier_state` | session | The active tier, any pinned override, slugs, preset, hosts (TD-1720), and plan-mode lock (TD-4603). Native-engine sessions only. Additive `fallbacks` maps a tier that moved to a backup endpoint this turn to the backup's 1-based position in its list; `model_slugs` and `hosts` then name the backup (TD-5120). |
 | `context_compacted` | session | Older turns were compacted to fit the context window. Never silent. Additive `trigger` (`auto` \| `manual` \| `from_here`) and `guidance` say who asked and what to keep (TD-5109). The trigger `inflight_trim` is not compaction: the loop trimmed the middles of this turn's tool results and no message left, so `dropped_messages` counts the results trimmed. The window shows it as a quieter "Trim" row that leads with the results trimmed and the tokens freed (TD-5150). The trigger `clear_stale` is not compaction either: before any turn is compacted, tool results from earlier turns were replaced with a one-line placeholder naming the tool, its target and the size that went (`clear_tool_results` in config.yaml), and no message left, so `dropped_messages` counts the results cleared. The window shows it as the same quiet "Trim" row, previewed "Cleared earlier tool results" (TD-5115). |
-| `context_usage` | session | The next request's estimated tokens against the tier's window and its compaction point, for the title-bar gauge. Sent before each model call and after a compaction (TD-5109). |
+| `context_usage` | session | The next request's estimated tokens against the tier's window and its compaction point, for the title-bar gauge. Sent before each model call and after a compaction (TD-5109). Additive `model` names the model the figures are for, and `fallback` its 1-based position in the tier's `fallbacks` (0 for the tier's own model): on a backup the window and the calibrated estimate are the backup's (TD-5120). |
 | `steering_reloaded` | session | Steering files were re-resolved after a detected change. |
 | `rule_activated` | session | A path-scoped rule entered the prompt because a matching file was touched. |
 | `tier_switched` | session | The active tier was overridden, naming the previous tier. |
+| `model_fallback` | session | A tier's endpoint failed after its retry budget (`reason`: a refused or dropped connection, 5xx, rate limit, timeout or stalled stream; `stream_interrupted` for a reply the endpoint cut off partway by dropping or with an in-band 429 or 5xx) and the same request went to the next backup in the tier's `fallbacks`: `from_model`/`from_host` to `to_model`/`to_host`, `fallback` its 1-based position (TD-5120). Text the failed call showed was withdrawn first (`assistant_retract`). Later calls in the turn stay on the backup; the next turn starts on the tier's own model. |
 | `instruction_stack` | session | The resolved steering stack: sources, tokens, imports, cache state, and skills (TD-4502), each with the frontmatter keys it ignored and whether only `/name` loads it (TD-5107). |
 | `instruction_files` | connection | The workspace's Instructions column: root steering plus `.tst/rules/*` (TD-2802). |
 | `command_list` | connection | The workspace's slash commands: name, description, source, body (TD-4501). |

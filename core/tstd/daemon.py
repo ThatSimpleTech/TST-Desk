@@ -458,6 +458,7 @@ from .session import (
     SessionRunner,
 )
 from .session_lifecycle import (
+    BUSY_CODE,
     apply_workspace_config,
     archive_session,
     boundary_update_event,
@@ -1001,7 +1002,7 @@ class Daemon:
         )
         self._slug_snapshot = _snapshot_slugs(self.config)
         self._provider = provider
-        self._clients: dict[tuple[str, str], ProviderLike] = {}
+        self._clients: dict[tuple[str, str, tuple[float | None, ...]], ProviderLike] = {}
         self._pending_memory: dict[str, DistillEmit] = {}
         # Built when the daemon starts serving — the audit database only
         # appears on disk once the daemon actually runs (TD-902).
@@ -1152,8 +1153,9 @@ class Daemon:
 
         An injected constructor provider (tests) is returned for every
         tier so a mock stays in front of the loop. Production caches one
-        handle per ``(base_url, credential)`` so two keys on one host do
-        not share a client, and a remapped local worker (TD-3903) does
+        handle per ``(base_url, credential, timeouts)`` so two keys on one
+        host do not share a client, a backup endpoint gets its own
+        timeouts (TD-5120), and a remapped local worker (TD-3903) does
         not reuse the remote brain client. The handle, not the HTTP
         client, is what the session loop keeps. An authentication failure
         closes the HTTP client and rebuilds it from the keychain (TD-4840).
@@ -1163,7 +1165,9 @@ class Daemon:
             return self._provider
         base_url = resolve_base_url(self.config, tier_cfg)
         cred_id = resolve_credential_id(tier_cfg) or ""
-        cache_key = (base_url, cred_id)
+        # The client carries its timeouts, so a tier or backup (TD-5120)
+        # with other timeouts on the same host and key gets its own.
+        cache_key = (base_url, cred_id, tier_cfg.timeout_key())
         cached = self._clients.get(cache_key)
         if cached is not None:
             return cached
@@ -1478,6 +1482,14 @@ class Daemon:
     async def _delete_named_credential(self, credential_id: str) -> None:
         """Drop catalog row, secret, and tier bindings."""
         cred_id = credential_id.strip()
+        backups = self.config.fallback_bindings(cred_id)
+        if backups:
+            # A backup is config only (TD-5120): nothing here can unbind it,
+            # and deleting its key would leave a config that no longer loads.
+            raise ConfigError(
+                f"The key {cred_id!r} is used by {', '.join(backups)} in config.yaml. "
+                "Remove it there first."
+            )
         bound: list[tuple[str, str]] = []
         for preset_name, preset in self.config.presets.items():
             for tier_name in ("brain", "worker", "validator"):
@@ -2602,6 +2614,30 @@ class Daemon:
                     session_id=msg.session_id,
                     in_reply_to=msg.type,
                 )
+            # TD-5118: Grok's own tools never meet TST Desk's policy gate, so
+            # a rule could not be kept there. Refused rather than dropped:
+            # a --deny that silently did nothing would be worse than none.
+            run = msg.run_permissions
+            if run is not None and (run.allow or run.deny) and found.engine == "grok":
+                return build_error(
+                    "run_rules_unsupported",
+                    "This session runs on the Grok engine, whose tools TST Desk's "
+                    "policy does not judge, so --allow and --deny cannot hold there. "
+                    "Use --on-ask alone, or a native session.",
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
+                )
+            # Checked with no await before add_user_message counts the turn,
+            # so of two sends that both saw the session idle only one gets
+            # in (TD-5160: `tst run --continue` races its own list_sessions).
+            if msg.only_if_idle and found.turn_in_flight:
+                return build_error(
+                    BUSY_CODE,
+                    "This session is running a turn. Let it finish, or answer its "
+                    "approval in the TST Desk window, then send again.",
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
+                )
             # Attachment caps and the text/binary test are enforced here
             # (TD-1709), not in the composer: the client is not trustworthy,
             # so a UI-only gate is no gate at all. A refusal drops the whole
@@ -2640,7 +2676,9 @@ class Daemon:
             provider = build_provider_user_content(msg.content, decoded)
             try:
                 await found.add_user_message(
-                    QueuedUserMessage(display=display, provider=provider),
+                    QueuedUserMessage(
+                        display=display, provider=provider, run_permissions=msg.run_permissions
+                    ),
                     refuse_unsaved=True,
                     steer=msg.steer,
                 )
@@ -2648,7 +2686,9 @@ class Daemon:
                 # Accepted means saved (TD-5155): a send that cannot reach
                 # the queue file is refused, and the window puts the text
                 # back in the composer, instead of being lost to the next
-                # restart without a word (TD-5158).
+                # restart without a word (TD-5158). The text claims nothing
+                # about the composer: older windows and every installed APK
+                # show it as is and do not give the text back (TD-5160).
                 found.pending_images = []
                 log.warning(
                     "user message not saved; refused",
@@ -2658,8 +2698,7 @@ class Daemon:
                 return build_error(
                     "message_not_saved",
                     f"Couldn't save the message to disk ({reason}), so it was not sent. "
-                    "It is back in the composer; check that TST Desk's data folder is "
-                    "writable, then send it again.",
+                    "Check that TST Desk's data folder is writable, then send it again.",
                     session_id=msg.session_id,
                     in_reply_to=msg.type,
                 )
@@ -4085,10 +4124,17 @@ class Daemon:
         return self.config.active_preset
 
     def _bind_session_preset(self, sess: Session, name: str) -> str:
-        """Point *sess* at a catalog snapshot. Does not write Settings."""
+        """Point *sess* at a catalog snapshot. Does not write Settings.
+
+        The new snapshot also carries the live ``shell.read_only`` list, so
+        a running loop rebinds its wall to it (TD-5160): the classifier
+        must not auto-run from a list the user has since shrunk.
+        """
         chosen = self._resolved_preset(name)
         sess.preset = chosen
         sess.config = self.config.model_copy(update={"active_preset": chosen})
+        if sess.on_config_reloaded is not None:
+            sess.on_config_reloaded()
         return chosen
 
     async def _handle_trust_workspace_config(self, msg: TrustWorkspaceConfig) -> str | None:
