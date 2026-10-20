@@ -42,6 +42,8 @@
 	import PlayfulBackground from "../PlayfulBackground.svelte";
 	import HeldMessages from "./HeldMessages.svelte";
 	import QueuedMessages from "./QueuedMessages.svelte";
+	import TaskStrip from "./TaskStrip.svelte";
+	import { taskListFor } from "../../task-list-store.svelte.js";
 	import WakeupCard from "../WakeupCard.svelte";
 	import { bindWakeup, startWakeup } from "../../wakeup.svelte.js";
 
@@ -197,6 +199,9 @@
 				<span class="duration">Worked for {formatTurnDuration(chat.lastTurnDuration)}</span>
 			{/if}
 		</div>
+		<!-- TD-5122: the agent's task list, the phone's view of the plan.
+		     Renders nothing while there is no unfinished list. -->
+		<TaskStrip items={taskListFor(session.sessionId)} />
 		<!-- TD-5155: what a restart left held, above the pane's own queue.
 		     Renders nothing while nothing is held. -->
 		<HeldMessages

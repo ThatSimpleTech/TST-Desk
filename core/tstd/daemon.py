@@ -484,6 +484,7 @@ from .speech import transcribe as transcribe_speech
 from .steering_proposals import decide as decide_steering
 from .steering_proposals import expire_restored as expire_restored_steering
 from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
+from .task_list import keep_task_list_visible, restore_task_list
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
 from .turn_seal import (
     INTERRUPTED_BY_RESTART,
@@ -3747,6 +3748,8 @@ class Daemon:
         # TD-5155: messages accepted before the stop come back held.
         rows = await asyncio.to_thread(self._session_persist.load_queue, session_id)
         await restore_queue(sess, rows, loaded.events)
+        # TD-5122: the task list is the newest one the log kept.
+        restore_task_list(sess, loaded.events)
         # TD-5140: open steering proposals lived in the old process's memory.
         await expire_restored_steering(sess, loaded.events)
         await self._seal_cut_review(sess, loaded.events)
@@ -4340,6 +4343,8 @@ class Daemon:
         # TD-5155: held messages whose list the log window trimmed away
         # are logged again, so this replay shows them.
         await keep_held_visible(session)
+        # TD-5122: so is the task list, which the Plan pane shows.
+        await keep_task_list_visible(session)
         # Replay from from_seq. A rotated prefix is a typed notice, then
         # the same gap/dup rules over whatever is still in the window.
         earliest = session.event_log.earliest_seq

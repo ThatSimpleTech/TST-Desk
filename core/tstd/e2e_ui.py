@@ -21,7 +21,7 @@ from pathlib import Path
 from .daemon import Daemon
 from .keychain import KeychainBackend, KeychainError, store_api_key
 from .mock import MockProvider, Script
-from .protocol import AssistantDelta, TurnComplete, UserTurn
+from .protocol import AssistantDelta, TaskList, TaskListItem, TurnComplete, UserTurn
 from .provider import ChatMessage
 from .session_persist import SessionPersist
 from .session_store import SessionStore
@@ -31,6 +31,13 @@ _REPLY = "E2E reply from the mock model."
 # with its Send and Remove (TD-5158).
 _HELD = ("Also list the files", "And say goodbye")
 _HELD_SESSION = "e2e-held"
+# The task list the agent left in that session (TD-5122): the strip
+# above the composer shows it, and the Plan pane.
+_TASKS = (
+    ("Read the failing test", "done"),
+    ("Fix the date parser", "in_progress"),
+    ("Run the suite", "pending"),
+)
 
 
 class MemoryKeychain(KeychainBackend):
@@ -91,7 +98,7 @@ def _prepare_workspace(workspace: Path) -> None:
 
 
 async def _seed_held_session(data_dir: Path, workspace: Path) -> None:
-    """A finished exchange plus two queued messages, as a restart leaves them."""
+    """A finished exchange, its task list and two queued messages, as a restart leaves them."""
     sid = _HELD_SESSION
     store = SessionStore(data_dir)
     await store.upsert(sid, str(workspace), "idle")
@@ -105,6 +112,14 @@ async def _seed_held_session(data_dir: Path, workspace: Path) -> None:
         UserTurn(session_id=sid, turn_id="t1", content="Say hello", seq=1),
         AssistantDelta(session_id=sid, delta="Hello.", seq=2),
         TurnComplete(session_id=sid, tokens=1, cost=0.0, tier="brain", duration=0.1, seq=3),
+        TaskList(
+            session_id=sid,
+            items=[
+                TaskListItem.model_validate({"content": content, "status": status})
+                for content, status in _TASKS
+            ],
+            seq=4,
+        ),
     ):
         persist.append_event(sid, event)
     persist.save_conversation(
@@ -169,6 +184,7 @@ async def serve(runtime_file: Path) -> None:
             "reply": _REPLY,
             "held": list(_HELD),
             "held_session": _HELD_SESSION,
+            "tasks": [content for content, _ in _TASKS],
         }
         await asyncio.to_thread(_write_runtime, runtime_file, payload)
         print(json.dumps(payload), flush=True)

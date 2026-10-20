@@ -1243,6 +1243,18 @@ stands for, which is how a message is found again. The timeline records each com
 who asked for it, the token counts before and after, and the guidance. Grok sessions keep Grok's
 own slash commands and don't show the gauge.
 
+**The task list outlives compaction (TD-5122).** On the native engine the agent can keep a task
+list with its `task_list` tool: each call sends the whole list, every item `pending`,
+`in_progress` or `done`, and replaces the last one. Every compaction, by the budget or by any of
+the three ways above, ends its summary with the list as it stands, under
+`[Kept across compaction]`, so the plan stays in front of the model after the turns that made it
+are summarized. A later compaction carries only the newest list. The Plan pane shows the list,
+and a strip above the composer shows how far along it is and the item in progress; tap it to see
+every item. On a phone the strip is where the list shows, since the chat is the one pane on
+screen. The strip goes away once every item is done; the Plan pane keeps the finished list. The
+list is saved with the session's events and comes back after a restart. A delegated worker or
+research child has no task list.
+
 **How the prompt is measured (TD-5007).** The estimate counts the message text, the tool-call
 arguments, every tool definition the request sends (as the request serializes it — a few
 thousand tokens on every call), and 4 tokens of chat-template overhead per message. It starts at
@@ -1975,6 +1987,10 @@ a model call to judge them. That includes `.env` and other secret files. A rule 
 to guard a file, name it for both tools that read contents. The same rules keep the
 read-only shell list (§2 `shell`, TD-5103) off the file: `cat .env`, `grep -r KEY .` and
 `git show HEAD:.env` ask instead of running.
+
+**The task list never asks (TD-5122).** `task_list` changes only the session's own list, never
+a file or a host, so it is Class A by a fixed rule and runs with no card in any mode. A policy
+rule naming `task_list` still wins. An MCP or plugin tool with that name gets no such grant.
 
 <!-- verify: workspace -->
 ```yaml

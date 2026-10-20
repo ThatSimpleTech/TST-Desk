@@ -25,6 +25,11 @@ summary's first line says how many user turns it stands for, and
 :func:`window_user_turns` maps the window's numbers back onto the
 conversation.  The count lives in the summary itself, so it survives a
 restart and a fork with no counter to keep in step.
+
+A compaction can carry text that is still current into its summary
+(TD-5122): the session's task list. It goes under ``_CARRY_HEADER``,
+after the capped summary, so the cap never cuts it. A later compaction
+drops the old copy when it folds that summary in and carries a fresh one.
 """
 
 from __future__ import annotations
@@ -57,6 +62,9 @@ MAX_GUIDANCE_CHARS = 500
 _SUMMARY_HEADER = "[Earlier conversation compacted]"
 # The header line with the user turns the summary stands for (TD-5109).
 _SUMMARY_TURNS = re.compile(re.escape(_SUMMARY_HEADER) + r" \((\d+) user turns?\)")
+# What a summary carries as still current goes under this line (TD-5122).
+_CARRY_HEADER = "[Kept across compaction]"
+_CARRY_MARK = f"\n\n{_CARRY_HEADER}\n"
 
 
 @dataclass(frozen=True)
@@ -163,6 +171,18 @@ def guidance_terms(guidance: str) -> frozenset[str]:
     return frozenset(w.lower() for w in re.findall(r"[A-Za-z0-9_][\w.-]{3,}", guidance))
 
 
+def _with_carry(summary: str, carry: str) -> str:
+    """*summary* with *carry* under the carry header, if there is any."""
+    carry = carry.strip()
+    return f"{summary}{_CARRY_MARK}{carry}" if carry else summary
+
+
+def _without_carry(text: str) -> str:
+    """A prior summary without what it carried: a fresh copy replaces it."""
+    cut = text.find(_CARRY_MARK)
+    return text if cut < 0 else text[:cut]
+
+
 def _render_summary(dropped: list[ChatMessage], guidance: str = "", turns: int = 0) -> str:
     """Deterministic extractive summary of the dropped span.
 
@@ -205,7 +225,7 @@ def _render_summary(dropped: list[ChatMessage], guidance: str = "", turns: int =
         elif message.role == "tool":
             lines.append((f"Tool result: {_truncate(text, limit)}", hit))
         else:  # system: only a prior summary can land here — fold it in
-            lines.append((text, True))
+            lines.append((_without_carry(text), True))
 
     def render(kept: list[tuple[str, bool]]) -> str:
         return "\n".join([*header, *(line for line, _ in kept)])
@@ -278,10 +298,13 @@ def maybe_compact(
     tier: TierConfig,
     counter: TokenCounter,
     tools: Sequence[ToolDefinition] | None = None,
+    *,
+    carry: str = "",
 ) -> tuple[list[ChatMessage], CompactionStats | None]:
     """Compact older turns when the estimated prompt exceeds the tier's
     budget. *tools* are the definitions the next request sends; they
-    count against the budget but are never compacted. Returns the
+    count against the budget but are never compacted. *carry* goes into
+    the summary whole, as still current (TD-5122). Returns the
     (possibly unchanged) message list and stats when compaction happened
     (None otherwise)."""
     if not messages:
@@ -295,7 +318,8 @@ def maybe_compact(
         # conversation is recent. Nothing older exists to drop.
         return messages, None
     turns = _user_turns(messages[1:cut])
-    summary = ChatMessage(role="system", content=_render_summary(messages[1:cut], turns=turns))
+    text = _with_carry(_render_summary(messages[1:cut], turns=turns), carry)
+    summary = ChatMessage(role="system", content=text)
     compacted = [messages[0], summary, *messages[cut:]]
     tokens_after, _ = estimate_tokens(compacted, counter, tools)
     return compacted, CompactionStats(
@@ -315,13 +339,15 @@ def compact_on_request(
     *,
     guidance: str = "",
     from_position: int | None = None,
+    carry: str = "",
 ) -> tuple[list[ChatMessage], CompactionStats] | None:
     """Compact now, whatever the budget says (TD-5109).
 
     Without *from_position*: summarize everything between the system
     message and the last user turn, which stays verbatim.  With it (the
     index of a user message): summarize that turn and everything after
-    it, and keep everything before it verbatim.  Returns None when there
+    it, and keep everything before it verbatim.  *carry* goes into the
+    summary whole, as still current (TD-5122).  Returns None when there
     is nothing to summarize.
     """
     if not messages or messages[0].role != "system":
@@ -339,7 +365,9 @@ def compact_on_request(
     dropped = messages[start:end]
     turns = _user_turns(dropped)
     tokens_before, method = estimate_tokens(messages, counter, tools)
-    summary = ChatMessage(role="system", content=_render_summary(dropped, guidance, turns))
+    summary = ChatMessage(
+        role="system", content=_with_carry(_render_summary(dropped, guidance, turns), carry)
+    )
     compacted = [*messages[:start], summary, *messages[end:]]
     tokens_after, _ = estimate_tokens(compacted, counter, tools)
     return compacted, CompactionStats(

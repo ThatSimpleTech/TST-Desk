@@ -14,6 +14,8 @@ export interface Runtime {
 	 *  the archived session holding them. */
 	held: string[];
 	held_session: string;
+	/** The task list seeded in that session, in order (TD-5122). */
+	tasks: string[];
 }
 
 export function runtime(): Runtime {

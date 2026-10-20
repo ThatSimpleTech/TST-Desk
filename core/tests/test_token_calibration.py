@@ -341,9 +341,11 @@ async def test_compaction_and_fit_see_the_learned_ratio(
         tier: TierConfig,
         counter: TokenCounter,
         tools: Sequence[ToolDefinition] | None = None,
+        *,
+        carry: str = "",
     ) -> tuple[list[ChatMessage], CompactionStats | None]:
         _record("compact", messages, counter, tools)
-        return real_compact(messages, tier, counter, tools)
+        return real_compact(messages, tier, counter, tools, carry=carry)
 
     def _fit(
         messages: list[ChatMessage], tier: TierConfig, counter: TokenCounter, **kwargs: Any

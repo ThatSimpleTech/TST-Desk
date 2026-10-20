@@ -1,9 +1,12 @@
 <script lang="ts">
 	import EmptyState from './EmptyState.svelte';
+	import TaskListView from './TaskListView.svelte';
 	import { approveGrokPlan, grok } from '../grok.svelte.js';
 	import { staysOnCopy } from '../machines';
 	import { machineNameFor } from '../machines.svelte.js';
 	import { session } from '../session-status.svelte.js';
+	import { progressLabel } from '../task-list';
+	import { taskListFor } from '../task-list-store.svelte.js';
 
 	let comment = $state('');
 
@@ -16,15 +19,23 @@
 	// TD-5015: Grok's plan for another computer's session stays there; the
 	// plan held here is this computer's last one.
 	let remoteName = $derived(machineNameFor(session.sessionId));
+	// TD-5122: the native loop's task list. Display only, so another
+	// computer's session shows its list too: the hub forwards the events.
+	let tasks = $derived(taskListFor(session.sessionId));
 </script>
 
 <div class="plan">
-	{#if remoteName !== null}
+	{#if tasks.length > 0}
+		<section class="native" aria-label="Task list">
+			<p class="progress">Tasks · {progressLabel(tasks)}</p>
+			<TaskListView items={tasks} />
+		</section>
+	{:else if remoteName !== null}
 		<EmptyState align="start" body={staysOnCopy(remoteName)} />
 	{:else if !hasPlan}
 		<EmptyState
 			align="start"
-			body="When Grok is in plan mode, the plan lands here. Approve it to start implementing, or type a revision note first."
+			body="The agent's task list lands here as it works. In Grok's plan mode the plan lands here too: approve it to start implementing, or type a revision note first."
 		/>
 	{:else}
 		{#if grok.planEntries.length > 0}
@@ -60,6 +71,16 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-3);
+	}
+	.native {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-2);
+	}
+	.progress {
+		margin: 0;
+		color: var(--color-ink-muted);
+		font-size: var(--text-sm);
 	}
 	.entries {
 		margin: 0;

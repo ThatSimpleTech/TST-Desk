@@ -209,5 +209,8 @@
 		"Files",
 		"More",
 		"Work"
+	],
+	"tasks": [
+		"Task list"
 	]
 }

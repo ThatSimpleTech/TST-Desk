@@ -75,6 +75,7 @@
 	import { localWorkspacePath, session } from '../session-status.svelte.js';
 	import { startCuKill, setCuKill } from '../cu-kill.svelte.js';
 	import { startGrok } from '../grok.svelte.js';
+	import { startTaskLists } from '../task-list-store.svelte.js';
 	import { startVoice } from '../voice.svelte.js';
 	import { resolveShortcut, sessionSlot } from '../shortcuts';
 	import { sessionIdAtSlot, stepSessionId } from '../rail';
@@ -198,6 +199,7 @@
 		const offCoworker = startCoworkerIndicator();
 		const offCuKill = startCuKill();
 		const offGrok = startGrok();
+		const offTaskLists = startTaskLists();
 		const offVoice = startVoice();
 		let offUpdates = () => {};
 		void startUpdates().then((off) => {
@@ -241,6 +243,7 @@
 			offCoworker();
 			offCuKill();
 			offGrok();
+			offTaskLists();
 			offVoice();
 			offUpdates();
 			offCloseHint();

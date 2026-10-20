@@ -143,6 +143,7 @@ from .router import TierName, TierRouter
 from .session import Session, SessionEventLog
 from .shell_read_only import probe_git
 from .steer import inject_steers
+from .task_list import carry_text
 from .tools import ToolDispatcher, ToolRegistry
 from .tools.boundary import PathGuard
 from .tools.dispatch import build_decision_request, canonicalize_path_fields
@@ -1213,7 +1214,11 @@ async def _fit_prompt(
     await _clear_stale_results(
         session, messages, tier, tier_cfg, counter, tool_definitions, clear_policy
     )
-    compacted, compaction = maybe_compact(messages, tier_cfg, counter, tool_definitions)
+    # The task list rides into the summary (TD-5122): the call that made
+    # it may be among the turns this drops.
+    compacted, compaction = maybe_compact(
+        messages, tier_cfg, counter, tool_definitions, carry=carry_text(session.task_list)
+    )
     if compaction is not None:
         messages[:] = compacted
         await session.event_log.add(

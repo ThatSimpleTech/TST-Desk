@@ -220,6 +220,8 @@ from tstd.protocol import (
     SteeringReject,
     SteeringReloaded,
     SteerPoint,
+    TaskList,
+    TaskListItem,
     TestEmail,
     TierState,
     TierSwitched,
@@ -958,6 +960,15 @@ FIXTURES = {
         context_window=65536,
         compact_at=49152,
         seq=18,
+    ),
+    "task_list": TaskList(
+        session_id="sess-1",
+        items=[
+            TaskListItem(content="Read the failing test", status="done"),
+            TaskListItem(content="Fix the date parser", status="in_progress"),
+            TaskListItem(content="Run the suite", status="pending"),
+        ],
+        seq=19,
     ),
     "tier_switched": TierSwitched(
         session_id="sess-1",

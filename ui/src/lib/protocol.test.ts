@@ -79,6 +79,7 @@ import type {
   TurnComplete,
   ContextCompacted,
   SteeringReloaded,
+  TaskList,
   RuleActivated,
   TierSwitched,
   InstructionStack,
@@ -938,6 +939,14 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(m.compact_at).toBeLessThan(m.context_window);
   });
 
+  it("task_list (TD-5122)", () => {
+    const m = fixtures.task_list as TaskList;
+    expect(m.type).toBe("task_list");
+    expect(isString(m.session_id)).toBe(true);
+    expect(m.items.map((i) => i.status)).toEqual(["done", "in_progress", "pending"]);
+    for (const item of m.items) expect(isString(item.content)).toBe(true);
+  });
+
   it("steering_reloaded", () => {
     const m = fixtures.steering_reloaded as SteeringReloaded;
     expect(m.type).toBe("steering_reloaded");
@@ -1172,7 +1181,7 @@ describe("All fixtures have required shape", () => {
       "tool_result_truncated", "tool_result_diff", "tool_result_read_only", "tool_result_denied",
       "shell_output", "tool_progress", "approval_request", "approval_request_always_allow", "decision_logged",
       "checkpoint_notice", "verify_result", "cost_update", "boundary_update", "boundary_update_config_trust", "turn_complete",
-      "tier_state", "tier_state_plan", "context_compacted", "context_compacted_manual", "context_compacted_inflight_trim", "context_compacted_clear_stale", "context_usage", "steering_reloaded", "rule_activated", "tier_switched",
+      "tier_state", "tier_state_plan", "context_compacted", "context_compacted_manual", "context_compacted_inflight_trim", "context_compacted_clear_stale", "context_usage", "task_list", "steering_reloaded", "rule_activated", "tier_switched",
       "instruction_stack", "instruction_files", "command_list", "context_pins", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "steering_proposal", "steering_decision", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",

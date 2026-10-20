@@ -39,6 +39,7 @@ from .search import DEFAULT_MAX_RESULTS, STOPPED, glob_crosses_folders, glob_mat
 from .send_file import send_file
 from .shell import ShellPolicy, run_shell
 from .steering_edit import propose_steering_edit
+from .task_list import task_list
 from .web_search import web_fetch, web_search
 from .write import fs_edit, fs_write
 
@@ -317,6 +318,7 @@ def register_builtin_handlers(
     register_delegate_handlers(dispatcher)
     dispatcher.register_handler("send_file", partial(send_file, service=sent_files))
     dispatcher.register_handler("propose_steering_edit", propose_steering_edit)
+    dispatcher.register_handler("task_list", task_list)
     from ..connectors.github_tools import register_github_handlers
 
     register_github_handlers(dispatcher)
