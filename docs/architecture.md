@@ -120,6 +120,31 @@ TTY, `tst run` prints copy to use the window and exits rather than hanging
 on stdin. The headless harness (TD-1401) stays the mock path; `tst run` is
 not a second harness.
 
+**`tst run` for scripts (TD-5111)** adds no protocol message. `--session <id>`
+and `--continue` send `list_sessions`, pick the row (the named id, or the
+local, unarchived session of `--workspace` that has not ended, newest by
+`updated_at`, which the daemon moves when a turn starts), refuse it while
+`busy`, then `attach` from `event_count + 1` so no earlier turn replays,
+and send `user_message`. The turn is the events from the `user_turn`
+carrying that message to its `turn_complete`; a `[REDACTED]` in that
+`user_turn` stands for the secret-shaped text the daemon scrubbed. The message comes
+from `--message`, or from stdin for `--message -` or no `--message` (a
+terminal is read only for `-`). `--output json` prints one object,
+`{session_id, status, reply, cost, error}`, where `cost` is
+`turn_complete.cost` and `error` is `null` or `{code, message}`;
+`--output ndjson` prints each of the session's events as received, one per
+line. Errors and refusals go to stderr in every mode. Neither machine mode
+prompts: an `approval_request` ends the run and the turn waits for the
+window. Exit codes:
+
+| Code | `status` | Meaning |
+|---|---|---|
+| 0 | `success` | The turn completed and no tool call was refused |
+| 1 | `error` | The turn failed, the daemon refused the message, or the run timed out or lost the daemon |
+| 2 | — | Usage error (argparse, or no message) |
+| 3 | `refused` | The turn completed, but a gate refused a tool call: `boundary_refusal`, `policy_denied` or `approval_denied` |
+| 4 | `approval_needed` | A call is waiting for approval that this run could not give |
+
 **`tst attach` (TD-3102)** is the same door in follow mode. Same port file and
 `hello`. It sends `attach{session_id, from_seq}` (default 1), prints assistant
 text the way `tst run` does, and prints one-line text for `turn_complete` and
@@ -489,8 +514,10 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_credential` | — | Create or rename a named API key without touching the secret (TD-1717). Optional `base_url` sets or clears the host that key talks to (TD-1722). |
 | `delete_credential` | — | Remove a named key, its secret, and tier bindings (TD-1717). |
 | `set_tier_credential` | — | Bind a named API key to one tier of one preset (TD-1717). That key's `base_url` is the host the tier calls when set (TD-1718). |
-| `set_mcp_server` | — | Create or replace one listed MCP server (id, transport, command argv and/or url, enabled). No `env` field. Acked with `setup_state` (TD-4403). |
-| `delete_mcp_server` | — | Remove one listed MCP server by id. Unknown id is a typed error. Acked with `setup_state` (TD-4403). |
+| `set_mcp_server` | — | Create or replace one listed MCP server (id, transport, command argv and/or url, enabled). No `env` or `headers` field; the server's existing ones are kept, unless the transport changes, which drops them and deletes their keychain items (TD-5110). Acked with `setup_state` (TD-4403). |
+| `delete_mcp_server` | — | Remove one listed MCP server by id, and delete the keychain items its `env` / `headers` named (TD-5110). Unknown id is a typed error. Acked with `setup_state` (TD-4403). |
+| `set_mcp_secret` | — | Store one env var (stdio) or header (http) of a listed MCP server (`server_id`, `target`, `name`, `value`) in the keychain item `tst-mcp.<server_id>.<entry>`; `config.yaml` gets only `keychain:<entry>`. The value never appears in any event, log or audit record. Acked with `setup_state` (TD-5110). |
+| `delete_mcp_secret` | — | Remove one env var or header from a listed MCP server, and the keychain item it named. Acked with `setup_state` (TD-5110). |
 | `run_diagnostics` | — | Run the doctor checks. |
 | `get_usage` | — | Ask for token and cost rollups by session, day and week (TD-1706). |
 | `export_usage` | — | Write a usage export; the daemon chooses the path and reports it back, so the verb cannot write anywhere the client names (TD-1706). |
@@ -534,7 +561,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 |---|---|---|
 | `ready` | connection | Daemon and protocol versions. Declared and parseable, but not emitted in v0.1. |
 | `session_state` | session | A session state transition, with an optional reason. Additive `engine` (`native` \| `grok`) names the loop this session started with. |
-| `user_turn` | session | A user message the loop accepted, so replay can show the user's side without inventing it. `turn_id` is the queued message's own id (TD-5155). |
+| `user_turn` | session | A user message the loop accepted, so replay can show the user's side without inventing it. `turn_id` is the queued message's own id (TD-5155). Logging it moves the session's `updated_at`, so `session_list` orders by use (TD-5111). |
 | `queued_messages` | session | The messages a restart left held, in order, whole each time (TD-5155): `queued_id`, `content` (what the `user_turn` will show) and `images_dropped` (attached images the queue file did not keep). Logged after a restart that left any and on every `send_queued` or `remove_queued`, and logged again when the log window trimmed the last one away, so the latest in a replay is the list. Nothing in it is sent until the person picks Send. |
 | `conversation_reset` | session | The conversation forked or a sibling was selected. The viewer drops rows after that user turn and replaces it. |
 | `assistant_delta` | session | A streamed chunk of assistant output. |
@@ -557,7 +584,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `steering_reloaded` | session | Steering files were re-resolved after a detected change. |
 | `rule_activated` | session | A path-scoped rule entered the prompt because a matching file was touched. |
 | `tier_switched` | session | The active tier was overridden, naming the previous tier. |
-| `instruction_stack` | session | The resolved steering stack: sources, tokens, imports, cache state, and skills (TD-4502). |
+| `instruction_stack` | session | The resolved steering stack: sources, tokens, imports, cache state, and skills (TD-4502), each with the frontmatter keys it ignored and whether only `/name` loads it (TD-5107). |
 | `instruction_files` | connection | The workspace's Instructions column: root steering plus `.tst/rules/*` (TD-2802). |
 | `command_list` | connection | The workspace's slash commands: name, description, source, body (TD-4501). |
 | `context_pins` | connection | The workspace's Context column: pinned files and folders (TD-2804). |
@@ -572,11 +599,11 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `machine_list` | connection | The paired computers: id, name, host, port, `status` (`connected`, `connecting`, `unreachable`, `refused`, `locked`, `outdated`), last seen, paired at, `same_computer` for a self-pair, and a `detail` line. Never a key. The reply to the four machine verbs, and pushed to viewers when one changes; never sent to a machine peer (TD-5015). |
 | `drain_result` | connection | Reply to `drain`, to that connection only: `drained` (no turn open at all), the session ids still `running`, `paused` for the person (the progress guard or a cap, TD-5155) or in `awaiting_approval` (ids only), and `hold_until` (null once released) (TD-5023). Only `running` turns can finish by themselves; `tst drain` exits 0 when none is left unless `--strict`. |
 | `policy_rules` | connection | The workspace's saved policy rules. An `auto` rule with no wildcard carries `exact`, the one text its `args` matches (`app/[[]id]/page.tsx` → `app/[id]/page.tsx`; for `shell`, the command segment once wrappers such as `timeout 60` are stripped). `exact` is null for a glob, and for every `ask` and `never` rule, which also match in another case (TD-5149, TD-5158). |
-| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_engine` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_voice` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach` / `rotate_remote_token` / `cancel_pairing` / `remove_remote_device` / `set_mcp_server` / `delete_mcp_server` / `set_judgments` / `set_email_notify`. `remote_bind` is the bound Tailscale address, never a token. `remote_devices` lists paired devices (id, name, paired_at, last_seen, connected), never a key or its hash (TD-5014). Carries `engine`, `grok_available`, `grok_binary`, `voice_enabled`, and `voice_has_endpoint`. `mcp_servers` is the listed MCP servers (id, transport, command, url, enabled) — never a secret. `speech_enabled` / `speech_ready` are hold-to-talk flags (TD-4701); the speech URL never appears. `judgments_*` echoes the judgment-seam toggles (TD-708 dev). A remote peer (a phone or another computer) gets it without `remote_devices`, `remote_bind` and `remote_port` (TD-5015). `email` is the mail form (enabled, method, host, port, security, username, from_address, password_stored) for TD-3820, TD-4853, and TD-4854; the password never appears. `github` is the connector snapshot (enabled, connected, phase, user code, verification URL, login, message) for TD-4852; tokens and the device code never appear. `microsoft` is the sign-in snapshot (enabled, connected, phase, account, message) for TD-4853; tokens and the authorization code never appear. `google` is the sign-in snapshot (enabled, connected, phase, account, message, client_secret_stored) for TD-4854; the secret, the tokens, and the authorization code never appear. |
+| `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_engine` / `set_tier_slug` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_voice` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach` / `rotate_remote_token` / `cancel_pairing` / `remove_remote_device` / `set_mcp_server` / `delete_mcp_server` / `set_mcp_secret` / `delete_mcp_secret` / `set_judgments` / `set_email_notify`. `remote_bind` is the bound Tailscale address, never a token. `remote_devices` lists paired devices (id, name, paired_at, last_seen, connected), never a key or its hash (TD-5014). Carries `engine`, `grok_available`, `grok_binary`, `voice_enabled`, and `voice_has_endpoint`. `mcp_servers` is the listed MCP servers (id, transport, command, url, enabled, and `env` / `headers` as name, source, entry and stored presence, TD-5110) — never a secret or a literal value. `speech_enabled` / `speech_ready` are hold-to-talk flags (TD-4701); the speech URL never appears. `judgments_*` echoes the judgment-seam toggles (TD-708 dev). A remote peer (a phone or another computer) gets it without `remote_devices`, `remote_bind` and `remote_port` (TD-5015). `email` is the mail form (enabled, method, host, port, security, username, from_address, password_stored) for TD-3820, TD-4853, and TD-4854; the password never appears. `github` is the connector snapshot (enabled, connected, phase, user code, verification URL, login, message) for TD-4852; tokens and the device code never appear. `microsoft` is the sign-in snapshot (enabled, connected, phase, account, message) for TD-4853; tokens and the authorization code never appear. `google` is the sign-in snapshot (enabled, connected, phase, account, message, client_secret_stored) for TD-4854; the secret, the tokens, and the authorization code never appear. |
 | `pairing_code` | connection | Reply to `start_pairing`: the code (and `ABCD-2345` display form), host, port, desktop name, the `tstdesk://pair` link, a QR of it as standalone SVG, and when it expires (TD-5014). |
 | `pairing_completed` | connection | A phone redeemed the code. Carries that device's summary (never its key). Sent to the computer's own loopback windows only (TD-5014). |
 | `api_key_validated` | connection | The result of a key probe. Never carries the key. |
-| `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. |
+| `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. The `skills` row names each skill's ignored frontmatter keys (TD-5107). |
 | `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |
 | `usage_exported` | connection | Where `export_usage` wrote, and how many rows (TD-1706). |
 | `log_trimmed` | connection | Attach asked for a seq the on-disk window dropped. Replay continues from `earliest_seq` (TD-2901). |

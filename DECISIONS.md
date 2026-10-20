@@ -15110,6 +15110,262 @@ too); that case was not in the note and is left as is.
 a provider error now closes the provider stream in a `finally`, so the
 hang-up comes before the turn moves on rather than from the finalizer.
 
+---
+
+## 2026-10-20 — TD-5107: skills with frontmatter TST Desk does not act on load and warn (Class B; revises TD-5011)
+
+TD-5011 skipped a skill that carried `model`, `tools`,
+`disallowed-tools`, `hooks`, `context`, `agent`, a non-default
+`disable-model-invocation` or `user-invocable`, or any unknown key, on the
+grounds that a partial skill must not load. The Agent Skills spec asks
+the opposite of clients: load a skill with fields you do not recognise
+and warn. Imported skills vanished with only a log line.
+
+**Decision:** Only a missing or blank `description`, or a `name`,
+`whenToUse` or `when_to_use` that is not text, still skips a skill. Every
+other key loads with it. Keys fall into four groups: read (`name`,
+`description`, `whenToUse`, `when_to_use`, `compatibility`,
+`disable-model-invocation`), labels that pass silently (`license`,
+`version`, `metadata`, `argument-hint`; they describe and ask nothing),
+`user-invocable` at its default (silent), and everything else, which is
+ignored and listed. `allowed-tools` moves from silent to listed: it is a
+grant TST Desk does not apply, and the user should see that. The list is
+`Skill.ignored_keys` (sorted), logged once per file, sent on the
+inspector's `SkillStackEntry.ignored_keys` (additive, default empty, no
+protocol bump) and named in a new Doctor row, `skills`, after `steering`.
+
+**Decision:** `when_to_use` (Claude Code's key) is read like `whenToUse`.
+When both are set and differ, `whenToUse` (ours) wins and `when_to_use`
+is listed as ignored. `compatibility` is shown to the model on the
+catalog line as "(compatibility: ...)", after "(when to use: ...)". A
+non-text `compatibility` is listed as ignored rather than skipping the
+skill, because TD-5011 loaded any value and a story that loads more
+skills must not start skipping one.
+
+**Decision (the conservative option, a Class C question the story left
+open):** `disable-model-invocation` is honored rather than ignored. Any
+value except `false` or blank makes the skill user-only: it is left out
+of the model's catalog, the `load_skill` tool refuses it, and only the
+user's `/name` (or the composer's "Load skill" marker) attaches it. The
+inspector marks it "slash only" via `SkillStackEntry.user_only`. TD-5011
+rejected this mode because skipping was then the strict answer; once the
+skill must load, ignoring the key would let the model start a workflow
+its author marked manual-only, so honoring it is now the strict answer.
+`user-invocable: false` is listed as ignored instead: the user typing
+`/name` is never a safety question.
+
+**Decision:** Doctor's `skills` row is `ok` when discovery runs, with
+"N skill(s) found; frontmatter keys ignored: name (keys); ...". It names
+skills, never paths (TD-1104). It skips with no workspace, like
+`steering`, and fails only when discovery itself raises. Discovery is
+designed not to raise, so, like the `steering` row, the row catches any
+exception, not just `OSError`: an escaped error closed the window's
+connection with 1011 and Doctor showed no report at all. A `SKILL.md`
+that is not UTF-8 (Windows-1252, or UTF-16 from PowerShell 5.1
+`Out-File`) was the case that raised; discovery now skips it and logs
+it once, like an unreadable file, rather than guessing an encoding, so
+prompt assembly and the inspector survive it too (review finding on
+PR #27). The row status set stays ok/fail/skip: a skill that loaded is
+not a failure, and a new "warn" status would change every viewer.
+
+**Rejected:** Enforcing `disallowed-tools` while the skill is loaded
+(tool-pattern semantics TST Desk does not have; every call still goes
+through the classifier). Mapping `allowed-tools` onto policy rules (as
+TD-5011: a skill would widen permissions by being loaded). A "warn"
+doctor status. Listing labels like `license` as ignored (noise on every
+agentskills.io skill). Capping `compatibility` length in the catalog
+(the spec's 500-character limit is the author's to keep).
+
+---
+
+## 2026-10-20 — TD-5110: keychain-backed env and headers per MCP server (Class B)
+
+TD-4401 and TD-4403 kept every token off `config.yaml` by having no `env`
+at all, so a stdio server's API key could only come from the daemon's own
+environment, which every child inherits. TD-5110 reverses "no env map"
+for the shape the gap audit asked for: literals that are not secrets, or
+references into the keychain.
+
+**Decision (config shape).** `mcp.servers.<id>.env` (stdio) and
+`.headers` (http) map names to a literal or `keychain:<entry>`. The
+keychain item is `tst-mcp.<server id>.<entry>` under the usual service;
+the `.` keeps it out of the credential namespace (`tst-<id>`) the way
+`tst-machine.` does, and putting the server id in the account means one
+server's config can only reach its own items. Entries are lowercase
+`[a-z0-9][a-z0-9_-]{0,63}` because Windows Credential Manager ignores
+case, so `Token` and `token` would share an item. Header names are HTTP
+tokens, listed once ignoring case; `Accept`, `Connection`,
+`Content-Length`, `Content-Type`, `Host` and `Transfer-Encoding` are
+refused because the client sets them or they change how the request is
+read. A value with CR, LF or NUL is refused (header injection). A YAML
+boolean is refused rather than sent as `True`. `env` on an http server or
+`headers` on a stdio one is a doctor `fail`, not a config load error, so
+a hand edit cannot stop the daemon, and not silently ignored either.
+
+**Decision (when the secret is read).** Each item is read when that
+server is started (load or reload), in `tstd/mcp/inject.py`, and passed
+straight to that one client: the stdio child gets `{**os.environ,
+**env}` as its spawn environment, the http client adds the headers to
+its own POSTs (with `Accept` last so it always wins). Nothing touches
+`os.environ`. A missing or unreadable item fails that server with a row
+naming the item and pointing at Settings; the server is never started
+with the value left out, which could make it fall back to an anonymous
+mode the user did not choose.
+The http client is built with an explicit `httpx.AsyncHTTPTransport()`,
+which makes httpx skip its proxy lookup. By default httpx sends a request,
+loopback included unless `NO_PROXY` lists it, through `HTTP_PROXY`,
+`ALL_PROXY` or the macOS or Windows system proxy, which may be off the
+box, and the headers would go with it (found in review of PR #28).
+`trust_env=False` was rejected because it also drops `SSL_CERT_FILE` and
+`SSL_CERT_DIR`, which an https loopback server's own CA may rely on.
+
+**Decision (Settings and the wire).** `set_mcp_server` still refuses
+`env`, `environment` and now `headers`, so nothing typed in Settings can
+land in `config.yaml` as a literal, and a rewrite keeps the server's
+existing maps (like the TD-5105 timeouts). Two new verbs carry the
+secret path: `set_mcp_secret {server_id, target, name, value}` writes
+the keychain first and the `keychain:<entry>` reference second (a failed
+keychain write leaves the file alone), reusing the entry when the name
+already has one, and otherwise `entry_for_name` (lowercased, slugged,
+`-2` on a clash). `delete_mcp_secret` drops the name from the file, then
+the item. Settings never writes a literal value; literals are for hand
+edits, and `setup_state` reports them as names only (`source:
+"literal"`), not their text, in case one was a secret after all.
+`target` is explicit even though the transport implies it, so a message
+can never put a token in the wrong place by inference; the daemon
+refuses a mismatch. Both verbs are allowed from a phone, as `set_api_key`
+is (a phone that can edit a server's command could already exfiltrate
+its env), and refused for machine peers by the deny-by-default list.
+
+**Decision (removing a server deletes its items).** `delete_mcp_server`
+deletes the keychain items the server's maps named, best effort (a
+failure is logged by entry name and the removal still succeeds). Those
+items can no longer be reached by any config (they are scoped to the
+id) and Settings can no longer show them, so leaving them would only
+leave tokens lying in the keychain. Re-adding the server means entering
+the token again. A `set_mcp_server` that changes the transport does the
+same to the old maps: `env` cannot follow a server to http, and kept, it
+would fail the server with no way to remove it from Settings (whose
+remove names the new transport's target).
+
+**Decision (redaction, directive 2).** The log, audit and wire scrubbers
+are pattern-based, and an MCP token can have any shape. `tstd.logging`
+now keeps a process-wide set of exact secret texts
+(`register_secret_value`), replaced before the patterns in
+`redact_secrets`, the one function behind the log filter, the JSON
+formatter's extra fields, the audit store, the event log and the wire
+scrub. `keychain_mcp` registers every value it stores or reads (before
+checking its shape, so even a refused value is hidden). A header value
+also registers each whitespace-separated part of 8+ characters, so the
+bare token in `Bearer <token>` is caught. Values shorter than 8
+characters are refused when stored and fail the server when read: the
+exact-text scrub would otherwise match ordinary words or miss the
+secret. Nothing is ever unregistered (a rotated token is still worth
+hiding). The JSON formatter now also scrubs the built message, since the
+filter only saw `msg` and string arguments, so an object whose `str()`
+held a secret got through.
+
+**Residual risk (recorded).** A server that echoes its own token in a
+tool result hands it to the model, and the conversation file keeps what
+the model was sent; logs, events and the audit DB scrub it. Scrubbing
+tool results before the model would change what every MCP tool returns
+and is not in this story.
+
+**Rejected:** `${VAR}` expansion from the daemon's environment as Claude
+Code does (the token would have to be in the daemon's environment, which
+every child inherits, the leak this story removes); one keychain item per
+server holding a JSON map (one bad edit loses every value, and presence
+can no longer be shown per name); a `literal` editor in Settings (a value
+typed there is one paste away from a secret in `config.yaml`); clearing
+the child's environment down to an allowlist (servers need `PATH`,
+`HOME`, proxies; a breaking change outside this story).
+
+---
+
+## 2026-10-20 — TD-5111: `tst run` for scripts: existing sessions, JSON/NDJSON, stdin, exit codes (Class B)
+
+**Context.** `tst run` always opened a new session and printed text, and
+every failure exited 1, a non-TTY approval included (gap audit 2026-10-14).
+The story names the flags and the four outcomes; how a run finds and
+follows an existing session, what each outcome means and what the JSON
+holds were left open.
+
+**Decision.**
+
+- **No new protocol.** `--session` and `--continue` use `list_sessions`,
+  `attach` and `user_message`, which the window already sends. The run
+  attaches from the row's `event_count + 1`, so the session's earlier
+  turns never replay, and it counts the turn from the `user_turn` that
+  carries its own message, so a turn another viewer queued in the
+  meantime is not reported as this run's. The daemon redacts every event
+  it logs, so that `user_turn` can come back with `[REDACTED]` where the
+  message had secret-shaped text (`sk-` has no word boundary, so
+  `task-management-dashboard` matches). Each marker is read as one or more
+  characters of the sent message, rather than redacting the message in
+  the CLI, so a daemon whose patterns differ from the CLI's install still
+  matches.
+- **`--continue` is the local, unarchived session of `--workspace` that
+  can still run turns and was used last**, by `updated_at` (the window's
+  quick entry picks the same way, stars aside). Ended sessions
+  (`complete`, `failed`, `cancelled`, `interrupted`) are skipped: the
+  daemon would refuse the message. **The daemon now moves `updated_at`
+  when a `user_turn` is logged.** A plain turn changes no state, so before
+  this `updated_at` moved only on a state change, a title, preset, archive
+  or move, and "newest" was not the session last worked in, though the
+  rail, quick entry, auto-bind and `doctor`'s current workspace all read
+  it as "used last". The rail's newest-first order now follows use. No
+  such session is an error, not a new session: a script that says
+  continue and silently starts fresh has lost its context. `--session`
+  with `--workspace` must name the same folder.
+- **A session with a turn in flight is refused (`session_busy`), not
+  queued behind.** That turn may be parked on an approval only a person can
+  give; queueing would hold the script until its timeout. The most
+  conservative reading, and the window is where the person answers.
+- **Refusal means a gate refused a tool call**: a tool result with
+  `boundary_refusal`, `policy_denied` or `approval_denied` in a turn that
+  otherwise completed. A handler's own failure is not a refusal, and the
+  daemon refusing the message itself (`session_not_running`, a drain hold)
+  is an error. This is Claude Code's "permission denials" reading.
+- **Exit codes:** 0 success, 1 error, 2 usage (argparse's code, kept), 3
+  refused, 4 approval needed. 1 stays the error code so a script that
+  tested for non-zero still works; 2 is left to argparse so a usage error
+  is never read as a refusal. A failed turn is an error even when it had
+  refusals; approval needed wins over refusals seen before it.
+- **JSON:** one line, `{session_id, status, reply, cost, error}`. `reply`
+  is all assistant text of the turn, the same text the text mode prints;
+  `cost` is `turn_complete.cost`, or the last `cost_update.turn_cost` when
+  the turn did not finish; `error` is `null` or `{code, message}`. A daemon
+  that cannot be reached is still one object (`connection_error`) so a
+  script always has something to parse; usage errors print usage, as
+  argparse does.
+- **NDJSON streams the session's events exactly as the daemon sent them**,
+  one per line, from the replay at seq 1 for a new session or from this
+  run's `user_turn` for an existing one. No synthetic summary line: the exit
+  code is the status.
+- **stdout holds only what the mode promises.** Errors, refusal lines and
+  the trust notice go to stderr in every mode, so a person still reads why
+  a script's run failed and a parser never meets them.
+- **The machine modes never prompt.** An approval card on stdout would
+  corrupt the JSON, and a script is not a person. The run exits 4 and the
+  call stays parked for the window, the same as a text run without a TTY.
+  The text mode keeps the TTY card (TD-3103).
+- **Stdin** is read for `--message -`, or when `--message` is left out and
+  stdin is not a terminal; a terminal with no `--message` is a usage error
+  rather than a silent wait. One trailing line break is dropped; an empty
+  message is refused.
+
+**Rejected:** a new `send_message`-style protocol verb (the existing ones
+cover it); continuing into a starred or archived session first; queueing
+behind a busy session; making refusal also cover model-side refusals,
+which TST Desk does not surface as a typed event. Taking the first
+`user_turn` after the attach point whatever its text (a message another
+viewer sent between the list and ours would be reported as this run's);
+a new `last_turn_at` field on `session_list` rows (a protocol addition,
+and the window's own "newest" would still be wrong); tightening the `sk-`
+pattern here (that is the redaction's own scope, TD-1405).
+
+---
+
 ## 2026-10-20 — TD-5103: a static, parsed read-only list for shell (Class B)
 
 **Decision:** TD-4805's "shell is never Class A" is reversed only for a

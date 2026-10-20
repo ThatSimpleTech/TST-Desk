@@ -1,4 +1,4 @@
-"""Skill discovery (TD-4502, TD-5011).
+"""Skill discovery (TD-4502, TD-5011, TD-5107).
 
 Finds and parses ``SKILL.md`` files for :mod:`tstd.context.skills`, which
 renders the catalog and loads bodies.  Human-authored ``SKILL.md`` files
@@ -8,11 +8,15 @@ no ``SKILL.md``, fall back to ``.claude/skills/``, and to
 ``~/.claude/skills/`` only when ``steering.claude_global_fallback`` is true
 (TD-4845's key: Claude Code's global files are opt-in).
 
-Frontmatter (TD-5011): ``description`` is required; ``whenToUse`` falls
-back to it.  ``name`` is accepted, and the directory name wins when they
-differ.  Claude Code keys that only describe a skill or grant it
-something are ignored; a key that would restrict or reroute it, and any
-unknown key, still skips the skill (TD-4502: a partial skill cannot load).
+Frontmatter (TD-5011, TD-5107): ``description`` is required;
+``whenToUse`` (or Claude Code's ``when_to_use``) falls back to it.
+``name`` is accepted, and the directory name wins when they differ.
+``compatibility`` is shown to the model beside the description, and
+``disable-model-invocation`` keeps a skill out of the model's reach
+(``/name`` still loads it).  Pure labels pass silently.  Every other key,
+known to another tool or unknown, no longer skips the skill: it loads, and
+the keys it ignored are logged and listed for the inspector and Doctor
+(the Agent Skills spec: load and warn, do not reject).
 """
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ import asyncio
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from ..logging import get_logger
 from .frontmatter import parse_frontmatter
@@ -34,21 +38,21 @@ SkillSource = Literal["workspace", "user", "claude_workspace", "claude_user"]
 # Fixed body cap. Recorded in DECISIONS.md (TD-4502).
 SKILL_BODY_TOKEN_CAP = 4000
 
-#: Keys a skill reads.  Only ``description`` is required (TD-5011).
-_HONORED_FRONTMATTER = frozenset({"name", "description", "whenToUse"})
-#: Claude Code keys dropped without effect (TD-5011).  They label the
-#: skill (``license``, ``version``, ``metadata``, ``compatibility``,
-#: ``argument-hint``) or pre-approve tools (``allowed-tools``); without the
-#: grant, the skill's tool calls go through this workspace's own policy.
-_IGNORED_FRONTMATTER = frozenset(
-    {"license", "version", "metadata", "compatibility", "argument-hint", "allowed-tools"}
+#: Keys a skill reads (TD-4502, TD-5011, TD-5107).  ``description`` is the
+#: one required key.
+_READ_FRONTMATTER = frozenset(
+    {
+        "name",
+        "description",
+        "whenToUse",
+        "when_to_use",
+        "compatibility",
+        "disable-model-invocation",
+    }
 )
-#: Claude Code switches ignored at their default value only.  Any other
-#: value limits who may invoke the skill, which the catalog cannot honor.
-_DEFAULT_ONLY_FRONTMATTER: dict[str, bool] = {
-    "disable-model-invocation": False,
-    "user-invocable": True,
-}
+#: Labels: they describe the skill and ask nothing of the client, so
+#: passing them over drops nothing and they are not listed as ignored.
+_LABEL_FRONTMATTER = frozenset({"license", "version", "metadata", "argument-hint"})
 _SKILL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 #: (message, path, details) already logged: discovery runs on every brain
@@ -74,6 +78,12 @@ class Skill:
     path: Path
     tokens: int
     directory: str
+    #: Agent Skills ``compatibility`` (environment needs), or "" (TD-5107).
+    compatibility: str = ""
+    #: ``disable-model-invocation`` set: only the user's ``/name`` loads it.
+    user_only: bool = False
+    #: Frontmatter keys present but not acted on, sorted (TD-5107).
+    ignored_keys: tuple[str, ...] = ()
 
 
 class SkillDiscoverer:
@@ -101,8 +111,9 @@ class SkillDiscoverer:
         """Discover skills for *workspace_path*, user-global winning on name.
 
         Missing trees are not errors.  Invalid directory names are
-        skipped.  A missing ``description``, or a frontmatter key that
-        cannot be honored or ignored, skips that skill.
+        skipped.  A missing ``description``, or a ``name`` or when-to-use
+        that is not a string, skips that skill.  Any other key loads with
+        the skill and is listed in :attr:`Skill.ignored_keys` (TD-5107).
         """
         workspace = Path(workspace_path).expanduser().resolve()
         ours_ws = self._skill_files(workspace / ".tst" / "skills")
@@ -153,21 +164,19 @@ class SkillDiscoverer:
             raw = path.read_text(encoding="utf-8")
         except OSError:
             return None
+        except UnicodeDecodeError:
+            # Not UTF-8 text (a Windows-1252 file, or UTF-16 from PowerShell
+            # 5.1 `Out-File`). Its frontmatter cannot be read, so it is
+            # skipped like an unreadable file. Raising here would take down
+            # every caller: prompt assembly, the inspector, Doctor.
+            warn_once("skill skipped; SKILL.md is not UTF-8 text", path)
+            return None
         metadata, body = parse_frontmatter(raw)
-        refused = sorted(str(key) for key in metadata if not _key_is_accepted(key, metadata[key]))
-        if refused:
-            warn_once("skill skipped: frontmatter keys it cannot honor", path, keys=refused)
+        fields = _read_frontmatter(metadata)
+        if fields is None:
             return None
-        raw_desc = metadata.get("description")
-        raw_when = metadata.get("whenToUse")
         raw_name = metadata.get("name")
-        if not isinstance(raw_desc, str) or not raw_desc.strip():
-            return None
-        if raw_when is not None and not isinstance(raw_when, str):
-            return None
-        if raw_name is not None and not isinstance(raw_name, str):
-            return None
-        if raw_name is not None and raw_name.strip() != name:
+        if isinstance(raw_name, str) and raw_name.strip() != name:
             # The directory is what `/name`, `load_skill` and the tree merge
             # key on, so it wins; the mismatch is logged, not fatal (TD-5011).
             warn_once(
@@ -175,17 +184,24 @@ class SkillDiscoverer:
                 path,
                 name=raw_name.strip(),
             )
-        description = raw_desc.strip()
-        when_to_use = raw_when.strip() if raw_when is not None else ""
+        if fields.ignored_keys:
+            warn_once(
+                "skill loaded; frontmatter keys ignored",
+                path,
+                keys=list(fields.ignored_keys),
+            )
         return Skill(
             name=name,
-            description=description,
-            when_to_use=when_to_use or description,
+            description=fields.description,
+            when_to_use=fields.when_to_use or fields.description,
             source=source,
             body=body,
             path=path,
             tokens=heuristic_count(body).count,
             directory=directory,
+            compatibility=fields.compatibility,
+            user_only=fields.user_only,
+            ignored_keys=fields.ignored_keys,
         )
 
     @staticmethod
@@ -211,13 +227,58 @@ def warn_once(message: str, path: Path, **fields: object) -> None:
     log.warning(message, extra={"extra_fields": {"path": str(path), **fields}})
 
 
-def _key_is_accepted(key: object, value: object) -> bool:
-    """Whether a frontmatter key lets the skill load (TD-4502, TD-5011)."""
-    if key in _HONORED_FRONTMATTER or key in _IGNORED_FRONTMATTER:
-        return True
-    if isinstance(key, str) and key in _DEFAULT_ONLY_FRONTMATTER:
-        return value is _DEFAULT_ONLY_FRONTMATTER[key]
-    return False
+@dataclass(frozen=True)
+class _Frontmatter:
+    description: str
+    when_to_use: str
+    compatibility: str
+    user_only: bool
+    ignored_keys: tuple[str, ...]
+
+
+def _read_frontmatter(metadata: dict[Any, Any]) -> _Frontmatter | None:
+    """The fields a skill uses, or None when the skill cannot load.
+
+    Only a missing description, or a ``name`` or when-to-use that is not a
+    string, refuses the skill.  Anything else present but not acted on is
+    returned in ``ignored_keys`` (TD-5107).
+    """
+    raw_desc = metadata.get("description")
+    if not isinstance(raw_desc, str) or not raw_desc.strip():
+        return None
+    raw_name = metadata.get("name")
+    if raw_name is not None and not isinstance(raw_name, str):
+        return None
+    ours = metadata.get("whenToUse")
+    claude = metadata.get("when_to_use")
+    if any(v is not None and not isinstance(v, str) for v in (ours, claude)):
+        return None
+    ours_text = ours.strip() if isinstance(ours, str) else ""
+    claude_text = claude.strip() if isinstance(claude, str) else ""
+    ignored: list[str] = []
+    if ours_text and claude_text and claude_text != ours_text:
+        # Our own key wins; the other is named so the loss is visible.
+        ignored.append("when_to_use")
+    raw_compat = metadata.get("compatibility")
+    if raw_compat is not None and not isinstance(raw_compat, str):
+        ignored.append("compatibility")
+    compatibility = raw_compat.strip() if isinstance(raw_compat, str) else ""
+    dmi = metadata.get("disable-model-invocation")
+    for key, value in metadata.items():
+        if key in _READ_FRONTMATTER or key in _LABEL_FRONTMATTER:
+            continue
+        if key == "user-invocable" and (value is True or value is None):
+            continue  # the default: every skill is the user's to invoke
+        ignored.append(str(key))
+    return _Frontmatter(
+        description=raw_desc.strip(),
+        when_to_use=ours_text or claude_text,
+        compatibility=compatibility,
+        # The strict reading: any value but false (or blank) keeps the
+        # skill out of the model's reach.
+        user_only=not (dmi is False or dmi is None),
+        ignored_keys=tuple(sorted(ignored)),
+    )
 
 
 def list_workspace_skills(

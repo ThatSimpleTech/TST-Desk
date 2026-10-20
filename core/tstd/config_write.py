@@ -441,7 +441,13 @@ def _assert_mcp_http_url(url: str) -> None:
 
 
 def _mcp_server_lines(server_id: str, spec: McpServerConfig) -> list[str]:
-    """One server block. Never writes ``env``."""
+    """One server block.
+
+    ``env`` and ``headers`` are written as the spec holds them: literals
+    the user put in this file, and ``keychain:<entry>`` references. A
+    secret's value is never in a spec, so it never reaches the file
+    (TD-5110).
+    """
     block = [
         f"    {server_id}:",
         f"      transport: {spec.transport}",
@@ -456,6 +462,13 @@ def _mcp_server_lines(server_id: str, spec: McpServerConfig) -> list[str]:
         value = getattr(spec, key)
         if value is not None:
             block.append(f"      {key}: {value:g}")
+    for key, mapping in (("env", spec.env), ("headers", spec.headers)):
+        if mapping:
+            block.append(f"      {key}:")
+            block.extend(
+                f"        {json.dumps(name)}: {json.dumps(value)}"
+                for name, value in mapping.items()
+            )
     return block
 
 
@@ -479,7 +492,7 @@ def _ensure_mcp_servers_header(lines: list[str]) -> tuple[int, int]:
 
 
 def save_mcp_server(server_id: str, spec: McpServerConfig, path: Path | None = None) -> Path:
-    """Create or replace one ``mcp.servers`` entry (TD-4403). Never writes env.
+    """Create or replace one ``mcp.servers`` entry (TD-4403).
 
     Surgical for the same reason as :func:`save_credential`: teaching
     comments around ``mcp:`` survive. HTTP destinations are loopback-checked

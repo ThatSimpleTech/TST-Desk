@@ -35,6 +35,7 @@ from pydantic import (
 )
 
 from .logging import get_logger, user_data_dir
+from .mcp_values import coerce_map
 from .provider import TimeoutConfig
 from .shell_read_only import READ_ONLY_ENTRIES
 
@@ -1106,8 +1107,9 @@ class McpServerConfig(BaseModel):
 
     Listed in user-data-dir config — no dynamic discovery. HTTP
     destinations must be loopback; the client refuses anything else
-    before dialing. No ``env`` map: a token pasted here would land
-    on disk (TD-4403 keeps paste-a-token in the keychain).
+    before dialing. ``env`` (stdio) and ``headers`` (http) hold a literal
+    that is not a secret, or ``keychain:<entry>`` (TD-5110): the token
+    itself stays in the keychain and reaches only this server.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -1124,6 +1126,20 @@ class McpServerConfig(BaseModel):
     #: Hard cap on one call, however much progress it reports.  None
     #: keeps 600 s.
     max_call_seconds: float | None = Field(default=None, gt=0)
+    #: Extra env for a stdio child, on top of the daemon's own (TD-5110).
+    env: dict[str, str] = Field(default_factory=dict)
+    #: Extra headers on every request to an http server (TD-5110).
+    headers: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("env", mode="before")
+    @classmethod
+    def _env_values(cls, value: Any) -> dict[str, str]:
+        return coerce_map("env", value)
+
+    @field_validator("headers", mode="before")
+    @classmethod
+    def _header_values(cls, value: Any) -> dict[str, str]:
+        return coerce_map("header", value)
 
     @field_validator("command", mode="before")
     @classmethod

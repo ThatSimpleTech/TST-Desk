@@ -9398,6 +9398,34 @@ EZER tool (a render, a build, a local-model call) died at 30 s.
       timeout (scaled to fractions of a second), and a stopped call that
       sends the cancel notice (core/tests/test_mcp_timeouts.py)
 
+### TD-5110 — Keychain-backed secrets per MCP server
+**Size:** 3 · **Depends on:** none · Gap audit 2026-10-14
+
+A stdio MCP server's API key could only come from the daemon's own
+environment, which every child inherits, and an http server could not be
+sent a token at all: `mcp.servers` had no `env` and no headers.
+
+**Acceptance criteria:**
+- [x] `mcp.servers.<id>.env` maps names to either a literal non-secret
+      value or `keychain:<entry>`. Keychain values are injected only into
+      that child at spawn (the item is `tst-mcp.<id>.<entry>`, read when
+      the server starts, never put in the daemon's environment; a test
+      runs two children and only one sees the token)
+- [x] `mcp.servers.<id>.headers` does the same for HTTP servers (for
+      example `Authorization: keychain:<entry>`; a test checks every
+      request to that server carries it and another server's do not, and
+      another that with `HTTP_PROXY` / `ALL_PROXY` set the proxy sees none)
+- [x] No secret value reaches config, logs or the audit DB (directive 2);
+      a redaction test covers it (core/tests/test_mcp_secrets.py: the
+      value is scrubbed by its exact text from the log file, including the
+      child's stderr, and from the audit DB, and Settings writes only the
+      reference to config.yaml)
+- [x] Settings can set a keychain entry for a server without showing the
+      value (Settings → MCP servers: a name and a password field per
+      server, `set_mcp_secret` / `delete_mcp_secret`; the field clears on
+      save and the store and `setup_state` carry names only; the UI walk
+      saves and removes one)
+
 ### TD-5106 — Provider timeouts and stream-idle watchdog in config
 **Size:** 2 · **Depends on:** none · Gap audit 2026-10-14, local-model batch (PR #10)
 
@@ -9423,6 +9451,29 @@ comments while sending no tokens.
 - [x] docs/configuration.md documents the keys and shows an EZER
       local-model example
 - [x] Tests in core/tests/test_provider_timeouts.py
+
+### TD-5107 — Load skills with unknown frontmatter and warn
+**Size:** 2 · **Depends on:** none · Gap audit 2026-10-14 (revisits TD-5011)
+
+A `SKILL.md` with a key TST Desk could not honor (`model`, `hooks`,
+`context`, `disallowed-tools`) or any unknown key was dropped whole, with
+only a log line, so imported skills vanished. The Agent Skills spec says
+to load such a skill and warn.
+
+**Acceptance criteria:**
+- [x] A SKILL.md with unknown or unsupported keys (for example `model`,
+      `hooks`, `context`, `disallowed-tools`) still loads. The ignored
+      keys are listed in the skills inspector (`SkillStackEntry.ignored_keys`,
+      an "ignored: ..." chip in the Stack view) and the doctor (a new
+      `skills` row after `steering`)
+- [x] `when_to_use` and `compatibility` are kept and shown to the model
+      with the description, on the skill's catalog line
+- [x] Tests cover a Claude-style skill and an agentskills.io-style skill
+      with extra keys (core/tests/test_skill_frontmatter_ignored.py, the
+      doctor row in test_diagnostics.py, ui stack-store and protocol tests)
+- [x] `disable-model-invocation` is honored the strict way, not ignored:
+      the skill loads but stays out of the model's catalog and
+      `load_skill`; only the user's `/name` loads it (DECISIONS.md)
 
 ### TD-5109 — Context gauge and compact-on-demand
 **Size:** 3 · **Depends on:** none · Gap audit 2026-10-14, local-model batch (PR #10)
@@ -10134,6 +10185,30 @@ code, a docs fix); one that is not, or no longer applies, says why.
       coverage for code that was already right and pass on both (TD-5104's
       loop-turn test, the walk's held step, the path-based steering
       write's plain write); ruff, mypy, tsc, vitest and the UI walk pass
+
+### TD-5111 — `tst run` for scripts
+**Size:** 3 · **Depends on:** none · Gap audit 2026-10-14
+
+`tst run` printed plain text only and always opened a new session, so a
+script could not continue a conversation, parse a result, pipe a message
+in, or tell a refusal from a failure.
+
+**Acceptance criteria:**
+- [x] `tst run --session <id>` and `--continue` send the message into an existing session.
+- [x] `--output json` prints one object: reply, session id, cost, status and error.
+      `--output ndjson` streams the existing protocol events.
+- [x] The message can come from stdin.
+- [x] Exit codes separate success, refusal, approval needed and error.
+
+**Notes:** `--continue` takes the local, unarchived session of
+`--workspace` that has not ended and was used last (`updated_at`, which
+the daemon now moves on every `user_turn`); a session with a turn in
+flight is refused, not queued behind. The run attaches after the
+session's last event and reports the turn from its own `user_turn`, read
+through the daemon's redaction. Exit codes: 0 success, 1 error,
+2 usage, 3 refused (a `boundary_refusal`, `policy_denied` or
+`approval_denied` tool result), 4 approval needed. The machine modes never
+prompt. See DECISIONS.md and architecture.md "`tst run` for scripts".
 
 ---
 

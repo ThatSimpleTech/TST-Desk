@@ -241,9 +241,12 @@ test("walks every settings section and its enabled controls", async () => {
 		if (section === "GitHub") {
 			await expect(dialog.getByText("GitHub is off until config.yaml")).toBeVisible();
 		}
+		if (section === "MCP servers") await addWalkServer(dialog);
 		const content = dialog.locator(".content");
 		await snap(`settings:${section}`, content);
+		if (section === "MCP servers") await saveWalkSecret(dialog);
 		await exercise(page, content);
+		if (section === "MCP servers") await removeWalkServer(dialog);
 		await expect(dialog).toBeVisible();
 	}
 	await page.keyboard.press("Escape");
@@ -315,6 +318,35 @@ test("runs the command palette actions that stay in this window", async () => {
 	if (process.env.E2E_UPDATE_CENSUS === "1") writeCensus(census);
 	else expect(census).toEqual(readCensus());
 });
+
+/** A listed server shows its keychain controls (TD-5110). `true` fails the
+ *  handshake at once, which is all the row needs. */
+async function addWalkServer(dialog: Locator): Promise<void> {
+	await dialog.getByPlaceholder("example", { exact: true }).fill("walk");
+	await dialog.getByPlaceholder("npx", { exact: true }).fill("true");
+	await dialog.getByRole("button", { name: "Add server", exact: true }).click();
+	await expect(dialog.getByText("walk", { exact: true })).toBeVisible();
+}
+
+/** The token goes to the keychain and is never shown again (TD-5110). */
+async function saveWalkSecret(dialog: Locator): Promise<void> {
+	const token = "walk-token-5110-Zx8q";
+	const value = dialog.getByPlaceholder("Paste token", { exact: true });
+	await expect(value).toHaveAttribute("type", "password");
+	await dialog.getByPlaceholder("GITHUB_TOKEN", { exact: true }).fill("WALK_TOKEN");
+	await value.fill(token);
+	await dialog.getByRole("button", { name: "Save to keychain", exact: true }).click();
+	await expect(dialog.getByText("env WALK_TOKEN · in the keychain")).toBeVisible();
+	await expect(value).toHaveValue("");
+	expect(await page.content()).not.toContain(token);
+	await dialog.getByRole("button", { name: "Remove WALK_TOKEN from walk", exact: true }).click();
+	await expect(dialog.getByText("env WALK_TOKEN")).toHaveCount(0);
+}
+
+async function removeWalkServer(dialog: Locator): Promise<void> {
+	await dialog.locator(".row", { hasText: "walk" }).getByRole("button", { name: "Remove", exact: true }).click();
+	await expect(dialog.getByText("walk", { exact: true })).toHaveCount(0);
+}
 
 const SKIP_CLICK =
 	/^(Close|Sign in with Microsoft|Sign in with Google|Connect GitHub|Disconnect|Send test email|Delete|Remove|Forget|Copy code|Open browser|Try again)$/;

@@ -10,6 +10,8 @@ import {
 	createStackStore,
 	formatTokens,
 	memoryPlaceholderCopy,
+	skillIgnoredBadge,
+	skillIgnoredTitle,
 	warningBadge,
 	type StackState,
 } from "./stack-store";
@@ -79,6 +81,36 @@ describe("applyEvent", () => {
 		expect(state.skills.map((s) => s.name)).toEqual(["review"]);
 		expect(state.skills[0]?.loaded).toBe(true);
 		expect(state.sources.every((s) => !s.path.endsWith("SKILL.md"))).toBe(true);
+	});
+
+	it("keeps the keys a skill ignored, and labels them (TD-5107)", () => {
+		const { state, store } = harness();
+		store.applyEvent(
+			stackEvent({
+				skills: [
+					{
+						name: "deploy",
+						description: "Deploy",
+						source: "claude_workspace",
+						loaded: false,
+						tokens: 40,
+						ignored_keys: ["context", "model"],
+						user_only: true,
+					},
+				],
+			}),
+			"s1",
+		);
+		const skill = state.skills[0];
+		expect(skill?.ignored_keys).toEqual(["context", "model"]);
+		expect(skill?.user_only).toBe(true);
+		expect(skillIgnoredBadge(skill?.ignored_keys)).toBe("ignored: context, model");
+		expect(skillIgnoredTitle(["model"])).toContain("model");
+	});
+
+	it("no ignored keys means no chip, from an older daemon too", () => {
+		expect(skillIgnoredBadge([])).toBeNull();
+		expect(skillIgnoredBadge(undefined)).toBeNull();
 	});
 
 	it("a missing skills field becomes an empty list, not a steering row", () => {

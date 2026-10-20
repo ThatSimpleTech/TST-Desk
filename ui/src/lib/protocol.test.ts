@@ -101,6 +101,8 @@ import type {
   SetTierCredential,
   SetMcpServer,
   DeleteMcpServer,
+  SetMcpSecret,
+  DeleteMcpSecret,
   SetSkipAllApprovals,
   SetLoadGlobalMemory,
   SetCoworker,
@@ -523,6 +525,24 @@ describe("Client message fixtures match TypeScript types", () => {
     expect(isString(m.id)).toBe(true);
   });
 
+  it("set_mcp_secret", () => {
+    const m = fixtures.set_mcp_secret as SetMcpSecret;
+    expect(m.type).toBe("set_mcp_secret");
+    expect(isString(m.server_id)).toBe(true);
+    expect(m.target === "env" || m.target === "header").toBe(true);
+    expect(isString(m.name)).toBe(true);
+    expect(isString(m.value)).toBe(true);
+  });
+
+  it("delete_mcp_secret", () => {
+    const m = fixtures.delete_mcp_secret as DeleteMcpSecret;
+    expect(m.type).toBe("delete_mcp_secret");
+    expect(isString(m.server_id)).toBe(true);
+    expect(m.target === "env" || m.target === "header").toBe(true);
+    expect(isString(m.name)).toBe(true);
+    expect("value" in m).toBe(false);
+  });
+
   // TD-1104 doctor
   it("run_diagnostics", () => {
     const m = fixtures.run_diagnostics as RunDiagnostics;
@@ -929,6 +949,16 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(m.mcp_servers?.every((s) => isString(s.id) && (s.transport === "stdio" || s.transport === "http"))).toBe(
       true,
     );
+    // TD-5110: names, sources and presence only.
+    const values = (m.mcp_servers ?? []).flatMap((s) => [...(s.env ?? []), ...(s.headers ?? [])]);
+    expect(values.length).toBeGreaterThan(0);
+    for (const v of values) {
+      expect(isString(v.name)).toBe(true);
+      expect(v.source === "literal" || v.source === "keychain").toBe(true);
+      expect(isString(v.entry)).toBe(true);
+      expect(isBoolean(v.stored)).toBe(true);
+      expect("value" in v).toBe(false);
+    }
     expect(isBoolean(m.speech_enabled)).toBe(true);
     expect(isBoolean(m.speech_ready)).toBe(true);
     expect(m.seq).toBe(1);
@@ -1062,7 +1092,7 @@ describe("All fixtures have required shape", () => {
       "set_grok_mode", "run_grok_command", "list_grok_sessions", "open_in_terminal",
       "approve_grok_plan", "list_grok_extensions",
       "set_credential", "delete_credential", "set_tier_credential",
-      "set_mcp_server", "delete_mcp_server",
+      "set_mcp_server", "delete_mcp_server", "set_mcp_secret", "delete_mcp_secret",
       "run_diagnostics",
       "get_usage", "export_usage",
       "list_artifacts", "open_artifact", "read_artifact_chunk",
@@ -1232,6 +1262,10 @@ describe("Session lifecycle messages match TypeScript types", () => {
     const skill = m.skills?.[0] as SkillStackEntry;
     expect(isString(skill.name)).toBe(true);
     expect(typeof skill.loaded).toBe("boolean");
+    // TD-5107: a skill loaded with frontmatter keys it ignored.
+    const flagged = m.skills?.find((s) => (s.ignored_keys ?? []).length > 0);
+    expect(flagged?.ignored_keys?.every(isString)).toBe(true);
+    expect(typeof flagged?.user_only).toBe("boolean");
   });
 
   it("command_list", () => {

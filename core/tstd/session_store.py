@@ -153,6 +153,14 @@ class SessionStore:
         record.updated_at = _now_iso()
         await self._persist()
 
+    async def touch(self, session_id: str) -> None:
+        """Mark a session used now: a turn started in it (TD-5111)."""
+        record = self._records.get(session_id)
+        if record is None:
+            return
+        record.updated_at = _now_iso()
+        await self._persist()
+
     async def set_archived(self, session_id: str, archived: bool) -> bool:
         """File a session away, or restore it (TD-1715).
 

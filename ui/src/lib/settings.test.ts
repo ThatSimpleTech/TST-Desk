@@ -69,6 +69,8 @@ import {
 	saveMcpServer,
 	setMcpServerEnabled,
 	deleteMcpServer,
+	saveMcpSecret,
+	deleteMcpSecret,
 } from "./settings.svelte.js";
 
 function emit(event: DaemonEventUnion): void {
@@ -787,8 +789,64 @@ describe("mcp section", () => {
 				url: "",
 				enabled: true,
 				excludedTools: [],
+				values: [],
 			},
 		]);
+	});
+
+	it("keeps env and header names, never a value (TD-5110)", () => {
+		startSettings();
+		emit(
+			setupState({
+				mcp_servers: [
+					{
+						id: "gh",
+						transport: "stdio",
+						command: ["true"],
+						url: "",
+						enabled: true,
+						env: [
+							{ name: "GITHUB_TOKEN", source: "keychain", entry: "github_token", stored: true },
+							{ name: "LOG_LEVEL", source: "literal", entry: "", stored: false },
+						],
+					},
+					{
+						id: "loop",
+						transport: "http",
+						command: [],
+						url: "http://127.0.0.1:9/mcp",
+						enabled: true,
+						headers: [
+							{ name: "Authorization", source: "keychain", entry: "authorization", stored: false },
+						],
+					},
+				],
+			}),
+		);
+		expect(settings.mcpServers.map((s) => s.values)).toEqual([
+			[
+				{ name: "GITHUB_TOKEN", source: "keychain", stored: true },
+				{ name: "LOG_LEVEL", source: "literal", stored: false },
+			],
+			[{ name: "Authorization", source: "keychain", stored: false }],
+		]);
+		saveMcpSecret("gh", " GITHUB_TOKEN ", " tok-123456789 ");
+		saveMcpSecret("loop", "Authorization", "Bearer tok-123456789");
+		saveMcpSecret("ghost", "X", "tok-123456789");
+		saveMcpSecret("gh", "X", "   ");
+		deleteMcpSecret("loop", "Authorization");
+		expect(mocks.sent).toEqual([
+			{ type: "set_mcp_secret", server_id: "gh", target: "env", name: "GITHUB_TOKEN", value: "tok-123456789" },
+			{
+				type: "set_mcp_secret",
+				server_id: "loop",
+				target: "header",
+				name: "Authorization",
+				value: "Bearer tok-123456789",
+			},
+			{ type: "delete_mcp_secret", server_id: "loop", target: "header", name: "Authorization" },
+		]);
+		expect(JSON.stringify(settings)).not.toContain("tok-123456789");
 	});
 
 	it("carries tools the daemon left out, with reasons (TD-5104)", () => {

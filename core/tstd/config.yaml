@@ -355,8 +355,10 @@ autonomy:
   verify_max_prompt_tokens: null
 
 # User-listed MCP servers (TD-4401). Empty is none — no doctor rows,
-# no dynamic discovery. HTTP urls must be loopback. No env: map
-# (tokens stay in the keychain; Settings is TD-4403).
+# no dynamic discovery. HTTP urls must be loopback. A server's env:
+# (stdio) or headers: (http) holds literals that are not secrets, or
+# "keychain:<entry>" — tokens stay in the keychain (TD-5110); Settings →
+# MCP servers stores one without showing it.
 mcp:
   servers: {}
 

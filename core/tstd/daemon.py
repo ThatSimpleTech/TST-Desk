@@ -25,6 +25,7 @@ from typing import Any, Literal, cast
 import websockets.exceptions
 from pydantic import ValidationError
 
+from . import keychain_mcp
 from .artifacts import ArtifactError, ArtifactRecord, ArtifactStore, artifact_ready_for, to_entry
 from .attachments import (
     AttachmentError,
@@ -96,7 +97,7 @@ from .context.instructions import (
 )
 from .context.memory_loader import list_workspace_memory
 from .context.prompt import PromptAssembler
-from .context.skills import list_workspace_skills_async
+from .context.skills import list_workspace_skills_async, skills_doctor_detail
 from .context.stack import build_instruction_stack
 from .context_pins import PinOutsideError, add_pin, list_pin_cards, project_capacity, remove_pin
 from .coworker import load_coworker, save_coworker
@@ -148,6 +149,12 @@ from .logging import get_logger, log_directory, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop, brain_manifest_config
 from .machine_pairing import DialPolicy
 from .mcp.loader import McpSupervisor
+from .mcp_settings import (
+    delete_mcp_secret,
+    forget_server_secrets,
+    set_mcp_secret,
+    value_summaries,
+)
 from .memory_commit import MemoryCommitter
 from .memory_pref import load_global_memory, save_global_memory
 from .memory_store import (
@@ -215,6 +222,7 @@ from .protocol import (
     DeleteCredential,
     DeleteJob,
     DeleteJobTemplate,
+    DeleteMcpSecret,
     DeleteMcpServer,
     DeleteSession,
     Deny,
@@ -326,6 +334,7 @@ from .protocol import (
     SetGrokMode,
     SetJudgments,
     SetLoadGlobalMemory,
+    SetMcpSecret,
     SetMcpServer,
     SetPlan,
     SetPreset,
@@ -357,6 +366,7 @@ from .protocol import (
     UsageReport,
     UsageRollup,
     UserMessage,
+    UserTurn,
     ValidateApiKey,
     VerifyResult,
     build_error,
@@ -1255,6 +1265,8 @@ class Daemon:
                         McpExcludedToolSummary(name=item.name, reason=item.reason)
                         for item in excluded_by_server.get(sid, ())
                     ],
+                    env=await value_summaries(sid, spec.env, self._mcp_secret_is_stored),
+                    headers=await value_summaries(sid, spec.headers, self._mcp_secret_is_stored),
                 )
                 for sid, spec in sorted(self.config.mcp.servers.items())
             ],
@@ -1350,6 +1362,23 @@ class Daemon:
 
     def _invalidate_stored_probe(self) -> None:
         self._stored_probe_cache.clear()
+
+    async def _mcp_secret_is_stored(self, server_id: str, entry: str) -> bool:
+        """Presence of one MCP value's item (TD-5110), cached like a credential's.
+
+        The cache key is the account name; it has a ``.`` that no credential
+        id has, so the two never collide.
+        """
+        account = f"{keychain_mcp.ACCOUNT_PREFIX}{server_id}.{entry}"
+        cached = self._stored_probe_cache.get(account)
+        if cached is not None:
+            return cached
+        try:
+            stored = await keychain_mcp.mcp_secret_is_stored(server_id, entry)
+        except (KeychainError, FileNotFoundError):
+            stored = False
+        self._stored_probe_cache[account] = stored
+        return stored
 
     async def _credential_summaries(self) -> list[CredentialSummary]:
         """Catalog rows plus the implicit openrouter slot, never secrets."""
@@ -1672,11 +1701,11 @@ class Daemon:
     async def _diagnostics_report(self) -> DiagnosticsReport:
         """Run the doctor checks (TD-1104) and return the report.
 
-        Rows in display order: daemon → key → provider → git → workspace →
-        steering → optional ``mcp:<id>`` (only when ``mcp.servers`` is
-        non-empty).  Blocking filesystem calls ride worker threads; the live
-        provider probe is the only slow row (one token, worst case the
-        provider timeout).
+        Rows in display order: daemon → key → provider → git → grok_cli →
+        workspace → steering → skills → optional ``mcp:<id>`` (only when
+        ``mcp.servers`` is non-empty).  Blocking filesystem calls ride
+        worker threads; the live provider probe is the only slow row (one
+        token, worst case the provider timeout).
         """
         checks: list[DiagnosticCheck] = [
             # The reply itself proves reachability; the row carries versions
@@ -1739,9 +1768,13 @@ class Daemon:
             checks.append(
                 DiagnosticCheck(name="steering", status="skip", detail="no workspace open yet")
             )
+            checks.append(
+                DiagnosticCheck(name="skills", status="skip", detail="no workspace open yet")
+            )
         else:
             checks.append(await asyncio.to_thread(_check_writable, workspace))
             checks.append(await self._check_steering(workspace))
+            checks.append(await self._check_skills(workspace))
 
         if self.config.mcp.servers:
             try:
@@ -1860,6 +1893,35 @@ class Daemon:
                 assembled.notices,
             ),
         )
+
+    async def _check_skills(self, workspace: Path) -> DiagnosticCheck:
+        """Skills found, and the frontmatter keys each one ignored (TD-5107).
+
+        A skill with keys TST Desk does not act on still loads, so the row
+        stays ok; it names those keys so the user sees what was dropped.
+        """
+        try:
+            skills = await list_workspace_skills_async(
+                workspace,
+                claude_global_fallback=self.config.steering.claude_global_fallback,
+            )
+        except OSError as e:
+            return DiagnosticCheck(
+                name="skills",
+                status="fail",
+                detail=_relativize_paths(f"skill discovery failed: {e}", workspace),
+                fix="Make the named skills folder readable and re-run Doctor.",
+            )
+        except Exception as e:  # discovery is designed not to raise; report if it does
+            # One bad skill must cost this row, never the whole report: an
+            # escaped error closes the window's connection with no report.
+            return DiagnosticCheck(
+                name="skills",
+                status="fail",
+                detail=_relativize_paths(f"skill discovery failed: {e}", workspace),
+                fix="Fix or remove the skill file that discovery stopped on and re-run Doctor.",
+            )
+        return DiagnosticCheck(name="skills", status="ok", detail=skills_doctor_detail(skills))
 
     async def run(self) -> None:
         """Start the daemon and run until shutdown is requested."""
@@ -2391,6 +2453,11 @@ class Daemon:
                 await event_log.drop_before(result.earliest_seq)
         if isinstance(event, SessionStateEvent):
             await self._session_store.update_state(event.session_id, event.state)
+        elif isinstance(event, UserTurn):
+            # A turn is use: the rail's newest-first order, quick entry and
+            # `tst run --continue` all read updated_at as "used last", and a
+            # turn changes no state (TD-5111).
+            await self._session_store.touch(event.session_id)
         announce = self._cu_permissions_session(event)
         if announce is not None:
             first_run = not load_shown(self.data_dir, driver_cu_platform(self.desktop_driver))
@@ -3497,6 +3564,7 @@ class Daemon:
             try:
                 # Settings sends no timeouts; keep the ones already set (TD-5105).
                 prior = self.config.mcp.servers.get(msg.id)
+                kept = prior is not None and prior.transport == msg.transport
                 spec = McpServerConfig(
                     transport=msg.transport,
                     command=msg.command,
@@ -3505,10 +3573,17 @@ class Daemon:
                     timeout_seconds=prior.timeout_seconds if prior else None,
                     startup_timeout_seconds=prior.startup_timeout_seconds if prior else None,
                     max_call_seconds=prior.max_call_seconds if prior else None,
+                    # Nor env or headers (TD-5110): only set_mcp_secret edits
+                    # those. A new transport cannot use the old ones.
+                    env=dict(prior.env) if prior and kept else {},
+                    headers=dict(prior.headers) if prior and kept else {},
                 )
                 save_mcp_server(msg.id, spec, self.config_path)
             except (ConfigError, ValidationError) as e:
                 return build_error("bad_request", str(e))
+            if prior is not None and not kept:
+                await forget_server_secrets(msg.id, prior)
+                self._invalidate_stored_probe()
             try:
                 self._reload_user_config()
             except ConfigError as e:
@@ -3518,10 +3593,14 @@ class Daemon:
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, DeleteMcpServer):
+            removed = self.config.mcp.servers.get(msg.id)
             try:
                 delete_mcp_server_entry(msg.id, self.config_path)
             except ConfigError as e:
                 return build_error("bad_request", str(e))
+            if removed is not None:
+                await forget_server_secrets(msg.id, removed)
+                self._invalidate_stored_probe()
             try:
                 self._reload_user_config()
             except ConfigError as e:
@@ -3529,6 +3608,9 @@ class Daemon:
             await self._mcp.reload(self.config.mcp)
             log.info("mcp server removed", extra={"extra_fields": {"server_id": msg.id}})
             return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, SetMcpSecret | DeleteMcpSecret):
+            return await self._handle_mcp_secret(msg)
 
         # ── Diagnostics (TD-1104 doctor) ─────────────────────────────
         if isinstance(msg, RunDiagnostics):
@@ -4733,6 +4815,43 @@ class Daemon:
             reset_email_sender(token)
             self._in_flight.release(job.id)
             await self._push_job_list()
+
+    async def _handle_mcp_secret(self, msg: SetMcpSecret | DeleteMcpSecret) -> str:
+        """Store or drop one MCP server value (TD-5110). Never logs the value."""
+        verb = "store" if isinstance(msg, SetMcpSecret) else "remove"
+        try:
+            if isinstance(msg, SetMcpSecret):
+                await set_mcp_secret(self.config.mcp, self.config_path, msg)
+            else:
+                await delete_mcp_secret(self.config.mcp, self.config_path, msg)
+        except KeychainLockedError as e:
+            return build_error("keychain_locked", str(e), in_reply_to=msg.type)
+        except (KeychainError, NotImplementedError) as e:
+            return build_error(
+                "key_store_failed" if verb == "store" else "key_delete_failed",
+                f"Could not {verb} the MCP server value: {e}",
+                in_reply_to=msg.type,
+            )
+        except ConfigError as e:
+            return build_error("bad_request", str(e), in_reply_to=msg.type)
+        finally:
+            self._invalidate_stored_probe()
+        try:
+            self._reload_user_config()
+        except ConfigError as e:
+            return build_error("bad_request", f"Saved, but the config no longer loads: {e}")
+        await self._mcp.reload(self.config.mcp)
+        log.info(
+            "mcp server value stored" if verb == "store" else "mcp server value removed",
+            extra={
+                "extra_fields": {
+                    "server_id": msg.server_id,
+                    "target": msg.target,
+                    "name": msg.name,
+                }
+            },
+        )
+        return (await self._setup_state_event()).model_dump_json()
 
     async def _handle_set_email_notify(self, msg: SetEmailNotify) -> str:
         from .notify.email import EmailNotifyError
