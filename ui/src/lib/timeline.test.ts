@@ -683,3 +683,17 @@ describe("in-turn trim vs compaction (TD-5150)", () => {
   });
 });
 
+
+describe("files restored (TD-5125)", () => {
+  it("records a restore from any window as its own row", () => {
+    const row = eventToEntry(fixtures.files_restored as DaemonEventUnion);
+    expect(row).not.toBeNull();
+    expect(row!.kind).toBe("restore");
+    expect(row!.title).toBe("Files restored");
+    expect(row!.preview).toBe("3 file(s) back to before an earlier message · 1 changed by hand left alone");
+    expect(row!.details.left_alone).toEqual(["notes.md"]);
+    expect(KIND_LABELS.restore).toBe("Restore");
+    expect(entryTone(row!)).toBe("info");
+    expect(entryIcon(row!)).toBe("retry");
+  });
+});

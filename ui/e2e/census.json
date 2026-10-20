@@ -15,6 +15,7 @@
 		"Message composer",
 		"Model tier",
 		"Plan",
+		"Restore files to here",
 		"Retry: resend your last message",
 		"Send message",
 		"Session preset",
@@ -63,6 +64,9 @@
 		"Stop computer use Halt all desktop actuation immediately. Capture still works.",
 		"Toggle Design mode Point at the Screen frame instead of describing it (⌘⇧D)",
 		"Toggle theme Switch between light and dark"
+	],
+	"restore": [
+		"Close"
 	],
 	"scheduled-form": [
 		"/Users/me/holidays.ics",

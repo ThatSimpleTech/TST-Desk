@@ -125,6 +125,26 @@ export interface SetBranch extends ClientMessage {
   sibling_index: number;
 }
 
+/** What "Restore files to here" would undo for one user turn (TD-5125).
+ *  `turn_id` is the turn's `user_turn` id. Answered on this connection with
+ *  `files_restore_preview`; writes nothing. */
+export interface PreviewRestoreFiles extends ClientMessage {
+  type: "preview_restore_files";
+  session_id: string;
+  turn_id: string;
+}
+
+/** Restore what a preview showed (TD-5125). `plan_id` is the preview's; a
+ *  file or the branch changed since is `restore_stale`. Hand-edited files
+ *  not named in `include_hand_edited` are left alone. */
+export interface RestoreFiles extends ClientMessage {
+  type: "restore_files";
+  session_id: string;
+  turn_id: string;
+  plan_id: string;
+  include_hand_edited?: string[];
+}
+
 export interface Approve extends ClientMessage {
   type: "approve";
   session_id: string;
@@ -1014,6 +1034,8 @@ export type ClientMessageUnion =
   | ForkFrom
   | CompactContext
   | SetBranch
+  | PreviewRestoreFiles
+  | RestoreFiles
   | Approve
   | Deny
   | AlwaysAllow
@@ -1195,6 +1217,39 @@ export interface ConversationReset extends DaemonEvent {
   sibling_index: number;
   sibling_count: number;
   content: string;
+}
+
+/** One file a restore would change (TD-5125): `modify` its content, `delete`
+ *  a file the agent made, or `recreate` one it deleted. A `hand_edited` file
+ *  changed after the agent's write and is left alone unless ticked. */
+export interface RestoreFileEntry {
+  path: string;
+  change: "modify" | "delete" | "recreate";
+  hand_edited: boolean;
+}
+
+/** Answer to `preview_restore_files` (TD-5125), this connection only. `diff`
+ *  runs from each file as it was before the turn to how it is now. No files
+ *  means nothing to restore. */
+export interface FilesRestorePreview extends DaemonEvent {
+  type: "files_restore_preview";
+  session_id: string;
+  turn_id: string;
+  plan_id: string;
+  files: RestoreFileEntry[];
+  diff: string;
+  diff_truncated: boolean;
+}
+
+/** Files were put back as they were before a user turn (TD-5125). */
+export interface FilesRestored extends DaemonEvent {
+  type: "files_restored";
+  session_id: string;
+  turn_id: string;
+  restored: string[];
+  removed: string[];
+  left_alone: string[];
+  lfs_pointers: string[];
 }
 
 /** Where a message sent mid-turn joined the running turn (TD-5112).
@@ -2586,6 +2641,8 @@ export type DaemonEventUnion =
   | Ready
   | SessionState
   | ConversationReset
+  | FilesRestorePreview
+  | FilesRestored
   | UserTurn
   | QueuedMessages
   | AssistantDelta

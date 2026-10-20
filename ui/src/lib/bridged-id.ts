@@ -57,6 +57,8 @@ export const BRIDGED_VERBS: ReadonlySet<string> = new Set([
   "fork_from",
   "set_branch",
   "compact_context", // TD-5154: /compact and "Summarize from here" on another computer
+  "preview_restore_files", // TD-5125: "Restore files to here" on another computer
+  "restore_files",
   "set_tier",
   "set_plan",
   "set_session_preset",

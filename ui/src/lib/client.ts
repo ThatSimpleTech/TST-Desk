@@ -21,7 +21,7 @@ import { daemonWsUrl } from "./remote-connect";
  * Replies the daemon answers on one connection with seq fixed at 1. They are
  * not in any session's log, so they never touch the replay cursor:
  * design_hit (TD-3403), transcript (TD-4701), artifact_list and artifact
- * (TD-3201) and artifact_chunk (TD-5143).
+ * (TD-3201), artifact_chunk (TD-5143) and files_restore_preview (TD-5125).
  */
 const CONNECTION_SCOPED: ReadonlySet<string> = new Set([
   "design_hit",
@@ -29,6 +29,7 @@ const CONNECTION_SCOPED: ReadonlySet<string> = new Set([
   "artifact_list",
   "artifact",
   "artifact_chunk",
+  "files_restore_preview",
 ]);
 
 /**
@@ -41,6 +42,8 @@ const KNOWN_EVENT_TYPES = new Set([
   "ready",
   "session_state",
   "conversation_reset",
+  "files_restore_preview", // TD-5125
+  "files_restored", // TD-5125
   "user_turn",
   "queued_messages",
   "assistant_delta",

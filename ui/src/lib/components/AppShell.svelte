@@ -46,6 +46,7 @@
 	import WizardPane from './WizardPane.svelte';
 	import DoctorPane from './DoctorPane.svelte';
 	import DecisionsPane from './DecisionsPane.svelte';
+	import RestoreFilesDialog from './RestoreFilesDialog.svelte';
 	import SettingsPane from './SettingsPane.svelte';
 	import CuPermissionsPane from './CuPermissionsPane.svelte';
 	import CommandPalette from './CommandPalette.svelte';
@@ -59,6 +60,7 @@
 	} from '../cu-permissions.svelte.js';
 	import { startDoctor, runDoctor, closeDoctor, doctor } from '../doctor.svelte.js';
 	import { startDecisions, openDecisions, closeDecisions, decisions } from '../decisions.svelte.js';
+	import { startRewind } from '../rewind-store.svelte.js';
 	import { palette, openPalette, closePalette } from '../palette-store.svelte.js';
 	import { rightPane, showRightPane, type RightPaneTab } from '../right-pane.svelte.js';
 	import { startUsage, refreshUsage, usage } from '../usage.svelte.js';
@@ -176,6 +178,7 @@
 		const offWizard = startOnboarding();
 		const offDoctor = startDoctor();
 		const offDecisions = startDecisions();
+		const offRewind = startRewind();
 		const offSettings = startSettings();
 		const offCuPerms = startCuPermissions();
 		const offUsage = startUsage();
@@ -230,6 +233,7 @@
 			offWizard();
 			offDoctor();
 			offDecisions();
+			offRewind();
 			offSettings();
 			offCuPerms();
 			offUsage();
@@ -543,6 +547,7 @@
 <WizardPane />
 <DoctorPane />
 <DecisionsPane />
+<RestoreFilesDialog />
 <SettingsPane />
 <CuPermissionsPane />
 <CommandPalette />
