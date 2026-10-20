@@ -21,6 +21,7 @@ from tstd.config import ConfigError, load_config
 from tstd.config_write import save_tier_credential, save_tier_slug
 from tstd.daemon import Daemon
 from tstd.protocol import ModelFallback, parse_daemon_event
+from tstd.provider import ProviderClient
 
 
 def _yaml_config(tmp_path: Path, brain: dict[str, Any], **extra: Any) -> Path:
@@ -170,3 +171,37 @@ class TestDeletingABackupsKey:
         # Nothing was deleted: the key and the config that names it stay.
         assert deleted == []
         assert "spare" in daemon.config.credentials
+
+
+class TestClientCache:
+    async def test_a_backup_with_other_timeouts_gets_its_own_client(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Same loopback host, no key: only the timeouts tell them apart.
+        slow = {
+            "slug": "slow-model",
+            "base_url": "http://127.0.0.1:8080/v1",
+            "input_price": 0,
+            "output_price": 0,
+            "cache_read_price": 0,
+            "context_window": 32768,
+            "max_output_tokens": 1000,
+            "read_timeout": 900,
+        }
+        config = load_config(_yaml_config(tmp_path, {"fallbacks": [slow]}))
+        monkeypatch.setattr("tstd.daemon.cached_config", lambda: config)
+        daemon = Daemon(data_dir=tmp_path)
+        brain = daemon.config.tier("brain")
+        own = await daemon._client_for(brain)
+        backup = await daemon._client_for(brain.fallbacks[0])
+        worker = await daemon._client_for(daemon.config.tier("worker"))
+        assert isinstance(own, ProviderClient) and isinstance(backup, ProviderClient)
+        try:
+            assert backup is not own
+            assert backup.timeout.read == 900
+            assert own.timeout.read == 120
+            # Tiers that share endpoint, key and timeouts share a client.
+            assert worker is own
+        finally:
+            await own.close()
+            await backup.close()
