@@ -250,7 +250,8 @@ class TierConfig(BaseModel):
     # caps one attempt including streaming; ``stream_idle_timeout`` aborts
     # a stream that sends no usable chunk for that long (keep-alive pings
     # do not count). A stall before any output is retried under
-    # ``provider_retry``. null turns either off.
+    # ``provider_retry``; one partway through a turn's reply is withdrawn
+    # and asked once more (TD-5159). null turns either off.
     connect_timeout: float = Field(default=30.0, gt=0)
     read_timeout: float = Field(default=120.0, gt=0)
     total_timeout: float | None = Field(default=None, gt=0)

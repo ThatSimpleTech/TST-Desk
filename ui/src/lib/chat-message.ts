@@ -5,6 +5,7 @@
 // chat-store, which re-exports them.
 
 import type { AttachmentChip } from "./attachments";
+import type { ResponseMark } from "./chat-retract";
 import type { SentFileRef } from "./sent-files";
 
 export interface ChatMessage {
@@ -52,6 +53,9 @@ export interface ChatMessage {
   /** Daemon-issued id for this user turn. Stamps a local echo so replay
    *  of `user_turn` does not duplicate the row. */
   turnId?: string;
+  /** Where the latest model response began on this assistant row, so an
+   *  `assistant_retract` can take it back off (TD-5159, chat-retract.ts). */
+  responseMark?: ResponseMark;
 }
 
 /** One ordered entry on an assistant row: a text segment or a tool call.

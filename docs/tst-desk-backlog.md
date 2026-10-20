@@ -9441,16 +9441,61 @@ comments while sending no tokens.
 - [x] A stream that sends nothing for `stream_idle_timeout` is aborted;
       before any output it is retried under the existing `provider_retry`
       policy
-- [ ] A stall after output began is not retried: it ends the turn as
-      `stream_stalled`, because a second attempt would append a second
-      reply to text the window already shows (DECISIONS.md). A retry
-      there needs the loop to withdraw shown text; not planned. A
-      scheduled job does try again later (TD-5154)
+- [x] A stall after output began is withdrawn and retried (TD-5159):
+      the loop sends `assistant_retract` for that model response, the
+      window takes its partial text back, and the request is sent once
+      more; a second stall ends the turn as `stream_stalled`. Until
+      TD-5159 it ended the turn at once, because a second attempt would
+      have appended a second reply to text the window already showed
+      (DECISIONS.md). A scheduled job also tries again later (TD-5154)
 - [x] The misnamed "total" is fixed: the old field is `pool` (not a key),
       and `total_timeout` is a real wall-clock cap on one attempt
 - [x] docs/configuration.md documents the keys and shows an EZER
       local-model example
 - [x] Tests in core/tests/test_provider_timeouts.py
+
+### TD-5159 — A stall after output began is retried without a second reply
+**Size:** 3 · **Depends on:** TD-5106, TD-5146, TD-5152
+
+TD-5106's watchdog ends a stream that goes quiet. Before any output the
+provider retries it; after output began the turn ended as
+`stream_stalled`, because a second attempt would have appended a second
+reply to the partial text the window already showed. Nothing on the
+wire said which shown text belonged to the stalled response.
+
+**Acceptance criteria:**
+- [x] When a turn's stream stalls (`stream_stalled`) after output was
+      shown, the daemon sends `assistant_retract` naming that model
+      response's `response_id` (a new additive field on
+      `assistant_delta` and `assistant_reasoning`), and the window takes
+      that response's text and thinking off the message, showing
+      "Provider went quiet. Asking again" until the retry's first token
+- [x] The request is then sent again after `provider_retry`'s first
+      backoff, at most once per model call (`provider_retry.max_retries:
+      0` turns it off), so the user ends up with exactly one reply, on
+      screen and in the conversation; a second stall ends the turn as
+      `stream_stalled`
+- [x] Tool calls already executed in that turn are not executed again:
+      only the stalled response's text-in-progress is withdrawn, and the
+      text and tools of earlier calls in the turn stay
+- [x] Off-turn calls (the after-write review, memory distill) keep
+      TD-5146's no-resend rule; the progress check and a cut-off stream
+      (`stream_interrupted`) are unchanged; Stop during the wait keeps
+      nothing
+- [x] Older clients degrade safely: an unknown event is dropped and the
+      withdrawn text stays above the retry. `tst run --output json`,
+      scheduled-run receipts and mailed replies leave withdrawn text out;
+      `tst run --output text` notes it on stderr
+- [x] TD-5106's open criterion is ticked
+- [x] docs/configuration.md, docs/architecture.md (event table) and
+      DECISIONS.md updated
+- [x] Tests in core (`core/tests/test_stall_retry.py`) and ui
+      (`ui/src/lib/chat-retract.test.ts`, `protocol.test.ts`) fail on the
+      old code and pass on the new
+
+Done (2026-10-20): `core/tstd/reply_retry.py` wraps the turn's model
+call; `ui/src/lib/chat-retract.ts` marks where each response began on
+the row and cuts back to it. Class B entry in DECISIONS.md.
 
 ### TD-5107 — Load skills with unknown frontmatter and warn
 **Size:** 2 · **Depends on:** none · Gap audit 2026-10-14 (revisits TD-5011)

@@ -1397,8 +1397,10 @@ class ProviderClient:
         """The error for a stream that went quiet or ran too long (TD-5106).
 
         Nothing shown yet: retryable, so ``retry_stream`` tries again under
-        ``provider_retry``.  Part of a reply shown: not retryable, because
-        a second attempt would repeat text the window already has.
+        ``provider_retry``.  Part of a reply shown: not retryable here,
+        because a second attempt would repeat text the window already has.
+        The turn withdraws that text and asks once more itself (TD-5159,
+        reply_retry.py); the off-turn calls return it.
         """
         if past_total:
             what = f"The reply took longer than total_timeout ({self.timeout.total:g} s)."

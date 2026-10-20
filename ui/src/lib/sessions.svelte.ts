@@ -314,6 +314,7 @@ function applyTurnEvidence(event: DaemonEventUnion): boolean {
 		event.type === "user_turn" ||
 		event.type === "assistant_delta" ||
 		event.type === "assistant_reasoning" ||
+		event.type === "assistant_retract" ||
 		event.type === "tool_call" ||
 		event.type === "approval_request"
 	) {

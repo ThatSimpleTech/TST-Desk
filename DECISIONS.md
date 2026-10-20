@@ -13010,6 +13010,7 @@ retries it under `provider_retry`. A stall after output began is
 to the window, and a second attempt would append a second reply to the
 first. The audit asked for "retried". This is the part of that which is
 safe. Retrying mid-reply would need the loop to withdraw shown text.
+TD-5159 adds that withdrawal and retries once; see its entry.
 
 **With TD-5146.** Ported onto main after TD-5146, which has the work
 check and memory distill stream and never resend a `timeout`. A stall is
@@ -15506,6 +15507,80 @@ Python (Python's `[^x]` is not bash's); dynamic filter pins as in
 `git_raw` (an in-tree `diff=` attribute can still route to a configured
 external diff command, which no `-c` value turns off); a column on
 `tool_calls`.
+
+## 2026-10-20 — TD-5159: a stall after output began is withdrawn and asked again (Class B)
+
+TD-5106 left one criterion open: a stream that went quiet after output
+began ended the turn as `stream_stalled`, because a second attempt would
+append a second reply to text the window already showed. A retry needed
+the loop to withdraw shown text, and nothing on the wire could say which
+text that was: `assistant_delta` carried no id, and a turn's row in the
+window holds every model call of the turn, text and tools interleaved.
+
+**Decision.** Protocol (additive, no version bump):
+
+- `assistant_delta` and `assistant_reasoning` take an optional
+  `response_id`. The loop stamps a fresh one on every model call of the
+  turn (`resp-` plus 16 hex). Text the daemon writes itself (a failure
+  line, a progress note, the keychain message) and the Grok engine carry
+  none, and such text is never withdrawn.
+- A new `assistant_retract` event (`session_id`, `response_id`, `reason`)
+  withdraws every delta and reasoning chunk with that id. The window cuts
+  the row back to where that response began: it notes the row's text,
+  reasoning and part lengths at the response's first chunk, so text from
+  earlier calls in the turn, and tools that ran, stay. Tool calls never
+  stream inside a response (`tool_call` is sent after the stream ends),
+  so a withdrawal can never take a tool off the row.
+
+Loop (`core/tstd/reply_retry.py`): a turn's model call that fails with
+`stream_stalled` after a chunk arrived (`StreamResult.began`; before that
+the provider retries it under `provider_retry`, as TD-5106 has it) sends
+`assistant_retract`, waits `retry_delay(1, provider_retry)`, and makes
+the same request again under a new id. The partial text never entered
+the conversation (TD-5152), so the retry sees what the first attempt saw,
+and the turn's executed tool results are already in it, so nothing is
+run twice.
+
+**Conservative choices** (the story allowed "at most once or per
+provider_retry"):
+
+- One retry per model call, not `max_retries`: each attempt can wait a
+  whole `stream_idle_timeout` (300 s by default, 600 s in the EZER
+  example), so four of them would hold a turn for 20 to 40 minutes. A
+  second stall ends the turn as `stream_stalled`, as before, and its
+  partial text stays on screen above the failure line, as before.
+  `provider_retry.max_retries: 0` turns the retry off too.
+- Only `stream_stalled`. A cut-off stream (`stream_interrupted`, TD-5152)
+  is the gateway reporting a failure or giving up, and `total_timeout`
+  (`timeout`) is a cap the user set on one attempt; neither is retried.
+- The progress check (`emit_events=False`) and the off-turn calls (the
+  work check, memory distill) are untouched: nothing of theirs is shown,
+  and TD-5146's no-resend rule stands for them.
+- Stop or cancel during the wait ends the turn with nothing kept: the
+  withdrawn text is not offered back as a stopped turn's partial answer.
+- The window shows "Provider went quiet. Asking again…" in the Working
+  line until the retry's first chunk, by arming the first-token wait from
+  the retract (concrete daemon evidence that a request is in flight, so
+  TD-1714 holds), and the activity timeline records the withdrawal. No
+  new control.
+
+**Older clients.** A window from before this story drops the unknown
+event (client.ts) and shows the withdrawn text above the retried reply:
+doubled text, nothing lost, no error. An older daemon reading an events
+file with the event drops that line as unknown. `tst run --output text`
+and the CLI's session follower have already printed the withdrawn text
+and cannot take it back, so they print a note; `--output json`,
+scheduled run receipts and mailed replies leave the withdrawn text out
+(`shown_deltas`).
+
+**Rejected:** a delta that clears the row (no id to scope it, and it
+would take tools and earlier text with it); the retract carrying the
+withdrawn text for the window to strip as a suffix (a trimmed or partial
+replay would strip the wrong text; ids say exactly what to remove);
+splitting text parts per response (TD-1902 splits text only at tools so
+markdown renders intact); retrying in the provider (it cannot reach the
+window, and the off-turn calls must not resend); erasing printed text
+with terminal escapes in `tst run` (stdout is often a pipe).
 
 ## TD-5112 — Steer a running turn (Class B)
 

@@ -191,7 +191,9 @@ const TURN_ERROR_COPY: Record<string, NoticeSpec> = {
 		body: "TST Desk restarted before this reply finished. Click Continue to pick it up; the conversation is preserved.",
 	},
 	// TD-5106: the stream went quiet for stream_idle_timeout (or read_timeout).
-	// Before any output it was already retried under provider_retry.
+	// Before any output it was already retried under provider_retry. After
+	// output began the reply was withdrawn and asked for once more (TD-5159),
+	// unless provider_retry.max_retries is 0.
 	stream_stalled: {
 		severity: "toast",
 		title: "Provider went quiet",

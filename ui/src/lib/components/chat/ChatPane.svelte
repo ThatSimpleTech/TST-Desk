@@ -178,7 +178,11 @@
 				     we know. Cancel stays live below; the first delta recovers this. -->
 				<span class="stalled">No response yet — the model may be slow or unreachable.</span>
 			{:else if chat.awaitingFirstToken}
-				<span class="shimmer">{workingVerb(waitElapsedMs)}…</span>
+				<!-- TD-5159: the provider went quiet partway through the reply;
+				     the daemon withdrew it and is asking again. -->
+				<span class="shimmer"
+					>{chat.retryingReply ? "Provider went quiet. Asking again" : workingVerb(waitElapsedMs)}…</span
+				>
 				{#if waitElapsedMs >= 2000}
 					<span class="elapsed">for {formatTurnDuration(waitElapsedMs / 1000)}</span>
 				{/if}

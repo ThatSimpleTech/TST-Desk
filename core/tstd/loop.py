@@ -136,6 +136,7 @@ from .provider import (
 from .provider import (
     ToolDefinition as ProviderToolDefinition,
 )
+from .reply_retry import StreamResult, stream_reply
 from .router import TierName, TierRouter
 from .session import Session, SessionEventLog
 from .shell_read_only import probe_git
@@ -306,6 +307,7 @@ async def _progress_check_gate(
         _raw,
         _finish,
         _details,
+        _began,
     ) = await _stream_and_parse(
         provider,
         model_slug,
@@ -586,16 +588,8 @@ async def _stream_and_parse(
     *,
     emit_events: bool = True,
     on_usage: Callable[[Usage], None] | None = None,
-) -> tuple[
-    str,
-    dict[int, dict[str, str | int]],
-    bool,
-    str,
-    str | None,
-    str,
-    str | None,
-    list[dict[str, Any]] | None,
-]:
+    response_id: str | None = None,
+) -> StreamResult:
     """Call the provider, stream deltas, and accumulate tool calls.
 
     The request caps generation at the tier's ``max_output_tokens`` and
@@ -605,9 +599,13 @@ async def _stream_and_parse(
     *on_usage* receives the call's reported usage once the stream closes
     (TD-5007: the main turn call feeds token calibration from it).
 
+    *response_id* stamps every delta and reasoning chunk this call
+    emits, so a stall can withdraw exactly this response (TD-5159).
+
     Returns:
-        A tuple of ``(collected_content, tool_calls, failed, error_msg,
-        error_code, raw_detail, finish_reason, reasoning_details)``.
+        A :class:`StreamResult` of ``(collected_content, tool_calls, failed,
+        error_msg, error_code, raw_detail, finish_reason, reasoning_details,
+        began)``.
         ``error_code`` is the provider's typed code (e.g. ``auth_failed``)
         so clients can key tailored copy off it (TD-1008). ``raw_detail`` is
         the upstream body for the log; it is empty unless the chunk is a
@@ -615,9 +613,11 @@ async def _stream_and_parse(
         reported, or ``None``; ``"length"`` means the reply stopped at
         ``max_output_tokens`` (TD-5008). ``reasoning_details`` is the
         OpenRouter array to echo on the next assistant message (TD-1903),
-        or ``None`` when the stream carried none.
+        or ``None`` when the stream carried none. ``began`` says a chunk
+        arrived, after which the provider no longer retries (TD-5159).
     """
     collected_content = ""
+    began = False
     tool_calls: dict[int, dict[str, str | int]] = {}
     collected_details: list[dict[str, Any]] = []
     failed = False
@@ -657,6 +657,7 @@ async def _stream_and_parse(
                 failed, error_msg, error_code = True, chunk.message, chunk.code
                 raw_detail = chunk.detail
                 break
+            began = True
 
             # Stream reasoning delta (TD-1901).  The plaintext is emitted,
             # never folded into `collected_content`: that string is replayed to
@@ -677,6 +678,7 @@ async def _stream_and_parse(
                     AssistantReasoning(
                         session_id=session.id,
                         delta=thinking,
+                        response_id=response_id,
                         seq=1,
                     )
                 )
@@ -690,6 +692,7 @@ async def _stream_and_parse(
                         AssistantDelta(
                             session_id=session.id,
                             delta=chunk.delta.content,
+                            response_id=response_id,
                             seq=1,
                         )
                     )
@@ -721,7 +724,7 @@ async def _stream_and_parse(
         if on_usage is not None:
             on_usage(usage)
 
-    return (
+    return StreamResult(
         collected_content,
         tool_calls,
         failed,
@@ -730,7 +733,43 @@ async def _stream_and_parse(
         raw_detail,
         finish_reason,
         collected_details or None,
+        began,
     )
+
+
+async def _stream_turn_reply(
+    provider: ProviderLike,
+    model_slug: str,
+    messages: list[ChatMessage],
+    session: Session,
+    tool_definitions: list[ProviderToolDefinition] | None,
+    tracker: CostTracker,
+    tier: TierName,
+    tier_cfg: TierConfig,
+    counter: CalibratedTokenCounter,
+    config: ModelConfig,
+) -> StreamResult:
+    """The turn's own model call. Only it teaches the token ratio (TD-5007).
+
+    A stall after output began is withdrawn from the window and the call
+    is made once more under ``provider_retry`` (TD-5159, reply_retry.py).
+    """
+
+    def attempt(response_id: str) -> Awaitable[StreamResult]:
+        return _stream_and_parse(
+            provider,
+            model_slug,
+            messages,
+            session,
+            tool_definitions,
+            tracker,
+            tier,
+            tier_cfg,
+            on_usage=_calibration_observer(counter, messages, tool_definitions),
+            response_id=response_id,
+        )
+
+    return await stream_reply(attempt, session, config.provider_retry)
 
 
 def _carries_non_text(messages: list[ChatMessage]) -> bool:
@@ -2004,7 +2043,9 @@ async def agent_loop(
                     )
 
             # 2d. Call provider (streaming). Only this call teaches the
-            #     token ratio (TD-5007); the progress check does not.
+            #     token ratio (TD-5007); the progress check does not. A
+            #     stall after output began is withdrawn from the window
+            #     and the call is made once more (TD-5159).
             turn_step += 1
             (
                 collected_content,
@@ -2015,7 +2056,8 @@ async def agent_loop(
                 raw_detail,
                 finish_reason,
                 reasoning_details,
-            ) = await _stream_and_parse(
+                _began,
+            ) = await _stream_turn_reply(
                 provider,
                 model_slug,
                 messages,
@@ -2024,7 +2066,8 @@ async def agent_loop(
                 tracker,
                 tier,
                 tier_cfg,
-                on_usage=_calibration_observer(counter, messages, tool_definitions),
+                counter,
+                config,
             )
 
             # 2e. Handle failure

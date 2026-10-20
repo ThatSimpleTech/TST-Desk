@@ -698,13 +698,29 @@
     "type": "assistant_delta",
     "seq": 3,
     "session_id": "sess-1",
-    "delta": "Hello "
+    "delta": "Hello ",
+    "response_id": null
   },
   "assistant_reasoning": {
     "type": "assistant_reasoning",
     "seq": 3,
     "session_id": "sess-1",
-    "delta": "Let me think"
+    "delta": "Let me think",
+    "response_id": null
+  },
+  "assistant_delta_response": {
+    "type": "assistant_delta",
+    "seq": 3,
+    "session_id": "sess-1",
+    "delta": "The fix is ",
+    "response_id": "resp-1"
+  },
+  "assistant_retract": {
+    "type": "assistant_retract",
+    "seq": 4,
+    "session_id": "sess-1",
+    "response_id": "resp-1",
+    "reason": "stream_stalled"
   },
   "tool_call": {
     "type": "tool_call",

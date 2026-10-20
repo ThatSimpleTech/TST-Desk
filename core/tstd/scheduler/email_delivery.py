@@ -22,7 +22,8 @@ from typing import Protocol
 
 from ..logging import get_logger
 from ..notify.email import EmailNotifyError
-from ..protocol import AssistantDelta, DaemonEvent, ToolCall
+from ..protocol import DaemonEvent, ToolCall
+from ..reply_retry import shown_deltas
 from .history import set_run_delivery
 from .models import DeliverTo, DeliveryStatus, Job, normalize_summary
 from .store import transform_job
@@ -71,8 +72,8 @@ def final_assistant_text(events: list[DaemonEvent]) -> str:
 
 
 def _assistant_text(events: list[DaemonEvent], start: int) -> str:
-    parts = [event.delta for event in events[start:] if isinstance(event, AssistantDelta)]
-    return "".join(parts).strip()
+    # Text withdrawn after a stall (TD-5159) is not the reply.
+    return "".join(shown_deltas(events, start)).strip()
 
 
 async def deliver_job(
