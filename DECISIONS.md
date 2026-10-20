@@ -15145,7 +15145,9 @@ skills must not start skipping one.
 
 **Decision (the conservative option, a Class C question the story left
 open):** `disable-model-invocation` is honored rather than ignored. Any
-value except `false` or blank makes the skill user-only: it is left out
+value except YAML `false` or no value at all (`null`; a quoted `''` or
+`"false"` is a value, so it counts; wording fixed in TD-5160) makes the
+skill user-only: it is left out
 of the model's catalog, the `load_skill` tool refuses it, and only the
 user's `/name` (or the composer's "Load skill" marker) attaches it. The
 inspector marks it "slash only" via `SkillStackEntry.user_only`. TD-5011
