@@ -124,26 +124,58 @@ async def _ignored(top: Path, rels: Sequence[str], env: Mapping[str, str]) -> li
     return [os.fsdecode(n) for n in out.split(b"\0") if n]
 
 
+#: POSIX: open each folder on the path with ``O_NOFOLLOW`` from the one
+#: before it. Windows has no ``dir_fd`` and keeps the inode check.
+_WALK_OPENS = (
+    hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY") and os.open in os.supports_dir_fd
+)
+
+
+def _open_walked(top: Path, rel: str) -> int:
+    """Open ``top/rel`` read-only, refusing a symlink at any part below *top*."""
+    *dirs, name = rel.split("/")
+    dir_fd = os.open(top, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in dirs:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
+            os.close(dir_fd)
+            dir_fd = child
+        return os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
 def _open_checked(top: Path, rel: str, planned: os.stat_result | None) -> int:
     """Open *rel* as the regular file staging planned, or refuse (TD-5158).
 
     Staging lstats a path, runs several git commands, and only then reads
     it. A process in the workspace could swap the file, or a folder on its
     path, for a symlink in that gap, and git would store whatever the link
-    points at as a regular-file blob the agent can read back. Here
-    ``O_NOFOLLOW`` refuses a final symlink, and the device and inode must
-    still be the ones the plan saw, which refuses a swapped folder too. The
-    bytes are then read from this descriptor, never from the path again.
+    points at as a regular-file blob the agent can read back. On POSIX
+    every part of the path is opened with ``O_NOFOLLOW``, which refuses a
+    link anywhere on it; a file an editor saved by temp file and rename in
+    that gap is a new inode but still a regular file in the workspace, so
+    its new bytes are staged as ``git add`` would (TD-5160). Without
+    ``dir_fd`` (Windows) only the final part can refuse a link, so the
+    device and inode must still be the ones the plan saw. The bytes are
+    then read from this descriptor, never from the path again.
     """
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
     try:
-        fd = os.open(top / rel, flags)
+        if _WALK_OPENS:
+            fd = _open_walked(top, rel)
+        else:
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+            fd = os.open(top / rel, flags)
     except OSError as e:
         reason = e.strerror or type(e).__name__
         raise GitRawError(f"'{rel}' changed while it was being staged ({reason})") from None
     try:
         st = os.fstat(fd)
-        same = planned is None or (st.st_dev, st.st_ino) == (planned.st_dev, planned.st_ino)
+        same = (
+            _WALK_OPENS
+            or planned is None
+            or (st.st_dev, st.st_ino) == (planned.st_dev, planned.st_ino)
+        )
         if not stat.S_ISREG(st.st_mode) or not same:
             raise GitRawError(f"'{rel}' changed while it was being staged; not staging it")
     except BaseException:

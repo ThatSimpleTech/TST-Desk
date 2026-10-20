@@ -10322,10 +10322,15 @@ code, a docs fix); one that is not, or no longer applies, says why.
 - [x] 33. TD-5157 a file swapped for a symlink while staging was read
       through it: each file is opened with `O_NOFOLLOW`, must be the device
       and inode the plan saw, and is hashed from that descriptor
-- [x] Tests fail on the old code and pass on the new, except three that add
+- [x] Tests fail on the old code and pass on the new, except six that add
       coverage for code that was already right and pass on both (TD-5104's
       loop-turn test, the walk's held step, the path-based steering
-      write's plain write); ruff, mypy, tsc, vitest and the UI walk pass
+      write's plain write, and, found by the TD-5160 review against
+      merge-base 9dab946: `test_without_ignorecase_another_case_is_another_file`,
+      `TestReviewNotes::test_a_role_only_reply_still_ends_as_before` and the
+      `C:x.txt` case of `test_windows_unsafe_form_is_refused_not_joined`,
+      which the old code already refused); ruff, mypy, tsc, vitest and the
+      UI walk pass
 
 ### TD-5111 — `tst run` for scripts
 **Size:** 3 · **Depends on:** none · Gap audit 2026-10-14

@@ -340,6 +340,8 @@ async def test_a_send_that_cannot_be_saved_is_refused_not_lost(
         assert frame["code"] == "message_not_saved"
         assert frame["in_reply_to"] == "user_message"
         assert "Permission denied" in frame["message"]
+        # TD-5160: old windows and APKs show this as is and give nothing back.
+        assert "composer" not in frame["message"]
         assert session.pending_user_messages == 0
         assert session.turn_in_flight is False
         assert session._waiting == []

@@ -2658,7 +2658,9 @@ class Daemon:
                 # Accepted means saved (TD-5155): a send that cannot reach
                 # the queue file is refused, and the window puts the text
                 # back in the composer, instead of being lost to the next
-                # restart without a word (TD-5158).
+                # restart without a word (TD-5158). The text claims nothing
+                # about the composer: older windows and every installed APK
+                # show it as is and do not give the text back (TD-5160).
                 found.pending_images = []
                 log.warning(
                     "user message not saved; refused",
@@ -2668,8 +2670,7 @@ class Daemon:
                 return build_error(
                     "message_not_saved",
                     f"Couldn't save the message to disk ({reason}), so it was not sent. "
-                    "It is back in the composer; check that TST Desk's data folder is "
-                    "writable, then send it again.",
+                    "Check that TST Desk's data folder is writable, then send it again.",
                     session_id=msg.session_id,
                     in_reply_to=msg.type,
                 )
