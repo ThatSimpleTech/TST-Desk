@@ -166,6 +166,30 @@ def test_this_turns_results_are_left_to_the_in_turn_trim() -> None:
     assert stats is None
 
 
+def test_a_message_sent_mid_turn_does_not_make_this_turns_results_stale() -> None:
+    """A steer (TD-5112) joins the running turn; it starts none, so the
+    results the turn got before it are still this turn's."""
+    messages = _conversation(0)
+    calls = [_call(f"c{i}", "fs_read", {"path": f"big{i}.md"}) for i in range(8)]
+    messages.append(ChatMessage(role="assistant", content=None, tool_calls=calls))
+    for i in range(8):
+        messages.append(ChatMessage(role="tool", content="y" * 12_000, tool_call_id=f"c{i}"))
+    messages.append(ChatMessage(role="user", content="also check big9.md", steer=True))
+    assert estimate_tokens(messages, COUNTER)[0] > BUDGET
+
+    policy = ClearToolResultsConfig(keep_recent_tool_results=0, clear_at_least_tokens=0)
+    out, stats = clear_stale_tool_results(messages, TIER, COUNTER, policy)
+    assert out is messages
+    assert stats is None
+
+    # An earlier turn's result before the running turn is still fair game.
+    earlier = _conversation(1)[:-1] + messages[1:]
+    out, stats = clear_stale_tool_results(earlier, TIER, COUNTER, policy)
+    assert stats is not None and stats.cleared_results == 1
+    assert _tool_texts(out)[0].startswith(CLEARED_PREFIX)
+    assert _tool_texts(out)[1:] == _tool_texts(earlier)[1:]
+
+
 def test_an_excluded_tool_keeps_its_result() -> None:
     messages = _conversation(8, t1="memory_lookup")
     policy = ClearToolResultsConfig(exclude_tools=["memory_lookup"])

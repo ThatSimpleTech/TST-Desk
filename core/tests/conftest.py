@@ -33,6 +33,7 @@ from tstd.context.calibration import CalibrationKey, CalibrationStore
 from tstd.context.embeddings import EmbeddingsClient
 from tstd.keychain import KeychainError
 from tstd.logging import LINUX_DATA_DIR_NAME, LINUX_LEGACY_DATA_DIR_NAME, user_data_dir
+from tstd.tools.web_page import PAGE_CACHE
 
 _KEEP_REAL_PING_INTERVAL = {
     "test_default_interval_leaves_room_for_a_missed_frame",
@@ -110,6 +111,14 @@ def _no_token_calibration_from_canned_usage(monkeypatch: pytest.MonkeyPatch) -> 
     assert path is None or not any(
         path.resolve().is_relative_to(real) for real in _REAL_USER_DATA_DIRS
     ), f"a test pointed token calibration at the real data folder: {path}"
+
+
+@pytest.fixture(autouse=True)
+def _empty_page_cache() -> Iterator[None]:
+    """web_fetch's page cache is daemon-wide (TD-5114); tests share URLs."""
+    PAGE_CACHE.clear()
+    yield
+    PAGE_CACHE.clear()
 
 
 @pytest.fixture(autouse=True)

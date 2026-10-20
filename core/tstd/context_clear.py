@@ -43,7 +43,7 @@ from dataclasses import dataclass, replace
 from .compaction import budget_threshold, estimate_tokens, find_compaction_point
 from .config import ClearToolResultsConfig, TierConfig
 from .context.tokens import TokenCounter
-from .context_fit import ELIDE_TARGET_FRACTION
+from .context_fit import ELIDE_TARGET_FRACTION, turn_start_index
 from .provider import ChatMessage, ToolDefinition, content_as_text
 from .provider import ToolCall as ProviderToolCall
 
@@ -169,12 +169,13 @@ def stale_tool_indexes(
 ) -> list[int]:
     """Tool results the policy lets go, oldest first.
 
-    Earlier turns only (before the last user message), outside the
-    newest ``keep_recent_tool_results`` results, not already cleared,
-    paired with a call of their own (see ``_calls_by_result``), and not
-    from a tool in ``exclude_tools``.
+    Earlier turns only (before the user message that started the turn
+    in flight; a message sent mid-turn that joined it, TD-5112, starts
+    none), outside the newest ``keep_recent_tool_results`` results, not
+    already cleared, paired with a call of their own (see
+    ``_calls_by_result``), and not from a tool in ``exclude_tools``.
     """
-    last_user = max((i for i, m in enumerate(messages) if m.role == "user"), default=-1)
+    turn_start = turn_start_index(messages)
     tool_indexes = [i for i, m in enumerate(messages) if m.role == "tool"]
     keep = policy.keep_recent_tool_results
     recent = set(tool_indexes[-keep:]) if keep > 0 else set()
@@ -183,7 +184,7 @@ def stale_tool_indexes(
     return [
         index
         for index in tool_indexes
-        if index < last_user
+        if index < turn_start
         and index not in recent
         and not is_cleared(messages[index])
         and index in calls

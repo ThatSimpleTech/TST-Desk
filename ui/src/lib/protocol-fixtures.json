@@ -15,7 +15,8 @@
     "type": "user_message",
     "session_id": "sess-1",
     "content": "hello world",
-    "attachments": []
+    "attachments": [],
+    "steer": false
   },
   "send_queued": {
     "type": "send_queued",
@@ -52,7 +53,15 @@
         "name": "empty.txt",
         "content_b64": ""
       }
-    ]
+    ],
+    "steer": false
+  },
+  "user_message_steer": {
+    "type": "user_message",
+    "session_id": "sess-1",
+    "content": "Also run the linter",
+    "attachments": [],
+    "steer": true
   },
   "approve": {
     "type": "approve",
@@ -650,7 +659,23 @@
     "seq": 3,
     "session_id": "sess-1",
     "turn_id": "turn-1",
-    "content": "Fix the tests"
+    "content": "Fix the tests",
+    "steer": null
+  },
+  "user_turn_steer": {
+    "type": "user_turn",
+    "seq": 9,
+    "session_id": "sess-1",
+    "turn_id": "turn-2",
+    "content": "Also run the linter",
+    "steer": {
+      "turn_id": "turn-1",
+      "step": 2,
+      "after_tool_call_ids": [
+        "tc-1",
+        "tc-2"
+      ]
+    }
   },
   "queued_messages": {
     "type": "queued_messages",
@@ -673,13 +698,29 @@
     "type": "assistant_delta",
     "seq": 3,
     "session_id": "sess-1",
-    "delta": "Hello "
+    "delta": "Hello ",
+    "response_id": null
   },
   "assistant_reasoning": {
     "type": "assistant_reasoning",
     "seq": 3,
     "session_id": "sess-1",
-    "delta": "Let me think"
+    "delta": "Let me think",
+    "response_id": null
+  },
+  "assistant_delta_response": {
+    "type": "assistant_delta",
+    "seq": 3,
+    "session_id": "sess-1",
+    "delta": "The fix is ",
+    "response_id": "resp-1"
+  },
+  "assistant_retract": {
+    "type": "assistant_retract",
+    "seq": 4,
+    "session_id": "sess-1",
+    "response_id": "resp-1",
+    "reason": "stream_stalled"
   },
   "tool_call": {
     "type": "tool_call",

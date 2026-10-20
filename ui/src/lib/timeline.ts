@@ -36,6 +36,7 @@ export type EntryKind =
   | "trim"
   | "steering_reload"
   | "error"
+  | "retry"
   | "verify";
 
 export interface TimelineEntry {
@@ -273,6 +274,16 @@ export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
           rule_path: event.rule_path,
           session_id: event.session_id,
         },
+      };
+    case "assistant_retract":
+      // TD-5159: the window took a half-written reply back; this says why.
+      return {
+        id: `retract:${event.seq}`,
+        kind: "retry",
+        seq: event.seq,
+        title: "Provider went quiet",
+        preview: "The partial reply was withdrawn; asking again.",
+        details: { reason: event.reason, response_id: event.response_id },
       };
     case "error":
       return {

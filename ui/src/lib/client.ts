@@ -45,6 +45,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "queued_messages",
   "assistant_delta",
   "assistant_reasoning", // TD-1901
+  "assistant_retract", // TD-5159
   "tool_call",
   "tool_result",
   "shell_output",

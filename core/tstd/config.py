@@ -250,7 +250,8 @@ class TierConfig(BaseModel):
     # caps one attempt including streaming; ``stream_idle_timeout`` aborts
     # a stream that sends no usable chunk for that long (keep-alive pings
     # do not count). A stall before any output is retried under
-    # ``provider_retry``. null turns either off.
+    # ``provider_retry``; one partway through a turn's reply is withdrawn
+    # and asked once more (TD-5159). null turns either off.
     connect_timeout: float = Field(default=30.0, gt=0)
     read_timeout: float = Field(default=120.0, gt=0)
     total_timeout: float | None = Field(default=None, gt=0)
@@ -457,7 +458,9 @@ class SearchConfig(BaseModel):
     ``fallback_base_urls`` is tried in order when the ones before it fail
     or return nothing parseable. ``web_fetch`` takes a URL the user
     approved. Empty ``base_url`` disables the primary only — fallbacks
-    still run; all empty disables search.
+    still run; all empty disables search. ``fetch_page_chars`` and
+    ``fetch_cache_seconds`` size ``web_fetch``'s windows and its
+    in-memory page cache (TD-5114).
     """
 
     base_url: str = ""
@@ -468,6 +471,10 @@ class SearchConfig(BaseModel):
     timeout_seconds: float = Field(default=15.0, gt=0)
     max_results: int = Field(default=8, ge=1, le=20)
     fetch_max_bytes: int = Field(default=200_000, ge=1)
+    # TD-5114: a page is read in windows of this many characters, and kept
+    # in memory this long so the next window or question skips the download.
+    fetch_page_chars: int = Field(default=30_000, ge=1_000)
+    fetch_cache_seconds: int = Field(default=900, ge=0, le=86_400)
 
 
 class ProjectContextConfig(BaseModel):

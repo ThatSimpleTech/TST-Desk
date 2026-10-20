@@ -812,7 +812,12 @@ describe("queued messages", () => {
     expect(store.sendQueuedNow(second)).toBe(true);
 
     expect(userSends(sent)).toEqual(["second"]);
-    expect(state.queued.map((q) => q.text)).toEqual(["first"]);
+    // TD-5112: it waits in place, read-only, until the daemon hands it to
+    // the turn; the row before it stays an ordinary queued row.
+    expect(state.queued.map((q) => [q.text, q.waiting === true])).toEqual([
+      ["first", false],
+      ["second", true],
+    ]);
     store.dispose();
   });
 
@@ -956,7 +961,15 @@ describe("empty queue chrome", () => {
     // stray wrapper; this one cannot.
     expect(template.startsWith("{#if showQueue(queued)}")).toBe(true);
     expect(template.endsWith("{/if}")).toBe(true);
-    expect(template.match(/\{#if /g)).toHaveLength(1);
+    // Blocks nested inside the guard (TD-5112's waiting row) are fine; the
+    // guard itself must not close before the end of the template.
+    let depth = 0;
+    const blocks = [...template.matchAll(/\{#if |\{\/if\}/g)];
+    blocks.forEach((match, index) => {
+      depth += match[0] === "{/if}" ? -1 : 1;
+      if (index < blocks.length - 1) expect(depth).toBeGreaterThan(0);
+    });
+    expect(depth).toBe(0);
   });
 
   it("shows the strip as soon as one message is queued", () => {
