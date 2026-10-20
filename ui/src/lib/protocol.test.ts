@@ -673,7 +673,7 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect((fixtures.user_turn as UserTurn).line_comments ?? null).toBeNull();
     const m = fixtures.user_turn_line_comments as UserTurn;
     expect(m.line_comments).toEqual([
-      { id: "c-1", path: "/home/user/project/src/app.py", start_line: 4, end_line: 5, body: "Use a constant here" },
+      { id: "c-1", path: "/home/user/project/src/app.py", start_line: 4, end_line: 5, body: "Use a constant here", base_seq: 7 },
     ]);
   });
 
@@ -681,6 +681,7 @@ describe("Daemon event fixtures match TypeScript types", () => {
     const m = fixtures.submit_line_comments as SubmitLineComments;
     expect(m.type).toBe("submit_line_comments");
     expect(m.comments[0].lines).toEqual(["x = 3", "y = 3"]);
+    expect(m.comments[0].base_seq).toBe(7);
   });
 
   it("assistant_delta", () => {

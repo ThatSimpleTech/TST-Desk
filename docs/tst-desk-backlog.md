@@ -11205,6 +11205,15 @@ carrying the range past writes elsewhere in the file
 (`ui/src/lib/review-comments.ts`). Tests: `core/tests/test_line_comments.py`,
 `ui/src/lib/review-comments.test.ts`, `ui/src/lib/review-comments-component.test.ts`.
 
+Review fixes (PR #50): sending never locks the pane. Comments sent while a
+turn runs show as waiting in the review bar until their `user_turn`, and the
+session ending first hands them back as drafts. Each comment carries
+`base_seq` (the write it was made on), so writes made before its turn carry
+its range, and one that changes its lines marks it Outdated instead of
+letting a later write resolve the wrong lines. Inside a hunk, lines are read
+by their first character only, so an added `++i;` or a removed `---` / `--`
+line is numbered and counted like any other.
+
 ### TD-5143 — The agent sends files to the chat
 **Size:** 5 · **Depends on:** TD-3201, TD-3202, TD-5014, TD-5015
 

@@ -107,6 +107,9 @@ export interface LineCommentAnchor {
   start_line: number;
   end_line: number;
   body: string;
+  /** Seq of the `tool_result` whose diff the comment was made on, so the
+   *  range is carried through writes made before the comment's turn. */
+  base_seq?: number | null;
 }
 
 /** One comment as the window sends it: `lines` are the commented lines as

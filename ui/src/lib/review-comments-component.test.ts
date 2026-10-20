@@ -3,8 +3,9 @@
 // TD-5132: the diff view takes line comments, mounted for real. A number in
 // the gutter starts a comment on that line, shift-click makes it a range,
 // and the review bar sends every draft at once as one submit_line_comments.
-// The drafts stay until the daemon's user_turn takes them; a refusal gives
-// them back with the reason.
+// A send never locks the pane: the drafts move to a waiting copy until the
+// daemon's user_turn takes them; a refusal, or the session ending first,
+// gives them back with the reason.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
@@ -52,7 +53,7 @@ beforeEach(() => {
   bindReviewComments("s1");
   target = document.createElement("div");
   document.body.appendChild(target);
-  mounted.push(mount(CommentableDiff, { target, props: { path: PATH, diff: DIFF } }));
+  mounted.push(mount(CommentableDiff, { target, props: { path: PATH, diff: DIFF, seq: 6 } }));
   mounted.push(mount(ReviewBar, { target }));
   flushSync();
 });
@@ -108,12 +109,20 @@ describe("CommentableDiff + ReviewBar", () => {
         type: "submit_line_comments",
         session_id: "s1",
         comments: [
-          expect.objectContaining({ path: PATH, start_line: 2, end_line: 3, body: "name this better", lines: ["TWO", "extra"] }),
+          expect.objectContaining({
+            path: PATH,
+            start_line: 2,
+            end_line: 3,
+            body: "name this better",
+            lines: ["TWO", "extra"],
+            base_seq: 6,
+          }),
           expect.objectContaining({ path: PATH, start_line: 4, end_line: 4, body: "and this", lines: ["three"] }),
         ],
       },
     ]);
-    expect(target.textContent).toContain("Sending 2 comments");
+    expect(target.textContent).toContain("2 comments sent, waiting for the agent");
+    expect(review.drafts).toEqual([]);
     const ids = (connection.sent[0] as { comments: { id: string }[] }).comments.map((c) => c.id);
     emit({
       type: "user_turn",
@@ -123,8 +132,48 @@ describe("CommentableDiff + ReviewBar", () => {
       seq: 9,
       line_comments: ids.map((id) => ({ id, path: PATH, start_line: 1, end_line: 1, body: "x" })),
     });
+    expect(review.waiting).toEqual([]);
+    expect(target.textContent).not.toContain("waiting");
+  });
+
+  it("sent mid-turn: the pane stays usable while the comments wait in the queue", () => {
+    comment(1, null, "first");
+    byText("Send comments to agent").click();
+    flushSync();
+    // The running turn has not ended, so no user_turn yet: still editable.
+    expect(byLabel("Comment on line 2").disabled).toBe(false);
+    comment(2, null, "second");
+    expect(review.drafts.map((d) => d.body)).toEqual(["second"]);
+    expect(byText("Discard comments").disabled).toBe(false);
+    expect(byLabel("Remove comment").disabled).toBe(false);
+    expect(target.textContent).toContain("1 comment ready");
+    expect(target.textContent).toContain("1 comment sent, waiting");
+  });
+
+  it("the session ending before the turn hands the waiting comments back", () => {
+    comment(1, null, "keep me");
+    byText("Send comments to agent").click();
+    flushSync();
+    emit({ type: "session_state", session_id: "s1", state: "cancelled", seq: 3 });
+    expect(review.waiting).toEqual([]);
+    expect(review.drafts.map((d) => d.body)).toEqual(["keep me"]);
+    expect(target.textContent).toContain("The session ended before the agent read these comments");
+  });
+
+  it("a held queue takes over the message: the waiting note clears", () => {
+    comment(1, null, "held");
+    byText("Send comments to agent").click();
+    flushSync();
+    emit({ type: "queued_messages", session_id: "s1", messages: [], seq: 3 });
+    expect(review.waiting).toHaveLength(1);
+    emit({
+      type: "queued_messages",
+      session_id: "s1",
+      messages: [{ queued_id: "q1", content: "Review comments", images_dropped: 0 }],
+      seq: 4,
+    });
+    expect(review.waiting).toEqual([]);
     expect(review.drafts).toEqual([]);
-    expect(review.sending).toBe(false);
   });
 
   it("a refusal keeps the drafts and shows why", () => {
@@ -140,7 +189,7 @@ describe("CommentableDiff + ReviewBar", () => {
       seq: 0,
     });
     expect(review.drafts).toHaveLength(1);
-    expect(review.sending).toBe(false);
+    expect(review.waiting).toEqual([]);
     expect(target.textContent).toContain("This session is done.");
   });
 
@@ -159,22 +208,23 @@ describe("CommentableDiff + ReviewBar", () => {
     byText("Send comments to agent").click();
     flushSync();
     expect(review.drafts).toHaveLength(1);
-    expect(review.sending).toBe(false);
+    expect(review.waiting).toEqual([]);
     expect(target.textContent).toContain("not connected");
   });
 });
 
 describe("SentComments", () => {
-  it("shows each sent comment open or resolved", () => {
+  it("shows each sent comment open, resolved or outdated", () => {
     const comments: SentComment[] = [
       { id: "a", path: PATH, start_line: 2, end_line: 3, body: "rename", turnSeq: 1, status: "resolved", resolvedSeq: 4 },
       { id: "b", path: PATH, start_line: 9, end_line: 9, body: "later", turnSeq: 1, status: "open", resolvedSeq: null },
+      { id: "c", path: PATH, start_line: 5, end_line: 5, body: "moved", turnSeq: 3, status: "outdated", resolvedSeq: 2 },
     ];
     const el = document.createElement("div");
     const view = mount(SentComments, { target: el, props: { comments } });
     flushSync();
     const rows = [...el.querySelectorAll("li")].map((li) => li.textContent?.replace(/\s+/g, " ").trim());
-    expect(rows).toEqual(["Resolved lines 2-3 rename", "Open line 9 later"]);
+    expect(rows).toEqual(["Resolved lines 2-3 rename", "Open line 9 later", "Outdated line 5 moved"]);
     unmount(view);
   });
 });

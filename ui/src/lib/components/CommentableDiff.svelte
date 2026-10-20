@@ -15,7 +15,7 @@
 	} from '../review-comments';
 	import { addDraft, removeDraft, review } from '../review-comments.svelte.js';
 
-	let { path, diff }: { path: string; diff: string } = $props();
+	let { path, diff, seq = null }: { path: string; diff: string; seq?: number | null } = $props();
 
 	let rows = $derived(numberDiffRows(diff));
 	let drafts = $derived(review.drafts.filter((d) => d.path === path));
@@ -25,7 +25,6 @@
 	let problem = $state<string | null>(null);
 
 	function pick(line: number, extend: boolean): void {
-		if (review.sending) return;
 		problem = null;
 		if (extend && anchor !== null) {
 			selection = { start: Math.min(anchor, line), end: Math.max(anchor, line) };
@@ -54,7 +53,7 @@
 			problem = 'That range skips lines this diff does not show. Pick lines from one block.';
 			return;
 		}
-		if (!addDraft(path, start, end, lines, body)) {
+		if (!addDraft(path, start, end, lines, body, seq)) {
 			problem = 'Write the comment first.';
 			return;
 		}
@@ -83,7 +82,6 @@
 					type="button"
 					aria-label={`Comment on line ${row.newLine}`}
 					aria-pressed={selected(row.newLine)}
-					disabled={review.sending}
 					onclick={(e) => pick(row.newLine as number, e.shiftKey)}>{row.newLine}</button
 				>
 			{:else}
@@ -119,7 +117,6 @@
 					type="button"
 					class="btn btn--quiet"
 					aria-label="Remove comment"
-					disabled={review.sending}
 					onclick={() => removeDraft(draft.id)}>Remove</button
 				>
 			</div>

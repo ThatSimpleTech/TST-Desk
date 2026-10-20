@@ -288,6 +288,11 @@ class LineCommentAnchor(BaseModel):
     start_line: int = Field(ge=1)
     end_line: int = Field(ge=1)
     body: str = Field(min_length=1, max_length=4000)
+    #: Seq of the ``tool_result`` whose diff the comment was made on, so the
+    #: window can carry the range through writes made before the comment's
+    #: turn starts (a comment sent mid-turn). Echoed as sent; ``None`` from
+    #: a client that does not say.
+    base_seq: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def _ordered(self) -> LineCommentAnchor:

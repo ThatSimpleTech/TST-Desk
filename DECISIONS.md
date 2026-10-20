@@ -17218,6 +17218,20 @@ pane: its line numbers are the file as it is now. Older writes stay read-only.
 - Not a machine-peer or forwarded verb: another computer's session shows its
   diffs read-only, and a phone on this computer can send them like the window.
 - Drafts live in the window's memory for the bound session and are dropped on
-  a session switch, like the plan-review cards; they stay until the
-  `user_turn` takes them, and a refusal hands them back with the reason.
+  a session switch, like the plan-review cards. A send does not lock them: the
+  daemon logs the `user_turn` only when the loop takes the message (after the
+  running turn, or never if it is held or the session ends), so the drafts move
+  at once to a waiting copy shown in the review bar. A refusal (`in_reply_to`)
+  or the session ending hands the copy back as drafts with the reason; the
+  `user_turn` or a non-empty held list (`queued_messages`) clears it. No new
+  acknowledgement event: the refusal path already says when a send failed.
+
+**Review follow-up (PR #50).** Each comment carries an optional `base_seq`,
+the seq of the write whose diff it was made on, echoed on the anchor. Writes
+between that write and the comment's turn (a turn still running when it was
+sent) carry the range; one that touches it marks the comment *Outdated*, not
+Resolved, because the agent changed those lines before reading it. The diff
+walker classes lines inside a hunk by the first character alone, counted by
+the hunk header, so `++i;` added or a `--`/`---` line removed is content, not a
+file header; `-a,0` inserts after line a.
 

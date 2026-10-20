@@ -4,26 +4,29 @@
 	import { discardDrafts, review, submitDrafts } from '../review-comments.svelte.js';
 
 	let count = $derived(review.drafts.length);
+	let waiting = $derived(review.waiting.length);
 </script>
 
-{#if count > 0 || review.notice}
+{#if count > 0 || waiting > 0 || review.notice}
 	<div class="review-bar" role="region" aria-label="Line comments to send">
 		<span class="summary" aria-live="polite">
-			{#if review.sending}
-				Sending {count} {count === 1 ? 'comment' : 'comments'}…
-			{:else}
-				{count} {count === 1 ? 'comment' : 'comments'} ready
+			{#if count > 0}{count} {count === 1 ? 'comment' : 'comments'} ready{/if}
+			{#if waiting > 0}
+				<span class="waiting"
+					>{waiting} {waiting === 1 ? 'comment' : 'comments'} sent, waiting for the agent to read
+					{waiting === 1 ? 'it' : 'them'}</span
+				>
 			{/if}
 		</span>
 		{#if review.notice}<p class="notice" role="alert">{review.notice}</p>{/if}
 		<div class="actions">
-			<button type="button" class="btn" disabled={review.sending || count === 0} onclick={discardDrafts}
+			<button type="button" class="btn" disabled={count === 0} onclick={discardDrafts}
 				>Discard comments</button
 			>
 			<button
 				type="button"
 				class="btn btn--primary"
-				disabled={review.sending || count === 0}
+				disabled={count === 0}
 				onclick={submitDrafts}>Send comments to agent</button
 			>
 		</div>
@@ -45,6 +48,13 @@
 
 	.summary {
 		flex: 1;
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-1) var(--space-3);
+	}
+
+	.waiting {
+		color: var(--color-ink-muted);
 	}
 
 	.notice {

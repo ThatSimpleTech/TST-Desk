@@ -116,6 +116,7 @@ def build_comments_turn(
             start_line=comment.start_line,
             end_line=comment.end_line,
             body=comment.body,
+            base_seq=comment.base_seq,
         )
         for comment, path in zip(comments, paths, strict=True)
     ]

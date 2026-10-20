@@ -313,6 +313,7 @@ FIXTURES = {
                 end_line=5,
                 body="Use a constant here",
                 lines=["x = 3", "y = 3"],
+                base_seq=7,
             )
         ],
     ),
@@ -634,6 +635,7 @@ FIXTURES = {
                 start_line=4,
                 end_line=5,
                 body="Use a constant here",
+                base_seq=7,
             )
         ],
         seq=12,

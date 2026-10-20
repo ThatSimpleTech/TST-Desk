@@ -100,7 +100,7 @@
 									<!-- TD-5132: only the latest write takes comments: its line
 									     numbers are the file as it is now. -->
 									{#if i === file.writes.length - 1 && commentable}
-										<CommentableDiff path={file.path} diff={write.diff} />
+										<CommentableDiff path={file.path} diff={write.diff} seq={write.seq} />
 									{:else}
 										<DiffPreview diff={write.diff} />
 									{/if}

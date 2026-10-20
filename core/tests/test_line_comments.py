@@ -37,6 +37,7 @@ def _comment(
         end_line=end,
         body=body,
         lines=lines,
+        base_seq=kw.pop("base_seq", None),
     )
 
 
@@ -65,6 +66,18 @@ def test_a_comment_is_anchored_by_file_and_line_with_the_code_around_it(work: Pa
     assert [(a.path, a.start_line, a.end_line) for a in turn.anchors] == [
         (str((work / "src" / "app.py").resolve()), 10, 10)
     ]
+
+
+def test_the_commented_writes_seq_is_echoed_on_the_anchor(work: Path) -> None:
+    """The window carries a range through writes made before the turn from it."""
+    comments = [
+        _comment(work / "src" / "app.py", 4, 4, base_seq=17),
+        _comment(work / "src" / "app.py", 6, 6, id="c2"),
+    ]
+    turn = build_comments_turn(comments, work, PolicyConfig())
+    assert [a.base_seq for a in turn.anchors] == [17, None]
+    with pytest.raises(ValidationError):
+        _comment(work / "src" / "app.py", 4, 4, base_seq=-1)
 
 
 def test_all_comments_go_as_one_message_in_order(work: Path) -> None:

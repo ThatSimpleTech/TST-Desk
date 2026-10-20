@@ -52,8 +52,8 @@ function write(seq: number, body: string): TimelineEntry {
   };
 }
 
-function anchor(id: string, start: number, end: number) {
-  return { id, path: PATH, start_line: start, end_line: end, body: "fix" };
+function anchor(id: string, start: number, end: number, base_seq?: number) {
+  return { id, path: PATH, start_line: start, end_line: end, body: "fix", ...(base_seq === undefined ? {} : { base_seq }) };
 }
 
 describe("numberDiffRows", () => {
@@ -72,6 +72,46 @@ describe("numberDiffRows", () => {
     // Removed lines and headers take no comment.
     expect(rows.find((r) => r.line === "-b")?.newLine).toBeNull();
     expect(rows.find((r) => r.kind === "meta")?.newLine).toBeNull();
+  });
+});
+
+describe("content lines that look like file headers", () => {
+  // Inside a hunk a line is classed by its first character only: an added
+  // `++i;` reads `+++i;`, a removed `---` rule reads `----`.
+  it("an added line starting with ++ is numbered, and so is every line after it", () => {
+    const rows = numberDiffRows(diff("@@ -1,2 +1,3 @@", " a", "+++i;", " b"));
+    const added = rows.find((r) => r.line === "+++i;");
+    expect(added?.kind).toBe("add");
+    expect(added?.newLine).toBe(2);
+    expect(added?.text).toBe("++i;");
+    expect(rows.find((r) => r.line === " b")?.newLine).toBe(3);
+  });
+
+  it("a removed line starting with -- is a removal in the old file's numbering", () => {
+    const rule = diff("@@ -1,3 +1,2 @@", " a", "----", " b");
+    expect(changeBlocks(rule)).toEqual([{ at: 2, removed: 1, added: 0 }]);
+    // The comment on the deleted line is resolved; one below it moves up.
+    expect(carryRange(2, 2, changeBlocks(rule))).toEqual({ touched: true });
+    expect(carryRange(5, 5, changeBlocks(rule))).toEqual({ touched: false, start: 4, end: 4 });
+    const sql = diff("@@ -4,2 +4,1 @@", "--- old note", " select 1;");
+    expect(changeBlocks(sql)).toEqual([{ at: 4, removed: 1, added: 0 }]);
+    expect(numberDiffRows(sql).find((r) => r.line === " select 1;")?.newLine).toBe(4);
+  });
+
+  it("file headers of the next file after a hunk are still headers", () => {
+    const two = [diff("@@ -1,1 +1,1 @@", "-a", "+A"), "--- a/x", "+++ b/x"].join("\n");
+    const rows = numberDiffRows(two);
+    expect(rows.filter((r) => r.kind === "meta").map((r) => r.line)).toEqual([
+      `--- a/${PATH}`,
+      `+++ b/${PATH}`,
+      "--- a/x",
+      "+++ b/x",
+    ]);
+  });
+
+  it("a pure insertion goes in after the hunk's old start", () => {
+    expect(changeBlocks(diff("@@ -3,0 +4,2 @@", "+x", "+y"))).toEqual([{ at: 4, removed: 0, added: 2 }]);
+    expect(changeBlocks(diff("@@ -0,0 +1,1 @@", "+x"))).toEqual([{ at: 1, removed: 0, added: 1 }]);
   });
 });
 
@@ -138,6 +178,27 @@ describe("sentComments", () => {
     expect(out[0].status).toBe("open");
   });
 
+  it("writes between the commented diff and the turn carry the range (sent mid-turn)", () => {
+    // Made on write 1 at line 10; write 2 (the running turn) puts two lines
+    // above it before the comment's turn at 3; write 4 touches line 12.
+    const above = diff("@@ -1,1 +1,3 @@", " a", "+x", "+y");
+    const atTwelve = diff("@@ -12,1 +12,1 @@", "-c", "+C");
+    const atTen = diff("@@ -10,1 +10,1 @@", "-c", "+C");
+    const ok = sentComments([write(1, FIRST), write(2, above), turn(3, [anchor("c1", 10, 10, 1)]), write(4, atTwelve)]);
+    expect(ok[0].status).toBe("resolved");
+    expect(ok[0].resolvedSeq).toBe(4);
+    // The old range would have been wrongly resolved by a write at line 10.
+    const moved = sentComments([write(1, FIRST), write(2, above), turn(3, [anchor("c1", 10, 10, 1)]), write(4, atTen)]);
+    expect(moved[0].status).toBe("open");
+  });
+
+  it("a write before the turn that changes the lines leaves it outdated, never resolved", () => {
+    const touching = diff("@@ -4,1 +4,1 @@", "-c", "+C");
+    const out = sentComments([write(1, FIRST), write(2, touching), turn(3, [anchor("c1", 4, 4, 1)]), write(4, touching)]);
+    expect(out[0].status).toBe("outdated");
+    expect(out[0].resolvedSeq).toBe(2);
+  });
+
   it("a turn without comments adds none", () => {
     expect(sentComments([turn(1, null), write(2, FIRST)])).toEqual([]);
   });
@@ -146,8 +207,14 @@ describe("sentComments", () => {
 describe("toWire", () => {
   it("sends each draft anchored by file and line, with its lines", () => {
     expect(
-      toWire([{ id: "d1", path: PATH, start_line: 2, end_line: 3, body: "  merge  ", lines: ["B", "B2"] }]),
-    ).toEqual([{ id: "d1", path: PATH, start_line: 2, end_line: 3, body: "merge", lines: ["B", "B2"] }]);
+      toWire([
+        { id: "d1", path: PATH, start_line: 2, end_line: 3, body: "  merge  ", lines: ["B", "B2"], base_seq: 7 },
+        { id: "d2", path: PATH, start_line: 4, end_line: 4, body: "x", lines: ["c"], base_seq: null },
+      ]),
+    ).toEqual([
+      { id: "d1", path: PATH, start_line: 2, end_line: 3, body: "merge", lines: ["B", "B2"], base_seq: 7 },
+      { id: "d2", path: PATH, start_line: 4, end_line: 4, body: "x", lines: ["c"] },
+    ]);
   });
 });
 
