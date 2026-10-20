@@ -10895,12 +10895,14 @@ clear` answer with no model call. A repo's `stop_check` waits for trust
 (TD-5113). The window shows the check as a fold on the reply (a failure the
 turn ended on opens on its own), a goal strip above the composer, `/goal`
 in the slash palette and copy for `stop_check_failed`; `tst run`/`tst
-attach` print a line on stderr. Not in unattended runs, delegate children
-or Grok sessions. Tests: `core/tests/test_stop_check.py` (config, trust,
+attach` print a line on stderr. Not in unattended runs, delegate children,
+Grok sessions, or a turn that ends in read-only plan mode (TD-5123, merged
+from main: a planning turn is not a claim the work is done; the goal stays
+set). Tests: `core/tests/test_stop_check.py` (config, trust,
 `/goal` parsing, outcomes, the feedback's turn numbering and persistence, a
 shell check that fails then passes, `max_retries` 1 and 0, a declined
 command, a red command beside an unjudged statement or a declined command, a worker statement, `/goal` set/met/kept/status/clear, the
-progress guard's DONE, revive and rotation), `ui/src/lib/stop-check.test.ts`,
+progress guard's DONE, revive and rotation, a planning turn left unchecked), `ui/src/lib/stop-check.test.ts`,
 `ui/src/lib/slash-commands.test.ts`. See DECISIONS.md, docs/configuration.md
 §4.9 and docs/architecture.md.
 

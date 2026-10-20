@@ -2650,7 +2650,9 @@ What happens when the model ends a turn:
 The check also runs when the progress guard's own check (TD-5002, §4.2) finds the work done,
 since that ends the turn too. It does not run in an unattended run, which polls its charter's
 `definition_of_done` instead, or in a delegate child. A Grok-engine session has its own loop and
-no done-check.
+no done-check. Nor does it run on a turn that ends while plan mode (§4.4) is on: planning only
+reads and ends in a plan you review, so a check would send the model back to fix what it may not
+touch. The goal stays set, and the first turn after plan mode is checked as usual.
 
 **`/goal <statement>` gives one session a goal, checked the same way.** Type it in the composer
 of a native-engine session (or send it with `tst run --message`). The statement becomes the task

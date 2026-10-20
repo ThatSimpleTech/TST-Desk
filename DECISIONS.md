@@ -16719,6 +16719,16 @@ meets it.
   normal path and when the progress guard's own check answers DONE (both
   end the turn). Not in unattended runs (the charter's DoD still runs
   there), delegate children, or Grok-engine sessions.
+- **Not while planning (merge with TD-5123).** TD-5123's read-only plan
+  mode landed on main while this story was open, and neither story says
+  whether a planning turn is checked. The conservative answer: no. A
+  planning turn only reads and ends in a plan the person reviews; a red
+  check would send the model back to fix what plan mode refuses, burning
+  `max_retries` into a `stop_check_failed` the person never asked for, and
+  a `$` check that plan mode refuses would only say "could not run". So
+  `TurnStopCheck.items()` is empty while `router.plan_mode` is on: no
+  `stop_check` event, nothing sent back, the goal stays set. A plan
+  approved mid-turn turns plan mode off, so that turn's end is checked.
 
 ---
 

@@ -144,6 +144,13 @@ class TurnStopCheck:
         session = self.session
         if session.autonomy or session.delegate_depth >= 1:
             return []
+        # TD-5123: a planning turn is read-only research that ends in a plan
+        # to review, not a claim the work is done. Checking it would send
+        # the model back to fix what plan mode will not let it touch. The
+        # goal stays set, and the first turn after plan mode is checked.
+        router = session.router
+        if router is not None and router.plan_mode:
+            return []
         found: list[tuple[str, Source]] = [
             (check, "workspace") for check in session.boundary_config.stop_check.checks
         ]

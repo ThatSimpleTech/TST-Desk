@@ -93,6 +93,7 @@ async def _shell_run(
     deny: bool = False,
     deny_only: str | None = None,
     worker: tuple[str, ...] = (),
+    plan: bool = False,
 ) -> tuple[Session, MockProvider, Any]:
     session = Session(str(tmp_path))
     session.boundary_config = boundary
@@ -111,9 +112,9 @@ async def _shell_run(
     if worker:
         sequences["test-worker"] = [Script(kind="text", content=v) for v in worker]
     mock = MockProvider(sequences=sequences)
-    runner = await start_loop(
-        session, TierRouter(lead_turns=80), mock, make_config(), dispatcher.registry, dispatcher
-    )
+    router = TierRouter(lead_turns=80)
+    router.set_plan(plan)
+    runner = await start_loop(session, router, mock, make_config(), dispatcher.registry, dispatcher)
     await session.add_user_message(message)
     return session, mock, runner
 
@@ -285,6 +286,17 @@ class TestPieces:
         session.delegate_depth = 1
         assert check.items() == []
 
+    def test_no_check_while_planning(self) -> None:
+        session = Session("/tmp/ws")
+        session.boundary_config = _boundary("$ true")
+        session.goal = "done"
+        session.router = TierRouter()
+        check = TurnStopCheck(session, None, None)
+        session.router.set_plan(True)
+        assert check.items() == []
+        session.router.set_plan(False)
+        assert [source for _, source in check.items()] == ["workspace", "goal"]
+
     def test_feedback_is_no_window_turn_and_no_cut_point(self) -> None:
         convo = [
             ChatMessage(role="system", content="sys"),
@@ -330,6 +342,26 @@ class TestPieces:
 
 
 class TestShellCheck:
+    async def test_a_planning_turn_is_not_checked(self, tmp_path: Path) -> None:
+        # TD-5123 x TD-5124: plan mode is read-only research ending in a
+        # plan; a done-check would send the model back to fix what it may
+        # not touch. The first turn after plan mode is checked as usual.
+        brain = [_say("Here is what I found."), _say("Done.")]
+        session, mock, runner = await _shell_run(
+            tmp_path, brain, _boundary("$ false", max_retries=0), message="plan it", plan=True
+        )
+        turn = await wait_for_turn(session, 1, 10.0)
+        assert turn.failed is False and turn.error_code is None
+        assert _checks(session) == []
+        assert len(_brain(mock)) == 1
+        assert session.router is not None
+        session.router.set_plan(False)
+        await session.add_user_message("now build it")
+        turn = await wait_for_turn(session, 2, 10.0)
+        assert [c.outcome for c in _checks(session)] == ["failed"]
+        assert turn.failed is True and turn.error_code == "stop_check_failed"
+        await runner.cancel()
+
     async def test_a_failure_goes_back_until_the_check_passes(self, tmp_path: Path) -> None:
         brain = [
             _say("All done."),
