@@ -219,6 +219,7 @@ from tstd.protocol import (
     SteeringProposal,
     SteeringReject,
     SteeringReloaded,
+    SteerPoint,
     TestEmail,
     TierState,
     TierSwitched,
@@ -284,6 +285,10 @@ FIXTURES = {
             Attachment(name="notes.md", content_b64="IyBUaXRsZQo="),
             Attachment(name="empty.txt"),
         ],
+    ),
+    # TD-5112: Send now mid-turn asks to join the running turn.
+    "user_message_steer": UserMessage(
+        session_id="sess-1", content="Also run the linter", steer=True
     ),
     "approve": Approve(session_id="sess-1", tool_call_id="tc-1"),
     "deny": Deny(session_id="sess-1", tool_call_id="tc-1", reason="not safe"),
@@ -503,6 +508,14 @@ FIXTURES = {
         turn_id="turn-1",
         content="Fix the tests",
         seq=3,
+    ),
+    # TD-5112: a message sent mid-turn, handed to that turn after a batch.
+    "user_turn_steer": UserTurn(
+        session_id="sess-1",
+        turn_id="turn-2",
+        content="Also run the linter",
+        steer=SteerPoint(turn_id="turn-1", step=2, after_tool_call_ids=["tc-1", "tc-2"]),
+        seq=9,
     ),
     # TD-5155: messages a restart left held, whole each time.
     "queued_messages": QueuedMessages(

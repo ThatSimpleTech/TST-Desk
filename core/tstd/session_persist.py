@@ -79,10 +79,18 @@ class LoadedSession:
 
 
 def chat_message_to_dict(message: ChatMessage) -> dict[str, Any]:
-    """The OpenAI-shaped dict the provider already uses on the wire."""
+    """The OpenAI-shaped dict the provider already uses on the wire.
+
+    Plus ``steer`` on a user message that joined a running turn (TD-5112),
+    which the wire never carries, so a restored conversation still knows
+    where its turns start.
+    """
     from .provider import ChatCompletionRequest
 
-    return ChatCompletionRequest._message_to_dict(message)
+    row = ChatCompletionRequest._message_to_dict(message)
+    if message.steer:
+        row["steer"] = True
+    return row
 
 
 def _content_from_dict(content: object) -> MessageContent | None:
@@ -151,12 +159,16 @@ def chat_message_from_dict(data: dict[str, Any]) -> ChatMessage:
         ):
             raise ValueError("reasoning_details must be a list of objects")
         reasoning_details = raw_details
+    steer = data.get("steer", False)
+    if not isinstance(steer, bool):
+        raise ValueError("steer must be a boolean")
     return ChatMessage(
         role=role,
         content=content,
         tool_calls=tool_calls,
         tool_call_id=tool_call_id,
         reasoning_details=reasoning_details,
+        steer=steer,
     )
 
 

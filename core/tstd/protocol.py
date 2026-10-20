@@ -186,12 +186,19 @@ class UserMessage(ClientMessage):
     sends one behaves exactly as it did.  The daemon decodes and vets them
     against the workspace's ``attachments`` caps before the message is
     enqueued, and refuses the whole message if any one fails.
+
+    ``steer`` (TD-5112) asks for the message to join the turn that is
+    running when it arrives, at that turn's next tool-batch boundary: the
+    window's Send now mid-turn sets it. Without it, or with no turn
+    running, the message waits for a turn of its own, as before. Additive:
+    a client that never sends it never steers.
     """
 
     type: Literal["user_message"] = "user_message"
     session_id: str
     content: str
     attachments: list[Attachment] = Field(default_factory=list)
+    steer: bool = False
 
 
 class SendQueued(ClientMessage):
@@ -1659,6 +1666,19 @@ class ConversationReset(DaemonEvent):
     content: str
 
 
+class SteerPoint(BaseModel):
+    """Where a message sent mid-turn joined the running turn (TD-5112).
+
+    ``turn_id`` is the running turn's own ``user_turn`` id. ``step`` counts
+    the model calls that turn had made, and ``after_tool_call_ids`` is the
+    tool batch whose results the model read just before this message.
+    """
+
+    turn_id: str
+    step: int = Field(ge=1)
+    after_tool_call_ids: list[str] = Field(default_factory=list)
+
+
 class UserTurn(DaemonEvent):
     """A user message the loop has accepted (needed for honest replay).
 
@@ -1666,12 +1686,18 @@ class UserTurn(DaemonEvent):
     daemon can replay the user's side of the transcript without inventing
     it. ``turn_id`` lets a live echo and the replayed event be the same
     row rather than a duplicate.
+
+    ``steer`` is set when the message was sent while a turn ran and the
+    loop handed it to that turn at a tool-batch boundary (TD-5112): no
+    new turn starts, and the model reads it before its next step.
+    Additive; ``None`` for a message that starts a turn.
     """
 
     type: Literal["user_turn"] = "user_turn"
     session_id: str
     turn_id: str
     content: str
+    steer: SteerPoint | None = None
 
 
 class QueuedMessageEntry(BaseModel):

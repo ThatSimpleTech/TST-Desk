@@ -141,8 +141,12 @@ def find_compaction_point(
 ) -> int:
     """Index of the oldest user message to keep; everything from 1 up to
     it is dropped. Returns 0 or 1 when there is nothing to cut (never cut
-    the system message at index 0)."""
-    user_idxs = [i for i, m in enumerate(messages) if m.role == "user"]
+    the system message at index 0).
+
+    Only a message that started a turn is a cut point. A message sent
+    mid-turn that joined the running turn (TD-5112) belongs to that turn,
+    so the turns kept are whole, the running one with its request."""
+    user_idxs = [i for i, m in enumerate(messages) if m.role == "user" and not m.steer]
     if len(user_idxs) <= keep_user_turns:
         return 0
     return user_idxs[-keep_user_turns]

@@ -185,6 +185,10 @@ class ChatMessage:
     tool_call_id: str | None = None
     # OpenRouter tool-loop echo (TD-1903). Opaque; pass back unmodified.
     reasoning_details: list[dict[str, Any]] | None = None
+    # A user message sent mid-turn that joined the running turn (TD-5112).
+    # It belongs to that turn: compaction never cuts at it and in-turn
+    # elision reaches past it. Kept with the conversation, never sent.
+    steer: bool = False
 
 
 def _prefix_content(prefix: str, content: MessageContent | None) -> MessageContent:

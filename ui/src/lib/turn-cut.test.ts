@@ -172,6 +172,11 @@ describe("a turn cut off by a restart", () => {
   });
 });
 
+/** Send now on the newest row: rows sent earlier stay put, waiting (TD-5112). */
+function sendNewestNow(store: ReturnType<typeof bound>["store"], state: ReturnType<typeof bound>["state"]): void {
+  expect(store.sendQueuedNow(state.queued[state.queued.length - 1].id)).toBe(true);
+}
+
 describe("a send refused while the daemon drains for a restart", () => {
   it("ends the wait, takes the echo row back out and puts the text back in the draft", () => {
     const { store, state, userSends } = bound();
@@ -214,17 +219,19 @@ describe("a send refused while the daemon drains for a restart", () => {
     // Accepted earlier and still waiting in the daemon's own queue.
     store.applyEvent({ type: "assistant_delta", session_id: "s1", delta: "Working", seq: 3 });
     store.sendUserMessage("steer");
-    store.sendQueuedNow(state.queued[0].id);
+    sendNewestNow(store, state);
     // Two sends the hold refuses.
     store.sendUserMessage("one");
-    store.sendQueuedNow(state.queued[0].id);
+    sendNewestNow(store, state);
     store.sendUserMessage("two");
-    store.sendQueuedNow(state.queued[0].id);
+    sendNewestNow(store, state);
 
     store.applyEvent(refusal("daemon_draining"));
     store.applyEvent(refusal("daemon_draining"));
 
     expect(state.draft).toBe("one\n\ntwo");
+    // TD-5112: the refused rows left the strip; the accepted one still waits.
+    expect(state.queued.map((q) => [q.text, q.waiting])).toEqual([["steer", true]]);
   });
 
   it("does not seal a reply that is still streaming", () => {
@@ -237,6 +244,7 @@ describe("a send refused while the daemon drains for a restart", () => {
     expect(reply?.complete).toBe(false);
     expect(showCancel(state.turnState)).toBe(true);
     expect(state.draft).toBe("steer now");
+    expect(state.queued).toEqual([]);
   });
 
   it("a refused attachment-only send takes only its own row back", () => {
@@ -244,17 +252,20 @@ describe("a send refused while the daemon drains for a restart", () => {
     store.applyEvent({ type: "assistant_delta", session_id: "s1", delta: "Working", seq: 3 });
     // Accepted before the hold, still waiting in the daemon's own queue.
     store.sendUserMessage("steer");
-    store.sendQueuedNow(state.queued[0].id);
+    sendNewestNow(store, state);
     store.sendUserMessage("", [{ name: "shot.png", size: 1, content_b64: "eA==" }]);
-    store.sendQueuedNow(state.queued[0].id);
+    sendNewestNow(store, state);
 
     store.applyEvent(refusal("daemon_draining"));
 
-    // It had no text to give back, and "steer" was never refused.
+    // It had no text to give back, and "steer" was never refused: it still
+    // waits for its step (TD-5112), with no echo in the transcript yet.
     expect(state.draft).toBe("");
-    expect(state.messages.filter((m) => m.role === "user").map((m) => m.text)).toEqual(["steer"]);
+    expect(state.queued.map((q) => [q.text, q.waiting])).toEqual([["steer", true]]);
+    expect(state.messages.filter((m) => m.role === "user")).toEqual([]);
     store.applyEvent({ type: "user_turn", session_id: "s1", turn_id: "t2", content: "steer", seq: 11 });
     expect(state.messages.filter((m) => m.role === "user").map((m) => m.turnId)).toEqual(["t2"]);
+    expect(state.queued).toEqual([]);
   });
 
   it("ignores a refusal addressed at another session", () => {

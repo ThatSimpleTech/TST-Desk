@@ -30,7 +30,15 @@ from .audit import AuditStore, DecisionClass, ToolCallStatus
 from .autonomy.worker import JudgmentAudit
 from .cost import CostTracker, billable_cached_tokens
 from .logging import get_logger
-from .protocol import DaemonEvent, DecisionLogged, Error, SessionState, ToolResult, TurnComplete
+from .protocol import (
+    DaemonEvent,
+    DecisionLogged,
+    Error,
+    SessionState,
+    ToolResult,
+    TurnComplete,
+    UserTurn,
+)
 from .protocol import ToolCall as ToolCallEvent
 from .session import EventSubscriber, Session, SessionEventLog
 
@@ -221,6 +229,8 @@ class AuditWriter:
                 self._on_turn_complete(sid, event)
             elif isinstance(event, DecisionLogged):
                 self._on_decision(sid, event)
+            elif isinstance(event, UserTurn) and event.steer is not None:
+                self._on_steer(sid, event)
             elif isinstance(event, SessionState) and event.state in (
                 "complete",
                 "failed",
@@ -293,6 +303,29 @@ class AuditWriter:
                 _write_model_call(self._store, sid, turn_id, rec, is_classifier=False)
 
         self._enqueue(sid, _op)
+
+    def _on_steer(self, sid: str, event: UserTurn) -> None:
+        """Record the injection point of a message sent mid-turn (TD-5112).
+
+        The running turn has not completed, so its ``turns`` row is the
+        next index this writer will hand out.
+        """
+        point = event.steer
+        if point is None:
+            return
+        index = self._turn_counters.get(sid, 0) + 1
+        self._enqueue(
+            sid,
+            lambda: self._store.append_steer(
+                session_id=sid,
+                message_id=event.turn_id,
+                into_turn_id=point.turn_id,
+                turn_index=index,
+                step=point.step,
+                after_tool_call_ids=point.after_tool_call_ids,
+                ts=time.time(),
+            ),
+        )
 
     def _on_decision(self, sid: str, event: DecisionLogged) -> None:
         self._enqueue(
