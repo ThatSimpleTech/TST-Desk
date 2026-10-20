@@ -25,7 +25,7 @@ from typing import Any
 
 from websockets.asyncio.client import connect
 
-from . import cli
+from . import cli_run
 from .daemon import Daemon
 from .e2e_checks import HarnessResult
 from .e2e_harness import _send, _wait_for_port_file
@@ -294,7 +294,7 @@ async def run_m5(workspace: Path, data_dir: Path) -> HarnessResult:
         buf = io.StringIO()
         err = io.StringIO()
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
-            cli_code = await cli.run_turn(workspace, _CLI_PROMPT, data_dir)
+            cli_code = await cli_run.run_turn(workspace, _CLI_PROMPT, data_dir)
         cli_out = buf.getvalue()
     finally:
         if not daemon_task.done():

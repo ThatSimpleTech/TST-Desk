@@ -20,6 +20,9 @@ from typing import Any
 # tree (TD-4842); the default data dir keeps today's platform path.
 LOG_FILE_NAME = "tstd.log"
 
+#: What each secret-shaped match becomes in every output path.
+REDACTED = "[REDACTED]"
+
 # Patterns that must be redacted in log output (from tst-cua policy.py).
 SECRET_PATTERNS: list[re.Pattern[str]] = [
     # OpenAI / OpenRouter / Anthropic key. Dashed forms (sk-or-v1-…,
@@ -118,9 +121,9 @@ def redact_secrets(text: str) -> str:
     """
     for known in _KNOWN_SECRETS:
         if known in text:
-            text = text.replace(known, "[REDACTED]")
+            text = text.replace(known, REDACTED)
     for pattern in SECRET_PATTERNS:
-        text = pattern.sub("[REDACTED]", text)
+        text = pattern.sub(REDACTED, text)
     return text
 
 

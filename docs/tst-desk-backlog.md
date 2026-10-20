@@ -10138,6 +10138,30 @@ code, a docs fix); one that is not, or no longer applies, says why.
       loop-turn test, the walk's held step, the path-based steering
       write's plain write); ruff, mypy, tsc, vitest and the UI walk pass
 
+### TD-5111 — `tst run` for scripts
+**Size:** 3 · **Depends on:** none · Gap audit 2026-10-14
+
+`tst run` printed plain text only and always opened a new session, so a
+script could not continue a conversation, parse a result, pipe a message
+in, or tell a refusal from a failure.
+
+**Acceptance criteria:**
+- [x] `tst run --session <id>` and `--continue` send the message into an existing session.
+- [x] `--output json` prints one object: reply, session id, cost, status and error.
+      `--output ndjson` streams the existing protocol events.
+- [x] The message can come from stdin.
+- [x] Exit codes separate success, refusal, approval needed and error.
+
+**Notes:** `--continue` takes the local, unarchived session of
+`--workspace` that has not ended and was used last (`updated_at`, which
+the daemon now moves on every `user_turn`); a session with a turn in
+flight is refused, not queued behind. The run attaches after the
+session's last event and reports the turn from its own `user_turn`, read
+through the daemon's redaction. Exit codes: 0 success, 1 error,
+2 usage, 3 refused (a `boundary_refusal`, `policy_denied` or
+`approval_denied` tool result), 4 approval needed. The machine modes never
+prompt. See DECISIONS.md and architecture.md "`tst run` for scripts".
+
 ---
 
 # Epic E52 — Files to the user

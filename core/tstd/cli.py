@@ -6,7 +6,8 @@ socket. If no live daemon is at the data dir it starts ``tstd`` and
 leaves it running; it is not the host, so it does not pass
 ``--parent-pid``.
 
-``run`` opens a workspace and prints one turn. ``attach`` follows a
+``run`` (TD-5111, in ``cli_run``) sends one message to a new or existing
+session and prints the turn. ``attach`` follows a
 session the daemon already owns: replay + live text, detach on SIGINT.
 A TTY can answer ``approval_request``; a non-TTY does not hang on stdin.
 ``pair`` and ``devices`` (TD-5014) live in ``cli_pairing``; ``machines``
@@ -55,43 +56,19 @@ def _add_data_dir(parser: argparse.ArgumentParser) -> None:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse ``tst`` argv: ``run``, ``attach``, ``pair``, ``devices``, ``machines``, ``drain``."""
-    # Function-local: cli_pairing, cli_machines and cli_drain import this
-    # module's helpers.
+    # Function-local: cli_pairing, cli_machines, cli_drain and cli_run
+    # import this module's helpers.
     from .cli_drain import add_drain_command
     from .cli_machines import add_machine_commands
     from .cli_pairing import add_pairing_commands
+    from .cli_run import add_run_command, check_run_args
 
     parser = argparse.ArgumentParser(
         prog="tst",
         description="TST Desk CLI — same daemon as the window, different door.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    run_p = sub.add_parser(
-        "run",
-        help="open a workspace, send one message, print the assistant reply",
-    )
-    run_p.add_argument(
-        "--workspace",
-        type=Path,
-        required=True,
-        help="workspace directory to open",
-    )
-    run_p.add_argument(
-        "--message",
-        required=True,
-        help="user message for this turn",
-    )
-    run_p.add_argument(
-        "--timeout",
-        type=_positive_seconds,
-        default=None,
-        metavar="SECONDS",
-        help=(
-            "base seconds to wait for the turn "
-            "(default: scheduler.max_run_seconds); provider retries are added"
-        ),
-    )
-    _add_data_dir(run_p)
+    run_p = add_run_command(sub, _add_data_dir)
     attach_p = sub.add_parser(
         "attach",
         help="replay a session from from_seq and stream live events as text",
@@ -108,7 +85,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     add_pairing_commands(sub, _add_data_dir)
     add_machine_commands(sub, _add_data_dir)
     add_drain_command(sub, _add_data_dir)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.command == "run":
+        check_run_args(run_p, args)
+    return args
 
 
 def _positive_seconds(raw: str) -> float:
@@ -281,39 +261,6 @@ def _finish_assistant_line(printed: bool) -> None:
         sys.stdout.flush()
 
 
-async def _run_session(
-    ws: Any,
-    workspace: Path,
-    message: str,
-    data_dir: Path | None = None,
-    budget: float | None = None,
-) -> int:
-    ack = await _recv_event(ws, 10.0)
-    if ack.get("type") != "hello_ack":
-        if ack.get("type") == "error":
-            _print_error(ack)
-            return 1
-        print("handshake failed", file=sys.stderr)
-        return 1
-
-    await _send(ws, {"type": "open_workspace", "path": str(workspace)})
-    opened = await _recv_event(ws, 15.0)
-    if opened.get("type") == "error":
-        _print_error(opened)
-        return 1
-    if opened.get("type") != "session_state" or not opened.get("session_id"):
-        print("open_workspace did not return a session", file=sys.stderr)
-        return 1
-    session_id = str(opened["session_id"])
-
-    await _send(ws, {"type": "attach", "session_id": session_id, "from_seq": 1})
-    await _send(
-        ws,
-        {"type": "user_message", "session_id": session_id, "content": message},
-    )
-    return await _stream_turn(ws, session_id, data_dir, budget)
-
-
 def _turn_timeout_secs(data_dir: Path | None = None, budget: float | None = None) -> float:
     """How long to wait on a turn, given what the daemon may spend retrying.
 
@@ -344,75 +291,6 @@ def _turn_timeout_secs(data_dir: Path | None = None, budget: float | None = None
         if base is None:
             base = float(DEFAULT_MAX_RUN_SECONDS)
         return base
-
-
-async def _stream_turn(
-    ws: Any,
-    session_id: str,
-    data_dir: Path | None = None,
-    budget: float | None = None,
-) -> int:
-    printed = False
-    deadline = time.monotonic() + _turn_timeout_secs(data_dir, budget)
-    while time.monotonic() < deadline:
-        remaining = max(0.1, deadline - time.monotonic())
-        try:
-            event = await _recv_event(ws, remaining)
-        except TimeoutError:
-            break
-        typ = event.get("type")
-        if typ == "error":
-            _finish_assistant_line(printed)
-            _print_error(event)
-            return 1
-        if event.get("session_id") != session_id:
-            continue
-        if typ == "boundary_update":
-            notice = config_trust_notice(event)
-            if notice is not None:
-                _finish_assistant_line(printed)
-                printed = False
-                print(notice, file=sys.stderr)
-            continue
-        if typ == "approval_request":
-            _finish_assistant_line(printed)
-            printed = False
-            reply = await prompt_approval(event, session_id)
-            if reply is None:
-                return 1
-            await _send(ws, reply)
-            continue
-        if typ == "assistant_delta":
-            sys.stdout.write(str(event.get("delta") or ""))
-            sys.stdout.flush()
-            printed = True
-        if typ == "turn_complete":
-            _finish_assistant_line(printed)
-            if event.get("failed"):
-                print(str(event.get("error_code") or "turn_failed"), file=sys.stderr)
-                return 1
-            return 0
-    print("timed out waiting for turn_complete", file=sys.stderr)
-    return 1
-
-
-async def run_turn(
-    workspace: Path,
-    message: str,
-    data_dir: Path,
-    *,
-    budget: float | None = None,
-) -> int:
-    """Connect, open the workspace, send one turn, print the reply."""
-    info = await resolve_daemon(data_dir)
-    try:
-        async with connect(f"ws://127.0.0.1:{info['port']}") as ws:
-            await _send(ws, hello_message(str(info["token"])))
-            return await _run_session(ws, workspace, message, data_dir, budget)
-    except OSError as e:
-        raise CliError(f"could not connect to daemon: {e}") from e
-    except TimeoutError as e:
-        raise CliError("timed out talking to the daemon") from e
 
 
 def _is_fatal_attach_error(event: dict[str, Any], session_id: str) -> bool:
@@ -506,8 +384,9 @@ def main(argv: list[str] | None = None) -> int:
     data_dir = _resolved_data_dir(args)
     try:
         if args.command == "run":
-            workspace = args.workspace.expanduser().resolve()
-            return asyncio.run(run_turn(workspace, args.message, data_dir, budget=args.timeout))
+            from .cli_run import run_command
+
+            return run_command(args, data_dir)
         if args.command == "attach":
             return asyncio.run(attach_session(args.session_id, data_dir, args.from_seq))
         if args.command in ("pair", "devices"):

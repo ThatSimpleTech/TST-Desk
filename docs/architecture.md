@@ -120,6 +120,31 @@ TTY, `tst run` prints copy to use the window and exits rather than hanging
 on stdin. The headless harness (TD-1401) stays the mock path; `tst run` is
 not a second harness.
 
+**`tst run` for scripts (TD-5111)** adds no protocol message. `--session <id>`
+and `--continue` send `list_sessions`, pick the row (the named id, or the
+local, unarchived session of `--workspace` that has not ended, newest by
+`updated_at`, which the daemon moves when a turn starts), refuse it while
+`busy`, then `attach` from `event_count + 1` so no earlier turn replays,
+and send `user_message`. The turn is the events from the `user_turn`
+carrying that message to its `turn_complete`; a `[REDACTED]` in that
+`user_turn` stands for the secret-shaped text the daemon scrubbed. The message comes
+from `--message`, or from stdin for `--message -` or no `--message` (a
+terminal is read only for `-`). `--output json` prints one object,
+`{session_id, status, reply, cost, error}`, where `cost` is
+`turn_complete.cost` and `error` is `null` or `{code, message}`;
+`--output ndjson` prints each of the session's events as received, one per
+line. Errors and refusals go to stderr in every mode. Neither machine mode
+prompts: an `approval_request` ends the run and the turn waits for the
+window. Exit codes:
+
+| Code | `status` | Meaning |
+|---|---|---|
+| 0 | `success` | The turn completed and no tool call was refused |
+| 1 | `error` | The turn failed, the daemon refused the message, or the run timed out or lost the daemon |
+| 2 | — | Usage error (argparse, or no message) |
+| 3 | `refused` | The turn completed, but a gate refused a tool call: `boundary_refusal`, `policy_denied` or `approval_denied` |
+| 4 | `approval_needed` | A call is waiting for approval that this run could not give |
+
 **`tst attach` (TD-3102)** is the same door in follow mode. Same port file and
 `hello`. It sends `attach{session_id, from_seq}` (default 1), prints assistant
 text the way `tst run` does, and prints one-line text for `turn_complete` and
@@ -536,7 +561,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 |---|---|---|
 | `ready` | connection | Daemon and protocol versions. Declared and parseable, but not emitted in v0.1. |
 | `session_state` | session | A session state transition, with an optional reason. Additive `engine` (`native` \| `grok`) names the loop this session started with. |
-| `user_turn` | session | A user message the loop accepted, so replay can show the user's side without inventing it. `turn_id` is the queued message's own id (TD-5155). |
+| `user_turn` | session | A user message the loop accepted, so replay can show the user's side without inventing it. `turn_id` is the queued message's own id (TD-5155). Logging it moves the session's `updated_at`, so `session_list` orders by use (TD-5111). |
 | `queued_messages` | session | The messages a restart left held, in order, whole each time (TD-5155): `queued_id`, `content` (what the `user_turn` will show) and `images_dropped` (attached images the queue file did not keep). Logged after a restart that left any and on every `send_queued` or `remove_queued`, and logged again when the log window trimmed the last one away, so the latest in a replay is the list. Nothing in it is sent until the person picks Send. |
 | `conversation_reset` | session | The conversation forked or a sibling was selected. The viewer drops rows after that user turn and replaces it. |
 | `assistant_delta` | session | A streamed chunk of assistant output. |

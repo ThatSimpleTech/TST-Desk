@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 from websockets.exceptions import ConnectionClosed
 
-from tstd import cli
+from tstd import cli, cli_turn
 from tstd.cli_approvals import (
     CLASS_C_NOT_ALWAYS_ALLOWABLE,
     NON_TTY_COPY,
@@ -184,14 +184,14 @@ class TestStreamWiring:
     async def test_run_tty_y_sends_approve(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(cli.sys, "stdin", _Stdin("y\n", tty=True))
         ws = _Ws([_APPROVAL_B, _TURN_DONE])
-        code = await cli._stream_turn(ws, _SESSION)
+        code = (await cli_turn.stream_turn(ws, _SESSION)).exit_code
         assert code == 0
         assert ws.sent == [{"type": "approve", "session_id": _SESSION, "tool_call_id": "tc-1"}]
 
     async def test_run_tty_always_on_b(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(cli.sys, "stdin", _Stdin("always\n", tty=True))
         ws = _Ws([_APPROVAL_B, _TURN_DONE])
-        code = await cli._stream_turn(ws, _SESSION)
+        code = (await cli_turn.stream_turn(ws, _SESSION)).exit_code
         assert code == 0
         assert ws.sent == [{"type": "always_allow", "session_id": _SESSION, "tool_call_id": "tc-1"}]
 
@@ -200,8 +200,9 @@ class TestStreamWiring:
     ) -> None:
         monkeypatch.setattr(cli.sys, "stdin", _Stdin("y\n", tty=False))
         ws = _Ws([_APPROVAL_B, _TURN_DONE])
-        code = await cli._stream_turn(ws, _SESSION)
-        assert code == 1
+        code = (await cli_turn.stream_turn(ws, _SESSION)).exit_code
+        # TD-5111: "approval needed" is its own exit code, apart from errors.
+        assert code == cli_turn.EXIT_APPROVAL_NEEDED
         assert ws.sent == []
         captured = capsys.readouterr()
         assert "approval: Run `ls`" in captured.out
@@ -213,7 +214,7 @@ class TestStreamWiring:
     ) -> None:
         monkeypatch.setattr(cli.sys, "stdin", _Stdin("always\nn\n", tty=True))
         ws = _Ws([_APPROVAL_C, _TURN_DONE])
-        code = await cli._stream_turn(ws, _SESSION)
+        code = (await cli_turn.stream_turn(ws, _SESSION)).exit_code
         assert code == 0
         assert ws.sent == [{"type": "deny", "session_id": _SESSION, "tool_call_id": "tc-2"}]
         assert CLASS_C_NOT_ALWAYS_ALLOWABLE in capsys.readouterr().err

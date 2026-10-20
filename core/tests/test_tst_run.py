@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from tstd import cli
+from tstd import cli, cli_run
 from tstd.daemon import Daemon
 from tstd.e2e_harness import run as harness_run
 from tstd.mock import MockProvider, Script
@@ -48,7 +48,7 @@ async def _stop_daemon(daemon: Daemon, task: asyncio.Task[None]) -> None:
 
 
 class TestParser:
-    def test_run_requires_workspace_and_message(self, tmp_path: Path) -> None:
+    def test_run_takes_workspace_and_message(self, tmp_path: Path) -> None:
         ns = cli.parse_args(
             ["run", "--workspace", str(tmp_path), "--message", "hello", "--data-dir", str(tmp_path)]
         )
@@ -156,7 +156,7 @@ class TestRunAgainstMockDaemon:
             data_dir, Script(kind="stream", content="hello from tst run")
         )
         try:
-            code = await cli.run_turn(workspace, "say hi", data_dir)
+            code = await cli_run.run_turn(workspace, "say hi", data_dir)
         finally:
             await _stop_daemon(daemon, task)
         assert code == 0
@@ -176,7 +176,7 @@ class TestRunAgainstMockDaemon:
             Script(kind="error", error_code="auth_failed", status_code=401, content="nope"),
         )
         try:
-            code = await cli.run_turn(workspace, "say hi", data_dir)
+            code = await cli_run.run_turn(workspace, "say hi", data_dir)
         finally:
             await _stop_daemon(daemon, task)
         assert code == 1
@@ -194,7 +194,7 @@ class TestRunAgainstMockDaemon:
         try:
             await daemon._start_session(str(first))
             assert len(await daemon.session_registry.list_sessions()) == 1
-            code = await cli.run_turn(second, "go", data_dir)
+            code = await cli_run.run_turn(second, "go", data_dir)
             sessions = await daemon.session_registry.list_sessions()
         finally:
             await _stop_daemon(daemon, task)
@@ -210,7 +210,7 @@ class TestRunAgainstMockDaemon:
         data_dir.mkdir()
         daemon, task = await _start_daemon(data_dir, Script(kind="stream", content="unused"))
         try:
-            code = await cli.run_turn(tmp_path / "nope", "hi", data_dir)
+            code = await cli_run.run_turn(tmp_path / "nope", "hi", data_dir)
         finally:
             await _stop_daemon(daemon, task)
         assert code == 1
@@ -236,7 +236,7 @@ class TestRunAgainstMockDaemon:
 
         monkeypatch.setattr(cli, "spawn_daemon", fake_spawn)
         try:
-            code = await cli.run_turn(workspace, "hi", data_dir)
+            code = await cli_run.run_turn(workspace, "hi", data_dir)
         finally:
             if run_task is not None:
                 await _stop_daemon(daemon, run_task)
@@ -246,19 +246,20 @@ class TestRunAgainstMockDaemon:
 
 
 def test_main_dispatches_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    seen: list[tuple[Path, str, Path, float | None]] = []
+    seen: list[tuple[Path | None, str, Path, float | None]] = []
 
     async def fake_run(
-        workspace: Path,
+        workspace: Path | None,
         message: str,
         data_dir: Path,
         *,
         budget: float | None = None,
+        **_: Any,
     ) -> int:
         seen.append((workspace, message, data_dir, budget))
         return 0
 
-    monkeypatch.setattr(cli, "run_turn", fake_run)
+    monkeypatch.setattr(cli_run, "run_turn", fake_run)
     data = tmp_path / "data"
     data.mkdir()
     code = cli.main(

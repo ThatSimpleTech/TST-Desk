@@ -547,7 +547,7 @@ after-write review and memory distillation get the same errors.
 
 How long one scheduled turn may run before the daemon cancels it (TD-3819). The same number is the base wait for `tst run`. A job can set its own limit, from 1 to 60 minutes, on the Scheduled form. When the limit expires the turn is cancelled and the receipt says `stopped after N minutes (max run time)`. That reason is not retried.
 
-`tst run --timeout SECONDS` replaces this base for one command. The provider retry allowance is still added when the config can be read, the same as before.
+`tst run --timeout SECONDS` replaces this base for one command. The provider retry allowance is still added when the config can be read, the same as before. The wait is the same when `tst run --session` or `--continue` sends into an existing session (TD-5111); see architecture.md for its output modes and exit codes.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
@@ -1953,7 +1953,8 @@ When the file loosens something:
 
 - **You see it before it applies.** A card above the composer lists each loosened setting next
   to its default, with **Trust and apply** and **Keep defaults**. `tst run` cannot show the
-  card, so it prints one line on stderr saying the run is on the defaults.
+  card, so a run that opens the session prints one line on stderr saying the run is on the
+  defaults.
 - **Until you trust it, the workspace runs on the packaged defaults.** The whole file is set
   aside, not only the loosened keys. The title bar's source reads `defaults — workspace config
   not trusted yet`.
