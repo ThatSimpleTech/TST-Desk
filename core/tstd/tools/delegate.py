@@ -283,6 +283,9 @@ async def run_worker_child(
         dispatcher=child_dispatcher,
         assembler=runtime.assembler,
         session_start=runtime.session_start,
+        # The parent's count, so a consult in the child checks the
+        # iteration cap the parent is under.
+        iterations=runtime.iterations,
         meter=runtime.meter or parent,
     )
 
