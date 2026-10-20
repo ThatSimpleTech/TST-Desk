@@ -20,6 +20,7 @@ import { notify } from "./notifications.svelte.js";
 import { bindApprovals } from "./approval-store.svelte.js";
 import { bindDecisions } from "./decisions.svelte.js";
 import { bindMemoryProposal } from "./memory-proposal-store.svelte.js";
+import { bindPlanReviews } from "./plan-review-store.svelte.js";
 import { bindQuestions } from "./question-store.svelte.js";
 import { bindSteeringProposal } from "./steering-proposal-store.svelte.js";
 import { bindSession } from "./timeline-store.svelte.js";
@@ -40,6 +41,7 @@ const store = createChatStore(
       bindDecisions(sessionId);
       bindApprovals(sessionId);
       bindQuestions(sessionId);
+      bindPlanReviews(sessionId);
       bindMemoryProposal(sessionId);
       bindSteeringProposal(sessionId);
     },

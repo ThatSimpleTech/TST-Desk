@@ -16,6 +16,8 @@ export interface Runtime {
 	held_session: string;
 	/** The task list seeded in that session, in order (TD-5122). */
 	tasks: string[];
+	/** The plan the mock model puts up when a turn plans (TD-5123). */
+	plan: string;
 }
 
 export function runtime(): Runtime {

@@ -75,6 +75,11 @@ class SessionRecord:
     # only — not a forked config tree. Defaulted so a store written
     # before this field loads unchanged instead of being dropped.
     preset: str = ""
+    # Read-only plan mode (TD-5123). Plan mode is a safety boundary, so a
+    # restart must not end it: revive reads it back from here. None on a
+    # row written before the field; revive then takes the newest
+    # ``tier_state`` in the log.
+    plan_mode: bool | None = None
 
 
 class SessionStore:
@@ -140,6 +145,7 @@ class SessionStore:
             auto_title=existing.auto_title if existing else None,
             engine=chosen_engine,
             preset=chosen_preset,
+            plan_mode=existing.plan_mode if existing else False,
         )
         self._records[session_id] = record
         await self._persist()
@@ -226,6 +232,21 @@ class SessionStore:
             return False
         record.preset = preset
         record.updated_at = _now_iso()
+        await self._persist()
+        return True
+
+    async def set_plan_mode(self, session_id: str, on: bool) -> bool:
+        """Record whether this session is in read-only plan mode (TD-5123).
+
+        Writes only on a change: every ``tier_state`` comes through here.
+        Returns False when the id is unknown.
+        """
+        record = self._records.get(session_id)
+        if record is None:
+            return False
+        if record.plan_mode is on:
+            return True
+        record.plan_mode = on
         await self._persist()
         return True
 

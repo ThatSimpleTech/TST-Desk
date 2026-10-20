@@ -53,6 +53,9 @@ const KNOWN_EVENT_TYPES = new Set([
   "approval_request",
   "question_request",
   "question_answered",
+  "plan_review", // TD-5123
+  "plan_reviewed", // TD-5123
+  "plan_pinned", // TD-5123
   "decision_logged",
   "checkpoint_notice",
   "verify_started", // TD-5158

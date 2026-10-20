@@ -142,8 +142,7 @@ from .local_worker import (
     effective_tier,
     last_cu_surface,
     session_is_cu_heavy,
-    titlebar_hosts,
-    titlebar_slugs,
+    tier_state_event,
 )
 from .logging import get_logger, log_directory, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop, brain_manifest_config
@@ -176,6 +175,8 @@ from .notify.ntfy import send as send_ntfy_notify
 from .notify.slack import schedule as schedule_slack_notify
 from .notify.slack import send as send_slack_notify
 from .notify.telegram import schedule as schedule_telegram_notify
+from .plan_review import answer as answer_plan
+from .plan_review import keep_pinned_plan_visible, restore_pinned_plan, restored_plan_mode
 from .policy import (
     PolicyConfig,
     add_rule,
@@ -309,6 +310,7 @@ from .protocol import (
     RenameSession,
     ResetCuPermissions,
     Resume,
+    ReviewPlan,
     RevokePolicyRule,
     RotateRemoteToken,
     RunDiagnostics,
@@ -839,33 +841,6 @@ def _active_tier_vision(session: Session, config: ModelConfig) -> bool:
         cu_heavy=session_is_cu_heavy(session),
     )
     return tier_cfg.vision
-
-
-def _tier_state_event(session: Session, config: ModelConfig) -> TierState:
-    """Build the ``tier_state`` event for the title bar (TD-1006).
-
-    A tier whose slug is still unresolved is omitted rather than sent as a
-    placeholder (TD-1805): the daemon does not yet know its model, and the
-    UI must never be handed a truth it wasn't given.  The loop re-emits
-    ``tier_state`` once discovery lands on the first turn.
-
-    After a computer-use tool (TD-3903) the worker slug is the remapped
-    local-worker preset's worker, not the active preset's remote worker.
-    """
-    assert session.router is not None
-    cu_heavy = session_is_cu_heavy(session)
-    tier_cfg = effective_tier(config, session.router.active_tier, cu_heavy=cu_heavy)
-    return TierState(
-        session_id=session.id,
-        tier=session.router.active_tier,
-        override=session.router.override,
-        model_slugs=titlebar_slugs(config, cu_heavy=cu_heavy),
-        preset=config.active_preset,
-        hosts=titlebar_hosts(config, cu_heavy=cu_heavy),
-        plan=session.router.plan_mode,
-        vision=tier_cfg.vision,
-        seq=1,  # overwritten by the event log
-    )
 
 
 def _job_entry(job: Job, *, running: bool = False) -> JobEntry:
@@ -2474,6 +2449,10 @@ class Daemon:
             # `tst run --continue` all read updated_at as "used last", and a
             # turn changes no state (TD-5111).
             await self._session_store.touch(event.session_id)
+        elif isinstance(event, TierState):
+            # Every plan-mode change logs tier_state, so this is the one place
+            # the row learns it; a restart reads it back (TD-5123).
+            await self._session_store.set_plan_mode(event.session_id, event.plan)
         announce = self._cu_permissions_session(event)
         if announce is not None:
             first_run = not load_shown(self.data_dir, driver_cu_platform(self.desktop_driver))
@@ -2499,7 +2478,7 @@ class Daemon:
             await self._maybe_broadcast_cu_focus(event.session_id)
 
     async def _keep_task_list_on_disk(self, session_id: str, event_log: SessionEventLog) -> None:
-        """Log the task list again when rotation drops its last event (TD-5122).
+        """Log the task list and pinned plan again when rotation drops them (TD-5122, TD-5123).
 
         The newest ``task_list`` event is the list's only copy on disk: a
         revive rebuilds the list from it, and the next compaction carries
@@ -2512,6 +2491,8 @@ class Daemon:
         if session is None or session.event_log is not event_log:
             return
         await keep_task_list_visible(session)
+        # TD-5123: the pinned plan's newest event is its only copy too.
+        await keep_pinned_plan_visible(session)
 
     async def _maybe_broadcast_cu_focus(self, closed_session_id: str) -> None:
         """Broadcast ``focus_window`` when no session still actuates (TD-4832).
@@ -2929,7 +2910,7 @@ class Daemon:
             # ...then acknowledge with the new state so the title bar snaps
             # over even before the next turn starts (TD-1006).
             await found.event_log.add(
-                _tier_state_event(found, _session_model_config(found, self.config))
+                tier_state_event(found, _session_model_config(found, self.config))
             )
             log.info(
                 "tier override set",
@@ -2972,6 +2953,18 @@ class Daemon:
                     in_reply_to=msg.type,
                 )
             return answer_question(found, msg)
+
+        if isinstance(msg, ReviewPlan):
+            # TD-5123: like approve, any attached client may review; the
+            # session owns the parked plan, not the connection.
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                    in_reply_to=msg.type,
+                )
+            return answer_plan(found, msg)
 
         if isinstance(msg, AlwaysAllow):
             found = self.session_registry.get(msg.session_id)
@@ -3654,6 +3647,8 @@ class Daemon:
                     timeout_seconds=prior.timeout_seconds if prior else None,
                     startup_timeout_seconds=prior.startup_timeout_seconds if prior else None,
                     max_call_seconds=prior.max_call_seconds if prior else None,
+                    # Nor the plan-mode read-only list (TD-5123).
+                    read_only_tools=list(prior.read_only_tools) if prior else [],
                     # Nor env or headers (TD-5110): only set_mcp_secret edits
                     # those. A new transport cannot use the old ones.
                     env=dict(prior.env) if prior and kept else {},
@@ -3811,6 +3806,11 @@ class Daemon:
         if loaded.conversation is not None:
             conversation = loaded.conversation
             sess.conversation[:] = repair_cut_conversation(conversation) if cut else conversation
+        # TD-5123: plan mode is read-only, so a restart keeps it. Set before
+        # the loop starts, so no turn and no tier_state sees it off.
+        if restored_plan_mode(record.plan_mode if record is not None else None, loaded.events):
+            sess.router = TierRouter()
+            sess.router.set_plan(True)
         await self._attach_session_runtime(sess)
         if cut:
             await self._seal_cut_turn(sess)
@@ -3819,6 +3819,8 @@ class Daemon:
         await restore_queue(sess, rows, loaded.events)
         # TD-5122: the task list is the newest one the log kept.
         restore_task_list(sess, loaded.events)
+        # TD-5123: so is the pinned plan.
+        restore_pinned_plan(sess, loaded.events)
         # TD-5140: open steering proposals lived in the old process's memory.
         await expire_restored_steering(sess, loaded.events)
         await self._seal_cut_review(sess, loaded.events)
@@ -4082,7 +4084,7 @@ class Daemon:
             )
             return
         assert sess.router is not None
-        await sess.event_log.add(_tier_state_event(sess, _session_model_config(sess, self.config)))
+        await sess.event_log.add(tier_state_event(sess, _session_model_config(sess, self.config)))
 
     async def _start_session(
         self,
@@ -4230,7 +4232,7 @@ class Daemon:
         self._bind_session_preset(found, msg.name)
         await self._session_store.set_preset(found.id, found.preset)
         await found.event_log.add(
-            _tier_state_event(found, _session_model_config(found, self.config))
+            tier_state_event(found, _session_model_config(found, self.config))
         )
         log.info(
             "session preset set",
@@ -4244,7 +4246,11 @@ class Daemon:
         return await self._handle_list_sessions()
 
     async def _handle_set_plan(self, msg: SetPlan) -> str | None:
-        """Turn plan mode on or off and ack with ``tier_state`` (TD-4603)."""
+        """Turn plan mode on or off and ack with ``tier_state`` (TD-4603).
+
+        Since TD-5123 plan mode is also read-only: the classifier refuses
+        every call that could change something until it is off again.
+        """
         found = self.session_registry.get(msg.session_id)
         if found is None:
             return build_error(
@@ -4259,7 +4265,7 @@ class Daemon:
             )
         found.router.set_plan(msg.on)
         await found.event_log.add(
-            _tier_state_event(found, _session_model_config(found, self.config))
+            tier_state_event(found, _session_model_config(found, self.config))
         )
         log.info(
             "plan mode set",
@@ -4421,6 +4427,8 @@ class Daemon:
         await keep_held_visible(session)
         # TD-5122: so is the task list, which the Plan pane shows.
         await keep_task_list_visible(session)
+        # TD-5123: and the pinned plan, which it shows too.
+        await keep_pinned_plan_visible(session)
         # Replay from from_seq. A rotated prefix is a typed notice, then
         # the same gap/dup rules over whatever is still in the window.
         earliest = session.event_log.earliest_seq

@@ -5,6 +5,7 @@
 // unfocused approval, unfocused turn complete, silence when focused,
 // and a single lazy permission ask.
 
+import fixtures from "./protocol-fixtures.json";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { ClientMessageUnion, DaemonEventUnion, JobEntry } from "./protocol";
 
@@ -447,6 +448,17 @@ describe("handleOsEvent for scheduled runs", () => {
 });
 
 describe("ask_user questions (TD-5121)", () => {
+	it("a plan waiting for review rings like a question, naming its first line (TD-5123)", () => {
+		const event = fixtures.plan_review as DaemonEventUnion;
+		expect(noticeFor(event)).toEqual({
+			title: "Plan ready for review",
+			body: "Plan",
+			kind: "question",
+			sessionId: "sess-1",
+			toolCallId: "tc-p",
+		});
+	});
+
 	it("a question rings like an approval, with no buttons on the banner", () => {
 		const event = {
 			type: "question_request",

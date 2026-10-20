@@ -17,6 +17,10 @@ import type {
   AlwaysAllow,
   AnswerQuestion,
   QuestionRequest,
+  PlanReview,
+  PlanReviewed,
+  PlanPinned,
+  ReviewPlan,
   QuestionAnswered,
   ListPolicyRules,
   RevokePolicyRule,
@@ -250,6 +254,13 @@ describe("Client message fixtures match TypeScript types", () => {
     const skipped = fixtures.answer_question_declined as AnswerQuestion;
     expect(skipped.declined).toBe(true);
     expect(skipped.answers).toEqual([]);
+  });
+
+  it("review_plan (TD-5123)", () => {
+    const m = fixtures.review_plan as ReviewPlan;
+    expect([m.type, m.decision, m.plan, m.feedback]).toEqual(["review_plan", "approve", "1. Add greet().", "keep it small"]);
+    const rejected = fixtures.review_plan_reject as ReviewPlan;
+    expect([rejected.decision, rejected.plan, rejected.feedback]).toEqual(["reject", null, "use the logger"]);
   });
 
   it("list_policy_rules", () => {
@@ -762,6 +773,20 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(declined.answers).toEqual([]);
   });
 
+  it("plan_review, plan_reviewed and plan_pinned (TD-5123)", () => {
+    const m = fixtures.plan_review as PlanReview;
+    expect(m.type).toBe("plan_review");
+    expect(isString(m.tool_call_id)).toBe(true);
+    expect(m.plan.startsWith("## Plan")).toBe(true);
+    const approved = fixtures.plan_reviewed as PlanReviewed;
+    expect([approved.outcome, approved.edited, approved.feedback]).toEqual(["approved", true, "keep it small"]);
+    expect(approved.plan).toBe("1. Add greet().");
+    const rejected = fixtures.plan_reviewed_rejected as PlanReviewed;
+    expect([rejected.outcome, rejected.plan, rejected.edited]).toEqual(["rejected", "", false]);
+    const pinned = fixtures.plan_pinned as PlanPinned;
+    expect(pinned.plan).toBe("1. Add greet().");
+  });
+
   it("approval_request carries the always-allow proposal", () => {
     const m = fixtures.approval_request_always_allow as ApprovalRequest;
     expect(m.type).toBe("approval_request");
@@ -1192,7 +1217,7 @@ describe("All fixtures have required shape", () => {
   it("every client message has a type field", () => {
     const clientTypes = [
       "hello", "open_workspace", "user_message", "user_message_steer", "fork_from", "set_branch", "approve", "deny",
-      "deny_no_reason", "always_allow", "answer_question", "answer_question_declined", "list_policy_rules", "revoke_policy_rule",
+      "deny_no_reason", "always_allow", "answer_question", "answer_question_declined", "review_plan", "review_plan_reject", "list_policy_rules", "revoke_policy_rule",
       "trust_workspace_config",
       "set_skip_all_approvals",
       "set_load_global_memory",
@@ -1251,7 +1276,7 @@ describe("All fixtures have required shape", () => {
     const eventTypes = [
       "ready", "session_state", "conversation_reset", "user_turn", "user_turn_steer", "user_turn_run_permissions", "assistant_delta", "assistant_reasoning", "assistant_delta_response", "assistant_retract", "tool_call", "tool_result",
       "tool_result_truncated", "tool_result_diff", "tool_result_read_only", "tool_result_denied",
-      "shell_output", "tool_progress", "approval_request", "approval_request_always_allow", "question_request", "question_answered", "decision_logged",
+      "shell_output", "tool_progress", "approval_request", "approval_request_always_allow", "question_request", "question_answered", "plan_review", "plan_reviewed", "plan_reviewed_rejected", "plan_pinned", "decision_logged",
       "checkpoint_notice", "verify_result", "cost_update", "boundary_update", "boundary_update_config_trust", "turn_complete",
       "tier_state", "tier_state_plan", "context_compacted", "context_compacted_manual", "context_compacted_inflight_trim", "context_compacted_clear_stale", "context_usage", "task_list", "steering_reloaded", "rule_activated", "tier_switched",
       "model_fallback", "context_usage_fallback", "tier_state_fallback",

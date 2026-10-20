@@ -16623,3 +16623,122 @@ it is re-injected were left open. Adam approved the story as written
 - **Native only, parent only.** Delegated worker and research children
   keep their fixed tool lists without `task_list`; the plan is the
   parent's. The Grok engine keeps its own plan.
+
+---
+
+## 2026-10-20 — TD-5123: read-only plan mode, ended by a plan the user reviews (Class B; revises TD-4603 and TD-5117)
+
+**Context.** TD-4603's plan mode only pinned routing to the brain; every
+tool still dispatched. The gap audit's TD-5123 asks for Claude Code's
+"analyze before you edit": refuse every mutating call while planning, end
+with a plan the user approves, rejects or edits, and toggle it from the
+composer, a slash command and the phone. Size 5, so the approach is
+recorded here instead of waiting for sign-off (Adam approved the gap-audit
+stories on 2026-10-14). The story and the 2026-10-14 decisions leave the
+mechanism, the MCP marking and the plan's lifetime open.
+
+**Decision.**
+
+1. **The classifier refuses; nothing downstream can run it.** A new first
+   rule, `plan-mode` (Class C, `refuses=True`), fires while the session's
+   router is in plan mode and the call is not plan-safe. Dispatch returns
+   that refusal (`error_code` `plan_mode`) straight after classifying,
+   before the path guard and the policy gate, so no `auto` rule, approval,
+   Skip all approvals or autonomy grant can run it. A plain Class C rule
+   would have asked, and skip-all promotes a C ask to auto. The tool result
+   tells the model it is planning, why this call was refused, and to call
+   `exit_plan_mode`. `Boundary.plan_mode` is a callable read per call (like
+   `read_guards`), so turning plan mode on or off mid-turn counts, and a
+   delegate child, which shares its parent's classifier, is judged by its
+   parent's plan mode.
+2. **Plan-safe is an allowlist.** `mutates` was not enough: the GitHub
+   write tools (`github_put_file`, `github_merge`, ...) declare none. A
+   builtin runs only if it is on `PLAN_READ_ONLY_BUILTINS` (fs reads, web
+   search and fetch, `load_skill`, `task_list`, `ask_user`, `consult`,
+   `send_file`, `exit_plan_mode`, the GitHub reads), is capture-only
+   computer use (`actuates` false), is `shell` made only of the TD-5103
+   read-only list (with the list off, every shell command is refused), or
+   is `delegate` without `kind: worker`. A test lists every builtin that
+   runs, so a new tool is refused until someone decides it reads.
+   `propose_steering_edit` is refused: a steering edit is a change, even
+   as a proposal the user's Accept writes.
+3. **MCP tools are read-only only by the user's config.** New key
+   `mcp.servers.<id>.read_only_tools`: the server's own tool names, matched
+   exactly. The loader sets `Tool.read_only`, which only the classifier's
+   `mcp:` branch reads; a plugin tool is never plan-safe whatever it
+   declares. MCP's `readOnlyHint` is not trusted (the spec calls
+   annotations untrusted hints, and TST Desk still speaks 2024-11-05,
+   which has none). Settings keeps the list when it rewrites a server. The
+   key adds nothing outside plan mode: a listed tool still asks.
+4. **`delegate kind: worker` is refused while planning (revises TD-5117
+   item 3).** TD-5117 kept the explicit worker running because the brain
+   could still write under TD-4603. Now nothing writes in plan mode, and a
+   worker child whose every write is refused only spends tokens; the
+   refusal names `kind research` instead. The child's own calls are still
+   refused by the shared classifier if one ever runs.
+5. **The model knows it is planning.** While plan mode is on, the turn's
+   message reaches the model with a fixed note after the person's words
+   (`plan_mode.PLAN_NOTE`); the window shows the message as typed. Tool
+   definitions never change with plan mode (`exit_plan_mode` is always
+   offered and refuses outside plan mode), so toggling keeps the
+   llama.cpp prefix cache.
+6. **`exit_plan_mode` parks like `ask_user` (TD-5121).** It is Class A by
+   its own rule (`exit-plan-mode`): the review is the one prompt. New
+   events `plan_review` (the plan), `plan_reviewed` (outcome `approved`,
+   `rejected`, `stopped`, `timed_out`, `cancelled`, with the approved plan,
+   `edited` and the person's `feedback`) and `plan_pinned`; new client
+   message `review_plan` (`decision` approve or reject, optional edited
+   `plan`, optional `feedback`). Editing is approving with your own text,
+   not a third verdict. The session waits in `awaiting_approval` ("waiting
+   for your plan review"); Stop, cancel and `approval_timeout_seconds` end
+   it, and skip-all never reviews a plan. Unattended runs, delegate
+   children and `--on-ask deny-and-continue` turns are refused
+   (`exit_plan_unattended`), and so is a plan the log's secret scrub would
+   change (`plan_secret_shaped`), as for TD-5121 and TD-5140. Plans and
+   edits are capped at 12,000 characters (`PLAN_MAX_CHARS`). `review_plan`
+   is a machine-peer and forwarded verb and an approval verb (never queued
+   while a lane connects): approving only turns plan mode off, which
+   `set_plan` already allows a peer.
+7. **Approving ends plan mode and pins the plan.** The daemon turns plan
+   mode off and logs `tier_state` (so every chip clears) and `plan_pinned`
+   before `plan_reviewed`, then the tool result hands the model the
+   approved text. The pinned plan lives on `Session.pinned_plan`, rides in
+   every compaction summary ahead of the task list (`carry_for`), shows in
+   the Plan pane above the task list, and comes back on revive from the
+   newest `plan_pinned`, which is logged again when the log window rotates
+   it out or an attach finds it missing (the TD-5122 pattern). A new
+   approval replaces it; there is no unpin control (not asked for).
+   Rejecting keeps plan mode on and returns the feedback.
+8. **Toggles.** The composer's Plan chip (TD-4603's), `/plan` (toggle),
+   `/plan on`, `/plan off` and `/plan <task>` (plan mode on, then the task)
+   handled in the window like `/compact`, and the phone, whose WebView
+   shows the same composer and card. A workspace command named `plan`
+   still wins the slash palette, as one named `compact` does. Grok
+   sessions keep their own modes and `/plan`.
+9. **`tst run`.** A `plan_review` exits `approval_needed` in every mode: a
+   plan is reviewed, and maybe edited, on the card. A `plan_mode` refusal
+   counts as a refusal (exit 3), so a script that hits a session left in
+   plan mode is told instead of exiting 0 having written nothing.
+10. **Plan mode outlives a restart (revises TD-4603's "in memory only").**
+    Once plan mode refuses writes it is a safety boundary, not a routing
+    lock: a restart that ended it would let a message held across a deploy
+    (TD-5155) run with writes on although the person never approved a plan
+    or turned planning off. The session row keeps `plan_mode`
+    (`sessions.json`, written whenever a `tier_state` changes it), and
+    revive sets it on the new router before the loop starts. A row written
+    before the field falls back to the newest `tier_state` in the log, so
+    the deploy that ships this keeps a session that was planning. The
+    pinned plan survives as before. A pinned tier (`set_tier`) is still in
+    memory only: it routes, it does not guard.
+
+**Class C answered conservatively:** the allowlist (rather than refusing
+only `mutates` tools), plugins never plan-safe, the server's
+`readOnlyHint` ignored, exact tool names (no globs) in
+`read_only_tools`, `propose_steering_edit` and `delegate kind: worker`
+refused, and plan mode kept across a restart (item 10; review of PR #47).
+
+**Alternatives rejected:** a plain Class C rule (skip-all would run it);
+narrowing the offered tool set in plan mode (breaks the prefix cache, and
+the model would not hear why); a plan document file in the workspace (a
+write in plan mode); TTY plan review in `tst run` (editing a plan wants
+the card); trusting MCP annotations.

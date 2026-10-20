@@ -24,6 +24,7 @@
 	import PlanPane from './PlanPane.svelte';
 	import ApprovalBar from './ApprovalBar.svelte';
 	import QuestionBar from './QuestionBar.svelte';
+	import PlanReviewBar from './PlanReviewBar.svelte';
 	import SteeringProposalBar from './SteeringProposalBar.svelte';
 	import MemoryProposalBar from './MemoryProposalBar.svelte';
 	import WorkspaceTrustCard from './WorkspaceTrustCard.svelte';
@@ -534,6 +535,7 @@
 
 <ApprovalBar />
 <QuestionBar />
+<PlanReviewBar />
 <SteeringProposalBar />
 <WorkspaceTrustCard />
 {#if projects.surface === 'home'}
