@@ -16,7 +16,8 @@
     "session_id": "sess-1",
     "content": "hello world",
     "attachments": [],
-    "steer": false
+    "steer": false,
+    "only_if_idle": false
   },
   "send_queued": {
     "type": "send_queued",
@@ -54,14 +55,16 @@
         "content_b64": ""
       }
     ],
-    "steer": false
+    "steer": false,
+    "only_if_idle": false
   },
   "user_message_steer": {
     "type": "user_message",
     "session_id": "sess-1",
     "content": "Also run the linter",
     "attachments": [],
-    "steer": true
+    "steer": true,
+    "only_if_idle": false
   },
   "approve": {
     "type": "approve",

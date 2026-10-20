@@ -15145,7 +15145,9 @@ skills must not start skipping one.
 
 **Decision (the conservative option, a Class C question the story left
 open):** `disable-model-invocation` is honored rather than ignored. Any
-value except `false` or blank makes the skill user-only: it is left out
+value except YAML `false` or no value at all (`null`; a quoted `''` or
+`"false"` is a value, so it counts; wording fixed in TD-5160) makes the
+skill user-only: it is left out
 of the model's catalog, the `load_skill` tool refuses it, and only the
 user's `/name` (or the composer's "Load skill" marker) attaches it. The
 inspector marks it "slash only" via `SkillStackEntry.user_only`. TD-5011
@@ -15549,7 +15551,12 @@ provider_retry"):
   example), so four of them would hold a turn for 20 to 40 minutes. A
   second stall ends the turn as `stream_stalled`, as before, and its
   partial text stays on screen above the failure line, as before.
-  `provider_retry.max_retries: 0` turns the retry off too.
+  `provider_retry.max_retries: 0` turns the retry off too. (Corrected in
+  TD-5160: the one retry is a fresh request, and a stall before its first
+  chunk is retried under `provider_retry` like any request, so from the
+  mid-reply stall on a model call can wait `max_retries + 2` times, 5 with
+  the defaults, not 2. Only a second stall after output began ends the
+  turn. The docs now say so; the behaviour is unchanged.)
 - Only `stream_stalled`. A cut-off stream (`stream_interrupted`, TD-5152)
   is the gateway reporting a failure or giving up, and `total_timeout`
   (`timeout`) is a cap the user set on one attempt; neither is retried.
@@ -16048,3 +16055,104 @@ gone before it could be read); reading `podman inspect` after dropping
   field (blank is unset), the YAML preview and the sign card show it. The
   Charter column is not in the UI walk's census, so the census is
   unchanged.
+
+## 2026-10-20 — TD-5160: low-severity review notes from waves 5-6 (Class B)
+
+The reviewers of TD-5103, 5107, 5110, 5111, 5158 (wave 5) and TD-5159,
+5112, 5114, 5115, 5116, 5117 (wave 6) left 32 low-severity notes. Each was
+checked against main; the choices below are the ones that are Class B, or
+Class C questions the notes left open (each the conservative option).
+
+- **Secret scrub boundary.** An `sk-` straight after a lowercase letter is
+  let go only when the run after it reads as words: `-`/`_`-separated
+  short words (lower or Title case, up to four digits after, as in `v2`),
+  short acronyms or short numbers. That is what made
+  `task-tool-availability` and `tst-desk-gap-audit` partly `[REDACTED]`.
+  Everywhere else the pattern is main's, so an `sk-` after anything but a
+  lowercase letter is always a key. A first cut instead dropped every
+  match after a lowercase letter; review found that let keys through
+  after an ANSI colour code (`\x1b[31msk-…`, from `git diff
+  --color-words`) and a JSON escape (`\u003esk-…`), so it was replaced.
+  This tests that the run looks like words, never that it looks like a
+  key: a key's random part has a segment too long, or mixed case inside
+  one, to fit, so no real key shape is bounded. A test glues 500 seeded
+  keys in five provider shapes to every lowercase letter. The UI's
+  diagnostics belt stays wider on purpose.
+- **Stored MCP secrets.** A value's last whitespace-separated part must be
+  8+ characters too (the token in `Bearer <token>`), since the exact-text
+  scrub registers only parts that long. This refuses a passphrase whose
+  last word is short; MCP secrets are tokens, and a leak is worse.
+  Remove now deletes the keychain item first and the name second, so a
+  failure leaves the file, the daemon and the keychain agreeing and a retry
+  finishes the job; Save deletes the item it stored if the file write
+  fails.
+- **`user_message.only_if_idle`** (additive, protocol). The daemon checks
+  `turn_in_flight` in the same step that counts the turn, so of two
+  `tst run --continue` started together only one gets in. Only `tst run`
+  into an existing session sets it.
+- **Read-only shell list and git config.** Each git command is classified
+  after an async `git config -z --get-regexp` in the workspace (includes
+  followed, as the command's git will): `diff.external` (or
+  `GIT_EXTERNAL_DIFF`) makes `git diff` ask, and `log.showSignature` or a
+  `%G` format in `format.pretty`/`pretty.*` makes `git log`/`git show`
+  ask; a `%G` or `%(signature` format word asks too. The same read gives
+  the object format, so SHA-256 repositories get their own empty tree for
+  `GIT_ATTR_SOURCE`. A root whose config could not be read asks. The pins
+  now apply to any git command the built-in list reads, whatever
+  `shell.read_only` says, and a preset bind rebinds the loop's wall, so a
+  stale classifier list can never auto-run a command without them.
+  `shell` and `shell.read_only` refuse unknown keys. Residual: a write in
+  the same parallel batch as the git command can still land between the
+  read and the run.
+- **Staging after an atomic save.** On POSIX each folder on the path is
+  opened with `O_NOFOLLOW` from the one before it, which refuses a
+  swapped-in symlink anywhere on the path, and a file whose inode changed
+  since the plan is staged only if it has one link (an editor's temp file
+  and rename); more links may be a hard link to a file elsewhere, and are
+  refused. Windows, with no `dir_fd`, keeps the strict device/inode test.
+- **`message_not_saved` copy.** The daemon's text no longer says the text
+  is back in the composer (older windows and APKs do not do that); the
+  window from TD-5158 on adds it, with a note to add attachments again.
+- **`web_fetch`.** (The worker window's old 2,000-character floor is gone:
+  on a small worker it could be more tokens than the worker holds.) The
+  shown URL is redacted and cut to 300 characters;
+  the raw window and the question-mode answer shrink until the whole
+  result fits the cap. The extract pass checks the session caps first, as
+  delegate does (skip-all never lifts them). A cached page cut at a smaller
+  `fetch_max_bytes` does not serve a larger one. The worker window counts
+  three ASCII characters a token and a whole token for any other
+  character (a script-aware estimate rather than the brain's calibrated
+  ratio, which describes the brain's endpoint and prose, not CJK pages).
+- **Delegate failures keep the transcript.** `HandlerRefusal` carries one,
+  and a crash in the child is re-raised as `HandlerFailed` (reported as
+  `handler_error` with the original message) carrying the steps. A
+  cancelled call still has none: cancel writes no tool result for any
+  tool.
+- **Cleared-result placeholders.** Only built-in reads (`fs_read`,
+  `fs_list`, `fs_grep`, `web_fetch`, `web_search`, `load_skill`) say "Run
+  the tool again if you need it"; every other tool's says it already ran
+  and not to run it again for the output. Rejected: excluding `delegate`
+  and `shell` by default (that would keep their full output and make the
+  window fill faster); the wording is what invited the re-run.
+- **A steer split by Send now.** `withdrawResponse` cuts every row holding
+  the response id and drops an earlier row the response alone filled. Only
+  an attachment-only Send now still echoes mid-stream since TD-5112.
+- **A steer that loads a skill** re-assembles the system prompt before the
+  model call that reads it.
+- **Shell memory cap.** The cap is certain only when the scope's own
+  `oom` counter shows it reached its limit; `Result=oom-kill` alone is
+  "likely"; a kill the counters show was not the cap gets no note. GPU
+  out-of-memory text is not the cap. A scope that fails to start resets
+  the probe and says the command did not run; a probe that found nothing
+  is retried after five minutes. Podman gets `--memory-swap` equal to
+  `--memory`. **Class C, conservative:** rootless Podman off cgroup v2 with
+  the systemd manager ignores or refuses limits, so the start check now
+  refuses an autonomous run there (naming the fix) rather than let an
+  unattended run go uncapped or fail at its first command. Not verified
+  against a real Podman (none on the build host); the decision rests on
+  Podman's documented behaviour and `podman info`'s fields.
+- **Docs only, behaviour unchanged:** `disable-model-invocation` values,
+  the ulimit fallback being per process, the stall retry bound
+  (`max_retries + 2` waits), the 70% clear exception and the gap not
+  being a promise, the summary counter not being calibrated, and the
+  TD-5158 and TD-5115 backlog ticks.

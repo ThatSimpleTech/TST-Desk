@@ -313,9 +313,14 @@ export function daemonErrorCopy(code: string, message: string): NoticeSpec {
 	}
 	if (code === "message_not_saved") {
 		// TD-5158: the daemon could not write the message to its queue file,
-		// so it refused it rather than lose it to the next restart. The text
-		// is back in the composer, and the daemon's message names the cause.
-		return { severity: "toast", title: "Message not sent", body: message };
+		// so it refused it rather than lose it to the next restart. The
+		// daemon's message names the cause; only this window puts the text
+		// back (attachments are not kept), so the window says so (TD-5160).
+		return {
+			severity: "toast",
+			title: "Message not sent",
+			body: `${message} The text is back in the composer; add any attachments again.`,
+		};
 	}
 	if (code === "queued_not_found") {
 		// TD-5155: Send or Remove on a held message another window (or a

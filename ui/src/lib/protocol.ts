@@ -76,6 +76,9 @@ export interface UserMessage extends ClientMessage {
    *  tool-batch boundary. Omitted, or with no turn running, the message
    *  waits for a turn of its own. Additive: older daemons ignore it. */
   steer?: boolean;
+  /** TD-5160: refuse with `session_busy` instead of queueing when the
+   *  session already owes a turn (`tst run` sets it; the window does not). */
+  only_if_idle?: boolean;
 }
 
 /** Send a message a restart left held (TD-5155). `queued_id` names a row of

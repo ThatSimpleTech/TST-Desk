@@ -192,6 +192,11 @@ class UserMessage(ClientMessage):
     window's Send now mid-turn sets it. Without it, or with no turn
     running, the message waits for a turn of its own, as before. Additive:
     a client that never sends it never steers.
+
+    ``only_if_idle`` (TD-5160) refuses the message with ``session_busy``
+    when the session already owes a turn, checked in the same step that
+    queues it, so two ``tst run --continue`` started together cannot both
+    get in. Additive: a client that never sends it queues as before.
     """
 
     type: Literal["user_message"] = "user_message"
@@ -199,6 +204,7 @@ class UserMessage(ClientMessage):
     content: str
     attachments: list[Attachment] = Field(default_factory=list)
     steer: bool = False
+    only_if_idle: bool = False
 
 
 class SendQueued(ClientMessage):

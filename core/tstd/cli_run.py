@@ -261,7 +261,12 @@ async def _turn(
     else:
         assert workspace is not None
         sid = await _open_new(ws, workspace)
-    await _send(ws, {"type": "user_message", "session_id": sid, "content": message})
+    sent: dict[str, Any] = {"type": "user_message", "session_id": sid, "content": message}
+    if existing:
+        # pick_session read a snapshot; the daemon re-checks as it queues,
+        # so a run started alongside this one cannot slip in behind it.
+        sent["only_if_idle"] = True
+    await _send(ws, sent)
     return await stream_turn(
         ws, sid, data_dir, budget, output=output, content=message if existing else None
     )
