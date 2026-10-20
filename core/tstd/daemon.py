@@ -2174,6 +2174,10 @@ class Daemon:
                 record.session_id, record.workspace_path, final_state
             )
             sess.preset = chosen
+            # A tombstone never gets a runtime, but Resume, a spend cap and
+            # a move still reload its wall: gated too, or a loosening file
+            # read as trusted (TD-5158).
+            sess.trust_store = self.workspace_trust
             if loaded is not None and loaded.events:
                 sess.event_log.replace(loaded.events)
                 # TD-5140: a replay-only session holds no proposal either.
@@ -3760,7 +3764,7 @@ class Daemon:
                 },
             )
 
-        policy_error = reload_session_policy(sess, sess.workspace_path)
+        policy_error = reload_session_policy(sess, sess.workspace_path, view=sess.config_view)
         if policy_error is not None:
             log.warning(
                 "workspace policy config invalid; using defaults",

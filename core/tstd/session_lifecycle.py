@@ -35,7 +35,7 @@ from .protocol import ConfigTrust, LoosenedSetting, build_error
 from .session import Session, SessionRegistry
 from .session_persist import SessionPersist
 from .session_store import SessionStore
-from .workspace_trust import read_view
+from .workspace_trust import WorkspaceConfigView, read_view
 
 log = get_logger("tstd.session_lifecycle")
 
@@ -275,14 +275,22 @@ def reload_session_boundary(
     return error
 
 
-def reload_session_policy(session: Session, workspace_path: str) -> ConfigError | None:
+def reload_session_policy(
+    session: Session, workspace_path: str, view: WorkspaceConfigView | None = None
+) -> ConfigError | None:
     """Reload *session*'s approval policy through the trust gate (TD-5113).
 
     An untrusted config gives the packaged default policy. An invalid one
     gives the defaults too, and the error is returned for the caller to log.
+
+    *view* is the read ``reload_session_boundary`` just made of the same
+    file. Passing it keeps the policy, the wall and the trust card on one
+    set of bytes: a second read could see a file changed in between, and
+    announce one version while enforcing another (TD-5158).
     """
     try:
-        view = read_view(workspace_path, session.trust_store)
+        if view is None:
+            view = read_view(workspace_path, session.trust_store)
         session.policy = policy_from_mapping(view.path, view.effective)
     except ConfigError as e:
         session.policy = PolicyConfig()
@@ -298,7 +306,7 @@ async def apply_workspace_config(session: Session) -> None:
     config falls back to defaults, as on open.
     """
     error = reload_session_boundary(session, session.workspace_path, fallback=BoundaryConfig())
-    policy_error = reload_session_policy(session, session.workspace_path)
+    policy_error = reload_session_policy(session, session.workspace_path, view=session.config_view)
     for problem in (error, policy_error):
         if problem is not None:
             log.warning(
@@ -331,7 +339,7 @@ async def _reload_working_context(session: Session, workspace_path: str) -> None
             extra={"extra_fields": {"workspace_path": workspace_path, "error": str(error)}},
         )
         source = f"defaults — invalid config ({error})"
-    policy_error = reload_session_policy(session, workspace_path)
+    policy_error = reload_session_policy(session, workspace_path, view=session.config_view)
     if policy_error is not None:
         log.warning(
             "workspace policy config invalid after move; using defaults",
