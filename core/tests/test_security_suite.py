@@ -12,8 +12,10 @@ import inspect
 import json
 import logging
 import os
+import random
 import re
 import sqlite3
+import string
 import sys
 import tempfile
 from enum import StrEnum
@@ -705,6 +707,10 @@ def test_clean_log_message_not_redacted() -> None:
         "pin flask-sqlalchemy-migrate and tst-desk-session-survival",
         "rename the task-management-dashboard component",
         "a risk-assessment-framework-v2 doc",
+        "Desk-Tool-Availability-Matrix",
+        "the task-API-docs-and-more page",
+        "the desk-2026-10-14-review-notes",
+        "task-tool_availability_check",
     ],
 )
 def test_a_word_ending_in_sk_is_not_a_key(text: str) -> None:
@@ -729,6 +735,14 @@ _SK_KEYS = [s for s in FAKE_SECRETS if s.startswith("sk-")]
         "cb?k%3d{}",
         "x-api-key:{}",
         "keys: [{}]",
+        # Glued to a lowercase letter, as real output writes it: an ANSI
+        # colour code ends in "m" (git diff --color-words, ls, rg), and a
+        # JSON-escaped ">" ends in "e" (TD-5160 review).
+        "\x1b[31m{}\x1b[m",
+        "OPENAI_API_KEY= \x1b[32m{}\x1b[m",
+        "\\u003e{}",
+        '{{"text": "\\u003c/b\\u003e{}"}}',
+        "token{}",
     ],
 )
 @pytest.mark.parametrize("key", _SK_KEYS)
@@ -737,6 +751,44 @@ def test_an_sk_key_is_redacted_however_it_is_framed(framing: str, key: str) -> N
     scrubbed = redact_secrets(text)
     assert key not in scrubbed
     assert scrubbed == framing.format(REDACTED)
+
+
+def test_a_coloured_word_diff_of_a_rotated_key_shows_neither_key() -> None:
+    # The reviewer's repro: `git diff --color-words` of a rotated .env.
+    old_key = "sk-proj-OLDoldOLDold0123456789"  # tst-secret-ok
+    new_key = "sk-proj-NEWnewNEWnew0123456789"  # tst-secret-ok
+    line = f"OPENAI_API_KEY= \x1b[31m{old_key}\x1b[m\x1b[32m{new_key}\x1b[m"
+    scrubbed = redact_secrets(line)
+    assert old_key not in scrubbed
+    assert new_key not in scrubbed
+    assert scrubbed == f"OPENAI_API_KEY= \x1b[31m{REDACTED}\x1b[m\x1b[32m{REDACTED}\x1b[m"
+
+
+def _random_sk_keys() -> list[str]:
+    """Keys in the shapes providers issue, from a fixed seed."""
+    rng = random.Random(5160)
+    base62 = string.ascii_letters + string.digits
+    url64 = base62 + "-_"
+    hexdigits = "0123456789abcdef"
+
+    def pick(alphabet: str, n: int) -> str:
+        return "".join(rng.choice(alphabet) for _ in range(n))
+
+    keys: list[str] = []
+    for _ in range(100):
+        keys.append("sk-" + pick(base62, 48))  # OpenAI legacy
+        keys.append("sk-proj-" + pick(url64, 156))  # OpenAI project
+        keys.append("sk-or-v1-" + pick(hexdigits, 64))  # OpenRouter
+        keys.append("sk-ant-api03-" + pick(url64, 93) + "AA")  # Anthropic
+        keys.append("sk-" + pick(hexdigits, 32))  # hex-only providers
+    return keys
+
+
+# Whatever lowercase letter a key is glued to, it is never let go as a word.
+@pytest.mark.parametrize("letter", list(string.ascii_lowercase))
+def test_a_key_after_any_lowercase_letter_is_still_redacted(letter: str) -> None:
+    leaked = [k for k in _random_sk_keys() if k in redact_secrets(f"{letter}{k}")]
+    assert leaked == []
 
 
 PLANTED = FAKE_SECRETS[0]

@@ -1696,8 +1696,8 @@ Accept and Save are only taken from this computer's own window (`loopback_only` 
 or another computer); Reject works from a phone. Every accepted, edited or rejected proposal
 goes in the session log as `steering_decision` with its diff. The card shows exactly what
 Accept writes. The session log blanks secret-shaped strings (a long run of letters, digits,
-`-` or `_` after `sk-`, `ghp_` and the like; an `sk-` straight after a lowercase letter, as in
-`task-tool-availability`, is a word and is left alone), so a proposal whose file name, current
+`-` or `_` after `sk-`, `ghp_` and the like; an `sk-` straight after a lowercase letter
+followed only by words, as in `task-tool-availability`, is left alone), so a proposal whose file name, current
 file or new text holds one is refused
 (`steering_secret_shaped`), and so is a Save of one; change that file by hand. Open proposals live in the daemon's memory, so a restart closes them: the daemon logs
 each one as `steering_decision` `expired` when it restores the session, its card does not

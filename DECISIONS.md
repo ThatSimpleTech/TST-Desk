@@ -16063,14 +16063,21 @@ The reviewers of TD-5103, 5107, 5110, 5111, 5158 (wave 5) and TD-5159,
 checked against main; the choices below are the ones that are Class B, or
 Class C questions the notes left open (each the conservative option).
 
-- **Secret scrub boundary.** `sk-` no longer matches straight after a
-  lowercase letter, which is what made `task-tool-availability` and
-  `tst-desk-gap-audit` partly `[REDACTED]`. It still matches after
-  punctuation, a digit or capital, an escaped `\n`, or a `%XX`
-  percent-encoding, so a key glued into a repr or a URL query is still
-  caught. Rejected: a key-shape test on what follows `sk-` (real keys vary
-  too much to bound it without letting one through). The UI's diagnostics
-  belt stays wider on purpose.
+- **Secret scrub boundary.** An `sk-` straight after a lowercase letter is
+  let go only when the run after it reads as words: `-`/`_`-separated
+  short words (lower or Title case, up to four digits after, as in `v2`),
+  short acronyms or short numbers. That is what made
+  `task-tool-availability` and `tst-desk-gap-audit` partly `[REDACTED]`.
+  Everywhere else the pattern is main's, so an `sk-` after anything but a
+  lowercase letter is always a key. A first cut instead dropped every
+  match after a lowercase letter; review found that let keys through
+  after an ANSI colour code (`\x1b[31msk-…`, from `git diff
+  --color-words`) and a JSON escape (`\u003esk-…`), so it was replaced.
+  This tests that the run looks like words, never that it looks like a
+  key: a key's random part has a segment too long, or mixed case inside
+  one, to fit, so no real key shape is bounded. A test glues 500 seeded
+  keys in five provider shapes to every lowercase letter. The UI's
+  diagnostics belt stays wider on purpose.
 - **Stored MCP secrets.** A value's last whitespace-separated part must be
   8+ characters too (the token in `Bearer <token>`), since the exact-text
   scrub registers only parts that long. This refuses a passphrase whose

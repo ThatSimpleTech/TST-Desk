@@ -23,18 +23,26 @@ LOG_FILE_NAME = "tstd.log"
 #: What each secret-shaped match becomes in every output path.
 REDACTED = "[REDACTED]"
 
+# A run after "sk-" that reads as words, not a key (TD-5160): segments
+# split by "-" or "_", each a short lowercase or Title-case word with up
+# to four digits after it ("v2", "api03"), a short acronym ("API") or a
+# short number ("2026"), up to the end of the run. A key's random part has
+# a long segment or mixed case inside one, so it never fits.
+_SK_WORD = r"(?:[A-Z]?[a-z]{1,24}[0-9]{0,4}|[A-Z]{1,4}[0-9]{0,4}|[0-9]{1,8})"
+_SK_WORDS = rf"{_SK_WORD}(?:[-_]+{_SK_WORD})*[-_]*(?![a-zA-Z0-9_-])"
+
 # Patterns that must be redacted in log output (from tst-cua policy.py).
 SECRET_PATTERNS: list[re.Pattern[str]] = [
     # OpenAI / OpenRouter / Anthropic key. Dashed forms (sk-or-v1-…,
     # sk-proj-…, sk-ant-…) are the shapes the shipped presets actually
-    # hold. Not straight after a lowercase letter (TD-5160): "task-tool-…"
-    # and "tst-desk-gap-…" are words, not keys. A key glued to an escape
-    # ("\nsk-…") or a percent-encoding ("%3dsk-…") still counts. The UI
-    # belt in ui/src/lib/redact.ts stays wider: it only feeds diagnostics.
-    re.compile(
-        r"((?:(?<![a-z])|(?<=\\[a-z])|(?<=%[0-9A-Fa-f]{2}))"
-        r"sk-[a-zA-Z0-9][a-zA-Z0-9_-]{15,})"
-    ),
+    # hold. Straight after a lowercase letter (TD-5160) a match is let go
+    # only when the run after "sk-" reads as words (_SK_WORDS): that is
+    # "task-tool-availability" or "tst-desk-gap-audit-2026-10-14". A key
+    # glued to a letter is still caught, as after an ANSI colour code
+    # ("\x1b[31msk-…"), a JSON escape ("\u003esk-…") or "\nsk-…", because a
+    # key's random part never reads as words. The UI belt in
+    # ui/src/lib/redact.ts stays wider: it only feeds diagnostics.
+    re.compile(rf"((?:(?<![a-z])|(?!sk-{_SK_WORDS}))sk-[a-zA-Z0-9][a-zA-Z0-9_-]{{15,}})"),
     re.compile(r"(github_pat_[a-zA-Z0-9_]{36,})"),  # GitHub fine-grained PAT
     re.compile(r"(ghp_[a-zA-Z0-9]{36,})"),  # GitHub classic PAT
     re.compile(r"(ghu_[A-Za-z0-9_]{20,})"),  # GitHub user-to-server token

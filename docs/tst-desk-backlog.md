@@ -10386,9 +10386,11 @@ fix); one that is not, or no longer applies, says why.
 - [x] 12. TD-5103 every pinned git diff/log/show failed in a SHA-256
       repository: the pin uses the repository's own empty tree
 - [x] 13. TD-5111/TD-5140 the `sk-` scrub blanked words such as
-      `task-tool-availability`: it no longer matches straight after a
-      lowercase letter, and keys after punctuation, an escape or a
-      percent-encoding are still caught (tests both ways)
+      `task-tool-availability`: straight after a lowercase letter a match
+      is let go only when what follows `sk-` reads as words, so keys
+      after an ANSI colour code, a JSON escape, `\n`, a `%XX` or any
+      other letter are still caught (tests both ways, including 500
+      seeded keys glued to every lowercase letter)
 - [x] 14. TD-5114 a long final URL on a tight cap pushed `web_fetch` over
       it and the offset footer was cut: the shown URL is capped and the
       window or answer shrinks until the result fits
