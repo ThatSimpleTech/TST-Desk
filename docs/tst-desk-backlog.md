@@ -10477,6 +10477,52 @@ checked against the journal, the pre-253 probe and note, and a charter run
 through write, sign and reload) and `ui/src/lib/charter.test.ts` (the
 charter's value survives Save and Start). See DECISIONS.md.
 
+### TD-5121 — `ask_user` tool
+**Size:** 5 · **Depends on:** none · Gap audit 2026-10-14
+
+The model could only end its turn with prose when it needed a decision
+from the person. Claude Code documents a structured question tool.
+
+**Acceptance criteria:**
+- [x] The model can ask one to four questions, each with 2-4 options plus free text. The daemon parks the turn like an approval.
+- [x] The desktop shows options as buttons. The phone shows them as taps.
+- [ ] `tst run` handles them per TD-5118. Done for what is on main: a TTY in
+      text mode answers them, and a non-TTY or `--output json`/`ndjson` run
+      exits 4 (`approval_needed`) with the question waiting for the window,
+      as for an approval. TD-5118's `--on-ask deny-and-continue` is on its
+      own branch; once both are merged, `ask_user` must refuse in such a turn
+      the way it refuses in an unattended run (see Notes).
+- [x] Answers come back as the tool result, and both question and answer are logged to the audit DB.
+
+Done (2026-10-20): `core/tstd/tools/ask_user.py` (the tool, Class A by the
+static rule `ask-user`), `core/tstd/questions.py` (parking, answer checks,
+the result text) and `core/tstd/cli_questions.py` (`tst run` and `tst
+attach` on a TTY). Protocol: `question_request`, `question_answered`
+(`answered`, `declined`, `stopped`, `timed_out`, `cancelled`) and
+`answer_question` (answers, or `declined`; `bad_answer` and
+`no_pending_question` refusals). The session waits in `awaiting_approval`
+(reason "waiting for your answer") in `Session.pending_questions`; Stop,
+cancel and `policy.approval_timeout_seconds` end the wait, skip-all never
+answers. An unattended run is refused (`ask_user_unattended`), and neither
+delegate child has the tool. Audit migration v6 adds `questions` (the
+questions and the answers as scrubbed JSON, with the outcome). The window
+shows `QuestionCard.svelte` in a footer bar: options as buttons, a box for
+the person's own words, Skip (Esc) and Send; one single-choice question
+sends on a tap, and on a phone or narrow window each option is a full-width
+tap target. The phone's WebView shows the same card once its APK is built
+from this UI (not built or installed here). `answer_question` is forwarded
+for bridged ids and never queued, like `approve`. OS banners and the ntfy,
+Slack, Discord and Telegram channels say a question is waiting. Tests:
+`core/tests/test_ask_user.py`, `core/tests/test_tst_questions.py`,
+`ui/src/lib/question.test.ts`, `ui/src/lib/question-store.test.ts`,
+`ui/src/lib/question-component.test.ts`. See DECISIONS.md, docs/configuration.md
+§4.4 and docs/architecture.md.
+
+**Notes:** for the TD-5118 merge, `ask_user` should treat a turn whose
+`session.run_permissions.on_ask` is `deny_and_continue` like an unattended
+run (refuse at once, so the model carries on) instead of parking; that
+branch adds `run_permissions`, which main does not have yet.
+
 ---
 
 # Epic E52 — Files to the user

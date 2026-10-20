@@ -37,7 +37,8 @@ ToolCallStatus = Literal["success", "error", "refused"]
 # ── Schema ─────────────────────────────────────────────────────────────
 #
 # Schema objects: sessions, turns, tool_calls, decisions, model_calls,
-# judgments (TD-708), allowed_calls (TD-5103), steers (TD-5112) — and
+# judgments (TD-708), allowed_calls (TD-5103), steers (TD-5112), questions
+# (TD-5121) — and
 # `costs`, which is a
 # VIEW over model_calls, not a table. Rollup rows would duplicate truth in
 # a store that can never correct them; a view aggregates on read instead
@@ -202,9 +203,35 @@ CREATE TABLE steers (
 CREATE INDEX idx_steers_session ON steers(session_id, ts);
 """
 
+# v6 records each ``ask_user`` call (TD-5121): the questions the agent
+# asked and what the person answered, both as scrubbed JSON, with how it
+# ended (``answered``, ``declined``, ``stopped``, ``timed_out``,
+# ``cancelled``). Unlike a tool result, which is stored as a hash, the
+# answer is the decision being recorded, so its text is kept.
+_SCHEMA_V6 = """
+CREATE TABLE questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(session_id),
+    tool_call_id TEXT NOT NULL,
+    questions TEXT NOT NULL,
+    outcome TEXT NOT NULL
+        CHECK(outcome IN ('answered', 'declined', 'stopped', 'timed_out', 'cancelled')),
+    answers TEXT NOT NULL,
+    ts REAL NOT NULL
+);
+CREATE INDEX idx_questions_session ON questions(session_id, ts);
+"""
+
 # Ordered migration steps; index + 1 is the schema version that step
 # produces. Every release that changes the schema appends one entry.
-MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3, _SCHEMA_V4, _SCHEMA_V5)
+MIGRATIONS: tuple[str, ...] = (
+    _SCHEMA_V1,
+    _SCHEMA_V2,
+    _SCHEMA_V3,
+    _SCHEMA_V4,
+    _SCHEMA_V5,
+    _SCHEMA_V6,
+)
 
 
 # ── Scrubbing ──────────────────────────────────────────────────────────
@@ -496,6 +523,34 @@ class AuditStore:
                 turn_index,
                 step,
                 json.dumps(list(after_tool_call_ids)),
+                ts or time.time(),
+            ),
+        )
+        self._conn.commit()
+        return int(cur.lastrowid or 0)
+
+    def append_question(
+        self,
+        session_id: str,
+        tool_call_id: str,
+        questions: Sequence[Mapping[str, Any]],
+        outcome: str,
+        answers: Sequence[Mapping[str, Any]],
+        ts: float | None = None,
+    ) -> int:
+        """Record an ``ask_user`` call and how the person answered (TD-5121).
+
+        Both sides are scrubbed first, as tool arguments are.
+        """
+        cur = self._conn.execute(
+            "INSERT INTO questions (session_id, tool_call_id, questions, outcome, answers, ts)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                session_id,
+                tool_call_id,
+                json.dumps(redact_structure(list(questions)), ensure_ascii=False),
+                outcome,
+                json.dumps(redact_structure(list(answers)), ensure_ascii=False),
                 ts or time.time(),
             ),
         )

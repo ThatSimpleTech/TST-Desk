@@ -34,6 +34,8 @@ from .protocol import (
     DaemonEvent,
     DecisionLogged,
     Error,
+    QuestionAnswered,
+    QuestionRequest,
     SessionState,
     ToolResult,
     TurnComplete,
@@ -107,6 +109,9 @@ class AuditWriter:
         self._drain_task: asyncio.Task[None] | None = None
         self._sessions: dict[str, Session] = {}
         self._pending_calls: dict[str, dict[str, _PendingCall]] = {}
+        # TD-5121: ask_user questions waiting for their answer, by session
+        # then tool call id, as JSON-able dicts.
+        self._pending_questions: dict[str, dict[str, list[dict[str, Any]]]] = {}
         self._pending_model_calls: dict[str, list[CallRecord]] = {}
         self._turn_counters: dict[str, int] = {}
         # Edge-triggered "audit incomplete" reporting: the user is told
@@ -231,6 +236,12 @@ class AuditWriter:
                 self._on_decision(sid, event)
             elif isinstance(event, UserTurn) and event.steer is not None:
                 self._on_steer(sid, event)
+            elif isinstance(event, QuestionRequest):
+                self._pending_questions.setdefault(sid, {})[event.tool_call_id] = [
+                    q.model_dump() for q in event.questions
+                ]
+            elif isinstance(event, QuestionAnswered):
+                self._on_question_answered(sid, event)
             elif isinstance(event, SessionState) and event.state in (
                 "complete",
                 "failed",
@@ -303,6 +314,27 @@ class AuditWriter:
                 _write_model_call(self._store, sid, turn_id, rec, is_classifier=False)
 
         self._enqueue(sid, _op)
+
+    def _on_question_answered(self, sid: str, event: QuestionAnswered) -> None:
+        """Record an ``ask_user`` call with its questions and answer (TD-5121).
+
+        A writer attached after the request (a revive) still records the
+        answer, with no questions, rather than lose it.
+        """
+        questions = self._pending_questions.get(sid, {}).pop(event.tool_call_id, [])
+        answers = [a.model_dump() for a in event.answers]
+        call_id, outcome = event.tool_call_id, event.outcome
+        self._enqueue(
+            sid,
+            lambda: self._store.append_question(
+                session_id=sid,
+                tool_call_id=call_id,
+                questions=questions,
+                outcome=outcome,
+                answers=answers,
+                ts=time.time(),
+            ),
+        )
 
     def _on_steer(self, sid: str, event: UserTurn) -> None:
         """Record the injection point of a message sent mid-turn (TD-5112).

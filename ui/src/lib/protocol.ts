@@ -141,6 +141,24 @@ export interface AlwaysAllow extends ClientMessage {
   tool_call_id: string;
 }
 
+/** One answer to an `ask_user` question (TD-5121): option labels picked
+ *  (at most one unless the question is `multi_select`) and/or the
+ *  person's own words. */
+export interface QuestionAnswer {
+  selected: string[];
+  text: string;
+}
+
+/** Answer the questions an `ask_user` call parked, one answer per question
+ *  in order, or decline them all (TD-5121). */
+export interface AnswerQuestion extends ClientMessage {
+  type: "answer_question";
+  session_id: string;
+  tool_call_id: string;
+  answers: QuestionAnswer[];
+  declined?: boolean;
+}
+
 export interface ListPolicyRules extends ClientMessage {
   type: "list_policy_rules";
   session_id: string;
@@ -996,6 +1014,7 @@ export type ClientMessageUnion =
   | Approve
   | Deny
   | AlwaysAllow
+  | AnswerQuestion
   | ListPolicyRules
   | RevokePolicyRule
   | SetSkipAllApprovals
@@ -1318,6 +1337,36 @@ export interface ApprovalRequest extends DaemonEvent {
   summary: string;
   reason: string;
   proposed_always_allow?: PolicyRuleSummary | null;
+}
+
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+export interface Question {
+  question: string;
+  header: string;
+  options: QuestionOption[];
+  multi_select: boolean;
+}
+
+/** An `ask_user` call parked its turn on one to four questions (TD-5121).
+ *  The call's `tool_result` clears the card. */
+export interface QuestionRequest extends DaemonEvent {
+  type: "question_request";
+  session_id: string;
+  tool_call_id: string;
+  questions: Question[];
+}
+
+/** How a parked `ask_user` call ended, with the answers (TD-5121). */
+export interface QuestionAnswered extends DaemonEvent {
+  type: "question_answered";
+  session_id: string;
+  tool_call_id: string;
+  outcome: "answered" | "declined" | "stopped" | "timed_out" | "cancelled";
+  answers: QuestionAnswer[];
 }
 
 export interface DecisionLogged extends DaemonEvent {
@@ -2485,6 +2534,8 @@ export type DaemonEventUnion =
   | ShellOutput
   | ToolProgress
   | ApprovalRequest
+  | QuestionRequest
+  | QuestionAnswered
   | DecisionLogged
   | CheckpointNotice
   | VerifyStarted

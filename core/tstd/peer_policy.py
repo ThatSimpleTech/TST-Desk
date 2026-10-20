@@ -53,6 +53,9 @@ MACHINE_PEER_VERBS: frozenset[str] = frozenset(
         "approve",
         "deny",
         "always_allow",
+        # TD-5121: the person's answer to an ask_user question. Weaker than
+        # approve: it only hands the model words, and changes no setting.
+        "answer_question",
         "run_verify",
         "deny_verify",
         "new_session",
@@ -88,8 +91,9 @@ MACHINE_PEER_VERBS: frozenset[str] = frozenset(
 FORWARDED_VERBS: frozenset[str] = MACHINE_PEER_VERBS - {"remove_remote_device"}
 
 # Approvals are never queued while a lane connects (A.8): a late approve
-# could land after the person stopped expecting it.
-APPROVAL_VERBS: frozenset[str] = frozenset({"approve", "deny", "always_allow"})
+# could land after the person stopped expecting it. An answer to a question
+# (TD-5121) is the same kind of decision.
+APPROVAL_VERBS: frozenset[str] = frozenset({"approve", "deny", "always_allow", "answer_question"})
 
 # The four machine verbs. ``list_machines`` is also open to viewers.
 MACHINE_VERBS: frozenset[str] = frozenset(

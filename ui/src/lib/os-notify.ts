@@ -23,7 +23,7 @@ function onWhere(base: string, sessionId: string | undefined, nameOf: MachineNam
 export interface OsNotice {
 	title: string;
 	body: string;
-	kind: "approval" | "turn" | "scheduled";
+	kind: "approval" | "question" | "turn" | "scheduled";
 	sessionId?: string;
 	toolCallId?: string;
 	/** Class B approvals can Approve/Deny from the banner. Class C must open the card. */
@@ -49,6 +49,19 @@ export function noticeFor(event: DaemonEventUnion, nameOf?: MachineNamer): OsNot
 						{ id: "deny", title: "Deny" },
 					]
 				: undefined,
+		};
+	}
+	if (event.type === "question_request") {
+		// TD-5121: the turn waits for an answer the way it waits for an
+		// approval. The banner only says so; the card is where it's answered.
+		const first = event.questions[0]?.question ?? "";
+		const more = event.questions.length - 1;
+		return {
+			title: onWhere("Question from the agent", event.session_id, nameOf),
+			body: banner(first + (more > 0 ? ` (+${more} more)` : "")) || "The agent is waiting for your answer",
+			kind: "question",
+			sessionId: event.session_id,
+			toolCallId: event.tool_call_id,
 		};
 	}
 	if (event.type === "turn_complete") {

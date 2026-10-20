@@ -227,7 +227,9 @@ unsubscribes. Nothing about that touches the loop.
 an `asyncio.Future` per parked tool call. The comment in the code says why: *"owned by the
 session — NOT by any websocket — so a client disconnect leaves them parked and resumable."* Close
 the window mid-approval, reopen it, and the card is still there because the future never went
-anywhere.
+anywhere. An `ask_user` question (TD-5121) parks the same way, in `Session.pending_questions`:
+the session waits in `awaiting_approval` until any client answers it, and Stop or cancel ends
+the wait. Skip-all releases approvals but never answers a question.
 
 **Disconnect cleanup is scoped to the stream.** When a connection drops,
 `Daemon._on_connection_closed` calls `_cleanup_attach`, which removes the connection from
@@ -456,6 +458,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `approve` | yes | Approve a parked tool call. |
 | `deny` | yes | Deny a parked tool call, with an optional reason. |
 | `always_allow` | yes | Approve and save the narrowest policy rule that would have allowed it, with glob characters made literal. Refused for class-C calls (`class_c_not_always_allowable`), and with `not_always_allowable` for a chained shell command or one policy cannot split with confidence (TD-5101). While the workspace config is not trusted (TD-5113) it approves the call once, saves nothing and replies `workspace_config_untrusted`. When an `ask` or `never` rule with the same tool and args is saved, it saves nothing, approves the call once (`ask`) or denies it (`never`), and replies `policy_rule_stricter` (TD-5149). |
+| `answer_question` | yes | Answer the questions an `ask_user` call parked (TD-5121): one answer per question, in order, each the option labels picked (one unless the question is `multi_select`) and/or the person's own `text`; or `declined: true` to skip them all. A bad answer is refused with `bad_answer` and the questions stay parked; none waiting is `no_pending_question`. Like `approve`, any attached client may answer, a phone included; it is forwarded for bridged ids and, like an approval, never queued while a lane connects. Skip-all never answers one. |
 | `list_policy_rules` | yes | List the workspace's saved policy rules. |
 | `revoke_policy_rule` | yes | Remove one saved rule, identified by `(tool, args)`. |
 | `set_spend_cap` | yes | Set or clear the workspace's session spend budget (`caps.spend_usd` in `.tst/config.yaml`). Null removes it and the built-in $25 pause applies; a number replaces that pause. Acked with `boundary_update`. |
@@ -587,6 +590,8 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `shell_output` | session | A streamed chunk of a shell command's stdout or stderr. |
 | `tool_progress` | session | Progress an MCP server reported for a running tool call: count, optional total and message (TD-5105). Thinned to two a second. |
 | `approval_request` | session | A tool call parked for approval, with the summary, the reason, and the rule "always allow" would write (none for class C or a chained shell command, while the workspace config is not trusted, or when it would replace a saved `ask` or `never` rule for the same call, TD-5149). |
+| `question_request` | session | An `ask_user` call parked its turn on one to four questions, each with 2-4 options (`label`, optional `description`), an optional `header` and `multi_select` (TD-5121). The session goes to `awaiting_approval` with reason "waiting for your answer" until `answer_question`, Stop, cancel, or `policy.approval_timeout_seconds`. The window and the phone show the options as buttons; the call's `tool_result` clears the card. Not emitted in an unattended run: the tool refuses there with `ask_user_unattended`. |
+| `question_answered` | session | How a parked `ask_user` call ended (TD-5121): `outcome` is `answered` (with `answers`), `declined`, `stopped`, `timed_out` or `cancelled`. Logged before the call's `tool_result`; the audit database records the questions and the answer in `questions`. |
 | `decision_logged` | session | A decision appended to the autonomy ledger. |
 | `checkpoint_notice` | session | A one-time notice that checkpointing is degraded. |
 | `verify_started` | session | An after-write review started running (TD-5158). It runs after `turn_complete` and holds the loop until its `verify_result`, so the window shows Stop in that span (Stop ends it, TD-5151). Not in the timeline. A review a restart cut off gets a `verify_result` (`error`, "Not reviewed: TST Desk restarted during the review.") on restore. |

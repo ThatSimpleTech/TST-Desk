@@ -1931,7 +1931,7 @@ memory:
 |---|---|---|---|
 | `rules` | list of rules | `[]` | Per-tool overrides. `never` beats `ask` beats `auto`, however specific the rules are. A shell command is checked one command at a time (below). |
 | `class_c_default` | `ask` or `never` | `ask` | What happens to a Class C call that no rule matches. `never` refuses it outright instead of asking. |
-| `approval_timeout_seconds` | float ≥ 0, or null | `null` | How long an approval request waits before being treated as a denial. Null waits indefinitely. |
+| `approval_timeout_seconds` | float ≥ 0, or null | `null` | How long an approval request waits before being treated as a denial. An `ask_user` question gets the same wait, then the model hears no answer came (TD-5121). Null waits indefinitely. |
 
 A rule has three keys:
 
@@ -1968,6 +1968,16 @@ what it guards (TD-5158).
   call once and Revoke fails, both saying why, until you fix the file.
 - A wider `ask` or `never` rule, such as `*.env*`, still applies to the file Always allow saved
   a rule for, because rules are deny first (below).
+
+**Questions from the agent (TD-5121).** The `ask_user` tool lets the agent ask you one to
+four multiple-choice questions, each with two to four options, and you can always answer in your
+own words instead. It is Class A by a fixed rule (`ask-user`), so the question is the only
+prompt: there is no approval card before it. The turn waits for your answer the way it waits for
+an approval, on the window, the phone (options are buttons you tap) or `tst run` on a terminal;
+Stop ends the wait, and so does `approval_timeout_seconds` when it is set. Skip all approvals
+never answers a question. In an unattended run nobody can answer, so the tool refuses and tells
+the agent to decide and say what it assumed. A `never` rule for `ask_user` turns the tool off in
+this workspace. Each question and its answer are kept in the audit database (`questions`).
 
 **Reads inside the workspace never ask (TD-5141).** `fs_read`, `fs_list` and `fs_grep` on a
 path inside the workspace are Class A by a fixed rule, so they run without asking and without

@@ -296,6 +296,33 @@ class AlwaysAllow(ClientMessage):
     tool_call_id: str
 
 
+class QuestionAnswer(BaseModel):
+    """The answer to one ``ask_user`` question (TD-5121).
+
+    ``selected`` holds the option labels picked (at most one unless the
+    question allows several); ``text`` is the person's own words, which
+    may stand alone or go with a pick.
+    """
+
+    selected: list[str] = Field(default_factory=list, max_length=4)
+    text: str = Field(default="", max_length=4000)
+
+
+class AnswerQuestion(ClientMessage):
+    """Answer the questions an ``ask_user`` call parked (TD-5121).
+
+    One answer per question, in order. ``declined`` skips them all: the
+    model hears the person chose not to answer and carries on. A bad
+    answer is refused with ``bad_answer`` and the questions stay parked.
+    """
+
+    type: Literal["answer_question"] = "answer_question"
+    session_id: str
+    tool_call_id: str
+    answers: list[QuestionAnswer] = Field(default_factory=list, max_length=4)
+    declined: bool = False
+
+
 class ListPolicyRules(ClientMessage):
     """List the workspace's saved policy rules (TD-803 settings)."""
 
@@ -1903,6 +1930,55 @@ class ApprovalRequest(DaemonEvent):
     summary: str
     reason: str
     proposed_always_allow: PolicyRuleSummary | None = None
+
+
+class QuestionOption(BaseModel):
+    """One choice on an ``ask_user`` question (TD-5121)."""
+
+    label: str = Field(min_length=1, max_length=80)
+    description: str = Field(default="", max_length=300)
+
+
+class Question(BaseModel):
+    """One ``ask_user`` question: 2-4 options, plus the person's own words."""
+
+    question: str = Field(min_length=1, max_length=1000)
+    header: str = Field(default="", max_length=40)
+    options: list[QuestionOption] = Field(min_length=2, max_length=4)
+    multi_select: bool = False
+
+
+class QuestionRequest(DaemonEvent):
+    """An ``ask_user`` call parked its turn on questions (TD-5121).
+
+    The turn waits like an approval (the session is ``awaiting_approval``)
+    until ``answer_question`` answers or declines, Stop, cancel, or the
+    approval timeout. The ``tool_result`` for the same ``tool_call_id``
+    clears the card.
+    """
+
+    type: Literal["question_request"] = "question_request"
+    session_id: str
+    tool_call_id: str
+    questions: list[Question] = Field(min_length=1, max_length=4)
+
+
+QuestionOutcomeKind = Literal["answered", "declined", "stopped", "timed_out", "cancelled"]
+
+
+class QuestionAnswered(DaemonEvent):
+    """How a parked ``ask_user`` call ended, with the answers (TD-5121).
+
+    Logged before the call's ``tool_result``; the audit database records
+    the questions and this answer in ``questions``. ``answers`` is empty
+    unless ``outcome`` is ``answered``.
+    """
+
+    type: Literal["question_answered"] = "question_answered"
+    session_id: str
+    tool_call_id: str
+    outcome: QuestionOutcomeKind
+    answers: list[QuestionAnswer] = Field(default_factory=list, max_length=4)
 
 
 class DecisionLogged(DaemonEvent):
@@ -3581,6 +3657,7 @@ ClientMessageT = Annotated[
     | Approve
     | Deny
     | AlwaysAllow
+    | AnswerQuestion
     | ListPolicyRules
     | RevokePolicyRule
     | ForkFrom
@@ -3709,6 +3786,8 @@ DaemonEventT = Annotated[
     | ShellOutput
     | ToolProgress
     | ApprovalRequest
+    | QuestionRequest
+    | QuestionAnswered
     | DecisionLogged
     | CheckpointNotice
     | VerifyStarted
@@ -3791,6 +3870,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "approve",
         "deny",
         "always_allow",
+        "answer_question",
         "list_policy_rules",
         "revoke_policy_rule",
         "fork_from",
@@ -3919,6 +3999,8 @@ _KNOWN_EVENT_TYPES = frozenset(
         "shell_output",
         "tool_progress",
         "approval_request",
+        "question_request",
+        "question_answered",
         "decision_logged",
         "checkpoint_notice",
         "verify_started",

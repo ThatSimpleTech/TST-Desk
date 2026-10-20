@@ -35,6 +35,7 @@ from .protocol import (
 )
 from .protocol import SessionState as SessionStateEvent
 from .provider import ChatMessage
+from .questions import PendingQuestion, resolve_all
 from .workspace_trust import TrustStore, WorkspaceConfigView
 
 if TYPE_CHECKING:
@@ -324,6 +325,9 @@ class Session:
         # resumable (prime directive §2.5).  Each record carries the call
         # metadata (TD-803) so "always allow" can generate its rule.
         self._pending_approvals: dict[str, PendingApproval] = {}
+        # TD-5121: ask_user questions parked the same way, by tool call id.
+        # Skip-all never answers one; only answer_question, Stop or cancel.
+        self.pending_questions: dict[str, PendingQuestion] = {}
         # Files the session has touched via successful path-bearing tool
         # calls (TD-503), as workspace-relative posix strings.  The loop
         # passes this set to the assembler so path-scoped steering rules
@@ -574,6 +578,7 @@ class Session:
         # Wake any parked approvals so their dispatchers unwind.
         for pending in self._pending_approvals.values():
             pending.future.cancel()
+        resolve_all(self, "cancelled")
         if self._state in ("running", "awaiting_approval", "paused"):
             await self.set_state("cancelled", reason=reason)
         await self.close_cu_session()
@@ -599,6 +604,7 @@ class Session:
         for pending in self._pending_approvals.values():
             if not pending.future.done():
                 pending.future.set_result((False, "stopped"))
+        resolve_all(self, "stopped")
         if self._state == "paused":
             await self.set_state("running", reason="turn stopped")
         # After the state change, so a loop parked on the pause wakes
@@ -715,6 +721,22 @@ class Session:
 
         return await self._await_approval_resolution(tool_call_id, fut)
 
+    async def enter_awaiting(self, reason: str) -> None:
+        """Park the session on the person: an approval or a question (TD-5121).
+
+        Only a running session parks. One already parked stays as it is,
+        and a cancelled one has nothing left to wait for.
+        """
+        if self._state == "running":
+            await self.set_state("awaiting_approval", reason=reason)
+
+    async def leave_awaiting(self, reason: str) -> None:
+        """Back to ``running`` once no approval or question is still parked."""
+        if self._pending_approvals or self.pending_questions:
+            return
+        if self._state == "awaiting_approval":
+            await self.set_state("running", reason=reason)
+
     async def _await_approval_resolution(
         self,
         tool_call_id: str,
@@ -742,8 +764,7 @@ class Session:
                     timed_out, approved, detail = True, False, None
         finally:
             self._pending_approvals.pop(tool_call_id, None)
-            if not self._pending_approvals and self._state == "awaiting_approval":
-                await self.set_state("running", reason="approval resolved")
+            await self.leave_awaiting("approval resolved")
 
         if approved:
             return ApprovalOutcome(True, "")

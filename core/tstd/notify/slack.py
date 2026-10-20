@@ -15,7 +15,8 @@ import httpx
 
 from ..keychain import KeychainError, get_slack_webhook_url
 from ..logging import get_logger
-from ..protocol import ApprovalRequest, DaemonEvent, TurnComplete
+from ..protocol import ApprovalRequest, DaemonEvent, QuestionRequest, TurnComplete
+from ..questions import question_text
 
 if TYPE_CHECKING:
     from ..config import ModelConfig
@@ -24,10 +25,12 @@ log = get_logger("tstd.notify.slack")
 
 
 def message_for(event: DaemonEvent) -> str | None:
-    """Slack text for an approval or turn-complete event, or ``None``."""
+    """Slack text for an approval, question or turn-complete event, or ``None``."""
     if isinstance(event, ApprovalRequest):
         body = event.summary or f"The agent wants to run {event.tool_name}"
         return f"Approval needed: {body}"
+    if isinstance(event, QuestionRequest):
+        return f"Question: {question_text(event)}"
     if isinstance(event, TurnComplete):
         if event.failed:
             detail = event.error_code or "The turn did not finish"

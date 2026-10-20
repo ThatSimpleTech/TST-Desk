@@ -445,3 +445,25 @@ describe("handleOsEvent for scheduled runs", () => {
 		expect(sent.map((n) => n.body)).toEqual(["3 new messages, none urgent", "build is green"]);
 	});
 });
+
+describe("ask_user questions (TD-5121)", () => {
+	it("a question rings like an approval, with no buttons on the banner", () => {
+		const event = {
+			type: "question_request",
+			session_id: "s1",
+			seq: 4,
+			tool_call_id: "tc-q",
+			questions: [
+				{ question: "Which database?", header: "", options: [], multi_select: false },
+				{ question: "Which features?", header: "", options: [], multi_select: true },
+			],
+		} as DaemonEventUnion;
+		expect(noticeFor(event)).toEqual({
+			title: "Question from the agent",
+			body: "Which database? (+1 more)",
+			kind: "question",
+			sessionId: "s1",
+			toolCallId: "tc-q",
+		});
+	});
+});
