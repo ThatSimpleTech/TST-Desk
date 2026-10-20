@@ -23,6 +23,7 @@ from pathlib import Path
 
 from .boundary_config import (
     BoundaryConfig,
+    CapsSection,
     boundary_from_mapping,
     boundary_source,
     configured_spend_from_mapping,
@@ -239,6 +240,13 @@ def boundary_update_event(session: Session, source: str) -> BoundaryUpdateEvent:
     )
 
 
+def _charter_caps(charter: CapsSection, workspace: CapsSection) -> CapsSection:
+    """A charter run's caps: the charter's, with the file's memory cap when it sets none."""
+    if charter.shell_memory_mb is not None or workspace.shell_memory_mb is None:
+        return charter
+    return charter.model_copy(update={"shell_memory_mb": workspace.shell_memory_mb})
+
+
 def reload_session_boundary(
     session: Session,
     workspace_path: str,
@@ -251,7 +259,10 @@ def reload_session_boundary(
     revive, move, resume), so none can forget the charter: a charter run's
     wall and caps are the charter's, whatever the workspace file says. The
     shell reads the session's allowlist per call, so a reload that dropped
-    the charter would widen it on the spot.
+    the charter would widen it on the spot. One exception: a charter that
+    leaves ``caps.shell_memory_mb`` unset keeps the file's value (TD-5116),
+    so a machine's memory cap does not fall back to half of RAM because a
+    run has a charter.
 
     An invalid file gives the session *fallback*, or leaves its current
     config when that is None; the error is returned for the caller to log
@@ -270,7 +281,7 @@ def reload_session_boundary(
         cfg = fallback if fallback is not None else session.boundary_config
     if session.charter is not None:
         cfg.boundary = session.charter.boundary
-        cfg.caps = session.charter.caps
+        cfg.caps = _charter_caps(session.charter.caps, cfg.caps)
     session.boundary_config = cfg
     return error
 

@@ -8,6 +8,7 @@ import {
 	charterPayload,
 	containerCopy,
 	previewCharterYaml,
+	shellMemoryCopy,
 	startConfirmCopy,
 } from "./charter";
 
@@ -40,6 +41,7 @@ import {
 	saveCharter,
 	setListItem,
 	setObjective,
+	setShellMemory,
 	startCharter,
 } from "./charter.svelte.js";
 
@@ -253,5 +255,69 @@ describe("store", () => {
 		expect(charter.starting).toBe(false);
 		expect(charter.ready).toBe(false);
 		expect(charter.error).toMatch(/Install Podman/);
+	});
+});
+
+describe("shell memory cap (TD-5116)", () => {
+	const capped = { ...sampleFields, caps: { ...sampleFields.caps, shell_memory_mb: 2048 } };
+
+	function loadCapped(): void {
+		loadCharter("/ws");
+		emit({
+			type: "charter",
+			seq: 1,
+			workspace_path: "/ws",
+			present: true,
+			charter: capped,
+		});
+	}
+
+	it("a charter's cap survives Save and Start", () => {
+		loadCapped();
+		saveCharter();
+		const saved = mocks.sent.at(-1);
+		expect(saved?.type === "save_charter" && saved.charter.caps).toEqual({
+			spend_usd: 12,
+			wall_clock_hours: 4,
+			max_iterations: 80,
+			shell_memory_mb: 2048,
+		});
+		beginStart();
+		confirmStart();
+		const started = mocks.sent.at(-1);
+		expect(started?.type).toBe("start_autonomy");
+		expect(
+			started?.type === "start_autonomy" &&
+				(started.charter?.caps as Record<string, unknown>).shell_memory_mb,
+		).toBe(2048);
+	});
+
+	it("an unset cap is left out, so the run keeps the workspace's", () => {
+		const caps = charterPayload(sampleFields).caps as Record<string, unknown>;
+		expect("shell_memory_mb" in caps).toBe(false);
+		const nulled = { ...sampleFields, caps: { ...sampleFields.caps, shell_memory_mb: null } };
+		expect("shell_memory_mb" in (charterPayload(nulled).caps as Record<string, unknown>)).toBe(
+			false,
+		);
+	});
+
+	it("the field sets it and clearing the field unsets it", () => {
+		loadCharter("/ws");
+		setShellMemory(4096);
+		expect((charterPayload(charter.draft).caps as Record<string, unknown>).shell_memory_mb).toBe(
+			4096,
+		);
+		setShellMemory(Number.NaN);
+		expect(charter.draft.caps.shell_memory_mb).toBeNull();
+		expect("shell_memory_mb" in (charterPayload(charter.draft).caps as Record<string, unknown>)).toBe(
+			false,
+		);
+	});
+
+	it("the preview and the sign card show it", () => {
+		expect(previewCharterYaml(capped, "")).toMatch(/\n {2}shell_memory_mb: 2048\n/);
+		expect(previewCharterYaml(sampleFields, "")).not.toMatch(/shell_memory_mb/);
+		expect(shellMemoryCopy(capped.caps)).toBe("2048 MB per command");
+		expect(shellMemoryCopy(sampleFields.caps)).toMatch(/caps\.shell_memory_mb, else half of RAM/);
 	});
 });

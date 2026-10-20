@@ -386,6 +386,9 @@ export interface CharterCaps {
   spend_usd: number;
   wall_clock_hours: number;
   max_iterations: number;
+  /** MiB one shell command may use (TD-5116). Unset or null: the workspace's
+   *  `caps.shell_memory_mb`, else half of the machine's RAM. */
+  shell_memory_mb?: number | null;
 }
 
 export interface CharterFields {

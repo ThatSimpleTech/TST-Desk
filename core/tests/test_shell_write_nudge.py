@@ -254,7 +254,9 @@ class TestShellResult:
         self, workspace: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # The container is not started here: the note is read from the text.
-        def fake_open(session: Session, command: str) -> Awaitable[asyncio.subprocess.Process]:
+        def fake_open(
+            session: Session, command: str, cap: object = None
+        ) -> Awaitable[asyncio.subprocess.Process]:
             return asyncio.create_subprocess_shell(
                 "exit 0",
                 cwd=session.workspace_path,

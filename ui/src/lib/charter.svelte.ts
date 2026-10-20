@@ -182,6 +182,12 @@ export function setCap(
 	charter.draft.caps[field] = value;
 }
 
+/** Shell memory cap in MB (TD-5116). A cleared field (NaN) unsets it, so
+ *  the run keeps the workspace's cap. */
+export function setShellMemory(value: number): void {
+	charter.draft.caps.shell_memory_mb = Number.isFinite(value) ? value : null;
+}
+
 export function saveCharter(): boolean {
 	const workspacePath = charter.workspacePath;
 	if (workspacePath === null) return false;

@@ -39,6 +39,7 @@ import yaml
 
 from .boundary_config import BoundaryConfig, boundary_from_mapping, workspace_config_path
 from .config import ConfigError
+from .host_memory import default_shell_memory_mb
 from .policy import approved_imports_from_mapping, policy_from_mapping
 
 TRUST_FILE = "workspace_trust.yaml"
@@ -145,12 +146,26 @@ def _boundary_loosened(path: Path, data: dict[str, Any]) -> list[Loosened]:
             )
     for name in ("spend_usd", "wall_clock_hours", "max_iterations"):
         out += _raised(f"caps.{name}", getattr(cfg.caps, name), getattr(base.caps, name))
+    out += _shell_memory_loosened(cfg.caps.shell_memory_mb)
     for name in ("max_file_bytes", "max_total_bytes", "max_count"):
         out += _raised(
             f"attachments.{name}", getattr(cfg.attachments, name), getattr(base.attachments, name)
         )
     out += _raised("memory.max_lines", cfg.memory.max_lines, base.memory.max_lines)
     return out
+
+
+def _shell_memory_loosened(configured: int | None) -> list[Loosened]:
+    """``caps.shell_memory_mb`` above half of this machine's RAM (TD-5116).
+
+    The default is worked out here, not stored, so the same file can loosen
+    on a small laptop and tighten on a big box. With RAM unknown there is
+    no default cap, and any value narrows.
+    """
+    default = default_shell_memory_mb()
+    if configured is None or default is None or configured <= default:
+        return []
+    return [Loosened("caps.shell_memory_mb", str(configured), f"{default} (half of RAM)")]
 
 
 def _policy_loosened(path: Path, data: dict[str, Any]) -> list[Loosened]:

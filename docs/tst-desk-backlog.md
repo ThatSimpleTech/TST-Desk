@@ -10428,6 +10428,55 @@ compaction and elision around steers, the steer's tokens, queue file,
 audit, a paired phone over the socket, refusals) and
 `ui/src/lib/chat-steer.test.ts`. See DECISIONS.md TD-5112.
 
+### TD-5116 — Memory cap on shell commands
+**Size:** 3 · **Depends on:** none · Gap audit 2026-10-14
+
+A runaway build could take the box's memory, and the kernel's
+out-of-memory killer could take the daemon with it: the shell tool only
+killed the process group on timeout. EZER has had swap and OOM trouble
+before.
+
+**Acceptance criteria:**
+- [x] `caps.shell_memory_mb` (default about half of RAM) applies through a
+      cgroup scope where systemd user scopes exist, otherwise through
+      `RLIMIT_AS`. Podman runs get `--memory`.
+- [x] A command over the cap is killed. The tool result says so plainly.
+- [x] Test: a memory hog is killed and the daemon survives.
+
+Done (2026-10-20): `core/tstd/tools/shell_memory.py` and
+`core/tstd/host_memory.py`. `caps.shell_memory_mb` in `.tst/config.yaml`
+(int ≥ 64, MiB; unset is half of RAM, worked out on the machine that runs
+the command; a charter's `caps` may set it for a run, and one that leaves
+it unset keeps the file's value; the Charter column edits it and the sign
+card shows it). On Linux each command runs in its own `systemd-run --user
+--scope` unit with `MemoryMax`, `MemorySwapMax=0`, `OOMPolicy=stop`
+(systemd 253+) and `--expand-environment=no` (systemd 254+ otherwise
+rewrites `$$` and `${x}` in the command), so the kernel kills inside that
+scope and never the daemon. The scope's description is fixed text, so the
+journal's "Started" line never carries the command. One probe per daemon checks that a scope starts, passes the
+command text through untouched and shows the cap in `memory.max`;
+without that the shell sets `ulimit -v` and then execs the command. The
+result gets a line under the exit code: `memory cap: killed — the command
+went over its N MB memory cap (caps.shell_memory_mb)`, from the unit's
+`Result=oom-kill` or the scope's `memory.events`; the failed unit is
+cleared. systemd 246–252 takes no `OOMPolicy` on a scope and records no
+oom-kill result, so there the scope runs without it and a SIGKILL exit is
+reported as the likely cause. Under `ulimit` nothing is killed by the kernel: the allocation
+fails and the line is read from the command's own out-of-memory error.
+Autonomous runs: Podman gets `--memory=<cap>m` and an exit of 137 is
+reported as the likely cause. macOS and Windows hosts are not capped
+(no `RLIMIT_AS` enforcement, no scopes). A value above half of RAM
+loosens the default and waits for trust (TD-5113). Verified on EZER-class
+Linux (systemd 259) for the scope path and with the scope forced off for
+`ulimit`; Podman is checked by argv and a fake runtime, as it is not
+installed here. Tests: `core/tests/test_shell_memory_cap.py` (config,
+trust, Podman argv, `ulimit`, scope, the probe with fake `systemd-run`s,
+and a real daemon whose hog turn ends and whose next shell call runs; after
+review: the fixed description, read back from inside a real scope and
+checked against the journal, the pre-253 probe and note, and a charter run
+through write, sign and reload) and `ui/src/lib/charter.test.ts` (the
+charter's value survives Save and Start). See DECISIONS.md.
+
 ---
 
 # Epic E52 — Files to the user
