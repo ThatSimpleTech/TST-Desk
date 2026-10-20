@@ -776,6 +776,28 @@ def _rule_steering_proposal(req: DecisionRequest, boundary: Boundary) -> bool:
     )
 
 
+def _rule_consult(req: DecisionRequest, _boundary: Boundary) -> bool:
+    """``consult`` asks the brain or validator one question (TD-5119).
+
+    It writes nothing, runs nothing and reaches only the session's own
+    model endpoints, and config caps it per turn on top of the spend
+    cap. Asking on each one would defeat a worker run that consults
+    mid-task. Only the builtin matches, with no path or host on the
+    request: an MCP or plugin tool of that name carries provenance and
+    gets no grant. A policy rule can still make it ask.
+    """
+    return (
+        req.tool_name == "consult"
+        and req.provenance is None
+        and req.side_effect_class == "auto"
+        and req.actuates is None
+        and not req.is_mutation
+        and not req.reads
+        and not req.writes
+        and not req.hosts
+    )
+
+
 def _rule_in_workspace_edit(req: DecisionRequest, boundary: Boundary) -> bool:
     """An in-workspace write inside writable_paths is a reversible Class A edit."""
     if not req.is_mutation or not req.writes:
@@ -957,6 +979,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="propose_steering_edit parks a diff for the user; writes nothing",
         decision_class=DecisionClass.A,
         match=_rule_steering_proposal,
+    ),
+    Rule(
+        id="consult",
+        description="consult asks the brain or validator a question; writes nothing",
+        decision_class=DecisionClass.A,
+        match=_rule_consult,
     ),
     # GitHub reads have no path or host metadata. A host on the request
     # would be Class C under the default network deny, and a path would

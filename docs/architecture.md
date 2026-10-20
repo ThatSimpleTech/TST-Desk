@@ -617,7 +617,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `checkpoint_notice` | session | A one-time notice that checkpointing is degraded. |
 | `verify_started` | session | An after-write review started running (TD-5158). It runs after `turn_complete` and holds the loop until its `verify_result`, so the window shows Stop in that span (Stop ends it, TD-5151). Not in the timeline. A review a restart cut off gets a `verify_result` (`error`, "Not reviewed: TST Desk restarted during the review.") on restore. |
 | `verify_result` | session | Interactive validator review of a write turn. Timeline only; not a chat bubble (TD-4204). |
-| `cost_update` | session | Accrued spend: this turn, this session, all time, by tier, and the classifier separately. |
+| `cost_update` | session | Accrued spend: this turn, this session, all time, by tier, and the classifier separately. A `consult` call (TD-5119) counts on the tier it asked, in the turn that made it; a delegate child's lands on its parent's session. |
 | `boundary_update` | session | The resolved workspace boundary and caps, and where they came from. Additive `config_trust` (TD-5113) is set when the workspace config loosens anything: `state` (`pending`, `trusted` or `declined`), its `sha256`, and each loosened setting with its default. Pending and declined run on packaged defaults. |
 | `turn_complete` | session | A finished turn: tokens, cost, tier, duration, and any failure code. A turn a restart cut is sealed once at revive with `failed`, zeros and `error_code: interrupted_by_restart` (TD-5018). |
 | `tier_state` | session | The active tier, any pinned override, slugs, preset, hosts (TD-1720), and plan-mode lock (TD-4603). Native-engine sessions only. |
