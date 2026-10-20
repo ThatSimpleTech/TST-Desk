@@ -134,6 +134,17 @@ export interface PreviewRestoreFiles extends ClientMessage {
   turn_id: string;
 }
 
+/** Measure a staged PDF, DOCX or XLSX for its chip (TD-5131). The daemon
+ *  that owns the session extracts the text against that session's caps and
+ *  answers on this connection with `attachment_extracted`. Stores nothing. */
+export interface ExtractAttachment extends ClientMessage {
+  type: "extract_attachment";
+  session_id: string;
+  /** The composer's own id, echoed on the answer. */
+  request_id: string;
+  attachment: Attachment;
+}
+
 /** Restore what a preview showed (TD-5125). `plan_id` is the preview's; a
  *  file or the branch changed since is `restore_stale`. Hand-edited files
  *  not named in `include_hand_edited` are left alone. */
@@ -1057,6 +1068,7 @@ export type ClientMessageUnion =
   | CompactContext
   | SetBranch
   | PreviewRestoreFiles
+  | ExtractAttachment
   | RestoreFiles
   | Approve
   | Deny
@@ -1263,6 +1275,23 @@ export interface FilesRestorePreview extends DaemonEvent {
   files: RestoreFileEntry[];
   diff: string;
   diff_truncated: boolean;
+}
+
+/** Answer to `extract_attachment` (TD-5131), this connection only. On a
+ *  refusal `error_code` and `message` are set and the counts are 0. */
+export interface AttachmentExtracted extends DaemonEvent {
+  type: "attachment_extracted";
+  session_id: string;
+  request_id: string;
+  name: string;
+  kind: "pdf" | "docx" | "xlsx" | null;
+  /** Pages for a PDF, sheets for an XLSX, 0 for a DOCX. */
+  units: number;
+  /** UTF-8 size of the extracted text: what the caps measure. */
+  text_bytes: number;
+  tokens: number;
+  error_code: string | null;
+  message: string;
 }
 
 /** Files were put back as they were before a user turn (TD-5125). */
@@ -2752,6 +2781,7 @@ export type DaemonEventUnion =
   | SessionState
   | ConversationReset
   | FilesRestorePreview
+  | AttachmentExtracted
   | FilesRestored
   | UserTurn
   | QueuedMessages

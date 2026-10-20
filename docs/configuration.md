@@ -2262,14 +2262,26 @@ itself still asks for approval like any Class B call.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `max_file_bytes` | int ≥ 1 | `4000000` | Size of one attached file. Measured on the file's real bytes, after decoding. |
-| `max_total_bytes` | int ≥ 1 | `8000000` | Size of all the attachments on one message, added together. |
+| `max_file_bytes` | int ≥ 1 | `4000000` | Size of one attached file. Measured on the file's real bytes, after decoding; for a PDF, DOCX or XLSX, on the text extracted from it (TD-5131). |
+| `max_total_bytes` | int ≥ 1 | `8000000` | Size of all the attachments on one message, added together, counting a document's extracted text rather than its file. |
 | `max_count` | int ≥ 1 | `10` | Files on one message. |
 
-**Text files, and images when the active tier has vision.** A file that is not valid UTF-8, or
-that contains a NUL byte, is refused as binary. A PDF, a compiled binary, and a UTF-16 text
-file land here. PNG, JPEG, GIF, and WebP are accepted when the active tier sets `vision: true`.
+**Text files, documents, and images when the active tier has vision.** A file that is not valid
+UTF-8, or that contains a NUL byte, is refused as binary, unless it is a PDF, DOCX or XLSX. A
+compiled binary and a UTF-16 text file land here. PNG, JPEG, GIF, and WebP are accepted when the active tier sets `vision: true`.
 The bytes are kept as they are. A file over `max_file_bytes` is refused whole.
+
+**PDF, DOCX and XLSX are sent as their text (TD-5131).** The daemon extracts it on this machine,
+with no network: PDF through PDFium, DOCX and XLSX with the standard library. The kind comes from
+the file's bytes, not its name. The model reads a `[page 3 of 12]` line before each PDF page and a
+`[sheet: Totals]` line before each sheet, whose rows are tab-separated with empty columns kept.
+A DOCX gives its paragraphs and its table rows, tab-separated. The caps above measure the text,
+so a 6 MB PDF of 20 KB of text fits and a small XLSX that expands past `max_file_bytes` does not.
+The file itself may be up to 10 MB, and the files on one message up to 12 MB together, whatever
+the caps say: that is what the websocket can carry. A PDF with no text (a scan) is refused with
+`attachment_no_text`, a damaged or password-locked file with `attachment_unreadable`. When you
+stage a document, the composer asks the daemon to extract it (`extract_attachment`) and its chip
+shows the page or sheet count and about how many tokens the text will take.
 
 **These are enforced by the daemon, not by the composer.** The message-box refuses an oversize
 or binary file early, with copy that names the file, but that is a convenience. The same

@@ -42,6 +42,15 @@
     "user_index": 0,
     "sibling_index": 1
   },
+  "extract_attachment": {
+    "type": "extract_attachment",
+    "session_id": "sess-1",
+    "request_id": "att-1",
+    "attachment": {
+      "name": "report.pdf",
+      "content_b64": "JVBERi0xLjQK"
+    }
+  },
   "preview_restore_files": {
     "type": "preview_restore_files",
     "session_id": "sess-1",
@@ -719,6 +728,32 @@
     "sibling_index": 1,
     "sibling_count": 2,
     "content": "hello again"
+  },
+  "attachment_extracted": {
+    "type": "attachment_extracted",
+    "seq": 1,
+    "session_id": "sess-1",
+    "request_id": "att-1",
+    "name": "report.pdf",
+    "kind": "pdf",
+    "units": 3,
+    "text_bytes": 5120,
+    "tokens": 1280,
+    "error_code": null,
+    "message": ""
+  },
+  "attachment_extracted_refused": {
+    "type": "attachment_extracted",
+    "seq": 1,
+    "session_id": "sess-1",
+    "request_id": "att-2",
+    "name": "scan.pdf",
+    "kind": null,
+    "units": 0,
+    "text_bytes": 0,
+    "tokens": 0,
+    "error_code": "attachment_no_text",
+    "message": "scan.pdf has no text to read."
   },
   "files_restore_preview": {
     "type": "files_restore_preview",
@@ -2712,6 +2747,7 @@
     "deny_verify",
     "detach",
     "end_session",
+    "extract_attachment",
     "fork_from",
     "get_instruction_stack",
     "list_sessions",

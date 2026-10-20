@@ -9,6 +9,10 @@
 	// dropdowns on the left and Send on the right — the same split Cursor
 	// uses, so the message is never squeezed beside the controls.
 	//
+	// A PDF, DOCX or XLSX attaches too and is sent as its text (TD-5131):
+	// staging one asks the daemon to extract it, and its chip shows the
+	// pages or sheets and a token count when the answer comes back.
+	//
 	// Text files and PNG/JPEG/GIF/WebP images attach here three ways
 	// (TD-1709): the paperclip's picker, drag-and-drop onto the card, and
 	// paste. The refusal shown inline is a courtesy — the daemon refuses
@@ -18,6 +22,8 @@
 	// copy is the point.
 	import {
 		acceptAttachment,
+		applyExtracted,
+		extractRequest,
 		toChips,
 		type AttachmentDraft,
 		type AttachmentRefusal,
@@ -32,6 +38,7 @@
 	import type { AttachmentLimits } from "../../protocol";
 	import { grok, matchingGrokCommands, runGrokCommand } from "../../grok.svelte.js";
 	import { localWorkspacePath, session } from "../../session-status.svelte.js";
+	import { onDaemonEvent, sendToDaemon } from "../../connection-status.svelte.js";
 	import {
 		BUILTIN_SLASH_ITEMS,
 		filterCommands,
@@ -147,9 +154,27 @@
 				return;
 			}
 			nextAttachmentId += 1;
-			attachments = [...attachments, { ...outcome.draft, id: `a${nextAttachmentId}` }];
+			const draft: AttachmentDraft = { ...outcome.draft, id: `a${nextAttachmentId}` };
+			if (draft.document !== undefined) {
+				const sessionId = session.sessionId;
+				// No session or no connection: the send measures it instead.
+				const asked = sessionId !== null && sendToDaemon(extractRequest(sessionId, draft));
+				if (!asked) draft.measure = { state: "unmeasured" };
+			}
+			attachments = [...attachments, draft];
 		}
 	}
+
+	// The daemon's answer for a staged document (TD-5131), matched by the
+	// draft's id. A refusal drops that chip and says why.
+	$effect(() =>
+		onDaemonEvent((event) => {
+			if (event.type !== "attachment_extracted") return;
+			const result = applyExtracted(attachments, event, limits);
+			attachments = result.drafts;
+			if (result.refusal !== null) refusal = result.refusal;
+		}),
+	);
 
 	function removeAttachment(index: number): void {
 		attachments = attachments.filter((_, i) => i !== index);

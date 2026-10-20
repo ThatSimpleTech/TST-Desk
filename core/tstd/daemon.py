@@ -27,6 +27,7 @@ from pydantic import ValidationError
 
 from . import keychain_mcp
 from .artifacts import ArtifactError, ArtifactRecord, ArtifactStore, artifact_ready_for, to_entry
+from .attachment_handlers import extract_attachment
 from .attachments import (
     AttachmentError,
     build_provider_user_content,
@@ -241,6 +242,7 @@ from .protocol import (
     EmailNotifyState,
     EndSession,
     ExportUsage,
+    ExtractAttachment,
     FocusWindow,
     ForkFrom,
     GetCharter,
@@ -2651,17 +2653,6 @@ class Daemon:
                     session_id=msg.session_id,
                     in_reply_to=msg.type,
                 )
-            # Checked with no await before add_user_message counts the turn,
-            # so of two sends that both saw the session idle only one gets
-            # in (TD-5160: `tst run --continue` races its own list_sessions).
-            if msg.only_if_idle and found.turn_in_flight:
-                return build_error(
-                    BUSY_CODE,
-                    "This session is running a turn. Let it finish, or answer its "
-                    "approval in the TST Desk window, then send again.",
-                    session_id=msg.session_id,
-                    in_reply_to=msg.type,
-                )
             # Attachment caps and the text/binary test are enforced here
             # (TD-1709), not in the composer: the client is not trustworthy,
             # so a UI-only gate is no gate at all. A refusal drops the whole
@@ -2671,11 +2662,17 @@ class Daemon:
                 allow_images = found.engine == "grok" or _active_tier_vision(
                     found, _session_model_config(found, self.config)
                 )
-                decoded = decode_attachments(
-                    msg.attachments,
-                    found.boundary_config.attachments,
-                    allow_images=allow_images,
-                )
+                if msg.attachments:
+                    # A PDF, DOCX or XLSX is turned into text here (TD-5131):
+                    # PDFium and unzip block, so off the event loop.
+                    decoded = await asyncio.to_thread(
+                        decode_attachments,
+                        msg.attachments,
+                        found.boundary_config.attachments,
+                        allow_images=allow_images,
+                    )
+                else:
+                    decoded = []
             except AttachmentError as e:
                 log.info(
                     "attachment refused",
@@ -2689,6 +2686,37 @@ class Daemon:
                 )
                 return build_error(
                     e.code, e.message, session_id=msg.session_id, in_reply_to=msg.type
+                )
+
+            # Extraction awaited (TD-5131): a drain or the session's end
+            # that began meanwhile still holds, as if it came first.
+            if msg.attachments:
+                if self._drain.active:
+                    return build_error(
+                        "daemon_draining",
+                        DRAINING_MESSAGE,
+                        session_id=msg.session_id,
+                        in_reply_to=msg.type,
+                    )
+                runner = self.session_registry.get_runner(msg.session_id)
+                if found.state in TERMINAL_STATES or runner is None or not runner.is_running:
+                    return build_error(
+                        "session_not_running",
+                        f"This session is {found.state} and can no longer run turns; "
+                        "the message was not delivered. Start a new session and resend it.",
+                        session_id=msg.session_id,
+                        in_reply_to=msg.type,
+                    )
+            # Checked with no await before add_user_message counts the turn,
+            # so of two sends that both saw the session idle only one gets
+            # in (TD-5160: `tst run --continue` races its own list_sessions).
+            if msg.only_if_idle and found.turn_in_flight:
+                return build_error(
+                    BUSY_CODE,
+                    "This session is running a turn. Let it finish, or answer its "
+                    "approval in the TST Desk window, then send again.",
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
                 )
 
             found.pending_images = [
@@ -2764,6 +2792,18 @@ class Daemon:
                 )
             await found.event_log.add(result)
             return None
+
+        if isinstance(msg, ExtractAttachment):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
+                )
+            # TD-5131: the composer's chip for a staged document.
+            return await extract_attachment(msg, found.boundary_config.attachments)
 
         if isinstance(msg, PreviewRestoreFiles | RestoreFiles):
             found = self.session_registry.get(msg.session_id)
