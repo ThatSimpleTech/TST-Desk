@@ -541,6 +541,9 @@ again if it needs the output back.
   such as llama.cpp reads the prompt again from there; between clears
   nothing earlier changes, and a cleared line is never rewritten, so its
   prefix cache keeps hitting.
+- An `ask_user` answer (TD-5121) is never cleared, whatever `exclude_tools`
+  says: it is your own words, and its placeholder would tell the model to run
+  the tool again, that is, to ask you the same thing again or guess.
 - Each result is matched to its own call, the one in the model's message just
   before it, so the line and `exclude_tools` name the right tool even when a
   server repeats call ids from turn to turn or sends none. A result that
@@ -554,7 +557,7 @@ again if it needs the output back.
 | `enabled` | bool | `true` | `false` goes back to compaction alone. |
 | `keep_recent_tool_results` | int ≥ 0 | `3` | The newest results that are never cleared, counted across the whole conversation, the running turn included. |
 | `clear_at_least_tokens` | int ≥ 0 | `2000` | A clear that would free fewer estimated tokens than this does not happen. Rewriting the prompt costs a local server its cached prefix, so a clear has to buy room. |
-| `exclude_tools` | list of tool names | `[]` | Tools whose results are never cleared, such as an MCP tool whose output the model must keep in view. Names are matched exactly; blanks and repeats are dropped. |
+| `exclude_tools` | list of tool names | `[]` | Tools whose results are never cleared, such as an MCP tool whose output the model must keep in view. Names are matched exactly; blanks and repeats are dropped. `ask_user` is always kept and need not be listed. |
 
 <!-- verify: model -->
 ```yaml
@@ -1976,8 +1979,13 @@ prompt: there is no approval card before it. The turn waits for your answer the 
 an approval, on the window, the phone (options are buttons you tap) or `tst run` on a terminal;
 Stop ends the wait, and so does `approval_timeout_seconds` when it is set. Skip all approvals
 never answers a question. In an unattended run nobody can answer, so the tool refuses and tells
-the agent to decide and say what it assumed. A `never` rule for `ask_user` turns the tool off in
-this workspace. Each question and its answer are kept in the audit database (`questions`).
+the agent to decide and say what it assumed; so does a `tst run` turn that answers every approval
+with no (`--on-ask deny-and-continue`, TD-5118). A question whose text the session log's secret
+scrub would change is refused too, and the agent rewords it: that scrub can take ordinary words
+such as `task-runner-integration` for a key, and a label shown blanked could never be picked. A
+`never` rule for `ask_user` turns the tool off in this workspace. Each question and its answer are
+kept in the audit database (`questions`), and an answer is never cleared from the agent's context
+as stale tool output (`clear_tool_results`).
 
 **Reads inside the workspace never ask (TD-5141).** `fs_read`, `fs_list` and `fs_grep` on a
 path inside the workspace are Class A by a fixed rule, so they run without asking and without

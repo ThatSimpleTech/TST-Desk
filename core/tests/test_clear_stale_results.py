@@ -27,13 +27,21 @@ from tstd.context_clear import (
     clear_stale_tool_results,
     cleared_placeholder,
     is_cleared,
+    stale_tool_indexes,
 )
 from tstd.context_fit import ELIDE_TARGET_FRACTION
 from tstd.loop import agent_loop
 from tstd.mock import MockProvider, Script
-from tstd.protocol import ContextCompacted, parse_daemon_event
+from tstd.protocol import (
+    ContextCompacted,
+    Question,
+    QuestionAnswer,
+    QuestionOption,
+    parse_daemon_event,
+)
 from tstd.provider import ChatMessage, FunctionCall, content_as_text
 from tstd.provider import ToolCall as ProviderToolCall
+from tstd.questions import QuestionReply, format_reply
 from tstd.router import TierRouter
 from tstd.session import Session, SessionRunner
 
@@ -198,6 +206,41 @@ def test_an_excluded_tool_keeps_its_result() -> None:
     texts = _tool_texts(out)
     assert texts[0] == _tool_texts(messages)[0]
     assert texts[1].startswith(CLEARED_PREFIX)
+
+
+def _asked_turn() -> tuple[list[ChatMessage], str]:
+    """Turn 1 asks the person (``ask_user``) and gets a worded answer."""
+    question = Question(
+        question="Which database should the app use, given the deploy target?",
+        options=[QuestionOption(label="Postgres"), QuestionOption(label="SQLite")],
+    )
+    words = "Postgres, but keep the schema portable: we may move to the managed one. " * 4
+    answer = format_reply(
+        [question], QuestionReply("answered", (QuestionAnswer(selected=["Postgres"], text=words),))
+    )
+    messages = _conversation(9)
+    messages[2] = ChatMessage(
+        role="assistant",
+        content=None,
+        tool_calls=[_call("t1", "ask_user", {"questions": [question.model_dump()]})],
+    )
+    messages[3] = ChatMessage(role="tool", content=answer, tool_call_id="t1")
+    return messages, answer
+
+
+def test_an_ask_user_answer_is_never_cleared_whatever_the_config() -> None:
+    # TD-5121: an ask_user result is the person's own answer, their words.
+    # Its placeholder would tell the model to run the tool again: to ask
+    # the person the same thing again, or to guess.
+    messages, answer = _asked_turn()
+    placeholder = cleared_placeholder("ask_user", "", len(answer))
+    assert COUNTER.count(answer).count > COUNTER.count(placeholder).count  # worth clearing
+    for policy in (ON, ClearToolResultsConfig(exclude_tools=["memory_lookup"])):
+        assert 3 not in stale_tool_indexes(messages, policy)
+        out, stats = clear_stale_tool_results(messages, TIER, COUNTER, policy)
+        assert stats is not None
+        assert content_as_text(out[3].content) == answer
+        assert _tool_texts(out)[1].startswith(CLEARED_PREFIX)
 
 
 def _placeholder_files(messages: Sequence[ChatMessage]) -> list[str]:

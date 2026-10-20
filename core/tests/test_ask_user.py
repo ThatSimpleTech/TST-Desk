@@ -13,6 +13,7 @@ import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -25,10 +26,12 @@ from tstd.audit import AuditStore
 from tstd.audit_writer import AuditWriter
 from tstd.autonomy.classifier import Boundary, DecisionClassifier
 from tstd.daemon import Daemon
+from tstd.logging import redact_secrets
 from tstd.mock import Script
 from tstd.notify import discord, ntfy, slack, telegram
 from tstd.protocol import (
     ApprovalRequest,
+    Question,
     QuestionAnswered,
     QuestionRequest,
     SessionState,
@@ -36,6 +39,7 @@ from tstd.protocol import (
     TurnComplete,
 )
 from tstd.session import Session
+from tstd.tools.ask_user import SECRET_SHAPED, hidden_part
 from tstd.tools.delegate import RESEARCH_CHILD_TOOLS, WORKER_CHILD_TOOLS
 from tstd.tools.dispatch import build_decision_request
 from tstd.tools.registry import Tool, create_registry
@@ -296,6 +300,150 @@ async def test_a_repeated_option_is_refused_without_asking(tmp_path: Path) -> No
         result = await run.finished()
         assert (result.status, result.error_code) == ("error", "invalid_question")
         assert run.events(QuestionRequest) == []
+    finally:
+        await _shutdown(run.daemon, run.sid)
+
+
+# ── What the card shows is what the person can pick ───────────────────
+
+
+# Ordinary words the event log's scrub takes for an ``sk-`` key, and two
+# labels that differ only in a real-looking key.
+_MANGLED = "Keep the task-runner-integration branch"
+_KEY_A = "Use sk-proj-" + "A" * 24
+_KEY_B = "Use sk-proj-" + "B" * 24
+
+
+def test_the_scrub_changes_these_labels_on_the_way_to_every_client() -> None:
+    assert redact_secrets(_MANGLED) != _MANGLED
+    assert redact_secrets(_KEY_A) == redact_secrets(_KEY_B)
+
+
+@pytest.mark.parametrize(
+    ("question", "part"),
+    [
+        (
+            {"question": "Which branch?", "options": [{"label": _MANGLED}, {"label": "New"}]},
+            "option 1 label",
+        ),
+        (
+            {"question": "Which key?", "options": [{"label": _KEY_A}, {"label": _KEY_B}]},
+            "option 1 label",
+        ),
+        (
+            {"question": f"Merge {_MANGLED[9:]}?", "options": [{"label": "Yes"}, {"label": "No"}]},
+            "question",
+        ),
+        (
+            {
+                "question": "Pick",
+                "header": "sk-" + "a" * 20,
+                "options": [{"label": "A"}, {"label": "B"}],
+            },
+            "header",
+        ),
+        (
+            {
+                "question": "Pick",
+                "options": [{"label": "A"}, {"label": "B", "description": _MANGLED}],
+            },
+            "option 2 description",
+        ),
+        (
+            {
+                "question": "Pick a branch",
+                "options": [{"label": "main"}, {"label": "td-5121-ask-user"}],
+            },
+            None,
+        ),
+    ],
+)
+def test_hidden_part_names_what_the_scrub_would_change(
+    question: dict[str, Any], part: str | None
+) -> None:
+    assert hidden_part(Question.model_validate(question)) == part
+
+
+@pytest.mark.parametrize("labels", [(_MANGLED, "Start fresh"), (_KEY_A, _KEY_B)])
+async def test_a_question_the_scrub_would_change_is_refused_without_asking(
+    tmp_path: Path, labels: tuple[str, str]
+) -> None:
+    # Shown scrubbed, the label could never be picked (bad_answer every
+    # time), and two labels that scrub alike would share one button.
+    question = {"question": "Which?", "options": [{"label": label} for label in labels]}
+    run = await _run(tmp_path, [_ask(DB, question), Script(kind="stream", content="ok")])
+    try:
+        message = {"type": "user_message", "session_id": run.sid, "content": "go"}
+        await run.daemon._handle_message(json.dumps(message), None)
+        result = await run.finished()
+        assert (result.status, result.error_code) == ("error", SECRET_SHAPED)
+        assert "Question 2's option 1 label" in run.tool_reply_seen_by_model()
+        assert run.events(QuestionRequest) == []
+        assert run.session.pending_questions == {}
+    finally:
+        await _shutdown(run.daemon, run.sid)
+
+
+async def test_a_label_with_hyphens_the_scrub_leaves_alone_is_picked(tmp_path: Path) -> None:
+    question = {
+        "question": "Which branch?",
+        "options": [{"label": "td-5121-ask-user"}, {"label": "main"}],
+    }
+    run = await _run(tmp_path, [_ask(question), Script(kind="stream", content="ok")])
+    try:
+        request = await run.start()
+        [shown] = request.questions
+        assert [o.label for o in shown.options] == ["td-5121-ask-user", "main"]
+        assert (
+            await run.answer(request.tool_call_id, answers=[{"selected": ["td-5121-ask-user"]}])
+            is None
+        )
+        result = await run.finished()
+        assert result.status == "success"
+        assert "Answer: td-5121-ask-user" in run.tool_reply_seen_by_model()
+    finally:
+        await _shutdown(run.daemon, run.sid)
+
+
+# ── tst run --on-ask deny-and-continue (TD-5118) ───────────────────────
+
+
+async def test_a_deny_and_continue_turn_is_refused_before_it_parks(tmp_path: Path) -> None:
+    # TD-5118's ``tst run --on-ask deny-and-continue`` answers every
+    # approval with a refusal so the run never waits; ask_user never asks
+    # for approval (Class A), so it must refuse by itself or the run would
+    # park on the question and exit approval_needed. The message carries
+    # the run's permissions as ``tst run`` sends them (the loop sets them on
+    # the session once TD-5118 is merged); before that the session's
+    # attribute is set here by hand.
+    run = await _run(tmp_path, [_ask(DB), Script(kind="stream", content="ok")])
+    try:
+        run.session.run_permissions = SimpleNamespace(on_ask="deny_and_continue")  # type: ignore[attr-defined]
+        message = {
+            "type": "user_message",
+            "session_id": run.sid,
+            "content": "go",
+            "run_permissions": {"on_ask": "deny_and_continue"},
+        }
+        await run.daemon._handle_message(json.dumps(message), None)
+        result = await run.finished()
+        assert (result.status, result.error_code) == ("error", "ask_user_unattended")
+        assert "--on-ask deny-and-continue" in run.tool_reply_seen_by_model()
+        assert run.events(QuestionRequest) == []
+        assert run.events(ApprovalRequest) == []
+        assert all(e.state != "awaiting_approval" for e in run.events(SessionState))
+    finally:
+        await _shutdown(run.daemon, run.sid)
+
+
+async def test_a_prompting_tst_run_turn_still_asks(tmp_path: Path) -> None:
+    run = await _run(tmp_path, [_ask(DB), Script(kind="stream", content="ok")])
+    try:
+        run.session.run_permissions = SimpleNamespace(on_ask="prompt")  # type: ignore[attr-defined]
+        request = await run.start()
+        assert await run.answer(request.tool_call_id, declined=True) is None
+        result = await run.finished()
+        assert result.status == "success"
     finally:
         await _shutdown(run.daemon, run.sid)
 

@@ -16107,10 +16107,9 @@ waiting for sign-off.
   (option numbers, comma-separated for multi-select, or typed words); the
   machine modes and a non-TTY never read stdin and end with
   `approval_needed` (exit 4) while the question waits for the window,
-  exactly as an approval does under TD-5111. TD-5118 (`--on-ask
-  deny-and-continue`) is not on main yet; `cli_questions.decline_message`
-  is the reply it should send for a question, so the model hears "the user
-  chose not to answer" and carries on.
+  exactly as an approval does under TD-5111. Under TD-5118's `--on-ask
+  deny-and-continue` the daemon refuses instead (see the review fixes
+  below), so no question reaches the run.
 
 **Conservative choices for questions the story leaves open (Class C,
 answered the narrow way):**
@@ -16130,6 +16129,38 @@ answered the narrow way):**
 - **A daemon restart drops the parked question.** The future lived in the
   old process; revive seals the cut turn (TD-5018), and the window clears
   the card on that `turn_complete`.
+
+**Review fixes (2026-10-20, PR #42), all Class B:**
+
+- **A question the event log's secret scrub would change is refused**
+  (`ask_user_secret_shaped`), the way a steering proposal is (TD-5140).
+  Every client draws the card from the scrubbed `question_request`, while
+  the parked question kept the model's text, so a label the scrub changed
+  could never be picked (`bad_answer` every time, on the window, the phone
+  and `tst run`), and two labels that scrubbed alike crashed the card's
+  keyed option list. The `sk-` pattern has no word boundary, so ordinary
+  labels such as "Keep the task-runner-integration branch" were hit, not
+  only keys. Checking answers against the scrubbed labels instead was
+  rejected: two labels can scrub to the same text, and the person would
+  still pick something other than what the model asked. The check covers
+  the question, header, labels and descriptions, and the refusal names the
+  part so the model can reword it.
+- **An `ask_user` answer is never cleared as stale tool output**
+  (`context_clear.ALWAYS_KEPT_TOOLS`), whatever `exclude_tools` says. It is
+  the person's words, which TD-5115 keeps verbatim; its placeholder would
+  tell the model to run the tool again, that is, ask again or guess. A
+  fixed set rather than a default `exclude_tools` entry, so a workspace that
+  lists its own tools cannot drop it by accident.
+- **`tst run --on-ask deny-and-continue` (TD-5118) refuses `ask_user`**
+  (`ask_user_unattended`) instead of parking. That flag promises the run
+  never waits for a person; TD-5118 applies it in the approval path, and
+  `ask_user` is Class A and never asks for approval, so without this the
+  run would park on the question and exit `approval_needed`. The tool reads
+  the turn's `Session.run_permissions` by name, so it needs no change when
+  TD-5118 merges, and no turn has any before then. Declining from the CLI
+  (`decline_message`, now removed) was rejected: the model would hear "the
+  user chose not to answer" when nobody was asked, and a question card
+  would flash on every window first.
 
 **Rejected:** a new `awaiting_answer` session state (see above); letting a
 single-select question take both a pick and an "Other" exclusive choice

@@ -3,8 +3,10 @@
 A question is asked the way an approval is (TD-3103, TD-5111): on a TTY
 the person answers each question here and the CLI sends one
 ``answer_question``; without a TTY nothing is read, and the question waits
-for the window. :func:`decline_message` is the reply for a run that may
-not wait for a person.
+for the window. A run that may not wait for a person (``--on-ask
+deny-and-continue``, TD-5118) never sees a question: the daemon's
+``ask_user`` refuses in that turn, as approvals are refused, and the
+model carries on.
 """
 
 from __future__ import annotations
@@ -74,17 +76,6 @@ def answer_message(
         "session_id": session_id,
         "tool_call_id": str(event.get("tool_call_id") or ""),
         "answers": answers,
-    }
-
-
-def decline_message(event: dict[str, Any], session_id: str) -> dict[str, Any]:
-    """Skip every question: the model hears the person chose not to answer."""
-    return {
-        "type": "answer_question",
-        "session_id": session_id,
-        "tool_call_id": str(event.get("tool_call_id") or ""),
-        "answers": [],
-        "declined": True,
     }
 
 

@@ -27,7 +27,6 @@ from tests.test_tst_run_scripts import (
 from tstd import cli, cli_run, cli_turn
 from tstd.cli_questions import (
     NON_TTY_COPY,
-    decline_message,
     format_question,
     parse_answer,
     prompt_questions,
@@ -74,15 +73,6 @@ class TestParse:
         assert card.splitlines()[0] == "question 1/2 [Database]: Which database?"
         assert "  1. Postgres - in compose" in card
         assert "  2. SQLite" in card
-
-    def test_decline_skips_every_question(self) -> None:
-        assert decline_message(_QUESTION, _SESSION) == {
-            "type": "answer_question",
-            "session_id": _SESSION,
-            "tool_call_id": "tc-q",
-            "answers": [],
-            "declined": True,
-        }
 
 
 class TestPrompt:
