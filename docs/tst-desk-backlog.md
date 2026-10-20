@@ -10477,6 +10477,42 @@ checked against the journal, the pre-253 probe and note, and a charter run
 through write, sign and reload) and `ui/src/lib/charter.test.ts` (the
 charter's value survives Save and Start). See DECISIONS.md.
 
+### TD-5118 — Per-run permissions for unattended runs
+**Size:** 3 · **Depends on:** TD-5111 · Gap audit 2026-10-14
+
+A `tst run` turn that needed approval stopped the run and left the call
+parked for the window, and a script had no way to widen or narrow what
+ran short of editing `.tst/config.yaml`.
+
+**Acceptance criteria:**
+- [x] `tst run --allow <rule>` and `--deny <rule>` add rules for one run only.
+- [x] `--on-ask deny-and-continue` turns an approval request into a refusal the model
+      sees, instead of failing the run.
+- [x] The classifier still runs on every call. Class C is never auto-approved by a flag.
+
+Done (2026-10-20): a rule is `TOOL` or `TOOL:ARGS`, the globs of a
+`policy.rules` entry; both flags repeat. They ride on the `user_message`
+as `run_permissions` and the daemon applies them at the dispatch gate,
+beside the workspace's rules for the one turn that message starts
+(`turn_complete` clears them): allow is `auto`, deny is `never`, deny
+first, so the workspace's `ask` and `never` still win over an allow and a
+Class C call is demoted to `class_c_default` whatever the rule. A deny over
+a read guards the read-only shell list too, and a delegate child keeps its
+parent turn's rules. `--on-ask deny-and-continue` answers every approval
+the turn would ask for (tool calls, external imports, Grok's) with an
+`approval_denied` result saying so: no card, nothing parked, the turn runs
+on and the run exits 3. `user_turn` echoes the permissions; a daemon that
+drops them has its turn stopped (`run_permissions_unsupported`). A message
+with them cannot steer, a Grok session refuses allow and deny
+(`run_rules_unsupported`), only this computer may send them for its own
+sessions (`loopback_only` from a phone or another computer), and a restart
+never keeps them on a held message. Tests: `core/tests/test_tst_run_permissions.py` (flags, the merge
+against workspace rules, Class C under every allow, one run only, deny,
+deny-and-continue in all three outputs, the daemon's refusals, the echo
+check, import and Grok approvals, delegate children, the classifier
+counting every allowed call, the read-only list). See DECISIONS.md and
+architecture.md "`tst run` for scripts".
+
 ---
 
 # Epic E52 — Files to the user

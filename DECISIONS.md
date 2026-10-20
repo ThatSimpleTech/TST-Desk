@@ -16048,3 +16048,78 @@ gone before it could be read); reading `podman inspect` after dropping
   field (blank is unset), the YAML preview and the sign card show it. The
   Charter column is not in the UI walk's census, so the census is
   unchanged.
+
+---
+
+## 2026-10-20 — TD-5118: per-run permissions for `tst run` (Class B)
+
+**Context.** A `tst run` turn that needed approval stopped the run (exit 4)
+and left the call parked for the window, and a script could not widen or
+narrow what ran without editing `.tst/config.yaml` (gap audit 2026-10-14).
+The story names `--allow`, `--deny` and `--on-ask deny-and-continue`, and
+says the classifier still runs and no flag auto-approves Class C. How the
+rules reach the daemon, how they combine with the workspace's, how long
+they last and what the model reads were left open.
+
+**Decision.**
+
+- **The daemon applies them, not the CLI.** `user_message` gains an
+  additive `run_permissions: {allow, deny, on_ask}`. A client-side answer
+  could approve an `ask`, but it could never refuse a call that runs
+  without asking, so `--deny` has to live at the policy gate. Rule syntax
+  on the command line is `TOOL` or `TOOL:ARGS`, the same globs as a
+  `policy.rules` entry; the first colon splits (tool names have none), and
+  a space after it is dropped so a rule can be pasted as reasons print it.
+- **They join the workspace's rules for that turn, deny first as ever.**
+  Allow rules are `auto` and deny rules `never`, appended to a copy of the
+  session's policy at the dispatch gate (`with_run_rules`). So a workspace
+  `ask` or `never` still beats a run's allow, a run's deny beats a
+  workspace `auto` (or the Class A default), every shell segment still
+  needs its own allow (TD-5101), and `resolve_explained` still demotes a
+  Class C `auto` to `class_c_default`: a flag can never run Class C. A
+  run's deny over `fs_read`/`fs_grep` also guards the read-only shell list
+  (TD-5103), since the read guards are read through the same merge. The
+  reason text names such a rule "(this run)". Nothing is saved.
+- **One turn.** The loop sets `session.run_permissions` from the message
+  it takes for a turn and `turn_complete` clears them; the next turn,
+  whoever sends it, runs under the workspace's rules alone. A message
+  carrying them may not `steer` (a validation error): steering would hand
+  them to someone else's turn. A delegate child's calls are the parent
+  turn's, so the child dispatcher reads the parent's. The queue file never
+  keeps them (TD-5155): a message a restart holds is sent again by a person
+  in the window, who is there to answer what it asks. Conservative choice:
+  a restart never revives a widened gate.
+- **`deny-and-continue` refuses in the session, before any card.**
+  `Session.request_approval`, the external-import approval and Grok's ACP
+  approval all return the refusal at once when the turn says so: no
+  `approval_request` is logged, nothing is parked and the state never
+  becomes `awaiting_approval`. The tool result is the ordinary
+  `approval_denied`, with text saying the run answers every approval with
+  no, so the window shows "Denied", the audit keeps it like any denial,
+  and `tst run` counts it a refusal (exit 3), not approval needed (4). The
+  turn runs to its end. Skip-all still turns every `ask` into `auto`
+  first, as before; it is the user's machine-wide setting, not a flag.
+- **The daemon echoes them on `user_turn`.** The run checks its own
+  `user_turn` carries `run_permissions`. A daemon older than the CLI
+  ignores the unknown field and would run the turn without them, a
+  `--deny` included, so the run sends `stop_turn` and fails with
+  `run_permissions_unsupported`. The echo also tells a replay why a call
+  ran or was refused without asking.
+- **Grok sessions take `--on-ask` only.** Grok's own tools never meet TST
+  Desk's policy gate, so an allow or deny could not hold there; the daemon
+  refuses the message with `run_rules_unsupported` rather than drop them.
+- **Only this computer sets them, for its own sessions.** A `user_message`
+  carrying `run_permissions` from a phone, the legacy remote token or
+  another computer's hub, or addressed to a bridged session, is refused
+  `loopback_only` (`peer_policy.check`). An allow rule switches approvals
+  off for a turn, and TD-5015 kept every such switch away from other
+  computers; a phone still approves call by call. Nothing but `tst run`
+  sends the field, so this costs no one a feature. Conservative choice.
+
+**Rejected:** answering approvals from the CLI (cannot deny an auto call,
+and races the window); letting a run's allow beat a workspace `ask`
+(Claude Code's own order is deny, ask, allow, and the workspace's rules
+are the user's standing word); a new `approval_skipped` error code (every
+consumer already reads `approval_denied` as a refusal, which this is);
+keeping the rules on a held message across a restart; a protocol version
+bump (the field is additive, and the echo catches an older daemon).

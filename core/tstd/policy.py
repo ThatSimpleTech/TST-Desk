@@ -34,7 +34,7 @@ from pydantic import BaseModel, Field, ValidationError
 from .autonomy.classifier import DecisionClass
 from .config import ConfigError
 from .policy_shell import split_command
-from .protocol import PolicyRuleSummary
+from .protocol import PolicyRuleSummary, RunPermissions
 
 if TYPE_CHECKING:
     # Type hints only.  A runtime import would cycle: tools/__init__ →
@@ -77,6 +77,31 @@ class PolicyConfig(BaseModel):
         description="How long an approval request waits before being treated "
         "as a denial.  None (the default) waits indefinitely (TD-802).",
     )
+
+
+class RunPolicyRule(PolicyRule):
+    """A rule from ``tst run --allow`` or ``--deny`` (TD-5118).
+
+    It lives only in the policy one turn is judged by (:func:`with_run_rules`)
+    and is never saved. A refusal or approval reason names it as this run's.
+    """
+
+
+def with_run_rules(config: PolicyConfig, run: RunPermissions | None) -> PolicyConfig:
+    """*config* with one turn's ``tst run`` rules beside its own (TD-5118).
+
+    Deny rules are ``never`` and allow rules ``auto``. Resolution is deny
+    first whatever the order, so an allow never beats the workspace's own
+    ``ask`` or ``never``, and :func:`resolve_explained` still keeps a Class C
+    call from running without asking. *config* itself is not changed.
+    """
+    if run is None or not (run.allow or run.deny):
+        return config
+    extra: list[PolicyRule] = [
+        *(RunPolicyRule(tool=r.tool, args=r.args, effect="never") for r in run.deny),
+        *(RunPolicyRule(tool=r.tool, args=r.args, effect="auto") for r in run.allow),
+    ]
+    return config.model_copy(update={"rules": [*config.rules, *extra]})
 
 
 @dataclass(frozen=True)
@@ -289,7 +314,8 @@ def _targets(tool: Tool, arguments: dict[str, Any], workspace: Path | None) -> _
 
 
 def _named(rule: PolicyRule) -> str:
-    return f"`{rule.tool}: {rule.args}`"
+    named = f"`{rule.tool}: {rule.args}`"
+    return f"{named} (this run)" if isinstance(rule, RunPolicyRule) else named
 
 
 def _on(text: str) -> str:

@@ -179,6 +179,37 @@ class Attachment(BaseModel):
     content_b64: str = ""
 
 
+class RunRule(BaseModel):
+    """One ``tst run --allow`` or ``--deny`` rule (TD-5118).
+
+    The same ``tool`` and ``args`` globs as a ``policy.rules`` entry in
+    ``.tst/config.yaml``; the list it sits in gives the effect.
+    """
+
+    tool: str = Field(min_length=1, max_length=200)
+    args: str = Field(default="**", min_length=1, max_length=4096)
+
+
+OnAsk = Literal["prompt", "deny_and_continue"]
+
+
+class RunPermissions(BaseModel):
+    """Permissions for the one turn a ``user_message`` starts (TD-5118).
+
+    ``allow`` rules are ``auto`` and ``deny`` rules ``never``, beside the
+    workspace's own rules for that turn only: deny first as ever, so a
+    workspace ``ask`` or ``never`` still wins over an allow, and a Class C
+    call never runs without asking whatever the rules say. ``on_ask``
+    ``deny_and_continue`` answers every approval the turn would ask for
+    with a refusal the model reads, so nothing waits for a person.
+    ``prompt`` (the default) asks as any turn does.
+    """
+
+    allow: list[RunRule] = Field(default_factory=list, max_length=100)
+    deny: list[RunRule] = Field(default_factory=list, max_length=100)
+    on_ask: OnAsk = "prompt"
+
+
 class UserMessage(ClientMessage):
     """A user message to the current session.
 
@@ -192,6 +223,10 @@ class UserMessage(ClientMessage):
     window's Send now mid-turn sets it. Without it, or with no turn
     running, the message waits for a turn of its own, as before. Additive:
     a client that never sends it never steers.
+
+    ``run_permissions`` (TD-5118, ``tst run``) hold for the turn this
+    message starts and no other. Additive. A message carrying them always
+    starts its own turn, so it may not also ``steer``.
     """
 
     type: Literal["user_message"] = "user_message"
@@ -199,6 +234,13 @@ class UserMessage(ClientMessage):
     content: str
     attachments: list[Attachment] = Field(default_factory=list)
     steer: bool = False
+    run_permissions: RunPermissions | None = None
+
+    @model_validator(mode="after")
+    def _own_turn(self) -> UserMessage:
+        if self.steer and self.run_permissions is not None:
+            raise ValueError("run_permissions start a turn of their own; they cannot steer")
+        return self
 
 
 class SendQueued(ClientMessage):
@@ -1691,6 +1733,11 @@ class UserTurn(DaemonEvent):
     loop handed it to that turn at a tool-batch boundary (TD-5112): no
     new turn starts, and the model reads it before its next step.
     Additive; ``None`` for a message that starts a turn.
+
+    ``run_permissions`` (TD-5118) are the ``tst run`` rules this turn runs
+    under, as the daemon took them, so the run can tell they were applied
+    and a replay shows why a call ran or was refused without asking.
+    Additive; ``None`` for a turn with none.
     """
 
     type: Literal["user_turn"] = "user_turn"
@@ -1698,6 +1745,7 @@ class UserTurn(DaemonEvent):
     turn_id: str
     content: str
     steer: SteerPoint | None = None
+    run_permissions: RunPermissions | None = None
 
 
 class QueuedMessageEntry(BaseModel):

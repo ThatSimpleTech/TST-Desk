@@ -233,6 +233,7 @@ async def run_worker_child(
     )
     child_dispatcher.skip_all_fn = parent_dispatcher.skip_all_fn
     child_dispatcher.autonomy_fn = parent_dispatcher.autonomy_fn
+    child_dispatcher.run_permissions_fn = parent_dispatcher.run_permissions_fn
     child_dispatcher.on_class_c = parent_dispatcher.on_class_c
     for tool in child_registry.list_tools():
         handler = parent_dispatcher._handlers.get(tool.name)

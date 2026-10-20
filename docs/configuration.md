@@ -1946,6 +1946,24 @@ call is downgraded to `class_c_default` — you can loosen approvals for ordinar
 riskiest calls always come back to you (or are refused). "Always allow this in this workspace"
 in the approval card writes a rule here for you, and keeps the file trusted (§4.8).
 
+**Rules for one `tst run` (TD-5118).** `tst run --allow RULE` and `--deny RULE` add rules for
+the one turn that run starts, and nothing is written here. A rule is `TOOL` or `TOOL:ARGS`, with
+the same globs as `tool` and `args` above (`--allow "shell:npm test*"`, `--deny fs_write`); each
+flag repeats. An allow is `auto` and a deny is `never`, judged beside this file's rules deny
+first, so a rule here that asks or refuses still wins over an allow, and an allow never makes a
+Class C call run. `--on-ask deny-and-continue` answers every approval that turn would ask for
+with a refusal the model reads, and the turn carries on: nothing waits for the window, and the
+run exits 3 (refused) if anything was refused. The next turn, from the window or another run,
+is back to this file alone. With skip-all on, nothing asks, so `--on-ask` changes nothing. Only
+`tst run` on this computer can set these, for this computer's own sessions: a phone or another
+computer approves call by call. A Grok session takes `--on-ask` but refuses `--allow` and
+`--deny`, because Grok's own tools never reach these rules.
+
+```bash
+tst run --workspace . --allow "shell:npm test*" --deny "shell:git push*" \
+  --on-ask deny-and-continue --message "fix the failing test" --output json
+```
+
 **Always allow saves a rule for that one call (TD-5149).** The rule names the exact path, or
 the one command, with any `*`, `?` or `[` in it made literal. A read of `app/[id]/page.tsx`
 saves `args: "app/[[]id]/page.tsx"`, which matches that file and no other, and a file literally

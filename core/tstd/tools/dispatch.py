@@ -29,9 +29,15 @@ from ..cu_verify import ActuationVerifier, StateProbe, Verification
 from ..desktop.protocol import DesktopError
 from ..logging import get_logger
 from ..memory_commit import MemoryCommitter
-from ..policy import ApprovalOutcome, PolicyConfig, format_summary, resolve_explained
+from ..policy import (
+    ApprovalOutcome,
+    PolicyConfig,
+    format_summary,
+    resolve_explained,
+    with_run_rules,
+)
 from ..protocol import DecisionLogged as DecisionLoggedEvent
-from ..protocol import WorkerStep
+from ..protocol import RunPermissions, WorkerStep
 from .boundary import PathGuard, RefusalError, windows_unsafe_reason
 from .desktop import peel_screenshot_png
 from .diff import render_diff, snapshot_text
@@ -279,6 +285,10 @@ class ToolDispatcher:
         # marks the run to stop after this call.
         self.autonomy_fn: Callable[[], bool] | None = None
         self.on_class_c: Callable[[str], None] | None = None
+        # TD-5118: live read of the ``tst run`` rules of the turn in
+        # flight, judged beside the workspace policy. A delegate child
+        # reads its parent's, since its calls are that turn's.
+        self.run_permissions_fn: Callable[[], RunPermissions | None] | None = None
         # TD-709 (dev): actuation verification.  Both None in tests and
         # whenever judgments.verification is off — the dispatch path is
         # then byte-identical to today.
@@ -430,8 +440,11 @@ class ToolDispatcher:
         gate_class = decision_class if decision_class is not None else DecisionClass.B
         skip_all = self.skip_all_fn() if self.skip_all_fn is not None else False
         autonomy = self.autonomy_fn() if self.autonomy_fn is not None else False
+        run_permissions = self.run_permissions_fn() if self.run_permissions_fn is not None else None
         decision = resolve_explained(
-            self.policy if self.policy is not None else PolicyConfig(),
+            with_run_rules(
+                self.policy if self.policy is not None else PolicyConfig(), run_permissions
+            ),
             tool,
             arguments,
             gate_class,
