@@ -8,7 +8,7 @@ import type { BranchSnaps } from "./chat-fork";
 import { applyHeldList, clearHeldPending } from "./chat-held";
 import type { ChatMessage, ChatState, ToolBlock } from "./chat-store";
 import type { MessageQueue } from "./chat-queue";
-import { refusedSend, returnToDraft, takeSent } from "./draft-store";
+import { dropSent, prependDraft, refusedSend, returnToDraft, takeSent } from "./draft-store";
 import type { FirstTokenWait } from "./first-token-wait";
 import { machineOf } from "./bridged-id";
 import type { DaemonEventUnion, SessionState, SessionSummary } from "./protocol";
@@ -332,6 +332,18 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
         if (event.session_id != null && event.session_id !== state.sessionId) return;
         clearHeldPending(state.held);
         if (event.in_reply_to === "send_queued") wait.end();
+        return;
+      }
+      if (event.in_reply_to === "fork_from") {
+        // An Edit or Retry was refused (TD-5158): a summarized message, a
+        // turn still running, a drain. The editor has closed, so the text
+        // goes to the composer, and the snapshot the send took is dropped.
+        if (event.session_id != null && event.session_id !== state.sessionId) return;
+        wait.end();
+        const fork = ctx.forks.takeRefusedFork();
+        if (fork === null) return;
+        dropSent(ctx.sending, fork.text);
+        prependDraft(state, fork.text);
         return;
       }
       if (event.code !== "session_not_running" && event.code !== "daemon_draining") return;

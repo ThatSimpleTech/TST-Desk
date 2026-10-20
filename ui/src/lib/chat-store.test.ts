@@ -1543,6 +1543,75 @@ describe("fork (TD-1708)", () => {
     expect(sent.length).toBe(before);
   });
 
+  it("a refused edit goes back to the composer and drops its snapshot (TD-5158)", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("first");
+    store.applyEvent(userTurn("s1", "t1", "first"));
+    store.applyEvent(delta("s1", "one"));
+    store.applyEvent(turnComplete("s1"));
+    state.draft = "typed since";
+    expect(store.forkFrom(0, "first, edited")).toBe(true);
+    store.applyEvent({
+      type: "error",
+      code: "user_turn_compacted",
+      message: "That message was folded into a summary.",
+      session_id: "s1",
+      in_reply_to: "fork_from",
+    } as DaemonEventUnion);
+    // The inline editor closed when the frame went out; the text is not lost.
+    expect(state.draft).toBe("first, edited\n\ntyped since");
+    expect(state.messages.filter((m) => m.role === "user").map((m) => m.text)).toEqual(["first"]);
+
+    // The transcript moves on. A later accepted fork of the same row must
+    // snapshot it as it is now, not as it was at the refused edit.
+    store.sendUserMessage("second");
+    store.applyEvent(userTurn("s1", "t2", "second"));
+    store.applyEvent(delta("s1", "two"));
+    store.applyEvent(turnComplete("s1"));
+    expect(store.forkFrom(0, "first, again")).toBe(true);
+    const reset = (sibling: number, content: string): DaemonEventUnion => ({
+      type: "conversation_reset",
+      session_id: "s1",
+      seq: 9,
+      user_index: 0,
+      sibling_index: sibling,
+      sibling_count: 2,
+      content,
+    });
+    store.applyEvent(reset(1, "first, again"));
+    store.applyEvent(reset(0, "first"));
+    expect(state.messages.filter((m) => m.role === "user").map((m) => m.text)).toEqual([
+      "first",
+      "second",
+    ]);
+  });
+
+  it("a refused fork claims only its own text, not a send after it (TD-5158)", () => {
+    const { store, state } = boundStore();
+    store.sendUserMessage("first");
+    store.applyEvent(userTurn("s1", "t1", "first"));
+    store.applyEvent(turnComplete("s1"));
+    expect(store.forkFrom(0, "edited")).toBe(true);
+    store.applyEvent({
+      type: "error",
+      code: "turn_in_progress",
+      message: "A turn is running.",
+      session_id: "s1",
+      in_reply_to: "fork_from",
+    } as DaemonEventUnion);
+    expect(state.draft).toBe("edited");
+    // A refusal for another session leaves this pane alone.
+    expect(store.forkFrom(0, "again")).toBe(true);
+    store.applyEvent({
+      type: "error",
+      code: "turn_in_progress",
+      message: "A turn is running.",
+      session_id: "other",
+      in_reply_to: "fork_from",
+    } as DaemonEventUnion);
+    expect(state.draft).toBe("edited");
+  });
+
   it("forkFrom sends fork_from", () => {
     const { store, sent } = boundStore();
     store.sendUserMessage("first");

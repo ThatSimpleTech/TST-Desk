@@ -518,12 +518,15 @@ _COMPACT_REFUSALS: dict[str, str] = {
 # Why an edit (``fork_from``) or a branch switch (``set_branch``) was refused
 # (TD-5147). A message folded into a summary is gone from the model's
 # context, so it can no longer be edited or switched to another version.
+# The way out names something the user can always do: after "Summarize from
+# here" the summary runs to the end, so there is no later message to edit
+# (TD-5158).
 _BRANCH_REFUSALS: dict[str, str] = {
     "turn_in_progress": "A turn is running. Edit or switch when it finishes, or stop it first.",
     "empty_content": "An edited message can't be empty.",
     "user_turn_compacted": (
         "That message was folded into a summary to free up context, so it can't be "
-        "edited or switched any more. Edit a message after the summary instead."
+        "edited or switched any more. Send a new message to carry on from the summary."
     ),
     "user_turn_not_found": "That message is not in this conversation.",
     "branch_not_found": "That version of the message is no longer available.",
@@ -2577,7 +2580,10 @@ class Daemon:
             result = await found.fork_from(msg.user_index, msg.content)
             if isinstance(result, str):
                 return build_error(
-                    result, _BRANCH_REFUSALS.get(result, result), session_id=msg.session_id
+                    result,
+                    _BRANCH_REFUSALS.get(result, result),
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
                 )
             await found.event_log.add(result)
             return None
@@ -2606,7 +2612,10 @@ class Daemon:
             result = await found.set_branch(msg.user_index, msg.sibling_index)
             if isinstance(result, str):
                 return build_error(
-                    result, _BRANCH_REFUSALS.get(result, result), session_id=msg.session_id
+                    result,
+                    _BRANCH_REFUSALS.get(result, result),
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
                 )
             await found.event_log.add(result)
             return None

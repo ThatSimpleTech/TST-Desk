@@ -298,14 +298,18 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     if (state.sessionId === null) return false;
     const text = content.trim();
     if (text === "") return false;
-    if (!forks.has(userIndex)) forks.save(userIndex, 0, state.messages);
+    const saved = !forks.has(userIndex);
+    if (saved) forks.save(userIndex, 0, state.messages);
     const sent = deps.send({
       type: "fork_from",
       session_id: state.sessionId,
       user_index: userIndex,
       content: text,
     });
-    if (sent) noteSent(sending, text);
+    if (sent) {
+      noteSent(sending, text);
+      forks.noteFork({ userIndex, text, saved });
+    }
     return sent;
   }
 

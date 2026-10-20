@@ -302,7 +302,7 @@ describe("notification routing", () => {
 
   it("an edit or branch switch on a summarized message is a readable toast (TD-5147)", () => {
     const message =
-      "That message was folded into a summary to free up context, so it can't be edited or switched any more. Edit a message after the summary instead.";
+      "That message was folded into a summary to free up context, so it can't be edited or switched any more. Send a new message to carry on from the summary.";
     notifyEvent({ type: "error", code: "user_turn_compacted", message, session_id: "s1", seq: 3 } as DaemonEventUnion);
     expect(banners).toHaveLength(0);
     expect(toasts).toHaveLength(1);
