@@ -750,6 +750,14 @@ shows "Response interrupted", the partial text is not kept as the
 model's answer, and Retry on the message resends it (TD-5152). The
 after-write review and memory distillation get the same errors.
 
+A connection that drops inside a `200` stream splits the same way
+(TD-5120). Before anything has streamed, it is retried like a refused
+connection and, once `max_retries` is spent, ends as `request_error`: a
+llama.cpp or vLLM server that restarts while it reads a long prompt has
+shown nothing yet, so there is nothing to repeat. Once part of the reply
+has streamed, it is `stream_interrupted` and is not retried. The
+after-write review and memory distillation retry it too.
+
 A stall partway through a turn's reply is different (TD-5159): the
 provider went quiet, it did not report a failure. The daemon withdraws
 what that model response had shown (its text and its thinking, with an
@@ -1669,17 +1677,22 @@ if its server may be down when the daemon starts.
 **What moves a turn to a backup.** The tier's own endpoint gets the whole `provider_retry`
 budget first. Then:
 
-- Before any output, every failure `provider_retry` retries: a refused or dropped connection, a
-  429, a 500, 502, 503 or 504 (in the HTTP status or in-band, TD-5152), a timeout, a stream that
-  closed without a word, and a stall (`stream_idle_timeout`, TD-5106).
-- Partway through a reply, a stall (`stream_stalled`), once the one withdraw-and-ask-again of
-  TD-5159 has stalled too. The partial text is withdrawn first (`assistant_retract`), so the
-  window shows only the backup's reply.
+- Before any output, every failure `provider_retry` retries: a refused connection or one that
+  drops before the reply begins (a server restarting while it reads the prompt), a 429, a 500,
+  502, 503 or 504 (in the HTTP status or in-band, TD-5152), a timeout, a stream that closed
+  without a word, and a stall (`stream_idle_timeout`, TD-5106).
+- Partway through a reply, the same failures of the endpoint: a dropped connection or a 429 or
+  5xx reported in-band (both end the call as `stream_interrupted`), and a stall
+  (`stream_stalled`) once the one withdraw-and-ask-again of TD-5159 has stalled too. A reply
+  already shown is never resent to the endpoint that cut it off (TD-5152), so the backup is
+  asked straight away. The partial text is withdrawn first (`assistant_retract`), so the window
+  shows only the backup's reply.
 
 Nothing else moves. A rejected key (401), a bad request, an unknown model (404), a template
 error or a context overflow would fail the same way anywhere, or needs you, so the turn fails as
-before. A reply cut off partway (`stream_interrupted`) keeps TD-5152's rule: the gateway
-reported a failure, and resending is your call, with Retry on the message.
+before, before or partway through a reply. So does a reply whose stream just ends partway, with
+no finish and no error (`stream_interrupted`), and one that runs past `total_timeout`
+(`timeout`): Retry on the message resends it (TD-5152).
 
 Each backup gets its own `provider_retry` budget before the next one is asked. When the last
 backup fails too, the turn fails with that backup's error.

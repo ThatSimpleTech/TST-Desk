@@ -16079,10 +16079,33 @@ chain and the test of what moves; `loop._reply_with_backups` asks them.
   thing "after the retry budget" can mean. Auth, 400/404, template errors
   and context overflow do not move: they fail the same way anywhere or
   need the user.
-- Partway through a reply: only `stream_stalled` (the idle watchdog the
-  story names), after TD-5159's one withdraw-and-retry has stalled too.
-  The second partial reply is withdrawn with `assistant_retract` before
-  the backup is asked, so the window shows one reply.
+- Partway through a reply: the same failures of the endpoint. A dropped
+  connection and an in-band 429 or 5xx end the call as
+  `stream_interrupted` with `ProviderError.endpoint_failed` set (carried
+  on `StreamResult` too); `stream_stalled` (the idle watchdog the story
+  names) moves after TD-5159's one withdraw-and-retry has stalled too.
+  The partial reply is withdrawn with `assistant_retract` before the
+  backup is asked, so the window shows one reply.
+
+**Review fix (PR #40).** The first version moved nothing that was cut
+off after the `200` headers. A connection that dropped there was
+`stream_interrupted`, not retryable, whether or not anything had been
+shown, so a llama.cpp or vLLM restart while it read a long prompt (the
+story's own case) failed the turn with nothing on screen and the docs'
+"dropped connection" claim was false. And a 5xx partway through a reply
+stayed, although the story names 5xx without a condition. Now:
+
+- `ProviderClient` maps a drop before any shown chunk to `request_error`,
+  retryable: the same failure a drop before the headers already was, and
+  the same line TD-5158 drew for an in-band error before output. Every
+  caller retries it under `provider_retry` (the off-turn calls too: it is
+  not a timeout), and a turn then moves to a backup.
+- A drop or an in-band 429/5xx after output stays `stream_interrupted`
+  and is still never resent to the same endpoint (TD-5152, TD-5159), but
+  it is marked `endpoint_failed` and moves to the next backup.
+  TD-5152's reason for not resending was the shown text and the gateway
+  that reported the failure; the withdrawal and a different endpoint
+  answer both.
 
 **Conservative choices** (Class C questions the story leaves open):
 
@@ -16090,11 +16113,10 @@ chain and the test of what moves; `loop._reply_with_backups` asks them.
   Inheriting would price a paid backup at the free local model it stands
   in for, and the spend cap would never see it. A backup must also name
   its `slug` (discovery asks a server that is failing) and cannot nest.
-- A cut-off reply (`stream_interrupted`, including a mid-stream 5xx)
-  keeps TD-5152's rule and does not move: the gateway reported the
-  failure, and resending is the user's call. A connection that drops on
-  a llama.cpp restart between calls is a refused connection on the next
-  call, which does move.
+- A reply whose stream just ends partway (no finish, no `[DONE]`, no
+  error), an in-band 4xx partway, and `total_timeout` partway do not
+  move: none names a failure of the endpoint the story lists, so they
+  keep TD-5152's rule and resending is the user's call.
 - Sticky for the rest of the user's turn, reset on the next one. A dead
   endpoint costs its retry budget once per turn, not once per tool call,
   and a backup that may cost money never becomes the silent default.

@@ -12,10 +12,16 @@ with (``backup_wanted``):
 - before any output, every failure the provider retries: a refused or
   dropped connection, a 429, a 500/502/503/504, a timeout, an empty
   stream or a stall;
-- partway through the reply, a stall (``stream_stalled``), once TD-5159's
-  one withdraw-and-ask-again has stalled too. What it showed is withdrawn
-  first. A cut-off stream (``stream_interrupted``) keeps TD-5152's rule:
-  the gateway reported a failure, and resending is the user's call.
+- partway through the reply, the same failures of the endpoint: a
+  dropped connection or an in-band 429 or 5xx (``stream_interrupted``
+  with ``endpoint_failed``), and a stall (``stream_stalled``) once
+  TD-5159's one withdraw-and-ask-again has stalled too. What the failed
+  call showed is withdrawn first, so the window shows one reply. The
+  provider never resends these to the same endpoint (TD-5152); asking
+  another one is what the backup is for.
+
+A stream that merely ends partway (no finish, no ``[DONE]``), an in-band
+4xx and ``total_timeout`` stay on the tier and fail the turn as before.
 
 The backup in use lasts for the rest of the user's turn, so a dead
 endpoint costs the retry budget once per turn rather than once per model
@@ -45,8 +51,9 @@ if TYPE_CHECKING:
 
 log = get_logger("tstd.fallback")
 
-# Failures partway through a reply that move to a backup. A stall is a
-# server that went quiet; its text is withdrawn before the backup answers.
+# A stall partway through a reply is a server that went quiet; it moves
+# to a backup once TD-5159's retry has stalled too. A reply cut off by the
+# endpoint carries ``endpoint_failed`` instead.
 MID_REPLY_CODES = frozenset({"stream_stalled"})
 
 
@@ -58,12 +65,14 @@ def backup_wanted(result: StreamResult) -> bool:
     provider's own retryable flag is the test: it marks exactly the
     failures of the endpoint rather than of the request (an auth failure,
     a context overflow or a template error fails on any endpoint, or
-    needs the user). Stop and cancel are never retryable.
+    needs the user). After output the provider retries nothing, so its
+    ``endpoint_failed`` flag marks the same failures. Stop and cancel are
+    never either.
     """
     if not result.failed:
         return False
     if result.began:
-        return result.error_code in MID_REPLY_CODES
+        return result.error_code in MID_REPLY_CODES or result.endpoint_failed
     return result.retryable
 
 

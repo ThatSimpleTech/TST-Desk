@@ -457,6 +457,14 @@ class ProviderError:
     """Seconds to wait before retrying, from a ``Retry-After`` header."""
     detail: str = ""
     """Upstream body, for logs only. Never copy this into assistant text."""
+    endpoint_failed: bool = False
+    """A reply cut off partway by the endpoint, not the request (TD-5120).
+
+    Set on a ``stream_interrupted`` whose cause would be retried had
+    nothing been shown: a dropped connection, or an in-band 429 or 5xx.
+    It is not retried here, because the window shows part of the reply,
+    but another endpoint can answer instead. Before output, ``retryable``
+    says the same thing."""
 
 
 # ── Retry configuration ────────────────────────────────────────────────
@@ -1295,18 +1303,7 @@ class ProviderClient:
                         yield self._stall_error(False, yielded_any, socket=True)
                         return
                     except httpx.HTTPError as e:
-                        # Mid-stream connection drop
-                        word = "tool call" if in_tool_call and not saw_finish else "response"
-                        log.warning(
-                            "provider stream interrupted mid-response",
-                            extra={"extra_fields": {"error": str(e)}},
-                        )
-                        yield ProviderError(
-                            code="stream_interrupted",
-                            message=f"Stream interrupted mid-{word}: {e}. "
-                            "Any partial content was discarded.",
-                            retryable=False,
-                        )
+                        yield self._dropped_error(e, yielded_any, in_tool_call and not saw_finish)
                         return
 
                     if held:
@@ -1390,6 +1387,38 @@ class ProviderClient:
             # stops early (an error handed on, Stop) closes this generator,
             # and the hang-up has to reach the attempt and its response now.
             await aclose_stream(attempts)
+
+    def _dropped_error(
+        self, error: httpx.HTTPError, yielded_any: bool, in_tool_call: bool
+    ) -> ProviderError:
+        """The error for a connection that dropped inside a ``200`` stream.
+
+        Nothing shown yet: the same transport failure as a drop before the
+        headers (``request_error``), retried under ``provider_retry``. A
+        llama.cpp or vLLM restart while it reads a long prompt lands here,
+        and nothing on screen stands in the way of asking again (TD-5120).
+        Part of a reply shown: ``stream_interrupted``, not retried, because
+        a second attempt would repeat text the window already has; it is
+        marked ``endpoint_failed`` so the turn can move to a backup.
+        """
+        log.warning(
+            "provider stream dropped",
+            extra={"extra_fields": {"error": str(error), "after_output": yielded_any}},
+        )
+        if not yielded_any:
+            return ProviderError(
+                code="request_error",
+                message=f"The connection to {self.base_url} dropped before the reply "
+                f"began: {error}",
+                retryable=True,
+            )
+        word = "tool call" if in_tool_call else "response"
+        return ProviderError(
+            code="stream_interrupted",
+            message=f"Stream interrupted mid-{word}: {error}. Any partial content was discarded.",
+            retryable=False,
+            endpoint_failed=True,
+        )
 
     def _stall_error(
         self, past_total: bool, yielded_any: bool, *, socket: bool = False
@@ -1476,7 +1505,9 @@ class ProviderClient:
         Nothing shown yet: the same error an HTTP reply with that status
         gives, so a 429 or 5xx is retried under ``provider_retry``. Part of
         a reply shown: ``stream_interrupted``, never retried, because a
-        second attempt would repeat text the window already has.
+        second attempt would repeat text the window already has. A 429 or
+        5xx there is still the endpoint's failure (``endpoint_failed``), so
+        the turn can move to a backup (TD-5120).
         """
         error = self._parse_error(response, raw, status_override=status)
         log.warning(
@@ -1504,6 +1535,7 @@ class ProviderClient:
             status_code=error.status_code,
             retryable=False,
             detail=error.detail,
+            endpoint_failed=error.retryable,
         )
 
     def _headers(self) -> dict[str, str]:

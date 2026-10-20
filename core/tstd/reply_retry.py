@@ -66,6 +66,10 @@ class StreamResult(NamedTuple):
     retryable: bool = False
     # The id this call's deltas carried, so a backup can withdraw them.
     response_id: str | None = None
+    # The provider's flag on a reply cut off partway by the endpoint (a
+    # dropped connection, an in-band 429 or 5xx), which moves a turn to a
+    # backup although it is not retried (TD-5120).
+    endpoint_failed: bool = False
 
 
 def new_response_id() -> str:

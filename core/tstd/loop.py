@@ -652,7 +652,7 @@ async def _stream_and_parse(
     Returns:
         A :class:`StreamResult` of ``(collected_content, tool_calls, failed,
         error_msg, error_code, raw_detail, finish_reason, reasoning_details,
-        began, retryable, response_id)``.
+        began, retryable, response_id, endpoint_failed)``.
         ``error_code`` is the provider's typed code (e.g. ``auth_failed``)
         so clients can key tailored copy off it (TD-1008). ``raw_detail`` is
         the upstream body for the log; it is empty unless the chunk is a
@@ -663,7 +663,9 @@ async def _stream_and_parse(
         or ``None`` when the stream carried none. ``began`` says a chunk
         arrived, after which the provider no longer retries (TD-5159).
         ``retryable`` is the provider's flag on the error that ended the
-        call, which is what moves a turn to a backup endpoint (TD-5120).
+        call, which is what moves a turn to a backup endpoint (TD-5120);
+        ``endpoint_failed`` does the same for a reply the endpoint cut off
+        partway, which is not retried.
     """
     collected_content = ""
     began = False
@@ -671,6 +673,7 @@ async def _stream_and_parse(
     collected_details: list[dict[str, Any]] = []
     failed = False
     retryable = False
+    endpoint_failed = False
     error_msg = ""
     error_code: str | None = None
     raw_detail = ""
@@ -706,7 +709,7 @@ async def _stream_and_parse(
             if isinstance(chunk, ProviderError):
                 failed, error_msg, error_code = True, chunk.message, chunk.code
                 raw_detail = chunk.detail
-                retryable = chunk.retryable
+                retryable, endpoint_failed = chunk.retryable, chunk.endpoint_failed
                 break
             began = True
 
@@ -787,6 +790,7 @@ async def _stream_and_parse(
         began,
         retryable,
         response_id,
+        endpoint_failed,
     )
 
 

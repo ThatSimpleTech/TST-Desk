@@ -23,7 +23,15 @@ from tests.test_dispatch import (
     make_registry_and_dispatcher,
     wait_for_turn,
 )
-from tests.test_turn_stream_errors import _DONE, _SSE, _event, _litellm_error, _text
+from tests.test_turn_stream_errors import (
+    _DONE,
+    _SSE,
+    _drops_after,
+    _event,
+    _litellm_error,
+    _openrouter_error,
+    _text,
+)
 from tstd.config import (
     CredentialConfig,
     ModelConfig,
@@ -280,8 +288,11 @@ class TestTheBackupAnswers:
             (lambda _: _stalls_after(), "stream_stalled"),
             # A 5xx reported in-band before any output (TD-5152).
             (lambda _: _litellm_error("upstream failed", "503"), "service_unavailable"),
+            # The server restarts while it reads the prompt: the headers
+            # arrived, then the connection dropped before any output.
+            (lambda _: _drops_after(), "request_error"),
         ],
-        ids=["503", "500", "502", "429", "idle-watchdog", "in-band-5xx"],
+        ids=["503", "500", "502", "429", "idle-watchdog", "in-band-5xx", "dropped"],
     )
     async def test_5xx_rate_limits_and_stalls_move_too(
         self, tmp_path: Path, script: Script, reason: str
@@ -332,6 +343,37 @@ class TestTheBackupAnswers:
         assert moved.reason == "stream_stalled"
         events = run.session.event_log.all_events
         assert events.index(retracts[-1]) < events.index(moved)
+
+    @pytest.mark.parametrize(
+        "script",
+        [
+            lambda _: _drops_after(_text("Half an answer ")),
+            lambda _: _text("Half an answer ") + _litellm_error("upstream failed", "500"),
+            lambda _: _text("Half an answer ") + _litellm_error("busy", "429"),
+            lambda _: _text("Half an answer ") + _openrouter_error("Provider disconnected"),
+        ],
+        ids=["dropped", "litellm-500", "litellm-429", "openrouter-error"],
+    )
+    async def test_a_reply_the_endpoint_cuts_off_is_withdrawn_before_the_backup_answers(
+        self, tmp_path: Path, script: Script
+    ) -> None:
+        run, endpoints, turn = await _one_turn(
+            tmp_path,
+            {PRIMARY: script, BACKUP: lambda _: _answer("The whole answer.")},
+            _config(BACKUP_TIER, retries=2),
+        )
+
+        # Before the review fix the turn failed here as stream_interrupted.
+        assert not turn.failed
+        # A shown reply is never resent to the endpoint that cut it off
+        # (TD-5152), so its retry budget is not spent on it.
+        assert (endpoints.count(PRIMARY), endpoints.count(BACKUP)) == (1, 1)
+        (retract,) = run.of(AssistantRetract)
+        (moved,) = run.of(ModelFallback)
+        assert moved.reason == "stream_interrupted"
+        events = run.session.event_log.all_events
+        assert events.index(retract) < events.index(moved)
+        assert run.shown() == "The whole answer."
 
     async def test_a_second_key_on_the_same_host_gets_its_own_client(self, tmp_path: Path) -> None:
         # The same model and host with another key: a rate-limited key's
@@ -430,19 +472,30 @@ class TestWhatDoesNotMove:
         assert endpoints.count(BACKUP) == 0
         assert run.of(ModelFallback) == []
 
-    async def test_a_cut_off_reply_keeps_td_5152s_rule(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        "script",
+        [
+            # The body just ends: no finish reason, no [DONE], no error.
+            lambda _: _text("The answer is "),
+            # The request's own failure, reported partway.
+            lambda _: _text("The answer is ") + _litellm_error("bad request", "400"),
+        ],
+        ids=["just-ends", "in-band-400"],
+    )
+    async def test_a_cut_off_reply_that_names_no_endpoint_failure_stays(
+        self, tmp_path: Path, script: Script
+    ) -> None:
         run, endpoints, turn = await _one_turn(
             tmp_path,
-            {
-                PRIMARY: lambda _: _text("The answer is ") + _litellm_error("upstream", "500"),
-                BACKUP: lambda _: _answer("never"),
-            },
+            {PRIMARY: script, BACKUP: lambda _: _answer("never")},
             _config(BACKUP_TIER, retries=2),
         )
 
         assert (turn.failed, turn.error_code) == (True, "stream_interrupted")
         assert endpoints.count(BACKUP) == 0
         assert run.of(ModelFallback) == []
+        # TD-5152 as before: the partial text stays above the failure line.
+        assert run.shown().startswith("The answer is ")
 
     async def test_a_tier_with_no_backups_fails_as_before(self, tmp_path: Path) -> None:
         run, endpoints, turn = await _one_turn(tmp_path, {PRIMARY: _refused}, _config(retries=2))
