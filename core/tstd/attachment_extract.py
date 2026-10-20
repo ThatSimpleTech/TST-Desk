@@ -46,11 +46,6 @@ MAX_ZIP_MEMBERS = 10_000
 # threads, so one document at a time goes through it.
 PDFIUM_LOCK = threading.Lock()
 
-_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-_S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
-_R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
-_PKG_REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
-
 
 class DocumentError(Exception):
     """A document that could not be turned into text, with its wire code."""
@@ -261,9 +256,21 @@ def _parse(data: bytes, name: str, what: str) -> ElementTree.Element:
     if b"<!DOCTYPE" in data or b"<!ENTITY" in data:
         raise _unreadable(name, what)
     try:
-        return ElementTree.fromstring(data)
+        root = ElementTree.fromstring(data)
     except ElementTree.ParseError as e:
         raise _unreadable(name, what) from e
+    # Match on local names: Transitional and Strict OOXML use different
+    # namespace URIs for the same parts, and neither changes the text.
+    for el in root.iter():
+        if isinstance(el.tag, str):
+            el.tag = _local(el.tag)
+        if el.attrib:
+            el.attrib = {_local(k): v for k, v in el.attrib.items()}
+    return root
+
+
+def _local(name: str) -> str:
+    return name.rsplit("}", 1)[-1]
 
 
 def _docx(name: str, raw: bytes, sink: _Sink) -> None:
@@ -272,33 +279,33 @@ def _docx(name: str, raw: bytes, sink: _Sink) -> None:
         if data is None:
             raise _unreadable(name, "Word document")
         root = _parse(data, name, "Word document")
-    body = root.find(f"{_W}body")
+    body = root.find("body")
     if body is None:
         return
     for block in body:
-        if block.tag == f"{_W}p":
+        if block.tag == "p":
             sink.add(_paragraph(block))
-        elif block.tag == f"{_W}tbl":
-            for row in block.iter(f"{_W}tr"):
+        elif block.tag == "tbl":
+            for row in block.iter("tr"):
                 cells = [
-                    " ".join(_paragraph(p) for p in cell.iter(f"{_W}p")).strip()
-                    for cell in row.findall(f"{_W}tc")
+                    " ".join(_paragraph(p) for p in cell.iter("p")).strip()
+                    for cell in row.findall("tc")
                 ]
                 sink.add("\t".join(cells))
         else:
             # Content controls (w:sdt) and the like wrap ordinary paragraphs.
-            for p in block.iter(f"{_W}p"):
+            for p in block.iter("p"):
                 sink.add(_paragraph(p))
 
 
 def _paragraph(p: ElementTree.Element) -> str:
     out: list[str] = []
     for node in p.iter():
-        if node.tag == f"{_W}t" and node.text:
+        if node.tag == "t" and node.text:
             out.append(node.text)
-        elif node.tag == f"{_W}tab":
+        elif node.tag == "tab":
             out.append("\t")
-        elif node.tag in (f"{_W}br", f"{_W}cr"):
+        elif node.tag in ("br", "cr"):
             out.append("\n")
     return "".join(out)
 
@@ -314,7 +321,7 @@ def _xlsx(name: str, raw: bytes, sink: _Sink) -> int:
             if data is None:
                 continue
             root = _parse(data, name, what)
-            for row in root.iter(f"{_S}row"):
+            for row in root.iter("row"):
                 values = _row_values(row, shared)
                 if values:
                     sink.add("\t".join(values).rstrip("\t"))
@@ -326,7 +333,7 @@ def _shared_strings(zf: zipfile.ZipFile, name: str) -> list[str]:
     if data is None:
         return []
     root = _parse(data, name, "spreadsheet")
-    return ["".join(t.text or "" for t in si.iter(f"{_S}t")) for si in root.findall(f"{_S}si")]
+    return ["".join(t.text or "" for t in si.iter("t")) for si in root.findall("si")]
 
 
 def _sheet_parts(zf: zipfile.ZipFile, name: str) -> Iterator[tuple[str, str]]:
@@ -338,17 +345,17 @@ def _sheet_parts(zf: zipfile.ZipFile, name: str) -> Iterator[tuple[str, str]]:
     targets: dict[str, str] = {}
     rels = _read_member(zf, "xl/_rels/workbook.xml.rels", name, what)
     if rels is not None:
-        for rel in _parse(rels, name, what).iter(f"{_PKG_REL}Relationship"):
+        for rel in _parse(rels, name, what).iter("Relationship"):
             target = rel.get("Target", "")
             target = target.lstrip("/")
             if not target.startswith("xl/"):
                 target = f"xl/{target}"
             targets[rel.get("Id", "")] = target
-    sheets = _parse(book, name, what).find(f"{_S}sheets")
+    sheets = _parse(book, name, what).find("sheets")
     if sheets is None:
         return
-    for i, sheet in enumerate(sheets.findall(f"{_S}sheet"), start=1):
-        part = targets.get(sheet.get(f"{_R}id", ""), f"xl/worksheets/sheet{i}.xml")
+    for i, sheet in enumerate(sheets.findall("sheet"), start=1):
+        part = targets.get(sheet.get("id", ""), f"xl/worksheets/sheet{i}.xml")
         yield sheet.get("name", f"Sheet{i}"), part
 
 
@@ -370,7 +377,7 @@ def _column_index(ref: str | None) -> int | None:
 def _row_values(row: ElementTree.Element, shared: list[str]) -> list[str]:
     """Cell values in column order, blanks kept so columns still line up."""
     values: list[str] = []
-    for cell in row.findall(f"{_S}c"):
+    for cell in row.findall("c"):
         col = _column_index(cell.get("r"))
         # A sparse row skips empty cells; pad so column C stays third. A
         # far-right reference (XFD1) pads at most to Excel's 16,384 columns,
@@ -387,11 +394,11 @@ def _row_values(row: ElementTree.Element, shared: list[str]) -> list[str]:
 def _cell_text(cell: ElementTree.Element, shared: list[str]) -> str:
     kind = cell.get("t")
     if kind == "inlineStr":
-        inline = cell.find(f"{_S}is")
+        inline = cell.find("is")
         if inline is None:
             return ""
-        return "".join(t.text or "" for t in inline.iter(f"{_S}t"))
-    v = cell.find(f"{_S}v")
+        return "".join(t.text or "" for t in inline.iter("t"))
+    v = cell.find("v")
     raw = v.text if v is not None and v.text is not None else ""
     if kind == "s":
         try:

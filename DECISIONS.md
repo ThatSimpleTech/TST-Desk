@@ -17189,6 +17189,8 @@ they were never on the branch, and the dialog says so.
   and `xml.etree` read the text with no new dependency. Hostile files: each
   member is read only to 64 MB decompressed, a DOCTYPE or ENTITY anywhere is
   refused (Office never writes one), and at most 10,000 members.
+  Elements are matched by local name, so Strict OOXML (other namespace URIs)
+  reads too, and the source names no remote host (TD-1410's literal scan).
 - **Kind from the bytes.** `%PDF-` must lead the file, so a text file that
   mentions it stays text; a zip is a DOCX or XLSX only by its parts. The
   composer guesses from the header and the name for its chip; the daemon
