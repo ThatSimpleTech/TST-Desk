@@ -14985,3 +14985,66 @@ cannot); `--attr-source`/`attr.tree` to ignore in-tree attributes (git
 `eol` rules); fetching LFS objects on revert (a network call nobody
 asked for); making `cmd` reading apply on POSIX hosts (it would flag
 writes that land in a plain file).
+
+## 2026-10-20 — TD-5111: `tst run` for scripts: existing sessions, JSON/NDJSON, stdin, exit codes (Class B)
+
+**Context.** `tst run` always opened a new session and printed text, and
+every failure exited 1, a non-TTY approval included (gap audit 2026-10-14).
+The story names the flags and the four outcomes; how a run finds and
+follows an existing session, what each outcome means and what the JSON
+holds were left open.
+
+**Decision.**
+
+- **No new protocol.** `--session` and `--continue` use `list_sessions`,
+  `attach` and `user_message`, which the window already sends. The run
+  attaches from the row's `event_count + 1`, so the session's earlier
+  turns never replay, and it counts the turn from the `user_turn` that
+  carries its own message, so a turn another viewer queued in the
+  meantime is not reported as this run's.
+- **`--continue` is the newest local, unarchived session of
+  `--workspace`**, by `updated_at` (the order the window's list uses, stars
+  aside). No such session is an error, not a new session: a script that
+  says continue and silently starts fresh has lost its context.
+  `--session` with `--workspace` must name the same folder.
+- **A session with a turn in flight is refused (`session_busy`), not
+  queued behind.** That turn may be parked on an approval only a person can
+  give; queueing would hold the script until its timeout. The most
+  conservative reading, and the window is where the person answers.
+- **Refusal means a gate refused a tool call**: a tool result with
+  `boundary_refusal`, `policy_denied` or `approval_denied` in a turn that
+  otherwise completed. A handler's own failure is not a refusal, and the
+  daemon refusing the message itself (`session_not_running`, a drain hold)
+  is an error. This is Claude Code's "permission denials" reading.
+- **Exit codes:** 0 success, 1 error, 2 usage (argparse's code, kept), 3
+  refused, 4 approval needed. 1 stays the error code so a script that
+  tested for non-zero still works; 2 is left to argparse so a usage error
+  is never read as a refusal. A failed turn is an error even when it had
+  refusals; approval needed wins over refusals seen before it.
+- **JSON:** one line, `{session_id, status, reply, cost, error}`. `reply`
+  is all assistant text of the turn, the same text the text mode prints;
+  `cost` is `turn_complete.cost`, or the last `cost_update.turn_cost` when
+  the turn did not finish; `error` is `null` or `{code, message}`. A daemon
+  that cannot be reached is still one object (`connection_error`) so a
+  script always has something to parse; usage errors print usage, as
+  argparse does.
+- **NDJSON streams the session's events exactly as the daemon sent them**,
+  one per line, from the replay at seq 1 for a new session or from this
+  run's `user_turn` for an existing one. No synthetic summary line: the exit
+  code is the status.
+- **stdout holds only what the mode promises.** Errors, refusal lines and
+  the trust notice go to stderr in every mode, so a person still reads why
+  a script's run failed and a parser never meets them.
+- **The machine modes never prompt.** An approval card on stdout would
+  corrupt the JSON, and a script is not a person. The run exits 4 and the
+  call stays parked for the window, the same as a text run without a TTY.
+  The text mode keeps the TTY card (TD-3103).
+- **Stdin** is read for `--message -`, or when `--message` is left out and
+  stdin is not a terminal; a terminal with no `--message` is a usage error
+  rather than a silent wait. One trailing line break is dropped; an empty
+  message is refused.
+
+**Rejected:** a new `send_message`-style protocol verb (the existing ones
+cover it); continuing into a starred or archived session first; queueing
+behind a busy session; making refusal also cover model-side refusals,
+which TST Desk does not surface as a typed event.

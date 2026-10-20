@@ -322,6 +322,11 @@ npm run tauri:dev
 # Optional: one headless turn against the same daemon (starts tstd if needed)
 cd core && uv run tst run --workspace /path/to/folder --message "say hi"
 
+# Scripts: continue the folder's newest session, message on stdin, one JSON result
+echo "and now the tests" | uv run tst run --workspace /path/to/folder --continue --output json
+# (--session <id> picks a session; --output ndjson streams its events;
+#  exit 0 success, 1 error, 3 a tool call was refused, 4 approval needed)
+
 # Follow a session already running on that daemon (Ctrl+C detaches)
 uv run tst attach <session_id>
 ```

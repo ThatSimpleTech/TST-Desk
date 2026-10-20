@@ -25,7 +25,7 @@ from tests.machine_helpers import eventually
 from tests.test_artifacts import _open, _shutdown
 from tests.test_tst_approvals import _SESSION, _TURN_DONE, _Ws
 from tests.test_two_daemons import _Steps
-from tstd import cli
+from tstd import cli, cli_turn
 from tstd.autonomy.classifier import DecisionClass
 from tstd.boundary_config import BoundaryConfig
 from tstd.config import ConfigError
@@ -468,7 +468,7 @@ async def test_a_headless_run_says_why_the_repo_settings_are_not_applying(
         "session_id": _SESSION,
         "config_trust": {"state": "pending", "sha256": "0" * 64, "loosened": [{}, {}]},
     }
-    code = await cli._stream_turn(_Ws([wall, _TURN_DONE]), _SESSION)
+    code = (await cli_turn.stream_turn(_Ws([wall, _TURN_DONE]), _SESSION)).exit_code
     assert code == 0
     err = capsys.readouterr().err
     assert "loosens 2 settings and is not trusted yet" in err

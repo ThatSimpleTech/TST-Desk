@@ -120,6 +120,29 @@ TTY, `tst run` prints copy to use the window and exits rather than hanging
 on stdin. The headless harness (TD-1401) stays the mock path; `tst run` is
 not a second harness.
 
+**`tst run` for scripts (TD-5111)** adds no protocol message. `--session <id>`
+and `--continue` send `list_sessions`, pick the row (the named id, or the
+newest local, unarchived session of `--workspace` by `updated_at`), refuse
+it while `busy`, then `attach` from `event_count + 1` so no earlier turn
+replays, and send `user_message`. The turn is the events from the
+`user_turn` carrying that message to its `turn_complete`. The message comes
+from `--message`, or from stdin for `--message -` or no `--message` (a
+terminal is read only for `-`). `--output json` prints one object,
+`{session_id, status, reply, cost, error}`, where `cost` is
+`turn_complete.cost` and `error` is `null` or `{code, message}`;
+`--output ndjson` prints each of the session's events as received, one per
+line. Errors and refusals go to stderr in every mode. Neither machine mode
+prompts: an `approval_request` ends the run and the turn waits for the
+window. Exit codes:
+
+| Code | `status` | Meaning |
+|---|---|---|
+| 0 | `success` | The turn completed and no tool call was refused |
+| 1 | `error` | The turn failed, the daemon refused the message, or the run timed out or lost the daemon |
+| 2 | — | Usage error (argparse, or no message) |
+| 3 | `refused` | The turn completed, but a gate refused a tool call: `boundary_refusal`, `policy_denied` or `approval_denied` |
+| 4 | `approval_needed` | A call is waiting for approval that this run could not give |
+
 **`tst attach` (TD-3102)** is the same door in follow mode. Same port file and
 `hello`. It sends `attach{session_id, from_seq}` (default 1), prints assistant
 text the way `tst run` does, and prints one-line text for `turn_complete` and
