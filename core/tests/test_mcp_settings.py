@@ -1,7 +1,8 @@
 """Settings writes for listed MCP servers (TD-4403).
 
 Add / disable / remove persist in the user ``config.yaml`` without a
-YAML dump, never write ``env``, and show up on ``setup_state``. HTTP
+YAML dump, never write an ``env`` the server did not have (TD-5110 adds
+one only through the keychain), and show up on ``setup_state``. HTTP
 off-box and a string command are refused before the file changes.
 """
 
@@ -196,6 +197,8 @@ class TestDaemonAck:
                 "url": "",
                 "enabled": True,
                 "excluded_tools": [],
+                "env": [],
+                "headers": [],
             }
         ]
         row = _servers(path)["example"]

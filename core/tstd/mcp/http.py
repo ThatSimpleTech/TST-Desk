@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -48,7 +49,8 @@ class HttpMcpClient:
     """One JSON-RPC session as POST-to-configured-URL.
 
     Not SSE and not Streamable-HTTP session ids — one JSON object out,
-    one JSON object back. The URL is the only host this module dials.
+    one JSON object back. The URL is the only host this module dials, so
+    ``headers`` (this server's own values, TD-5110) go nowhere else.
     """
 
     def __init__(
@@ -57,9 +59,12 @@ class HttpMcpClient:
         *,
         timeout: float = CALL_TIMEOUT,
         startup_timeout: float | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> None:
         assert_loopback_http_url(url)
         self._url = url
+        # Accept last: the client's own header always wins.
+        self._headers = {**dict(headers or {}), "Accept": "application/json"}
         self._timeout = timeout
         # The handshake (initialize, initialized, tools/list) answers in its
         # own time, which may be longer than a call's (TD-5105).
@@ -198,7 +203,7 @@ class HttpMcpClient:
             response = await self._http.post(
                 self._url,
                 json=payload,
-                headers={"Accept": "application/json"},
+                headers=self._headers,
                 timeout=(wait_seconds or self._timeout) + 5.0,
             )
             response.raise_for_status()

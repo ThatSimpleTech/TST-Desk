@@ -71,7 +71,7 @@ no effect.
 | `remote` | mapping | see below | Opt-in Tailscale bind. Omitted in an older user copy is filled from the shipped file at load. Empty `bind` is loopback only. |
 | `notify` | mapping | see below | Outbound notification channels. Omitted in an older user copy is filled from the shipped file at load. Slack and ntfy are off until their `enabled` flag is true and a destination URL is stored in the OS keychain. |
 | `autonomy` | mapping | see below | Rootless container for autonomous runs (TD-4301) and interactive verify after writes (TD-4204). Interactive sessions ignore `runtime` and `image`. Omitted in an older user copy is filled from the shipped file at load. A missing or rootful runtime refuses start with install copy. |
-| `mcp` | mapping | empty servers | User-listed MCP servers (TD-4401). Omitted in an older user copy defaults to no servers. Empty `servers` adds no doctor rows. HTTP `url` must be loopback; off-box is refused before dial. No `env` map — tokens stay in the keychain. |
+| `mcp` | mapping | empty servers | User-listed MCP servers (TD-4401). Omitted in an older user copy defaults to no servers. Empty `servers` adds no doctor rows. HTTP `url` must be loopback; off-box is refused before dial. A server's token is `keychain:<entry>` in its `env` or `headers`, never the value (TD-5110). |
 | `engine` | mapping | see below | Which agent loop new sessions use. `native` is the TST 3-tier OpenAI-compatible loop. `grok` spawns the installed Grok Build CLI over ACP. Omitted in an older user copy is filled from the shipped file at load. |
 | `steering` | mapping | see below | User-global steering (TD-4845). Omitted in an older user copy is filled from the shipped file at load. |
 
@@ -692,12 +692,39 @@ A packaged sidecar with empty `command` serves `tstd --cu-mcp` (TD-1725).
 Tool names are prefixed `{server_id}__{remote_name}` so an MCP tool
 named `fs_read` cannot replace the builtin. Registry provenance is
 `mcp:<server_id>`. The approval floor is `ask` (TD-4402 classifies
-path/host fields). No free-form `env` map — a token pasted here would
-land on disk; Settings (TD-4403) keeps paste-a-token in the keychain.
-Settings persist add / disable / remove through `set_mcp_server` and
-`delete_mcp_server`; the write is surgical so teaching comments survive.
-There is no `env` field on those messages. Live sessions keep the tool
-set they attached with until a new session.
+path/host fields). Settings persist add / disable / remove through
+`set_mcp_server` and `delete_mcp_server`; the write is surgical so
+teaching comments survive. There is no `env` or `headers` field on those
+messages: a rewrite keeps the server's existing ones, unless it changes
+the transport, which drops them and deletes their keychain items. Live
+sessions keep the tool set they attached with until a new session.
+
+**Tokens per server (TD-5110).** A stdio server's `env` and an http
+server's `headers` map names to values. A value is either a literal,
+which is not a secret because it sits in this file, or
+`keychain:<entry>`. A reference names the OS keychain item
+`tst-mcp.<server id>.<entry>` (service `com.thatsimpletech.tstdesk`), so
+a server can only reach its own items. The daemon reads each item when
+it starts that server and gives it to that child's environment, on top
+of the daemon's own, or to that server's requests. It never goes into
+the daemon's environment, so no other child sees it. A missing or
+unreadable item fails that server with a doctor row that names the item;
+the server does not start without it. `env` on an http server, or
+`headers` on a stdio one, fails the server the same way.
+
+Settings → MCP servers stores a token without ever showing it. Under a
+listed server, name it (an env var for stdio, a header such as
+`Authorization` for http, whose value is the whole header, for example
+`Bearer …`) and save. The value goes to the keychain under the name
+lowercased (`GITHUB_TOKEN` → `github_token`) and this file gets only the
+reference. Saving a name that already has an entry replaces the value
+there. Remove drops the name from this file and deletes its item;
+removing the server deletes all of its items. A stored value must be
+one line of printable ASCII and at least 8 characters. Every value the
+daemon reads or stores is scrubbed by its exact text from the log, the
+audit DB and the events from then on, whatever its shape. Settings
+lists each name with where it lives (keychain, stored or not, or this
+file); it never shows a value, literal or not.
 
 Strict OpenAI-compatible servers (vLLM, llama.cpp, LM Studio) reject the
 whole request when one tool is malformed, so each listed tool is checked
@@ -732,6 +759,8 @@ reply per call), so `timeout_seconds` bounds the whole call.
 | `timeout_seconds` | number > 0 | `30` | Longest silence in a tool call: no result and no progress for this long ends the call and sends `notifications/cancelled`. Over http it bounds the whole call. Settings keeps it when it toggles or edits the server. |
 | `startup_timeout_seconds` | number > 0 | `8` | Time allowed for each step of the handshake (`initialize`, then `tools/list`), whatever `timeout_seconds` says. Raise it for a server that loads a model before it answers. |
 | `max_call_seconds` | number > 0 | `600` | Hard cap on one stdio tool call, progress or not. Never below `timeout_seconds`. |
+| `env` | mapping of name → string | `{}` | stdio only. Extra environment for this server's child, on top of the daemon's. Names are `[A-Za-z_][A-Za-z0-9_]*`. A value is a literal or `keychain:<entry>` (entry: lowercase letters, digits, `_` and `-`, at most 64). Numbers become strings; a YAML boolean is refused, so quote it. A value may not hold a line break or NUL. |
+| `headers` | mapping of name → string | `{}` | http only. Extra headers on every request to this server, same value rules as `env`. Names are HTTP field names, one spelling each (case is ignored). `Accept`, `Connection`, `Content-Length`, `Content-Type`, `Host` and `Transfer-Encoding` are TST Desk's own and are refused. |
 
 <!-- verify: model -->
 ```yaml
@@ -843,10 +872,15 @@ mcp:
       timeout_seconds: 120
       startup_timeout_seconds: 30
       max_call_seconds: 1800
+      env:
+        RENDER_TOKEN: "keychain:render_token"
+        RENDER_QUALITY: "draft"
     loop:
       transport: http
       url: http://127.0.0.1:9
       enabled: true
+      headers:
+        Authorization: "keychain:authorization"
 engine:
   kind: native
   binary: ""

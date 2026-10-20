@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+from collections.abc import Mapping
 from typing import Any
 
 from ..logging import get_logger
@@ -32,7 +34,9 @@ class StdioMcpClient:
     """One JSON-RPC session over a child process's stdio.
 
     Stderr is drained so a chatty server cannot fill the pipe and stall.
-    No extra ``env`` map — the child inherits the daemon environment.
+    The child inherits the daemon environment plus ``env``, this server's
+    own values (TD-5110). ``env`` goes to this child's spawn and nowhere
+    else: never ``os.environ``, so no other child sees it.
     """
 
     def __init__(
@@ -42,10 +46,12 @@ class StdioMcpClient:
         timeout: float = CALL_TIMEOUT,
         max_call_seconds: float = MAX_CALL_SECONDS,
         startup_timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> None:
         if not command:
             raise McpError("stdio MCP command must be a non-empty argv")
         self._command = command
+        self._env = dict(env or {})
         self._timeout = timeout
         self._max_call = max(max_call_seconds, timeout)
         # The handshake (initialize, initialized, tools/list) answers in its
@@ -66,6 +72,7 @@ class StdioMcpClient:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 limit=STREAM_LIMIT,
+                env={**os.environ, **self._env} if self._env else None,
             )
         except OSError as e:
             raise McpError(f"failed to start stdio MCP: {e}") from e

@@ -307,15 +307,21 @@ async def _doctor_checks(daemon: Daemon) -> list[dict[str, Any]]:
 
 
 class TestConfigShape:
-    def test_env_map_is_rejected(self) -> None:
-        with pytest.raises(ValidationError, match="env"):
-            McpServerConfig.model_validate(
-                {
-                    "transport": "stdio",
-                    "command": ["true"],
-                    "env": {"TOKEN": "secret"},
-                }
-            )
+    def test_env_values_are_literals_or_keychain_references(self) -> None:
+        """TD-5110 replaced TD-4401's "no env map"; a value must still be well formed."""
+        spec = McpServerConfig.model_validate(
+            {
+                "transport": "stdio",
+                "command": ["true"],
+                "env": {"TOKEN": "keychain:token", "PORT": 8080},
+            }
+        )
+        assert spec.env == {"TOKEN": "keychain:token", "PORT": "8080"}
+        for bad in ({"1X": "a"}, {"X": True}, {"X": "a\nb"}, {"X": "keychain:Upper"}):
+            with pytest.raises(ValidationError, match="env"):
+                McpServerConfig.model_validate(
+                    {"transport": "stdio", "command": ["true"], "env": bad}
+                )
 
     def test_server_id_must_be_a_slug(self) -> None:
         with pytest.raises(ValidationError, match="lowercase slug"):

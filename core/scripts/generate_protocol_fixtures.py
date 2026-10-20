@@ -62,6 +62,7 @@ from tstd.protocol import (
     DeleteCredential,
     DeleteJob,
     DeleteJobTemplate,
+    DeleteMcpSecret,
     DeleteMcpServer,
     DeleteSession,
     Deny,
@@ -130,6 +131,7 @@ from tstd.protocol import (
     MachineList,
     MachineSummary,
     McpServerSummary,
+    McpValueSummary,
     MemoryAccept,
     MemoryEdit,
     MemoryFileDiff,
@@ -191,6 +193,7 @@ from tstd.protocol import (
     SetGrokMode,
     SetJudgments,
     SetLoadGlobalMemory,
+    SetMcpSecret,
     SetMcpServer,
     SetPlan,
     SetPreset,
@@ -442,6 +445,11 @@ FIXTURES = {
         enabled=True,
     ),
     "delete_mcp_server": DeleteMcpServer(id="example"),
+    # TD-5110: the value is a placeholder, never a real token.
+    "set_mcp_secret": SetMcpSecret(
+        server_id="example", target="env", name="GITHUB_TOKEN", value="placeholder-value"
+    ),
+    "delete_mcp_secret": DeleteMcpSecret(server_id="example", target="env", name="GITHUB_TOKEN"),
     # Diagnostics (TD-1104 doctor)
     "run_diagnostics": RunDiagnostics(),
     # Usage and cost (TD-1706)
@@ -954,6 +962,12 @@ FIXTURES = {
                 command=["python", "-m", "some_mcp"],
                 url="",
                 enabled=True,
+                env=[
+                    McpValueSummary(
+                        name="GITHUB_TOKEN", source="keychain", entry="github_token", stored=True
+                    ),
+                    McpValueSummary(name="LOG_LEVEL", source="literal"),
+                ],
             )
         ],
         speech_enabled=False,

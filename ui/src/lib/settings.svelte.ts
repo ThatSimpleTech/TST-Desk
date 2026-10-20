@@ -62,6 +62,14 @@ export type McpServerRow = {
 	enabled: boolean;
 	/** Tools left out at the last load (TD-5104). */
 	excludedTools?: { name: string; reason: string }[];
+	/** Env vars (stdio) or headers (http) by name (TD-5110). Never a value. */
+	values?: McpValueRow[];
+};
+
+export type McpValueRow = {
+	name: string;
+	source: "literal" | "keychain";
+	stored: boolean;
 };
 
 export type Theme = "light" | "system" | "dark";
@@ -412,6 +420,11 @@ function reduce(event: DaemonEventUnion): void {
 			url: row.url ?? "",
 			enabled: row.enabled ?? true,
 			excludedTools: row.excluded_tools ?? [],
+			values: [...(row.env ?? []), ...(row.headers ?? [])].map((v) => ({
+				name: v.name,
+				source: v.source,
+				stored: v.stored,
+			})),
 		}));
 		settings.speechEnabled = event.speech_enabled ?? false;
 		settings.speechReady = event.speech_ready ?? false;
@@ -752,6 +765,36 @@ export function setMcpServerEnabled(id: string, enabled: boolean): void {
 export function deleteMcpServer(id: string): void {
 	if (id.trim() === "") return;
 	sendToDaemon({ type: "delete_mcp_server", id });
+}
+
+/** An env var for a stdio server, a header for an http one (TD-5110). */
+function mcpTarget(serverId: string): "env" | "header" | null {
+	const row = settings.mcpServers.find((s) => s.id === serverId);
+	if (!row) return null;
+	return row.transport === "stdio" ? "env" : "header";
+}
+
+/** Put one value in the keychain for a listed server (TD-5110). The value
+ *  goes straight to the daemon and is never kept in this store. */
+export function saveMcpSecret(serverId: string, name: string, value: string): void {
+	const target = mcpTarget(serverId);
+	const trimmedName = name.trim();
+	const trimmedValue = value.trim();
+	if (target === null || trimmedName === "" || trimmedValue === "") return;
+	sendToDaemon({
+		type: "set_mcp_secret",
+		server_id: serverId,
+		target,
+		name: trimmedName,
+		value: trimmedValue,
+	});
+}
+
+/** Drop one env var or header, and its keychain item (TD-5110). */
+export function deleteMcpSecret(serverId: string, name: string): void {
+	const target = mcpTarget(serverId);
+	if (target === null || name.trim() === "") return;
+	sendToDaemon({ type: "delete_mcp_secret", server_id: serverId, target, name });
 }
 
 // ── Email (TD-3820) ──────────────────────────────────────────────────

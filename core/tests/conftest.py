@@ -195,6 +195,11 @@ _KEYCHAIN_SEAMS = (
     "tstd.keychain.store_github_oauth",
     "tstd.keychain.delete_github_oauth",
     "tstd.keychain.github_oauth_is_stored",
+    # TD-5110: MCP server values. Callers reach them through the module.
+    "tstd.keychain_mcp.store_mcp_secret",
+    "tstd.keychain_mcp.get_mcp_secret",
+    "tstd.keychain_mcp.delete_mcp_secret",
+    "tstd.keychain_mcp.mcp_secret_is_stored",
     "tstd.daemon.api_key_is_stored",
     "tstd.notify.slack.get_slack_webhook_url",
     "tstd.notify.ntfy.get_ntfy_topic_url",
