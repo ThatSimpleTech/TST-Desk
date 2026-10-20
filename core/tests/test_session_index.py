@@ -230,6 +230,22 @@ def test_scoping_and_one_hit_per_session(index: SessionIndex) -> None:
     assert len(index.search("parser", per_session=5, session_ids={"a"})) > 1
 
 
+def test_a_chatty_session_cannot_hide_the_others(index: SessionIndex) -> None:
+    # Hundreds of short, high-ranking hits in one session must not fill
+    # the result window before the per-session cap is applied.
+    chatty = Log("chatty")
+    _feed(index, [chatty.user("deploy", f"c{n}") for n in range(300)])
+    for n in range(20):
+        other = Log(f"s{n}")
+        _feed(index, [other.user(f"long notes about many things before we deploy {n}", "t1")])
+    hits = index.search("deploy", limit=50, per_session=1)
+    assert len(hits) == 21
+    assert {h.session_id for h in hits} == {"chatty"} | {f"s{n}" for n in range(20)}
+    recall = index.search("deploy", limit=5, per_session=2)
+    assert len(recall) == 5
+    assert sum(h.session_id == "chatty" for h in recall) == 2
+
+
 def test_removing_a_session_drops_its_rows(index: SessionIndex) -> None:
     a, b = Log("a"), Log("b")
     _feed(index, _two_turns(a) + _two_turns(b))

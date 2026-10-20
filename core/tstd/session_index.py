@@ -362,37 +362,45 @@ class SessionIndex:
         per_session: int,
         tokens: int,
     ) -> list[SearchHit]:
-        sql = (
-            "SELECT m.session_id, m.turn, m.turn_id, m.role, "
-            "snippet(messages_fts, 0, '', '', ?, ?) "
-            "FROM messages_fts JOIN messages AS m ON m.id = messages_fts.rowid "
-            "WHERE messages_fts MATCH ?"
-        )
-        params: list[object] = [ELLIPSIS, tokens, expression]
+        # Rank every match, keep the best *per_session* of each session
+        # inside SQL, then take the overall best *limit*. Capping before
+        # the LIMIT means one chatty session cannot crowd the others out;
+        # snippets are cut only for the rows that are kept.
+        scope = ""
+        params: list[object] = [expression]
         if session_ids is not None:
-            sql += " AND m.session_id IN (SELECT value FROM json_each(?))"
+            scope = " AND m.session_id IN (SELECT value FROM json_each(?))"
             params.append(_json_list(session_ids))
-        # Over-fetch so one chatty session cannot crowd the others out.
-        sql += " ORDER BY bm25(messages_fts), m.seq DESC LIMIT ?"
-        params.append(limit * per_session * 4 + 16)
-        hits: list[SearchHit] = []
-        taken: dict[str, int] = {}
-        for session_id, turn, turn_id, role, snippet in conn.execute(sql, params):
-            if taken.get(session_id, 0) >= per_session:
-                continue
-            taken[session_id] = taken.get(session_id, 0) + 1
-            hits.append(
-                SearchHit(
-                    session_id=session_id,
-                    turn=int(turn),
-                    turn_id=turn_id,
-                    role="user" if role == "user" else "assistant",
-                    snippet=" ".join(str(snippet).split()),
-                )
+        sql = (
+            # bm25() only works in the FTS query itself, so the score is
+            # materialised first and the window ranks over that column.
+            "WITH scored AS MATERIALIZED ("
+            " SELECT m.id AS id, m.session_id AS session_id, m.seq AS seq,"
+            " bm25(messages_fts) AS score"
+            " FROM messages_fts JOIN messages AS m ON m.id = messages_fts.rowid"
+            " WHERE messages_fts MATCH ?" + scope + "),"
+            " ranked AS (SELECT id, seq, score, ROW_NUMBER() OVER ("
+            "PARTITION BY session_id ORDER BY score, seq DESC) AS n FROM scored),"
+            " kept AS (SELECT id, seq, score FROM ranked WHERE n <= ?"
+            " ORDER BY score, seq DESC LIMIT ?)"
+            " SELECT m.session_id, m.turn, m.turn_id, m.role,"
+            " snippet(messages_fts, 0, '', '', ?, ?)"
+            " FROM kept JOIN messages_fts ON messages_fts.rowid = kept.id"
+            " JOIN messages AS m ON m.id = kept.id"
+            " WHERE messages_fts MATCH ?"
+            " ORDER BY kept.score, kept.seq DESC"
+        )
+        params += [per_session, limit, ELLIPSIS, tokens, expression]
+        return [
+            SearchHit(
+                session_id=session_id,
+                turn=int(turn),
+                turn_id=turn_id,
+                role="user" if role == "user" else "assistant",
+                snippet=" ".join(str(snippet).split()),
             )
-            if len(hits) >= limit:
-                break
-        return hits
+            for session_id, turn, turn_id, role, snippet in conn.execute(sql, params)
+        ]
 
     # ── Internals ────────────────────────────────────────────────────
 
