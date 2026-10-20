@@ -2144,8 +2144,10 @@ export interface ContextCompacted extends DaemonEvent {
   /** What asked for it (TD-5109); older daemons omit it, meaning "auto".
    *  `inflight_trim` is not compaction: the loop trimmed this turn's tool
    *  results, no message left, and `dropped_messages` counts the results
-   *  trimmed (TD-5150). */
-  trigger?: "auto" | "manual" | "from_here" | "inflight_trim";
+   *  trimmed (TD-5150). `clear_stale` is not compaction either: tool
+   *  results from earlier turns became one-line placeholders, no message
+   *  left, and `dropped_messages` counts the results cleared (TD-5115). */
+  trigger?: "auto" | "manual" | "from_here" | "inflight_trim" | "clear_stale";
   guidance?: string | null;
 }
 

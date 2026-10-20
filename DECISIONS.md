@@ -15506,3 +15506,83 @@ Python (Python's `[^x]` is not bash's); dynamic filter pins as in
 `git_raw` (an in-tree `diff=` attribute can still route to a configured
 external diff command, which no `-c` value turns off); a column on
 `tool_calls`.
+
+## TD-5115 — Clear stale tool results before whole turns compact (Class B)
+
+2026-10-20. Compaction (TD-405) was the only way old context left a
+session: past the budget, every turn but the last two folded into a
+2,000-character summary. On a 32,768-token local tier most of what fills
+the budget by then is old tool output the model has already used.
+Anthropic's API clears it server-side (context editing, `clear_tool_uses`);
+TST Desk now does it in the client.
+
+**Decision:** a new `clear_tool_results` section in config.yaml
+(`enabled`, `keep_recent_tool_results` = 3, `clear_at_least_tokens` =
+2,000, `exclude_tools` = []), on by default. Before `maybe_compact`, at the
+same budget, `context_clear.clear_stale_tool_results` replaces tool results
+of earlier turns, outside the newest three and not from an excluded tool,
+with one line: `[Earlier tool result cleared to save context: fs_read
+"docs/spec.md", 12,000 chars. Run the tool again if you need it.]`. The
+target is the call's `path`, `file_path`, `url`, `command`, `query`,
+`pattern`, `task` or `target` argument, on one line and cut to 80
+characters. One clear takes every stale result at once, and goes ahead only
+when it frees `clear_at_least_tokens` and brings the prompt to 70% of the
+budget or under (`ELIDE_TARGET_FRACTION`, the trim's hysteresis from
+TD-5010; the gap audit calls it TD-5009's). Otherwise the turn compacts as
+before, except that a session with no older turn to fold clears even when
+it lands higher. A cleared line is never rewritten, and it depends only on
+the call and the result it replaced. The loop announces a clear as
+`context_compacted` with the new trigger `clear_stale`, `dropped_messages`
+counting the results cleared, and the window shows it as the TD-5150 "Trim"
+row with the preview "Cleared earlier tool results".
+
+**Rationale:**
+
+- *Earlier turns only.* The running turn's results are what the model is
+  working from, and compaction never touches them either; TD-5010's trim
+  already handles their overflow. Clearing them would change what the
+  model sees mid-task (the six reads behind one page in
+  `test_parallel_reads_fit_a_32k_tier`). This is the conservative reading
+  of the story, whose gap is that earlier turns' results live until their
+  whole turn is compacted.
+- *Every stale result per clear, not just down to 70%.* A clear rewrites
+  the prompt from the oldest result it touches, so a partial clear leaves
+  a run of old results behind that the next clear re-reads; a full clear
+  leaves only the results added since. In the loop replay below with a
+  lighter system prompt (run outside the test harness, 60 turns), clearing
+  oldest-first only down to 70% took 6 clears whose rebuilds re-read 127k
+  tokens; clearing every stale result took 3 clears and 24k.
+- *The landing rule.* Once the user's messages, the answers, the kept
+  results and the placeholders fill most of the budget, a clear buys a turn
+  or two and the next follows straight after: one prefix rebuild per turn,
+  the flapping TD-5010 removed from the trim. Requiring the 70% landing
+  hands those cases to compaction, which makes the big cut, and clearing
+  starts again on the turns it keeps. In the replay below (60 turns), no
+  landing rule meant 17 clears and 107k tokens re-read (111k when also
+  stopping at 70%); with it, 10 clears, 2 compactions and 74k.
+- *`clear_at_least_tokens` is all or nothing,* as in Anthropic's
+  `clear_at_least`: a small clear costs a whole prefix rebuild.
+- *The trim row, not a new row kind.* A clear removes no message, like the
+  trim, and TD-5150 made that row for exactly that. A window from before
+  this change reads the unknown trigger as "Context compacted", which
+  TD-5150 already guarantees.
+
+**Measured** on EZER with the replay in
+`core/tests/test_clear_stale_results.py` (`_long_session`: the real loop
+and dispatcher with MockProvider on a 32,768-token tier; each turn reads a
+~7.7k-character file and answers). The test runs 30 turns: 4 compactions
+with clearing off, none with it on (5 clears). The same replay at 60
+turns: 9 compactions off; 2 on, with 10 clears. Between clears and
+compactions every request starts with the previous request byte for byte
+(the test checks it). The cost: the prompt changes somewhat more often (12
+rebuilds instead of 9 over 60 turns) and the rebuilds re-read more (74k
+tokens in all instead of 39k), because the conversation kept verbatim is
+longer than a summary. The live model in the running app was not measured.
+
+**Rejected:** clearing this turn's results too (Anthropic does, with no
+trim to fall back on; here the trim exists and clearing would hide what
+the model is using); stopping at 70% of the budget (above); a new
+"Clear" row kind and glyph (the trim row says the same thing); clearing
+the tool calls' arguments too (`clear_tool_inputs`; small, and the
+placeholder already names the target); a per-tier policy (one policy
+reads the same everywhere, and the budget already scales with the tier).

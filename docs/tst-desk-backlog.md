@@ -9566,6 +9566,51 @@ other's request.
       fail when `wire_messages` is a no-op: they restore a regression
       guard and pass on the old code (qualified by TD-5158)
 
+### TD-5115 — Clear stale tool results
+**Size:** 3 · **Depends on:** none · Gap audit 2026-10-14, item 15
+
+Old tool results stayed in the prompt until compaction folded their whole
+turn into a summary; only the running turn's results were ever trimmed
+(`core/tstd/context_fit.py`). On a 32k local window that meant frequent
+compactions of turns whose words still mattered, to get rid of file reads
+the model had already used. Anthropic's API clears such results
+server-side (context editing, tool-result clearing); this does it in the
+client.
+
+**Acceptance criteria:**
+- [x] Policy keys `keep_recent_tool_results`, `clear_at_least_tokens` and
+      `exclude_tools` (in `clear_tool_results` in config.yaml, with
+      `enabled`). Older results are replaced with a short placeholder
+      (tool, target, size) before whole turns are compacted: at the
+      compaction budget, earlier turns' results outside the newest
+      `keep_recent_tool_results` and not from an excluded tool become one
+      line, and compaction runs only if the prompt is still over
+- [x] The prefix stays byte-stable between clears, so the llama.cpp prefix
+      cache still hits: a cleared line depends only on its call and result
+      and is never rewritten, and a long session's requests each start
+      with the previous one byte for byte except where a clear or a
+      compaction is announced
+- [x] Clearing happens in batches, with the TD-5010 hysteresis (the gap
+      audit says TD-5009): one clear takes every stale result, and goes
+      ahead only when it frees `clear_at_least_tokens` and lands at 70% of
+      the budget or under; otherwise the turn compacts as before. Never
+      two clears on consecutive requests in the tests
+- [x] Measured on EZER with a replayed long session through the real loop
+      (MockProvider, 32,768-token tier): 30 turns compacted 4 times with
+      clearing off and never with it on; 60 turns 9 times off and 2 times
+      on (DECISIONS.md, with the prefix-rebuild cost)
+- [ ] Measured on EZER against the live local model in the running app.
+      Not done: it needs this change deployed, which this story does not
+      do
+- [x] A clear is announced as `context_compacted` with the trigger
+      `clear_stale` (`dropped_messages` counts the results cleared), shown
+      as the quiet "Trim" row previewed "Cleared earlier tool results";
+      `docs/architecture.md`, `docs/configuration.md` and the protocol
+      fixtures (`context_compacted_clear_stale`) say so
+- [x] Tests in `core/tests/test_clear_stale_results.py` and the ui
+      timeline, trim-row and protocol tests fail on the old code and pass
+      on the new
+
 ### TD-5113 — Trust prompt for repo-supplied config
 **Size:** 3 · **Depends on:** none
 

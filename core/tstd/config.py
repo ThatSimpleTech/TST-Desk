@@ -548,6 +548,41 @@ class SessionConfig(BaseModel):
     send_file_session_max_bytes: int = Field(default=4_294_967_296, ge=1)
 
 
+class ClearToolResultsConfig(BaseModel):
+    """Clear stale tool results before whole turns compact (TD-5115).
+
+    Once the prompt is over the compaction budget, the tool results of
+    earlier turns become, in one batch, a one-line placeholder naming the
+    tool, its target and the size that went. The newest
+    ``keep_recent_tool_results`` results and every result of a tool in
+    ``exclude_tools`` stay. A clear that cannot free
+    ``clear_at_least_tokens`` does not happen: rewriting an old result
+    costs a local server its cached prefix, so it has to buy room
+    (see :mod:`tstd.context_clear`).
+    """
+
+    enabled: bool = True
+    keep_recent_tool_results: int = Field(default=3, ge=0)
+    clear_at_least_tokens: int = Field(default=2_000, ge=0)
+    exclude_tools: list[str] = Field(default_factory=list)
+
+    @field_validator("exclude_tools", mode="before")
+    @classmethod
+    def _clean_tool_names(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("exclude_tools must be a list of tool names")
+        names: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ValueError("exclude_tools must be a list of tool names")
+            name = item.strip()
+            if name and name not in names:
+                names.append(name)
+        return names
+
+
 class ShellReadOnlyConfig(BaseModel):
     """The read-only shell list (TD-5103): commands that run without asking.
 
@@ -1215,6 +1250,7 @@ class ModelConfig(BaseModel):
     project_context: ProjectContextConfig = Field(default_factory=ProjectContextConfig)
     steering: SteeringConfig = Field(default_factory=SteeringConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
+    clear_tool_results: ClearToolResultsConfig = Field(default_factory=ClearToolResultsConfig)
     shell: ShellConfig = Field(default_factory=ShellConfig)
     provider_retry: ProviderRetryConfig = Field(default_factory=ProviderRetryConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
@@ -1398,6 +1434,7 @@ def load_config(path: Path | None = None) -> ModelConfig:
         "project_context",
         "steering",
         "session",
+        "clear_tool_results",
         "scheduler",
         "computer_use",
         "remote",

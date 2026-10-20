@@ -878,6 +878,16 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect((fixtures.context_compacted as ContextCompacted).trigger ?? "auto").toBe("auto");
   });
 
+  it("context_compacted_clear_stale clears earlier turns' results (TD-5115)", () => {
+    const m = fixtures.context_compacted_clear_stale as ContextCompacted;
+    expect(m.type).toBe("context_compacted");
+    expect(m.trigger).toBe("clear_stale");
+    // The fields an older window reads are all still there.
+    expect(isNumber(m.dropped_messages)).toBe(true);
+    expect(isNumber(m.kept_messages)).toBe(true);
+    expect(m.tokens_before).toBeGreaterThan(m.tokens_after);
+  });
+
   it("context_compacted_inflight_trim is the in-turn trim (TD-5150)", () => {
     const m = fixtures.context_compacted_inflight_trim as ContextCompacted;
     expect(m.type).toBe("context_compacted");
@@ -1130,7 +1140,7 @@ describe("All fixtures have required shape", () => {
       "tool_result_truncated", "tool_result_diff", "tool_result_read_only", "tool_result_denied",
       "shell_output", "tool_progress", "approval_request", "approval_request_always_allow", "decision_logged",
       "checkpoint_notice", "verify_result", "cost_update", "boundary_update", "boundary_update_config_trust", "turn_complete",
-      "tier_state", "tier_state_plan", "context_compacted", "context_compacted_manual", "context_compacted_inflight_trim", "context_usage", "steering_reloaded", "rule_activated", "tier_switched",
+      "tier_state", "tier_state_plan", "context_compacted", "context_compacted_manual", "context_compacted_inflight_trim", "context_compacted_clear_stale", "context_usage", "steering_reloaded", "rule_activated", "tier_switched",
       "instruction_stack", "instruction_files", "command_list", "context_pins", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "steering_proposal", "steering_decision", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",

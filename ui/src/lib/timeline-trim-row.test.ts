@@ -45,6 +45,16 @@ describe("TimelineEntryRow for context_compacted (TD-5150)", () => {
 		expect(el.querySelector(".preview")?.textContent).toBe("Trimmed tool output · 30500 → 29300 tokens");
 	});
 
+	it("draws a clear of earlier results as the same muted Trim row (TD-5115)", () => {
+		const el = row(fixtures.context_compacted_clear_stale as ContextCompacted);
+		expect(el.classList.contains("row--quiet")).toBe(true);
+		expect(el.classList.contains("row--neutral")).toBe(true);
+		expect(el.querySelector(".kind")?.textContent).toBe("Trim");
+		expect(el.querySelector(".preview")?.textContent).toBe(
+			"Cleared earlier tool results · 23123 → 13153 tokens",
+		);
+	});
+
 	it("keeps a compaction loud", () => {
 		const el = row(fixtures.context_compacted as ContextCompacted);
 		expect(el.classList.contains("row--quiet")).toBe(false);

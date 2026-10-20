@@ -98,13 +98,21 @@ function compactionTitle(trigger: string): string {
     : COMPACTION_TITLES.auto;
 }
 
+/** What each kind of trim says it did. */
+const TRIM_PREVIEWS: Record<"inflight_trim" | "clear_stale", string> = {
+  inflight_trim: "Trimmed tool output",
+  clear_stale: "Cleared earlier tool results",
+};
+
 /** The in-turn trim (TD-5150) arrives as context_compacted but folds no
  *  turn away: it shortened this turn's tool results, so it gets its own
  *  quieter row and says how many results and how many tokens it freed.
  *  The title is the two numbers and nothing else: the "Trim" label says
  *  what happened, and a 200px activity pane (the phone) has room for the
- *  label and the start of the title only, so the numbers go first. */
-function trimEntry(event: ContextCompacted): TimelineEntry {
+ *  label and the start of the title only, so the numbers go first.
+ *  Clearing earlier turns' results (TD-5115) folds no turn away either,
+ *  so it is the same row; only the preview says which it was. */
+function trimEntry(event: ContextCompacted, trigger: keyof typeof TRIM_PREVIEWS): TimelineEntry {
   const results = event.dropped_messages;
   const freed = Math.max(0, event.tokens_before - event.tokens_after);
   return {
@@ -112,14 +120,14 @@ function trimEntry(event: ContextCompacted): TimelineEntry {
     kind: "trim",
     seq: event.seq,
     title: `${results} ${results === 1 ? "result" : "results"} · ${formatTokens(freed)} tokens freed`,
-    preview: `Trimmed tool output · ${event.tokens_before} → ${event.tokens_after} tokens`,
+    preview: `${TRIM_PREVIEWS[trigger]} · ${event.tokens_before} → ${event.tokens_after} tokens`,
     details: {
       trimmed_results: results,
       tokens_freed: freed,
       tokens_before: event.tokens_before,
       tokens_after: event.tokens_after,
       kept_messages: event.kept_messages,
-      trigger: "inflight_trim",
+      trigger,
     },
   };
 }
@@ -221,7 +229,7 @@ export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
     case "context_compacted": {
       // TD-5109: say who asked, and what the summary was told to keep.
       const trigger = event.trigger ?? "auto";
-      if (trigger === "inflight_trim") return trimEntry(event);
+      if (trigger === "inflight_trim" || trigger === "clear_stale") return trimEntry(event, trigger);
       const guidance = event.guidance ?? null;
       const counts = `${event.tokens_before} → ${event.tokens_after} tokens (${event.dropped_messages} dropped)`;
       return {

@@ -72,7 +72,8 @@ from .context.embeddings import EmbeddingsClient, load_memory_for_turn
 from .context.manifest import ManifestConfig, manifest_config_for_window
 from .context.skills import apply_slash_skill, list_workspace_skills
 from .context.stack import build_instruction_stack
-from .context.tokens import make_token_counter
+from .context.tokens import TokenCounter, make_token_counter
+from .context_clear import clear_stale_tool_results
 from .context_fit import fit_inflight_turn, tool_result_char_cap, transcript_failure_text
 from .cost import CallRecord, CostTracker
 from .cu_verify import ActuationVerifier
@@ -238,6 +239,53 @@ def _warn_verdict_cap_once(tier_cfg: TierConfig, base_url: str, model: str) -> N
                 "model": model,
                 "max_tokens": _VERDICT_MAX_TOKENS,
                 "verdict_extra_body_set": tier_cfg.verdict_extra_body is not None,
+            }
+        },
+    )
+
+
+async def _clear_stale_results(
+    session: Session,
+    messages: list[ChatMessage],
+    tier: TierName,
+    tier_cfg: TierConfig,
+    counter: TokenCounter,
+    tool_definitions: list[ProviderToolDefinition] | None,
+    config: ModelConfig,
+) -> None:
+    """Clear earlier turns' tool results in place when over budget (TD-5115).
+
+    Announced like the in-turn trim: ``context_compacted`` with its own
+    trigger, so the window shows a quiet row rather than a compaction.
+    """
+    cleared, stats = clear_stale_tool_results(
+        messages, tier_cfg, counter, config.clear_tool_results, tool_definitions
+    )
+    if stats is None:
+        return
+    messages[:] = cleared
+    await session.conversation_changed()
+    await session.event_log.add(
+        ContextCompacted(
+            session_id=session.id,
+            dropped_messages=stats.cleared_results,
+            kept_messages=stats.kept_messages,
+            tokens_before=stats.tokens_before,
+            tokens_after=stats.tokens_after,
+            trigger="clear_stale",
+            seq=1,  # overwritten by the event log
+        )
+    )
+    log.info(
+        "stale tool results cleared",
+        extra={
+            "extra_fields": {
+                "session_id": session.id,
+                "tier": tier,
+                "cleared_results": stats.cleared_results,
+                "tokens_before": stats.tokens_before,
+                "tokens_after": stats.tokens_after,
+                "counter_method": stats.counter_method,
             }
         },
     )
@@ -1736,6 +1784,14 @@ async def agent_loop(
                 )
                 _token_counters[counter_key] = counter
             session.context_meter = ContextMeter(tier, tier_cfg, counter, tool_definitions)
+            # Old tool results go before whole turns do (TD-5115): over
+            # the same budget, earlier turns' results become one-line
+            # placeholders in one batch that must land at 70% of it or
+            # under, so the turns stay verbatim and the prefix holds
+            # until the next batch. Compaction still runs if over.
+            await _clear_stale_results(
+                session, messages, tier, tier_cfg, counter, tool_definitions, config
+            )
             compacted, compaction = maybe_compact(messages, tier_cfg, counter, tool_definitions)
             if compaction is not None:
                 messages[:] = compacted

@@ -1233,6 +1233,17 @@
     "trigger": "inflight_trim",
     "guidance": null
   },
+  "context_compacted_clear_stale": {
+    "type": "context_compacted",
+    "seq": 18,
+    "session_id": "sess-1",
+    "dropped_messages": 5,
+    "kept_messages": 34,
+    "tokens_before": 23123,
+    "tokens_after": 13153,
+    "trigger": "clear_stale",
+    "guidance": null
+  },
   "context_usage": {
     "type": "context_usage",
     "seq": 18,

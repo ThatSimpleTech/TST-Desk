@@ -2014,7 +2014,13 @@ class ContextCompacted(DaemonEvent):
     shortened the middles of this turn's tool results (TD-5010) and no
     message left the conversation.  ``dropped_messages`` then counts the
     tool results trimmed, and ``kept_messages`` is every message.  The
-    window shows it as a quieter "Trimmed tool output" row."""
+    window shows it as a quieter "Trimmed tool output" row.
+
+    ``trigger: "clear_stale"`` (TD-5115) is not compaction either: tool
+    results from earlier turns were replaced with a one-line placeholder
+    before any turn had to be compacted.  ``dropped_messages`` counts the
+    results cleared and ``kept_messages`` is every message.  The window
+    shows it as the same quiet row, "Cleared earlier tool results"."""
 
     type: Literal["context_compacted"] = "context_compacted"
     session_id: str
@@ -2024,8 +2030,9 @@ class ContextCompacted(DaemonEvent):
     tokens_after: int = Field(ge=0)
     #: What compacted (TD-5109): the budget (``auto``), ``/compact`` or
     #: the gauge (``manual``), or "Summarize from here" (``from_here``).
-    #: ``inflight_trim`` is the in-turn tool-result trim (TD-5150).
-    trigger: Literal["auto", "manual", "from_here", "inflight_trim"] = "auto"
+    #: ``inflight_trim`` is the in-turn tool-result trim (TD-5150), and
+    #: ``clear_stale`` the clearing of earlier turns' results (TD-5115).
+    trigger: Literal["auto", "manual", "from_here", "inflight_trim", "clear_stale"] = "auto"
     guidance: str | None = None
 
 
