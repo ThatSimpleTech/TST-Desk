@@ -309,6 +309,35 @@ class SetBranch(ClientMessage):
     sibling_index: int
 
 
+class PreviewRestoreFiles(ClientMessage):
+    """Ask what "Restore files to here" would undo for one user turn (TD-5125).
+
+    ``turn_id`` is that turn's ``user_turn`` id. Answered on this connection
+    with ``files_restore_preview``. Writes nothing. Refused mid-turn.
+    """
+
+    type: Literal["preview_restore_files"] = "preview_restore_files"
+    session_id: str
+    turn_id: str = Field(min_length=1, max_length=200)
+
+
+class RestoreFiles(ClientMessage):
+    """Restore the files a ``files_restore_preview`` showed (TD-5125).
+
+    ``plan_id`` is the preview's. When the session branch or one of the files
+    changed since, nothing is written and the answer is ``restore_stale``.
+    ``include_hand_edited`` names the hand-edited files the person ticked;
+    every other hand-edited file is left alone. Refused mid-turn. Logged as
+    ``files_restored``.
+    """
+
+    type: Literal["restore_files"] = "restore_files"
+    session_id: str
+    turn_id: str = Field(min_length=1, max_length=200)
+    plan_id: str = Field(min_length=1, max_length=64)
+    include_hand_edited: list[str] = Field(default_factory=list, max_length=10_000)
+
+
 class Approve(ClientMessage):
     """Approve a pending tool call."""
 
@@ -1739,6 +1768,56 @@ class ConversationReset(DaemonEvent):
     sibling_index: int
     sibling_count: int
     content: str
+
+
+class RestoreFileEntry(BaseModel):
+    """One file "Restore files to here" would change (TD-5125).
+
+    ``change`` is what restoring does: ``modify`` the content, ``delete`` a
+    file the agent made, or ``recreate`` one it deleted. A ``hand_edited``
+    file was changed by something other than the agent after the agent did;
+    it is left alone unless the person ticks it.
+    """
+
+    path: str
+    change: Literal["modify", "delete", "recreate"]
+    hand_edited: bool = False
+
+
+class FilesRestorePreview(DaemonEvent):
+    """What "Restore files to here" would undo (TD-5125). This connection only.
+
+    ``files`` is every file the agent changed since the turn, with paths
+    relative to the repository; ``diff`` shows each from how it was then to
+    how it is now (the changes a restore takes away), cut at a size limit
+    when ``diff_truncated``. No files means nothing to restore.
+    """
+
+    type: Literal["files_restore_preview"] = "files_restore_preview"
+    seq: int = 1
+    session_id: str
+    turn_id: str
+    plan_id: str
+    files: list[RestoreFileEntry] = Field(default_factory=list)
+    diff: str = ""
+    diff_truncated: bool = False
+
+
+class FilesRestored(DaemonEvent):
+    """Files were put back as they were before a user turn (TD-5125).
+
+    ``restored`` were written, ``removed`` were deleted, ``left_alone`` are the
+    hand-edited files nobody ticked, and ``lfs_pointers`` were written as a
+    git-lfs pointer because the object is not stored locally.
+    """
+
+    type: Literal["files_restored"] = "files_restored"
+    session_id: str
+    turn_id: str
+    restored: list[str] = Field(default_factory=list)
+    removed: list[str] = Field(default_factory=list)
+    left_alone: list[str] = Field(default_factory=list)
+    lfs_pointers: list[str] = Field(default_factory=list)
 
 
 class SteerPoint(BaseModel):
@@ -3774,6 +3853,8 @@ ClientMessageT = Annotated[
     | ForkFrom
     | CompactContext
     | SetBranch
+    | PreviewRestoreFiles
+    | RestoreFiles
     | SetSkipAllApprovals
     | SetLoadGlobalMemory
     | SetCoworker
@@ -3887,6 +3968,8 @@ DaemonEventT = Annotated[
     Ready
     | SessionState
     | ConversationReset
+    | FilesRestorePreview
+    | FilesRestored
     | UserTurn
     | QueuedMessages
     | AssistantDelta
@@ -3989,6 +4072,8 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "fork_from",
         "compact_context",
         "set_branch",
+        "preview_restore_files",
+        "restore_files",
         "set_skip_all_approvals",
         "set_load_global_memory",
         "set_judgments",
@@ -4102,6 +4187,8 @@ _KNOWN_EVENT_TYPES = frozenset(
         "ready",
         "session_state",
         "conversation_reset",
+        "files_restore_preview",
+        "files_restored",
         "user_turn",
         "queued_messages",
         "assistant_delta",

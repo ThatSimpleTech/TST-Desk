@@ -17,6 +17,7 @@ import os
 import stat
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 from .git_eol import checkin_eol, eol_action, eol_config, has_text_crlf, path_attributes
@@ -320,12 +321,18 @@ class _Plan:
 
 
 def _plan(
-    top: Path, rels: Sequence[str], tracked: Mapping[str, tuple[str, str]], *, explicit: bool
+    top: Path,
+    rels: Sequence[str],
+    tracked: Mapping[str, tuple[str, str]],
+    *,
+    explicit: bool,
+    missing_ok: bool = False,
 ) -> _Plan:
     """lstat each path. A missing one removes what is tracked at or under it.
 
     *explicit* paths came from the caller, so a missing untracked one is
-    an error, as for ``git add``; listed ones (a folder's contents) are not.
+    an error, as for ``git add``, unless *missing_ok*; listed ones (a
+    folder's contents) are not.
     """
     plan = _Plan({}, [], [], [])
     for rel in rels:
@@ -335,7 +342,7 @@ def _plan(
             st = os.lstat(top / rel)
         except (FileNotFoundError, NotADirectoryError):
             under = [t for t in tracked if t == rel or t.startswith(rel + "/")]
-            if explicit and not under:
+            if explicit and not under and not missing_ok:
                 raise GitRawError(f"pathspec '{rel}' did not match any files") from None
             plan.removes += under
             continue
@@ -352,14 +359,16 @@ def _plan(
 
 
 async def stage_paths(
-    top: Path, paths: Sequence[Path], *, env: Mapping[str, str]
+    top: Path, paths: Sequence[Path], *, env: Mapping[str, str], missing_ok: bool = False
 ) -> list[IndexEntry]:
     """Put *paths* into the index ``GIT_INDEX_FILE`` in *env* names, as raw bytes.
 
     Mirrors ``git add -- <paths>`` without filters: a file or link is
     hashed as it is on disk, a missing tracked path is removed, a folder
     stages what ``git add`` would under it, and an untracked ignored path
-    is refused the way ``git add`` refuses it.
+    is refused the way ``git add`` refuses it. A path neither on disk nor
+    tracked is refused too, unless *missing_ok* (TD-5125: a file an agent
+    write is about to create, or one it created and a restore removed).
     """
     rels = list(
         dict.fromkeys(await asyncio.to_thread(lambda: [repo_relative(top, p) for p in paths]))
@@ -369,7 +378,9 @@ async def stage_paths(
     filemode = bools.get("core.filemode", os.name != "nt")
     symlinks = bools.get("core.symlinks", os.name != "nt")
 
-    plan = await asyncio.to_thread(_plan, top, rels, tracked, explicit=True)
+    plan = await asyncio.to_thread(
+        partial(_plan, top, rels, tracked, explicit=True, missing_ok=missing_ok)
+    )
     explicit = [*plan.files, *plan.links]
     if plan.folders:
         tracked.update(await _ls_stage(top, plan.folders, env))

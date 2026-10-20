@@ -521,6 +521,18 @@ class ToolDispatcher:
             before_snapshots = {
                 field: snapshot_text(canonical) for field, canonical in canonical_writes.items()
             }
+            # TD-5125: the person's own changes to these files, kept on the
+            # session branch before the write buries them.
+            if self.checkpointer is not None and session is not None:
+                try:
+                    await self.checkpointer.preimage(
+                        list(canonical_writes.values()), tool_name=name, tool_call_id=tool_call_id
+                    )
+                except Exception:  # defense in depth; preimage traps its own errors
+                    log.exception(
+                        "checkpoint pre-image raised unexpectedly",
+                        extra={"extra_fields": {"tool_call_id": tool_call_id, "tool": name}},
+                    )
 
         # 3.26 Actuation verification (TD-709, dev): capture the before-state
         #      so a successful actuation can be judged against the after-state.

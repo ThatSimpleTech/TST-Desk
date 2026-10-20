@@ -1255,7 +1255,13 @@ def _checkpointer_for(session: Session) -> Checkpointer:
     branch = None
     if session.autonomy and session.charter is not None:
         branch = auto_branch(session.charter.slug)
-    return Checkpointer(Path(session.workspace_path), session.id, branch=branch)
+    # Log-Seq on every commit places it against the user turns (TD-5125).
+    return Checkpointer(
+        Path(session.workspace_path),
+        session.id,
+        branch=branch,
+        log_seq=lambda: session.event_log.last_seq,
+    )
 
 
 def rebind_config(session: Session, dispatcher: ToolDispatcher) -> None:
