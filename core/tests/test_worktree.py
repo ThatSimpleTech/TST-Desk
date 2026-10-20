@@ -244,6 +244,24 @@ async def test_close_removes_an_unchanged_worktree_whatever_was_asked(tmp_path: 
     assert git(repo, "branch", "--list", wt.branch) == ""
 
 
+async def test_tst_desk_files_are_not_changes_but_a_new_rule_is(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path / "repo")
+    wt = await opened(repo, tmp_path)
+    top = Path(wt.path)
+    for planted in (".tst/memory/notes.md", ".tst/autonomy/DECISIONS.md", ".tst/config.yaml"):
+        (top / planted).parent.mkdir(parents=True, exist_ok=True)
+        (top / planted).write_text("planted\n", encoding="utf-8")
+    assert not (await changes(wt, sanitized_env())).changed
+
+    (top / ".tst" / "rules").mkdir()
+    (top / ".tst" / "rules" / "style.md").write_text("Use tabs.\n", encoding="utf-8")
+    assert (await changes(wt, sanitized_env())).files == 1
+
+    await close(wt, "merge", title="Add a rule")
+    assert (repo / ".tst" / "rules" / "style.md").read_text(encoding="utf-8") == "Use tabs.\n"
+    assert not (repo / ".tst" / "autonomy").exists()
+
+
 async def test_close_with_changes_asks_then_keeps(tmp_path: Path) -> None:
     repo = make_repo(tmp_path / "repo")
     wt = await opened(repo, tmp_path)

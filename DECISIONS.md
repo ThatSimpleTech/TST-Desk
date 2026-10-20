@@ -16682,7 +16682,9 @@ recorded here instead of waiting for sign-off.
   removed automatically) and every main checkout "dirty" (the notice on
   every new chat), and committing them in a merge would collide with the
   main checkout's own untracked copies. Accepted memory is committed, so it
-  still counts.
+  still counts, and anything new in the shared `.tst/rules`, `skills`,
+  `commands`, `context` folders or `.tst/worktree-include` is the user's
+  work and counts too.
 - **Filters off for the checkout.** `git worktree add` runs with every
   configured filter driver pinned off, as all the daemon's git calls since
   TD-5157 (a merged `.gitattributes` must not make the daemon run a

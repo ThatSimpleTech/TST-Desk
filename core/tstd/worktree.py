@@ -143,16 +143,27 @@ async def find_repo(workspace: Path, env: Mapping[str, str]) -> RepoSpot | None:
     return RepoSpot(top=top, prefix=prefix, head=out.decode().strip())
 
 
-def _own_untracked(xy: str, path: str) -> bool:
-    """An untracked file under a ``.tst`` folder: TST Desk's, not the user's work.
+#: ``.tst`` entries that are the user's shared content, not TST Desk's own.
+_SHARED_TST = frozenset({"rules", "skills", "commands", "context", "worktree-include"})
 
-    The ``.tst/memory`` templates, the copied ``.tst/config.yaml`` and the
-    decisions ledger are planted in every worktree. They neither make one
-    "changed" nor travel back in a merge, where an untracked copy in the
-    main checkout would stop it. Memory the user accepts is committed, so
-    it still counts.
+
+def _own_untracked(xy: str, path: str) -> bool:
+    """An untracked file TST Desk planted in a ``.tst`` folder, not the user's work.
+
+    The ``.tst/memory`` templates, the copied ``.tst/config.yaml``, the
+    decisions ledger and attachment copies appear in every worktree. They
+    neither make one "changed" nor travel back in a merge, where an
+    untracked copy in the main checkout would stop it. Memory the user
+    accepts is committed, so it still counts, and so does anything new in
+    the shared ``rules``, ``skills``, ``commands`` and ``context`` folders.
     """
-    return xy == "??" and (path.startswith(".tst/") or "/.tst/" in path)
+    if xy != "??":
+        return False
+    parts = path.split("/")
+    if ".tst" not in parts[:-1]:
+        return False
+    after = parts[parts.index(".tst") + 1]
+    return after not in _SHARED_TST
 
 
 async def _status(top: Path, env: Mapping[str, str]) -> list[tuple[str, str]]:

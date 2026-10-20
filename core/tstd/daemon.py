@@ -4558,9 +4558,16 @@ class Daemon:
         if sess is not None:
             sess.worktree = None
             sess.worktree_ready = None
-        await move_session(
+        refusal = await move_session(
             self.session_registry, self._session_store, session_id, record.workspace_path
         )
+        if refusal is not None:
+            # The folder is gone: the worktree is too, so say both.
+            log.warning(
+                "session not moved back from its worktree",
+                extra={"extra_fields": {"session_id": session_id, "refusal": refusal}},
+            )
+            note = f"{note} Its folder {record.workspace_path} could not be opened."
         if sess is not None:
             await sess.event_log.add(state_event(sess, note))
 
