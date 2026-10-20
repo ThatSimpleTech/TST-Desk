@@ -15531,7 +15531,14 @@ budget or under (`ELIDE_TARGET_FRACTION`, the trim's hysteresis from
 TD-5010; the gap audit calls it TD-5009's). Otherwise the turn compacts as
 before, except that a session with no older turn to fold clears even when
 it lands higher. A cleared line is never rewritten, and it depends only on
-the call and the result it replaced. The loop announces a clear as
+its own call and the result it replaced. Its own call is the one in the
+assistant message just before it, matched there by id, or by position when
+the id is empty or shared by parallel calls; call ids are no key across the
+conversation, because the loop keeps whatever id the provider sends
+(MockProvider sends `call_mock_1` on every turn, and some servers send
+none). A result with no call of its own is never cleared, so
+`exclude_tools` cannot be checked against the wrong tool. The loop
+announces a clear as
 `context_compacted` with the new trigger `clear_stale`, `dropped_messages`
 counting the results cleared, and the window shows it as the TD-5150 "Trim"
 row with the preview "Cleared earlier tool results".
@@ -15578,6 +15585,9 @@ compactions every request starts with the previous request byte for byte
 rebuilds instead of 9 over 60 turns) and the rebuilds re-read more (74k
 tokens in all instead of 39k), because the conversation kept verbatim is
 longer than a summary. The live model in the running app was not measured.
+The counts were re-run after the call pairing fix (PR #34 review) and are
+unchanged; the replay test now also checks that every placeholder names
+the file its own turn read.
 
 **Rejected:** clearing this turn's results too (Anthropic does, with no
 trim to fall back on; here the trim exists and clearing would hide what

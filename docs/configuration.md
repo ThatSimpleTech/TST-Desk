@@ -523,6 +523,10 @@ again if it needs the output back.
   such as llama.cpp reads the prompt again from there; between clears
   nothing earlier changes, and a cleared line is never rewritten, so its
   prefix cache keeps hitting.
+- Each result is matched to its own call, the one in the model's message just
+  before it, so the line and `exclude_tools` name the right tool even when a
+  server repeats call ids from turn to turn or sends none. A result that
+  cannot be matched to a call there is never cleared.
 - Each clear shows in the Activity panel as a quiet "Trim" row, previewed
   "Cleared earlier tool results", with the results cleared and the tokens
   freed (`context_compacted` with the trigger `clear_stale`).

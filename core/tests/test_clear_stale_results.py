@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from itertools import pairwise
 from pathlib import Path
 
@@ -53,9 +53,11 @@ def _call(call_id: str, tool: str, arguments: dict[str, object]) -> ProviderTool
     )
 
 
-def _turn(n: int, chars: int = 12_000, tool: str = "fs_read") -> list[ChatMessage]:
+def _turn(
+    n: int, chars: int = 12_000, tool: str = "fs_read", call_id: str | None = None
+) -> list[ChatMessage]:
     """One finished turn: a read of ``docs/file<n>.md`` and an answer."""
-    call_id = f"t{n}"
+    call_id = f"t{n}" if call_id is None else call_id
     body = (f"file{n} line " * (chars // 10 + 1))[:chars]
     return [
         ChatMessage(role="user", content=f"turn {n}: what does file {n} say?"),
@@ -69,11 +71,17 @@ def _turn(n: int, chars: int = 12_000, tool: str = "fs_read") -> list[ChatMessag
     ]
 
 
-def _conversation(turns: int, chars: int = 12_000, **tools: str) -> list[ChatMessage]:
-    """System, *turns* finished turns, then the user message now in flight."""
+def _conversation(
+    turns: int, chars: int = 12_000, call_id: str | None = None, **tools: str
+) -> list[ChatMessage]:
+    """System, *turns* finished turns, then the user message now in flight.
+
+    *call_id* gives every turn's call the same id, as MockProvider does
+    (``call_mock_1``) and as a provider that sends none does (``""``).
+    """
     messages = [ChatMessage(role="system", content="system")]
     for n in range(1, turns + 1):
-        messages.extend(_turn(n, chars, tools.get(f"t{n}", "fs_read")))
+        messages.extend(_turn(n, chars, tools.get(f"t{n}", "fs_read"), call_id))
     messages.append(ChatMessage(role="user", content="and now?"))
     return messages
 
@@ -166,6 +174,71 @@ def test_an_excluded_tool_keeps_its_result() -> None:
     texts = _tool_texts(out)
     assert texts[0] == _tool_texts(messages)[0]
     assert texts[1].startswith(CLEARED_PREFIX)
+
+
+def _placeholder_files(messages: Sequence[ChatMessage]) -> list[str]:
+    """The target each cleared result names, oldest first."""
+    return [text.split('"')[1] for text in _tool_texts(messages) if text.startswith(CLEARED_PREFIX)]
+
+
+def test_a_result_is_named_after_its_own_call_when_ids_repeat_across_turns() -> None:
+    # MockProvider gives every turn's call ``call_mock_1``, and the loop
+    # keeps whatever id the provider sends: a result answers the call of
+    # its own assistant message, not the last call that used the id.
+    for call_id in ("call_mock_1", ""):
+        messages = _conversation(8, call_id=call_id)
+        out, stats = clear_stale_tool_results(messages, TIER, COUNTER, ON)
+        assert stats is not None
+        assert _placeholder_files(out) == [f"docs/file{n}.md" for n in range(1, 6)], call_id
+
+
+def test_an_excluded_tool_keeps_its_result_when_ids_repeat_across_turns() -> None:
+    messages = _conversation(8, call_id="call_mock_1", t1="memory_lookup")
+    policy = ClearToolResultsConfig(exclude_tools=["memory_lookup"])
+    out, stats = clear_stale_tool_results(messages, TIER, COUNTER, policy)
+    assert stats is not None
+    texts = _tool_texts(out)
+    assert texts[0] == _tool_texts(messages)[0]
+    assert texts[1] == cleared_placeholder("fs_read", "docs/file2.md", 12_000)
+
+
+def _parallel_turn(call_ids: tuple[str, str], tools: tuple[str, str]) -> list[ChatMessage]:
+    """A finished turn of two parallel reads, results in call order."""
+    calls = [
+        _call(call_id, tool, {"path": f"docs/{tool}.md"})
+        for call_id, tool in zip(call_ids, tools, strict=True)
+    ]
+    body = "x" * 12_000
+    return [
+        ChatMessage(role="user", content="read both"),
+        ChatMessage(role="assistant", content=None, tool_calls=calls),
+        *(ChatMessage(role="tool", content=body, tool_call_id=c) for c in call_ids),
+        ChatMessage(role="assistant", content="Both read."),
+    ]
+
+
+def test_parallel_calls_sharing_an_id_pair_with_their_results_in_order() -> None:
+    for call_ids in (("same", "same"), ("", "")):
+        messages = _conversation(6)
+        messages[1:1] = _parallel_turn(call_ids, ("fs_read", "memory_lookup"))
+        policy = ClearToolResultsConfig(exclude_tools=["memory_lookup"])
+        out, stats = clear_stale_tool_results(messages, TIER, COUNTER, policy)
+        assert stats is not None
+        texts = _tool_texts(out)
+        assert texts[0] == cleared_placeholder("fs_read", "docs/fs_read.md", 12_000)
+        assert texts[1] == _tool_texts(messages)[1], call_ids
+
+
+def test_a_result_with_no_call_of_its_own_is_left_alone() -> None:
+    # Its id names no call of the assistant message before it, so neither
+    # the tool nor exclude_tools can be told: it stays as it is.
+    messages = _conversation(8)
+    messages[3] = replace(messages[3], tool_call_id="t2")
+    out, stats = clear_stale_tool_results(messages, TIER, COUNTER, ON)
+    assert stats is not None
+    texts = _tool_texts(out)
+    assert texts[0] == _tool_texts(messages)[0]
+    assert _placeholder_files(out) == [f"docs/file{n}.md" for n in range(2, 6)]
 
 
 def test_a_clear_that_cannot_free_enough_does_not_happen() -> None:
@@ -424,6 +497,26 @@ def _prefix_breaks(requests: list[list[str]]) -> int:
     return len(_break_points(requests))
 
 
+def _misnamed_placeholders(requests: list[list[str]]) -> tuple[int, list[str]]:
+    """Count the cleared results in *requests*; list those that do not name
+    the file their own turn read (turn n reads ``file<n>.md``)."""
+    cleared = 0
+    wrong: list[str] = []
+    for request in requests:
+        turn = ""
+        for line in request:
+            message = json.loads(line)
+            content = message["content"]
+            if message["role"] == "user" and isinstance(content, str):
+                if content.startswith("Turn "):
+                    turn = content.split(":")[0].removeprefix("Turn ")
+            elif message["role"] == "tool" and str(content).startswith(CLEARED_PREFIX):
+                cleared += 1
+                if f'fs_read "file{turn}.md"' not in content:
+                    wrong.append(f"turn {turn}: {content}")
+    return cleared, wrong
+
+
 async def test_a_long_session_compacts_less_and_its_prompt_changes_only_in_batches(
     tmp_path: Path,
 ) -> None:
@@ -451,3 +544,11 @@ async def test_a_long_session_compacts_less_and_its_prompt_changes_only_in_batch
     assert len(clears) <= turns // 3
     points = _break_points(after_requests)
     assert min(b - a for a, b in pairwise(points)) >= 2
+    # MockProvider sends every call as ``call_mock_1``; each placeholder
+    # still names the file its own turn read.
+    last = [json.loads(line) for line in after_requests[-1]]
+    ids = [m["tool_call_id"] for m in last if m["role"] == "tool"]
+    assert len(ids) > len(set(ids)), "the replay should repeat call ids"
+    cleared, wrong = _misnamed_placeholders(after_requests)
+    assert cleared > 0
+    assert wrong == []

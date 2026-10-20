@@ -9585,6 +9585,12 @@ client.
       compaction budget, earlier turns' results outside the newest
       `keep_recent_tool_results` and not from an excluded tool become one
       line, and compaction runs only if the prompt is still over
+- [x] Each placeholder names the tool and target of the result's own call,
+      the one in the assistant message just before it, and
+      `exclude_tools` is checked against that tool, even when call ids
+      repeat across turns (MockProvider's `call_mock_1`), are empty, or are
+      shared by parallel calls; a result with no call of its own is never
+      cleared
 - [x] The prefix stays byte-stable between clears, so the llama.cpp prefix
       cache still hits: a cleared line depends only on its call and result
       and is never rewritten, and a long session's requests each start

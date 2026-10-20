@@ -24,9 +24,10 @@ The clearing policy is ``clear_tool_results`` in config.yaml:
 Every clear rewrites the prompt from the oldest result it touches on,
 which costs a local server (llama.cpp on EZER) its cached prefix. So a
 clear is a batch, and between clears nothing earlier changes: a cleared
-result is never rewritten, and its placeholder depends only on the
-tool call and the result it replaced, so the bytes are the same on every
-later request and after a restart. Taking every stale result, rather
+result is never rewritten, and its placeholder depends only on its own
+tool call (in the assistant message just before it) and the result it
+replaced, so the bytes are the same on every later request and after a
+restart. Taking every stale result, rather
 than stopping at 70% of the budget as the trim does, is what keeps the
 rebuilds few and short: the next clear starts at the results added
 since this one, near the end of the prompt, instead of re-reading a
@@ -44,6 +45,7 @@ from .config import ClearToolResultsConfig, TierConfig
 from .context.tokens import TokenCounter
 from .context_fit import ELIDE_TARGET_FRACTION
 from .provider import ChatMessage, ToolDefinition, content_as_text
+from .provider import ToolCall as ProviderToolCall
 
 #: Every placeholder starts with this, so a cleared result is never
 #: cleared again (and never changes).
@@ -94,13 +96,47 @@ def _target(arguments: str) -> str:
     return ""
 
 
-def _calls_by_id(messages: Sequence[ChatMessage]) -> dict[str, tuple[str, str]]:
-    """tool_call_id → (tool name, target) for every call in *messages*."""
-    calls: dict[str, tuple[str, str]] = {}
-    for message in messages:
-        for call in message.tool_calls or ():
-            if call.function is not None and call.id:
-                calls[call.id] = (call.function.name, _target(call.function.arguments))
+def _own_call(
+    batch: Sequence[ProviderToolCall], call_id: str, position: int
+) -> ProviderToolCall | None:
+    """The call in *batch* that the *position*-th result after it answers.
+
+    By id when the id names exactly one call in the batch; otherwise (no
+    id, or parallel calls sharing one) by position, which holds because
+    the loop appends results in call order, provided that call carries
+    the same id. ``None`` when neither matches.
+    """
+    same = [call for call in batch if call.id == call_id]
+    if len(same) == 1:
+        return same[0]
+    if position < len(batch) and batch[position].id == call_id:
+        return batch[position]
+    return None
+
+
+def _calls_by_result(messages: Sequence[ChatMessage]) -> dict[int, tuple[str, str]]:
+    """Index of each tool result → (tool name, target) of its own call.
+
+    A result answers a call of the nearest assistant message before it.
+    Ids are no key across the conversation: the loop keeps whatever id
+    the provider sends, MockProvider sends ``call_mock_1`` on every turn
+    and some servers send none, so a dictionary of ids would name another
+    turn's call and check ``exclude_tools`` against the wrong tool. A
+    result with no call of its own in that message is left out, and so
+    is never cleared.
+    """
+    calls: dict[int, tuple[str, str]] = {}
+    batch: Sequence[ProviderToolCall] = ()
+    position = 0
+    for index, message in enumerate(messages):
+        if message.role == "assistant":
+            batch = message.tool_calls or ()
+            position = 0
+        elif message.role == "tool":
+            call = _own_call(batch, message.tool_call_id or "", position)
+            position += 1
+            if call is not None and call.function is not None:
+                calls[index] = (call.function.name, _target(call.function.arguments))
     return calls
 
 
@@ -122,8 +158,8 @@ def cleared_placeholder(tool: str, target: str, chars: int, images: int = 0) -> 
     return f"{CLEARED_PREFIX}: {what}, {size}. Run the tool again if you need it.]"
 
 
-def _placeholder_for(message: ChatMessage, calls: dict[str, tuple[str, str]]) -> str:
-    tool, target = calls.get(message.tool_call_id or "", ("", ""))
+def _placeholder_for(message: ChatMessage, call: tuple[str, str]) -> str:
+    tool, target = call
     chars = len(content_as_text(message.content))
     return cleared_placeholder(tool, target, chars, _image_count(message))
 
@@ -135,13 +171,14 @@ def stale_tool_indexes(
 
     Earlier turns only (before the last user message), outside the
     newest ``keep_recent_tool_results`` results, not already cleared,
-    and not from a tool in ``exclude_tools``.
+    paired with a call of their own (see ``_calls_by_result``), and not
+    from a tool in ``exclude_tools``.
     """
     last_user = max((i for i, m in enumerate(messages) if m.role == "user"), default=-1)
     tool_indexes = [i for i, m in enumerate(messages) if m.role == "tool"]
     keep = policy.keep_recent_tool_results
     recent = set(tool_indexes[-keep:]) if keep > 0 else set()
-    calls = _calls_by_id(messages)
+    calls = _calls_by_result(messages)
     excluded = set(policy.exclude_tools)
     return [
         index
@@ -149,7 +186,8 @@ def stale_tool_indexes(
         if index < last_user
         and index not in recent
         and not is_cleared(messages[index])
-        and calls.get(messages[index].tool_call_id or "", ("", ""))[0] not in excluded
+        and index in calls
+        and calls[index][0] not in excluded
     ]
 
 
@@ -181,13 +219,13 @@ def clear_stale_tool_results(
     if not stale:
         return messages, None
 
-    calls = _calls_by_id(messages)
+    calls = _calls_by_result(messages)
     cleared = list(messages)
     changed = 0
     freed = 0
     for index in stale:
         old = content_as_text(cleared[index].content)
-        placeholder = _placeholder_for(cleared[index], calls)
+        placeholder = _placeholder_for(cleared[index], calls[index])
         # A tool message's estimate is its text alone, so the drop is
         # exact: the per-message overhead does not change.
         saved = counter.count(old).count - counter.count(placeholder).count
