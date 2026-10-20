@@ -125,7 +125,9 @@ and `--continue` send `list_sessions`, pick the row (the named id, or the
 local, unarchived session of `--workspace` that has not ended, newest by
 `updated_at`, which the daemon moves when a turn starts), refuse it while
 `busy`, then `attach` from `event_count + 1` so no earlier turn replays,
-and send `user_message`. The turn is the events from the `user_turn`
+and send `user_message` with `only_if_idle: true`, so the daemon refuses it
+with `session_busy` if another run got a turn in after that list (TD-5160).
+The turn is the events from the `user_turn`
 carrying that message to its `turn_complete`; a `[REDACTED]` in that
 `user_turn` stands for the secret-shaped text the daemon scrubbed. The message comes
 from `--message`, or from stdin for `--message -` or no `--message` (a
@@ -447,7 +449,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `hello` | — | Opening handshake: auth token plus protocol version. |
 | `pair` | — | First frame from a phone redeeming a pairing code, instead of `hello`: code, device name, protocol version. Remote peers only (loopback gets `bad_request`). Optional `replaces`: the phone's current key, whose entry is retired. Success is a bare `pair_ok` with the device's own key, then close 1000; failure is `pair_failed` or `pair_locked`, then close 1008 (TD-5014). |
 | `open_workspace` | — | Open a workspace directory as a new session. |
-| `user_message` | yes | Queue a user turn for the session's loop. With `steer: true` (additive; the window's Send now mid-turn), sent while a native-engine turn runs, it joins that turn at its next tool-batch boundary instead (TD-5112). The message is written to the session's `queued.json` before the handler returns and leaves it once its `user_turn` is saved, so a restart before the turn starts brings it back held (TD-5155). A message that cannot be written is refused with `message_not_saved` and not queued; the window puts it back in the composer (TD-5158). Every refusal names `in_reply_to: user_message`, so the window can give back a Send now row still waiting for its turn (TD-5112). |
+| `user_message` | yes | Queue a user turn for the session's loop. With `steer: true` (additive; the window's Send now mid-turn), sent while a native-engine turn runs, it joins that turn at its next tool-batch boundary instead (TD-5112). The message is written to the session's `queued.json` before the handler returns and leaves it once its `user_turn` is saved, so a restart before the turn starts brings it back held (TD-5155). A message that cannot be written is refused with `message_not_saved` and not queued; the window puts it back in the composer (TD-5158). With `only_if_idle: true` (additive; `tst run` into an existing session sets it) a session that already owes a turn refuses it with `session_busy`, checked in the same step that queues it (TD-5160). Every refusal names `in_reply_to: user_message`, so the window can give back a Send now row still waiting for its turn (TD-5112). |
 | `send_queued` | yes | Send a message a restart left held, named by its `queued_id` from `queued_messages` (TD-5155). It joins the loop's queue as if just sent, so a drain hold refuses it with `daemon_draining`; a session that can no longer run turns refuses it with `session_not_running`; an id that is no longer held is `queued_not_found`. Each refusal names `in_reply_to`. |
 | `remove_queued` | yes | Drop a message a restart left held, unsent (TD-5155). An id that is no longer held is `queued_not_found`. |
 | `fork_from` | yes | Replace a past user turn and fork a sibling from there. `user_index` counts user turns from the start of the session and is mapped through compaction summaries; a turn inside one is refused with `user_turn_compacted` (TD-5147). Refused mid-turn. Every refusal names `in_reply_to`, so the window can give the edited text back to the composer (TD-5158). |

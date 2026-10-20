@@ -456,6 +456,7 @@ from .session import (
     SessionRunner,
 )
 from .session_lifecycle import (
+    BUSY_CODE,
     apply_workspace_config,
     archive_session,
     boundary_update_event,
@@ -2597,6 +2598,17 @@ class Daemon:
                     "session_not_running",
                     f"This session is {found.state} and can no longer run turns; "
                     "the message was not delivered. Start a new session and resend it.",
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
+                )
+            # Checked with no await before add_user_message counts the turn,
+            # so of two sends that both saw the session idle only one gets
+            # in (TD-5160: `tst run --continue` races its own list_sessions).
+            if msg.only_if_idle and found.turn_in_flight:
+                return build_error(
+                    BUSY_CODE,
+                    "This session is running a turn. Let it finish, or answer its "
+                    "approval in the TST Desk window, then send again.",
                     session_id=msg.session_id,
                     in_reply_to=msg.type,
                 )
