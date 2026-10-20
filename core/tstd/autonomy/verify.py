@@ -16,7 +16,7 @@ from ..context import PromptAssembler
 from ..context.calibration import CalibrationStore, process_calibration_store
 from ..cost import CostTracker
 from ..logging import get_logger
-from ..protocol import VerifyResult
+from ..protocol import VerifyResult, VerifyStarted
 from ..provider import (
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -235,6 +235,11 @@ async def _park_ask(
         setattr(session, _ATTR_PENDING, False)
         setattr(session, _ATTR_RESUME, None)
         setattr(session, _ATTR_DENY, None)
+        # Stop is ignored while the review waits (nothing runs), so a flag
+        # still set with no turn open is a turn's, landed as it ended. It
+        # must not turn the user's Run into "Verify stopped." (TD-5158).
+        if not session.turn_in_flight:
+            session.acknowledge_stop_turn()
         await _run_validator(session, config, tracker, client_for, assembler, store)
         clear_turn_writes(session)
 
@@ -289,10 +294,14 @@ async def _run_validator(
     stopped with no verdict from the partial text.
     """
     with session.review_open():
+        # The window offers Stop until the result (TD-5158).
+        await session.event_log.add(VerifyStarted(session_id=session.id, seq=1))
         finished = await _review(session, config, tracker, client_for, assembler, store)
-    if finished:
-        return
-    await _report(session, "error", STOPPED_SUMMARY)
+    if not finished:
+        await _report(session, "error", STOPPED_SUMMARY)
+    # Acknowledged even when the review finished: a Stop that came after
+    # the call returned (while the result was being written) still reached
+    # the open review, and left set it would stop the next Run (TD-5158).
     # A stop that also belongs to a turn (one running beside an ask-mode
     # review, or queued behind this one) is the loop's to acknowledge.
     if not session.turn_in_flight:
@@ -358,8 +367,15 @@ async def _review(
             "verify assemble failed",
             extra={"extra_fields": {"session_id": session.id}},
         )
+        if session.stop_turn_requested:
+            return False
         await _report(session, "error", "Could not assemble the validator prompt.")
         return True
+    # Fitting takes up to a few assembler round-trips; a Stop in that span
+    # is a stop, not a "Not reviewed" for a prompt nobody asked to send
+    # any more (TD-5158).
+    if session.stop_turn_requested:
+        return False
     material = prompt.material
     log_review_fit(session.id, prompt)
     if not prompt.sendable:

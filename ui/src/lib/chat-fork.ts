@@ -14,10 +14,26 @@ export interface ConversationResetView {
   content: string;
 }
 
+/** A `fork_from` the daemon has not answered yet (TD-5158). */
+export interface PendingFork {
+  userIndex: number;
+  text: string;
+  /** This send took the row's first snapshot, so a refusal drops it. */
+  saved: boolean;
+}
+
+/** A refused fork's answer is one frame away, so a handful is plenty. */
+const MAX_PENDING_FORKS = 8;
+
 export interface BranchSnaps {
   clear(): void;
   has(userIndex: number): boolean;
   save(userIndex: number, sibling: number, messages: readonly ChatMessage[]): void;
+  /** A `fork_from` went out (TD-5158). */
+  noteFork(fork: PendingFork): void;
+  /** The daemon refused the newest fork still waiting: forget the snapshot
+   *  it took and hand back what it sent, so the edited text is not lost. */
+  takeRefusedFork(): PendingFork | null;
   /** Rebuild the transcript from a reset. True when a user row was found. */
   applyReset(state: ChatState, event: ConversationResetView): boolean;
   /** Refresh the active sibling after a turn lands. */
@@ -42,6 +58,7 @@ function cloneMessages(messages: readonly ChatMessage[]): ChatMessage[] {
 
 export function createBranchSnaps(): BranchSnaps {
   const snaps = new Map<string, ChatMessage[][]>();
+  const pending: PendingFork[] = [];
 
   function save(userIndex: number, sibling: number, messages: readonly ChatMessage[]): void {
     const key = String(userIndex);
@@ -54,6 +71,7 @@ export function createBranchSnaps(): BranchSnaps {
   return {
     clear() {
       snaps.clear();
+      pending.length = 0;
     },
 
     has(userIndex) {
@@ -63,7 +81,21 @@ export function createBranchSnaps(): BranchSnaps {
 
     save,
 
+    noteFork(fork) {
+      pending.push(fork);
+      if (pending.length > MAX_PENDING_FORKS) pending.shift();
+    },
+
+    takeRefusedFork() {
+      const fork = pending.pop() ?? null;
+      if (fork?.saved === true) snaps.delete(String(fork.userIndex));
+      return fork;
+    },
+
     applyReset(state, event) {
+      // An accepted fork is answered by its reset, not by an error.
+      const landed = pending.findIndex((f) => f.userIndex === event.user_index);
+      if (landed >= 0) pending.splice(landed, 1);
       const saved = snaps.get(String(event.user_index))?.[event.sibling_index];
       if (saved !== undefined && saved.length > 0) {
         state.messages = saved.map((m) => ({

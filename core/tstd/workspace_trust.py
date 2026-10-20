@@ -55,7 +55,6 @@ Decision = Literal["trusted", "declined"]
 _UNREAD_LOOSENING_KEYS: tuple[str, ...] = ("mcp_servers", "hooks")
 
 _DRIVE = re.compile(r"^[A-Za-z]:")
-_SUMMARY_MAX = 200
 
 
 class UntrustedConfigError(ConfigError):
@@ -114,8 +113,13 @@ def _escapes_workspace(pattern: str) -> bool:
 
 
 def _summary(value: Any) -> str:
-    text = yaml.safe_dump(value, default_flow_style=True, sort_keys=True).strip()
-    return text if len(text) <= _SUMMARY_MAX else text[: _SUMMARY_MAX - 1] + "…"
+    """The whole value, never cut short (TD-5158).
+
+    Trust applies the whole file, so a card that hid the tail of a hook
+    command would ask the user to trust text they never saw. The card
+    scrolls; a long value costs space, not safety.
+    """
+    return yaml.safe_dump(value, default_flow_style=True, sort_keys=True).strip()
 
 
 def _raised(key: str, value: float, default: float) -> list[Loosened]:

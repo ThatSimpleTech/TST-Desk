@@ -967,8 +967,10 @@ The agent never writes a steering file, but it can propose one with `propose_ste
 and test commands, CI config and layout) and proposes the whole new file.
 
 - **What can be proposed:** `AGENTS.md` and `CLAUDE.md` at any depth, a `.tst/rules/<name>.md`
-  rule, a `SKILL.md`, and a slash-command file directly under `.tst/commands/`,
-  `.claude/commands/` or `.tstdesk/commands/`, all inside the workspace. Names match exactly. The
+  rule, a `SKILL.md`, and a slash-command file directly under `.tst/commands/` or
+  `.claude/commands/`, all inside the workspace. Names match exactly. (`~/.tstdesk/commands/` is
+  read from your home folder only, so a `.tstdesk/commands/` inside a workspace can't be
+  proposed.) The
   signed charter (`.tst/autonomy/CHARTER.md`), the approval policy (`.tst/config.yaml`), and
   any path under `.git`, `.vscode` or another folder that runs code later can't be proposed.
 - **What you see:** a card with the diff and **Accept**, **Edit** and **Reject**. Edit opens the

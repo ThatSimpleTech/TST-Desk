@@ -250,6 +250,41 @@ test("walks every settings section and its enabled controls", async () => {
 	await expect(dialog).toHaveCount(0);
 });
 
+/**
+ * TD-5158: the walk daemon seeds one archived session a restart left with
+ * two messages held. Archived, the window never bound it, so the walk above
+ * ran as before. Unarchived and opened, it shows the held strip: Remove
+ * drops one unsent, Send hands the other to the daemon as a turn.
+ */
+test("sends and removes messages a restart left held", async () => {
+	await page.getByRole("button", { name: "Show archived sessions" }).click();
+	await page.getByRole("button", { name: /^Actions for session Held through a restart/ }).click();
+	await page
+		.getByRole("group", { name: /^Actions for session Held through a restart/ })
+		.getByRole("button", { name: "Unarchive" })
+		.click();
+	await page.getByRole("button", { name: "Back to the session list" }).click();
+	await page.locator(`[data-rail-row="${info.held_session}"]`).click();
+
+	const chat = page.getByRole("region", { name: "Chat pane" });
+	const strip = chat.getByRole("list", { name: "Held messages" });
+	const [first, second] = info.held;
+	await expect(strip.getByRole("listitem")).toHaveCount(2);
+	await snap("held", strip);
+
+	await strip
+		.getByRole("listitem")
+		.filter({ hasText: second })
+		.getByRole("button", { name: "Remove held message" })
+		.click();
+	await expect(strip.getByRole("listitem")).toHaveCount(1);
+	await strip.getByRole("button", { name: "Send held message" }).click();
+	await expect(strip).toHaveCount(0);
+	await expect(chat.getByText(first, { exact: true })).toBeVisible();
+	await expect(chat.getByText(info.reply)).toBeVisible();
+	await expect(chat.getByText(second, { exact: true })).toHaveCount(0);
+});
+
 test("runs the command palette actions that stay in this window", async () => {
 	await openPalette(page);
 	const palette = page.getByRole("dialog", { name: "Command palette" });

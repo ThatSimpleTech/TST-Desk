@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import difflib
+import errno
 import os
 import stat
 import tempfile
@@ -74,9 +75,10 @@ STALE_MESSAGE = "The file changed since this was proposed. A fresh diff is on th
 
 _INSTRUCTION_NAMES = frozenset({"AGENTS.md", "CLAUDE.md", "SKILL.md"})
 _RULES_PARTS = (".tst", "rules")
-_COMMAND_PAIRS = frozenset(
-    {(".tst", "commands"), (".claude", "commands"), (".tstdesk", "commands")}
-)
+# The workspace command trees the loader reads (context/commands.py). It
+# reads ``.tstdesk/commands`` only under the home directory, so a proposal
+# there inside a workspace would land a file nothing uses (TD-5158).
+_COMMAND_PAIRS = frozenset({(".tst", "commands"), (".claude", "commands")})
 _POLICY_PARTS = (".tst", "config.yaml")
 _PROTECTED = frozenset({_POLICY_PARTS, tuple(p.casefold() for p in CHARTER_RELATIVE_PARTS)})
 
@@ -151,7 +153,9 @@ class ParkedSteering:
     """One proposal waiting for the user, with the exact text.
 
     ``before`` is the file as the diff saw it (``None``: did not exist).
-    ``workspace`` is the canonical root it was proposed in.
+    ``workspace`` is the canonical root it was proposed in. ``user_text``
+    says ``after`` is the user's own edit carried onto a fresh card after
+    the file changed, so accepting it is logged as ``edited`` (TD-5158).
     """
 
     proposal_id: str
@@ -161,6 +165,7 @@ class ParkedSteering:
     after: str
     tool_call_id: str = ""
     autonomy: bool = False
+    user_text: bool = False
 
     @property
     def action(self) -> Literal["create", "replace"]:
@@ -272,20 +277,128 @@ def hidden_part(diff: SteeringFileDiff) -> Literal["path", "before", "after"] | 
     return None
 
 
-def write_steering_file(target: Path, text: str) -> None:
-    """Write *text* atomically: a temp file beside the target, then rename.
+def write_steering_file(root: Path, relative: str, text: str) -> None:
+    """Write *text* to *relative* under *root* atomically: a temp file, then rename.
 
     The rename replaces the directory entry, so a hardlinked file is
     never written through. An existing file keeps its permission bits.
+
+    Where the OS allows it, every directory under *root* is opened with
+    ``O_NOFOLLOW`` and the file is written relative to the last one, so
+    the path is resolved once. The agent's turn keeps running while the
+    card is open, and a shell command could swap a directory on the
+    checked path for a symlink between the check and the write; the user's
+    text would then land wherever the link points (TD-5158). A swapped
+    directory now fails the write instead. Elsewhere (Windows), where a
+    junction needs no privilege, :func:`_write_by_path` checks the folders
+    for links before and after it creates the temp file.
     """
+    if not _DIR_FD_WRITES:
+        _write_by_path(root, relative, text)
+        return
+    *dirs, name = relative.split("/")
+    dir_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
     try:
-        mode = stat.S_IMODE(target.stat().st_mode)
+        for part in dirs:
+            with contextlib.suppress(FileExistsError):
+                os.mkdir(part, dir_fd=dir_fd)
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
+            os.close(dir_fd)
+            dir_fd = child
+        _write_in_dir(dir_fd, name, text)
+    finally:
+        os.close(dir_fd)
+
+
+#: ``openat``-style writes: POSIX. Windows has no ``O_NOFOLLOW`` or
+#: ``dir_fd`` and takes :func:`_write_by_path`, which checks for links
+#: itself: a junction there needs no privilege (``mklink /J``).
+_DIR_FD_WRITES = (
+    hasattr(os, "O_NOFOLLOW")
+    and hasattr(os, "O_DIRECTORY")
+    and os.open in os.supports_dir_fd
+    and os.rename in os.supports_dir_fd
+)
+
+
+def _write_in_dir(dir_fd: int, name: str, text: str) -> None:
+    try:
+        info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        mode = stat.S_IMODE(info.st_mode) if stat.S_ISREG(info.st_mode) else 0o644
     except FileNotFoundError:
         mode = 0o644
-    target.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+    tmp = f".{name}.{uuid.uuid4().hex}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+    fd = os.open(tmp, flags, 0o600, dir_fd=dir_fd)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fchmod(handle.fileno(), mode)
+            os.fsync(handle.fileno())
+        os.replace(tmp, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp, dir_fd=dir_fd)
+        raise
+
+
+#: ``IsReparseTagNameSurrogate``: a reparse point that names another place
+#: (symlinks and junctions), as opposed to e.g. a cloud-file placeholder.
+_NAME_SURROGATE = 0x20000000
+
+
+def _is_link(info: os.stat_result) -> bool:
+    """A symlink, or on Windows any name-surrogate reparse point (a junction)."""
+    tag = getattr(info, "st_reparse_tag", 0)
+    return stat.S_ISLNK(info.st_mode) or bool(tag & _NAME_SURROGATE)
+
+
+class _LinkOnPath(OSError):
+    pass
+
+
+def _real_folders(root: Path, dirs: Sequence[str], *, create: bool) -> Path:
+    """Walk *dirs* under *root* with ``lstat``; refuse a link or a non-folder."""
+    folder = root
+    for part in dirs:
+        folder = folder / part
+        if create:
+            with contextlib.suppress(FileExistsError):
+                os.mkdir(folder)
+        info = os.lstat(folder)
+        if _is_link(info) or not stat.S_ISDIR(info.st_mode):
+            raise _LinkOnPath(errno.ELOOP, "a folder on its path is a link", str(folder))
+    return folder
+
+
+def _write_by_path(root: Path, relative: str, text: str) -> None:
+    """The write where ``dir_fd`` is missing (Windows): checks, not descriptors.
+
+    Every folder under *root* is checked for a link (a junction needs no
+    privilege on Windows) before the temp file is made, and again after,
+    when the temp file at its path must still be the file this call holds
+    open. Only then does the user's text go into it, through that handle.
+    A folder swapped in between leaves at most an empty temp file. The
+    rename that follows resolves the path once more, but it can only move
+    a file that is at the temp file's path, so a swap after the check
+    fails it unless the agent can already write where the link points.
+    """
+    *dirs, name = relative.split("/")
+    folder = _real_folders(root, dirs, create=True)
+    target = folder / name
+    try:
+        info = os.lstat(target)
+        mode = stat.S_IMODE(info.st_mode) if stat.S_ISREG(info.st_mode) else 0o644
+    except FileNotFoundError:
+        mode = 0o644
+    fd, tmp = tempfile.mkstemp(prefix=f".{name}.", suffix=".tmp", dir=folder)
+    held = os.fstat(fd)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            _real_folders(root, dirs, create=False)
+            if not _is_held(tmp, held):
+                raise _LinkOnPath(errno.ELOOP, "a folder on its path is a link", tmp)
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
@@ -293,8 +406,17 @@ def write_steering_file(target: Path, text: str) -> None:
         os.replace(tmp, target)
     except BaseException:
         with contextlib.suppress(OSError):
-            os.unlink(tmp)
+            if _is_held(tmp, held):  # never a file someone else put at that path
+                os.unlink(tmp)
         raise
+
+
+def _is_held(path: str, held: os.stat_result) -> bool:
+    try:
+        there = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    return (there.st_dev, there.st_ino) == (held.st_dev, held.st_ino)
 
 
 # ── The tool side ──────────────────────────────────────────────────────
@@ -397,7 +519,8 @@ async def decide(
         return _error(
             session, msg, "steering_write_failed", f"Couldn't write {parked.relative}: {reason}"
         )
-    decision: Literal["accepted", "edited"] = "accepted" if text == parked.after else "edited"
+    edited = parked.user_text or text != parked.after
+    decision: Literal["accepted", "edited"] = "edited" if edited else "accepted"
     await _log_decision(session, parked, decision, file_diff(parked, after=text))
     return None
 
@@ -405,7 +528,9 @@ async def decide(
 def _error(
     session: Session, msg: SteeringAccept | SteeringEdit | SteeringReject, code: str, text: str
 ) -> str:
-    return build_error(code, text, session_id=session.id, in_reply_to=msg.type)
+    return build_error(
+        code, text, session_id=session.id, in_reply_to=msg.type, proposal_id=msg.proposal_id
+    )
 
 
 def _write_if_unchanged(session: Session, parked: ParkedSteering, text: str) -> None:
@@ -424,7 +549,7 @@ def _write_if_unchanged(session: Session, parked: ParkedSteering, text: str) -> 
     current = read_current(target)
     if current != parked.before:
         raise _Stale(current)
-    write_steering_file(target, text)
+    write_steering_file(canonical_path(root), parked.relative, text)
 
 
 async def _offer_fresh(
@@ -439,7 +564,13 @@ async def _offer_fresh(
     The fresh one carries the text the user was saving, so an edit made on
     the stale card is not lost.
     """
-    fresh = replace(parked, proposal_id=f"sp-{uuid.uuid4()}", before=current, after=text)
+    fresh = replace(
+        parked,
+        proposal_id=f"sp-{uuid.uuid4()}",
+        before=current,
+        after=text,
+        user_text=parked.user_text or text != parked.after,
+    )
     if hidden_part(file_diff(fresh)) is not None:
         # The card could not show the file as it is now. Keep the stale one
         # so Reject still logs a decision; Accept stays refused as stale.

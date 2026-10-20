@@ -124,23 +124,56 @@ async def _ignored(top: Path, rels: Sequence[str], env: Mapping[str, str]) -> li
     return [os.fsdecode(n) for n in out.split(b"\0") if n]
 
 
-def _read(top: Path, rels: Sequence[str]) -> dict[str, bytes]:
-    return {rel: (top / rel).read_bytes() for rel in rels}
+def _open_checked(top: Path, rel: str, planned: os.stat_result | None) -> int:
+    """Open *rel* as the regular file staging planned, or refuse (TD-5158).
+
+    Staging lstats a path, runs several git commands, and only then reads
+    it. A process in the workspace could swap the file, or a folder on its
+    path, for a symlink in that gap, and git would store whatever the link
+    points at as a regular-file blob the agent can read back. Here
+    ``O_NOFOLLOW`` refuses a final symlink, and the device and inode must
+    still be the ones the plan saw, which refuses a swapped folder too. The
+    bytes are then read from this descriptor, never from the path again.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    try:
+        fd = os.open(top / rel, flags)
+    except OSError as e:
+        reason = e.strerror or type(e).__name__
+        raise GitRawError(f"'{rel}' changed while it was being staged ({reason})") from None
+    try:
+        st = os.fstat(fd)
+        same = planned is None or (st.st_dev, st.st_ino) == (planned.st_dev, planned.st_ino)
+        if not stat.S_ISREG(st.st_mode) or not same:
+            raise GitRawError(f"'{rel}' changed while it was being staged; not staging it")
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _read(
+    top: Path, rels: Sequence[str], planned: Mapping[str, os.stat_result]
+) -> dict[str, bytes]:
+    contents: dict[str, bytes] = {}
+    for rel in rels:
+        with os.fdopen(_open_checked(top, rel, planned.get(rel)), "rb") as handle:
+            contents[rel] = handle.read()
+    return contents
 
 
 async def _hash(
-    top: Path, env: Mapping[str, str], *, write: bool, paths: Sequence[str] = (), data: bytes = b""
-) -> list[str]:
-    """``hash-object --no-filters`` of *paths* (absolute), or of *data* when none."""
-    args = ["hash-object", *(["-w"] if write else []), "--no-filters"]
-    if not paths:
-        out = await checked_git(top, *args, "--stdin", env=env, stdin=data, timeout=_HASH_TIMEOUT)
-        return [out.decode().strip()]
-    stdin = b"".join(os.fsencode(p) + b"\n" for p in paths)
-    out = await checked_git(
-        top, *args, "--stdin-paths", env=env, stdin=stdin, timeout=_HASH_TIMEOUT
-    )
-    return out.decode().split()
+    top: Path, env: Mapping[str, str], *, write: bool, data: bytes | None = None, fd: int = -1
+) -> str:
+    """``hash-object --no-filters --stdin`` of *data*, or of the open file *fd* (closed after)."""
+    args = ["hash-object", *(["-w"] if write else []), "--no-filters", "--stdin"]
+    try:
+        stdin: bytes | int = data if data is not None else fd
+        out = await checked_git(top, *args, env=env, stdin=stdin, timeout=_HASH_TIMEOUT)
+    finally:
+        if data is None:
+            os.close(fd)
+    return out.decode().strip()
 
 
 async def blob_ids(
@@ -150,19 +183,23 @@ async def blob_ids(
     env: Mapping[str, str],
     *,
     write: bool = True,
+    planned: Mapping[str, os.stat_result] | None = None,
 ) -> list[str]:
     """The blob ``git add`` would store for each file, without its filter driver.
 
     *tracked* maps a path to the (mode, oid) the index holds, for git's
-    "safer autocrlf" check. A file git leaves as it is goes to
-    ``--stdin-paths`` in one call; a converted one is hashed from memory.
+    "safer autocrlf" check. *planned* is each file's lstat from the plan:
+    a file is read only if it is still that file (:func:`_open_checked`).
+    A text file is hashed from the bytes read; any other from its open
+    descriptor, so git never opens the path itself.
     """
     if not rels:
         return []
+    seen = planned if planned is not None else {}
     attrs = await path_attributes(top, rels, env, cached=False)
     cfg, _symlinks = await eol_config(top, env)
     texty = [r for r in rels if eol_action(attrs.get(r, {}), cfg) != "binary"]
-    contents = await asyncio.to_thread(_read, top, texty)
+    contents = await asyncio.to_thread(_read, top, texty, seen)
     auto = [
         r
         for r in texty
@@ -176,17 +213,11 @@ async def blob_ids(
         index_crlf = rel in auto and has_text_crlf(stored[tracked[rel][1]])
         data = contents[rel]
         converted = checkin_eol(data, attrs.get(rel, {}), cfg, index_has_crlf=index_crlf)
-        if converted != data:
-            oids[rel] = (await _hash(top, env, write=write, data=converted))[0]
-    plain = [r for r in rels if r not in oids]
-    batch = [r for r in plain if "\n" not in str(top / r)]
-    if batch:
-        found = await _hash(top, env, write=write, paths=[str(top / r) for r in batch])
-        oids.update(zip(batch, found, strict=True))
-    for rel in plain:
-        if rel not in oids:  # a name --stdin-paths cannot carry
-            data = await asyncio.to_thread((top / rel).read_bytes)
-            oids[rel] = (await _hash(top, env, write=write, data=data))[0]
+        oids[rel] = await _hash(top, env, write=write, data=converted)
+    for rel in rels:
+        if rel not in oids:
+            fd = await asyncio.to_thread(_open_checked, top, rel, seen.get(rel))
+            oids[rel] = await _hash(top, env, write=write, fd=fd)
     return [oids[rel] for rel in rels]
 
 
@@ -206,6 +237,33 @@ async def _hash_link(top: Path, rel: str, env: Mapping[str, str]) -> str:
     return out.decode().strip()
 
 
+async def _index_spelling(
+    top: Path, rels: Sequence[str], env: Mapping[str, str]
+) -> dict[str, tuple[str, tuple[str, str]]]:
+    """For each untracked *rel*, the index entry that names it in another case.
+
+    Under ``core.ignorecase`` (git init sets it on APFS and NTFS) ``git
+    add Docs/X.md`` updates a tracked ``docs/x.md`` instead of adding a
+    second, case-variant entry beside it; staging does the same
+    (TD-5158). Returns rel to (index path, (mode, oid)).
+    """
+    found: dict[str, tuple[str, tuple[str, str]]] = {}
+    folded = {rel.casefold(): rel for rel in rels}
+    for i in range(0, len(rels), _CHUNK):
+        specs = [f":(literal,icase){rel}" for rel in rels[i : i + _CHUNK]]
+        out = await checked_git(top, "ls-files", "-s", "-z", "--", *specs, env=env)
+        for record in out.split(b"\0"):
+            meta, tab, name = record.partition(b"\t")
+            if not tab:
+                continue
+            path = os.fsdecode(name)
+            rel = folded.get(path.casefold())
+            if rel is not None and rel != path and rel not in found:
+                mode, oid, _stage = meta.decode().split(" ")
+                found[rel] = (path, (mode, oid))
+    return found
+
+
 def _file_mode(st_mode: int, old: tuple[str, str] | None, *, filemode: bool, symlinks: bool) -> str:
     """The index mode ``git add`` would give a regular file."""
     if old is not None and old[0] == "120000" and not symlinks:
@@ -219,7 +277,7 @@ def _file_mode(st_mode: int, old: tuple[str, str] | None, *, filemode: bool, sym
 class _Plan:
     """What staging does to each path: hash a file (with its mode), hash a link, remove."""
 
-    files: dict[str, int]
+    files: dict[str, os.stat_result]
     links: list[str]
     removes: list[str]
     folders: list[str]
@@ -251,7 +309,7 @@ def _plan(
         elif stat.S_ISLNK(st.st_mode):
             plan.links.append(rel)
         elif stat.S_ISREG(st.st_mode):
-            plan.files[rel] = st.st_mode
+            plan.files[rel] = st
         elif explicit:
             raise GitRawError(f"'{rel}' is not a file, link or folder")
     return plan
@@ -271,7 +329,7 @@ async def stage_paths(
         dict.fromkeys(await asyncio.to_thread(lambda: [repo_relative(top, p) for p in paths]))
     )
     tracked = await _ls_stage(top, rels, env)
-    bools = await config_bools(top, env, "core.filemode", "core.symlinks")
+    bools = await config_bools(top, env, "core.filemode", "core.symlinks", "core.ignorecase")
     filemode = bools.get("core.filemode", os.name != "nt")
     symlinks = bools.get("core.symlinks", os.name != "nt")
 
@@ -285,6 +343,13 @@ async def stage_paths(
         plan.links += inner.links
         plan.removes += inner.removes
 
+    spelled: dict[str, str] = {}
+    if bools.get("core.ignorecase", False):
+        untracked = [r for r in (*plan.files, *plan.links) if r not in tracked]
+        for rel, (name, entry) in (await _index_spelling(top, untracked, env)).items():
+            spelled[rel] = name
+            tracked[rel] = entry
+
     ignored = await _ignored(top, [r for r in explicit if r not in tracked], env)
     if ignored:
         raise GitRawError(
@@ -293,11 +358,14 @@ async def stage_paths(
 
     entries: list[IndexEntry] = []
     files = list(plan.files)
-    for rel, oid in zip(files, await blob_ids(top, files, tracked, env), strict=True):
-        mode = _file_mode(plan.files[rel], tracked.get(rel), filemode=filemode, symlinks=symlinks)
-        entries.append(IndexEntry(mode, oid, rel))
+    oids = await blob_ids(top, files, tracked, env, planned=plan.files)
+    for rel, oid in zip(files, oids, strict=True):
+        st_mode = plan.files[rel].st_mode
+        mode = _file_mode(st_mode, tracked.get(rel), filemode=filemode, symlinks=symlinks)
+        entries.append(IndexEntry(mode, oid, spelled.get(rel, rel)))
     for rel in dict.fromkeys(plan.links):
-        entries.append(IndexEntry("120000", await _hash_link(top, rel, env), rel))
+        oid = await _hash_link(top, rel, env)
+        entries.append(IndexEntry("120000", oid, spelled.get(rel, rel)))
     for rel in dict.fromkeys(plan.removes):
         entries.append(IndexEntry("0", "0" * len(tracked[rel][1]), rel))
     if entries:

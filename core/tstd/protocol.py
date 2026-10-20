@@ -1807,6 +1807,18 @@ class CheckpointNotice(DaemonEvent):
     message: str
 
 
+class VerifyStarted(DaemonEvent):
+    """An after-write review started running (TD-5158).
+
+    It runs after ``turn_complete`` and holds the loop until its
+    ``verify_result``; Stop ends it (TD-5151). The window offers Stop in
+    that span. Not shown in the timeline.
+    """
+
+    type: Literal["verify_started"] = "verify_started"
+    session_id: str
+
+
 class VerifyResult(DaemonEvent):
     """Interactive validator review of a write turn (TD-4204).
 
@@ -2987,6 +2999,10 @@ class Error(DaemonEvent):
     # knows it (a hub refusing a forwarded verb). Lets a download claim only
     # its own refusals. Absent from older daemons.
     in_reply_to: str | None = None
+    # TD-5158: the steering proposal a refused accept, edit or reject named,
+    # so the window shows the refusal on that card even after the user has
+    # acted on another one. Absent from older daemons.
+    proposal_id: str | None = None
 
 
 class ScreenFrame(DaemonEvent):
@@ -3538,6 +3554,7 @@ DaemonEventT = Annotated[
     | ApprovalRequest
     | DecisionLogged
     | CheckpointNotice
+    | VerifyStarted
     | VerifyResult
     | CostUpdate
     | BoundaryUpdate
@@ -3744,6 +3761,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "approval_request",
         "decision_logged",
         "checkpoint_notice",
+        "verify_started",
         "verify_result",
         "cost_update",
         "boundary_update",
@@ -3988,6 +4006,7 @@ def build_error(
     session_id: str | None = None,
     machine: str | None = None,
     in_reply_to: str | None = None,
+    proposal_id: str | None = None,
 ) -> str:
     """Build a typed error message.
 
@@ -3997,7 +4016,8 @@ def build_error(
     ``session_id`` (optional, TD-1711) lets the UI attribute the error to
     the session whose message was refused. ``machine`` (TD-5015) marks an
     error that came from, or is about, a paired computer. ``in_reply_to``
-    (TD-5144) names the client message type the error answers.
+    (TD-5144) names the client message type the error answers, and
+    ``proposal_id`` (TD-5158) the steering proposal it was about.
     """
     payload: dict[str, str] = {"type": "error", "code": code, "message": redact_secrets(message)}
     if session_id is not None:
@@ -4006,6 +4026,8 @@ def build_error(
         payload["machine"] = machine
     if in_reply_to is not None:
         payload["in_reply_to"] = in_reply_to
+    if proposal_id is not None:
+        payload["proposal_id"] = proposal_id
     return json.dumps(payload)
 
 

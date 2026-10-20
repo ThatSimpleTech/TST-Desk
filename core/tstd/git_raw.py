@@ -47,18 +47,27 @@ async def run_git(
     cwd: Path,
     *args: str,
     env: Mapping[str, str],
-    stdin: bytes | None = None,
+    stdin: bytes | int | None = None,
     timeout: float = _GIT_TIMEOUT,  # noqa: ASYNC109 - passed to finish_subprocess
 ) -> tuple[int, bytes, bytes]:
-    """``git -C <cwd> <args>`` through :func:`git_command`; bytes in and out."""
+    """``git -C <cwd> <args>`` through :func:`git_command`; bytes in and out.
+
+    *stdin* is bytes to write, or an open file descriptor git reads itself
+    (a file the caller opened and checked, TD-5158).
+    """
+    if isinstance(stdin, int):
+        spawn_stdin: int = stdin
+    else:
+        spawn_stdin = asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL
     proc = await asyncio.create_subprocess_exec(
         *git_command("-C", str(cwd), *args),
-        stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
+        stdin=spawn_stdin,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env=dict(env),
     )
-    out, err = await finish_subprocess(proc, timeout=timeout, stdin=stdin)
+    written = stdin if isinstance(stdin, bytes) else None
+    out, err = await finish_subprocess(proc, timeout=timeout, stdin=written)
     return (proc.returncode if proc.returncode is not None else -1), out, err
 
 
@@ -66,7 +75,7 @@ async def checked_git(
     cwd: Path,
     *args: str,
     env: Mapping[str, str],
-    stdin: bytes | None = None,
+    stdin: bytes | int | None = None,
     timeout: float = _GIT_TIMEOUT,  # noqa: ASYNC109 - passed to finish_subprocess
 ) -> bytes:
     """:func:`run_git`, raising :class:`GitRawError` on a non-zero exit."""
