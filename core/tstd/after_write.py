@@ -10,7 +10,13 @@ tool result instead of costing a turn.
   file is in force (TD-5113): a repo's command never runs untrusted.
 - The command runs without a shell, in the workspace, with secrets
   stripped from its environment (as the shell tool and ``worktree.setup``
-  do), for at most its ``timeout_seconds``.
+  do), for at most its ``timeout_seconds``. It leads its own process
+  group, so a timeout or a cancelled turn kills the whole tree (``npx``
+  starts ``node`` as a child), as the shell tool does.
+- File arguments are workspace-relative against the resolved workspace
+  (a symlinked workspace matches the same patterns), and a name that
+  starts with ``-`` goes in as ``./-name``, so a file the model named
+  can never be read as an option by the user's formatter.
 - A failure, a timeout or a command that cannot start goes back to the
   model as a note on the tool result, with the output's start and end. A
   hook that rewrote the file (a formatter) says so, so the model reads it
@@ -40,7 +46,11 @@ from pydantic import ValidationError
 
 from .config import AfterWriteHook, ConfigError, HooksConfig
 from .logging import get_logger
-from .proc_lifecycle import finish_subprocess
+from .proc_lifecycle import (
+    kill_left_leader_running,
+    reap_subprocess,
+    retain_subprocess_transport,
+)
 from .protocol import HookRun
 
 log = get_logger(__name__)
@@ -53,6 +63,9 @@ OUTPUT_CHARS = 2000
 _OUTPUT_HEAD = 300
 
 FILES_TOKEN = "{files}"
+
+# After the group kill, how long to wait for the leader's exit.
+_REAP_SECS = 2.0
 
 
 def clip_output(text: str, limit: int = OUTPUT_CHARS) -> str:
@@ -111,6 +124,16 @@ def _relative(path: Path, root: Path | None) -> str:
     return path.as_posix()
 
 
+def as_argument(rel: str) -> str:
+    """*rel* as a file argument no program can read as an option.
+
+    A relative name that starts with ``-`` (the model can create
+    ``--config=evil.js``) gets ``./`` in front. ``--`` is not used: not
+    every formatter accepts it.
+    """
+    return f"./{rel}" if rel.startswith("-") else rel
+
+
 def matches(hook: AfterWriteHook, rel: str) -> bool:
     """A pattern without ``/`` matches the file name, one with ``/`` the path."""
     name = PurePosixPath(rel).name
@@ -141,12 +164,45 @@ def _digest(path: Path) -> str | None:
         return None
 
 
+async def _communicate(proc: asyncio.subprocess.Process, timeout: float) -> bytes:  # noqa: ASYNC109
+    """The hook's output. On timeout or cancel, its whole tree is killed first.
+
+    ``proc.kill()`` alone would reach only the leader: ``npx`` runs
+    ``node`` as a child, which would keep rewriting the file after the
+    diff was taken and hold the pipe open for the reap's full grace.
+    """
+    from .tools.shell import _kill_process_group, _kill_process_group_offloaded
+
+    try:
+        out, _err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        return out
+    except TimeoutError:
+        note = await _kill_process_group_offloaded(proc)
+        await _reap(proc, note)
+        raise
+    except asyncio.CancelledError:
+        # Sync on purpose: an await here could be cancelled again before
+        # the kill lands.
+        note = _kill_process_group(proc)
+        await _reap(proc, note)
+        raise
+    finally:
+        retain_subprocess_transport(proc)
+
+
+async def _reap(proc: asyncio.subprocess.Process, note: str | None) -> None:
+    if note:
+        log.warning("after-write hook kill: %s (pid %s)", note, proc.pid)
+    if not kill_left_leader_running(proc, note):
+        await reap_subprocess(proc, timeout=_REAP_SECS)
+
+
 async def _run_one(
     hook: AfterWriteHook, files: list[Path], cwd: Path, env: dict[str, str], root: Path | None
 ) -> tuple[HookRun, str]:
     """Run *hook* on *files*. ``(the record, the note for the model or "")``."""
     label = hook.label
-    shown = [_relative(f, root) for f in files]
+    shown = [as_argument(_relative(f, root)) for f in files]
     argv = build_argv(hook, shown)
     program = shutil.which(argv[0], path=env.get("PATH"))
     started = time.monotonic()
@@ -158,6 +214,8 @@ async def _run_one(
         run = HookRun(name=label, status="error", duration_ms=elapsed_ms())
         return run, f"[after-write hook `{label}` could not start: {argv[0]} is not on PATH]"
     before = {f: await asyncio.to_thread(_digest, f) for f in files}
+    from .tools.shell import _CREATE_NEW_PROCESS_GROUP, _CREATE_NO_WINDOW
+
     try:
         proc = await asyncio.create_subprocess_exec(
             program,
@@ -167,12 +225,16 @@ async def _run_one(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             env=env,
+            # Its own group, so a stop kills grandchildren too. The
+            # flags are 0 off Windows, where ``start_new_session`` is ignored.
+            start_new_session=True,
+            creationflags=_CREATE_NEW_PROCESS_GROUP | _CREATE_NO_WINDOW,
         )
     except OSError as e:
         run = HookRun(name=label, status="error", duration_ms=elapsed_ms())
         return run, f"[after-write hook `{label}` could not start: {e}]"
     try:
-        out, _err = await finish_subprocess(proc, timeout=hook.timeout_seconds)
+        out = await _communicate(proc, hook.timeout_seconds)
     except TimeoutError:
         run = HookRun(name=label, status="timed_out", duration_ms=elapsed_ms())
         return run, (
@@ -227,7 +289,14 @@ async def run_after_write(
     from .tools.shell import sanitized_env
 
     raw_root = getattr(session, "workspace_path", None)
-    root = Path(raw_root) if isinstance(raw_root, str) and raw_root else None
+    # The written paths are canonical (PathGuard resolves symlinks), so the
+    # root must be too, or a symlinked workspace (macOS /tmp, a linked
+    # ~/code) matches no path pattern and hands out absolute paths.
+    root = (
+        await asyncio.to_thread(Path(raw_root).resolve)
+        if isinstance(raw_root, str) and raw_root
+        else None
+    )
     cwd = root if root is not None and root.is_dir() else Path(files[0]).parent
     env = sanitized_env()
     runs: list[HookRun] = []

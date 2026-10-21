@@ -1044,9 +1044,9 @@ a turn. Each entry of `after_write` is one command:
 |---|---|---|---|
 | `after_write` | list of hooks, up to 10 | `[]` | Commands run, in order, after every successful `fs_write` and `fs_edit`, on the files that call changed. Empty means none. |
 | `name` | string, up to 60 characters | *empty* | The label in the step timeline and in the note to the model. Empty is the program's file name. |
-| `command` | list of strings, or one string | *required* | The program and its arguments, run **without a shell** (no pipes, `&&` or globbing). One string is split into words the way a POSIX shell would; on Windows, give a list when a path holds backslashes. An item that is exactly `{files}` is replaced by the changed files; with none, the files go on the end. |
+| `command` | list of strings, or one string | *required* | The program and its arguments, run **without a shell** (no pipes, `&&` or globbing). One string is split into words the way a POSIX shell would; on Windows, give a list when a path holds backslashes. An item that is exactly `{files}` is replaced by the changed files, as paths from the workspace root (a name starting with `-` is passed as `./-name`, so it is never read as an option); with none, the files go on the end. |
 | `match` | list of glob patterns | `["*"]` | Which changed files the hook runs on. A pattern without `/` matches the file name (`*.py`); one with `/` matches the path from the workspace root (`src/*.ts`). A write that matches no pattern skips the hook. |
-| `timeout_seconds` | number, up to 600 | `30` | How long the command may run before it is stopped. |
+| `timeout_seconds` | number, up to 600 | `30` | How long the command may run before it is stopped. Stopping it (or stopping the turn) kills the command's whole process tree, so a formatter `npx` started cannot keep writing after the diff is taken. |
 
 <!-- verify: model -->
 ```yaml

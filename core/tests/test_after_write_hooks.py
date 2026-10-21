@@ -7,8 +7,12 @@ so each test exercises the same path a session's ``fs_write`` and
 
 from __future__ import annotations
 
+import asyncio
+import json
+import os
 import sys
 import textwrap
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -51,6 +55,21 @@ FORMAT = textwrap.dedent(
 )
 
 SLEEP = "import time; time.sleep(30)"
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    # A zombie still answers; it is dead for our purpose.
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            return f.read().split(") ", 1)[1][:1] != "Z"
+    except OSError:
+        return True
 
 
 def _script(tmp_path: Path, name: str, body: str) -> str:
@@ -131,6 +150,51 @@ class TestFailuresGoBackToTheModel:
         assert result.status == "success"
         assert [r.status for r in result.hooks] == ["timed_out"]
         assert "`slow` stopped after 0.3 s" in result.output
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+    async def test_a_timeout_kills_the_hooks_children_too(self, tmp_path: Path) -> None:
+        # Like ``npx`` running ``node``: the work is in a grandchild. A kill
+        # of the leader alone left it running and held the pipe for the
+        # reap's whole grace.
+        marker = tmp_path.parent / f"{tmp_path.name}-pid"
+        body = textwrap.dedent(
+            f"""
+            import subprocess, sys, time
+            child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+            open({str(marker)!r}, "w").write(str(child.pid))
+            time.sleep(30)
+            """
+        )
+        hook = _hook(tmp_path, "tree", body, timeout_seconds=1.0)
+        started = time.monotonic()
+        result = await _write(tmp_path, _session(tmp_path, hook), "a.py", "x = 1\n")
+        assert time.monotonic() - started < 4.0
+        assert [r.status for r in result.hooks] == ["timed_out"]
+        pid = int(marker.read_text())
+        deadline = time.monotonic() + 3.0
+        while _alive(pid) and time.monotonic() < deadline:  # noqa: ASYNC110 - polls another process
+            await asyncio.sleep(0.05)
+        assert not _alive(pid), "the hook's grandchild outlived the timeout"
+
+    async def test_a_file_named_like_an_option_is_not_an_option(self, tmp_path: Path) -> None:
+        argv_out = tmp_path.parent / f"{tmp_path.name}-argv"
+        body = f"import json, sys; open({str(argv_out)!r}, 'w').write(json.dumps(sys.argv[1:]))"
+        hook = _hook(tmp_path, "args", body)
+        await _write(tmp_path, _session(tmp_path, hook), "--config=evil.py", "x = 1\n")
+        assert json.loads(argv_out.read_text()) == ["./--config=evil.py"]
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
+    async def test_a_symlinked_workspace_matches_path_patterns(self, tmp_path: Path) -> None:
+        real = tmp_path / "real"
+        (real / "src").mkdir(parents=True)
+        link = tmp_path / "link"
+        link.symlink_to(real, target_is_directory=True)
+        argv_out = tmp_path.parent / f"{tmp_path.name}-argv"
+        body = f"import json, sys; open({str(argv_out)!r}, 'w').write(json.dumps(sys.argv[1:]))"
+        hook = _hook(tmp_path, "src", body, match=["src/*.py"])
+        result = await _write(link, _session(link, hook), "src/a.py", "x = 1\n")
+        assert [r.name for r in result.hooks] == ["src"]
+        assert json.loads(argv_out.read_text()) == ["src/a.py"]
 
     async def test_a_missing_program_is_reported(self, tmp_path: Path) -> None:
         hook = AfterWriteHook(name="gone", command=["tst-no-such-formatter-5135", "{files}"])

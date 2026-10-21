@@ -11519,6 +11519,13 @@ the step timeline. The packaged config.yaml and the workspace scaffold
 carry commented templates. The general hook runner (TD-5134) is still to
 come and reuses the `hooks` section.
 
+Review fixes (PR #58): the command leads its own process group and a
+timeout or cancelled turn kills the whole tree (as the shell tool does),
+not only the leader; a file name starting with `-` reaches the command as
+`./-name`; the workspace root is resolved before matching, so a symlinked
+workspace still matches `src/*.py` patterns and passes relative paths
+(core/tests/test_after_write_hooks.py: the three tests fail on the old code).
+
 ## Epic E53 — Connectors
 
 Owner-approved scope 2026-10-02. A connector is a local sign-in to a
