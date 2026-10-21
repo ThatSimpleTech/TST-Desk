@@ -20,6 +20,7 @@ suite rather than quietly mislead you.
 | `.tst/config.yaml` in a workspace | You, per project | **Yes.** Git-tracked if you want the team to share it. |
 | `.tst/memory/*.md` in a workspace | Distill writes; you correct | **Yes.** Git-tracked on purpose. Standing rules stay in `AGENTS.md`. |
 | `.tst/autonomy/CHARTER.md` | You, from the Charter column | **Yes.** Human path only — the agent cannot write it. Spec §12.4. |
+| `.tst/agents/*.md`, `~/.tstdesk/agents/*.md` | You | **Yes.** Named workers for `delegate` (§4.11). Human path only — the agent cannot write either tree. |
 
 The packaged file is a seed, not a setting. On first load, if your user copy is missing, it is
 copied there verbatim — comments and all — and from then on nothing the daemon reads comes from
@@ -1424,7 +1425,7 @@ voice:
 ### `hooks`
 
 Commands TST Desk runs at five points in a session (TD-5134). The same block can go in a
-workspace's `.tst/config.yaml` (§4.11), where it applies only once you trust that file. Your
+workspace's `.tst/config.yaml` (§4.12), where it applies only once you trust that file. Your
 hooks run first, then the workspace's.
 
 | Key | Type | Default | Effect |
@@ -2906,7 +2907,7 @@ them when:
 | `approved_external_imports` | It lists any path. |
 | `worktree.setup` | It names a command. The daemon runs it in each new worktree (TD-5126), so a repo-shipped one waits for your trust; until then the new chat says it was skipped. |
 | `mcp_servers` | The key is set at all. TST Desk does not read it from a workspace yet; it is judged now so a later feature cannot run it untrusted. |
-| `hooks` | The key is set at all. Each hook is a command TST Desk runs on its own (§4.11), so a repo's hooks run only once you trust the file. |
+| `hooks` | The key is set at all. Each hook is a command TST Desk runs on its own (§4.12), so a repo's hooks run only once you trust the file. |
 | `stop_check.checks` | It names any check (TD-5124). A check runs on its own whenever the model ends a turn: a command through the shell tool, or a statement that goes to the model as a message when it fails. |
 
 Tightening never asks: `allowed_commands`, `ask` and `never` rules, `class_c_default: never`,
@@ -3028,7 +3029,57 @@ copy from the main checkout into each new worktree:
 config/local.json
 ```
 
-### 4.11 `hooks` — commands that run at points in a session (TD-5134)
+### 4.11 Named workers — `.tst/agents/*.md` (TD-5133)
+
+Each markdown file in `.tst/agents/` (this workspace) or `~/.tstdesk/agents/` (every workspace)
+defines one worker that `delegate` can run by name. The frontmatter says what it is; the body is
+its own prompt, added after the worker tier's steering. On the same name the file in
+`~/.tstdesk/agents/` wins, so a cloned repo cannot replace a worker you wrote.
+
+```markdown
+---
+name: reviewer            # optional; defaults to the file name
+description: Reviews a diff for bugs and missing tests
+tools: [fs_read, fs_grep, shell]
+tier: brain               # brain, worker (the default) or validator; ~/.tstdesk/agents/ only
+preset: openrouter        # optional; that preset's tier instead of the active one; ~/.tstdesk/agents/ only
+policy:
+  - tool: shell
+    args: "git push*"
+    effect: never
+---
+Read the diff, run the tests, and list each bug with its file and line.
+```
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `name` | string | the file name | 1–64 letters, digits, `-` or `_`. What `delegate`'s `agent` and `@name` use. |
+| `description` | string | required | Shown to the model in `delegate`'s list, so it knows when to pick this worker. Cut at 300 characters. |
+| `tools` | list | read-only: `fs_read`, `fs_list`, `fs_grep`, `web_search`, `web_fetch` | The allow list, a subset of ONE built-in child kind plus `consult`: either the worker kind's (`fs_read`, `fs_list`, `fs_grep`, `fs_write`, `fs_edit`, `shell`) or the research kind's (`fs_read`, `fs_list`, `fs_grep`, `web_search`, `web_fetch`). A list mixing `fs_write`/`fs_edit`/`shell` with `web_search`/`web_fetch` is refused. `consult` is offered only when `consult.tiers` includes the worker's tier. Never `delegate`, a plugin or an MCP tool. |
+| `tier` | `brain` / `worker` / `validator` | `worker` | The tier the worker's model calls run on, priced and capped like any call on it. Only a file in `~/.tstdesk/agents/` may name a tier other than `worker`. |
+| `preset` | string | the active preset | Take `tier` from this preset. A preset missing from `config.yaml` refuses the call rather than falling back. Only a file in `~/.tstdesk/agents/` may name a preset. |
+| `policy` | list of rules | none | Rules like §4.4's, judged beside the workspace policy for this worker's calls only. `effect` must be `ask` or `never`: a worker's policy can only tighten. |
+
+A file that breaks a rule above — an `auto` rule, a tool outside the list, tools from both kinds,
+a workspace file naming `tier: brain` or a `preset`, a key TST Desk does not read (`model`, say),
+no description — is not loaded, and `delegate` names the reason when the
+model asks for it. The trees are read fresh at the start of each turn and again when `delegate`
+runs, so a saved edit counts on the next call.
+
+- **The model sees them.** `delegate` lists every loaded worker with its description, and its
+  `agent` argument takes one of their names. With no definitions the tool is unchanged.
+- **`@name` in a message** points the turn at that worker: the model is told to hand the task to
+  it with `delegate`. The approval card and the call are the usual ones.
+- **The agent cannot write them.** Both trees are refused like steering files (prime directive
+  4): `fs_write`, `fs_edit` and a shell write are Class C, inside the workspace or not. They are
+  not proposable with `propose_steering_edit` either; edit them yourself.
+- **Plan mode** runs only a worker with no `fs_write`, `fs_edit` or `shell`.
+- They load from a workspace you have not trusted (§4.8), so a definition can only narrow what a
+  built-in delegated child already has: its tools fit inside one child kind, its policy only
+  tightens, and a workspace file runs on the worker tier of the active preset. Choosing another
+  tier or a preset is for your own `~/.tstdesk/agents/` files.
+
+### 4.12 `hooks` — commands that run at points in a session (TD-5134)
 
 The same block as §2's `hooks`, for this workspace. It applies only once you trust the file
 (§4.8): a hook is a command TST Desk runs on its own. Until then, or if the block is invalid,

@@ -912,7 +912,10 @@ What does **not** carry over, and what to do about it:
 - **MCP server definitions, hooks, and subagent files** are configuration for
   another product, not steering. They are ignored. TST Desk's own hooks are
   set under `hooks:` in `config.yaml` (or a trusted `.tst/config.yaml`); see
-  docs/configuration.md (TD-5134).
+  docs/configuration.md (TD-5134). TST Desk's own named workers live in
+  `.tst/agents/*.md` (and `~/.tstdesk/agents/*.md`); `.claude/agents/` is not read. A
+  Claude Code subagent file can be copied over once its `model` key is replaced with
+  `tier` or `preset` (configuration §4.11, TD-5133).
 - **Slash commands** live in `.tst/commands/*.md` (and `~/.tstdesk/commands/*.md`).
   They are not steering: the assembler never puts them in the cache prefix.
   Type `/` in the composer to list them. The agent cannot write those trees.
@@ -971,6 +974,10 @@ The instruction stack never reads them. Invoking `/review` inserts the file
 body into the user message; until then the body is absent from the prompt.
 Agent writes to `.tst/commands/**` and `.claude/commands/**` are Class C, the
 same refusal as `AGENTS.md`.
+
+Named worker definitions (`.tst/agents/` and `~/.tstdesk/agents/`, TD-5133) are
+not steering either: a worker's prompt reaches only that worker, after the worker
+tier's stack. Agent writes to both trees are Class C, the same refusal.
 
 ---
 

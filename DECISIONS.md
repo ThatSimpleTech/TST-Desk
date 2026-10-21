@@ -17619,3 +17619,76 @@ workspace file with invalid hooks adds no hooks rather than some of them.
 - **`tst run` counts hook blocks as refusals.** `hook_blocked` joins
   `REFUSAL_CODES` (a `before_tool` block), and a turn that ends with
   `hook_blocked` (a blocked prompt) is `refused` too: exit 3.
+
+## 2026-10-21 — TD-5133: named worker definitions in `.tst/agents/` and `~/.tstdesk/agents/` (Class B)
+
+**Context.** The gap audit asked for workers with their own prompt, tool
+allow list, tier or preset and tightening policy, picked by name from
+`delegate` or by `@name` in the composer. The 2026-10-14 decisions do
+not cover it beyond directive 4.
+
+**Decision.**
+- **Format.** One markdown file per worker; YAML frontmatter `name`
+  (defaults to the stem), `description` (required: it is what the model
+  picks by), `tools`, `tier` (`brain`/`worker`/`validator`, default
+  `worker`), `preset`, `policy`; the body is the prompt, capped at 32 KiB
+  like a slash command. User-global wins on a name, as for commands, so a
+  cloned repo cannot replace a worker the user wrote.
+- **Fail closed.** A file with an `auto` rule, a tool outside the allowed
+  set, an unknown key (Claude Code's `model`, say), no description or a
+  bad name is not loaded. The reason is kept and `delegate` repeats it when
+  the model asks for that name. Ignoring an unknown key would run the
+  worker differently from what its author wrote.
+- **Tools.** A subset of ONE built-in child kind plus `consult` (still
+  only when `consult.tiers` has the worker's tier): the worker kind's
+  (`fs_*` reads, `fs_write`, `fs_edit`, `shell`) or the research kind's
+  (`fs_*` reads, `web_search`, `web_fetch`). A list mixing writes or
+  `shell` with the web is refused, since TD-5117 kept the web on the
+  read-only child and no built-in child holds both. Never `delegate`,
+  plugin or MCP tools: nothing vouches for them in a child yet. No `tools`
+  key means the read-only research set, the narrower default.
+- **Tier and preset.** `preset` picks that preset's `tier`; a preset not in
+  `config.yaml` refuses the call instead of falling back. Spend lands on
+  that tier in the parent's tracker, still under the parent's caps. Only
+  a user-global file (`~/.tstdesk/agents/`) may set `tier` other than
+  `worker` or name a `preset`; a workspace file that does is not loaded.
+  Workspace definitions load without a trust card, so a cloned repo must
+  not be able to move its child onto the brain tier or another preset's
+  models. Gating the keys behind TD-5113 trust was the alternative; that
+  trust covers `.tst/config.yaml` bytes, not these files, so refusing is
+  the conservative choice (review finding on PR #57).
+- **Policy.** Rules become `WorkerPolicyRule`s on the child dispatcher's
+  `worker_rules`, merged after the workspace and run rules. Resolution is
+  deny first, so `ask`/`never` can only tighten; `with_worker_rules` drops
+  `auto` again so no caller can widen. A refusal names `(worker <name>)`.
+  The read-only shell list's read guards still come from the workspace
+  policy only: a worker's `fs_read` rule does not make a listed shell
+  command ask, but the worker's own `shell` rules still apply by tool.
+- **Unwritable.** `(.tst, agents)` and `(.tstdesk, agents)` join the
+  reserved directory pairs `is_steering_write` checks over the whole path,
+  so `fs_write`, `fs_edit` and shell redirects are Class C in the
+  workspace and in the home tree (a `writable_paths` hole too). They are
+  not added to `propose_steering_edit`: the user edits them by hand.
+- **What the model sees.** Each turn the loop reads both trees (off the
+  event loop) and rewrites `delegate`'s definition: a "Named workers"
+  list with descriptions and an `enum` on `agent`. With no definitions the
+  definition is the registry's own, so requests and the provider's prompt
+  cache are unchanged. `delegate` reads the trees again when it runs, so a
+  removed or edited file is what runs or is refused.
+- **`@name`.** The daemon matches `@name` (not inside an address) against
+  the loaded names and appends a note to the message the model receives;
+  the window shows the message as typed, as plan mode's note does. The
+  model still makes the `delegate` call, so it goes through the
+  classifier and the approval card like any other.
+- **Plan mode.** A named worker holding `fs_write`, `fs_edit` or `shell`
+  is refused while planning; a read-only one runs.
+- **Untrusted workspaces.** Definitions load from a workspace whose
+  `.tst/config.yaml` is not trusted (TD-5113): a definition can only
+  narrow the tools and policy a delegated child already has.
+
+**Conservative answers to questions the story left open (Class C, PR body).**
+No composer autocomplete or new control for `@name`: the daemon recognises
+it in the typed text and no wire message changes. No implicit delegation:
+the model is told to delegate, and the call is still judged and approved.
+Unknown frontmatter keys refuse the file. `agent` with `kind` is refused.
+
