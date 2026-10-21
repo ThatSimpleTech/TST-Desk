@@ -249,6 +249,23 @@ class UserMessage(ClientMessage):
         return self
 
 
+class ExtractAttachment(ClientMessage):
+    """Measure a staged PDF, DOCX or XLSX before it is sent (TD-5131).
+
+    The composer cannot read a document itself, so it asks the daemon that
+    will receive the message: the text comes out on that machine, against
+    that session's caps, and the answer is ``attachment_extracted`` on this
+    connection. Nothing is stored or sent to the model; the same file on a
+    ``user_message`` is extracted again, because the client is not trusted
+    to carry an answer back. ``request_id`` is the composer's own, echoed.
+    """
+
+    type: Literal["extract_attachment"] = "extract_attachment"
+    session_id: str
+    request_id: str = Field(min_length=1, max_length=64)
+    attachment: Attachment
+
+
 class SendQueued(ClientMessage):
     """Send a message a restart left held (TD-5155).
 
@@ -268,6 +285,80 @@ class RemoveQueued(ClientMessage):
     type: Literal["remove_queued"] = "remove_queued"
     session_id: str
     queued_id: str
+
+
+#: Lines one diff comment may span (TD-5132).
+LINE_COMMENT_MAX_LINES = 200
+
+
+class LineCommentAnchor(BaseModel):
+    """Where one diff comment points, and what it says (TD-5132).
+
+    ``path`` is the absolute path the diff's ``+++ b/`` header named.
+    ``start_line`` and ``end_line`` count lines of the file after that
+    write, from 1, both inclusive. ``id`` is the window's own, so it can
+    match the comment it sent to the ``user_turn`` that carried it.
+    """
+
+    id: str = Field(min_length=1, max_length=64)
+    path: str = Field(min_length=1, max_length=4096)
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+    body: str = Field(min_length=1, max_length=4000)
+    #: Seq of the ``tool_result`` whose diff the comment was made on, so the
+    #: window can carry the range through writes made before the comment's
+    #: turn starts (a comment sent mid-turn). Echoed as sent; ``None`` from
+    #: a client that does not say.
+    base_seq: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _ordered(self) -> LineCommentAnchor:
+        if self.end_line < self.start_line:
+            raise ValueError("end_line comes before start_line")
+        if self.end_line - self.start_line + 1 > LINE_COMMENT_MAX_LINES:
+            raise ValueError(f"a comment spans at most {LINE_COMMENT_MAX_LINES} lines")
+        if not self.body.strip():
+            raise ValueError("a comment needs text")
+        return self
+
+
+class LineComment(LineCommentAnchor):
+    """One comment as the window sends it (TD-5132).
+
+    ``lines`` are the commented lines as the diff showed them, one per
+    line of the range. The daemon compares them with the file: when they
+    still match, the model gets the lines around them from the file;
+    when the file has changed since, it gets these, marked as such.
+    """
+
+    lines: list[str] = Field(min_length=1, max_length=LINE_COMMENT_MAX_LINES)
+
+    @model_validator(mode="after")
+    def _one_per_line(self) -> LineComment:
+        if len(self.lines) != self.end_line - self.start_line + 1:
+            raise ValueError("lines must hold one entry per line of the range")
+        if any(len(line) > 4000 for line in self.lines):
+            raise ValueError("a commented line is longer than 4000 characters")
+        return self
+
+
+class SubmitLineComments(ClientMessage):
+    """Send the diff view's comments to the agent as one message (TD-5132).
+
+    The daemon checks every path is inside the session's workspace, reads
+    the code around each comment, and queues one user turn whose text the
+    model reads. That turn's ``user_turn`` carries the comments, so the
+    window can mark each resolved once a later write touches its lines.
+    Refused like ``user_message`` (``session_not_running``,
+    ``message_not_saved``, ``daemon_draining``), and with
+    ``line_comment_outside_workspace`` for a path outside the wall; every
+    refusal names ``in_reply_to``. Not forwarded for another computer's
+    session.
+    """
+
+    type: Literal["submit_line_comments"] = "submit_line_comments"
+    session_id: str
+    comments: list[LineComment] = Field(min_length=1, max_length=50)
 
 
 class ForkFrom(ClientMessage):
@@ -935,6 +1026,18 @@ class ListSessions(ClientMessage):
     """Request the current session list (id, workspace, state, timestamps)."""
 
     type: Literal["list_sessions"] = "list_sessions"
+
+
+class SearchSessions(ClientMessage):
+    """Search what this computer's sessions said (TD-5129). The rail's search box.
+
+    Answered with ``session_search_results`` from the local full-text
+    index; nothing leaves the computer.
+    """
+
+    type: Literal["search_sessions"] = "search_sessions"
+    query: str = Field(max_length=500)
+    limit: int = Field(default=50, ge=1, le=200)
 
 
 class NewSession(ClientMessage):
@@ -1844,6 +1947,30 @@ class FilesRestorePreview(DaemonEvent):
     diff_truncated: bool = False
 
 
+class AttachmentExtracted(DaemonEvent):
+    """Answer to ``extract_attachment`` (TD-5131). This connection only.
+
+    On success: ``kind`` (``pdf`` | ``docx`` | ``xlsx``), ``units`` (pages
+    or sheets; 0 for DOCX), ``text_bytes`` (what the caps measure) and
+    ``tokens`` (an estimate at the daemon's chars-per-token). On a refusal
+    ``error_code`` and ``message`` say why, in the copy the same file would
+    earn on send, and the counts stay 0. A file that is not a document is
+    ``attachment_not_document``.
+    """
+
+    type: Literal["attachment_extracted"] = "attachment_extracted"
+    seq: int = 1
+    session_id: str
+    request_id: str
+    name: str
+    kind: Literal["pdf", "docx", "xlsx"] | None = None
+    units: int = 0
+    text_bytes: int = 0
+    tokens: int = 0
+    error_code: str | None = None
+    message: str = ""
+
+
 class FilesRestored(DaemonEvent):
     """Files were put back as they were before a user turn (TD-5125).
 
@@ -1891,6 +2018,10 @@ class UserTurn(DaemonEvent):
     under, as the daemon took them, so the run can tell they were applied
     and a replay shows why a call ran or was refused without asking.
     Additive; ``None`` for a turn with none.
+
+    ``line_comments`` (TD-5132) are the diff comments this message carried,
+    as the daemon took them, so the window can mark each one resolved when
+    a later write touches its lines. Additive; ``None`` for any other turn.
     """
 
     type: Literal["user_turn"] = "user_turn"
@@ -1899,6 +2030,7 @@ class UserTurn(DaemonEvent):
     content: str
     steer: SteerPoint | None = None
     run_permissions: RunPermissions | None = None
+    line_comments: list[LineCommentAnchor] | None = None
 
 
 class QueuedMessageEntry(BaseModel):
@@ -2963,6 +3095,32 @@ class SessionList(DaemonEvent):
     sessions: list[SessionSummary] = Field(default_factory=list)
 
 
+class SessionSearchHit(BaseModel):
+    """The best message of one session for a ``search_sessions`` query (TD-5129)."""
+
+    session_id: str
+    #: 1-based user turn the message belongs to.
+    turn: int = Field(ge=0)
+    role: Literal["user", "assistant"]
+    #: A few words around the match, from the redacted session text.
+    snippet: str
+
+
+class SessionSearchResults(DaemonEvent):
+    """Reply to ``search_sessions`` (TD-5129): one hit per session, best first.
+
+    ``query`` echoes the request so a window that typed on can drop a stale
+    reply. ``available`` is false when the index could not be opened; the
+    rail then filters on titles alone.
+    """
+
+    type: Literal["session_search_results"] = "session_search_results"
+    seq: int = 1
+    query: str
+    hits: list[SessionSearchHit] = Field(default_factory=list)
+    available: bool = True
+
+
 class PolicyRules(DaemonEvent):
     """Response to ``list_policy_rules`` / ``revoke_policy_rule`` (TD-803).
 
@@ -4023,6 +4181,7 @@ ClientMessageT = Annotated[
     | UserMessage
     | SendQueued
     | RemoveQueued
+    | SubmitLineComments
     | Approve
     | Deny
     | AlwaysAllow
@@ -4035,6 +4194,7 @@ ClientMessageT = Annotated[
     | SetBranch
     | PreviewRestoreFiles
     | RestoreFiles
+    | ExtractAttachment
     | SetSkipAllApprovals
     | SetLoadGlobalMemory
     | SetCoworker
@@ -4063,6 +4223,7 @@ ClientMessageT = Annotated[
     | SaveCharter
     | StartAutonomy
     | ListPins
+    | SearchSessions
     | AddPin
     | RemovePin
     | MemoryAccept
@@ -4151,6 +4312,7 @@ DaemonEventT = Annotated[
     | ConversationReset
     | FilesRestorePreview
     | FilesRestored
+    | AttachmentExtracted
     | UserTurn
     | QueuedMessages
     | AssistantDelta
@@ -4188,6 +4350,7 @@ DaemonEventT = Annotated[
     | InstructionFiles
     | CommandList
     | ContextPins
+    | SessionSearchResults
     | MemoryFiles
     | CharterDocument
     | AutonomyStart
@@ -4250,6 +4413,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "user_message",
         "send_queued",
         "remove_queued",
+        "submit_line_comments",
         "approve",
         "deny",
         "always_allow",
@@ -4261,6 +4425,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "compact_context",
         "set_branch",
         "preview_restore_files",
+        "extract_attachment",
         "restore_files",
         "set_skip_all_approvals",
         "set_load_global_memory",
@@ -4290,6 +4455,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "save_charter",
         "start_autonomy",
         "list_pins",
+        "search_sessions",
         "add_pin",
         "remove_pin",
         "memory_accept",
@@ -4377,6 +4543,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "session_state",
         "conversation_reset",
         "files_restore_preview",
+        "attachment_extracted",
         "files_restored",
         "user_turn",
         "queued_messages",
@@ -4415,6 +4582,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "instruction_files",
         "command_list",
         "context_pins",
+        "session_search_results",
         "memory_files",
         "charter",
         "autonomy_start",

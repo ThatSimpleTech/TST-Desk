@@ -69,6 +69,7 @@ no effect.
 | `computer_use` | mapping | see below | Desktop computer-use sidecar. Omitted in an older user copy is filled from the shipped file at load. Empty `command` is mock-only — the daemon never spawns `mcp/tst-cu-mcp`. Empty `grounding.base_url` leaves click targeting on the intended (x, y). |
 | `session` | mapping | see below | On-disk session event-log window. Omitted in an older user copy is filled from the shipped file at load. Zero is invalid, not unbounded. |
 | `clear_tool_results` | mapping | see below | Clear stale tool results before whole turns are compacted (TD-5115). Omitted in an older user copy is filled from the shipped file at load, which turns it on. |
+| `compaction` | mapping | see below | How compaction writes its summary and what it brings back (TD-5128): a worker-written structured summary, written ahead in the background, and the recent files read again. Omitted in an older user copy is filled from the shipped file at load, which turns the worker summary on. A config with the block but no `summary` key is `extractive`. |
 | `consult` | mapping | see below | Which tiers get the `consult` tool, which asks the brain or the validator one question mid-task, and how many consults one turn may make (TD-5119). Omitted in an older user copy is filled from the shipped file at load: the worker only, two a turn. |
 | `shell` | mapping | see below | The read-only shell list (TD-5103): commands that run without asking. Omitted in an older user copy means the whole built-in list, on. Config can shrink it or switch it off, never add to it. |
 | `remote` | mapping | see below | Opt-in Tailscale bind. Omitted in an older user copy is filled from the shipped file at load. Empty `bind` is loopback only. |
@@ -222,7 +223,7 @@ under the user data dir. Playwright missing always falls back to mock.
 | `browser` | `mock` or `playwright` | `mock` | Browser driver. `mock` never launches Chrome. `playwright` uses a persistent profile under the user data dir when Playwright is installed; otherwise the mock. |
 | `grounding` | mapping | see below | Local vision model for click targeting (TD-3902). |
 | `local_worker_preset` | string | `vllm` | After this session has used a `desktop_` or `browser_` tool, the worker *client* uses that named preset's worker tier (loopback URL + optional slug). Brain stays on the active preset. Empty never remaps. The name is a preset key, not a model slug. Lead-turns, `set_tier`, and escalation are unchanged. |
-| `max_prompt_images` | int ≥ 0 | `1` | How many `image_url` parts a completion may keep. Oldest screenshots are dropped first. `1` matches ezer-forge (`--limit-mm-per-prompt image:1`). |
+| `max_prompt_images` | int ≥ 0 | `1` | How many `image_url` parts a completion may keep. Oldest images (screenshots, and images `fs_read` returned) are dropped first. `1` matches ezer-forge (`--limit-mm-per-prompt image:1`). It also caps the page images one PDF read returns (at most 5), and `0` makes `fs_read` treat every tier as text-only (TD-5130). |
 
 #### `computer_use.grounding`
 
@@ -517,6 +518,17 @@ drop a different prefix than `from_seq`. Zero is a load error, not
 | `send_file_max_bytes` | int 1..2147483648 | `536870912` | Largest file `send_file` copies into the chat (512 MiB). Bigger is refused with `file_too_large`; nothing is copied. |
 | `send_file_session_max_bytes` | int ≥ 1 | `4294967296` | Total of sent files one session may hold (4 GiB). Past it, `session_quota`. |
 
+**Search index (TD-5129).** Every user message and assistant reply the session
+logs carry is also written to `session_index.db` in the data dir, a SQLite FTS5
+full-text index (file mode 0600). The rail's search box and the model's
+`session_search` tool read it. It holds the same redacted text as
+`events.jsonl`, never thinking or tool output, and nothing in it leaves the
+computer. Rows outlive `log_max_events`, so a trimmed event stays findable;
+deleting a session removes its rows. The daemon fills it as events are written
+and, on start, catches up from each session's log, so sessions written before
+the index existed become searchable on the first start. It has no keys: delete
+the file to rebuild it from the logs that remain.
+
 ### `clear_tool_results`
 
 How old tool output leaves a full context window (TD-5115). Compaction
@@ -590,6 +602,82 @@ clear_tool_results:
   keep_recent_tool_results: 5
   clear_at_least_tokens: 4000
   exclude_tools: [load_skill]
+```
+
+### `compaction`
+
+What a compaction leaves in place of the turns it folds (TD-5128). When the
+prompt passes the tier's budget (and clearing stale tool results was not
+enough), the turns before the last two user turns become one summary
+message; `/compact` and "Summarize from here" do the same on request
+(TD-5109).
+
+- **The summary.** With `summary: model` the worker tier writes it, as a
+  structured summary under four headings: `## Goal`, `## Decisions`,
+  `## Files touched` and `## Open items`. `summary_prompt` replaces the
+  built-in prompt; the worker gets the folded turns (a prior summary whole,
+  then the newest messages first when they do not all fit its window) and,
+  for `/compact guidance`, your guidance. The summary falls back to the
+  short extractive one (about 200 characters of each folded message, 2,000
+  in all) when the worker fails, takes longer than
+  `summary_timeout_seconds`, is cut off at `summary_max_tokens`, or, with the
+  built-in prompt, answers without the four headings in order. A custom
+  prompt's answer only has to be non-empty. Compaction never fails because
+  of the worker. `summary: extractive` never calls a model.
+- **In the background.** Once a request passes `background_percent` of the
+  budget, the turns the next compaction can fold are summarized while the
+  turn runs. There are two such spans: everything before the previous user
+  turn (what a compaction in the middle of this turn folds, the usual case
+  when tool results grow the prompt) and everything before the last user
+  turn (what the next turn's compaction, or `/compact` with no guidance,
+  folds). The first is normally the one already written during the turn
+  before, so this costs about one worker call per turn. When a compaction
+  folds one of those spans, the summary is ready and the turn does not wait
+  for the worker. Clearing stale tool results does not count as a change.
+  `0` turns writing ahead off.
+- **Recent files.** After a compaction, the files read (`fs_read`), written
+  (`fs_write`) or edited (`fs_edit`) in the folded turns are read again from
+  disk, newest first, and go under the summary, headed
+  `[Recent files, read again after compaction]`. At most `reinject_files`
+  files and `reinject_tokens` tokens, and never more than half the room left
+  under the budget, so the files cannot bring the next request straight
+  back to it; the last file that fits is cut, with a note. A file the kept
+  turns read or changed too is left out (it is still in the prompt), and so
+  is any file outside the workspace, any file an `ask` or `never` rule over
+  the built-in reads matches (§4.4), and anything that is not UTF-8 text.
+  A later compaction folds only the summary itself, never an old copy of
+  the files.
+- **Skills.** A skill loaded with `load_skill` or `/name` lives in the
+  system prompt, which compaction never folds, so its body is in every
+  request after a compaction too, within its own size cap.
+- The worker's calls are priced as worker calls outside the turn (as the
+  memory distill is) and show in the cost meter. The `context_compacted`
+  row is the same whichever summary was used.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `summary` | `model` \| `extractive` | `model` in the shipped file | Who writes the summary. A config with the block and no `summary` key is `extractive`. |
+| `summary_prompt` | string | `""` | Replaces the built-in summary prompt. Empty uses the built-in one, whose four headings the answer must carry. |
+| `summary_max_tokens` | int ≥ 64 | `1200` | The worker's output cap for one summary. An answer cut off there falls back to the extractive summary. |
+| `summary_timeout_seconds` | number > 0 | `120` | How long a compaction waits for the worker before it falls back. |
+| `background_percent` | int 0–99 | `75` | From this share of the compaction budget, the next compaction's summary is written in the background. `0` is off. |
+| `reinject_files` | int ≥ 0 | `5` | How many recent files come back after a compaction. `0` brings none back. |
+| `reinject_tokens` | int ≥ 0 | `6000` | The most estimated tokens those files may take, before the half-the-headroom cap. |
+
+<!-- verify: model -->
+```yaml
+presets:
+  local:
+    brain: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    worker: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    validator: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+active_preset: local
+compaction:
+  summary: model
+  summary_prompt: "Summarize for a coding agent: the goal, what was decided, every file path touched, and what is left."
+  background_percent: 60
+  reinject_files: 3
+  reinject_tokens: 4000
 ```
 
 ### `consult`
@@ -1379,7 +1467,7 @@ three tier definitions. You can pin a tier for a session from the title bar.
 | `cache_read_price` | float ≥ 0 | *required* | Dollars per **million** prompt tokens served from cache. |
 | `context_window` | int > 0 | *required* | The compaction budget — see below. |
 | `max_output_tokens` | int > 0 | *required* | Sent as `max_tokens` on the tier's requests, and the answer reservation subtracted from `context_window` — see below. |
-| `vision` | bool | `false` | When `true`, PNG/JPEG/GIF/WebP attachments are accepted on user turns routed to this tier (TD-4705). Capability is config — never inferred from the slug in code. |
+| `vision` | bool | `false` | When `true`, PNG/JPEG/GIF/WebP attachments are accepted on user turns routed to this tier (TD-4705), and `fs_read` returns an image file, or PDF page images on request, as an image the model sees (TD-5130). Capability is config — never inferred from the slug in code. |
 | `extra_body` | map | none | Extra JSON fields added to every chat request the tier makes: the turn, the progress check, a delegated worker, the after-write review (validator tier), memory distillation (worker tier), and (on the worker tier) the tool-call classifier, DoD polls and judgment calls that run on the worker. They fill in only fields the request did not set itself. For provider-specific settings such as a llama.cpp server's `chat_template_kwargs` — see §3.6. It cannot set `model`, `messages`, `tools`, `tool_choice`, `stream`, `stream_options`, `max_tokens` or `max_completion_tokens`, and its values must be plain JSON; a load error names the problem. Sent as written: never put a key or token here. |
 | `verdict_extra_body` | map | none | Merged over `extra_body` on the worker tier's one-word verdict calls only: the tool-call classifier, DoD polls and judgment calls that run on the worker. Nested maps merge and this map wins a clash. The turn, a delegated worker and memory distillation never send it. Same rules as `extra_body`; it does nothing on the brain and validator tiers. Use it to turn a reasoning model's thinking off for an 8-token answer — see §3.6. |
 | `connect_timeout` | float > 0 | `30` | Seconds to open the connection to `base_url`. |
@@ -2262,14 +2350,28 @@ itself still asks for approval like any Class B call.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `max_file_bytes` | int ≥ 1 | `4000000` | Size of one attached file. Measured on the file's real bytes, after decoding. |
-| `max_total_bytes` | int ≥ 1 | `8000000` | Size of all the attachments on one message, added together. |
+| `max_file_bytes` | int ≥ 1 | `4000000` | Size of one attached file. Measured on the file's real bytes, after decoding; for a PDF, DOCX or XLSX, on the text extracted from it (TD-5131). |
+| `max_total_bytes` | int ≥ 1 | `8000000` | Size of all the attachments on one message, added together, counting a document's extracted text rather than its file. |
 | `max_count` | int ≥ 1 | `10` | Files on one message. |
 
-**Text files, and images when the active tier has vision.** A file that is not valid UTF-8, or
-that contains a NUL byte, is refused as binary. A PDF, a compiled binary, and a UTF-16 text
-file land here. PNG, JPEG, GIF, and WebP are accepted when the active tier sets `vision: true`.
+**Text files, documents, and images when the active tier has vision.** A file that is not valid
+UTF-8, or that contains a NUL byte, is refused as binary, unless it is a PDF, DOCX or XLSX. A
+compiled binary and a UTF-16 text file land here. PNG, JPEG, GIF, and WebP are accepted when the active tier sets `vision: true`.
 The bytes are kept as they are. A file over `max_file_bytes` is refused whole.
+
+**PDF, DOCX and XLSX are sent as their text (TD-5131).** The daemon extracts it on this machine,
+with no network: PDF through PDFium, DOCX and XLSX with the standard library. The kind comes from
+the file's bytes, not its name. The model reads a `[page 3 of 12]` line before each PDF page and a
+`[sheet: Totals]` line before each sheet, whose rows are tab-separated with empty columns kept.
+A DOCX gives its paragraphs and its table rows, tab-separated. The caps above measure the text,
+so a 6 MB PDF of 20 KB of text fits and a small XLSX that expands past `max_file_bytes` does not.
+The file itself may be up to 10 MB, and the files on one message up to 12 MB together, whatever
+the caps say: that is what the websocket can carry. A PDF with no text (a scan) is refused with
+`attachment_no_text`, a damaged or password-locked file with `attachment_unreadable`. A DOCX or
+XLSX whose insides pass 128 MB of XML or 4 million elements is refused with `attachment_too_large`
+even when it holds little text: that is a zip bomb, not a document. When you
+stage a document, the composer asks the daemon to extract it (`extract_attachment`) and its chip
+shows the page or sheet count and about how many tokens the text will take.
 
 **These are enforced by the daemon, not by the composer.** The message-box refuses an oversize
 or binary file early, with copy that names the file, but that is a convenience. The same
@@ -2407,6 +2509,24 @@ to guard a file, name it for both tools that read contents. The same rules keep 
 read-only shell list (§2 `shell`, TD-5103) off the file: `cat .env`, `grep -r KEY .` and
 `git show HEAD:.env` ask instead of running.
 
+**`fs_read` opens images, PDFs and notebooks (TD-5130).** The file's type comes from its bytes,
+not its name. The tier that reads the result decides what comes back:
+
+| File | Tier with `vision: true` | Tier without |
+|---|---|---|
+| PNG, JPEG, GIF, WebP (up to 4 MB) | The image, as an image the model sees, after one line naming it | A refusal that says the model does not take images |
+| PDF | Page text under `── page N ──` markers. `page_images: true` adds images of the pages read (at most 5, and at most `computer_use.max_prompt_images`) | Page text; asking for page images says why there are none |
+| `.ipynb` (nbformat 4) | Each cell's source, then its stream, result and error outputs as text (colour codes stripped). Image and HTML-only outputs are named, not shown | Same |
+
+A PDF read takes `pages`: one page (`"3"`) or a range (`"1-5"`). Empty reads the first 10 pages;
+a range is cut to 20 pages and the result names the next range to ask for. The text also stops
+at whole pages under the call's result cap (50,000 characters, lower on a small tier), so dense
+pages end earlier and the note still names the next page; images come only for pages whose text
+is in the result, and one page longer than the cap is cut and says so. A damaged or
+password-locked PDF is an error. PDF text comes from PDFium (`pypdfium2`), on the machine; nothing
+is uploaded. `limit` and `offset` window a notebook's lines as they do a text file's. A notebook
+that is not nbformat 4 JSON, and every other text file, read as before.
+
 **The task list never asks (TD-5122).** `task_list` changes only the session's own list, never
 a file or a host, so it is Class A by a fixed rule and runs with no card in any mode. A policy
 rule naming `task_list` still wins. An MCP or plugin tool with that name gets no such grant.
@@ -2416,6 +2536,12 @@ and changes which definitions the next requests carry, so it is Class A by a fix
 (`tool-search`). A tool it loads is granted nothing: each call to that tool is classified on its
 own, so an MCP tool still asks (§2 `mcp`). A policy rule naming `tool_search` still wins. An MCP
 or plugin tool with that name gets no such grant.
+
+**Session search never asks (TD-5129).** `session_search` reads TST Desk's own index of what
+earlier sessions in the same workspace said (`session_index.db` in the data dir; see `session`) and
+changes nothing, so it is Class A by a fixed rule (`session-search`). It reads no workspace
+file and reaches no host. A policy rule naming `session_search` still wins. An MCP or plugin
+tool with that name gets no such grant.
 
 <!-- verify: workspace -->
 ```yaml

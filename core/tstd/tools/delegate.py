@@ -33,6 +33,7 @@ from ..output_cap import (
     split_cut_calls,
     stub_call,
 )
+from ..prompt_images import cap_prompt_images
 from ..protocol import WorkerStep
 from ..provider import ChatCompletionRequest, ChatMessage, ProviderError, ToolCall
 from ..session import Session
@@ -255,7 +256,7 @@ async def run_worker_child(
         )
 
     from ..cost import CostTracker
-    from ..loop import _cap_violation, dispatch_worker_child_tools
+    from ..loop import _cap_violation, _tool_message_content, dispatch_worker_child_tools
 
     tracker = parent.cost_tracker
     if tracker is None:
@@ -335,6 +336,11 @@ async def run_worker_child(
     child_limit = min(CHILD_MAX_ITERATIONS, remaining)
     last_text = ""
     worker_cfg = runtime.config.tier("worker")
+    # The child's results go back to the worker tier: an image fs_read
+    # opens is sent only if that tier takes images (TD-5130).
+    max_images = runtime.config.computer_use.max_prompt_images
+    child.tool_vision = worker_cfg.vision
+    child.tool_max_images = max_images
     counter = make_token_counter(worker_cfg.slug)
     record = TranscriptRecorder(transcript)
 
@@ -385,6 +391,7 @@ async def run_worker_child(
             record.add("note", f"Worker stopped: {violation}")
             return finish(last_text or f"Worker stopped: {violation}")
 
+        cap_prompt_images(messages, max_images)
         request = ChatCompletionRequest(
             model=worker_cfg.require_slug(),
             messages=list(messages),
@@ -449,7 +456,8 @@ async def run_worker_child(
         results = await dispatch_worker_child_tools(child_dispatcher, child, items)
         for r in results:
             record.add("tool_result", r.output, tool=r.name, status=r.status)
-            messages.append(ChatMessage(role="tool", content=r.output, tool_call_id=r.tool_call_id))
+            content = _tool_message_content(r) if r.images else r.output
+            messages.append(ChatMessage(role="tool", content=content, tool_call_id=r.tool_call_id))
 
     record.add("note", "Worker stopped: iteration cap.")
     return finish(last_text or "Worker stopped: iteration cap.")

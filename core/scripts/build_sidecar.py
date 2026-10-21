@@ -87,6 +87,13 @@ def build(triple: str) -> Path:
             "mcp.cli",
             "--collect-all",
             "PIL",
+            # PDF text for attachments and fs_read (TD-5131, TD-5130). Imported
+            # function-locally, so analysis never sees it; collect-all pulls
+            # the PDFium shared library out of pypdfium2_raw.
+            "--collect-all",
+            "pypdfium2",
+            "--collect-all",
+            "pypdfium2_raw",
             # pyobjc: the macOS CU backend imports these function-locally
             # (TD-4834), so static analysis never sees them. collect-all
             # pulls the C extensions and framework bundles.

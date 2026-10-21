@@ -113,6 +113,7 @@ import {
   recencyLabel,
   rowTitle,
   rowTitleFull,
+  rowHit,
   rowSubtitle,
   liveActivity,
   snapshotBoundActivity,
@@ -331,6 +332,87 @@ describe("filter", () => {
     setFilter("zzz");
     expect(visibleRows()).toEqual([]);
     expect(sessions.rows).toHaveLength(2);
+  });
+});
+
+// ── Message text (TD-5129: the rail searches what sessions said) ──────────
+
+describe("message search", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    emit(
+      sessionList([
+        ["abc12345-rest", "2026-08-14T09:00:00Z", "idle", "/ws/api-server"],
+        ["def67890-rest", "2026-08-13T09:00:00Z", "interrupted", "/ws/web-app"],
+      ]),
+    );
+    mocks.sent.length = 0;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function results(query: string, ids: string[], available = true): DaemonEventUnion {
+    return {
+      type: "session_search_results",
+      seq: 1,
+      query,
+      available,
+      hits: ids.map((id) => ({
+        session_id: id,
+        turn: 4,
+        role: "assistant" as const,
+        snippet: "…the date parser now keeps the offset…",
+      })),
+    };
+  }
+
+  it("asks the daemon once typing pauses, not per keystroke", () => {
+    setFilter("da");
+    setFilter("dat");
+    setFilter("date parser");
+    expect(sentTypes()).toEqual([]);
+    vi.advanceTimersByTime(250);
+    expect(mocks.sent).toEqual([{ type: "search_sessions", query: "date parser", limit: 50 }]);
+  });
+
+  it("shows sessions whose messages match, with the matching words", () => {
+    setFilter("date parser");
+    vi.advanceTimersByTime(250);
+    emit(results("date parser", ["def67890-rest"]));
+    const rows = visibleRows();
+    expect(rows.map((r) => r.sessionId)).toEqual(["def67890-rest"]);
+    expect(rowHit(rows[0])?.snippet).toContain("date parser");
+    expect(rowHit(rows[0])?.turn).toBe(4);
+  });
+
+  it("drops a reply to an earlier query", () => {
+    setFilter("date");
+    vi.advanceTimersByTime(250);
+    setFilter("date parser");
+    emit(results("date", ["def67890-rest"]));
+    expect(visibleRows()).toEqual([]);
+  });
+
+  it("keeps title and path matches alongside message matches", () => {
+    setFilter("api");
+    vi.advanceTimersByTime(250);
+    emit(results("api", ["def67890-rest"]));
+    expect(visibleRows().map((r) => r.sessionId)).toEqual(["abc12345-rest", "def67890-rest"]);
+    expect(rowHit(visibleRows()[0])).toBeNull();
+  });
+
+  it("does not search one letter, and clearing the box clears the hits", () => {
+    setFilter("d");
+    vi.advanceTimersByTime(250);
+    expect(sentTypes()).toEqual([]);
+    setFilter("date");
+    vi.advanceTimersByTime(250);
+    emit(results("date", ["def67890-rest"]));
+    setFilter("");
+    expect(visibleRows()).toHaveLength(2);
+    expect(rowHit(visibleRows()[1])).toBeNull();
   });
 });
 

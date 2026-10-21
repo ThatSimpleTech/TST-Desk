@@ -30,6 +30,24 @@
     "session_id": "sess-1",
     "queued_id": "q-1"
   },
+  "submit_line_comments": {
+    "type": "submit_line_comments",
+    "session_id": "sess-1",
+    "comments": [
+      {
+        "id": "c-1",
+        "path": "/home/user/project/src/app.py",
+        "start_line": 4,
+        "end_line": 5,
+        "body": "Use a constant here",
+        "base_seq": 7,
+        "lines": [
+          "x = 3",
+          "y = 3"
+        ]
+      }
+    ]
+  },
   "fork_from": {
     "type": "fork_from",
     "session_id": "sess-1",
@@ -41,6 +59,15 @@
     "session_id": "sess-1",
     "user_index": 0,
     "sibling_index": 1
+  },
+  "extract_attachment": {
+    "type": "extract_attachment",
+    "session_id": "sess-1",
+    "request_id": "att-1",
+    "attachment": {
+      "name": "report.pdf",
+      "content_b64": "JVBERi0xLjQK"
+    }
   },
   "preview_restore_files": {
     "type": "preview_restore_files",
@@ -389,6 +416,11 @@
     "type": "list_pins",
     "workspace_path": "/home/user/project"
   },
+  "search_sessions": {
+    "type": "search_sessions",
+    "query": "date parser",
+    "limit": 50
+  },
   "add_pin": {
     "type": "add_pin",
     "workspace_path": "/home/user/project",
@@ -720,6 +752,32 @@
     "sibling_count": 2,
     "content": "hello again"
   },
+  "attachment_extracted": {
+    "type": "attachment_extracted",
+    "seq": 1,
+    "session_id": "sess-1",
+    "request_id": "att-1",
+    "name": "report.pdf",
+    "kind": "pdf",
+    "units": 3,
+    "text_bytes": 5120,
+    "tokens": 1280,
+    "error_code": null,
+    "message": ""
+  },
+  "attachment_extracted_refused": {
+    "type": "attachment_extracted",
+    "seq": 1,
+    "session_id": "sess-1",
+    "request_id": "att-2",
+    "name": "scan.pdf",
+    "kind": null,
+    "units": 0,
+    "text_bytes": 0,
+    "tokens": 0,
+    "error_code": "attachment_no_text",
+    "message": "scan.pdf has no text to read."
+  },
   "files_restore_preview": {
     "type": "files_restore_preview",
     "seq": 1,
@@ -793,7 +851,8 @@
     "turn_id": "turn-1",
     "content": "Fix the tests",
     "steer": null,
-    "run_permissions": null
+    "run_permissions": null,
+    "line_comments": null
   },
   "user_turn_steer": {
     "type": "user_turn",
@@ -809,7 +868,27 @@
         "tc-2"
       ]
     },
-    "run_permissions": null
+    "run_permissions": null,
+    "line_comments": null
+  },
+  "user_turn_line_comments": {
+    "type": "user_turn",
+    "seq": 12,
+    "session_id": "sess-1",
+    "turn_id": "turn-4",
+    "content": "Review comments on your changes (1 comment).",
+    "steer": null,
+    "run_permissions": null,
+    "line_comments": [
+      {
+        "id": "c-1",
+        "path": "/home/user/project/src/app.py",
+        "start_line": 4,
+        "end_line": 5,
+        "body": "Use a constant here",
+        "base_seq": 7
+      }
+    ]
   },
   "user_turn_run_permissions": {
     "type": "user_turn",
@@ -832,7 +911,8 @@
         }
       ],
       "on_ask": "deny_and_continue"
-    }
+    },
+    "line_comments": null
   },
   "queued_messages": {
     "type": "queued_messages",
@@ -1535,6 +1615,20 @@
         "too_large": false
       }
     ]
+  },
+  "session_search_results": {
+    "type": "session_search_results",
+    "seq": 1,
+    "query": "date parser",
+    "hits": [
+      {
+        "session_id": "11111111-2222-3333-4444-555555555555",
+        "turn": 3,
+        "role": "assistant",
+        "snippet": "\u2026the date parser now reads ISO weeks\u2026"
+      }
+    ],
+    "available": true
   },
   "context_pins": {
     "type": "context_pins",
@@ -2712,6 +2806,7 @@
     "deny_verify",
     "detach",
     "end_session",
+    "extract_attachment",
     "fork_from",
     "get_instruction_stack",
     "list_sessions",

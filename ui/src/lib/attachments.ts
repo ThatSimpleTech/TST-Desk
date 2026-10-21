@@ -14,7 +14,7 @@
 // Pure and DOM-free apart from TextDecoder (available in node and the
 // browser), so it unit-tests under vitest's node environment.
 
-import type { Attachment, AttachmentLimits } from "./protocol";
+import type { Attachment, AttachmentExtracted, AttachmentLimits, ExtractAttachment } from "./protocol";
 
 /** Mirrors core/tstd/attachments.py. Used only until the first
  *  `boundary_update` names the workspace's real numbers. */
@@ -24,13 +24,33 @@ export const DEFAULT_ATTACHMENT_LIMITS: AttachmentLimits = {
   max_count: 10,
 };
 
+/** Mirrors core/tstd/attachments.py (TD-5131): the transport's ceilings on a
+ *  document's file and on all the files of one message. Not workspace caps:
+ *  past these the websocket drops the frame with no word at all. */
+export const MAX_DOCUMENT_FILE_BYTES = 10_000_000;
+export const MAX_MESSAGE_FILE_BYTES = 12_000_000;
+
+export type DocumentKind = "pdf" | "docx" | "xlsx";
+
+/** What the daemon said a staged document holds (TD-5131). `pending` until
+ *  `attachment_extracted` answers; `unmeasured` when the ask could not go
+ *  out, and the send will measure it instead. */
+export type DocumentMeasure =
+  | { state: "pending" }
+  | { state: "unmeasured" }
+  | { state: "ready"; units: number; text_bytes: number; tokens: number };
+
 /** An accepted file, before the composer gives it a row id. */
 export interface NewAttachment {
   name: string;
-  /** Byte length of the file, which is what the caps are measured against. */
+  /** Byte length of the file. The caps measure this, except for a document,
+   *  whose caps measure its extracted text (TD-5131). */
   size: number;
   /** The file's bytes, base64'd for the wire. */
   content_b64: string;
+  /** Set for a PDF, DOCX or XLSX, which is sent as its text (TD-5131). */
+  document?: DocumentKind;
+  measure?: DocumentMeasure;
 }
 
 /** One accepted file, held in the composer until the message goes out. */
@@ -69,9 +89,33 @@ function oneDecimal(x: number): string {
   return x.toFixed(1);
 }
 
+/** What the caps count for one draft: a document's text once measured
+ *  (nothing until then), any other file's bytes. */
+export function countedBytes(draft: NewAttachment): number {
+  if (draft.document === undefined) return draft.size;
+  return draft.measure?.state === "ready" ? draft.measure.text_bytes : 0;
+}
+
 /** Bytes already staged, which the per-message total is measured against. */
 export function totalBytes(drafts: readonly NewAttachment[]): number {
+  return drafts.reduce((sum, d) => sum + countedBytes(d), 0);
+}
+
+/** File bytes staged, against the transport's ceiling for one message. */
+export function wireBytes(drafts: readonly NewAttachment[]): number {
   return drafts.reduce((sum, d) => sum + d.size, 0);
+}
+
+/** PDF from its header; DOCX and XLSX are zips, told apart by the name here.
+ *  Only a hint for the chip: the daemon opens the zip and decides. */
+export function detectDocument(name: string, bytes: Uint8Array): DocumentKind | null {
+  if (bytes.length >= 5 && String.fromCharCode(...bytes.subarray(0, 5)) === "%PDF-") return "pdf";
+  const zip = bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 3 && bytes[3] === 4;
+  if (!zip) return null;
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".docx")) return "docx";
+  if (lower.endsWith(".xlsx")) return "xlsx";
+  return null;
 }
 
 /** Basename only. The daemon strips this again — it does not trust us — but
@@ -213,6 +257,40 @@ export function acceptAttachment(
     };
   }
 
+  const document = detectDocument(name, bytes);
+  if (document !== null) {
+    if (bytes.length > MAX_DOCUMENT_FILE_BYTES) {
+      return {
+        ok: false,
+        refusal: {
+          name,
+          code: "attachment_too_large",
+          message: `${name} is ${formatBytes(bytes.length)}; a document can be at most ${formatBytes(MAX_DOCUMENT_FILE_BYTES)} to attach. Split it, or save its text as a text file and attach that.`,
+        },
+      };
+    }
+    if (wireBytes(staged) + bytes.length > MAX_MESSAGE_FILE_BYTES) {
+      return {
+        ok: false,
+        refusal: {
+          name,
+          code: "attachment_total_too_large",
+          message: `Adding ${name} would put this message over ${formatBytes(MAX_MESSAGE_FILE_BYTES)} of files, the most one message can carry. Send what's here first.`,
+        },
+      };
+    }
+    return {
+      ok: true,
+      draft: {
+        name,
+        size: bytes.length,
+        content_b64: toBase64(bytes),
+        document,
+        measure: { state: "pending" },
+      },
+    };
+  }
+
   if (bytes.length > limits.max_file_bytes) {
     return {
       ok: false,
@@ -231,6 +309,17 @@ export function acceptAttachment(
         name,
         code: "attachment_total_too_large",
         message: `Adding ${name} would put this message over ${formatBytes(limits.max_total_bytes)} of attachments. Send what's here first, or raise max_total_bytes under attachments: in .tst/config.yaml.`,
+      },
+    };
+  }
+
+  if (wireBytes(staged) + bytes.length > MAX_MESSAGE_FILE_BYTES) {
+    return {
+      ok: false,
+      refusal: {
+        name,
+        code: "attachment_total_too_large",
+        message: `Adding ${name} would put this message over ${formatBytes(MAX_MESSAGE_FILE_BYTES)} of files, the most one message can carry. Send what's here first.`,
       },
     };
   }
@@ -259,7 +348,7 @@ export function acceptAttachment(
       refusal: {
         name,
         code: "attachment_binary",
-        message: `${name} isn't a text file or a PNG/JPEG/GIF/WebP image, so it can't be attached.`,
+        message: `${name} isn't a text file, a PDF, DOCX or XLSX document, or a PNG/JPEG/GIF/WebP image, so it can't be attached.`,
       },
     };
   }
@@ -280,8 +369,84 @@ export function toWireAttachments(drafts: readonly NewAttachment[]): Attachment[
 export interface AttachmentChip {
   name: string;
   size: number;
+  /** A document sent as its text (TD-5131), and what the daemon measured. */
+  document?: DocumentKind;
+  measure?: DocumentMeasure;
 }
 
 export function toChips(drafts: readonly NewAttachment[]): AttachmentChip[] {
-  return drafts.map((d) => ({ name: d.name, size: d.size }));
+  return drafts.map((d) =>
+    d.document === undefined
+      ? { name: d.name, size: d.size }
+      : { name: d.name, size: d.size, document: d.document, measure: d.measure ?? { state: "pending" } },
+  );
+}
+
+const KIND_LABEL: Record<DocumentKind, string> = { pdf: "PDF", docx: "DOCX", xlsx: "XLSX" };
+
+/** "≈1.2k tokens": the daemon's estimate, rounded for a chip. */
+export function formatTokens(tokens: number): string {
+  if (tokens < 1000) return `≈${tokens} token${tokens === 1 ? "" : "s"}`;
+  if (tokens < 1_000_000) return `≈${oneDecimal(tokens / 1000)}k tokens`;
+  return `≈${oneDecimal(tokens / 1_000_000)}M tokens`;
+}
+
+/** The chip's small print: a file's size, or a document's kind, pages or
+ *  sheets and token count (TD-5131). */
+export function chipDetail(chip: AttachmentChip): string {
+  if (chip.document === undefined) return formatBytes(chip.size);
+  const parts = [KIND_LABEL[chip.document]];
+  const m = chip.measure ?? { state: "pending" };
+  if (m.state === "pending") return `${parts[0]} · reading…`;
+  if (m.state === "unmeasured") return `${parts[0]} · ${formatBytes(chip.size)}`;
+  if (chip.document === "pdf") parts.push(`${m.units} page${m.units === 1 ? "" : "s"}`);
+  if (chip.document === "xlsx") parts.push(`${m.units} sheet${m.units === 1 ? "" : "s"}`);
+  parts.push(formatTokens(m.tokens));
+  return parts.join(" · ");
+}
+
+/** The ask that measures a staged document; `request_id` is the draft's id. */
+export function extractRequest(sessionId: string, draft: AttachmentDraft): ExtractAttachment {
+  return {
+    type: "extract_attachment",
+    session_id: sessionId,
+    request_id: draft.id,
+    attachment: { name: draft.name, content_b64: draft.content_b64 },
+  };
+}
+
+/** Fold the daemon's answer into the staged drafts. A refusal, or text that
+ *  takes the message over the workspace's total, drops that document and
+ *  names why, as a refusal at staging would have. An answer for a draft no
+ *  longer staged changes nothing. */
+export function applyExtracted(
+  drafts: readonly AttachmentDraft[],
+  event: AttachmentExtracted,
+  limits: AttachmentLimits,
+): { drafts: AttachmentDraft[]; refusal: AttachmentRefusal | null } {
+  const index = drafts.findIndex((d) => d.id === event.request_id && d.document !== undefined);
+  if (index < 0) return { drafts: [...drafts], refusal: null };
+  const draft = drafts[index];
+  const others = drafts.filter((_, i) => i !== index);
+  if (event.error_code !== null) {
+    return {
+      drafts: others,
+      refusal: { name: draft.name, code: event.error_code, message: event.message },
+    };
+  }
+  if (totalBytes(others) + event.text_bytes > limits.max_total_bytes) {
+    return {
+      drafts: others,
+      refusal: {
+        name: draft.name,
+        code: "attachment_total_too_large",
+        message: `The text in ${draft.name} would put this message over ${formatBytes(limits.max_total_bytes)} of attachments. Send what's here first, or raise max_total_bytes under attachments: in .tst/config.yaml.`,
+      },
+    };
+  }
+  const measured: AttachmentDraft = {
+    ...draft,
+    measure: { state: "ready", units: event.units, text_bytes: event.text_bytes, tokens: event.tokens },
+  };
+  return { drafts: drafts.map((d, i) => (i === index ? measured : d)), refusal: null };
 }

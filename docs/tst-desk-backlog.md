@@ -11216,11 +11216,198 @@ DECISIONS.md.
 
 ---
 
+### TD-5129 — Search and recall earlier sessions
+**Size:** 5 · **Depends on:** none · Gap audit 2026-10-14
+
+Claude's apps search and reference past chats. TST Desk's rail filtered
+on id, path and title only, and the model had no way to look back at an
+earlier session in the same project.
+
+**Acceptance criteria:**
+- [x] A local full-text index (SQLite FTS) over saved conversations is
+      updated as sessions write.
+- [x] The session rail searches message text, not just titles.
+- [x] A Class A `session_search` tool lets the model recall earlier
+      sessions in the same workspace, citing the session and turn.
+- [x] Nothing leaves the machine (directive 3).
+
+Done (2026-10-20): `core/tstd/session_index.py` keeps `session_index.db`
+(SQLite FTS5, unicode61 with diacritics folded, file mode 0600) in the
+data dir. The daemon hands it each event right after `events.jsonl` gets
+it, under the same per-session lock: a user message is a row, a streamed
+reply is buffered per `response_id` and written as one row when the next
+non-text event arrives, a withdrawn reply (TD-5159) leaves no row, and
+thinking and tool output are not indexed. Each row carries its turn (the
+1-based user turn, a mid-turn message counted with the turn it joined, a
+fork renumbering from the edited turn) and that turn's `turn_id`. On
+start, restore catches each session up from its log, so a crash
+mid-reply loses nothing and sessions older than the index become
+searchable; deleting a session deletes its rows. The rail sends
+`search_sessions` 200 ms after typing pauses (two characters or more)
+and adds the sessions whose words matched, each showing the matching
+message under its title; a reply to an earlier keystroke is dropped
+(`ui/src/lib/session-search.svelte.ts`). `session_search`
+(`core/tstd/tools/session_search.py`) searches the other sessions of the
+caller's workspace, two matches per session at most, and cites each as
+`[session <id8> "<title>", turn <n>, last used <date>]`; it is Class A by
+the static rule `session-search` and allowed in plan mode. Nothing in the
+index or either search opens a socket. Tests:
+`core/tests/test_session_index.py` (user and reply rows with turns,
+thinking and tool arguments left out, one write per reply, prefix words
+and FTS syntax read as plain text, the any-word fallback, retraction,
+mid-turn and fork turn numbers, scoping, removal, restart catch-up
+without duplicates, a log older than the index, the 0600 file, no socket
+with `socket` patched to fail, an unopenable index),
+`core/tests/test_session_search.py` (a real daemon with the mock
+provider: the rail finds user and reply text as turns finish, a restart
+rebuilds a deleted index and a delete empties it, an unopenable index
+answers `available: false`; the tool through the real dispatcher with no
+approval, scoped to the workspace and citing session and turn; the
+rule's shape and order), `core/tests/test_plan_mode.py`, and
+`ui/src/lib/sessions.test.ts` (debounce, message matches with their
+snippet, stale replies dropped, title matches kept). See DECISIONS.md,
+docs/configuration.md §2 `session` and docs/architecture.md.
+
+---
+
 # Epic E52 — Files to the user
 
 Filed 2026-10-15. The agent built an APK for Adam and had no way to hand it over in the chat.
 
 ---
+
+### TD-5132 — Line comments on the diff view go back to the agent
+**Size:** 5 · **Depends on:** none · Gap audit 2026-10-14
+
+The Files pane showed each write's diff (ui/src/lib/components/DiffPreview.svelte)
+but took no comments, so feedback on a line meant retyping its path and number
+in the composer. Claude Code's desktop diff view takes inline comments, which
+gives local models precise, anchored instructions.
+
+**Acceptance criteria:**
+- [x] In the diff view, the user can comment on a line or range, then submit
+      all comments at once as one message, anchored by file and line.
+- [x] The model receives the comments with surrounding code.
+- [x] Comments show as resolved once the next write touches those lines.
+
+Done (2026-10-20): the latest write of each file in the Files pane has a
+gutter of line numbers (the file after that write). A click starts a comment
+on that line, shift-click makes it a range; drafts sit under their lines and
+the pane's review bar sends them all as one `submit_line_comments`
+(`core/tstd/line_comments.py`). The daemon checks every path is inside the
+workspace (all or nothing), reads each file, and writes one user turn: each
+comment numbered with its workspace-relative path and lines, the commented
+lines marked `>` with three lines of code either side, then the comment.
+Where the file changed since the diff, cannot be read, or a policy rule
+makes reading it ask, the model gets only the reviewed lines, marked as
+such. The turn's `user_turn` carries the comments in `line_comments`; the
+pane lists sent comments per file as Open, and as Resolved once a write
+after that turn removes or adds lines in (or right beside) the range,
+carrying the range past writes elsewhere in the file
+(`ui/src/lib/review-comments.ts`). Tests: `core/tests/test_line_comments.py`,
+`ui/src/lib/review-comments.test.ts`, `ui/src/lib/review-comments-component.test.ts`.
+
+Review fixes (PR #50): sending never locks the pane. Comments sent while a
+turn runs show as waiting in the review bar until their `user_turn`, and the
+session ending first hands them back as drafts. Each comment carries
+`base_seq` (the write it was made on), so writes made before its turn carry
+its range, and one that changes its lines marks it Outdated instead of
+letting a later write resolve the wrong lines. Inside a hunk, lines are read
+by their first character only, so an added `++i;` or a removed `---` / `--`
+line is numbered and counted like any other.
+
+### TD-5131 — Local text extraction for PDF, DOCX and XLSX attachments
+**Size:** 5 · **Depends on:** TD-5130 (PDFium dependency shared) · Gap audit 2026-10-14
+
+A PDF, DOCX or XLSX attached to a message was refused as binary
+(core/tstd/attachments.py). Claude's apps take common document types as
+uploads.
+
+**Acceptance criteria:**
+- [x] PDF, DOCX and XLSX attachments are converted to text locally, with
+      sheet and page markers, and shown as chips with a token count.
+- [x] Size caps apply to the extracted text, not the file bytes.
+- [x] No network is used.
+
+Done (2026-10-20): the daemon tells a document by its bytes
+(`core/tstd/attachment_extract.py`): `%PDF-` leads a PDF, and a zip holding
+`word/document.xml` or `xl/workbook.xml` is a DOCX or an XLSX. A PDF's text
+comes out page by page through PDFium (`pypdfium2`, the dependency TD-5130
+adds too) under a `[page N of M]` line; a DOCX gives its paragraphs and its
+table rows, tab-separated; an XLSX gives a `[sheet: Name]` line per sheet in
+workbook order (following the workbook's relationships, not the part names)
+and its rows tab-separated with empty columns kept. The text rides in the
+message under `--- attached file: report.pdf (PDF, 3 pages, text extracted
+locally) ---`. `max_file_bytes` and `max_total_bytes` measure that text;
+the file itself is held only to the transport's ceilings (10 MB a document,
+12 MB of files a message, both under the 16 MiB websocket frame).
+Extraction stops as soon as the text passes the cap. Refusals:
+`attachment_too_large` (text or file), `attachment_no_text` (a scan),
+`attachment_unreadable` (damaged, password-locked, or XML with a DOCTYPE),
+and a zip member past 64 MB decompressed is refused rather than read. DOCX
+and XLSX parts are streamed (`core/tstd/attachment_office.py`), each element
+dropped once read, under a whole-document budget of 128 MB of decompressed
+XML and 4 million elements, so a file of empty rows or empty far-right
+cells, which the text cap never sees, stops after a fixed amount of work
+(`attachment_too_large`); an empty cell costs nothing, since blank columns
+are only padded up to a cell with text. The
+composer stages a document as "PDF · reading…" and sends
+`extract_attachment` to the daemon that owns the session (a forwarded verb,
+so a bridged session measures on its own computer); `attachment_extracted`
+fills the chip with "PDF · 3 pages · ≈1.2k tokens" or drops it with the
+daemon's copy. The daemon answers it from a background task (two documents
+at a time), so the connection keeps handling interrupts, approvals and sends
+while a document is read. The sent row keeps the same chip. On `user_message` the
+daemon extracts again in a worker thread and re-checks drain and session
+liveness after that await, before the `only_if_idle` check. Nothing opens a
+socket: PDFium reads the bytes it is handed, and DOCX and XLSX use only
+`zipfile` and `xml.etree`. The sidecar build collects `pypdfium2` and
+`pypdfium2_raw`. Tests: `core/tests/test_attachment_extract.py` (markers for
+each kind, the header the model reads, kind from bytes not name, a big PDF
+with little text fits and a small DOCX with too much text is refused, the
+message total counts text, the file ceiling, a scan, a damaged PDF, entity
+expansion, a zip bomb, the whole-document budget, memory held while
+streaming, empty far-right cells, extraction with `socket` patched to fail,
+a PDF through a real daemon to the loop, `extract_attachment`'s answer and
+refusals, the connection staying free while a chip is measured, a drain,
+the session's end and a turn starting while a send's extraction is in
+flight, and the verb for a bridged id), `core/tests/doc_fixtures.py`
+(real PDF, DOCX and XLSX built in memory), `ui/src/lib/attachments-documents.test.ts`,
+`ui/src/lib/protocol.test.ts` (fixtures).
+
+### TD-5128 — Model-written compaction summary that keeps recent files
+**Size:** 5 · **Depends on:** TD-5109 · Gap audit 2026-10-14
+
+Compaction kept the last two user turns plus a 2,000-character extractive
+summary (core/tstd/compaction.py), so on a 32k-65k window the goal, the
+decisions and the files went within a couple of compactions, and the agent
+read the same files again one call at a time. Anthropic's API and Claude
+Code document a model-written summary and what survives it.
+
+**Acceptance criteria:**
+- [x] Compaction asks the worker tier for a structured summary (goal,
+      decisions, files touched, open items), using a summary prompt the
+      user can configure (`compaction.summary_prompt`). If that fails, it
+      falls back to today's extractive summary (worker error, timeout,
+      cut-off answer, or an answer without the four headings)
+- [x] It can run in the background before the threshold, so the turn
+      doesn't block: from `compaction.background_percent` of the budget the
+      summaries of both spans a fold can take (mid-turn: before the
+      previous user turn; next turn or `/compact`: before the last user
+      turn) are written while the turn runs, and the fold uses the matching
+      one with no new call, at a turn boundary and in the middle of a turn
+      that makes tool calls
+- [x] Files read or edited recently, and loaded skill bodies, are
+      re-injected after compaction within a budget: `fs_read` / `fs_write`
+      / `fs_edit` files from the folded turns, newest first, within
+      `reinject_files`, `reinject_tokens` and half the headroom left, through
+      the path guard and read rules; skill bodies stay in the system prompt,
+      which compaction never folds
+- [x] `/compact` and "Summarize from here" use the worker too, with the
+      guidance passed to it, and drop the result if a turn started meanwhile
+- [x] docs/configuration.md `compaction`, docs/architecture.md and
+      DECISIONS.md updated
+- [x] Tests in core/tests/test_compaction_model.py
 
 ### TD-5143 — The agent sends files to the chat
 **Size:** 5 · **Depends on:** TD-3201, TD-3202, TD-5014, TD-5015
@@ -11268,6 +11455,35 @@ Filed 2026-10-15. The agent built an APK for Adam and had no way to hand it over
 - [ ] The file bridge refuses calls without the page key
 - [ ] versionCode 11 / 0.1.10, installs over 0.1.9 with the same keystore
 - [ ] Live: the agent on EZER sends an APK and the Pixel's installer opens
+
+### TD-5130 — fs_read opens images, PDFs and notebooks
+**Size:** 5 · **Depends on:** none · Gap audit 2026-10-14
+
+`fs_read` refused images and PDFs as binary and dumped notebooks as raw
+JSON, so the agent could not look at a screenshot already in the repo.
+Claude Code's read tool handles all three.
+
+**Acceptance criteria:**
+- [x] `fs_read` on an image returns it as an image part when the tier has
+      vision (TD-4705 path), or says it can't otherwise.
+- [x] `fs_read` on a PDF takes a page range and returns text. On a vision
+      tier it can also return page images.
+- [x] `fs_read` on `.ipynb` returns cells and text outputs.
+
+Done (2026-10-20): the file's type comes from its bytes. An image goes to
+the model as an `image_url` part after one line of text when the tier the
+loop just called has `vision: true` (and `max_prompt_images` is not 0); a
+text-only tier gets a refusal that says so. A PDF returns page text under
+`── page N ──` markers through PDFium (`pypdfium2`), 10 pages by default,
+`pages="3"` or `"1-5"`, at most 20 a call with the next range named,
+and stops at whole pages under the dispatcher's result cap so a dense PDF
+still names the next page instead of hitting the offset/limit marker;
+`page_images: true` on a vision tier adds PNG page images (at most 5 and
+at most `max_prompt_images`). A notebook returns each cell's source and its
+stream, result and error outputs, colour codes stripped, windowed by
+`limit`/`offset`. Delegate workers get the same, judged by the worker
+tier. Tests: core/tests/test_fs_read_media.py (handler, dispatch and the
+loop with the mock provider).
 
 ## Epic E53 — Connectors
 

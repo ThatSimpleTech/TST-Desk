@@ -27,8 +27,8 @@ from tstd.compaction import (
     CompactionStats,
     budget_threshold,
     estimate_tokens,
-    maybe_compact,
 )
+from tstd.compaction_model import compact_auto
 from tstd.config import ModelConfig, TierConfig
 from tstd.context.calibration import (
     EMA_ALPHA,
@@ -327,7 +327,7 @@ async def test_compaction_and_fit_see_the_learned_ratio(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     seen: list[tuple[str, int, int]] = []
-    real_compact = maybe_compact
+    real_compact = compact_auto
     real_fit = fit_inflight_turn
 
     def _record(
@@ -341,16 +341,15 @@ async def test_compaction_and_fit_see_the_learned_ratio(
         raw, _ = estimate_tokens(messages, counter.base, tools)
         seen.append((stage, raw, scaled))
 
-    def _compact(
+    async def _compact(
         messages: list[ChatMessage],
         tier: TierConfig,
         counter: TokenCounter,
-        tools: Sequence[ToolDefinition] | None = None,
-        *,
-        carry: str = "",
+        tools: Sequence[ToolDefinition] | None,
+        **kwargs: Any,
     ) -> tuple[list[ChatMessage], CompactionStats | None]:
         _record("compact", messages, counter, tools)
-        return real_compact(messages, tier, counter, tools, carry=carry)
+        return await real_compact(messages, tier, counter, tools, **kwargs)
 
     def _fit(
         messages: list[ChatMessage], tier: TierConfig, counter: TokenCounter, **kwargs: Any
@@ -358,7 +357,7 @@ async def test_compaction_and_fit_see_the_learned_ratio(
         _record("fit", messages, counter, kwargs.get("tools"))
         return real_fit(messages, tier, counter, **kwargs)
 
-    monkeypatch.setattr(loop_module, "maybe_compact", _compact)
+    monkeypatch.setattr(loop_module, "compact_auto", _compact)
     monkeypatch.setattr(loop_module, "fit_inflight_turn", _fit)
     store = CalibrationStore()
     session = Session(str(tmp_path))

@@ -288,11 +288,15 @@ def _register_builtins(registry: ToolRegistry, *, search: SearchConfig | None = 
         Tool(
             name="fs_read",
             description=(
-                "Read a text file as numbered lines. path may be workspace-relative "
-                "(docs/foo.md) or absolute. Default window is 2000 lines — that is a "
-                "cap, not the whole file. If the result ends with "
+                "Read a file. path may be workspace-relative (docs/foo.md) or absolute. "
+                "Text comes back as numbered lines. Default window is 2000 lines — that "
+                "is a cap, not the whole file. If the result ends with "
                 "'continue with offset=N', call again with that offset to read the next "
-                "window. Repeat until there is no continuation marker."
+                "window. Repeat until there is no continuation marker. "
+                "Images (PNG, JPEG, GIF, WebP) come back as an image if you take images. "
+                "PDFs come back as page text, 10 pages unless pages names a range "
+                "(at most 20 per call); page_images=true also sends page images if you "
+                "take images. Notebooks (.ipynb) come back as cells and text outputs."
             ),
             parameters={
                 "type": "object",
@@ -313,6 +317,22 @@ def _register_builtins(registry: ToolRegistry, *, search: SearchConfig | None = 
                         "type": "integer",
                         "description": "1-based start line. 0 means the first line.",
                         "default": 0,
+                    },
+                    "pages": {
+                        "type": "string",
+                        "description": (
+                            'PDF only: one page ("3") or a range ("1-5"), counted from 1. '
+                            "Empty reads the first 10 pages."
+                        ),
+                        "default": "",
+                    },
+                    "page_images": {
+                        "type": "boolean",
+                        "description": (
+                            "PDF only: also send images of the pages read (up to 5), "
+                            "for figures and scans. Needs a model that takes images."
+                        ),
+                        "default": False,
                     },
                 },
                 "required": ["path"],
@@ -611,7 +631,7 @@ def create_registry(
 
     The native loop's own tools come before plugins too: ``task_list``
     (TD-5122), ``ask_user`` (TD-5121), ``exit_plan_mode`` (TD-5123) and
-    ``tool_search`` (TD-5127).
+    ``tool_search`` (TD-5127), and ``session_search`` (TD-5129).
 
     ``candidate_selection`` (judgments.candidate_selection, TD-711) adds
     ``browser_pick`` to the tool surface.
@@ -625,6 +645,7 @@ def create_registry(
     from .exit_plan import register_exit_plan_tool
     from .plugins import load_plugins
     from .send_file import register_send_file_tool
+    from .session_search import register_session_search_tool
     from .steering_edit import register_steering_edit_tool
     from .task_list import register_task_list_tool
     from .tool_search import register_tool_search_tool
@@ -642,6 +663,7 @@ def create_registry(
     register_ask_user_tool(registry)
     register_exit_plan_tool(registry)
     register_tool_search_tool(registry)
+    register_session_search_tool(registry)
     # Before plugins so a plugin cannot take a GitHub tool name (TD-4852).
     from ..connectors.github_tools import register_github_tools
 

@@ -97,6 +97,35 @@ export interface RemoveQueued extends ClientMessage {
   queued_id: string;
 }
 
+/** Where one diff comment points, and what it says (TD-5132). `path` is the
+ *  absolute path of the diff's `+++ b/` header; `start_line`..`end_line`
+ *  (from 1, inclusive) count lines of the file after that write. `id` is the
+ *  window's own, echoed on the `user_turn` that carried it. */
+export interface LineCommentAnchor {
+  id: string;
+  path: string;
+  start_line: number;
+  end_line: number;
+  body: string;
+  /** Seq of the `tool_result` whose diff the comment was made on, so the
+   *  range is carried through writes made before the comment's turn. */
+  base_seq?: number | null;
+}
+
+/** One comment as the window sends it: `lines` are the commented lines as
+ *  the diff showed them, one per line of the range (TD-5132). */
+export interface LineComment extends LineCommentAnchor {
+  lines: string[];
+}
+
+/** Send the diff view's comments to the agent as one message (TD-5132).
+ *  Refused whole, never in part; every refusal names `in_reply_to`. */
+export interface SubmitLineComments extends ClientMessage {
+  type: "submit_line_comments";
+  session_id: string;
+  comments: LineComment[];
+}
+
 /** Replace a past user turn and fork from there (TD-1708). */
 export interface ForkFrom extends ClientMessage {
   type: "fork_from";
@@ -132,6 +161,17 @@ export interface PreviewRestoreFiles extends ClientMessage {
   type: "preview_restore_files";
   session_id: string;
   turn_id: string;
+}
+
+/** Measure a staged PDF, DOCX or XLSX for its chip (TD-5131). The daemon
+ *  that owns the session extracts the text against that session's caps and
+ *  answers on this connection with `attachment_extracted`. Stores nothing. */
+export interface ExtractAttachment extends ClientMessage {
+  type: "extract_attachment";
+  session_id: string;
+  /** The composer's own id, echoed on the answer. */
+  request_id: string;
+  attachment: Attachment;
 }
 
 /** Restore what a preview showed (TD-5125). `plan_id` is the preview's; a
@@ -559,6 +599,16 @@ export interface Drain extends ClientMessage {
 
 export interface ListSessions extends ClientMessage {
   type: "list_sessions";
+}
+
+/** Search what this computer's sessions said (TD-5129). Answer:
+ *  session_search_results, from the daemon's local full-text index. */
+export interface SearchSessions extends ClientMessage {
+  type: "search_sessions";
+  /** Up to 500 characters. */
+  query: string;
+  /** 1..200, default 50. */
+  limit?: number;
 }
 
 /** Create a fresh session in an existing session's workspace (TD-1701).
@@ -1053,10 +1103,12 @@ export type ClientMessageUnion =
   | UserMessage
   | SendQueued
   | RemoveQueued
+  | SubmitLineComments
   | ForkFrom
   | CompactContext
   | SetBranch
   | PreviewRestoreFiles
+  | ExtractAttachment
   | RestoreFiles
   | Approve
   | Deny
@@ -1094,6 +1146,7 @@ export type ClientMessageUnion =
   | SaveCharter
   | StartAutonomy
   | ListPins
+  | SearchSessions
   | AddPin
   | RemovePin
   | MemoryAccept
@@ -1265,6 +1318,23 @@ export interface FilesRestorePreview extends DaemonEvent {
   diff_truncated: boolean;
 }
 
+/** Answer to `extract_attachment` (TD-5131), this connection only. On a
+ *  refusal `error_code` and `message` are set and the counts are 0. */
+export interface AttachmentExtracted extends DaemonEvent {
+  type: "attachment_extracted";
+  session_id: string;
+  request_id: string;
+  name: string;
+  kind: "pdf" | "docx" | "xlsx" | null;
+  /** Pages for a PDF, sheets for an XLSX, 0 for a DOCX. */
+  units: number;
+  /** UTF-8 size of the extracted text: what the caps measure. */
+  text_bytes: number;
+  tokens: number;
+  error_code: string | null;
+  message: string;
+}
+
 /** Files were put back as they were before a user turn (TD-5125). */
 export interface FilesRestored extends DaemonEvent {
   type: "files_restored";
@@ -1311,6 +1381,9 @@ export interface UserTurn extends DaemonEvent {
   /** The `tst run` rules this turn runs under (TD-5118). Additive: older
    *  daemons omit it, and null is a turn without them. */
   run_permissions?: RunPermissions | null;
+  /** The diff comments this message carried (TD-5132), so the window can
+   *  mark each resolved once a later write touches its lines. Additive. */
+  line_comments?: LineCommentAnchor[] | null;
 }
 
 /** One message a restart left held (TD-5155). `content` is what its user
@@ -1881,6 +1954,26 @@ export interface SessionList extends DaemonEvent {
   type: "session_list";
   seq: number;
   sessions: SessionSummary[];
+}
+
+/** The best message of one session for a search (TD-5129). */
+export interface SessionSearchHit {
+  session_id: string;
+  /** 1-based user turn the message belongs to. */
+  turn: number;
+  role: "user" | "assistant";
+  /** A few words around the match, from the redacted session text. */
+  snippet: string;
+}
+
+/** Reply to search_sessions (TD-5129): one hit per session, best first.
+ *  `query` echoes the request; `available` is false when the index is off. */
+export interface SessionSearchResults extends DaemonEvent {
+  type: "session_search_results";
+  seq: number;
+  query: string;
+  hits: SessionSearchHit[];
+  available: boolean;
 }
 
 export interface PolicyRules extends DaemonEvent {
@@ -2752,6 +2845,7 @@ export type DaemonEventUnion =
   | SessionState
   | ConversationReset
   | FilesRestorePreview
+  | AttachmentExtracted
   | FilesRestored
   | UserTurn
   | QueuedMessages
@@ -2790,6 +2884,7 @@ export type DaemonEventUnion =
   | InstructionFiles
   | CommandList
   | ContextPins
+  | SessionSearchResults
   | MemoryFiles
   | CharterDocument
   | AutonomyStart

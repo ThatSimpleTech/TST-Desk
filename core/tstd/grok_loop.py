@@ -518,6 +518,7 @@ async def grok_loop(
                     turn_id=turn_id,
                     content=user_content,
                     run_permissions=queued.run_permissions,
+                    line_comments=queued.line_comments,
                     seq=1,
                 )
             )

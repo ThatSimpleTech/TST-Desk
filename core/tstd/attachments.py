@@ -1,4 +1,8 @@
-"""Text-file and image attachments on a user message (TD-1709, TD-4705).
+"""Text-file, image and document attachments on a user message.
+
+Text files (TD-1709), images (TD-4705), and PDF, DOCX and XLSX documents,
+which arrive as files and leave as their text, extracted on this machine
+(TD-5131, ``attachment_extract.py``).
 
 **The daemon is the gate, not the composer.**  A client is not trustworthy:
 it can be an older build, a stalled one, or something that is not our UI at
@@ -12,7 +16,8 @@ answerable at all: a client that reads a PNG and ships it raw fails the
 strict UTF-8 decode here, where a pre-decoded string would have arrived as
 replacement characters and looked like ordinary prose.
 
-Deliberately leaf: this module imports nothing from ``tstd``, so both
+Deliberately leaf: this module imports nothing from ``tstd`` but its leaf
+sibling ``attachment_extract``, so both
 ``protocol`` (the wire) and ``boundary_config`` (the caps) can depend on it
 without a cycle.
 """
@@ -27,6 +32,8 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
+from .attachment_extract import DocumentError, DocumentKind, extract_document, sniff_document
+
 # Local websocket frame. ``ws.serve`` passes this as ``max_size``. Base64
 # adds a third, so a full message at the default total cap (about 10.7 MB
 # on the wire) still fits, and an oversize message is refused here instead
@@ -40,6 +47,13 @@ WS_MAX_FRAME_BYTES = 16 * 1024 * 1024
 DEFAULT_MAX_FILE_BYTES = 4_000_000
 DEFAULT_MAX_TOTAL_BYTES = 8_000_000
 DEFAULT_MAX_COUNT = 10
+
+# A document's caps measure its extracted text (TD-5131), so its file may be
+# bigger than ``max_file_bytes``. These ceilings are the transport's, not a
+# workspace setting: the files of one message, base64'd, must still fit one
+# ``WS_MAX_FRAME_BYTES`` frame, or the socket drops it with no word at all.
+MAX_DOCUMENT_FILE_BYTES = 10_000_000
+MAX_MESSAGE_FILE_BYTES = 12_000_000
 
 
 class AttachmentLimits(BaseModel):
@@ -85,6 +99,8 @@ class DecodedAttachment:
 
     Images carry ``data`` and ``media_type`` and leave ``text`` empty so a
     native loop can mention the file without dumping bytes into the prompt.
+    A document (TD-5131) carries its extracted ``text``, its ``document``
+    kind and how many pages or sheets it had; ``size`` stays the file's.
     """
 
     name: str
@@ -94,10 +110,19 @@ class DecodedAttachment:
     data_b64: str | None = None
     data: bytes | None = None
     media_type: str | None = None
+    document: DocumentKind | None = None
+    units: int = 0
 
     @property
     def is_image(self) -> bool:
         return self.mime is not None or self.media_type is not None
+
+    @property
+    def counted_bytes(self) -> int:
+        """What the caps measure: a document's text, any other file's bytes."""
+        if self.document is not None and self.text is not None:
+            return len(self.text.encode("utf-8"))
+        return self.size
 
 
 def format_bytes(count: int) -> str:
@@ -149,8 +174,9 @@ def _decode_text(name: str, raw: bytes) -> str:
     """Strict UTF-8, plus a NUL scan — the whole text/binary test."""
     binary = AttachmentError(
         "attachment_binary",
-        f"{name} isn't a text file or a PNG/JPEG/GIF/WebP image, so it can't "
-        "be attached. Attach a text file, or enable vision on the active "
+        f"{name} isn't a text file, a PDF, DOCX or XLSX document, or a "
+        "PNG/JPEG/GIF/WebP image, so it can't be attached. Attach a text "
+        "file, or enable vision on the active "
         "tier in config.yaml if this is an image. Nothing was sent.",
     )
     if b"\x00" in raw:
@@ -190,6 +216,7 @@ def decode_attachments(
 
     decoded: list[DecodedAttachment] = []
     total = 0
+    wire_total = 0
     for item in items:
         name = _safe_name(item.name)
         try:
@@ -201,6 +228,17 @@ def decode_attachments(
                 "Re-attach it. Nothing was sent.",
             ) from e
 
+        wire_total += len(raw)
+        kind = sniff_document(raw)
+        if kind is not None:
+            _check_document_file(name, len(raw))
+            _check_wire(wire_total)
+            document = extract_attachment_document(name, kind, raw, limits)
+            total += document.counted_bytes
+            _check_total(total, limits)
+            decoded.append(document)
+            continue
+
         if len(raw) > limits.max_file_bytes:
             raise AttachmentError(
                 "attachment_too_large",
@@ -210,16 +248,9 @@ def decode_attachments(
                 ".tst/config.yaml. Nothing was sent.",
             )
 
+        _check_wire(wire_total)
         total += len(raw)
-        if total > limits.max_total_bytes:
-            raise AttachmentError(
-                "attachment_total_too_large",
-                f"The attachments total more than "
-                f"{format_bytes(limits.max_total_bytes)}, which is this "
-                "workspace's limit for one message. Send them across separate "
-                "messages, or raise max_total_bytes under attachments: in "
-                ".tst/config.yaml. Nothing was sent.",
-            )
+        _check_total(total, limits)
 
         mime = detect_image_mime(raw)
         if mime is not None:
@@ -244,6 +275,100 @@ def decode_attachments(
     return decoded
 
 
+def _check_wire(wire_total: int) -> None:
+    if wire_total > MAX_MESSAGE_FILE_BYTES:
+        raise AttachmentError(
+            "attachment_total_too_large",
+            f"The files on this message total more than "
+            f"{format_bytes(MAX_MESSAGE_FILE_BYTES)}, the most one message "
+            "can carry. Send them across separate messages. Nothing was sent.",
+        )
+
+
+def _check_document_file(name: str, size: int) -> None:
+    if size > MAX_DOCUMENT_FILE_BYTES:
+        raise AttachmentError(
+            "attachment_too_large",
+            f"{name} is {format_bytes(size)}; a document can be at most "
+            f"{format_bytes(MAX_DOCUMENT_FILE_BYTES)} to attach. Split it, or "
+            "save its text as a text file and attach that. Nothing was sent.",
+        )
+
+
+def _check_total(total: int, limits: AttachmentLimits) -> None:
+    if total > limits.max_total_bytes:
+        raise AttachmentError(
+            "attachment_total_too_large",
+            f"The attachments total more than "
+            f"{format_bytes(limits.max_total_bytes)}, which is this "
+            "workspace's limit for one message. Send them across separate "
+            "messages, or raise max_total_bytes under attachments: in "
+            ".tst/config.yaml. Nothing was sent.",
+        )
+
+
+def measure_document(item: AttachmentLike, limits: AttachmentLimits) -> DecodedAttachment:
+    """One staged file as a document's text, for the composer's chip (TD-5131).
+
+    The same name, decode, ceiling and text-cap checks a ``user_message``
+    runs on it, so a chip that shows a count is a file the send will take
+    (the per-message totals aside). A file that is not a PDF, DOCX or XLSX
+    is ``attachment_not_document``. Blocking: call from a worker thread.
+    """
+    name = _safe_name(item.name)
+    try:
+        raw = base64.b64decode(item.content_b64, validate=True)
+    except (binascii.Error, ValueError) as e:
+        raise AttachmentError(
+            "attachment_invalid_encoding",
+            f"{name} arrived in a form the daemon couldn't read. Re-attach it.",
+        ) from e
+    kind = sniff_document(raw)
+    if kind is None:
+        raise AttachmentError(
+            "attachment_not_document",
+            f"{name} isn't a PDF, DOCX or XLSX document.",
+        )
+    return extract_attachment_document(name, kind, raw, limits)
+
+
+def extract_attachment_document(
+    name: str, kind: DocumentKind, raw: bytes, limits: AttachmentLimits
+) -> DecodedAttachment:
+    """One PDF, DOCX or XLSX as its text, capped by the text (TD-5131).
+
+    The file itself is held only to the transport's ceiling; the
+    workspace's ``max_file_bytes`` applies to the text that comes out.
+    Blocking (PDFium, unzip): the daemon calls this from a worker thread.
+    """
+    _check_document_file(name, len(raw))
+    try:
+        extracted = extract_document(name, kind, raw, max_text_bytes=limits.max_file_bytes)
+    except DocumentError as e:
+        raise AttachmentError(e.code, e.message) from e
+    return DecodedAttachment(
+        name=name,
+        size=len(raw),
+        text=extracted.text,
+        document=kind,
+        units=extracted.units,
+    )
+
+
+_KIND_LABEL = {"pdf": "PDF", "docx": "Word document", "xlsx": "spreadsheet"}
+
+
+def _file_header(item: DecodedAttachment) -> str:
+    if item.document is None:
+        return f"{item.name} ({item.size} bytes)"
+    label = _KIND_LABEL[item.document]
+    if item.document == "pdf":
+        label += f", {item.units} page{'' if item.units == 1 else 's'}"
+    elif item.document == "xlsx":
+        label += f", {item.units} sheet{'' if item.units == 1 else 's'}"
+    return f"{item.name} ({label}, text extracted locally)"
+
+
 def render_user_content(text: str, attachments: Sequence[DecodedAttachment]) -> str:
     """Fold accepted text attachments into the message the model reads."""
     text_files = [a for a in attachments if not a.is_image]
@@ -259,9 +384,7 @@ def render_user_content(text: str, attachments: Sequence[DecodedAttachment]) -> 
     for item in text_files:
         assert item.text is not None
         blocks.append(
-            f"--- attached file: {item.name} ({item.size} bytes) ---\n"
-            f"{item.text}\n"
-            f"--- end of {item.name} ---"
+            f"--- attached file: {_file_header(item)} ---\n{item.text}\n--- end of {item.name} ---"
         )
     body = "\n\n".join(blocks)
     image_note = _image_summary(attachments)

@@ -16,6 +16,18 @@ from ..protocol import WorkerStep
 # ── Result types ────────────────────────────────────────────────────────
 
 
+@dataclass(frozen=True)
+class ToolImage:
+    """One image a tool result hands the model (TD-5130).
+
+    ``mime`` is a type a vision endpoint takes (PNG, JPEG, GIF, WebP),
+    found from the bytes, never from a file name.
+    """
+
+    mime: str
+    data: bytes
+
+
 @dataclass
 class ToolResult:
     """The result of executing a tool call.
@@ -38,6 +50,9 @@ class ToolResult:
             display; ``None`` for reads and non-diffable writes.
         image_png: Screenshot bytes for the model as a vision part
             (TD-1729). Never duplicated into ``output`` as base64 text.
+        images: Images a handler returned for the model, such as a file
+            ``fs_read`` opened (TD-5130). Vision parts after the text, like
+            ``image_png``, and never part of ``output`` or an event.
         verification: Actuation verification status (TD-709, dev) —
             ``verified`` / ``refuted`` / ``unavailable``; ``None`` when
             no verifier is wired or the tool does not actuate.
@@ -60,6 +75,7 @@ class ToolResult:
     memory_notice: Notice | None = None
     diff: str | None = None
     image_png: bytes | None = None
+    images: tuple[ToolImage, ...] = ()
     verification: str | None = None
     allowed_by: tuple[str, ...] = ()
     transcript: tuple[WorkerStep, ...] = ()
@@ -67,15 +83,17 @@ class ToolResult:
 
 @dataclass(frozen=True)
 class HandlerOutput:
-    """A handler's text plus display-only extras (TD-5117).
+    """A handler's text plus extras that are not text (TD-5117, TD-5130).
 
     ``text`` is what the model gets, capped like any output. The
     ``transcript`` goes on the ``tool_result`` event for the window and
-    never into the conversation.
+    never into the conversation. ``images`` go to the model as vision
+    parts after the text, and never onto an event or into a log.
     """
 
     text: str
     transcript: tuple[WorkerStep, ...] = ()
+    images: tuple[ToolImage, ...] = ()
 
 
 class HandlerRefusal(Exception):

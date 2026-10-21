@@ -37,6 +37,7 @@ from tstd.protocol import (
     AssistantRetract,
     Attach,
     Attachment,
+    AttachmentExtracted,
     AutonomyStart,
     AutonomySummary,
     BoundaryUpdate,
@@ -82,6 +83,7 @@ from tstd.protocol import (
     EndSession,
     Error,
     ExportUsage,
+    ExtractAttachment,
     FilesRestored,
     FilesRestorePreview,
     FocusWindow,
@@ -118,6 +120,8 @@ from tstd.protocol import (
     JobRuns,
     JobTemplateEntry,
     JobTemplates,
+    LineComment,
+    LineCommentAnchor,
     ListArtifacts,
     ListCommands,
     ListGrokExtensions,
@@ -197,10 +201,13 @@ from tstd.protocol import (
     SaveJobTemplate,
     SaveMemory,
     ScreenFrame,
+    SearchSessions,
     SendQueued,
     SessionGoal,
     SessionJobSource,
     SessionList,
+    SessionSearchHit,
+    SessionSearchResults,
     SessionState,
     SessionWorktreeInfo,
     SetApiKey,
@@ -243,6 +250,7 @@ from tstd.protocol import (
     SteerPoint,
     StopCheck,
     StopCheckItem,
+    SubmitLineComments,
     TaskList,
     TaskListItem,
     TestEmail,
@@ -299,9 +307,30 @@ FIXTURES = {
     # TD-5155: the person's choice on a message a restart left held.
     "send_queued": SendQueued(session_id="sess-1", queued_id="q-1"),
     "remove_queued": RemoveQueued(session_id="sess-1", queued_id="q-1"),
+    # TD-5132: the diff view's line comments, sent as one message.
+    "submit_line_comments": SubmitLineComments(
+        session_id="sess-1",
+        comments=[
+            LineComment(
+                id="c-1",
+                path="/home/user/project/src/app.py",
+                start_line=4,
+                end_line=5,
+                body="Use a constant here",
+                lines=["x = 3", "y = 3"],
+                base_seq=7,
+            )
+        ],
+    ),
     "fork_from": ForkFrom(session_id="sess-1", user_index=0, content="hello again"),
     "set_branch": SetBranch(session_id="sess-1", user_index=0, sibling_index=1),
     # TD-5125: "Restore files to here" and the preview it shows first.
+    # TD-5131: the composer's chip count for a staged document.
+    "extract_attachment": ExtractAttachment(
+        session_id="sess-1",
+        request_id="att-1",
+        attachment=Attachment(name="report.pdf", content_b64="JVBERi0xLjQK"),
+    ),
     "preview_restore_files": PreviewRestoreFiles(session_id="sess-1", turn_id="turn-1"),
     "restore_files": RestoreFiles(
         session_id="sess-1",
@@ -456,6 +485,7 @@ FIXTURES = {
         notes="Human context.",
     ),
     "list_pins": ListPins(workspace_path="/home/user/project"),
+    "search_sessions": SearchSessions(query="date parser", limit=50),
     "add_pin": AddPin(workspace_path="/home/user/project", path="src/app.ts"),
     "remove_pin": RemovePin(workspace_path="/home/user/project", path="src/app.ts"),
     "memory_accept": MemoryAccept(session_id="sess-1", proposal_id="mp-1"),
@@ -557,6 +587,22 @@ FIXTURES = {
         content="hello again",
         seq=2,
     ),
+    "attachment_extracted": AttachmentExtracted(
+        session_id="sess-1",
+        request_id="att-1",
+        name="report.pdf",
+        kind="pdf",
+        units=3,
+        text_bytes=5120,
+        tokens=1280,
+    ),
+    "attachment_extracted_refused": AttachmentExtracted(
+        session_id="sess-1",
+        request_id="att-2",
+        name="scan.pdf",
+        error_code="attachment_no_text",
+        message="scan.pdf has no text to read.",
+    ),
     "files_restore_preview": FilesRestorePreview(
         session_id="sess-1",
         turn_id="turn-1",
@@ -604,6 +650,23 @@ FIXTURES = {
         content="Also run the linter",
         steer=SteerPoint(turn_id="turn-1", step=2, after_tool_call_ids=["tc-1", "tc-2"]),
         seq=9,
+    ),
+    # TD-5132: a turn that carried the diff view's line comments.
+    "user_turn_line_comments": UserTurn(
+        session_id="sess-1",
+        turn_id="turn-4",
+        content="Review comments on your changes (1 comment).",
+        line_comments=[
+            LineCommentAnchor(
+                id="c-1",
+                path="/home/user/project/src/app.py",
+                start_line=4,
+                end_line=5,
+                body="Use a constant here",
+                base_seq=7,
+            )
+        ],
+        seq=12,
     ),
     # TD-5118: a tst run turn echoes the permissions it runs under.
     "user_turn_run_permissions": UserTurn(
@@ -1062,6 +1125,18 @@ FIXTURES = {
                 description="Review the current diff",
                 source="workspace",
                 body="Please review the staged changes.\n",
+            )
+        ],
+    ),
+    "session_search_results": SessionSearchResults(
+        seq=1,
+        query="date parser",
+        hits=[
+            SessionSearchHit(
+                session_id="11111111-2222-3333-4444-555555555555",
+                turn=3,
+                role="assistant",
+                snippet="…the date parser now reads ISO weeks…",
             )
         ],
     ),
