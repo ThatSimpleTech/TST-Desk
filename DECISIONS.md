@@ -18202,3 +18202,9 @@ servers per session (a worktree per session already multiplies roots;
 sharing by root keeps one server per checkout). Keeping servers for the
 daemon's life (idle ones would hold memory on a box running local models).
 
+
+## Model picker with an Effort submenu
+
+- A "model" in the picker is a catalog preset; picking one is `set_session_preset`. Presets named `sub-*` or `ezer-*` go under "More models"; the rest, `ezer` included, are the main list (`ui/src/lib/effort.ts`). The gateway's `/v1/models` is not listed yet: a route shows up once a preset names it.
+- Effort is per session (`set_effort`, `TierRouter.effort`, session row `effort`), default `session.default_effort: medium`. The wire value is `reasoning_effort` = low | medium | high | xhigh | max | ultracode (Extra = xhigh). It goes out on the turn's request for the model `ezer` always, and for any other tier only with `reasoning_effort: true` in its config. The picked level wins over a `reasoning_effort` in the tier's `extra_body`. Verdict, compaction and other off-turn calls are not given the picked effort.
+- The phone is the same UI in a WebView, so it gets the picker with no Android change.

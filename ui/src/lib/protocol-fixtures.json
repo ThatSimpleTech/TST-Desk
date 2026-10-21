@@ -312,6 +312,11 @@
     "session_id": "sess-1",
     "on": true
   },
+  "set_effort": {
+    "type": "set_effort",
+    "session_id": "sess-1",
+    "effort": "ultracode"
+  },
   "set_session_preset": {
     "type": "set_session_preset",
     "session_id": "sess-1",
@@ -2943,6 +2948,7 @@
     "run_verify",
     "send_queued",
     "set_branch",
+    "set_effort",
     "set_plan",
     "set_session_preset",
     "set_session_star",

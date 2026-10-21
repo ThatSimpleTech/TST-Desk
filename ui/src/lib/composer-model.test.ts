@@ -71,7 +71,9 @@ describe("composer model controls", () => {
 			"worker (flash)",
 			"validator (pro)",
 		]);
-		expect(document.querySelector('[aria-label="Session preset"]')).not.toBeNull();
+		expect(document.querySelector('[aria-label="Model and effort"]')?.textContent).toContain(
+			"vllm Medium",
+		);
 		expect(document.body.textContent).toContain("Plan");
 	});
 

@@ -79,6 +79,7 @@ MACHINE_PEER_VERBS: frozenset[str] = frozenset(
         "restore_files",
         "set_tier",
         "set_plan",
+        "set_effort",
         "set_session_preset",
         "rename_session",
         "set_session_star",

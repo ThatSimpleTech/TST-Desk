@@ -33,6 +33,7 @@ import type {
   Attach,
   Detach,
   SetTier,
+  SetEffort,
   SetPlan,
   SetSessionPreset,
   GetInstructionStack,
@@ -360,6 +361,13 @@ describe("Client message fixtures match TypeScript types", () => {
     const m = fixtures.set_tier as SetTier;
     expect(m.type).toBe("set_tier");
     expect(m.tier).toBe("brain");
+  });
+
+  it("set_effort", () => {
+    const m = fixtures.set_effort as SetEffort;
+    expect(m.type).toBe("set_effort");
+    expect(m.effort).toBe("ultracode");
+    expect(isString(m.session_id)).toBe(true);
   });
 
   it("set_plan", () => {
@@ -1300,7 +1308,7 @@ describe("All fixtures have required shape", () => {
       "set_workspace_pin",
       "set_session_star",
       "rename_session",
-      "cancel", "run_verify", "deny_verify", "attach", "detach", "set_tier", "set_plan",
+      "cancel", "run_verify", "deny_verify", "attach", "detach", "set_tier", "set_plan", "set_effort",
       "set_session_preset",
       "get_instruction_stack",
       "list_instructions", "list_commands", "list_memory", "save_memory", "create_rule",

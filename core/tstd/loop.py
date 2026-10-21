@@ -86,6 +86,7 @@ from .context_fit import fit_inflight_turn, tool_result_char_cap, transcript_fai
 from .cost import CallRecord, CostTracker
 from .cu_verify import ActuationVerifier
 from .discovery import discover_model, resolve_tier_slugs
+from .effort import DEFAULT_EFFORT, with_effort
 from .fallback import BackupChain, TurnBackups, announce_switch, backup_wanted
 from .hooks import with_hook_context
 from .keychain import KeychainError
@@ -768,7 +769,12 @@ async def _stream_and_parse(
         messages,
         tool_definitions,
         max_tokens=tier_cfg.max_output_tokens,
-        extra_body=tier_cfg.extra_body,
+        extra_body=with_effort(
+            tier_cfg.extra_body,
+            session.router.effort if session.router is not None else DEFAULT_EFFORT,
+            slug=model_slug,
+            tier_supports=tier_cfg.reasoning_effort,
+        ),
     )
     try:
         async for chunk in stream:

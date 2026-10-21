@@ -125,6 +125,7 @@ from .desktop.permissions import (
 )
 from .desktop.protocol import DesktopError
 from .discovery import resolve_tier_slugs
+from .effort import is_effort_level
 from .grok_acp import GrokEngineError, find_grok_binary
 from .grok_home import (
     grok_configured_model,
@@ -343,6 +344,7 @@ from .protocol import (
     SetCuIndicators,
     SetCuKill,
     SetCuPolicy,
+    SetEffort,
     SetEmailNotify,
     SetEngine,
     SetGrokMode,
@@ -2572,6 +2574,7 @@ class Daemon:
             # Every plan-mode change logs tier_state, so this is the one place
             # the row learns it; a restart reads it back (TD-5123).
             await self._session_store.set_plan_mode(event.session_id, event.plan)
+            await self._session_store.set_effort(event.session_id, event.effort)
         announce = self._cu_permissions_session(event)
         if announce is not None:
             first_run = not load_shown(self.data_dir, driver_cu_platform(self.desktop_driver))
@@ -3067,6 +3070,9 @@ class Daemon:
 
         if isinstance(msg, SetPlan):
             return await self._handle_set_plan(msg)
+
+        if isinstance(msg, SetEffort):
+            return await self._handle_set_effort(msg)
 
         if isinstance(msg, SetSessionPreset):
             return await self._handle_set_session_preset(msg)
@@ -4089,6 +4095,14 @@ class Daemon:
         if restored_plan_mode(record.plan_mode if record is not None else None, loaded.events):
             sess.router = TierRouter()
             sess.router.set_plan(True)
+        # The picker's effort is kept the same way (a row without one, or
+        # a level this build no longer knows, takes the configured default).
+        saved_effort = record.effort if record is not None else None
+        if sess.router is None:
+            sess.router = TierRouter()
+        sess.router.set_effort(
+            saved_effort if is_effort_level(saved_effort) else self.config.session.default_effort
+        )
         sess.loaded_mcp_tools[:] = await asyncio.to_thread(
             self._session_persist.load_loaded_tools, session_id
         )
@@ -4349,7 +4363,10 @@ class Daemon:
 
         sess._queue_hook = _save_queue
         sess._overlay_session = self.desktop_driver.set_overlay_session
-        router = sess.router if sess.router is not None else TierRouter()
+        router = sess.router
+        if router is None:
+            router = TierRouter()
+            router.set_effort(self.config.session.default_effort)
         sess.router = router
 
         # TD-5113: every config load below goes through the trust gate.
@@ -4695,6 +4712,33 @@ class Daemon:
             },
         )
         return await self._handle_list_sessions()
+
+    async def _handle_set_effort(self, msg: SetEffort) -> str | None:
+        """Pick the session's reasoning effort and ack with ``tier_state``.
+
+        Allowed mid-turn: the next request carries it, and the chip follows.
+        """
+        found = self.session_registry.get(msg.session_id)
+        if found is None:
+            return build_error(
+                "session_not_found",
+                f"Session {msg.session_id!r} not found",
+            )
+        if found.router is None:
+            return build_error(
+                "session_not_live",
+                f"Session {msg.session_id!r} has no live agent loop "
+                "(restored after restart); its effort cannot be changed",
+            )
+        found.router.set_effort(msg.effort)
+        await found.event_log.add(
+            tier_state_event(found, _session_model_config(found, self.config))
+        )
+        log.info(
+            "effort set",
+            extra={"extra_fields": {"session_id": found.id, "effort": msg.effort}},
+        )
+        return None
 
     async def _handle_set_plan(self, msg: SetPlan) -> str | None:
         """Turn plan mode on or off and ack with ``tier_state`` (TD-4603).

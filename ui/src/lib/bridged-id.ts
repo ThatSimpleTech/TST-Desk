@@ -62,6 +62,7 @@ export const BRIDGED_VERBS: ReadonlySet<string> = new Set([
   "extract_attachment", // TD-5131: a staged document's chip, measured where it will be sent
   "restore_files",
   "set_tier",
+  "set_effort",
   "set_plan",
   "set_session_preset",
   "rename_session",

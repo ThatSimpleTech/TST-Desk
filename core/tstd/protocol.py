@@ -28,6 +28,7 @@ from pydantic import (
 
 from .attachments import AttachmentLimits
 from .autonomy.charter import Charter
+from .effort import EffortLevel
 from .logging import redact_secrets, redact_structure
 from .router import TierName
 
@@ -802,6 +803,19 @@ class SetTier(ClientMessage):
     type: Literal["set_tier"] = "set_tier"
     session_id: str
     tier: Literal["brain", "worker", "validator"]
+
+
+class SetEffort(ClientMessage):
+    """Pick the reasoning effort for a session (the model picker).
+
+    Sent on the wire as ``reasoning_effort`` for ``ezer`` and for tiers that
+    opt in. Persists on the session row. Acked with ``tier_state``, whose
+    ``effort`` the composer chip follows.
+    """
+
+    type: Literal["set_effort"] = "set_effort"
+    session_id: str
+    effort: EffortLevel
 
 
 class SetPlan(ClientMessage):
@@ -2472,6 +2486,8 @@ class TierState(DaemonEvent):
     # ``hosts`` already name the backup for those tiers. Empty when every
     # tier is on its own model; the next turn starts there again.
     fallbacks: dict[str, int] = Field(default_factory=dict)
+    # Reasoning effort the session sends (the model picker). Additive.
+    effort: EffortLevel = "medium"
 
 
 class LoosenedSetting(BaseModel):
@@ -4343,6 +4359,7 @@ ClientMessageT = Annotated[
     | Attach
     | Detach
     | SetTier
+    | SetEffort
     | SetPlan
     | SetSessionPreset
     | GetInstructionStack
@@ -4579,6 +4596,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "attach",
         "detach",
         "set_tier",
+        "set_effort",
         "set_plan",
         "set_session_preset",
         "get_instruction_stack",
