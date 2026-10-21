@@ -41,7 +41,8 @@ SECRET_PATTERNS: list[re.Pattern[str]] = [
     # glued to a letter is still caught, as after an ANSI colour code
     # ("\x1b[31msk-…"), a JSON escape ("\u003esk-…") or "\nsk-…", because a
     # key's random part never reads as words. The UI belt in
-    # ui/src/lib/redact.ts stays wider: it only feeds diagnostics.
+    # ui/src/lib/redact.ts uses the same sk- rule (TD-5161): it also cleans
+    # OS notification banners, which a person reads.
     re.compile(rf"((?:(?<![a-z])|(?!sk-{_SK_WORDS}))sk-[a-zA-Z0-9][a-zA-Z0-9_-]{{15,}})"),
     re.compile(r"(github_pat_[a-zA-Z0-9_]{36,})"),  # GitHub fine-grained PAT
     re.compile(r"(ghp_[a-zA-Z0-9]{36,})"),  # GitHub classic PAT

@@ -110,6 +110,7 @@ async def restore_files(session: Session, msg: RestoreFiles) -> str | None:
         seq = _check(session, msg)
         if isinstance(seq, str):
             return _refusal(msg, seq)
+        session.folder_busy = "restoring files"
         try:
             result = await apply_rewind(
                 Path(session.workspace_path),
@@ -125,6 +126,8 @@ async def restore_files(session: Session, msg: RestoreFiles) -> str | None:
         except Exception as e:
             log.exception("restore failed", extra={"extra_fields": {"session_id": session.id}})
             return _refusal(msg, "rewind_failed", f"Restoring stopped part way: {e}")
+        finally:
+            session.folder_busy = None
         log.info(
             "files restored to a turn",
             extra={

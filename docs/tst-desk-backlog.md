@@ -10530,7 +10530,9 @@ fix); one that is not, or no longer applies, says why.
       `git diff` does)
 - [x] Tests fail on the old code and pass on the new, except coverage tests
       for code that was already right (note 21's counter test, the key
-      framings in note 13, the native-thread lines in note 31); ruff, mypy,
+      framings in note 13, the native-thread lines in note 31, and, found
+      by TD-5161, `test_a_file_swapped_for_a_hard_link_while_staging_is_refused`:
+      the old dev/inode check already refused that swap); ruff, mypy,
       tsc and vitest pass; DECISIONS.md has the TD-5160 entry
 
 ### TD-5162 — Measure TD-5115 stale-result clearing on the GPU server

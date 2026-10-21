@@ -569,6 +569,17 @@ class ToolDispatcher:
                     error_code="approval_denied",
                     decision_class=decision_class,
                 )
+            # Plan mode turned on while the call waited: skip-all or a
+            # late Allow must not run a changing call now (TD-5161).
+            if (await self.classifier.classify(request)).refused:
+                return ToolResult(
+                    tool_call_id=tool_call_id,
+                    name=name,
+                    status="error",
+                    output=planning_refusal(request),
+                    error_code=PLAN_MODE_REFUSED,
+                    decision_class=decision_class,
+                )
 
         # What let the call run without asking, for the audit (TD-5103):
         # the read-only list, only when no policy rule or approval decided.

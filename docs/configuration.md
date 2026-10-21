@@ -1002,10 +1002,15 @@ the folder; its `worktree_state` note says why, and `tst run` prints it.
   merges it back (its changes are committed on the branch and the branch is merged into the
   main checkout; a merge that would conflict, or a main checkout in the middle of a merge or
   rebase, is refused and nothing changes) or removes it with its changes. An unchanged
-  worktree is removed whichever you pick. The session then works in the main checkout.
+  worktree is removed whichever you pick. The session then works in the main checkout. While
+  it closes, a new message to the session is refused with a note to send it again (TD-5161).
 - **Removed on its own when unchanged:** when its session is deleted, and when a scheduled
   run ends. A worktree with changes is never removed without your choice: deleting its
   session leaves it on disk on its branch, and a scheduled run's stays with its session.
+  A session whose `worktree.setup` is still running cannot be deleted until it ends
+  (TD-5161). An open or archived session keeps its worktree, changed or not, until you
+  close the worktree or delete the session: archiving files the chat away, it does not
+  end its work.
 - **`tst run` too.** It opens an ordinary session, so its changes land in that session's
   worktree, and it says so on stderr in every output mode: the branch and the worktree's
   path (`--output json` keeps its one object). Close it from the rail or `git merge` the
@@ -1018,7 +1023,7 @@ the folder; its `worktree_state` note says why, and `tst run` prints it.
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `enabled` | bool | `true` | Worktrees for sessions, scheduled jobs and delegated workers on this computer. A workspace can still turn them off for itself (§4.10). |
-| `folder` | string | `""` | Where worktrees go, one folder each named `<repository>-<id>`. Empty is `worktrees/` in the data dir, outside every repository. `~` is expanded. |
+| `folder` | string | `""` | Where worktrees go, one folder each named `<repository>-<id>`. Empty is `worktrees/` in the data dir, outside every repository. `~` is expanded. A relative path is refused (TD-5161): it would mean one place to TST Desk and another to git. |
 | `setup_timeout_s` | int 10–3600 | `600` | Seconds a workspace's `worktree.setup` may run before it is stopped and reported as failed. |
 
 <!-- verify: model -->
@@ -1347,7 +1352,8 @@ uses, TD-5007), that tier's requests leave them out and carry the builtin
 (names only, about 4,000 characters at most; a server past that is
 named with its tool count). The agent calls it with a few keywords, or
 `select:<name>,<name>` for exact names, and the best matches (five unless
-it asks for up to twenty) load: from the next model call on, their full
+it asks for up to twenty; named picks load up to twenty, and the result
+lists any it had to leave out, TD-5161) load: from the next model call on, their full
 definitions are in the request, after every other tool, and they stay
 for the rest of the session, through compaction and a restart (the
 session's folder keeps the list in `mcp_tools.json`). A tool the
@@ -1358,7 +1364,9 @@ is a plain `tools` array, so it works on any OpenAI-compatible endpoint.
 `tool_search` is Class A (§4.4); loading a tool grants it nothing, and
 each call to it is classified as before. Whether a tier defers is decided
 on its first call and kept for the session, so the learned token ratio
-cannot make the tool list come and go. Measured on the GPU server with six servers
+cannot make the tool list come and go. A backup model (TD-5120) that
+stands in for the tier is offered the tool list sized for its own
+window, not the primary's (TD-5161). Measured on the GPU server with six servers
 (70 tools, `core/scripts/measure_mcp_tool_search.py`) on the local 27B's
 tokenizer: the first request of a turn was 15,294 prompt tokens with
 every schema and 8,272 with tool search, and 9,037 after one search
@@ -2414,8 +2422,8 @@ changes made through the shell (never on the branch, see the paragraph above), a
 autonomously (its own `tst/auto/<slug>` branch and drift revert), a Grok-engine session (Grok
 writes files with its own tools, so nothing is checkpointed), a workspace that is not a git
 repository, and a turn whose later checkpoints were made before TST Desk recorded when (an
-older session; use the decision's `git revert`). It is refused while a turn runs. There is no
-setting.
+older session; use the decision's `git revert`). It is refused while a turn runs, and a message
+sent while it writes is refused with a note to send it again (TD-5161). There is no setting.
 
 ### 4.2 `caps` — when the agent stops and asks
 
@@ -2492,8 +2500,9 @@ out-of-memory killer and systemd-oomd, so the line says the cap is the likely ca
 the counters show was not the cap gets no line (TD-5160). With
 `ulimit` the line says the command ran out of memory at its cap, read from its error text
 (`MemoryError`, `Cannot allocate memory`, `std::bad_alloc`, `out of memory`, `failed to map
-segment from shared object`, …; a JavaScript heap limit and GPU memory, such as PyTorch's "CUDA
-out of memory", are not counted). In a container an exit of 137 (SIGKILL) is reported as the likely
+segment from shared object`, …; a JavaScript heap limit, GPU memory (any line naming CUDA, CuPy,
+XLA, ggml, ROCm or Vulkan, and PyTorch's HIP and MPS messages) and a loader's `Operation not
+permitted` on a noexec mount are not counted; TD-5161). In a container an exit of 137 (SIGKILL) is reported as the likely
 cause. A command the tool itself timed out, cancelled or stopped gets no such line. Each command
 has its own cap; two commands running at once can each use it. A value above half of RAM loosens
 the default, so a repo's config that sets one waits for your trust (§4.8). Skip-all does not
@@ -2675,7 +2684,9 @@ then runs on the brain tier, and the agent may only read: the classifier refuses
 `read_only_tools`, plugin tools, desktop and browser actuation, the GitHub write tools,
 `propose_steering_edit`, `delegate` with `kind: worker`, and any other tool not known to only read. The refusal comes first, before your `policy` rules, an approval
 card or Skip all approvals, so none of them can run a refused call, and it tells the agent it is
-planning. Reads (`fs_read`, `fs_list`, `fs_grep`, the GitHub reads, screenshots), web search and
+planning. A call that was already waiting on an approval card when plan mode came on is
+checked again once it is allowed, so a late Allow or Skip all approvals refuses it too
+(TD-5161). Reads (`fs_read`, `fs_list`, `fs_grep`, the GitHub reads, screenshots), web search and
 fetch, `load_skill`, `send_file`, `task_list`, `ask_user`, `consult`, `tool_search` (TD-5127: it
 only loads definitions; a loaded MCP tool still needs `read_only_tools`) and `delegate` for research
 still run under the usual rules. The agent ends plan mode with `exit_plan_mode`: its plan
@@ -2688,7 +2699,9 @@ refused call counts as a refusal (`plan_mode`). Plan mode outlives a daemon rest
 stop and launch, a crash): only approving a plan or turning it off ends it, so a message held
 across the restart still runs read-only. The session row in `sessions.json` keeps it
 (`plan_mode`), and the pinned plan is read back too. A pinned tier (`set_tier`) still lasts only
-until the restart.
+until the restart. `/plan` typed in the window is the window's own command, like `/compact`, so
+a skill named `plan` no longer loads by typing `/plan`: ask for it by name (the agent loads it
+with `load_skill`) or rename it (TD-5161).
 
 **Reads inside the workspace never ask (TD-5141).** `fs_read`, `fs_list` and `fs_grep` on a
 path inside the workspace are Class A by a fixed rule, so they run without asking and without
@@ -3108,11 +3121,14 @@ touch. The goal stays set, and the first turn after plan mode is checked as usua
 **`/goal <statement>` gives one session a goal, checked the same way.** Type it in the composer
 of a native-engine session (or send it with `tst run --message`). The statement becomes the task
 for that turn, so you do not need a second message, and it joins the workspace's checks as a
-statement the worker judges, with the same `max_retries` (3 when the file sets none). The goal
+statement the worker judges, with the same `max_retries` (3 when the file sets none). A goal that
+starts with `$` is a command instead, as a check is (`/goal $ npm test`): it runs through the
+shell tool's gate, and a failure sends its output back (TD-5161). The goal
 lasts until a check passes with it, `/goal clear` (or `off`, `stop`, `none`, `cancel`, `reset`)
 clears it, or another `/goal` replaces it. `/goal` on its own shows the goal and how many checks
-have judged it. Neither of those calls the model. A goal is at most 4000 characters, it needs no
-charter, and it survives a restart.
+have judged it. Neither of those calls the model. Sent while a turn runs (Send now), each of these
+takes effect at once (TD-5161), so `/goal clear` ends a goal chase without Stop. A goal is at most
+4000 characters, it needs no charter, and it survives a restart.
 
 **A repo's `stop_check` waits for your trust (§4.8).** It runs on its own at every turn end, so it
 counts as loosening. Your own `/goal` needs no trust.

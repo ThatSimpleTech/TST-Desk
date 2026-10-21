@@ -9,14 +9,16 @@ point a turn at the worker its message names as ``@name``.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..config import ModelConfig, TierConfig, TierName
-from ..context.workers import WorkerCatalog, WorkerDefinition, load_workers_async
 from ..provider import FunctionDefinition, MessageContent
 from ..provider import ToolDefinition as ProviderToolDefinition
 from .delegate_child import CONSULT_TOOL_NAME, SUMMARY_TOKEN_CAP
 from .results import HandlerRefusal
+
+if TYPE_CHECKING:  # TD-5161: context.workers imports tools; no cycle at import
+    from ..context.workers import WorkerCatalog, WorkerDefinition
 
 #: The delegate argument that names a worker.
 AGENT_ARG = "agent"
@@ -35,6 +37,8 @@ async def resolve_named_worker(
             "delegate_agent_kind",
             "Error: give either agent or kind, not both; a named worker sets its own tools.",
         )
+    from ..context.workers import load_workers_async
+
     catalog = await load_workers_async(workspace)
     worker = catalog.get(agent)
     if worker is None:

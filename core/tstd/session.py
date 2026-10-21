@@ -349,6 +349,9 @@ class Session:
         # daemon builds mid-turn (set_plan, set_tier) names the same model
         # as the loop's own report.
         self.turn_backups: TurnBackups | None = None
+        # TD-5161: a restore or a worktree close is rewriting the folder;
+        # the daemon refuses a new message until it ends (the reason).
+        self.folder_busy: str | None = None
         # TD-5124: the goal ``/goal`` set, checked when the model ends a
         # turn until a check passes; rebuilt from the log on revive. And
         # how many checks have judged it, for ``/goal`` on its own.

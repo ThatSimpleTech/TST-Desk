@@ -16121,7 +16121,10 @@ Class C questions the notes left open (each the conservative option).
   key: a key's random part has a segment too long, or mixed case inside
   one, to fit, so no real key shape is bounded. A test glues 500 seeded
   keys in five provider shapes to every lowercase letter. The UI's
-  diagnostics belt stays wider on purpose.
+  diagnostics belt stays wider on purpose. (Corrected by TD-5161: the UI's
+  `redact` also cleans OS notification banners, a human-facing surface
+  where the old pattern still blanked words in file names, so its `sk-`
+  rule is now core's; its other patterns stay wider.)
 - **Stored MCP secrets.** A value's last whitespace-separated part must be
   8+ characters too (the token in `Bearer <token>`), since the exact-text
   scrub registers only parts that long. This refuses a passphrase whose

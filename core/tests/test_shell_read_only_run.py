@@ -304,6 +304,16 @@ def test_run_env_pins_only_listed_git(tmp_path: Path) -> None:
     assert run_env("git status > x", {}, tmp_path) == {}
 
 
+def test_an_approved_signature_format_keeps_the_pins(tmp_path: Path) -> None:
+    """TD-5161: a %G or %(signature word kept the line off the list, and the pins too."""
+    for command in ("git log -p --format=%GS", "git branch --format='%(signature)'"):
+        pins = run_env(command, {}, tmp_path)
+        assert pins.get("GIT_ATTR_SOURCE") == "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+        assert pins["GIT_CONFIG_COUNT"] == "4"
+    entries = frozenset(READ_ONLY_ENTRIES)
+    assert shell_read_only.match("git log -p --format=%GS", entries, tmp_path) == ()
+
+
 def test_run_env_pins_whatever_the_configured_list_says(tmp_path: Path) -> None:
     """TD-5160: the classifier's copy of the list can be older than the
     session's, so the pins never depend on it: a git command it still

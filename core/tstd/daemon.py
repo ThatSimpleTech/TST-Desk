@@ -2721,6 +2721,17 @@ class Daemon:
                     session_id=msg.session_id,
                     in_reply_to=msg.type,
                 )
+            # TD-5161: a restore or worktree close is rewriting the folder;
+            # a turn started now would write into it (or into a folder
+            # about to be deleted).
+            if found.folder_busy is not None:
+                return build_error(
+                    "session_busy",
+                    f"This session is {found.folder_busy}. Send the message again when "
+                    "that is done.",
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
+                )
             # TD-5118: Grok's own tools never meet TST Desk's policy gate, so
             # a rule could not be kept there. Refused rather than dropped:
             # a --deny that silently did nothing would be worse than none.
@@ -3504,6 +3515,14 @@ class Daemon:
 
         if isinstance(msg, DeleteSession):
             doomed = self._session_worktree(msg.session_id)
+            if doomed is not None and doomed.setup == "running":
+                # TD-5161: deleting now would orphan the worktree and its
+                # branch, with the setup still running for nobody.
+                return build_error(
+                    "worktree_busy",
+                    "The worktree's setup is still running. Delete the session when it ends.",
+                    session_id=msg.session_id,
+                )
             refusal = await delete_session(
                 self.session_registry,
                 self._session_store,
@@ -3517,7 +3536,7 @@ class Daemon:
                 save_session_stars(self.data_dir, self.session_stars)
                 # TD-5126: an unchanged worktree goes with its session; one
                 # with changes stays on disk, on its branch.
-                if doomed is not None and doomed.setup != "running":
+                if doomed is not None:
                     await settle(doomed)
             return refusal if refusal is not None else await self._handle_list_sessions()
 
@@ -4971,13 +4990,20 @@ class Daemon:
             return build_error(
                 "worktree_busy", "The worktree's setup is still running.", session_id=sid
             )
+        if sess is not None:
+            sess.folder_busy = "closing its worktree"
         try:
-            note = await close_worktree(wt, msg.action, title=record.title or f"Session {sid[:8]}")
-        except WorktreeHasChanges as e:
-            return build_error("worktree_has_changes", str(e), session_id=sid)
-        except WorktreeError as e:
-            return build_error("worktree_failed", str(e), session_id=sid)
-        await self._leave_worktree(sid, note)
+            try:
+                title = record.title or f"Session {sid[:8]}"
+                note = await close_worktree(wt, msg.action, title=title)
+            except WorktreeHasChanges as e:
+                return build_error("worktree_has_changes", str(e), session_id=sid)
+            except WorktreeError as e:
+                return build_error("worktree_failed", str(e), session_id=sid)
+            await self._leave_worktree(sid, note)
+        finally:
+            if sess is not None:
+                sess.folder_busy = None
         log.info(
             "worktree closed",
             extra={"extra_fields": {"session_id": sid, "action": msg.action or "auto"}},

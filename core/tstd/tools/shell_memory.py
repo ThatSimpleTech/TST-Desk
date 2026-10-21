@@ -115,6 +115,10 @@ _OWN_HEAP_LIMITS = (
     "hip out of memory",
     "mps backend out of memory",
 )
+# A line naming a GPU stack is about the GPU's memory, whatever its words
+# (llama.cpp's cudaMalloc, CUDA_ERROR_OUT_OF_MEMORY, CuPy, JAX/XLA's
+# RESOURCE_EXHAUSTED): the whole line is set aside (TD-5161).
+_GPU_MARKERS = ("cuda", "cupy", "xla", "resource_exhausted", "ggml", "rocm", "vulkan")
 # What systemd-run prints, alone, when it cannot start the scope; it then
 # exits 1 without running the command (TD-5160). A command that runs
 # systemctl can print the same line, so only a lone line counts, and the
@@ -336,11 +340,20 @@ def host_command(cap: ShellMemoryCap | None, command: str) -> str:
     return command
 
 
+def _cap_line(line: str) -> bool:
+    """False for a line about a limit the cap does not set (TD-5161)."""
+    if any(marker in line for marker in _GPU_MARKERS):
+        return False
+    # A loader refused by a noexec mount says "failed to map segment" too.
+    return "operation not permitted" not in line
+
+
 def ran_out_of_memory(stderr: str) -> bool:
     """True when *stderr* carries an out-of-memory error the cap explains."""
     text = stderr.casefold()
     for phrase in _OWN_HEAP_LIMITS:
         text = text.replace(phrase, "")
+    text = "\n".join(line for line in text.splitlines() if _cap_line(line))
     return any(sig in text for sig in _OOM_SIGNATURES)
 
 

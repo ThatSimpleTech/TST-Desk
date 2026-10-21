@@ -314,7 +314,7 @@ class SessionPersist:
             return []
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as e:
+        except (OSError, ValueError) as e:  # ValueError: bad JSON or not UTF-8
             log.warning(
                 "loaded mcp tools unreadable",
                 extra={"extra_fields": {"session_id": session_id, "error": str(e)}},

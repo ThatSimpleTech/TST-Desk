@@ -117,10 +117,14 @@ def feedback_text(
     for result, source in results:
         if result.green or not result.decided:
             continue
-        if source == "goal":
+        if result.via == "shell":
+            # A `$` goal runs as a command too (TD-5161): its output is what
+            # the model needs to fix it.
+            label = "Goal not met yet: " if source == "goal" else ""
+            output = clip_detail(result.detail)
+            lines.append(f"- {label}`{result.item}` failed:\n```\n{output}\n```")
+        elif source == "goal":
             lines.append(f"- Goal not met yet: {result.item}")
-        elif result.via == "shell":
-            lines.append(f"- `{result.item}` failed:\n```\n{clip_detail(result.detail)}\n```")
         else:
             lines.append(f"- Not true yet: {result.item}")
     return "\n".join(lines)
