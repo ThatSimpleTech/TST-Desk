@@ -40,6 +40,7 @@ from .dispatch import ToolDispatcher
 from .exit_plan import exit_plan_mode
 from .search import DEFAULT_MAX_RESULTS, STOPPED, glob_crosses_folders, glob_matcher, grep
 from .send_file import send_file
+from .session_search import SessionRecall, register_session_search_handler
 from .shell import ShellPolicy, run_shell
 from .steering_edit import propose_steering_edit
 from .task_list import task_list
@@ -276,6 +277,7 @@ def register_builtin_handlers(
     grounding_client: GroundingLocator | None = None,
     sent_files: SentFiles | None = None,
     shell_allowlist: Callable[[], tuple[str, ...] | None] | None = None,
+    session_recall: SessionRecall | None = None,
 ) -> None:
     """Register the built-in tool handlers on *dispatcher*.
 
@@ -291,6 +293,8 @@ def register_builtin_handlers(
     (TD-3902); omitted or disabled keeps the intended (x, y).
     ``sent_files`` stores what ``send_file`` sends (TD-5143); omitted, the
     handler still exists and refuses with ``send_unavailable``.
+    ``session_recall`` backs ``session_search`` (TD-5129); omitted, that
+    handler refuses with ``session_search_unavailable``.
     """
     dispatcher.register_handler("fs_read", fs_read)
     dispatcher.register_handler("fs_list", fs_list)
@@ -327,6 +331,7 @@ def register_builtin_handlers(
     dispatcher.register_handler("ask_user", ask_user)
     dispatcher.register_handler("exit_plan_mode", exit_plan_mode)
     register_tool_search_handler(dispatcher)
+    register_session_search_handler(dispatcher, session_recall)
     from ..connectors.github_tools import register_github_handlers
 
     register_github_handlers(dispatcher)

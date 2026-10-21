@@ -11168,6 +11168,60 @@ DECISIONS.md.
 
 ---
 
+### TD-5129 — Search and recall earlier sessions
+**Size:** 5 · **Depends on:** none · Gap audit 2026-10-14
+
+Claude's apps search and reference past chats. TST Desk's rail filtered
+on id, path and title only, and the model had no way to look back at an
+earlier session in the same project.
+
+**Acceptance criteria:**
+- [x] A local full-text index (SQLite FTS) over saved conversations is
+      updated as sessions write.
+- [x] The session rail searches message text, not just titles.
+- [x] A Class A `session_search` tool lets the model recall earlier
+      sessions in the same workspace, citing the session and turn.
+- [x] Nothing leaves the machine (directive 3).
+
+Done (2026-10-20): `core/tstd/session_index.py` keeps `session_index.db`
+(SQLite FTS5, unicode61 with diacritics folded, file mode 0600) in the
+data dir. The daemon hands it each event right after `events.jsonl` gets
+it, under the same per-session lock: a user message is a row, a streamed
+reply is buffered per `response_id` and written as one row when the next
+non-text event arrives, a withdrawn reply (TD-5159) leaves no row, and
+thinking and tool output are not indexed. Each row carries its turn (the
+1-based user turn, a mid-turn message counted with the turn it joined, a
+fork renumbering from the edited turn) and that turn's `turn_id`. On
+start, restore catches each session up from its log, so a crash
+mid-reply loses nothing and sessions older than the index become
+searchable; deleting a session deletes its rows. The rail sends
+`search_sessions` 200 ms after typing pauses (two characters or more)
+and adds the sessions whose words matched, each showing the matching
+message under its title; a reply to an earlier keystroke is dropped
+(`ui/src/lib/session-search.svelte.ts`). `session_search`
+(`core/tstd/tools/session_search.py`) searches the other sessions of the
+caller's workspace, two matches per session at most, and cites each as
+`[session <id8> "<title>", turn <n>, last used <date>]`; it is Class A by
+the static rule `session-search` and allowed in plan mode. Nothing in the
+index or either search opens a socket. Tests:
+`core/tests/test_session_index.py` (user and reply rows with turns,
+thinking and tool arguments left out, one write per reply, prefix words
+and FTS syntax read as plain text, the any-word fallback, retraction,
+mid-turn and fork turn numbers, scoping, removal, restart catch-up
+without duplicates, a log older than the index, the 0600 file, no socket
+with `socket` patched to fail, an unopenable index),
+`core/tests/test_session_search.py` (a real daemon with the mock
+provider: the rail finds user and reply text as turns finish, a restart
+rebuilds a deleted index and a delete empties it, an unopenable index
+answers `available: false`; the tool through the real dispatcher with no
+approval, scoped to the workspace and citing session and turn; the
+rule's shape and order), `core/tests/test_plan_mode.py`, and
+`ui/src/lib/sessions.test.ts` (debounce, message matches with their
+snippet, stale replies dropped, title matches kept). See DECISIONS.md,
+docs/configuration.md §2 `session` and docs/architecture.md.
+
+---
+
 # Epic E52 — Files to the user
 
 Filed 2026-10-15. The agent built an APK for Adam and had no way to hand it over in the chat.

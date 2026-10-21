@@ -241,7 +241,7 @@
 				<span class="filter-icon" aria-hidden="true"><Icon name="search" size={13} /></span>
 				<input
 					type="text"
-					placeholder="Filter sessions"
+					placeholder="Search sessions"
 					aria-label="Filter sessions"
 					value={sessions.filter}
 					oninput={(e) => setFilter(e.currentTarget.value)}

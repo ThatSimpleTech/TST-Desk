@@ -518,6 +518,17 @@ drop a different prefix than `from_seq`. Zero is a load error, not
 | `send_file_max_bytes` | int 1..2147483648 | `536870912` | Largest file `send_file` copies into the chat (512 MiB). Bigger is refused with `file_too_large`; nothing is copied. |
 | `send_file_session_max_bytes` | int ≥ 1 | `4294967296` | Total of sent files one session may hold (4 GiB). Past it, `session_quota`. |
 
+**Search index (TD-5129).** Every user message and assistant reply the session
+logs carry is also written to `session_index.db` in the data dir, a SQLite FTS5
+full-text index (file mode 0600). The rail's search box and the model's
+`session_search` tool read it. It holds the same redacted text as
+`events.jsonl`, never thinking or tool output, and nothing in it leaves the
+computer. Rows outlive `log_max_events`, so a trimmed event stays findable;
+deleting a session removes its rows. The daemon fills it as events are written
+and, on start, catches up from each session's log, so sessions written before
+the index existed become searchable on the first start. It has no keys: delete
+the file to rebuild it from the logs that remain.
+
 ### `clear_tool_results`
 
 How old tool output leaves a full context window (TD-5115). Compaction
@@ -2493,6 +2504,12 @@ and changes which definitions the next requests carry, so it is Class A by a fix
 (`tool-search`). A tool it loads is granted nothing: each call to that tool is classified on its
 own, so an MCP tool still asks (§2 `mcp`). A policy rule naming `tool_search` still wins. An MCP
 or plugin tool with that name gets no such grant.
+
+**Session search never asks (TD-5129).** `session_search` reads TST Desk's own index of what
+earlier sessions in the same workspace said (`session_index.db` in the data dir; see `session`) and
+changes nothing, so it is Class A by a fixed rule (`session-search`). It reads no workspace
+file and reaches no host. A policy rule naming `session_search` still wins. An MCP or plugin
+tool with that name gets no such grant.
 
 <!-- verify: workspace -->
 ```yaml

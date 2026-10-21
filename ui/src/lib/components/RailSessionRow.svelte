@@ -26,6 +26,7 @@
 		ROW_STATE_LABELS,
 		rowSubtitle,
 		rowTitle,
+		rowHit,
 		rowTitleFull,
 		sessions,
 		activityTone,
@@ -72,6 +73,8 @@
 	let renaming = $derived(sessions.renameFor === row.sessionId);
 	let closingTree = $derived(sessions.closeWorktreeFor === row.sessionId);
 	let activity = $derived(liveActivity(row));
+	// TD-5129: the message the search box found in this session, if any.
+	let hit = $derived(rowHit(row));
 	let targets = $derived(moving ? moveTargets(row.sessionId) : []);
 	let draft = $state('');
 	let inputEl = $state<HTMLInputElement | undefined>(undefined);
@@ -156,6 +159,12 @@
 				<span class="row-sub">
 					{rowSubtitle(row)} · {ACTIVITY_LABELS[activity]}{#if stateNote !== null} · <span class="row-state">{stateNote}</span>{/if}
 				</span>
+				{#if hit !== null}
+					<span class="row-hit" title={`Turn ${hit.turn}, ${hit.role === 'user' ? 'you' : 'the assistant'}: ${hit.snippet}`}>
+						<span class="row-hit-who">{hit.role === 'user' ? 'You' : 'Reply'}:</span>
+						{hit.snippet}
+					</span>
+				{/if}
 				{#if row.worktree !== null}
 					<!-- TD-5126: the branch this session's worktree is on. -->
 					<span class="row-branch" title={`Works in a git worktree on ${row.worktree.branch}`}>
@@ -284,6 +293,23 @@
 		color: var(--color-ink-muted);
 		font-family: var(--font-mono);
 		font-size: var(--text-xs);
+	}
+
+	/* TD-5129: two lines of the matching message, under the title. */
+	.row-hit {
+		display: -webkit-box;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		overflow: hidden;
+		font-family: var(--font-sans);
+		font-size: var(--text-xs);
+		color: var(--color-ink-secondary);
+		white-space: normal;
+	}
+
+	.row-hit-who {
+		font-weight: var(--weight-medium);
 	}
 
 	.row-branch-name {
