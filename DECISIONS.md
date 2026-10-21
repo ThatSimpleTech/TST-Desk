@@ -17981,3 +17981,109 @@ and a command `on_timeout: "background"` moves to a job are the same
 `shell` call, so they run in the sandbox under the same rule. The guard
 check runs when the job ends, however it ends (exit, stop, session end),
 and its `blocked:` notes go to the job's output and the daemon log.
+
+## 2026-10-21 — TD-5139: language-server diagnostics and navigation (Class B)
+
+**Approach (size 8; recorded here instead of waiting for sign-off).** The
+gap audit said to split the story. It was built as one change in three
+layers that each have their own tests, because the second and third
+acceptance criteria share everything below them (start, sync, pool):
+
+1. **Client** (`core/tstd/lsp/client.py`). A hand-written LSP client over
+   the child's stdin/stdout: `Content-Length` framing, `initialize` with
+   `rootUri`/`workspaceFolders`, full-text sync (`didOpen`, `didChange`,
+   `didSave`), `publishDiagnostics`, and plain requests with a timeout.
+   Server-to-client requests get an empty answer
+   (`workspace/configuration`, `client/registerCapability`,
+   `window/workDoneProgress/create`) or "method not found", so a server
+   never blocks on us. No new dependency: `pygls`/`lsprotocol` would add a
+   server framework to get a few hundred lines of client.
+2. **Pool** (`core/tstd/lsp/pool.py`). One process-wide pool keyed by the
+   resolved workspace root and the server entry. Servers start lazily on
+   first need, are shared by sessions in the same root, are stopped after
+   `lsp.idle_seconds` unused (checked when any server is next asked for),
+   and closed in the daemon's shutdown phases. A failed start is
+   remembered and reported once, not on every write.
+3. **Uses.** The dispatcher folds diagnostics into `fs_write`/`fs_edit`
+   results after the `after_write` hooks (so the server sees the
+   formatted file), and three tools, `lsp_definition`, `lsp_references`
+   and `lsp_symbols`, ask for navigation.
+
+**Config shape.** `lsp: {servers: [...], idle_seconds, max_diagnostics}`
+in config.yaml, each server `name`, `command` (argv, or one string split
+like `hooks.after_write`), `match` (the same globs as `after_write`),
+`language_id`, `init_options`, and three timeouts. A list with `match`
+rather than a map keyed by language, so one server can take several
+extensions and the patterns read like the hooks beside them.
+
+**"New" diagnostics.** The client remembers, per document, the errors
+and warnings the model was last told about. A write reports only those not
+already reported, matched on (severity, code, message) as a multiset, not
+on position, because an edit above a problem moves its line. Hints and
+information are dropped. A fix that clears the file says "no problems
+left". A clean file, or a server that publishes nothing within
+`diagnostics_wait_seconds`, adds nothing. After the first publish the
+client waits 0.3 s more for a second one, since servers often publish
+syntax and then type errors.
+
+**Positions.** The model gives a 1-based line and the symbol's name
+(whole word first, then any substring); a 1-based column is the fallback.
+Small models are bad at counting columns. Columns are converted to the
+negotiated encoding (UTF-16 by default, UTF-8 if the server picks it).
+
+**No tool surface without a server.** `create_registry(lsp_enabled=...)`
+registers the tools only when `lsp.servers` is non-empty, so a default
+install sends no extra schemas to small local contexts. A file no server
+matches is refused with `lsp_unavailable` pointing at `fs_grep`.
+
+**Class C questions the story left open, answered conservatively.**
+- *Who may name a server.* Only the user's config.yaml. A workspace's
+  `.tst/config.yaml` cannot add one, trusted or not: its command would
+  run as soon as the agent wrote a file. (`after_write` hooks allow a
+  trusted workspace; the narrower choice is easy to widen later.)
+- *"On loopback".* Stdio only. A `--port`, `--socket`, `--tcp`,
+  `--listen`, `--host`, `--pipe` or `--node-ipc` argument is a load error,
+  so no configured server listens on any address (prime directive 1).
+- *Classification.* The three tools are static Class A by a new
+  `lsp-read` rule with exactly `builtin-read`'s test (builtin, `auto`, no
+  writes or hosts, every path in the workspace), and they are on the plan
+  mode read-only list. Starting the server and syncing a written file are
+  not tool calls the model made; like `after_write`, they only ever see
+  files a classified call already touched (directive 6 still holds for
+  every model call).
+- *Locations outside the workspace* (library definitions) show their path
+  only, never their text, since the wall would refuse reading them.
+- *Which workspaces a server runs in* (added after review of PR #62).
+  rust-analyzer runs `build.rs` and proc-macros and tsserver loads
+  tsconfig plugins, so starting a server can run repository code. No
+  server starts while the workspace's `.tst/config.yaml` is pending or
+  declined trust (TD-5113) or unreadable, the gate a repo's
+  `after_write` hooks already sit behind; the tools say why. TST Desk's
+  trust is per config file, not per folder, so a clone with no
+  `.tst/config.yaml` is not gated. That matches the user's own
+  `after_write` hooks (a formatter also loads repo config) and keeps the
+  server the user chose working. A per-workspace approval for the first
+  start was rejected: it needs a new approval surface for a program the
+  user already named in their own config.
+- *What "new" is measured against.* The record of what was reported
+  lives on the session (`Session.lsp_reported`), keyed by server and
+  file, not on the pooled client, so one session's report never hides a
+  problem from another session in the same workspace. Published URIs are
+  matched by a normalized key (decoded escapes, `/c:/` drive form,
+  `normcase`), since servers on vscode-uri send `file:///c%3A/...` on
+  Windows. The `file:` URI is parsed by hand: `urllib.request` would
+  give the module a network-capable import (§2.3).
+- *Autonomous sessions* start no server: their commands run only in the
+  container, and a server has no container path yet. The tools refuse
+  there and writes get no diagnostics.
+- *Environment.* Secrets are stripped as for the shell tool, and the
+  server leads its own process group so closing it kills its children.
+- No protocol event or window control: the notes ride in the tool
+  result's text, which the timeline already shows.
+
+**Alternatives rejected.** Running diagnostics as an `after_write` hook
+with a CLI checker (no navigation, and a cold start per write). Starting
+servers per session (a worktree per session already multiplies roots;
+sharing by root keeps one server per checkout). Keeping servers for the
+daemon's life (idle ones would hold memory on a box running local models).
+

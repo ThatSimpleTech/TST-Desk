@@ -610,6 +610,9 @@ def register_builtin_handlers(
     dispatcher.register_handler("exit_plan_mode", exit_plan_mode)
     register_tool_search_handler(dispatcher)
     register_session_search_handler(dispatcher, session_recall)
+    from .lsp import register_lsp_handlers
+
+    register_lsp_handlers(dispatcher)
     from ..connectors.github_tools import register_github_handlers
 
     register_github_handlers(dispatcher)

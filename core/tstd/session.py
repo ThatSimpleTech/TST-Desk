@@ -387,6 +387,9 @@ class Session:
         # ``config_view`` is the read the boundary was last loaded from.
         self.trust_store: TrustStore | None = None
         self.config_view: WorkspaceConfigView | None = None
+        # TD-5139: the language-server problems this session's model was
+        # last told, per (server, file), so a write reports only new ones.
+        self.lsp_reported: dict[tuple[str, str], list[dict[str, Any]]] = {}
         # Hooks (TD-5134): user hooks the loop binds, workspace hooks read
         # from ``config_view`` while it applies, and each hook's last run.
         self.hooks = HookRunner(self)

@@ -92,6 +92,7 @@ from tstd.config import (
 )
 from tstd.hooks_config import AfterWriteHook, HookEntry, HooksConfig, load_workspace_hooks
 from tstd.logging import LINUX_DATA_DIR_NAME
+from tstd.lsp_config import LspConfig, LspServerConfig
 from tstd.policy import PolicyConfig, PolicyRule, load_approved_imports, load_policy
 from tstd.shell_sandbox import SandboxSection
 
@@ -271,6 +272,8 @@ _POLICY_FIELDS = frozenset(PolicyConfig.model_fields)
 _RULE_FIELDS = frozenset(PolicyRule.model_fields)
 _HOOKS_FIELDS = frozenset(HooksConfig.model_fields)
 _HOOK_FIELDS = frozenset(HookEntry.model_fields)
+_LSP_FIELDS = frozenset(LspConfig.model_fields)
+_LSP_SERVER_FIELDS = frozenset(LspServerConfig.model_fields)
 
 
 def _check_keys(mapping: Any, fields: frozenset[str], where: str) -> None:
@@ -435,6 +438,10 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
             search = data["mcp"].get("tool_search")
             if isinstance(search, dict):
                 _check_keys(search, _MCP_TOOL_SEARCH_FIELDS, f"{where} mcp.tool_search")
+        if "lsp" in data:
+            _check_keys(data["lsp"], _LSP_FIELDS, f"{where} lsp")
+            for i, server in enumerate(data["lsp"].get("servers") or []):
+                _check_keys(server, _LSP_SERVER_FIELDS, f"{where} lsp.servers[{i}]")
         if "credentials" in data:
             for cid, body in data["credentials"].items():
                 _check_keys(body, _CREDENTIAL_FIELDS, f"{where} credentials.{cid}")
@@ -502,6 +509,8 @@ def test_every_config_key_is_documented() -> None:
         | _RULE_FIELDS
         | _HOOKS_FIELDS
         | _HOOK_FIELDS
+        | _LSP_FIELDS
+        | _LSP_SERVER_FIELDS
     )
     missing = [key for key in sorted(keys) if f"`{key}`" not in text]
     assert not missing, "undocumented config keys: " + ", ".join(missing)

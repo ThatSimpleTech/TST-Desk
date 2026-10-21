@@ -114,6 +114,9 @@ _MEMORY_DIR_PARTS = (".tst", "memory")
 # The shipped read tools (TD-5141). The rule also requires no provenance,
 # so a plugin or MCP tool that borrows one of these names is not covered.
 _BUILTIN_READ_TOOLS = frozenset({"fs_read", "fs_list", "fs_grep"})
+# The language-server tools (TD-5139): each reads one in-workspace file and
+# asks the user's own configured server, a local child process, about it.
+LSP_READ_TOOLS = frozenset({"lsp_definition", "lsp_references", "lsp_symbols"})
 # The approval policy lives here (spec §6). Not a steering file by name,
 # but a write to it rewrites the guardrails — the self-escalation the
 # steering refusal exists to prevent (TD-4803).
@@ -761,6 +764,7 @@ PLAN_READ_ONLY_BUILTINS: frozenset[str] = frozenset(
         # here: it kills a process, and planning changes nothing.
         "shell_job_output",
     }
+    | LSP_READ_TOOLS
     | GITHUB_READ_TOOLS
 )
 
@@ -1042,9 +1046,22 @@ def _rule_builtin_read(req: DecisionRequest, boundary: Boundary) -> bool:
     workspace (symlinks resolved). A user policy rule still wins, since
     policy only falls back to the class default when no rule matches.
     """
+    return req.tool_name in _BUILTIN_READ_TOOLS and _in_workspace_builtin_read(req, boundary)
+
+
+def _rule_lsp_read(req: DecisionRequest, boundary: Boundary) -> bool:
+    """A language-server lookup on an in-workspace file is Class A (TD-5139).
+
+    The same narrow test as ``builtin-read``. The server is the user's own
+    program from ``lsp.servers``, never one the model or the repo named,
+    and the answer is locations and names, so asking it is a read.
+    """
+    return req.tool_name in LSP_READ_TOOLS and _in_workspace_builtin_read(req, boundary)
+
+
+def _in_workspace_builtin_read(req: DecisionRequest, boundary: Boundary) -> bool:
     return (
-        req.tool_name in _BUILTIN_READ_TOOLS
-        and req.provenance is None
+        req.provenance is None
         and req.side_effect_class == "auto"
         and not req.is_mutation
         and not req.writes
@@ -1179,6 +1196,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="built-in read (fs_read, fs_list, fs_grep) inside the workspace",
         decision_class=DecisionClass.A,
         match=_rule_builtin_read,
+    ),
+    Rule(
+        id="lsp-read",
+        description="language-server lookup (definition, references, symbols) in the workspace",
+        decision_class=DecisionClass.A,
+        match=_rule_lsp_read,
     ),
     Rule(
         id="shell-read-only",

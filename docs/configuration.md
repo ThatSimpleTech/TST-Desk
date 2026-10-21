@@ -81,6 +81,7 @@ no effect.
 | `steering` | mapping | see below | User-global steering (TD-4845). Omitted in an older user copy is filled from the shipped file at load. |
 | `worktree` | mapping | see below | A git worktree per session (TD-5126). On by default: a session or scheduled job in a git repository works in its own worktree. Omitted in an older user copy is the defaults, on. |
 | `hooks` | mapping | no hooks | Commands TST Desk runs around the agent's work: at five points in a session (TD-5134, §2 `hooks`), and `after_write`, a formatter or linter run on the files each `fs_write` or `fs_edit` changed, its failures sent back to the model in that call's result (TD-5135, §2 `hooks.after_write`). Omitted in an older user copy is no hooks. |
+| `lsp` | mapping | no servers | Language servers by file pattern (TD-5139, §2 `lsp`): new errors and warnings in a file the agent writes come back in that write's result, and the `lsp_definition`, `lsp_references` and `lsp_symbols` tools find definitions, uses and declarations. Each server is a child process over stdio, never a socket. Omitted in an older user copy is no servers. |
 
 ### `credentials`
 
@@ -1100,6 +1101,89 @@ has its own loop and runs no hooks, and an autonomous session runs no `after_wri
 commands run only in its container, and these have no container path yet. `after_write` is not one of the five events below: it has its
 own keys, its runs show on the write's `tool_result`, not as `hook_run` events, and **More →
 Hooks** does not list it.
+
+### `lsp`
+
+Language servers for diagnostics and code navigation (TD-5139). A small local model that can ask
+"where is this defined?" and is told about a type error the moment it writes one finds its way
+around a codebase far better than one that greps. Each entry of `servers` is one server, picked for
+the files its `match` names:
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `servers` | list of servers, up to 10 | `[]` | The servers, first match wins. Empty starts nothing and leaves the three `lsp_*` tools out of every request. |
+| `idle_seconds` | number | `600` | A server unused this long is shut down the next time any server is needed. The daemon stops them all when it stops. |
+| `max_diagnostics` | integer, 1–200 | `20` | Most problems listed per file in one write's result; the rest are counted. |
+| `name` | string, up to 60 characters | *empty* | The label in the note to the model. Empty is the program's file name. |
+| `command` | list of strings, or one string | *required* | The program and its arguments, run **without a shell**, speaking LSP on its stdin and stdout (`pyright-langserver --stdio`). One string is split into words the way a POSIX shell would. An argument that makes the server listen instead (`--port`, `--socket`, `--tcp`, `--listen`, `--host`, `--pipe`, `--node-ipc`) is a load error: TST Desk only speaks stdio, so nothing listens on any address. |
+| `match` | list of glob patterns | *required* | Which files the server handles. A pattern without `/` matches the file name (`*.py`); one with `/` the path from the workspace root (`src/*.ts`), as in `hooks.after_write`. |
+| `language_id` | string | *required* | The LSP language id sent when a file is opened (`python`, `typescript`, `rust`, `go`). |
+| `init_options` | mapping | `{}` | Sent as the server's `initializationOptions`, for servers that read settings there. |
+| `start_timeout_seconds` | number, up to 300 | `30` | How long the `initialize` handshake may take. A server that does not start is reported once, in the next write's result, and not tried again until its entry changes or the daemon restarts. |
+| `request_timeout_seconds` | number, up to 120 | `10` | How long one definition, references or symbols request may take. |
+| `diagnostics_wait_seconds` | number, up to 60 | `3` | After a write, how long to wait for the server's diagnostics. `0` turns diagnostics after writes off for this server; the tools still work. |
+
+<!-- verify: model -->
+```yaml
+presets:
+  local:
+    brain: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    worker: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    validator: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+active_preset: local
+lsp:
+  servers:
+    - name: pyright
+      command: "pyright-langserver --stdio"
+      match: ["*.py"]
+      language_id: python
+    - name: typescript
+      command: ["npx", "--no-install", "typescript-language-server", "--stdio"]
+      match: ["*.ts", "*.tsx", "*.js"]
+      language_id: typescript
+    - name: rust-analyzer
+      command: rust-analyzer
+      match: ["*.rs"]
+      language_id: rust
+      diagnostics_wait_seconds: 10
+```
+
+What it does:
+
+- **After each `fs_write` and `fs_edit`**, a written file a server matches is sent to it (opened,
+  or its whole new text, then saved), after any `after_write` hooks, so the server sees the file as
+  the formatter left it. The errors and warnings it publishes within `diagnostics_wait_seconds`
+  come back in that call's result as `path:line:col error: message (code)`. Only **new** problems
+  are listed: one this session's model was already told about for that file is not repeated (matched on
+  severity, code and message, since an edit above it moves its line), and the note counts the ones
+  still there. When the last problem is fixed the note says so. A clean file adds nothing; hints and
+  information are never sent.
+- **The tools.** `lsp_definition` and `lsp_references` take a file, a 1-based `line` and the
+  `symbol` on it (or a 1-based `column`); `lsp_symbols` lists what a file declares, or with `query`
+  searches the whole workspace. Results are `path:line:col` from the workspace root with the line's
+  text; a location outside the workspace (a library) shows its path only, never its text. A file no
+  server matches is refused with `lsp_unavailable`, and the model is pointed at `fs_grep`.
+- **They never ask.** Each tool reads one file inside the workspace and asks your own configured
+  server, so it is Class A by a fixed rule (`lsp-read`), the same test as `fs_read`, and it runs in
+  plan mode. A path outside the workspace is Class C as for any read. A policy rule naming the tool
+  still wins.
+- **One server per workspace and entry**, started the first time a session needs it, shared by the
+  sessions in that workspace, in the workspace, with secrets stripped from its environment as the
+  shell tool does. Stopping it kills its whole process tree. What was reported is remembered per session,
+  so two sessions sharing a server each hear about every problem in their own results. A server
+  may spell a file's URI differently from TST Desk (on Windows, `file:///c%3A/...`); both name the
+  same file.
+- **Not in an untrusted workspace.** Many servers run the repository's own code while they index
+  (rust-analyzer builds `build.rs` and proc-macros, tsserver loads tsconfig plugins). While the
+  workspace's `.tst/config.yaml` waits on your trust or was declined (TD-5113), or cannot be read,
+  no server starts there: writes get no diagnostics and the tools refuse with `lsp_unavailable`.
+  A workspace with no such file, or one that loosens nothing, is not gated, the same as a repo's
+  `after_write` hooks.
+
+Only this file can list a server: a workspace's `.tst/config.yaml` cannot, trusted or not, since its
+command would start as soon as the agent wrote a file. An autonomous session starts no server (its
+commands run only in its container, and a server has no container path yet), so it gets no
+diagnostics and the tools refuse. A Grok-engine session has its own loop and uses none of this.
 
 ### `remote`
 
@@ -2719,6 +2803,11 @@ and changes which definitions the next requests carry, so it is Class A by a fix
 (`tool-search`). A tool it loads is granted nothing: each call to that tool is classified on its
 own, so an MCP tool still asks (§2 `mcp`). A policy rule naming `tool_search` still wins. An MCP
 or plugin tool with that name gets no such grant.
+
+**Language-server lookups never ask (TD-5139).** `lsp_definition`, `lsp_references` and
+`lsp_symbols` read one file inside the workspace and ask the server you listed in `lsp.servers`, so
+they are Class A by a fixed rule (`lsp-read`), on the same terms as `fs_read`. A policy rule naming
+one still wins. An MCP or plugin tool with that name gets no such grant.
 
 **Session search never asks (TD-5129).** `session_search` reads TST Desk's own index of what
 earlier sessions in the same workspace said (`session_index.db` in the data dir; see `session`) and

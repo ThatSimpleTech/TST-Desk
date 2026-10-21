@@ -36,6 +36,7 @@ from pydantic import (
 
 from .hooks_config import HooksConfig
 from .logging import get_logger, user_data_dir
+from .lsp_config import LspConfig
 from .mcp_values import coerce_map
 from .provider import TimeoutConfig
 from .shell_read_only import READ_ONLY_ENTRIES
@@ -1459,6 +1460,8 @@ class ModelConfig(BaseModel):
     mcp: McpConfig = Field(default_factory=McpConfig)
     # User hooks (TD-5134). A workspace's own ``hooks`` apply once trusted.
     hooks: HooksConfig = Field(default_factory=HooksConfig)
+    # Language servers (TD-5139). User config only; none by default.
+    lsp: LspConfig = Field(default_factory=LspConfig)
 
     @field_validator("credentials")
     @classmethod
