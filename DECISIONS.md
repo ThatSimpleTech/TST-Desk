@@ -15883,13 +15883,19 @@ turns off and 7 on (about 25 minutes of turns).
 Over the 7 turns both ran: one compaction with clearing off, none with it
 on. At the same point in the same session the clear replaced the
 compaction, kept every message verbatim, and landed 2,162 estimated tokens
-above where the summary did. No turn failed and no file was read twice in
+above where the summary did. **This does not meet TD-5115's criterion**
+(fewer compactions on a long session), which stays unticked: turns 1 to 6
+had no reduction either way, so the threshold was crossed at the same turn
+in both runs, one reduction replaced another, and the clear left the
+prompt higher, so the next limit would come sooner. The clearing-on run
+stopped right after its clear, so whether it reaches its next compaction
+later than the clearing-off run, or at all, was not observed. No turn failed and no file was read twice in
 either run. Peak prompts run about 1k lower with clearing on from turn 2:
 the placeholders are not the cause (nothing is cleared before turn 7),
 most likely the two runs' answers differ in length.
 
-*Follow-up:* one compaction cycle is the least that shows the effect. A
-run of 24 turns or more each way (about 40 minutes of forge per run, when
+*Follow-up (needed to close TD-5115):* one compaction cycle cannot show
+the effect. A run of 24 turns or more each way (about 40 minutes of forge per run, when
 forge is free) would show whether clearing keeps compaction away over
 several cycles, as the 60-turn replay did (9 off, 2 on), and whether a
 recall turn after a clear makes the model re-read the cleared file.
