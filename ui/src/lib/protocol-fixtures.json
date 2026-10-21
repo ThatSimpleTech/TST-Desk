@@ -1764,6 +1764,29 @@
       }
     ]
   },
+  "shell_jobs": {
+    "type": "shell_jobs",
+    "seq": 19,
+    "session_id": "sess-1",
+    "jobs": [
+      {
+        "job_id": "job-1",
+        "command": "npm run dev",
+        "status": "running",
+        "exit_code": null,
+        "started_at": 1760000000.0,
+        "ended_at": null
+      },
+      {
+        "job_id": "job-2",
+        "command": "npm test -- --watch",
+        "status": "exited",
+        "exit_code": 1,
+        "started_at": 1760000010.0,
+        "ended_at": 1760000070.0
+      }
+    ]
+  },
   "stop_check": {
     "type": "stop_check",
     "seq": 20,

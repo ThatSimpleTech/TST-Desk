@@ -47,6 +47,11 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Install bubblewrap
+        # The shell sandbox tests (TD-5138) run a real bwrap; they skip
+        # themselves where the runner cannot start one.
+        run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends bubblewrap
+
       - name: Sync dependencies
         run: uv sync --frozen
 

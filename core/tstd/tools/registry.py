@@ -625,6 +625,16 @@ def _register_builtins(registry: ToolRegistry, *, search: SearchConfig | None = 
                         "description": "Maximum time in seconds before the command is killed",
                         "default": 30,
                     },
+                    "background": {
+                        "type": "boolean",
+                        "description": "Run as a background job (dev server, watch, tail); "
+                        "returns a job id for shell_job_output and shell_job_stop",
+                    },
+                    "on_timeout": {
+                        "type": "string",
+                        "enum": ["kill", "background"],
+                        "description": "At the timeout: kill (default) or keep it as a job",
+                    },
                 },
                 "required": ["command"],
             },
@@ -662,6 +672,7 @@ def create_registry(
     from .plugins import load_plugins
     from .send_file import register_send_file_tool
     from .session_search import register_session_search_tool
+    from .shell_job_tools import register_shell_job_tools
     from .steering_edit import register_steering_edit_tool
     from .task_list import register_task_list_tool
     from .tool_search import register_tool_search_tool
@@ -680,6 +691,7 @@ def create_registry(
     register_exit_plan_tool(registry)
     register_tool_search_tool(registry)
     register_session_search_tool(registry)
+    register_shell_job_tools(registry)
     if lsp_enabled:
         from .lsp import register_lsp_tools
 

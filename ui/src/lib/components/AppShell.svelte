@@ -82,6 +82,7 @@
 	import { startCuKill, setCuKill } from '../cu-kill.svelte.js';
 	import { startGrok } from '../grok.svelte.js';
 	import { startTaskLists } from '../task-list-store.svelte.js';
+	import { startShellJobs } from '../shell-jobs-store.svelte.js';
 	import { startGoals } from '../goal-store.svelte.js';
 	import { startVoice } from '../voice.svelte.js';
 	import { resolveShortcut, sessionSlot } from '../shortcuts';
@@ -209,6 +210,7 @@
 		const offCuKill = startCuKill();
 		const offGrok = startGrok();
 		const offTaskLists = startTaskLists();
+		const offShellJobs = startShellJobs();
 		const offGoals = startGoals();
 		const offVoice = startVoice();
 		let offUpdates = () => {};
@@ -256,6 +258,7 @@
 			offCuKill();
 			offGrok();
 			offTaskLists();
+			offShellJobs();
 			offGoals();
 			offVoice();
 			offUpdates();

@@ -43,6 +43,9 @@ the *obvious* cases — the ones that must never reach the model:
 - the builtin ``tool_search``, which only reads the registry → A (TD-5127)
 - the builtin ``session_search``, which only reads the local session
   index → A (TD-5129)
+- the builtin ``shell_job_output`` and ``shell_job_stop``, which read and end only
+  the session's own background jobs → A (TD-5137); starting a job is a
+  ``shell`` call and is judged like one
 
 Anything the table cannot decide is left unclassified so the worker-tier
 classifier (TD-703) can handle it, defaulting to **B** — fail toward
@@ -757,6 +760,9 @@ PLAN_READ_ONLY_BUILTINS: frozenset[str] = frozenset(
         "tool_search",
         # TD-5129: reads the local index of earlier sessions' text.
         "session_search",
+        # TD-5137: reads a background job's buffer. ``shell_job_stop`` is not
+        # here: it kills a process, and planning changes nothing.
+        "shell_job_output",
     }
     | LSP_READ_TOOLS
     | GITHUB_READ_TOOLS
@@ -923,6 +929,26 @@ def _rule_session_search(req: DecisionRequest, _boundary: Boundary) -> bool:
     """
     return (
         req.tool_name == "session_search"
+        and req.provenance is None
+        and req.side_effect_class == "auto"
+        and req.actuates is None
+        and not req.is_mutation
+        and not req.reads
+        and not req.writes
+        and not req.hosts
+    )
+
+
+def _rule_shell_job(req: DecisionRequest, _boundary: Boundary) -> bool:
+    """``shell_job_output`` / ``shell_job_stop`` on the session's own jobs (TD-5137).
+
+    The job was started by a ``shell`` call that was classified like any
+    other: reading it reads the daemon's buffer, and stopping it kills only
+    the process group that call started. No path, host or write. Only the
+    builtins match: an MCP or plugin tool of either name carries provenance.
+    """
+    return (
+        req.tool_name in ("shell_job_output", "shell_job_stop")
         and req.provenance is None
         and req.side_effect_class == "auto"
         and req.actuates is None
@@ -1237,6 +1263,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="session_search reads the local index of this workspace's earlier sessions",
         decision_class=DecisionClass.A,
         match=_rule_session_search,
+    ),
+    Rule(
+        id="shell-job",
+        description="shell_job_output and shell_job_stop touch only this session's own jobs",
+        decision_class=DecisionClass.A,
+        match=_rule_shell_job,
     ),
     Rule(
         id="tool-search",
