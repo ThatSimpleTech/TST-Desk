@@ -645,6 +645,37 @@ class ClearToolResultsConfig(BaseModel):
         return names
 
 
+class CompactionConfig(BaseModel):
+    """How compaction writes its summary and what it keeps (TD-5128).
+
+    ``summary: model`` asks the worker tier for a structured summary
+    (goal, decisions, files touched, open items) with ``summary_prompt``,
+    or the built-in prompt when that is empty.  A worker that fails, times
+    out or answers without the built-in prompt's four headings leaves the
+    extractive summary in its place.  ``extractive`` never calls a model.
+
+    Once the prompt passes ``background_percent`` of the compaction budget,
+    the summary of the turns that would go is written in the background,
+    so the turn that reaches the budget does not wait for it; 0 turns that
+    off.  After a compaction, the files read or changed in the turns that
+    went are read again from disk, newest first, up to ``reinject_files``
+    files and ``reinject_tokens`` tokens.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # The shipped config.yaml turns the worker on; a config built in code
+    # (or a file that names this block without the key) spends no model
+    # call it did not ask for.
+    summary: Literal["model", "extractive"] = "extractive"
+    summary_prompt: str = ""
+    summary_max_tokens: int = Field(default=1_200, ge=64)
+    summary_timeout_seconds: float = Field(default=120.0, gt=0)
+    background_percent: int = Field(default=75, ge=0, le=99)
+    reinject_files: int = Field(default=5, ge=0)
+    reinject_tokens: int = Field(default=6_000, ge=0)
+
+
 def _default_consult_tiers() -> list[TierName]:
     return ["worker"]
 
@@ -1403,6 +1434,7 @@ class ModelConfig(BaseModel):
     steering: SteeringConfig = Field(default_factory=SteeringConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
     clear_tool_results: ClearToolResultsConfig = Field(default_factory=ClearToolResultsConfig)
+    compaction: CompactionConfig = Field(default_factory=CompactionConfig)
     consult: ConsultConfig = Field(default_factory=ConsultConfig)
     shell: ShellConfig = Field(default_factory=ShellConfig)
     provider_retry: ProviderRetryConfig = Field(default_factory=ProviderRetryConfig)
@@ -1605,6 +1637,7 @@ def load_config(path: Path | None = None) -> ModelConfig:
         "steering",
         "session",
         "clear_tool_results",
+        "compaction",
         "consult",
         "scheduler",
         "computer_use",

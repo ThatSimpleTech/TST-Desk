@@ -389,6 +389,11 @@
     "type": "list_pins",
     "workspace_path": "/home/user/project"
   },
+  "search_sessions": {
+    "type": "search_sessions",
+    "query": "date parser",
+    "limit": 50
+  },
   "add_pin": {
     "type": "add_pin",
     "workspace_path": "/home/user/project",
@@ -1535,6 +1540,20 @@
         "too_large": false
       }
     ]
+  },
+  "session_search_results": {
+    "type": "session_search_results",
+    "seq": 1,
+    "query": "date parser",
+    "hits": [
+      {
+        "session_id": "11111111-2222-3333-4444-555555555555",
+        "turn": 3,
+        "role": "assistant",
+        "snippet": "\u2026the date parser now reads ISO weeks\u2026"
+      }
+    ],
+    "available": true
   },
   "context_pins": {
     "type": "context_pins",

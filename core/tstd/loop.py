@@ -52,7 +52,10 @@ from .autonomy.verify import (
 )
 from .autonomy.wakeup import deliver_wakeup
 from .autonomy.worker import JudgmentAudit
-from .compaction import ContextMeter, budget_threshold, estimate_tokens, maybe_compact
+from .compaction import ContextMeter, budget_threshold, estimate_tokens
+from .compaction_files import FileAccess
+from .compaction_model import compact_auto
+from .compaction_wire import attach_summarizer
 from .config import (
     ClearToolResultsConfig,
     ConfigError,
@@ -1379,8 +1382,16 @@ async def _fit_prompt(
     )
     # The task list (TD-5122) and the pinned plan (TD-5123) ride into the
     # summary: the calls that made them may be among the turns this drops.
-    compacted, compaction = maybe_compact(
-        messages, tier_cfg, counter, tool_definitions, carry=carry_for(session)
+    # TD-5128: the worker writes the summary when it can, and the files
+    # the folded turns read or changed ride under it.
+    summarizer = session.compaction_summarizer
+    compacted, compaction = await compact_auto(
+        messages,
+        tier_cfg,
+        counter,
+        tool_definitions,
+        carry=carry_for(session),
+        summarizer=summarizer,
     )
     if compaction is not None:
         messages[:] = compacted
@@ -1407,6 +1418,11 @@ async def _fit_prompt(
                 }
             },
         )
+
+    # Near the budget, the next compaction's summary is written while
+    # this turn runs, so the turn that reaches it does not wait (TD-5128).
+    if summarizer is not None:
+        summarizer.prefetch(messages, tier_cfg, counter, tool_definitions)
 
     # In-flight tool results sit past the compaction cut (TD-4839).
     # Once the prompt is over the same budget, or half of it
@@ -1853,6 +1869,18 @@ async def agent_loop(
             )
             _token_counters[key] = counter
         return counter
+
+    # TD-5128: compaction summaries on the worker, here and for /compact.
+    attach_summarizer(
+        session,
+        config,
+        client_for,
+        tracker,
+        lambda: FileAccess(
+            PathGuard(session_boundary(session)),
+            read_guards(with_run_rules(session.policy, session.run_permissions)),
+        ),
+    )
 
     # ── Turn loop ───────────────────────────────────────────────────
     while not session.cancel_requested:

@@ -19,7 +19,7 @@ from .autonomy.charter import Charter
 from .autonomy.classifier import DecisionClass
 from .autonomy.judgment import JudgmentBackend
 from .boundary_config import BoundaryConfig
-from .compaction import ContextMeter, compact_on_request, window_user_turns
+from .compaction import ContextMeter, window_user_turns
 from .logging import get_logger, redact_structure
 from .plan_review import PendingPlan, carry_for
 from .plan_review import resolve_all as resolve_plans
@@ -44,6 +44,7 @@ from .workspace_trust import TrustStore, WorkspaceConfigView
 from .worktree import SessionWorktree
 
 if TYPE_CHECKING:
+    from .compaction_model import CompactionSummarizer
     from .config import ModelConfig
     from .context.memory_loader import MemoryLoad
     from .cost import CostTracker
@@ -135,6 +136,11 @@ class PendingApproval:
     tool: Tool | None
     arguments: dict[str, Any]
     decision_class: DecisionClass
+
+
+def _same_messages(a: list[ChatMessage], b: list[ChatMessage]) -> bool:
+    """Whether *b* holds the very messages of *a*, in order (TD-5128)."""
+    return len(a) == len(b) and all(x is y for x, y in zip(a, b, strict=True))
 
 
 def _redact_event(event: DaemonEvent) -> DaemonEvent:
@@ -407,6 +413,9 @@ class Session:
         self.last_memory: MemoryLoad | None = None
         # TD-4502: skill names loaded this session via load_skill or slash.
         self.loaded_skills: list[str] = []
+        # TD-5128: writes compaction summaries on the worker tier. Set by
+        # the agent loop, which owns the worker client; None until it runs.
+        self.compaction_summarizer: CompactionSummarizer | None = None
         # TD-5127: deferred MCP tools loaded this session (tool_search, or
         # called by name), in load order. Offered on every later call.
         self.loaded_mcp_tools: list[str] = []
@@ -1330,6 +1339,7 @@ class Session:
         many user turns it stands for, so it holds after any compaction
         and after a restart.
         """
+        from .compaction_model import compact_manual
         from .protocol import ContextCompacted
 
         if self.turn_in_flight:
@@ -1343,16 +1353,24 @@ class Session:
             if isinstance(found, str):
                 return found
             position = found
-        result = compact_on_request(
-            self.conversation,
+        # The worker may take a while (TD-5128). Folded from a copy, and
+        # dropped if a turn started or the conversation changed meanwhile:
+        # the turn owns the conversation then.
+        before = list(self.conversation)
+        result = await compact_manual(
+            before,
+            meter.tier_cfg,
             meter.counter,
             meter.tools,
             guidance=guidance,
             from_position=position,
             carry=carry_for(self),
+            summarizer=self.compaction_summarizer,
         )
         if result is None:
             return "nothing_to_compact"
+        if self.turn_in_flight or not _same_messages(before, self.conversation):
+            return "turn_in_progress"
         compacted, stats = result
         self.conversation[:] = compacted
         # Saved now, not when the next turn ends (TD-5154): a restart before

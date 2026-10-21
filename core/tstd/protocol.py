@@ -937,6 +937,18 @@ class ListSessions(ClientMessage):
     type: Literal["list_sessions"] = "list_sessions"
 
 
+class SearchSessions(ClientMessage):
+    """Search what this computer's sessions said (TD-5129). The rail's search box.
+
+    Answered with ``session_search_results`` from the local full-text
+    index; nothing leaves the computer.
+    """
+
+    type: Literal["search_sessions"] = "search_sessions"
+    query: str = Field(max_length=500)
+    limit: int = Field(default=50, ge=1, le=200)
+
+
 class NewSession(ClientMessage):
     """Create a fresh session in an existing session's workspace (TD-1701).
 
@@ -2963,6 +2975,32 @@ class SessionList(DaemonEvent):
     sessions: list[SessionSummary] = Field(default_factory=list)
 
 
+class SessionSearchHit(BaseModel):
+    """The best message of one session for a ``search_sessions`` query (TD-5129)."""
+
+    session_id: str
+    #: 1-based user turn the message belongs to.
+    turn: int = Field(ge=0)
+    role: Literal["user", "assistant"]
+    #: A few words around the match, from the redacted session text.
+    snippet: str
+
+
+class SessionSearchResults(DaemonEvent):
+    """Reply to ``search_sessions`` (TD-5129): one hit per session, best first.
+
+    ``query`` echoes the request so a window that typed on can drop a stale
+    reply. ``available`` is false when the index could not be opened; the
+    rail then filters on titles alone.
+    """
+
+    type: Literal["session_search_results"] = "session_search_results"
+    seq: int = 1
+    query: str
+    hits: list[SessionSearchHit] = Field(default_factory=list)
+    available: bool = True
+
+
 class PolicyRules(DaemonEvent):
     """Response to ``list_policy_rules`` / ``revoke_policy_rule`` (TD-803).
 
@@ -4063,6 +4101,7 @@ ClientMessageT = Annotated[
     | SaveCharter
     | StartAutonomy
     | ListPins
+    | SearchSessions
     | AddPin
     | RemovePin
     | MemoryAccept
@@ -4188,6 +4227,7 @@ DaemonEventT = Annotated[
     | InstructionFiles
     | CommandList
     | ContextPins
+    | SessionSearchResults
     | MemoryFiles
     | CharterDocument
     | AutonomyStart
@@ -4290,6 +4330,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "save_charter",
         "start_autonomy",
         "list_pins",
+        "search_sessions",
         "add_pin",
         "remove_pin",
         "memory_accept",
@@ -4415,6 +4456,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "instruction_files",
         "command_list",
         "context_pins",
+        "session_search_results",
         "memory_files",
         "charter",
         "autonomy_start",

@@ -631,7 +631,7 @@ def create_registry(
 
     The native loop's own tools come before plugins too: ``task_list``
     (TD-5122), ``ask_user`` (TD-5121), ``exit_plan_mode`` (TD-5123) and
-    ``tool_search`` (TD-5127).
+    ``tool_search`` (TD-5127), and ``session_search`` (TD-5129).
 
     ``candidate_selection`` (judgments.candidate_selection, TD-711) adds
     ``browser_pick`` to the tool surface.
@@ -645,6 +645,7 @@ def create_registry(
     from .exit_plan import register_exit_plan_tool
     from .plugins import load_plugins
     from .send_file import register_send_file_tool
+    from .session_search import register_session_search_tool
     from .steering_edit import register_steering_edit_tool
     from .task_list import register_task_list_tool
     from .tool_search import register_tool_search_tool
@@ -662,6 +663,7 @@ def create_registry(
     register_ask_user_tool(registry)
     register_exit_plan_tool(registry)
     register_tool_search_tool(registry)
+    register_session_search_tool(registry)
     # Before plugins so a plugin cannot take a GitHub tool name (TD-4852).
     from ..connectors.github_tools import register_github_tools
 

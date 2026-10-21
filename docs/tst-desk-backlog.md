@@ -11168,11 +11168,99 @@ DECISIONS.md.
 
 ---
 
+### TD-5129 — Search and recall earlier sessions
+**Size:** 5 · **Depends on:** none · Gap audit 2026-10-14
+
+Claude's apps search and reference past chats. TST Desk's rail filtered
+on id, path and title only, and the model had no way to look back at an
+earlier session in the same project.
+
+**Acceptance criteria:**
+- [x] A local full-text index (SQLite FTS) over saved conversations is
+      updated as sessions write.
+- [x] The session rail searches message text, not just titles.
+- [x] A Class A `session_search` tool lets the model recall earlier
+      sessions in the same workspace, citing the session and turn.
+- [x] Nothing leaves the machine (directive 3).
+
+Done (2026-10-20): `core/tstd/session_index.py` keeps `session_index.db`
+(SQLite FTS5, unicode61 with diacritics folded, file mode 0600) in the
+data dir. The daemon hands it each event right after `events.jsonl` gets
+it, under the same per-session lock: a user message is a row, a streamed
+reply is buffered per `response_id` and written as one row when the next
+non-text event arrives, a withdrawn reply (TD-5159) leaves no row, and
+thinking and tool output are not indexed. Each row carries its turn (the
+1-based user turn, a mid-turn message counted with the turn it joined, a
+fork renumbering from the edited turn) and that turn's `turn_id`. On
+start, restore catches each session up from its log, so a crash
+mid-reply loses nothing and sessions older than the index become
+searchable; deleting a session deletes its rows. The rail sends
+`search_sessions` 200 ms after typing pauses (two characters or more)
+and adds the sessions whose words matched, each showing the matching
+message under its title; a reply to an earlier keystroke is dropped
+(`ui/src/lib/session-search.svelte.ts`). `session_search`
+(`core/tstd/tools/session_search.py`) searches the other sessions of the
+caller's workspace, two matches per session at most, and cites each as
+`[session <id8> "<title>", turn <n>, last used <date>]`; it is Class A by
+the static rule `session-search` and allowed in plan mode. Nothing in the
+index or either search opens a socket. Tests:
+`core/tests/test_session_index.py` (user and reply rows with turns,
+thinking and tool arguments left out, one write per reply, prefix words
+and FTS syntax read as plain text, the any-word fallback, retraction,
+mid-turn and fork turn numbers, scoping, removal, restart catch-up
+without duplicates, a log older than the index, the 0600 file, no socket
+with `socket` patched to fail, an unopenable index),
+`core/tests/test_session_search.py` (a real daemon with the mock
+provider: the rail finds user and reply text as turns finish, a restart
+rebuilds a deleted index and a delete empties it, an unopenable index
+answers `available: false`; the tool through the real dispatcher with no
+approval, scoped to the workspace and citing session and turn; the
+rule's shape and order), `core/tests/test_plan_mode.py`, and
+`ui/src/lib/sessions.test.ts` (debounce, message matches with their
+snippet, stale replies dropped, title matches kept). See DECISIONS.md,
+docs/configuration.md §2 `session` and docs/architecture.md.
+
+---
+
 # Epic E52 — Files to the user
 
 Filed 2026-10-15. The agent built an APK for Adam and had no way to hand it over in the chat.
 
 ---
+
+### TD-5128 — Model-written compaction summary that keeps recent files
+**Size:** 5 · **Depends on:** TD-5109 · Gap audit 2026-10-14
+
+Compaction kept the last two user turns plus a 2,000-character extractive
+summary (core/tstd/compaction.py), so on a 32k-65k window the goal, the
+decisions and the files went within a couple of compactions, and the agent
+read the same files again one call at a time. Anthropic's API and Claude
+Code document a model-written summary and what survives it.
+
+**Acceptance criteria:**
+- [x] Compaction asks the worker tier for a structured summary (goal,
+      decisions, files touched, open items), using a summary prompt the
+      user can configure (`compaction.summary_prompt`). If that fails, it
+      falls back to today's extractive summary (worker error, timeout,
+      cut-off answer, or an answer without the four headings)
+- [x] It can run in the background before the threshold, so the turn
+      doesn't block: from `compaction.background_percent` of the budget the
+      summaries of both spans a fold can take (mid-turn: before the
+      previous user turn; next turn or `/compact`: before the last user
+      turn) are written while the turn runs, and the fold uses the matching
+      one with no new call, at a turn boundary and in the middle of a turn
+      that makes tool calls
+- [x] Files read or edited recently, and loaded skill bodies, are
+      re-injected after compaction within a budget: `fs_read` / `fs_write`
+      / `fs_edit` files from the folded turns, newest first, within
+      `reinject_files`, `reinject_tokens` and half the headroom left, through
+      the path guard and read rules; skill bodies stay in the system prompt,
+      which compaction never folds
+- [x] `/compact` and "Summarize from here" use the worker too, with the
+      guidance passed to it, and drop the result if a turn started meanwhile
+- [x] docs/configuration.md `compaction`, docs/architecture.md and
+      DECISIONS.md updated
+- [x] Tests in core/tests/test_compaction_model.py
 
 ### TD-5143 — The agent sends files to the chat
 **Size:** 5 · **Depends on:** TD-3201, TD-3202, TD-5014, TD-5015
