@@ -1728,8 +1728,10 @@ screen. The strip goes away once every item is done; the Plan pane keeps the fin
 list is saved with the session's events and comes back after a restart: when a long step pushes
 its last copy out of the event log's window (`session.log_max_events`), the daemon logs it again
 at once. Lowering `log_max_events` while a session is stopped can window an old list away; the
-agent's next `task_list` call writes it again. A delegated worker or
-research child has no task list.
+agent's next `task_list` call writes it again. Editing a message or switching to another version
+of it (TD-5161) gives the branch its own list: the newest one that branch saved, or none if it
+never made one. A branch that starts from a compaction summary keeps the list it had. A delegated
+worker or research child has no task list.
 
 **How the prompt is measured (TD-5007).** The estimate counts the message text, the tool-call
 arguments, every tool definition the request sends (as the request serializes it — a few
@@ -2512,8 +2514,9 @@ charter breakers and do not take this check.
 on the worker tier. It gets at most 8 model calls, fewer if the session has fewer
 `max_iterations` left, and spend and wall clock are checked before each of its calls the same
 way. There are two kinds (TD-5117). `worker`, the default, can read, write files and run shell.
-`research` is read-only: `fs_read`, `fs_list`, `fs_grep`, `web_search` and `web_fetch`, and
-nothing else, no MCP or plugin tool included. Either kind's calls go through the same
+`research` is read-only: `fs_read`, `fs_list`, `fs_grep`, `web_search` and `web_fetch`, plus
+`consult` while `consult.tiers` lists `worker` (the default, TD-5119), and nothing else, no MCP
+or plugin tool included. Either kind's calls go through the same
 classifier and approval gate as the session's own. Either kind hands back a summary of at most
 500 tokens, counted with the token counter for the worker tier's model: four characters a token
 unless tiktoken knows the slug (it is not installed with TST Desk), and not scaled by the ratio
@@ -2614,7 +2617,9 @@ first, so a rule here that asks or refuses still wins over an allow, and an allo
 Class C call run. `--on-ask deny-and-continue` answers every approval that turn would ask for
 with a refusal the model reads, and the turn carries on: nothing waits for the window, and the
 run exits 3 (refused) if anything was refused. The next turn, from the window or another run,
-is back to this file alone. With skip-all on, nothing asks, so `--on-ask` changes nothing. Only
+is back to this file alone. A run's message still queued when the daemon restarts comes back
+held for the window with its `--deny` rules and nothing else: its allows and `--on-ask` are
+dropped, and Send runs it with those denies beside this file's rules (TD-5161). With skip-all on, nothing asks, so `--on-ask` changes nothing. Only
 `tst run` on this computer can set these, for this computer's own sessions: a phone or another
 computer approves call by call. A Grok session takes `--on-ask` but refuses `--allow` and
 `--deny`, because Grok's own tools never reach these rules.

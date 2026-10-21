@@ -140,14 +140,26 @@ def tier_state_event(session: Session, config: ModelConfig) -> TierState:
     assert session.router is not None
     cu_heavy = session_is_cu_heavy(session)
     tier_cfg = effective_tier(config, session.router.active_tier, cu_heavy=cu_heavy)
+    slugs = titlebar_slugs(config, cu_heavy=cu_heavy)
+    hosts = titlebar_hosts(config, cu_heavy=cu_heavy)
+    fallbacks: dict[str, int] = {}
+    # TD-5161: mid-turn (set_plan, set_tier and set_preset are allowed
+    # then) a tier on a backup keeps naming the backup, as the loop's own
+    # report does; the loop dedups against its last report and would never
+    # correct a reset. Between turns the next turn starts on the own model.
+    backups = session.turn_backups
+    if backups is not None and session.turn_in_flight:
+        slugs, hosts = backups.overlay(slugs, hosts)
+        fallbacks = backups.positions()
     return TierState(
         session_id=session.id,
         tier=session.router.active_tier,
         override=session.router.override,
-        model_slugs=titlebar_slugs(config, cu_heavy=cu_heavy),
+        model_slugs=slugs,
         preset=config.active_preset,
-        hosts=titlebar_hosts(config, cu_heavy=cu_heavy),
+        hosts=hosts,
         plan=session.router.plan_mode,
         vision=tier_cfg.vision,
+        fallbacks=fallbacks,
         seq=1,  # overwritten by the event log
     )

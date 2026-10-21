@@ -9986,7 +9986,8 @@ keep exploration out of the parent's context.
 **Acceptance criteria:**
 - [x] `delegate` takes `kind: research`. That child gets fs_read, fs_list,
       fs_grep (once TD-5102 lands), web_search and web_fetch only, on the
-      worker tier.
+      worker tier. (TD-5161: since TD-5119 it also gets `consult` while
+      `consult.tiers` lists `worker`, the default.)
 - [x] It returns a summary capped in tokens. Its transcript stays out of
       the parent context and stays viewable in the UI.
 - [x] Plan mode (TD-5123) sends research to this worker. Verified on the
@@ -10784,7 +10785,11 @@ fallback list covered web search.
       The timeline and meter show the switch: a `model_fallback` event
       and a **Backup** timeline row, the context gauge's `· backup` and
       Tier row, `tier_state.fallbacks` with the backup's slug and host,
-      the composer's `backup N`, and a stderr line from `tst run`
+      the composer's `backup N`, and a stderr line from `tst run`.
+      (Qualified by TD-5161: "meter" was read as the context gauge. The
+      cost meter, which the gap audit also calls "the meter", lists cost
+      per tier only, so a backup's cost sits under its tier with no mark
+      of the switch; marking it there is new UI, left for a later story.)
 - [x] Token calibration and the context window follow the model in use:
       the backup's own calibrated counter, its window and compaction
       point (the prompt is fitted before it is asked, and
@@ -10816,6 +10821,9 @@ from the person. Claude Code documents a structured question tool.
 **Acceptance criteria:**
 - [x] The model can ask one to four questions, each with 2-4 options plus free text. The daemon parks the turn like an approval.
 - [x] The desktop shows options as buttons. The phone shows them as taps.
+      (Qualified by TD-5161: no APK was built or installed and no test
+      checks the coarse-pointer 44 px rule, which jsdom cannot; the
+      buttons are the same ones a phone taps once its APK is rebuilt.)
 - [x] `tst run` handles them per TD-5118. A TTY in text mode answers them,
       and a non-TTY or `--output json`/`ndjson` run exits 4
       (`approval_needed`) with the question waiting for the window, as for
@@ -10878,6 +10886,9 @@ Claude Code and Cowork both show a live task list.
       the Grok engine's plan (ui/src/lib/components/PlanPane.svelte).
 - [x] The list is re-injected after compaction.
 - [x] It shows on the phone.
+      (Qualified by TD-5161: checked only in the UI walk at a 375 px
+      viewport. The APK serves a UI bundled at build time, so an installed
+      phone gets this after its next APK build; no device was tried.)
 
 Done (2026-10-20): `core/tstd/tools/task_list.py` (the tool) and
 `core/tstd/task_list.py` (the session's list). Each call sends the whole
@@ -10886,8 +10897,8 @@ or `done`; up to 30 items of 200 characters) and replaces the last one;
 an empty list clears it. The classifier's `task-list` rule makes the
 builtin Class A, so no card appears; a policy rule still wins. Each
 change logs a `task_list` event with the whole list. The Plan pane shows
-the focused chat's list with its progress (`Tasks · 1 of 3 done`) ahead
-of Grok's plan, and a new list opens the Plan tab. A strip above the
+the focused chat's list with its progress (`Tasks · 1 of 3 done`) in
+place of Grok's plan (TD-5161: the pane shows one or the other), and a new list opens the Plan tab. A strip above the
 composer shows the progress and the item in progress and opens to every
 item; on a phone the chat is the one pane, so that is where it shows.
 The strip goes away once every item is done. Every compaction (budget,
@@ -10972,6 +10983,12 @@ a plan to approve.
 - [x] Plan mode ends with a plan the user approves, rejects or edits.
       Approving switches to normal mode with the plan pinned.
 - [x] Toggle from the composer, a slash command and the phone.
+      (Qualified by TD-5161: checked only in the UI walk at a 375 px
+      viewport. The APK serves a UI bundled at build time, so an installed
+      phone gets this after its next APK build; no device was tried.
+      Until then the old APK's Plan chip still toggles plan mode, but it
+      drops `plan_review`, so a "Plan ready for review" ping has no card
+      there to act on.)
 
 Done (2026-10-20): the classifier's first rule, `plan-mode` (Class C,
 `refuses`), fires while the router is planning and the call is not

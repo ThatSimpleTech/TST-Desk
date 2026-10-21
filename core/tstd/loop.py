@@ -2099,6 +2099,7 @@ async def agent_loop(
         # Tiers this turn moved to a backup endpoint (TD-5120). Fresh per
         # user turn, so the next one starts on each tier's own model.
         backups = TurnBackups()
+        session.turn_backups = backups
         guard = ProgressGuard()
         # TD-5124: the done-check when the model ends this turn.
         stop_check = TurnStopCheck(session, tool_dispatcher, _worker_completion)

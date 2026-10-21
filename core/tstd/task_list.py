@@ -12,12 +12,17 @@ daemon logs the list again whenever the log window rotates it out.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+from pydantic import ValidationError
+
+from .compaction_text import is_summary
 from .protocol import DaemonEvent, TaskList, TaskListItem
 
 if TYPE_CHECKING:
+    from .provider import ChatMessage
     from .session import Session
 
 _LABELS = {"pending": "pending", "in_progress": "in progress", "done": "done"}
@@ -57,6 +62,54 @@ async def set_task_list(session: Session, items: Sequence[TaskListItem]) -> None
     """Replace the session's list and log it."""
     session.task_list = list(items)
     await session.event_log.add(TaskList(session_id=session.id, items=list(items), seq=1))
+
+
+def _saved(result: ChatMessage | None) -> bool:
+    text = result.content if result is not None else None
+    return isinstance(text, str) and ("Task list saved:" in text or "Task list cleared." in text)
+
+
+def branch_task_list(
+    conversation: Sequence[ChatMessage], current: Sequence[TaskListItem]
+) -> list[TaskListItem]:
+    """The list as the branch *conversation* left it (TD-5161).
+
+    The newest ``task_list`` call the branch made and saved wins. A branch
+    whose newest record is a compaction summary keeps *current*: the
+    summary carried a list this module does not parse back. A branch with
+    neither never made a list, so it has none.
+    """
+    results = {m.tool_call_id: m for m in conversation if m.role == "tool"}
+    for message in reversed(conversation):
+        if is_summary(message):
+            return list(current)
+        for call in reversed(message.tool_calls or []):
+            fn = call.function
+            if fn is None or fn.name != "task_list" or not _saved(results.get(call.id)):
+                continue
+            try:
+                tasks = json.loads(fn.arguments)["tasks"]
+                return [
+                    TaskListItem.model_validate(
+                        {"content": " ".join(t["content"].split()), "status": t["status"]}
+                    )
+                    for t in tasks
+                ]
+            except (ValueError, KeyError, TypeError, ValidationError):
+                continue
+    return []
+
+
+async def follow_branch(session: Session) -> None:
+    """After an edit or a sibling switch, show the branch's own list.
+
+    Otherwise the next compaction would carry the abandoned branch's plan
+    into a branch that never made it, worded as the plan to keep working
+    from, and the Plan pane would keep showing it.
+    """
+    items = branch_task_list(session.conversation, session.task_list)
+    if items != session.task_list:
+        await set_task_list(session, items)
 
 
 def restore_task_list(session: Session, events: Sequence[DaemonEvent]) -> None:

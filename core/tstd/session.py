@@ -42,6 +42,7 @@ from .protocol import (
 from .protocol import SessionState as SessionStateEvent
 from .provider import ChatMessage
 from .questions import PendingQuestion, resolve_all
+from .task_list import follow_branch
 from .workspace_trust import TrustStore, WorkspaceConfigView
 from .worktree import SessionWorktree
 
@@ -50,6 +51,7 @@ if TYPE_CHECKING:
     from .config import ModelConfig
     from .context.memory_loader import MemoryLoad
     from .cost import CostTracker
+    from .fallback import TurnBackups
     from .router import TierName, TierRouter
     from .steering_proposals import ParkedSteering
     from .tools.registry import Tool
@@ -78,9 +80,10 @@ class QueuedUserMessage:
     # hands it to that turn, and only that turn, at its next tool-batch
     # boundary. A turn that ends first leaves it a turn of its own.
     steer_into: str | None = None
-    # TD-5118: ``tst run`` rules for the turn this message starts. Never
-    # saved to the queue file: a message a restart holds is sent again by
-    # a person in the window, who can answer what it asks.
+    # TD-5118: ``tst run`` rules for the turn this message starts. A
+    # restart keeps only the deny rules (TD-5161): a message it holds is
+    # sent again by a person in the window, who can answer what it asks,
+    # but never under a wider gate than the run's.
     run_permissions: RunPermissions | None = None
     # TD-5132: the diff comments this message carries. The loop logs them
     # on the user_turn, so the window can tell when a write resolves one.
@@ -342,6 +345,10 @@ class Session:
         # TD-5122: the model's task list (``task_list`` tool). Carried into
         # every compaction summary; rebuilt from the log on revive.
         self.task_list: list[TaskListItem] = []
+        # TD-5161: the running turn's backup endpoints, so a tier_state the
+        # daemon builds mid-turn (set_plan, set_tier) names the same model
+        # as the loop's own report.
+        self.turn_backups: TurnBackups | None = None
         # TD-5124: the goal ``/goal`` set, checked when the model ends a
         # turn until a check passes; rebuilt from the log on revive. And
         # how many checks have judged it, for ``/goal`` on its own.
@@ -1339,6 +1346,7 @@ class Session:
         self._branch_cursor[user_index] = len(siblings) - 1
         self.conversation[cut:] = []
         self._drain_user_queue()
+        await follow_branch(self)
         await self.add_user_message(text)
         return self._emit_reset(user_index, text)
 
@@ -1500,6 +1508,7 @@ class Session:
         self._branch_cursor[user_index] = sibling_index
         self.conversation[:] = deepcopy(siblings[sibling_index])
         self._drain_user_queue()
+        await follow_branch(self)
         async with self._queue_lock:
             await self._write_queue()
         position = self._find_user_turn(user_index)

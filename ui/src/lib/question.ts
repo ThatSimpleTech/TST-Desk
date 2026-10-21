@@ -48,8 +48,17 @@ export function isAnswered(draft: Draft): boolean {
   return draft.selected.length > 0 || draft.text.trim() !== "";
 }
 
+/** The daemon's cap on one answer's own words (`QuestionAnswer.text`). */
+export const ANSWER_TEXT_MAX = 4000;
+
+/** Words over the cap would be refused with no reply the card could match,
+ *  leaving it stuck on "Sending your answer…" (TD-5161). */
+export function fitsCap(draft: Draft): boolean {
+  return draft.text.trim().length <= ANSWER_TEXT_MAX;
+}
+
 export function canSend(drafts: readonly Draft[]): boolean {
-  return drafts.length > 0 && drafts.every(isAnswered);
+  return drafts.length > 0 && drafts.every((d) => isAnswered(d) && fitsCap(d));
 }
 
 /** One question, one choice, nothing to type: a tap is the whole answer. */

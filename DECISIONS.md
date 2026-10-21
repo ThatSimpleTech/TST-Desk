@@ -16240,7 +16240,10 @@ they last and what the model reads were left open.
   turn's, so the child dispatcher reads the parent's. The queue file never
   keeps them (TD-5155): a message a restart holds is sent again by a person
   in the window, who is there to answer what it asks. Conservative choice:
-  a restart never revives a widened gate.
+  a restart never revives a widened gate. (Changed by TD-5161: dropping a
+  deny rule widens the gate too, so the queue file now keeps a held
+  message's `deny` rules, and only those; a row whose rules cannot be read
+  back is dropped rather than sent under the workspace rules alone.)
 - **`deny-and-continue` refuses in the session, before any card.**
   `Session.request_approval`, the external-import approval and Grok's ACP
   approval all return the refusal at once when the turn says so: no
@@ -16342,7 +16345,15 @@ in `config.yaml` holds `tiers` (default `[worker]`) and `max_per_turn`
    (`tool: consult, effect: ask`) still makes it ask. This is the
    conservative reading that still meets the story: an approval card per
    consult would stall the unattended worker runs it is for, and a user
-   who wants one can add the rule.
+   who wants one can add the rule. (Corrected by TD-5161: the stall
+   reason is wrong. An unattended run never prompts Class A or B and
+   treats `ask` as `auto`, so an ask floor would only have put a card in
+   front of a person in an interactive session. The grant stands on the
+   other reasons: the call writes nothing, reaches only the session's own
+   configured brain or validator endpoint, is capped per turn and by the
+   spend cap, and a policy rule still makes it ask. The cost of the grant
+   is that, in an interactive session, worker-chosen context goes to that
+   endpoint without a card.)
 8. **Same tier refused.** A tier cannot ask itself (`consult_same_tier`);
    a listed brain asks the validator by default.
 9. **Stop ends a consult in flight.** The streamed call races
@@ -16620,8 +16631,11 @@ it is re-injected were left open. The owner approved the story as written
   bridged session all read the same thing with no merge. `grok_plan` stays
   Grok's: its entries are free-form ACP statuses with markdown and an
   approve verb a task list does not have. The Plan pane shows the native
-  list first when the focused session has one (with no Approve button),
-  then Grok's plan. A new list (empty → non-empty) for the focused chat
+  list when the focused session has one (with no Approve button), and
+  Grok's plan otherwise. (Corrected by TD-5161: it said "first ... then
+  Grok's plan", but the pane shows one or the other; a native session has
+  no Grok plan of its own, and the Grok plan held is another session's.)
+  A new list (empty → non-empty) for the focused chat
   opens the Plan tab, as a Grok plan does; later updates leave the tab
   where the user put it.
 - **Class A by its own rule (`task-list`).** The list is daemon state,
@@ -16656,7 +16670,10 @@ it is re-injected were left open. The owner approved the story as written
   the session is stopped (the load windows the file), can still drop it;
   the agent's next `task_list` call writes it again. A fork (edit a
   message) keeps the session's list; the model rewrites it if the branch
-  changes the plan.
+  changes the plan. (Changed by TD-5161: an edit or a sibling switch takes
+  the newest saved `task_list` call of the branch, or no list, so a
+  compaction never carries an abandoned branch's plan as the one to keep
+  working from.)
 - **The phone's view is a strip above the composer.** On a narrow window
   the chat is the one pane (TD-3701), so the Plan pane is not on screen.
   The strip shows "Tasks · 2 of 5 done" and the item in progress; tapping

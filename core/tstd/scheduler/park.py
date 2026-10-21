@@ -25,7 +25,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 from ..logging import get_logger
-from ..protocol import ApprovalRequest, ToolResult, TurnComplete
+from ..protocol import ApprovalRequest, QuestionRequest, ToolResult, TurnComplete
+from ..questions import question_text
 from ..session import Session
 from .email_delivery import deliver_job
 from .grace import _clock
@@ -42,6 +43,7 @@ log = get_logger("tstd.scheduler.park")
 PARKED_MISS = "previous run still waiting for approval"
 UNANSWERED = "approval never answered"
 _FALLBACK_SUMMARY = "a tool call"
+QUESTION_PREFIX = "your answer to: "
 
 SlotDeliver = Callable[[DeliverTo, str], Awaitable[None]]
 ParkHook = Callable[[str, str, str], None]
@@ -57,13 +59,21 @@ class _Disk:
 
 
 def pending_tool_summary(session: Session) -> str:
-    """The latest approval card's summary, redacted, or a plain fallback."""
+    """What the run waits on, redacted, or a plain fallback.
+
+    The newest approval card's summary, or, when the newest thing parked
+    is an ``ask_user`` question (TD-5161), :data:`QUESTION_PREFIX` and the
+    question, so the channel never calls a question an approval or names
+    an older card.
+    """
     found = ""
     for event in session.event_log.all_events:
         if isinstance(event, ApprovalRequest):
             text = event.summary.strip()
             if text:
                 found = text
+        elif isinstance(event, QuestionRequest):
+            found = QUESTION_PREFIX + question_text(event)
     return _safe_summary(found)
 
 
@@ -107,10 +117,11 @@ def waiting_line(timezone: str | None, slot: str | None, summary: str) -> str:
 
     The clock matches a skipped slot (``7:45 AM``). Run now has no slot.
     """
+    what = summary if summary.startswith(QUESTION_PREFIX) else f"your approval: {summary}"
     if slot is None:
-        return f"This job is waiting for your approval: {summary}"
+        return f"This job is waiting for {what}"
     clock = _clock(parse_next_run(slot), timezone)
-    return f"{clock} job is waiting for your approval: {summary}"
+    return f"{clock} job is waiting for {what}"
 
 
 async def park_run(

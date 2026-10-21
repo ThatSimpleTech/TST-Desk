@@ -255,6 +255,15 @@ class _TurnReader:
             return await self._approval(ws, event)
         if typ == "question_request":
             return await self._question(ws, event)
+        if typ == "session_state" and event.get("state") == "paused":
+            # TD-5161: the progress guard or a spend cap paused the turn for
+            # a person (a run that keeps retrying a refused call trips the
+            # guard). Say so now rather than wait out the budget.
+            self.end_line()
+            reason = str(event.get("reason") or "paused")
+            waiting = f"the turn paused ({reason}); resume or stop it in the TST Desk window"
+            print(f"{APPROVAL_NEEDED}: {waiting}", file=sys.stderr)
+            return self.outcome("approval_needed", APPROVAL_NEEDED, waiting)
         if typ == "plan_review":
             # TD-5123: reviewed on the card in every mode, where it can be edited.
             self.end_line()
