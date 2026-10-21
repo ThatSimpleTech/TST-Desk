@@ -75,14 +75,14 @@ def test_both_trees_define_workers_with_every_field(tmp_path: Path) -> None:
         "reviewer",
         "description: Reviews a diff for bugs\n"
         "tools: [fs_read, fs_grep, shell]\n"
-        "tier: brain\n"
+        "tier: worker\n"
         "policy:\n  - tool: shell\n    args: 'git push*'\n    effect: never",
         "Review carefully.\n",
     )
     _define(
         _user_agents(),
         "scout",
-        "name: scout\ndescription: Finds things\npreset: other",
+        "name: scout\ndescription: Finds things\ntier: brain\npreset: other",
         "Look around.\n",
     )
 
@@ -95,7 +95,7 @@ def test_both_trees_define_workers_with_every_field(tmp_path: Path) -> None:
     assert reviewer.description == "Reviews a diff for bugs"
     assert reviewer.prompt == "Review carefully."
     assert reviewer.tools == ("fs_read", "fs_grep", "shell")
-    assert reviewer.tier == "brain"
+    assert reviewer.tier == "worker"
     assert reviewer.source == "workspace"
     assert [(r.tool, r.args, r.effect) for r in reviewer.policy] == [
         ("shell", "git push*", "never")
@@ -104,7 +104,7 @@ def test_both_trees_define_workers_with_every_field(tmp_path: Path) -> None:
     assert scout is not None
     assert scout.source == "user"
     assert scout.preset == "other"
-    assert scout.tier == "worker"
+    assert scout.tier == "brain"
     # No tools key: the worker is read-only.
     assert scout.tools == READ_ONLY
 
@@ -128,6 +128,13 @@ def test_user_global_wins_on_the_same_name(tmp_path: Path) -> None:
         ("description: x\nmodel: gpt-5", "does not read: model"),
         ("tools: [fs_read]", "needs a description"),
         ("description: x\ntier: boss", "tier must be"),
+        # One kind's tools only: never shell or writes together with the web.
+        ("description: x\ntools: [shell, web_fetch]", "one kind's tools"),
+        ("description: x\ntools: [fs_write, web_search]", "one kind's tools"),
+        # A workspace file cannot pick a dearer tier or another preset.
+        ("description: x\ntier: brain", "worker tier of the active preset"),
+        ("description: x\ntier: validator", "worker tier of the active preset"),
+        ("description: x\npreset: other", "worker tier of the active preset"),
         ("name: 'has space'\ndescription: x", "name must be"),
     ],
 )
@@ -214,7 +221,7 @@ async def test_delegate_runs_the_named_worker_with_its_prompt_tools_and_tier(
 ) -> None:
     ws = _workspace(tmp_path)
     _define(
-        _ws_agents(ws),
+        _user_agents(),
         "reader",
         "description: Reads notes\ntools: [fs_read, fs_list]\ntier: brain",
         f"Always answer in one line. {PROMPT_MARKER}\n",
@@ -248,7 +255,7 @@ async def test_delegate_runs_the_named_worker_with_its_prompt_tools_and_tier(
 
 async def test_a_named_preset_supplies_the_tier(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
-    _define(_ws_agents(ws), "cheap", "description: cheap reads\npreset: alt")
+    _define(_user_agents(), "cheap", "description: cheap reads\npreset: alt")
     parent = Session(str(ws))
     dispatcher = _parent_dispatcher(ws)
     mock = MockProvider(sequences={"alt-worker": [Script(kind="text", content="done")]})
@@ -267,7 +274,7 @@ async def test_a_named_preset_supplies_the_tier(tmp_path: Path) -> None:
 
 async def test_an_unconfigured_preset_is_refused(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
-    _define(_ws_agents(ws), "lost", "description: x\npreset: nowhere")
+    _define(_user_agents(), "lost", "description: x\npreset: nowhere")
     parent = Session(str(ws))
     _bind_runtime(parent, _parent_dispatcher(ws), MockProvider())
     with pytest.raises(HandlerRefusal) as ei:

@@ -2963,8 +2963,8 @@ its own prompt, added after the worker tier's steering. On the same name the fil
 name: reviewer            # optional; defaults to the file name
 description: Reviews a diff for bugs and missing tests
 tools: [fs_read, fs_grep, shell]
-tier: brain               # brain, worker (the default) or validator
-preset: openrouter        # optional; that preset's tier instead of the active one
+tier: brain               # brain, worker (the default) or validator; ~/.tstdesk/agents/ only
+preset: openrouter        # optional; that preset's tier instead of the active one; ~/.tstdesk/agents/ only
 policy:
   - tool: shell
     args: "git push*"
@@ -2977,13 +2977,14 @@ Read the diff, run the tests, and list each bug with its file and line.
 |---|---|---|---|
 | `name` | string | the file name | 1–64 letters, digits, `-` or `_`. What `delegate`'s `agent` and `@name` use. |
 | `description` | string | required | Shown to the model in `delegate`'s list, so it knows when to pick this worker. Cut at 300 characters. |
-| `tools` | list | read-only: `fs_read`, `fs_list`, `fs_grep`, `web_search`, `web_fetch` | The allow list. Only the delegate children's own tools: those five plus `fs_write`, `fs_edit`, `shell`, and `consult` (offered only when `consult.tiers` includes the worker's tier). Never `delegate`, a plugin or an MCP tool. |
-| `tier` | `brain` / `worker` / `validator` | `worker` | The tier the worker's model calls run on, priced and capped like any call on it. |
-| `preset` | string | the active preset | Take `tier` from this preset. A preset missing from `config.yaml` refuses the call rather than falling back. |
+| `tools` | list | read-only: `fs_read`, `fs_list`, `fs_grep`, `web_search`, `web_fetch` | The allow list, a subset of ONE built-in child kind plus `consult`: either the worker kind's (`fs_read`, `fs_list`, `fs_grep`, `fs_write`, `fs_edit`, `shell`) or the research kind's (`fs_read`, `fs_list`, `fs_grep`, `web_search`, `web_fetch`). A list mixing `fs_write`/`fs_edit`/`shell` with `web_search`/`web_fetch` is refused. `consult` is offered only when `consult.tiers` includes the worker's tier. Never `delegate`, a plugin or an MCP tool. |
+| `tier` | `brain` / `worker` / `validator` | `worker` | The tier the worker's model calls run on, priced and capped like any call on it. Only a file in `~/.tstdesk/agents/` may name a tier other than `worker`. |
+| `preset` | string | the active preset | Take `tier` from this preset. A preset missing from `config.yaml` refuses the call rather than falling back. Only a file in `~/.tstdesk/agents/` may name a preset. |
 | `policy` | list of rules | none | Rules like §4.4's, judged beside the workspace policy for this worker's calls only. `effect` must be `ask` or `never`: a worker's policy can only tighten. |
 
-A file that breaks a rule above — an `auto` rule, a tool outside the list, a key TST Desk does not
-read (`model`, say), no description — is not loaded, and `delegate` names the reason when the
+A file that breaks a rule above — an `auto` rule, a tool outside the list, tools from both kinds,
+a workspace file naming `tier: brain` or a `preset`, a key TST Desk does not read (`model`, say),
+no description — is not loaded, and `delegate` names the reason when the
 model asks for it. The trees are read fresh at the start of each turn and again when `delegate`
 runs, so a saved edit counts on the next call.
 
@@ -2995,8 +2996,10 @@ runs, so a saved edit counts on the next call.
   4): `fs_write`, `fs_edit` and a shell write are Class C, inside the workspace or not. They are
   not proposable with `propose_steering_edit` either; edit them yourself.
 - **Plan mode** runs only a worker with no `fs_write`, `fs_edit` or `shell`.
-- They load from a workspace you have not trusted (§4.8): a definition can narrow the tools and
-  the policy a delegated child already has, never widen them.
+- They load from a workspace you have not trusted (§4.8), so a definition can only narrow what a
+  built-in delegated child already has: its tools fit inside one child kind, its policy only
+  tightens, and a workspace file runs on the worker tier of the active preset. Choosing another
+  tier or a preset is for your own `~/.tstdesk/agents/` files.
 
 ---
 

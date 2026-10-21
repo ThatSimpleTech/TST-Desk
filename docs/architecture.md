@@ -365,8 +365,8 @@ changes come back committed on its branch for the parent to merge.
 
 `delegate` with `agent: <name>` runs a named worker (TD-5133) from `.tst/agents/*.md` or
 `~/.tstdesk/agents/*.md` (`context/workers.py`; user-global wins on a name). It is the same
-one-level child with the definition's tool allow list, its tier (from its `preset` when it
-names one), its prompt after the worker tier's stack, and its `ask`/`never` rules on the
+one-level child with the definition's tool allow list (a subset of one built-in kind's tools),
+its tier (from its `preset` when it names one; only user-global files may change tier or preset), its prompt after the worker tier's stack, and its `ask`/`never` rules on the
 child dispatcher's `worker_rules`, merged after the workspace and run rules
 (`with_worker_rules`), so it can only tighten. The loop reads the trees at each turn start:
 `delegate`'s definition lists the workers and their descriptions with an `agent` enum, and

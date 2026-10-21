@@ -7,12 +7,17 @@ Human-authored markdown under ``.tst/agents/`` (the workspace) and
 the body as the worker's own prompt.
 
 The agent never writes these trees (the classifier refuses them like
-steering, prime directive 4). A definition can only narrow what the
-generic worker already has: its tools come from the two built-in child
-kinds plus ``consult``, and its policy rules are ``ask`` or ``never``.
-A file that breaks either is not loaded, and the reason is kept so the
-caller can say why. User-global wins on the same name, as for slash
-commands, so a cloned repo cannot replace a worker the user wrote.
+steering, prime directive 4). A definition can only narrow what a
+built-in child already has: its tools are a subset of ONE built-in kind
+(the worker kind's, or the research kind's) plus ``consult``, so no
+named worker holds both ``shell``/writes and the web; and its policy
+rules are ``ask`` or ``never``. Workspace files load without a trust
+card, so a workspace definition always runs on the worker tier of the
+active preset: only a user-global file may name another ``tier`` or a
+``preset``. A file that breaks any of this is not loaded, and the
+reason is kept so the caller can say why. User-global wins on the same
+name, as for slash commands, so a cloned repo cannot replace a worker
+the user wrote.
 """
 
 from __future__ import annotations
@@ -41,10 +46,18 @@ WORKER_DESCRIPTION_CAP = 300
 
 #: Every tool a named worker may list: what the two built-in kinds have,
 #: plus ``consult``. Never ``delegate`` (no grandchildren), never a plugin
-#: or MCP tool (nothing vouches for it here).
+#: or MCP tool (nothing vouches for it here). One definition may only use
+#: one kind's share of this list (:data:`WORKER_KIND_TOOLS`).
 WORKER_ALLOWED_TOOLS: tuple[str, ...] = tuple(
     dict.fromkeys((*WORKER_CHILD_TOOLS, *RESEARCH_CHILD_TOOLS, CONSULT_TOOL_NAME))
 )
+#: The built-in kinds a named worker's tools must fit inside, one of them:
+#: the worker kind writes and runs shell but has no web, the research kind
+#: has the web but cannot write (TD-5117). ``consult`` goes with either.
+WORKER_KIND_TOOLS: dict[str, frozenset[str]] = {
+    "worker": frozenset((*WORKER_CHILD_TOOLS, CONSULT_TOOL_NAME)),
+    "research": frozenset((*RESEARCH_CHILD_TOOLS, CONSULT_TOOL_NAME)),
+}
 #: Tools that can change something. A worker holding one does not run in
 #: plan mode (TD-5123).
 WORKER_WRITING_TOOLS = frozenset({"fs_write", "fs_edit", "shell"})
@@ -175,13 +188,23 @@ def parse_worker(text: str, path: Path, source: WorkerSource) -> WorkerDefinitio
     prompt = body.strip()
     if len(prompt.encode("utf-8")) > WORKER_PROMPT_CAP:
         raise WorkerDefinitionError(f"prompt is over {WORKER_PROMPT_CAP} bytes")
+    tier = _tier(metadata.get("tier"))
+    preset = _preset(metadata.get("preset"))
+    if source == "workspace" and (tier != "worker" or preset is not None):
+        # Workspace files load without a trust card (a cloned repo's
+        # included), so they may not move the child onto a dearer tier or
+        # another preset's models. The user's own tree may.
+        raise WorkerDefinitionError(
+            "a workspace worker runs on the worker tier of the active preset; "
+            "put it in ~/.tstdesk/agents/ to choose a tier or preset"
+        )
     return WorkerDefinition(
         name=name,
         description=" ".join(description.split())[:WORKER_DESCRIPTION_CAP],
         prompt=prompt,
         tools=_tools(metadata.get("tools")),
-        tier=_tier(metadata.get("tier")),
-        preset=_preset(metadata.get("preset")),
+        tier=tier,
+        preset=preset,
         policy=_policy(metadata.get("policy"), name),
         source=source,
         path=path,
@@ -201,6 +224,11 @@ def _tools(raw: Any) -> tuple[str, ...]:
         raise WorkerDefinitionError(
             f"tools {', '.join(outside)} are not worker tools; "
             f"choose from {', '.join(WORKER_ALLOWED_TOOLS)}"
+        )
+    if not any(set(names) <= kind for kind in WORKER_KIND_TOOLS.values()):
+        raise WorkerDefinitionError(
+            "tools mix the worker kind's fs_write, fs_edit and shell with the research "
+            "kind's web_search and web_fetch; a worker holds one kind's tools"
         )
     return names
 

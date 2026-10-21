@@ -11502,9 +11502,11 @@ Code documents subagent files with their own prompt, tools and model.
 Done (2026-10-21): `core/tstd/context/workers.py` reads both trees
 (user-global wins on a name): frontmatter `name`, `description`
 (required), `tools`, `tier`, `preset`, `policy`, and the body as the
-worker's prompt. Tools come only from the delegate children's own set
-(the research five, `fs_write`, `fs_edit`, `shell`, `consult`); no
-`tools` key means read-only. Policy rules must be `ask` or `never`, and
+worker's prompt. Tools must fit inside one built-in child kind (the
+worker kind's or the research kind's) plus `consult`, so writes or
+`shell` never come with the web; no `tools` key means read-only. Only
+a user-global file may set a non-worker `tier` or a `preset`, since
+workspace files load without trust. Policy rules must be `ask` or `never`, and
 `with_worker_rules` drops `auto` again at the gate, so a worker can only
 tighten. A file that breaks a rule, or carries a key TST Desk does not
 read, is not loaded and `delegate` names why. The classifier refuses

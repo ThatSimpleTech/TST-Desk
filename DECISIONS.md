@@ -17556,14 +17556,24 @@ not cover it beyond directive 4.
   bad name is not loaded. The reason is kept and `delegate` repeats it when
   the model asks for that name. Ignoring an unknown key would run the
   worker differently from what its author wrote.
-- **Tools.** Only the delegate children's own tools (the research five,
-  `fs_write`, `fs_edit`, `shell`) plus `consult` (still only when
-  `consult.tiers` has the worker's tier). Never `delegate`, plugin or MCP
-  tools: nothing vouches for them in a child yet. No `tools` key means the
-  read-only research set, the narrower default.
+- **Tools.** A subset of ONE built-in child kind plus `consult` (still
+  only when `consult.tiers` has the worker's tier): the worker kind's
+  (`fs_*` reads, `fs_write`, `fs_edit`, `shell`) or the research kind's
+  (`fs_*` reads, `web_search`, `web_fetch`). A list mixing writes or
+  `shell` with the web is refused, since TD-5117 kept the web on the
+  read-only child and no built-in child holds both. Never `delegate`,
+  plugin or MCP tools: nothing vouches for them in a child yet. No `tools`
+  key means the read-only research set, the narrower default.
 - **Tier and preset.** `preset` picks that preset's `tier`; a preset not in
   `config.yaml` refuses the call instead of falling back. Spend lands on
-  that tier in the parent's tracker, still under the parent's caps.
+  that tier in the parent's tracker, still under the parent's caps. Only
+  a user-global file (`~/.tstdesk/agents/`) may set `tier` other than
+  `worker` or name a `preset`; a workspace file that does is not loaded.
+  Workspace definitions load without a trust card, so a cloned repo must
+  not be able to move its child onto the brain tier or another preset's
+  models. Gating the keys behind TD-5113 trust was the alternative; that
+  trust covers `.tst/config.yaml` bytes, not these files, so refusing is
+  the conservative choice (review finding on PR #57).
 - **Policy.** Rules become `WorkerPolicyRule`s on the child dispatcher's
   `worker_rules`, merged after the workspace and run rules. Resolution is
   deny first, so `ask`/`never` can only tighten; `with_worker_rules` drops
