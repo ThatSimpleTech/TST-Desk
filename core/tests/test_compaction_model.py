@@ -589,8 +589,11 @@ async def test_a_loaded_skill_body_is_in_the_prompt_after_compaction(tmp_path: P
 
 
 # Tool definitions are most of the prompt; this window puts the budget
-# between turn 3's first request and the one after its file read.
-WINDOW = 11425
+# between turn 3's first request and the one after its file read. It
+# passes from about 11,500 to 13,000 with fs_read's TD-5130 schema; it
+# sits mid-range so a small change to any tool definition does not move
+# the fold to a turn boundary.
+WINDOW = 12000
 
 
 async def test_the_loop_folds_mid_turn_with_a_summary_written_ahead(
