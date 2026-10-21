@@ -232,7 +232,7 @@ describe("approvals for another computer's session (TD-5015)", () => {
     machines.list = [
       {
         id: MCH,
-        name: "ezer",
+        name: "tower",
         host: null,
         port: null,
         status,
@@ -251,7 +251,7 @@ describe("approvals for another computer's session (TD-5015)", () => {
       session_id: sessionId,
       machine: MCH,
       code: "machine_unreachable",
-      message: "ezer isn't reachable.",
+      message: "tower isn't reachable.",
     };
   }
 

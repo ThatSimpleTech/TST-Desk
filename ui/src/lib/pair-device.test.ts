@@ -31,8 +31,8 @@ const CODE: PairingCode = {
   display_code: "ABCD-2345",
   host: "100.64.7.7",
   port: 39079,
-  desktop_name: "ezer",
-  link: "tstdesk://pair?h=100.64.7.7&p=39079&c=ABCD2345&n=ezer",
+  desktop_name: "tower",
+  link: "tstdesk://pair?h=100.64.7.7&p=39079&c=ABCD2345&n=tower",
   qr_svg: "<svg></svg>",
   expires_at: "2026-10-14T10:50:00Z",
 };

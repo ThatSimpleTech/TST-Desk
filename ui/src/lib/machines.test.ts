@@ -77,7 +77,7 @@ const RAW = "3f2a9c1e-7b4d-4e8a-9f01-2c3d4e5f6a7b";
 function machine(over: Partial<MachineSummary> = {}): MachineSummary {
   return {
     id: MCH_A,
-    name: "EZER",
+    name: "TOWER",
     host: "100.64.0.2",
     port: 39079,
     status: "connected",
@@ -131,7 +131,7 @@ describe("status words and lines", () => {
 
   it("explains a refused, locked or outdated link", () => {
     expect(statusLine(machine({ status: "refused" }), NOW)).toBe(
-      "EZER no longer knows this computer. Pair again or remove it.",
+      "TOWER no longer knows this computer. Pair again or remove it.",
     );
     expect(statusLine(machine({ status: "locked" }), NOW)).toContain("keychain is locked");
     expect(statusLine(machine({ status: "outdated" }), NOW)).toContain("needs a newer TST Desk");
@@ -147,24 +147,24 @@ describe("status words and lines", () => {
 
 describe("copy", () => {
   it("warns that an offline computer keeps listing this one", () => {
-    expect(removeConfirmCopy(machine())).toBe("Remove EZER? Its sessions leave this list.");
+    expect(removeConfirmCopy(machine())).toBe("Remove TOWER? Its sessions leave this list.");
     expect(removeConfirmCopy(machine({ status: "unreachable" }))).toBe(
-      "Remove EZER? Its sessions leave this list. EZER still lists this computer until it's removed there.",
+      "Remove TOWER? Its sessions leave this list. TOWER still lists this computer until it's removed there.",
     );
   });
 
   it("uses the spec's sentences", () => {
-    expect(unreachableNotice("EZER")).toBe("EZER isn't reachable. This session opens when it is.");
-    expect(firstSessionCopy("EZER")).toBe("Start the first session on EZER; it shows up here.");
-    expect(staysOnCopy("EZER")).toBe("These stay on EZER.");
+    expect(unreachableNotice("TOWER")).toBe("TOWER isn't reachable. This session opens when it is.");
+    expect(firstSessionCopy("TOWER")).toBe("Start the first session on TOWER; it shows up here.");
+    expect(staysOnCopy("TOWER")).toBe("These stay on TOWER.");
     expect(readOnlyCopy("studio")).toBe("Add or remove computers in Settings on studio.");
   });
 
   it("names the computers a paired phone also sees, leaving out a self-pair", () => {
     expect(alsoSeesCopy([])).toBeNull();
-    expect(alsoSeesCopy(["EZER", "mini"])).toBe("This phone will also see sessions on: EZER, mini.");
+    expect(alsoSeesCopy(["TOWER", "mini"])).toBe("This phone will also see sessions on: TOWER, mini.");
     expect(alsoSeesFor([machine(), machine({ id: MCH_B, name: "studio", same_computer: true })])).toBe(
-      "This phone will also see sessions on: EZER.",
+      "This phone will also see sessions on: TOWER.",
     );
     expect(alsoSeesFor([machine({ same_computer: true })])).toBeNull();
   });
@@ -187,7 +187,7 @@ describe("knownWorkspaces", () => {
 
 describe("checkAddMachine", () => {
   it("sends a pasted link as is", () => {
-    const link = "tstdesk://pair?h=100.64.0.2&p=39079&c=ABCD2345&n=EZER";
+    const link = "tstdesk://pair?h=100.64.0.2&p=39079&c=ABCD2345&n=TOWER";
     expect(checkAddMachine({ link: `  ${link} ` })).toEqual({ ok: true, message: { type: "add_machine", link } });
   });
 
@@ -276,9 +276,9 @@ describe("machines store", () => {
     expect(sessionMachineUp(RAW)).toBe(true);
     expect(sessionMachineUp(`${RAW}:${MCH_A}`)).toBe(true);
     expect(sessionMachineUp(`${RAW}:${MCH_B}`)).toBe(false);
-    expect(nameOfMachine(MCH_A)).toBe("EZER");
+    expect(nameOfMachine(MCH_A)).toBe("TOWER");
     expect(machineNameFor(RAW)).toBeNull();
-    expect(machineNameFor(`${RAW}:${MCH_A}`)).toBe("EZER");
+    expect(machineNameFor(`${RAW}:${MCH_A}`)).toBe("TOWER");
     expect(machineNameFor(`${RAW}:mch_cccccccccccc`)).toBe("another computer");
   });
 
@@ -314,7 +314,7 @@ describe("machines store", () => {
       type: "error",
       seq: 3,
       code: "keychain_locked",
-      message: "On ezer: locked",
+      message: "On tower: locked",
       machine: "mch_0123456789ab",
     } as DaemonEventUnion;
     emit(relayed);

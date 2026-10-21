@@ -526,7 +526,7 @@ async def _long_session(
 ) -> tuple[list[ContextCompacted], list[list[str]]]:
     """Drive *turns* read-then-answer turns; return the context events and
     every request's messages as the wire would carry them."""
-    mock = MockProvider(sequences={"ezer-forge": _scripts(turns)})
+    mock = MockProvider(sequences={"gateway-model": _scripts(turns)})
     session = Session(str(workspace))
     dispatcher = make_dispatcher(workspace)
     runner = SessionRunner(

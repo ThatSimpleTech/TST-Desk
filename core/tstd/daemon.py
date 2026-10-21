@@ -177,6 +177,7 @@ from .notify.ntfy import send as send_ntfy_notify
 from .notify.slack import schedule as schedule_slack_notify
 from .notify.slack import send as send_slack_notify
 from .notify.telegram import schedule as schedule_telegram_notify
+from .peer_policy import outbound_event, service_hosts
 from .plan_review import answer as answer_plan
 from .plan_review import keep_pinned_plan_visible, restore_pinned_plan, restored_plan_mode
 from .policy import (
@@ -4733,8 +4734,11 @@ class Daemon:
                 ).model_dump_json()
             )
         replay_from = max(msg.from_seq, earliest)
+        # TD-5169: another computer gets the events without service hosts.
+        peer = self.ws_server.peer_view(connection)
+        hosts = service_hosts(self.config.model_dump()) if peer.machine else frozenset()
         for event in session.event_log.events_from(replay_from):
-            await connection.send(event.model_dump_json())
+            await connection.send(outbound_event(event, peer, hosts).model_dump_json())
 
         # Register as attached
         if session_id not in self._attached_clients:
@@ -4746,8 +4750,10 @@ class Daemon:
             try:
                 while True:
                     new_seq = await session.event_log.wait_for_new_event(seen_seq)
+                    # Read each wake: the config may have changed since attach.
+                    live = service_hosts(self.config.model_dump()) if peer.machine else ()
                     for event in session.event_log.events_from(seen_seq + 1):
-                        await connection.send(event.model_dump_json())
+                        await connection.send(outbound_event(event, peer, live).model_dump_json())
                     seen_seq = new_seq
             except websockets.exceptions.ConnectionClosed:
                 pass

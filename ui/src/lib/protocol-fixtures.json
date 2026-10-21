@@ -706,7 +706,7 @@
   },
   "add_machine": {
     "type": "add_machine",
-    "link": "tstdesk://pair?h=100.64.1.5&p=39079&c=ABCD2345&n=ezer",
+    "link": "tstdesk://pair?h=100.64.1.5&p=39079&c=ABCD2345&n=tower",
     "host": null,
     "port": null,
     "code": null
@@ -2069,7 +2069,7 @@
     "machines": [
       {
         "id": "mch_0123456789ab",
-        "name": "EZER",
+        "name": "TOWER",
         "host": "100.64.1.5",
         "port": 39079,
         "status": "connected",

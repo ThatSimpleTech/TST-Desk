@@ -382,7 +382,7 @@ def test_summaries_carry_the_connected_flag_and_never_a_hash(tmp_path: Path) -> 
         ("", "Unnamed device"),
         (" \x07 ", "Unnamed device"),
         ("x" * 100, "x" * 64),
-        ("Adam\u2019s phone \U0001f4f1", "Adam\u2019s phone \U0001f4f1"),
+        ("Alex\u2019s phone \U0001f4f1", "Alex\u2019s phone \U0001f4f1"),
     ],
 )
 def test_device_names_are_cleaned(raw: str, want: str) -> None:
@@ -393,19 +393,19 @@ def test_device_names_are_cleaned(raw: str, want: str) -> None:
 
 
 def test_the_link_carries_host_port_code_and_an_encoded_name() -> None:
-    link = pairing_link("100.64.7.7", 39079, "ABCD2345", "ezer box/2")
-    assert link == "tstdesk://pair?h=100.64.7.7&p=39079&c=ABCD2345&n=ezer%20box%2F2"
+    link = pairing_link("100.64.7.7", 39079, "ABCD2345", "tower box/2")
+    assert link == "tstdesk://pair?h=100.64.7.7&p=39079&c=ABCD2345&n=tower%20box%2F2"
 
 
 def test_the_qr_is_a_plain_standalone_svg() -> None:
-    svg = pairing_qr_svg("tstdesk://pair?h=100.64.7.7&p=39079&c=ABCD2345&n=ezer")
+    svg = pairing_qr_svg("tstdesk://pair?h=100.64.7.7&p=39079&c=ABCD2345&n=tower")
     assert svg.startswith("<svg") and svg.endswith("</svg>")
     assert "<?xml" not in svg and "<script" not in svg.lower()
     assert "viewBox" in svg and "#000" in svg and "#fff" in svg
 
 
 def test_the_pairing_code_event_matches_the_contract(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("tstd.remote_devices.platform.node", lambda: "ezer.tail1234.ts.net")
+    monkeypatch.setattr("tstd.remote_devices.platform.node", lambda: "tower.tail1234.ts.net")
     event = pairing_code_event("ABCD2345", _T0 + 600, "100.64.7.7", 39079)
     assert event.model_dump(exclude={"qr_svg"}) == {
         "type": "pairing_code",
@@ -414,8 +414,8 @@ def test_the_pairing_code_event_matches_the_contract(monkeypatch: pytest.MonkeyP
         "display_code": "ABCD-2345",
         "host": "100.64.7.7",
         "port": 39079,
-        "desktop_name": "ezer",
-        "link": "tstdesk://pair?h=100.64.7.7&p=39079&c=ABCD2345&n=ezer",
+        "desktop_name": "tower",
+        "link": "tstdesk://pair?h=100.64.7.7&p=39079&c=ABCD2345&n=tower",
         "expires_at": "2026-10-14T10:50:00Z",
     }
 

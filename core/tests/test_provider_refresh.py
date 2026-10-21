@@ -44,11 +44,11 @@ from tstd.provider_refresh import (
 from tstd.router import TierRouter
 from tstd.session import Session, SessionRunner
 
-OLD = "ezer-old-token"
-NEW = "ezer-new-token"
+OLD = "tower-old-token"
+NEW = "tower-new-token"
 HOST = "http://192.0.2.49:4000/v1"
-EXACT_401 = "EZER (192.0.2.49:4000) rejected the API key (401) — check it in Settings → API keys"
-EXACT_403 = "EZER (192.0.2.49:4000) rejected the API key (403) — check it in Settings → API keys"
+EXACT_401 = "TOWER (192.0.2.49:4000) rejected the API key (401) — check it in Settings → API keys"
+EXACT_403 = "TOWER (192.0.2.49:4000) rejected the API key (403) — check it in Settings → API keys"
 
 OK_BODY = {
     "id": "c1",
@@ -62,7 +62,7 @@ OK_BODY = {
 
 def _request() -> ChatCompletionRequest:
     return ChatCompletionRequest(
-        model="ezer-brain",
+        model="gateway-brain",
         messages=[ChatMessage(role="user", content="hi")],
     )
 
@@ -150,7 +150,7 @@ def _handle(
     first: _Box,
     rebuilds: list[_Box],
     *,
-    name: str = "EZER",
+    name: str = "TOWER",
     base_url: str = HOST,
 ) -> RefreshingProvider:
     async def rebuild() -> _Box:
@@ -158,7 +158,7 @@ def _handle(
 
     return RefreshingProvider(
         first,
-        credential_id="ezer",
+        credential_id="tower",
         credential_name=name,
         base_url=base_url,
         rebuild=rebuild,
@@ -178,8 +178,8 @@ class TestLabels:
         assert host_label(url) == label
 
     def test_rejected_sentence_names_credential_host_and_status(self) -> None:
-        assert rejected_key_message("EZER", HOST, 401) == EXACT_401
-        assert rejected_key_message("EZER", HOST, 403) == EXACT_403
+        assert rejected_key_message("TOWER", HOST, 401) == EXACT_401
+        assert rejected_key_message("TOWER", HOST, 403) == EXACT_403
         assert "http://" not in EXACT_401
         assert "/v1" not in EXACT_401
 
@@ -315,8 +315,8 @@ class TestHandleRefresh:
 
         handle = RefreshingProvider(
             first,
-            credential_id="ezer",
-            credential_name="EZER",
+            credential_id="tower",
+            credential_name="TOWER",
             base_url=HOST,
             rebuild=rebuild,
         )
@@ -335,8 +335,8 @@ class TestHandleRefresh:
 
         handle = RefreshingProvider(
             first,
-            credential_id="ezer",
-            credential_name="EZER",
+            credential_id="tower",
+            credential_name="TOWER",
             base_url=HOST,
             rebuild=rebuild,
         )
@@ -356,14 +356,14 @@ class TestHandleRefresh:
         async def rebuild() -> _Box:
             if phase["fail"]:
                 raise KeychainError(
-                    "the stored API key for 'ezer' is empty — re-save it in Settings → API keys"
+                    "the stored API key for 'tower' is empty — re-save it in Settings → API keys"
                 )
             return stored
 
         handle = RefreshingProvider(
             first,
-            credential_id="ezer",
-            credential_name="EZER",
+            credential_id="tower",
+            credential_name="TOWER",
             base_url=HOST,
             rebuild=rebuild,
         )
@@ -422,8 +422,8 @@ class TestHttpxClose:
 
         handle = RefreshingProvider(
             make(next(keys)),
-            credential_id="ezer",
-            credential_name="EZER",
+            credential_id="tower",
+            credential_name="TOWER",
             base_url=HOST,
             rebuild=rebuild,
         )
@@ -516,8 +516,8 @@ class TestHttpxClose:
 
         handle = RefreshingProvider(
             first,
-            credential_id="ezer",
-            credential_name="EZER",
+            credential_id="tower",
+            credential_name="TOWER",
             base_url=HOST,
             rebuild=rebuild,
         )
@@ -532,12 +532,12 @@ class TestHttpxClose:
         assert http.is_closed is True
 
 
-def _ezer_config() -> ModelConfig:
+def _gateway_config() -> ModelConfig:
     def tier(slug: str) -> TierConfig:
         return TierConfig(
             slug=slug,
             base_url=HOST,
-            credential="ezer",
+            credential="tower",
             input_price=0.0,
             output_price=0.0,
             cache_read_price=0.0,
@@ -548,13 +548,13 @@ def _ezer_config() -> ModelConfig:
     return ModelConfig(
         presets={
             "test": Preset(
-                brain=tier("ezer-brain"),
-                worker=tier("ezer-worker"),
-                validator=tier("ezer-validator"),
+                brain=tier("gateway-brain"),
+                worker=tier("gateway-worker"),
+                validator=tier("gateway-validator"),
             )
         },
         active_preset="test",
-        credentials={"ezer": CredentialConfig(name="EZER", base_url=HOST)},
+        credentials={"tower": CredentialConfig(name="TOWER", base_url=HOST)},
     )
 
 
@@ -676,7 +676,7 @@ async def _start_loop(
     current: dict[str, str | None],
     reject: dict[str, int],
 ) -> _Harness:
-    config = _ezer_config()
+    config = _gateway_config()
     monkeypatch.setattr("tstd.daemon.cached_config", lambda: config)
     daemon = Daemon(data_dir=tmp_path)
     built: list[KeyedMock] = []
@@ -685,7 +685,7 @@ async def _start_loop(
         key = current["key"]
         if key is None or not key.strip():
             raise KeychainError(
-                "the stored API key for 'ezer' is empty — re-save it in Settings → API keys"
+                "the stored API key for 'tower' is empty — re-save it in Settings → API keys"
             )
         mock = KeyedMock(api_key=key, reject_status=reject)
         built.append(mock)
@@ -734,7 +734,7 @@ class TestDaemonCache:
     async def test_missing_or_empty_key_is_not_cached(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        config = _ezer_config()
+        config = _gateway_config()
         monkeypatch.setattr("tstd.daemon.cached_config", lambda: config)
         daemon = Daemon(data_dir=tmp_path)
         stored: dict[str, str | None] = {}
@@ -757,12 +757,12 @@ class TestDaemonCache:
             await daemon._client_for(tier)
         assert daemon._clients == {}
 
-        stored["ezer"] = "   "
+        stored["tower"] = "   "
         with pytest.raises(KeychainError, match="empty"):
             await daemon._client_for(tier)
         assert daemon._clients == {}
 
-        stored["ezer"] = NEW
+        stored["tower"] = NEW
         handle = await daemon._client_for(tier)
         assert isinstance(handle, RefreshingProvider)
         inner = handle._inner
@@ -795,10 +795,10 @@ class TestDaemonCache:
     async def test_in_app_reload_drops_the_cache_without_closing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        config = _ezer_config()
+        config = _gateway_config()
         monkeypatch.setattr("tstd.daemon.cached_config", lambda: config)
         daemon = Daemon(data_dir=tmp_path)
-        assert daemon._credential_label("ezer") == "EZER"
+        assert daemon._credential_label("tower") == "TOWER"
         assert daemon._credential_label("openrouter") == "OpenRouter"
         assert daemon._credential_label("other") == "other"
         built: list[KeyedMock] = []
@@ -869,7 +869,7 @@ class TestLoop:
             assert len(refresh) == 1
             extra = refresh[0].extra_fields
             assert extra == {
-                "credential": "ezer",
+                "credential": "tower",
                 "host": "192.0.2.49:4000",
                 "status_code": 401,
                 "key_changed": True,
@@ -905,8 +905,8 @@ class TestLoop:
             assert sentence in _log_blob(caplog)
             assert "http://" not in shown
             assert "/v1" not in shown
-            assert "EZER (" in shown
-            assert "ezer (" not in shown
+            assert "TOWER (" in shown
+            assert "tower (" not in shown
             assert len(harness.built) == 2
             assert harness.built[0].closed is True
             assert harness.built[0].stream_calls == 2

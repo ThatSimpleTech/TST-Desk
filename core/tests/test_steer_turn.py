@@ -348,7 +348,7 @@ async def test_messages_sent_to_steer_a_turn_that_ended_each_keep_a_turn() -> No
 
 def _small_tier() -> TierConfig:
     return TierConfig(
-        slug="ezer-forge",
+        slug="gateway-model",
         base_url="http://mock.local/v1",
         input_price=0.0,
         output_price=0.0,

@@ -436,7 +436,7 @@ describe("code to copy (§6.5)", () => {
     expect(copy("machine_unreachable", { ...remote, machine: "iMac" })).toBe(
       "iMac isn't reachable. The download carries on when it is.",
     );
-    expect(copy("machine_not_found", { ...remote, machine: "EZER" })).toBe("EZER is not reachable.");
+    expect(copy("machine_not_found", { ...remote, machine: "TOWER" })).toBe("TOWER is not reachable.");
     expect([phase("no_app"), copy("no_app")]).toEqual(["done", "No app here opens .apk files. Save it to Downloads instead."]);
     expect(messageFor("no_app", desk)).toEqual({ kind: "phase", phase: "done", copy: "No app opens this file.", reveal: true });
     expect([phase("not_verified"), copy("not_verified")]).toEqual(["failed", "Download it again first."]);

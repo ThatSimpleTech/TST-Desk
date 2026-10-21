@@ -361,7 +361,7 @@ async def _run_read(workspace: Path, vision_on: bool) -> object:
     (workspace / "shot.png").write_bytes(PNG)
     mock = MockProvider(
         sequences={
-            "ezer-forge": [
+            "gateway-model": [
                 Script(
                     kind="tool_call",
                     tool_name="fs_read",

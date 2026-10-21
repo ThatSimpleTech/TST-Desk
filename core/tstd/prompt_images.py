@@ -1,6 +1,6 @@
 """Cap vision parts on the outbound prompt (TD-1730).
 
-ezer-forge is served with ``--limit-mm-per-prompt '{"image":1}'``. A second
+A local VLM is often served with ``--limit-mm-per-prompt '{"image":1}'``. A second
 ``desktop_screenshot`` would otherwise send two ``image_url`` parts and
 the host rejects the turn. Keep the newest images; drop older ones in
 place. Text of those tool results stays.
