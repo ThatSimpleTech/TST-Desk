@@ -12175,3 +12175,23 @@ past the start of the next stream and never scan it.
 - [x] A stream's end is measured on the bytes actually read, so the next
       stream is scanned (the same test's second half; scanning a local
       sidecar now walks twice as many streams as before).
+
+### TD-5171 — Phone: an open panel fills the screen
+**Size:** 1 · **Depends on:** TD-3701, TD-5109 · **Status:** Done
+
+On the Pixel (0.4.0), opening the sessions list or the activity pane split the
+screen with the chat: with the list open the chat was a third of the width,
+words broke mid-word and the model picker ran under the send button. Below
+640px the shell now shows one panel at a time, full width, with the chat kept
+mounted behind it.
+
+- [x] At 375px the sessions list opens alone and full width; the chat hides.
+- [x] At 375px the activity pane opens alone and full width; opening it closes
+      the list, and opening the list closes it.
+- [x] Picking a session or a rail surface goes back to the chat; the list
+      opens expanded even when the desktop rail was collapsed.
+- [x] App walk: `shows one panel at a time on a phone's width`.
+
+The gauge missing from the same screenshots is not a bug: EZER's last turn
+(10-17) predates TD-5109 (10-19), so no session there has a reading until its
+next turn.

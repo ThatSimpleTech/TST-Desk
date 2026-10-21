@@ -29,7 +29,7 @@ LATEST_MODERN = MODERN_VERSIONS[-1]
 VERSION_HEADER_SINCE = "2025-06-18"
 
 CLIENT_NAME = "tstd"
-CLIENT_VERSION = "0.4.0"
+CLIENT_VERSION = "0.4.1"
 #: What tstd does for a server. It answers ``ping`` and nothing else a
 #: server may ask of a client: no roots, sampling or elicitation. An honest
 #: empty set means a server never sends one of those and waits on it.

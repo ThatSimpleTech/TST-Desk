@@ -32,7 +32,13 @@
 	import { onEvent } from '../connection-status.svelte.js';
 	import { entries, push } from '../timeline-store.svelte.js';
 	import { inspectorCounts, tabCount } from '../inspector';
-	import { selectRow, sessions, setPickForNewSession, visibleRows } from '../sessions.svelte.js';
+	import {
+		selectRow,
+		sessions,
+		setPickForNewSession,
+		toggleCollapsed,
+		visibleRows,
+	} from '../sessions.svelte.js';
 	import ChatPane from './chat/ChatPane.svelte';
 	import ProjectPane from './ProjectPane.svelte';
 	import ArtifactPane from './ArtifactPane.svelte';
@@ -101,6 +107,26 @@
 	let narrow = $state(false);
 	let showRail = $state(false);
 	let inspectorOpen = $state(true);
+
+	// TD-5171: on a phone one panel shows at a time, full width. The list
+	// opens expanded, and picking a session or a surface goes back to it.
+	function toggleRail(): void {
+		showRail = !showRail;
+		if (!showRail) return;
+		inspectorOpen = false;
+		if (sessions.collapsed) toggleCollapsed();
+	}
+
+	function toggleInspector(): void {
+		inspectorOpen = !inspectorOpen;
+		if (narrow && inspectorOpen) showRail = false;
+	}
+
+	$effect(() => {
+		void session.sessionId;
+		void projects.surface;
+		showRail = false;
+	});
 
 	// Global shortcuts (TD-1609): Esc peels layers (menu → palette → modal →
 	// turn), ⌘, opens settings (TD-1703), ⌘K the command palette (TD-1707).
@@ -425,7 +451,7 @@
 			title="Sessions"
 			aria-label="Show sessions"
 			aria-pressed={showRail}
-			onclick={() => (showRail = !showRail)}><Icon name="panel-left" size={16} /></button
+			onclick={toggleRail}><Icon name="panel-left" size={16} /></button
 		>
 	{/if}
 	<button
@@ -434,7 +460,7 @@
 		title={inspectorOpen ? 'Hide activity pane' : 'Show activity pane'}
 		aria-label={inspectorOpen ? 'Hide activity pane' : 'Show activity pane'}
 		aria-pressed={inspectorOpen}
-		onclick={() => (inspectorOpen = !inspectorOpen)}><Icon name="panel-right" size={16} /></button
+		onclick={toggleInspector}><Icon name="panel-right" size={16} /></button
 	>
 	<!-- Settings is reached from the rail's account anchor (TD-1712) or ⌘,;
 	     the header no longer buries it behind a gear. -->
@@ -819,6 +845,30 @@
 
 		.shell-body:not(.shell-show-inspector) :global(.splitpane .right),
 		.shell-body:not(.shell-show-inspector) :global(.splitpane .divider) {
+			display: none;
+		}
+
+		/* TD-5171: an open panel takes the whole width; splitting a phone's
+		   screen with the chat squashed both. The chat stays mounted. */
+		.shell-body.shell-show-rail :global(.rail) {
+			flex: 1 1 100% !important;
+			border-right: none;
+		}
+
+		.shell-body.shell-show-rail :global(.rail .resize-handle) {
+			display: none;
+		}
+
+		.shell-body.shell-show-rail > :global(.splitpane) {
+			display: none;
+		}
+
+		.shell-body.shell-show-inspector :global(.splitpane) {
+			grid-template-columns: 1fr !important;
+		}
+
+		.shell-body.shell-show-inspector :global(.splitpane .left),
+		.shell-body.shell-show-inspector :global(.splitpane .divider) {
 			display: none;
 		}
 	}

@@ -1,6 +1,6 @@
 [project]
 name = "tstd"
-version = "0.4.0"
+version = "0.4.1"
 description = "TST Desk core daemon"
 requires-python = ">=3.11"
 dependencies = [
