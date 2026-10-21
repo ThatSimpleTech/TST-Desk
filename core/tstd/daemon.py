@@ -79,6 +79,7 @@ from .config_write import (
     save_engine_kind,
     save_judgments,
     save_mcp_server,
+    save_model_preset,
     save_tier_credential,
     save_tier_slug,
 )
@@ -140,6 +141,7 @@ from .keychain import (
     KeychainLockedError,
     api_key_is_stored,
     delete_api_key,
+    get_api_key,
     store_api_key,
 )
 from .line_comments import LineCommentError, build_comments_turn
@@ -174,6 +176,14 @@ from .memory_trigger import (
     completed_turn_count,
     distill_if_due,
 )
+from .model_setup import (
+    TEST_MAX_TOKENS,
+    TEST_PROMPT,
+    default_context_window,
+    default_max_output,
+    list_endpoint_models,
+    preset_name_for,
+)
 from .notify.discord import schedule as schedule_discord_notify
 from .notify.ntfy import schedule as schedule_ntfy_notify
 from .notify.ntfy import send as send_ntfy_notify
@@ -198,6 +208,7 @@ from .policy import (
 )
 from .port_file import release_port_file
 from .protocol import (
+    AddModel,
     AddPin,
     AlwaysAllow,
     AnswerQuestion,
@@ -245,6 +256,7 @@ from .protocol import (
     Drain,
     DrainResult,
     EmailNotifyState,
+    EndpointModels,
     EndSession,
     ExportUsage,
     ExtractAttachment,
@@ -281,6 +293,7 @@ from .protocol import (
     JobTemplates,
     ListArtifacts,
     ListCommands,
+    ListEndpointModels,
     ListGrokExtensions,
     ListGrokSessions,
     ListInstructions,
@@ -303,6 +316,7 @@ from .protocol import (
     MicrosoftConnectorState,
     MicrosoftDisconnect,
     MicrosoftStatus,
+    ModelTested,
     MoveSession,
     NewSession,
     OpenArtifact,
@@ -374,6 +388,7 @@ from .protocol import (
     StopTurn,
     SubmitLineComments,
     TestEmail,
+    TestModel,
     TierState,
     Transcribe,
     Transcript,
@@ -409,6 +424,7 @@ from .provider import (
     ProviderError,
     RetryConfig,
     auth_failure_message,
+    content_as_text,
 )
 from .provider_refresh import RefreshingProvider, _close_client
 from .questions import answer as answer_question
@@ -1287,7 +1303,8 @@ class Daemon:
         """
         credentials = await self._credential_summaries()
         has_api_key = any(item.stored for item in credentials)
-        tiers = self.config.tiers()
+        # An empty catalog is a first run, not an error (TD-5172).
+        tiers = self.config.tiers() if self.config.has_model() else {}
         grok_path, grok_ok = _probe_grok(self.config.engine.binary)
         engine_kind = self.config.engine.kind
         key_required = self.config.requires_api_key() and engine_kind != "grok"
@@ -1302,9 +1319,18 @@ class Daemon:
             preset_labels={
                 name: p.label for name, p in sorted(self.config.presets.items()) if p.label
             },
+            preset_descriptions={
+                name: p.description
+                for name, p in sorted(self.config.presets.items())
+                if p.description
+            },
             more_presets=sorted(
                 name for name, p in self.config.presets.items() if p.picker == "more"
             ),
+            team_presets=sorted(
+                name for name, p in self.config.presets.items() if p.picker == "team"
+            ),
+            has_model=self.config.has_model(),
             skip_all_approvals=self.skip_all_approvals,
             load_global_memory=self.load_global_memory,
             coworker_enabled=self.coworker_enabled,
@@ -1484,7 +1510,11 @@ class Daemon:
     def _reload_user_config(self) -> None:
         """Re-read this daemon's config.yaml, keep the live preset, drop clients."""
         loaded = call_config_loader(load_config, self.config_path)
-        self.config = loaded.model_copy(update={"active_preset": self.config.active_preset})
+        live = self.config.active_preset
+        # A live preset the file no longer has (or none yet, TD-5172) falls
+        # back to what the loader chose.
+        keep = live if live in loaded.presets else loaded.active_preset
+        self.config = loaded.model_copy(update={"active_preset": keep})
         self._slug_snapshot = _snapshot_slugs(self.config)
         self._drop_provider_clients()
 
@@ -1709,6 +1739,84 @@ class Daemon:
             return ApiKeyValidated(seq=1, ok=False, detail=detail)
         return ApiKeyValidated(
             seq=1, ok=True, detail="Key accepted by the active preset's provider."
+        )
+
+    # ── Add a model (TD-5172) ─────────────────────────────────────────
+
+    async def _list_endpoint_models(self, msg: ListEndpointModels) -> EndpointModels:
+        """The walkthrough's model list, with the typed or a stored key."""
+        api_key = msg.api_key.strip() if msg.api_key and msg.api_key.strip() else None
+        if api_key is None and msg.credential:
+            try:
+                api_key = await get_api_key(msg.credential)
+            except (KeychainError, NotImplementedError) as e:
+                return EndpointModels(base_url=msg.base_url, error=str(e))
+        return await list_endpoint_models(msg.base_url, api_key)
+
+    async def _handle_add_model(self, msg: AddModel) -> str:
+        """Write a single-model preset, make it active, ack with setup_state."""
+        base_url = msg.base_url.strip().rstrip("/")
+        credential = msg.credential.strip() if msg.credential else None
+        api_key = msg.api_key.strip() if msg.api_key and msg.api_key.strip() else None
+        try:
+            name = preset_name_for(msg.label, set(self.config.presets))
+            if api_key is not None:
+                credential = await self._store_named_key(api_key, None, msg.label.strip(), base_url)
+                self._invalidate_stored_probe()
+            window = msg.context_window or default_context_window(base_url)
+            save_model_preset(
+                name,
+                label=msg.label,
+                description=msg.description,
+                base_url=base_url,
+                slug=msg.slug,
+                credential=credential,
+                context_window=window,
+                max_output_tokens=default_max_output(window),
+                input_price=msg.input_price or 0.0,
+                output_price=msg.output_price or 0.0,
+                path=self.config_path,
+            )
+            save_active_preset(name, self.config_path)
+            self._reload_user_config()
+        except KeychainLockedError as e:
+            return build_error("keychain_locked", str(e))
+        except (KeychainError, NotImplementedError) as e:
+            return build_error("key_store_failed", f"Could not store the API key: {e}")
+        except ConfigError as e:
+            return build_error("bad_request", str(e))
+        self.config = self.config.model_copy(update={"active_preset": name})
+        self._slug_snapshot = _snapshot_slugs(self.config)
+        log.info("model added", extra={"extra_fields": {"preset": name}})
+        return (await self._setup_state_event()).model_dump_json()
+
+    async def _test_model(self, preset: str | None) -> ModelTested:
+        """One short message to *preset*'s model, so the user sees it answer."""
+        name = preset or self.config.active_preset
+        if name not in self.config.presets:
+            return ModelTested(preset=name, ok=False, detail="No model is set up yet.")
+        tier_cfg = apply_credential_host(self.config, self.config.presets[name].brain)
+        try:
+            client = await self._client_for(tier_cfg)
+            response = await client.chat_completion(
+                ChatCompletionRequest(
+                    model=tier_cfg.require_slug(),
+                    messages=[ChatMessage(role="user", content=TEST_PROMPT)],
+                    max_tokens=TEST_MAX_TOKENS,
+                    stream=False,
+                )
+            )
+        except (KeychainError, ConfigError) as e:
+            return ModelTested(preset=name, ok=False, detail=str(e))
+        if isinstance(response, ProviderError):
+            detail = auth_failure_message() if response.code == "auth_failed" else response.message
+            return ModelTested(preset=name, ok=False, detail=detail)
+        reply = content_as_text(response.message.content).strip()
+        return ModelTested(
+            preset=name,
+            ok=True,
+            reply=reply[:400],
+            detail="The model answered." if reply else "The model answered with no text.",
         )
 
     # ── Diagnostics (TD-1104 doctor) ──────────────────────────────────
@@ -3718,6 +3826,16 @@ class Daemon:
 
         if isinstance(msg, ValidateApiKey):
             return (await self._validate_api_key(msg.api_key, msg.credential)).model_dump_json()
+
+        # ── Add a model (TD-5172) ────────────────────────────────────
+        if isinstance(msg, ListEndpointModels):
+            return (await self._list_endpoint_models(msg)).model_dump_json()
+
+        if isinstance(msg, AddModel):
+            return await self._handle_add_model(msg)
+
+        if isinstance(msg, TestModel):
+            return (await self._test_model(msg.preset)).model_dump_json()
 
         if isinstance(msg, DeleteApiKey):
             # TD-1102: key removable from settings. Same ack pattern as

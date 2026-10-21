@@ -570,3 +570,97 @@ def delete_mcp_server_entry(server_id: str, path: Path | None = None) -> Path:
 
     _atomic_write(config_path, "\n".join(lines))
     return config_path
+
+
+def save_model_preset(
+    name: str,
+    *,
+    label: str,
+    description: str,
+    base_url: str,
+    slug: str,
+    credential: str | None,
+    context_window: int,
+    max_output_tokens: int,
+    input_price: float = 0.0,
+    output_price: float = 0.0,
+    path: Path | None = None,
+) -> Path:
+    """Append a single-model preset to the user config (TD-5172).
+
+    One model on all three tiers, with a picker ``label`` and
+    ``description``. Surgical like every writer here: the block is spliced
+    in after the last preset (or over the shipped ``presets: {}``), and
+    the rest of the file stays byte-identical. Every string is written
+    JSON-encoded, a valid YAML double-quoted scalar, so a label cannot
+    inject YAML. Never writes a secret: ``credential`` is a catalog id.
+
+    Raises ``ConfigError`` when *name* is taken or not a slug, or the
+    credential is not declared.
+    """
+    if not CREDENTIAL_ID_RE.match(name):
+        raise ConfigError(f"preset name {name!r} must be a lowercase slug [a-z][a-z0-9-]{{0,31}}")
+    cleaned_url = base_url.strip().rstrip("/")
+    if urlsplit(cleaned_url).scheme not in ("http", "https"):
+        raise ConfigError("The endpoint URL must start with http:// or https://")
+    if not slug.strip():
+        raise ConfigError("Pick a model first")
+    if credential is None and not is_loopback_url(cleaned_url):
+        raise ConfigError("A server off this machine needs an API key")
+
+    config_path = ensure_user_config(path)
+    config = load_config(config_path)
+    if name in config.presets:
+        raise ConfigError(f"A preset named {name!r} already exists")
+    if (
+        credential is not None
+        and credential not in config.credentials
+        and credential != DEFAULT_CREDENTIAL_ID
+    ):
+        raise ConfigError(f"Unknown credential {credential!r}")
+
+    tier_lines = [
+        f"      slug: {json.dumps(slug.strip())}",
+        f"      base_url: {json.dumps(cleaned_url)}",
+    ]
+    if credential is not None:
+        tier_lines.append(f"      credential: {json.dumps(credential)}")
+    tier_lines += [
+        f"      input_price: {float(input_price)!r}",
+        f"      output_price: {float(output_price)!r}",
+        f"      cache_read_price: {float(input_price)!r}",
+        f"      context_window: {int(context_window)}",
+        f"      max_output_tokens: {int(max_output_tokens)}",
+    ]
+    block = [
+        f"  {name}:",
+        f"    label: {json.dumps(label.strip())}",
+    ]
+    if description.strip():
+        block.append(f"    description: {json.dumps(description.strip())}")
+    for tier in TIER_NAMES:
+        block.append(f"    {tier}:")
+        block += tier_lines
+
+    lines = config_path.read_text(encoding="utf-8").split("\n")
+    presets_at = _find_key(lines, 0, len(lines), "presets", 0)
+    if presets_at < 0:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines += ["presets:", *block, ""]
+    elif lines[presets_at].split(":", 1)[1].strip() in ("", "{}"):
+        lines[presets_at] = "presets:"
+        presets_end = _block_bounds(lines, presets_at, 0)
+        # After the last real line of the block, so a comment that opens
+        # the next section stays with it.
+        at = presets_at + 1
+        for i in range(presets_at + 1, presets_end):
+            stripped = lines[i].strip()
+            if stripped and not stripped.startswith("#"):
+                at = i + 1
+        lines[at:at] = block
+    else:
+        raise ConfigError(f"{config_path} has a `presets:` value this writer cannot edit")
+
+    _atomic_write(config_path, "\n".join(lines))
+    return config_path

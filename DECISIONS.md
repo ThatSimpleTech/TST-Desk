@@ -18208,3 +18208,47 @@ daemon's life (idle ones would hold memory on a box running local models).
 - A "model" in the picker is a catalog preset; picking one is `set_session_preset`. A preset's `picker: primary | more` (default `primary`) puts it on the main list or under "More models", and its optional `label` is the name shown (default: the key). Both reach the UI in `setup_state` (`preset_labels`, `more_presets`). No model name is hard-coded. The gateway's model list is not queried; a route shows up once a preset names it.
 - Effort is per session (`set_effort`, `TierRouter.effort`, session row `effort`), default `session.default_effort: medium`. The wire value is `reasoning_effort` = low | medium | high | xhigh | max | ultracode (Extra = xhigh), sent on the turn's request only for a tier with `reasoning_effort: true`. The picked level wins over a `reasoning_effort` in the tier's `extra_body`. Verdict, compaction and other off-turn calls are not given it.
 - The phone is the same UI in a WebView, so it gets the picker with no Android change.
+
+## 2026-10-21 — TD-5172: model picker cleanup, empty catalog, "Add a model" (Class B)
+
+The ask: every item in the model picker gets one clear job and a
+walkthrough a new person can follow, and anything without both goes.
+
+- **No model ships.** `config.yaml` carries `presets: {}` with a commented
+  example; `PRESETS = ()`, `DEFAULT_PRESET = ""`,
+  `computer_use.local_worker_preset = ""`. The old four presets named one
+  maintainer's routes and taught nothing a newcomer could use.
+- **An empty catalog runs, it does not raise.** With no active preset,
+  `ModelConfig.tiers()` returns keyless loopback stand-ins
+  (`http://127.0.0.1:9/v1`, zero prices) so every reader of tiers keeps
+  working, and `resolve_tier_slugs` fails the turn with
+  `ModelDiscoveryError("No model is set up yet", fix="Add one in Settings →
+  Models → Add a model.")`. A first attempt raised a new exception from
+  `tiers()`; it crashed `setup_state`, `tier_state` and the assembler, so
+  it was dropped. `has_model()` is the first-run signal and reaches the UI
+  as `setup_state.has_model`.
+- **Old configs keep loading.** A missing, null or unknown `active_preset`
+  falls back to the first declared preset (none for an empty catalog)
+  instead of a load error, so a user copy naming a removed preset still
+  starts.
+- **Tests keep the old catalog as a fixture**, not in the shipped file:
+  `tests/fixtures/test_presets.yaml`, seeded through a new
+  `tstd.config._seed_source()` seam that conftest patches unless a test is
+  marked `shipped_config`. The UI walk seeds its own two models and a team.
+- **Three new client messages, two events.** `list_endpoint_models`
+  (GET `{base_url}/models`; the typed key is sent only to the URL the user
+  typed and is never echoed), `add_model` (keychain store, then
+  `save_model_preset` writes a single-model preset with the three tiers
+  spelled out (so Build a team can edit one), then it is made active; acked with `setup_state`) and
+  `test_model` (one short non-streaming completion). `endpoint_models` and
+  `model_tested` answer them. `model_setup.py` joins the modules allowed to
+  open a network transport.
+- **Picker rules.** An unlabelled preset is hidden unless current; a
+  `description` is the subtitle; `picker: team` lists under "Teams", shown
+  only when one exists. The tier chip is gone from the composer;
+  `set_tier` stays on the wire.
+- **The wizard opens on `has_model: false`**, no longer on "no key". A
+  model whose key is missing is fixed in Settings → API keys; the old key
+  and preset steps are replaced by the "Add a model" step.
+- **The walkthrough link** goes to docs/models.md on the public repository
+  (`ui/src/lib/docs-links.ts`), opened in the system browser.

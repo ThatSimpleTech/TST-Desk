@@ -34,6 +34,8 @@ from typing import Any
 import httpx
 
 from .config import (
+    NO_MODEL_FIX,
+    NO_MODEL_MESSAGE,
     TIER_NAMES,
     ModelConfig,
     ModelDiscoveryError,
@@ -218,6 +220,10 @@ async def resolve_tier_slugs(
     preset points all three at the same server, and three identical requests
     would be noise.
     """
+    if not config.has_model():
+        # First run (TD-5172): fail the turn with the walkthrough, not a
+        # "start your server" fix for a stand-in endpoint.
+        raise ModelDiscoveryError(NO_MODEL_MESSAGE, endpoint="", fix=NO_MODEL_FIX)
     tiers = config.tiers()
     unset = [name for name in TIER_NAMES if tiers[name].slug is None]
     if not unset:

@@ -10,14 +10,13 @@ So none of it is taken on trust, following the pattern
 ``test_docs_config_reference``, ``test_docs_steering_guide`` and
 ``test_docs_architecture_guide`` already use:
 
-* **The price table is derived, in both directions.**  Every tier of every
-  shipped preset must have a row, and every row must match the tier's real
-  ``input_price`` / ``output_price`` / ``cache_read_price``.  Adding a
-  preset fails this until the README names it; changing a price fails it
-  until the README follows.
+* **No price table for presets that do not ship.**  Since TD-5172 no
+  model ships, so a price row naming a preset would document something a
+  new install does not have.  A row is checked against the shipped config
+  and fails unless that preset ships with those prices.
 * **The worked example is executed**, not asserted — its four dollar
   figures are recomputed by the shipped ``compute_call_details`` from the
-  token counts the README itself states.
+  token counts and rates the README itself states.
 * **The per-session estimate is traced to its source.**  It is a spec
   figure, not a measurement, so the README has to quote the spec exactly
   rather than drift its own version of it.
@@ -59,7 +58,7 @@ _PRICE_ROW = re.compile(
 # A worked-example line: token count, component name, rate, then its dollar cost.
 _EXAMPLE_LINE = re.compile(
     r"^\s*(?P<tokens>[\d,]+)\s+(?P<kind>uncached prompt|cached prompt|completion)\b"
-    r".*?\$(?P<cost>[\d.]+)\s*$",
+    r".*?\$(?P<rate>[\d.]+)/M.*?\$(?P<cost>[\d.]+)\s*$",
     re.MULTILINE,
 )
 _EXAMPLE_TOTAL = re.compile(r"^\s*\$(?P<total>[\d.]+)\s*$", re.MULTILINE)
@@ -86,53 +85,41 @@ def _documented_prices() -> dict[tuple[str, str], tuple[float, float, float]]:
         key = (m.group("preset"), m.group("tier"))
         assert key not in rows, f"{DOC}: duplicate price row for {key[0]}/{key[1]}"
         rows[key] = (float(m.group("input")), float(m.group("output")), float(m.group("cache")))
-    assert rows, f"{DOC}: no price rows found — has the cost table been reformatted?"
     return rows
 
 
-SHIPPED_TIERS = [
-    (preset_name, tier_name)
-    for preset_name, preset in _shipped().presets.items()
-    for tier_name in TIER_NAMES
-]
-
-
-@pytest.mark.parametrize(("preset_name", "tier_name"), SHIPPED_TIERS)
-def test_documented_prices_match_the_shipped_config(preset_name: str, tier_name: str) -> None:
-    """Every shipped tier has a row, and the row states its real prices."""
-    documented = _documented_prices()
-    row = documented.get((preset_name, tier_name))
-    assert row is not None, (
-        f"{DOC}: no cost-table row for preset `{preset_name}` tier `{tier_name}`"
-    )
-    tier = _tiers(_shipped().presets[preset_name])[tier_name]
-    expected = (tier.input_price, tier.output_price, tier.cache_read_price)
-    assert row == expected, (
-        f"{DOC}: `{preset_name}`/`{tier_name}` states {row}, config.yaml says {expected}"
-    )
-
-
-def test_no_row_names_a_preset_or_tier_that_stopped_existing() -> None:
-    """The other direction: a removed preset leaves a row behind."""
+def test_every_price_row_names_a_shipped_preset_at_its_real_prices() -> None:
+    """A row for a preset that does not ship documents nothing (TD-5172)."""
     shipped = _shipped()
-    for preset_name, tier_name in _documented_prices():
+    for (preset_name, tier_name), row in _documented_prices().items():
         assert preset_name in shipped.presets, (
             f"{DOC}: cost table documents preset `{preset_name}`, which config.yaml does not ship"
         )
         assert tier_name in TIER_NAMES, f"{DOC}: cost table documents unknown tier `{tier_name}`"
+        tier = _tiers(shipped.presets[preset_name])[tier_name]
+        assert row == (tier.input_price, tier.output_price, tier.cache_read_price)
+
+
+def test_the_readme_says_no_model_ships() -> None:
+    """The quickstart starts with adding a model, because none ships."""
+    assert _shipped().presets == {}
+    text = _doc_text()
+    assert "No model ships" in text
+    assert "docs/models.md" in text
 
 
 def test_the_worked_example_is_what_the_cost_function_computes() -> None:
     """The example's arithmetic is run, not trusted.
 
-    It is stated against `tst-default`'s brain, so the prices come from
-    there and the token counts come from the README's own prose.
+    No model ships, so the rates are the README's own (one per line), as
+    are the token counts; the cost function does the arithmetic.
     """
     text = _doc_text()
     tokens = {
         m.group("kind"): (int(m.group("tokens").replace(",", "")), float(m.group("cost")))
         for m in _EXAMPLE_LINE.finditer(text)
     }
+    rates = {m.group("kind"): float(m.group("rate")) for m in _EXAMPLE_LINE.finditer(text)}
     assert set(tokens) == {"uncached prompt", "cached prompt", "completion"}, (
         f"{DOC}: the worked example should have one line per cost component, found {sorted(tokens)}"
     )
@@ -146,7 +133,16 @@ def test_the_worked_example_is_what_the_cost_function_computes() -> None:
         completion_tokens=completion,
         total_tokens=uncached + cached + completion,
     )
-    actual = compute_call_details(usage, _tiers(_shipped().presets["tst-default"])["brain"])
+    tier = TierConfig(
+        slug="example/model",
+        base_url="https://api.example.com/v1",
+        input_price=rates["uncached prompt"],
+        output_price=rates["completion"],
+        cache_read_price=rates["cached prompt"],
+        context_window=128000,
+        max_output_tokens=8192,
+    )
+    actual = compute_call_details(usage, tier)
 
     assert uncached_cost == actual["prompt_cost"], "uncached prompt line"
     assert cached_cost == actual["cached_cost"], "cached prompt line"
@@ -235,6 +231,7 @@ _WORKS_IMPORTS: tuple[tuple[str, str], ...] = (
     ("remote attach", "tstd.remote_attach"),
     ("tailscale", "tstd.tailscale_bind"),
     ("ui-tars", "tstd.desktop.grounding_client"),
+    ("vllm", "tstd.local_worker"),
     ("charter.md", "tstd.autonomy.charter"),
     ("charter editor", "tstd.autonomy.charter_io"),
     ("sends files to the chat", "tstd.tools.send_file"),
@@ -378,8 +375,6 @@ def test_works_claims_resolve_to_shipped_modules() -> None:
         if phrase.lower() not in lowered:
             continue
         import_module(module)
-    if "vllm" in lowered:
-        assert "vllm" in _shipped().presets, f"{DOC}: works names vllm, but no such preset ships"
 
 
 @pytest.mark.parametrize("phrase,story_id", sorted(_LEFTOVER_STORIES.items()))

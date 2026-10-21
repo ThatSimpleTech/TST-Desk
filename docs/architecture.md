@@ -604,6 +604,9 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `get_setup_state` | — | Ask for the onboarding state: key presence, presets, active preset. |
 | `set_api_key` | — | Store an API key in the OS keychain. Optional `base_url` is the host that key talks to (TD-1722). |
 | `validate_api_key` | — | Probe a key with one cheap live call. |
+| `list_endpoint_models` | — | "Add a model": list a server's `/models`, with the typed key sent only to that URL (TD-5172). |
+| `add_model` | — | "Add a model": store the key, write a single-model preset, make it active. Acked with `setup_state`. |
+| `test_model` | — | Send one short test message to a preset's model (default: the active one). |
 | `delete_api_key` | — | Remove an API key from the OS keychain. |
 | `set_preset` | — | Choose the active model preset. |
 | `set_engine` | — | Choose the agent engine for new sessions (`native` or `grok`). Acked with `setup_state`. |
@@ -724,6 +727,8 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `pairing_code` | connection | Reply to `start_pairing`: the code (and `ABCD-2345` display form), host, port, desktop name, the `tstdesk://pair` link, a QR of it as standalone SVG, and when it expires (TD-5014). |
 | `pairing_completed` | connection | A phone redeemed the code. Carries that device's summary (never its key). Sent to the computer's own loopback windows only (TD-5014). |
 | `api_key_validated` | connection | The result of a key probe. Never carries the key. |
+| `endpoint_models` | connection | A server's model list for "Add a model", or why it could not be read. Never carries the key. |
+| `model_tested` | connection | The result of `test_model`: the reply, or what went wrong. |
 | `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. The `skills` row names each skill's ignored frontmatter keys (TD-5107). |
 | `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |
 | `usage_exported` | connection | Where `export_usage` wrote, and how many rows (TD-1706). |

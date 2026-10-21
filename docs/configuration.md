@@ -62,8 +62,8 @@ no effect.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `presets` | mapping of name → preset | *required* | The named model stacks you can switch between. Any name is legal; the shipped file declares `tst-default`, `budget`, `local`, and `vllm`. |
-| `active_preset` | string | `tst-default` | Which preset is in force. Naming a preset that is not declared is a load error. |
+| `presets` | mapping of name → preset | empty | The named models you can switch between. Any name is legal. None ship (TD-5172): the first run's "Add a model" walkthrough writes the first one, and [models.md](models.md) shows how to write more by hand. With none, the daemon starts and every turn fails with "No model is set up yet". |
+| `active_preset` | string | the first preset | Which preset is in force. Omitted, empty, or naming a preset that is not declared falls back to the first declared preset (none when the catalog is empty), so a config written for presets a release removed still loads. |
 | `credentials` | mapping of id → `{ name, base_url? }` | empty | Named API keys. The `name` is what Settings shows. Optional `base_url` is the host that key talks to (TD-1718). The secret is never here — it lives in the OS keychain as `tst-<id>`. Omitted in an older user copy is filled from the shipped file at load. |
 | `search` | mapping | see below | Destination for the `web_search` tool. Omitted in an older user copy is filled from the shipped file at load. |
 | `embeddings` | mapping | see below | Local embeddings sidecar for memory ranking. Omitted in an older user copy is filled from the shipped file at load. Empty `base_url` disables the client. Empty `command` is attach-only — the host never spawns on `base_url` alone. |
@@ -225,7 +225,7 @@ under the user data dir. Playwright missing always falls back to mock.
 | `command` | string or list | *empty* | Argv for the computer-use MCP sidecar. A string is split with the shell; a list is used as-is. Empty or omitted is mock-only. |
 | `browser` | `mock` or `playwright` | `mock` | Browser driver. `mock` never launches Chrome. `playwright` uses a persistent profile under the user data dir when Playwright is installed; otherwise the mock. |
 | `grounding` | mapping | see below | Local vision model for click targeting (TD-3902). |
-| `local_worker_preset` | string | `vllm` | After this session has used a `desktop_` or `browser_` tool, the worker *client* uses that named preset's worker tier (loopback URL + optional slug). Brain stays on the active preset. Empty never remaps. The name is a preset key, not a model slug. Lead-turns, `set_tier`, and escalation are unchanged. |
+| `local_worker_preset` | string | *empty* | After this session has used a `desktop_` or `browser_` tool, the worker *client* uses that named preset's worker tier (loopback URL + optional slug). Brain stays on the active preset. Empty never remaps. The name is a preset key, not a model slug. Lead-turns, `set_tier`, and escalation are unchanged. |
 | `max_prompt_images` | int ≥ 0 | `1` | How many `image_url` parts a completion may keep. Oldest images (screenshots, and images `fs_read` returned) are dropped first. `1` matches gateway-model (`--limit-mm-per-prompt image:1`). It also caps the page images one PDF read returns (at most 5), and `0` makes `fs_read` treat every tier as text-only (TD-5130). |
 
 #### `computer_use.grounding`
@@ -1745,11 +1745,13 @@ Every preset declares all three tiers. Omitting one is a load error naming it.
 | `brain` | tier | Planning turns. The router opens every session here for the first two turns, and escalates back to it after three consecutive worker failures. |
 | `worker` | tier | Token-heavy execution — edits, and the tool-call classifier. Where turns land once the lead turns are spent. |
 | `validator` | tier | Reviewing diffs and tests. Interactive mode may call it once after a write turn (`autonomy.verify`, TD-4204). Autonomy supervision is a later story. |
-| `label` | string | The name the composer's model picker and chip show for this preset. Default: the preset's key. |
-| `picker` | `primary` \| `more` | `primary` puts the preset on the picker's main list; `more` puts it under "More models". Default `primary`. |
+| `label` | string | The name the composer's model picker, its chip and the account row show for this preset. A preset with no label is left out of the picker (unless it is the current one). Default: none. |
+| `description` | string, up to 120 characters | One line under the label in the picker: what this model is for. Default: none. |
+| `picker` | `primary` \| `more` \| `team` | `primary` puts the preset on the picker's main list; `more` puts it under "More models"; `team` (a preset whose tiers use different models) puts it under "Teams", a submenu shown only when one exists. Default `primary`. |
 
 Routing is turn-count and failure driven; it does not read anything from this file beyond the
-three tier definitions. You can pin a tier for a session from the title bar.
+three tier definitions. The composer has no tier chip (TD-5172); a client can still pin a tier
+for a session with the `set_tier` message.
 
 ### A tier
 

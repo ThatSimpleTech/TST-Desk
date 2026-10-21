@@ -14,7 +14,6 @@
 		"Edit message",
 		"Message composer",
 		"Model and effort",
-		"Model tier",
 		"Plan",
 		"Restore files to here",
 		"Retry: resend your last message",
@@ -97,7 +96,7 @@
 		"Save as template",
 		"Start from template",
 		"Use current Native Grok",
-		"Use current budget local tst-default vllm",
+		"Use current walk-fast walk-main walk-team",
 		"every 2 hours in /home/me/proj summarize the inbox deliver to slack",
 		"holiday|PTO|OOO",
 		"weekdays at 7:45",
@@ -116,7 +115,7 @@
 		"Save as template",
 		"Start from template",
 		"Use current Native Grok",
-		"Use current budget local tst-default vllm",
+		"Use current walk-fast walk-main walk-team",
 		"every 2 hours in /home/me/proj summarize the inbox deliver to slack",
 		"holiday|PTO|OOO",
 		"weekdays at 7:45",
@@ -209,7 +208,12 @@
 		"toggle"
 	],
 	"settings:Model": [
-		"OpenRouter"
+		"Add a model",
+		"Brain model",
+		"How models work",
+		"None (no key) OpenRouter",
+		"Validator model",
+		"Worker model"
 	],
 	"settings:Phones and devices": [
 		"Older way: token",

@@ -1,7 +1,8 @@
 <script lang="ts">
-	// First-run wizard (TD-1101): welcome → API key → preset → workspace → done.
-	// Every step is skippable-with-consequence (the consequence is stated next
-	// to the skip link); nothing is forced. All daemon contact rides the
+	// First-run wizard (TD-1101, TD-5172): welcome → Add a model → workspace →
+	// done. "Add a model" walks server URL → key → pick a model → label →
+	// test message. Every step is skippable-with-consequence (stated next to
+	// the skip link); nothing is forced. All daemon contact rides the
 	// onboarding store — this component renders state and forwards clicks.
 	import {
 		onboarding,
@@ -9,18 +10,41 @@
 		nextStep,
 		backStep,
 		closeWizard,
-		storeKey,
-		validateKey,
-		removeKey,
-		choosePreset,
+		setModelUrl,
+		listModels,
+		pickModel,
+		addModel,
+		testModel,
+		backModelStep,
+		isLocalUrl,
 		chooseWorkspace,
 		finish,
 	} from '../onboarding.svelte.js';
-	import Icon from './Icon.svelte';
+	import { MODELS_DOC_URL, openDoc } from '../docs-links';
 
+	let urlInput = $state('');
 	let keyInput = $state('');
+	let filter = $state('');
+	let labelInput = $state('');
+	let descriptionInput = $state('');
 
 	const stepIndex = $derived(WIZARD_STEPS.indexOf(onboarding.step));
+	const form = $derived(onboarding.model);
+	const shown = $derived(
+		form.models.filter((m) => m.id.toLowerCase().includes(filter.trim().toLowerCase())).slice(0, 200)
+	);
+
+	// The label fields start from the store's guess each time a model is picked.
+	$effect(() => {
+		if (form.sub === 'label') {
+			labelInput = form.label;
+			descriptionInput = form.description;
+		}
+	});
+
+	function price(value: number | null | undefined): string {
+		return value === null || value === undefined ? '' : `$${value.toFixed(2)}`;
+	}
 
 	async function pickFolder(): Promise<void> {
 		const { open } = await import('@tauri-apps/plugin-dialog');
@@ -51,90 +75,178 @@
 			{#if onboarding.step === 'welcome'}
 				<h1 class="step-title">Welcome to TST Desk</h1>
 				<p class="step-body">
-					Four quick things: an API key, a model preset, and a workspace folder. Each step is
-					skippable — you can change any of it later from the gear in the title bar.
+					Two quick things: add a model for the agent to talk to, and pick the folder it works in.
+					You can change either later from the model picker or Settings.
 				</p>
 				<div class="actions">
+					<button class="btn btn--ghost" type="button" onclick={() => openDoc(MODELS_DOC_URL)}>
+						How models work
+					</button>
 					<button class="btn btn--primary" type="button" onclick={nextStep}>Get started</button>
 					<button class="btn btn--ghost" type="button" onclick={closeWizard}>Skip everything</button>
 				</div>
-			{:else if onboarding.step === 'key'}
-				<h1 class="step-title">Provider API key</h1>
-				<p class="step-body">
-					Keys are stored in the OS keychain — never in a file. Get one at
-					<span class="mono">openrouter.ai/keys</span>.
-				</p>
-				<label class="field">
-					<span class="field-label">API key</span>
-					<input
-						class="field-input"
-						type="password"
-						autocomplete="off"
-						placeholder="sk-or-…"
-						bind:value={keyInput}
-					/>
-				</label>
-				{#if onboarding.validating}
-					<p class="verdict verdict--pending">Checking the key with the provider…</p>
-				{:else if onboarding.validation}
-					<p class="verdict" class:verdict--ok={onboarding.validation.ok} class:verdict--bad={!onboarding.validation.ok}>
-						{onboarding.validation.detail}
+			{:else if onboarding.step === 'model'}
+				<h1 class="step-title">Add a model</h1>
+				{#if form.sub === 'url'}
+					<p class="step-body">
+						Paste the API URL of any server that speaks the OpenAI chat API: a hosted provider, or a
+						model server on this computer. It usually ends in <span class="mono">/v1</span>.
 					</p>
-				{/if}
-				<div class="actions">
-					<button class="btn btn--ghost" type="button" onclick={backStep}>Back</button>
-					<button
-						class="btn"
-						type="button"
-						disabled={keyInput.trim().length === 0 || onboarding.validating}
-						onclick={() => storeKey(keyInput)}
-					>
-						{onboarding.hasApiKey ? 'Key stored' : 'Store key'}
-					</button>
-					<button
-						class="btn"
-						type="button"
-						disabled={onboarding.validating ||
-							(!onboarding.hasApiKey && keyInput.trim().length === 0)}
-						onclick={() => validateKey(keyInput)}>Validate</button
-					>
-					{#if onboarding.hasApiKey}
-						<button class="btn btn--ghost" type="button" onclick={removeKey}>
-							Remove stored key
-						</button>
+					<label class="field">
+						<span class="field-label">Server URL</span>
+						<input
+							class="field-input"
+							type="url"
+							autocomplete="off"
+							placeholder="https://api.example.com/v1"
+							bind:value={urlInput}
+						/>
+					</label>
+					{#if form.listing}
+						<p class="verdict verdict--pending">Asking the server for its models…</p>
+					{:else if form.listError}
+						<p class="verdict verdict--bad">{form.listError}</p>
 					{/if}
-					<button class="btn btn--primary" type="button" onclick={nextStep}>Continue</button>
-					<button class="btn btn--ghost" type="button" onclick={nextStep}>
-						Skip — chats fail until a key is stored
-					</button>
-				</div>
-			{:else if onboarding.step === 'preset'}
-				<h1 class="step-title">Model preset</h1>
-				<p class="step-body">
-					A preset picks the models each tier routes to. You can edit any of it in the config
-					later — nothing here is locked in.
-				</p>
-				<div class="preset-list" role="radiogroup" aria-label="Model preset">
-					{#each onboarding.presets as name}
+					<div class="actions">
+						<button class="btn btn--ghost" type="button" onclick={backModelStep}>Back</button>
 						<button
-							class="preset"
-							class:preset--active={name === onboarding.activePreset}
+							class="btn btn--primary"
 							type="button"
-							role="radio"
-							aria-checked={name === onboarding.activePreset}
-							onclick={() => choosePreset(name)}
+							disabled={urlInput.trim().length === 0 || form.listing}
+							onclick={() => setModelUrl(urlInput)}>Continue</button
 						>
-							<span class="preset-name">{name}</span>
-							{#if name === onboarding.activePreset}
-								<span class="preset-check"><Icon name="check" size={14} /></span>
-							{/if}
+						<button class="btn btn--ghost" type="button" onclick={nextStep}>
+							Skip — chats fail until a model is added
 						</button>
-					{/each}
-				</div>
-				<div class="actions">
-					<button class="btn btn--ghost" type="button" onclick={backStep}>Back</button>
-					<button class="btn btn--primary" type="button" onclick={nextStep}>Continue</button>
-				</div>
+					</div>
+				{:else if form.sub === 'key'}
+					<p class="step-body">
+						Paste the API key from your provider's account page. It goes into the OS keychain, never
+						a file, and is only sent to <span class="mono">{form.baseUrl}</span>.
+					</p>
+					<label class="field">
+						<span class="field-label">API key</span>
+						<input
+							class="field-input"
+							type="password"
+							autocomplete="off"
+							placeholder="sk-…"
+							bind:value={keyInput}
+						/>
+					</label>
+					{#if form.listing}
+						<p class="verdict verdict--pending">Asking the server for its models…</p>
+					{:else if form.listError}
+						<p class="verdict verdict--bad">{form.listError}</p>
+					{/if}
+					<div class="actions">
+						<button class="btn btn--ghost" type="button" onclick={backModelStep}>Back</button>
+						<button
+							class="btn btn--primary"
+							type="button"
+							disabled={keyInput.trim().length === 0 || form.listing}
+							onclick={() => listModels(keyInput)}>List models</button
+						>
+					</div>
+				{:else if form.sub === 'pick'}
+					<p class="step-body">
+						{form.models.length} model{form.models.length === 1 ? '' : 's'} at
+						<span class="mono">{form.baseUrl}</span>. Pick the one the agent should use.
+					</p>
+					{#if form.models.length > 8}
+						<input
+							class="field-input"
+							type="search"
+							placeholder="Filter models"
+							aria-label="Filter models"
+							bind:value={filter}
+						/>
+					{/if}
+					<div class="preset-list model-list" role="listbox" aria-label="Models">
+						{#each shown as row (row.id)}
+							<button
+								class="preset"
+								type="button"
+								role="option"
+								aria-selected={row.id === form.slug}
+								onclick={() => pickModel(row)}
+							>
+								<span class="preset-name mono">{row.id}</span>
+								<span class="preset-meta">
+									{#if row.context_window}{Math.round(row.context_window / 1000)}k{/if}
+									{#if row.input_price !== null && row.input_price !== undefined}
+										· {price(row.input_price)} / {price(row.output_price)} per M
+									{/if}
+								</span>
+							</button>
+						{/each}
+					</div>
+					<div class="actions">
+						<button class="btn btn--ghost" type="button" onclick={backModelStep}>Back</button>
+					</div>
+				{:else if form.sub === 'label'}
+					<p class="step-body">
+						Name it the way you want to see it in the model picker, and say in a few words what it is
+						for. <span class="mono">{form.slug}</span>
+					</p>
+					<label class="field">
+						<span class="field-label">Label</span>
+						<input class="field-input field-input--text" maxlength="40" bind:value={labelInput} />
+					</label>
+					<label class="field">
+						<span class="field-label">Description (optional)</span>
+						<input
+							class="field-input field-input--text"
+							maxlength="120"
+							placeholder="General coding and chat"
+							bind:value={descriptionInput}
+						/>
+					</label>
+					{#if form.addError}
+						<p class="verdict verdict--bad">{form.addError}</p>
+					{/if}
+					<div class="actions">
+						<button class="btn btn--ghost" type="button" onclick={backModelStep}>Back</button>
+						<button
+							class="btn btn--primary"
+							type="button"
+							disabled={labelInput.trim().length === 0 || form.adding}
+							onclick={() => addModel(labelInput, descriptionInput)}
+							>{form.adding ? 'Saving…' : 'Save model'}</button
+						>
+					</div>
+				{:else}
+					<p class="step-body">
+						Saved as <strong>{form.label}</strong> and picked as the model for new chats. Sending it
+						one short test message:
+					</p>
+					{#if form.testing}
+						<p class="verdict verdict--pending">Waiting for a reply…</p>
+					{:else if form.test}
+						<p
+							class="verdict"
+							class:verdict--ok={form.test.ok}
+							class:verdict--bad={!form.test.ok}
+						>
+							{form.test.ok ? `It replied: “${form.test.reply}”` : form.test.detail}
+						</p>
+					{/if}
+					<div class="actions">
+						{#if form.test && !form.test.ok}
+							<button class="btn" type="button" onclick={testModel}>Try again</button>
+						{/if}
+						<button
+							class="btn btn--primary"
+							type="button"
+							disabled={form.testing}
+							onclick={() => (onboarding.addOnly ? finish() : nextStep())}
+							>Continue</button
+						>
+					</div>
+				{/if}
+				{#if form.sub === 'url' && isLocalUrl(urlInput)}
+					<p class="hint">A server on this computer needs no key.</p>
+				{/if}
 			{:else if onboarding.step === 'workspace'}
 				<h1 class="step-title">Workspace</h1>
 				<p class="step-body">
@@ -316,8 +428,29 @@
 		text-align: left;
 	}
 
-	.preset--active {
+	.preset[aria-selected='true'] {
 		border-color: var(--color-accent);
+	}
+
+	.model-list {
+		max-height: 16rem;
+		overflow-y: auto;
+	}
+
+	.preset-meta {
+		font-size: var(--text-xs);
+		color: var(--color-ink-muted);
+		white-space: nowrap;
+	}
+
+	.field-input--text {
+		font-family: var(--font-sans);
+	}
+
+	.hint {
+		margin: 0;
+		font-size: var(--text-xs);
+		color: var(--color-ink-muted);
 	}
 
 	.preset-name {
@@ -326,8 +459,4 @@
 		color: var(--color-ink);
 	}
 
-	.preset-check {
-		display: inline-flex;
-		color: var(--color-accent);
-	}
 </style>

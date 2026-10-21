@@ -46,21 +46,22 @@ The app also runs from source — see [Development](#development).
 
 ## Quickstart
 
-Five minutes, launch to first result. The first-run wizard is: welcome → API key → preset →
-workspace → done.
+Five minutes, launch to first result. No model ships, so the first-run wizard is: welcome →
+add a model → workspace → done. [How models work](docs/models.md) walks through every step.
 
 1. **Download it, install it, open it.** [Install](#install) above has the per-platform steps;
    clearing the unsigned-build warning on first launch is a one-time click.
-2. **Paste an API key.** The wizard links to where to get one and validates it with a single
-   cheap live call. The key goes into your OS keychain, not a file.
-   *Or skip this entirely:* pick the `local` preset instead. It ships pointed at Ollama's
-   default loopback port, and for a loopback endpoint no key is asked for and none is sent.
-   (vLLM or llama.cpp: pick the `vllm` preset instead — it ships pointed at
-   `http://127.0.0.1:8000/v1`. A different port is a `base_url` edit in `config.yaml`.)
-3. **Pick a preset.** `tst-default`, `budget`, `local`, or `vllm`. Settings' preset is the
-   default for *new* sessions. The title bar can retarget the open chat at another catalog
-   preset without rewriting Settings. Changing the *model* behind a tier is still a settings
-   change and applies to new sessions — a running session keeps the slugs it opened with.
+2. **Add a model.** Paste the API URL of any server that speaks the OpenAI chat API — a hosted
+   provider, or a model server on this computer (llama.cpp, vLLM, Ollama, LM Studio). For a
+   hosted one, paste its API key; it goes into your OS keychain, not a file, and is sent only to
+   that URL. For a server on this computer no key is asked for and none is sent. TST Desk lists
+   the server's models, you pick one and give it a label and a one-line description, and it
+   sends one short test message so you know it works.
+3. **Switch models from the picker.** The chip under the message box opens the model picker:
+   your models with their descriptions, an Effort level, and **Add a model** for the next one.
+   A model on the picker is a `presets:` entry in your `config.yaml`; [docs/models.md](docs/models.md)
+   shows how to write one by hand, and how to build a team that gives planning, doing and
+   checking their own models.
 4. **Pick a workspace.** A native folder picker. The folder is the unit of work — TST Desk
    scaffolds a `.tst/` directory in it with a commented default config, resolves any `AGENTS.md`
    or `CLAUDE.md` it finds, and shows you the resolved instruction stack.
@@ -84,34 +85,21 @@ Grok credentials stay in `~/.grok/auth.json` — never in TST Desk's config.
 You are billed by your provider for the tokens you use. Nothing is billed by us, because there
 is nobody to bill you — see [The promises](#the-promises).
 
-The shipped stack routes three tiers: a **brain** for planning turns, a **worker** for
-token-heavy edits, and a **validator** for review. Cheap tiers do the volume; the expensive tier
-only plans. Four presets ship, and the prices below are the ones in
-[`core/tstd/config.yaml`](core/tstd/config.yaml), in dollars per million tokens:
+Every turn routes three roles, called tiers: a **brain** for planning turns, a **worker** for
+token-heavy edits, and a **validator** for review. One model can fill all three; a team lets
+cheap tiers do the volume while the expensive tier only plans. No model ships, so no price
+ships either: each model entry in your `config.yaml` carries the dollars-per-million-token
+prices the meter uses. The "Add a model" walkthrough fills them in when the server reports
+them and leaves them at `0.0` otherwise; edit them there.
 
-| Preset | Tier | Input | Output | Cache read |
-|---|---|---|---|---|
-| `tst-default` | `brain` | $2.80 | $14.00 | $0.30 |
-| `tst-default` | `worker` | $0.07 | $0.17 | $0.07 |
-| `tst-default` | `validator` | $0.44 | $0.87 | $0.44 |
-| `budget` | `brain` | $0.15 | $0.60 | $0.015 |
-| `budget` | `worker` | $0.07 | $0.17 | $0.07 |
-| `budget` | `validator` | $0.44 | $0.87 | $0.44 |
-| `local` | `brain` | $0.00 | $0.00 | $0.00 |
-| `local` | `worker` | $0.00 | $0.00 | $0.00 |
-| `local` | `validator` | $0.00 | $0.00 | $0.00 |
-| `vllm` | `brain` | $0.00 | $0.00 | $0.00 |
-| `vllm` | `worker` | $0.00 | $0.00 | $0.00 |
-| `vllm` | `validator` | $0.00 | $0.00 | $0.00 |
+Model slugs are deliberately not restated here. The landscape moves weekly, so your
+`config.yaml` is the one place they live — change them there without waiting for a release.
 
-Model slugs are deliberately not restated here. The landscape moves weekly, so
-`core/tstd/config.yaml` is the one place they live — read it there, and change them there
-without waiting for a release.
-
-**A worked turn.** Token counts below are illustrative, but the prices and the arithmetic are
-the shipped ones — this is [`compute_call_details`](core/tstd/cost.py) run on
-`tst-default`'s `brain`. A turn sending 20,000 prompt tokens, of which the provider reports
-15,000 served from cache, and generating 1,500 tokens:
+**A worked turn.** Token counts and prices below are illustrative, but the arithmetic is the
+shipped one — this is [`compute_call_details`](core/tstd/cost.py) run on a brain priced at
+$2.80 input, $14.00 output and $0.30 cache read per million tokens. A turn sending 20,000
+prompt tokens, of which the provider reports 15,000 served from cache, and generating 1,500
+tokens:
 
 ```
   5,000 uncached prompt  × $2.80/M  =  $0.0140
@@ -131,8 +119,8 @@ design-time figure, and this build has not published one of its own. What the bu
 you is the real one — a live meter in the title bar showing spend per turn, per session and per
 day, broken down by tier, plus a spend cap that pauses the session when it is hit.
 
-**Per session, on `local`.** Zero. Every price in the `local` preset is `0.0`, so the meter
-reads `$0.00` and means it.
+**Per session, on a model on this computer.** Zero. Its prices are `0.0` unless you set
+them, so the meter reads `$0.00` and means it.
 
 ## The promises
 
@@ -140,7 +128,7 @@ These are not marketing lines. They are architectural constraints, written down 
 directives in [`AGENTS.md`](AGENTS.md) §2 and enforced in code.
 
 - **No account.** There is nothing to sign up for. The only credential in the system is your own
-  provider API key, and on the `local` preset there is not even that:
+  provider API key, and for a model on this computer there is not even that:
   [`config.py`](core/tstd/config.py)'s `requires_api_key()` returns false when every tier points
   at loopback, and the provider client is then built with `api_key=None` and sends no
   `Authorization` header at all.
@@ -247,7 +235,7 @@ questions the agent asks you (`ask_user`) as buttons to tap on the window or the
 a done-check (`stop_check` in `.tst/config.yaml`, or `/goal`) that sends the agent back to work
 when it stops before a command passes or a statement holds, remote attach over
 Tailscale (never `0.0.0.0`) with Slack/ntfy notify
-and the scheduler rail, the `vllm` preset and UI-TARS grounding for local pixel loops,
+and the scheduler rail, local vLLM workers (`computer_use.local_worker_preset`) and UI-TARS grounding for local pixel loops,
 a validating `CHARTER.md` schema and the project-home charter editor, the
 autonomy engine (unattended runner, circuit breakers, hard-required container),
 slash commands, `SKILL.md`, plan lock, MCP loading (with `tool_search` loading MCP tools

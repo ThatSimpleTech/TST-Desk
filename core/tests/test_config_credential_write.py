@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tstd.config import ConfigError, default_config_yaml, load_config
+from tests.catalog_helpers import catalog_config_yaml
+from tstd.config import ConfigError, load_config
 from tstd.config_write import (
     delete_credential_entry,
     save_credential,
@@ -18,7 +19,7 @@ from tstd.config_write import (
 
 def _seed(tmp_path: Path) -> Path:
     path = tmp_path / "config.yaml"
-    path.write_text(default_config_yaml(), encoding="utf-8")
+    path.write_text(catalog_config_yaml(), encoding="utf-8")
     return path
 
 

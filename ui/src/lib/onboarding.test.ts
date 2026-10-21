@@ -57,6 +57,15 @@ import {
   choosePreset,
   chooseWorkspace,
   finish,
+  openAddModel,
+  setModelUrl,
+  listModels,
+  pickModel,
+  addModel,
+  testModel,
+  backModelStep,
+  isLocalUrl,
+  labelFromSlug,
 } from "./onboarding.svelte.js";
 
 function send(msg: ClientMessageUnion): ClientMessageUnion[] {
@@ -67,15 +76,18 @@ function emit(event: DaemonEventUnion): void {
   mocks.handler?.(event);
 }
 
-const setupState = (hasKey: boolean, keyRequired = true): DaemonEventUnion =>
+const setupState = (hasKey: boolean, keyRequired = true, hasModel = true): DaemonEventUnion =>
   ({
     type: "setup_state",
     seq: 1,
     has_api_key: hasKey,
     key_required: keyRequired,
-    presets: ["budget", "local", "tst-default"],
-    active_preset: "tst-default",
+    presets: hasModel ? ["budget", "local", "tst-default"] : [],
+    active_preset: hasModel ? "tst-default" : "",
+    has_model: hasModel,
   }) as DaemonEventUnion;
+
+const firstRun = (): DaemonEventUnion => setupState(false, false, false);
 
 beforeEach(() => {
   resetOnboarding();
@@ -85,33 +97,35 @@ beforeEach(() => {
 });
 
 describe("first-run detection", () => {
-  it("opens the wizard when the first setup_state reports no key", () => {
+  it("opens the wizard when the first setup_state has no model (TD-5172)", () => {
     start();
-    emit(setupState(false));
+    emit(firstRun());
     expect(onboarding.open).toBe(true);
     expect(onboarding.step).toBe("welcome");
-    expect(onboarding.presets).toEqual(["budget", "local", "tst-default"]);
+    expect(onboarding.hasModel).toBe(false);
+    expect(onboarding.presets).toEqual([]);
   });
 
-  it("stays closed when a key already exists (returning user)", () => {
+  it("stays closed when a model is set up (returning user)", () => {
     start();
     emit(setupState(true));
     expect(onboarding.open).toBe(false);
     expect(onboarding.hasApiKey).toBe(true);
   });
 
-  it("stays closed on a local-only preset that needs no key (TD-1801)", () => {
+  it("stays closed when a model exists but its key is missing: Settings → Keys fixes that", () => {
     start();
+    emit(setupState(false));
+    expect(onboarding.open).toBe(false);
     emit(setupState(false, false));
     expect(onboarding.open).toBe(false);
-    expect(onboarding.hasApiKey).toBe(false);
   });
 
   it("auto-opens at most once — closing is a decision, not a bug", () => {
     start();
-    emit(setupState(false));
+    emit(firstRun());
     closeWizard();
-    emit(setupState(false));
+    emit(firstRun());
     expect(onboarding.open).toBe(false);
   });
 
@@ -241,14 +255,12 @@ describe("step flow", () => {
     start();
     expect(onboarding.step).toBe("welcome");
     nextStep();
-    nextStep();
-    expect(onboarding.step).toBe("preset");
+    expect(onboarding.step).toBe("model");
     nextStep();
     expect(onboarding.step).toBe("workspace");
     nextStep();
     nextStep();
     expect(onboarding.step).toBe("done"); // clamped
-    backStep();
     backStep();
     backStep();
     backStep();
@@ -268,8 +280,151 @@ describe("step flow", () => {
 
   it("finish closes the wizard", () => {
     start();
-    emit(setupState(false));
+    emit(firstRun());
     finish();
     expect(onboarding.open).toBe(false);
+  });
+});
+
+describe("Add a model (TD-5172)", () => {
+  const listed = (error: string | null = null): DaemonEventUnion =>
+    ({
+      type: "endpoint_models",
+      seq: 1,
+      base_url: "https://api.example.com/v1",
+      models: error
+        ? []
+        : [
+            { id: "vendor/model-a", context_window: 128000, input_price: 3, output_price: 15 },
+            { id: "vendor/model-b" },
+          ],
+      error,
+    }) as DaemonEventUnion;
+
+  it("opens straight on the step from the picker or Settings", () => {
+    openAddModel();
+    expect(onboarding.open).toBe(true);
+    expect(onboarding.step).toBe("model");
+    expect(onboarding.model.sub).toBe("url");
+    expect(onboarding.addOnly).toBe(true);
+  });
+
+  it("a hosted URL asks for a key, then lists models with it", () => {
+    start();
+    openAddModel();
+    setModelUrl("  https://api.example.com/v1  ");
+    expect(onboarding.model.sub).toBe("key");
+    expect(send({ type: "list_endpoint_models" } as ClientMessageUnion)).toHaveLength(0);
+    listModels(" sk-test ");
+    expect(send({ type: "list_endpoint_models" } as ClientMessageUnion)).toEqual([
+      { type: "list_endpoint_models", base_url: "https://api.example.com/v1", api_key: "sk-test" },
+    ]);
+    expect(onboarding.model.listing).toBe(true);
+    emit(listed());
+    expect(onboarding.model.listing).toBe(false);
+    expect(onboarding.model.sub).toBe("pick");
+    expect(onboarding.model.models.map((m) => m.id)).toEqual(["vendor/model-a", "vendor/model-b"]);
+  });
+
+  it("a server on this computer skips the key", () => {
+    start();
+    openAddModel();
+    setModelUrl("http://127.0.0.1:8000/v1");
+    const sent = send({ type: "list_endpoint_models" } as ClientMessageUnion);
+    expect(sent).toEqual([{ type: "list_endpoint_models", base_url: "http://127.0.0.1:8000/v1" }]);
+    emit(listed());
+    expect(onboarding.model.sub).toBe("pick");
+    backModelStep();
+    expect(onboarding.model.sub).toBe("url");
+  });
+
+  it("a listing error stays on the step and says why", () => {
+    start();
+    openAddModel();
+    setModelUrl("https://api.example.com/v1");
+    listModels("sk-bad");
+    emit(listed("The server refused the key. Check it and try again."));
+    expect(onboarding.model.sub).toBe("key");
+    expect(onboarding.model.listError).toContain("refused the key");
+  });
+
+  it("pick → label → save sends add_model, then tests the new model", () => {
+    start();
+    openAddModel();
+    setModelUrl("https://api.example.com/v1");
+    listModels("sk-test");
+    emit(listed());
+    pickModel(onboarding.model.models[0]);
+    expect(onboarding.model.sub).toBe("label");
+    expect(onboarding.model.label).toBe("model-a");
+    addModel(" My model ", " Coding and chat ");
+    expect(send({ type: "add_model" } as ClientMessageUnion)).toEqual([
+      {
+        type: "add_model",
+        label: "My model",
+        description: "Coding and chat",
+        base_url: "https://api.example.com/v1",
+        slug: "vendor/model-a",
+        api_key: "sk-test",
+        context_window: 128000,
+        input_price: 3,
+        output_price: 15,
+      },
+    ]);
+    emit({ ...setupState(true), active_preset: "my-model" } as DaemonEventUnion);
+    expect(onboarding.model.sub).toBe("test");
+    expect(onboarding.model.added).toBe("my-model");
+    expect(onboarding.model.apiKey).toBe(""); // dropped once the daemon has it
+    expect(send({ type: "test_model" } as ClientMessageUnion)).toEqual([
+      { type: "test_model", preset: "my-model" },
+    ]);
+    emit({
+      type: "model_tested",
+      seq: 1,
+      preset: "my-model",
+      ok: true,
+      reply: "I am working.",
+      detail: "",
+    } as DaemonEventUnion);
+    expect(onboarding.model.testing).toBe(false);
+    expect(onboarding.model.test).toEqual({ ok: true, reply: "I am working.", detail: "" });
+  });
+
+  it("a refused save shows the daemon's message", () => {
+    start();
+    openAddModel();
+    setModelUrl("http://127.0.0.1:8000/v1");
+    emit(listed());
+    pickModel({ id: "local-model" });
+    addModel("Local", "");
+    emit({ type: "error", seq: 1, code: "bad_request", message: "That name is taken" } as DaemonEventUnion);
+    expect(onboarding.model.adding).toBe(false);
+    expect(onboarding.model.addError).toBe("That name is taken");
+    expect(onboarding.model.sub).toBe("label");
+  });
+
+  it("closing drops a typed key", () => {
+    start();
+    openAddModel();
+    setModelUrl("https://api.example.com/v1");
+    listModels("sk-test");
+    closeWizard();
+    expect(onboarding.model.apiKey).toBe("");
+  });
+
+  it("test again re-sends", () => {
+    start();
+    testModel();
+    expect(send({ type: "test_model" } as ClientMessageUnion)).toEqual([{ type: "test_model" }]);
+  });
+
+  it("helpers: local URLs and labels from ids", () => {
+    expect(isLocalUrl("http://127.0.0.1:8000/v1")).toBe(true);
+    expect(isLocalUrl("http://localhost:11434/v1")).toBe(true);
+    expect(isLocalUrl("http://[::1]:8000/v1")).toBe(true);
+    expect(isLocalUrl("https://api.example.com/v1")).toBe(false);
+    expect(isLocalUrl("not a url")).toBe(false);
+    expect(labelFromSlug("vendor/model-a")).toBe("model-a");
+    expect(labelFromSlug("plain")).toBe("plain");
   });
 });

@@ -16,12 +16,13 @@ from pathlib import Path
 
 import pytest
 
+from tests.catalog_helpers import catalog_config_yaml
 from tstd.audit import AuditStore, audit_db_path
 from tstd.audit_queries import export_jsonl
 from tstd.autonomy.charter import charter_path
 from tstd.browser.factory import browser_profile_dir
 from tstd.cli import _turn_timeout_secs
-from tstd.config import cached_config, config_yaml_path, default_config_yaml
+from tstd.config import cached_config, config_yaml_path
 from tstd.config_bind import call_config_loader
 from tstd.config_write import save_active_preset
 from tstd.coworker import save_coworker
@@ -91,7 +92,7 @@ def _patch_default_dir(monkeypatch: pytest.MonkeyPatch, default: Path) -> None:
 
 
 def _config_text(*, preset: str, name: str, retries: int | None = None) -> str:
-    text = default_config_yaml().replace("name: OpenRouter", f"name: {name}", 1)
+    text = catalog_config_yaml().replace("name: OpenRouter", f"name: {name}", 1)
     if retries is not None:
         text = text.replace("\n  max_retries: 3\n", f"\n  max_retries: {retries}\n", 1)
     return text.rstrip() + f"\n\nactive_preset: {preset}\n"

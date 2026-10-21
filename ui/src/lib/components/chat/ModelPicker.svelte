@@ -1,27 +1,43 @@
 <script lang="ts">
 	// The model picker, built like Claude's: a short model list with a check
 	// on the current one, an "Effort" row that opens a submenu (Low to Max,
-	// Ultracode last), and a "More models" row for the raw routes. The chip
-	// reads "<Model> <Effort>", e.g. "House Medium". A model is a catalog
-	// preset; picking one is the same act as the old preset dropdown.
+	// Ultracode last), a "More models" row for the raw routes, and "Teams"
+	// (a model per role) only when the config has one. The chip reads
+	// "<Model> <Effort>", e.g. "House Medium". A model is a catalog preset.
+	//
+	// TD-5172: every row has one job a person can look up. Models show their
+	// label with the config's one-line description under it; unlabelled
+	// presets stay out of the list (unless current). "Add a model" opens the
+	// walkthrough and "How models work" opens docs/models.md. With no model
+	// yet, the chip itself reads "Add a model".
 	import {
 		chipLabel,
 		EFFORT_HINT,
 		EFFORT_OPTIONS,
 		effortLabel,
 		groupModels,
+		modelDescription,
 		modelLabel,
 	} from "../../effort";
+	import { MODELS_DOC_URL, openDoc } from "../../docs-links";
+	import { openAddModel } from "../../onboarding.svelte.js";
 	import { session, setEffort, setSessionPreset } from "../../session-status.svelte.js";
 	import { settings } from "../../settings.svelte.js";
 
-	type View = "main" | "effort" | "more";
+	type View = "main" | "effort" | "more" | "teams";
 
 	let open = $state(false);
 	let view = $state<View>("main");
 
 	const current = $derived(session.preset);
-	const groups = $derived(groupModels(settings.presets, settings.morePresets, current));
+	const groups = $derived(
+		groupModels(settings.presets, {
+			more: settings.morePresets,
+			teams: settings.teamPresets,
+			labels: settings.presetLabels,
+			current,
+		}),
+	);
 	const locked = $derived(session.turnActive);
 
 	function close(): void {
@@ -30,8 +46,22 @@
 	}
 
 	function toggle(): void {
+		if (!settings.hasModel) {
+			openAddModel();
+			return;
+		}
 		if (open) close();
 		else open = true;
+	}
+
+	function addModel(): void {
+		close();
+		openAddModel();
+	}
+
+	function howModelsWork(): void {
+		close();
+		void openDoc(MODELS_DOC_URL);
 	}
 
 	function pickModel(name: string): void {
@@ -71,7 +101,7 @@
 		aria-expanded={open}
 		onclick={toggle}
 	>
-		{chipLabel(current, session.effort, settings.presetLabels)}
+		{settings.hasModel ? chipLabel(current, session.effort, settings.presetLabels) : "Add a model"}
 		<span class="caret" aria-hidden="true"></span>
 	</button>
 
@@ -88,7 +118,12 @@
 						title={locked && name !== current ? "Cannot change model while a turn is running" : ""}
 						onclick={() => pickModel(name)}
 					>
-						<span class="label">{modelLabel(name, settings.presetLabels)}</span>
+						<span class="text">
+							<span class="label">{modelLabel(name, settings.presetLabels)}</span>
+							{#if modelDescription(name, settings.presetDescriptions)}
+								<span class="sub">{modelDescription(name, settings.presetDescriptions)}</span>
+							{/if}
+						</span>
 						<span class="check" aria-hidden="true">{name === current ? "✓" : ""}</span>
 					</button>
 				{/each}
@@ -104,6 +139,25 @@
 						<span class="more" aria-hidden="true">›</span>
 					</button>
 				{/if}
+				{#if groups.teams.length > 0}
+					<button
+						class="item"
+						type="button"
+						role="menuitem"
+						title="A team gives the planning, doing and checking roles their own models."
+						onclick={() => (view = "teams")}
+					>
+						<span class="label">Teams</span>
+						<span class="more" aria-hidden="true">›</span>
+					</button>
+				{/if}
+				<div class="rule" role="separator"></div>
+				<button class="item" type="button" role="menuitem" onclick={addModel}>
+					<span class="label">Add a model</span>
+				</button>
+				<button class="item item--link" type="button" role="menuitem" onclick={howModelsWork}>
+					<span class="label">How models work</span>
+				</button>
 			{:else if view === "effort"}
 				<button class="back" type="button" onclick={() => (view = "main")}>‹ Effort</button>
 				<p class="hint">{EFFORT_HINT}</p>
@@ -126,8 +180,13 @@
 					</button>
 				{/each}
 			{:else}
-				<button class="back" type="button" onclick={() => (view = "main")}>‹ More models</button>
-				{#each groups.more as name (name)}
+				<button class="back" type="button" onclick={() => (view = "main")}>
+					‹ {view === "teams" ? "Teams" : "More models"}
+				</button>
+				{#if view === "teams"}
+					<p class="hint">Each team gives planning, doing and checking their own models.</p>
+				{/if}
+				{#each view === "teams" ? groups.teams : groups.more as name (name)}
 					<button
 						class="item"
 						type="button"
@@ -136,7 +195,12 @@
 						disabled={locked && name !== current}
 						onclick={() => pickModel(name)}
 					>
-						<span class="label">{modelLabel(name, settings.presetLabels)}</span>
+						<span class="text">
+							<span class="label">{modelLabel(name, settings.presetLabels)}</span>
+							{#if modelDescription(name, settings.presetDescriptions)}
+								<span class="sub">{modelDescription(name, settings.presetDescriptions)}</span>
+							{/if}
+						</span>
 						<span class="check" aria-hidden="true">{name === current ? "✓" : ""}</span>
 					</button>
 				{/each}
@@ -246,6 +310,25 @@
 	.label {
 		flex: 1;
 		min-width: 0;
+	}
+
+	.text {
+		display: flex;
+		flex: 1;
+		flex-direction: column;
+		min-width: 0;
+	}
+
+	.sub {
+		font-size: var(--text-xs);
+		color: var(--color-ink-muted);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.item--link .label {
+		color: var(--color-ink-secondary);
 	}
 
 	.value,

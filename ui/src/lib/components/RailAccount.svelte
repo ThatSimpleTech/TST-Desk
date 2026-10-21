@@ -1,7 +1,7 @@
 <script lang="ts">
 	// The rail's account anchor (TD-1712): pinned bottom-left rather than
 	// buried behind a header gear. TST Desk has no accounts (§2) — the
-	// identity shown is the daemon's active provider preset and whether a key
+	// identity shown is the active model's label (TD-5172) and whether a key
 	// is stored, both from `setup_state`. The row opens TD-1703's settings
 	// pane through its own store; it never reimplements it.
 	import Icon from './Icon.svelte';
@@ -11,7 +11,13 @@
 	// `compact` is the rail's collapsed 48px strip: avatar only.
 	let { compact = false }: { compact?: boolean } = $props();
 
-	let account = $derived(accountRow(settings.activePreset, settings.hasApiKey));
+	let account = $derived(
+		accountRow(settings.activePreset, settings.hasApiKey, {
+			labels: settings.presetLabels,
+			keyRequired: settings.keyRequired,
+			hasModel: settings.hasModel,
+		})
+	);
 </script>
 
 <button

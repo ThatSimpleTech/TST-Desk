@@ -4,8 +4,7 @@
 # The model landscape moves weekly. Update these values without a release.
 # Slugs, prices, and URLs live here, never in Python source code.
 #
-# Four presets are shipped. Customize any tier within a preset, or add
-# your own presets below.
+# No model presets ship; the first run adds one (see `presets:` below).
 #
 # A tier has:
 #   slug             — OpenRouter slug or any model identifier. Optional for
@@ -44,173 +43,60 @@ credentials:
     name: OpenRouter
     base_url: https://openrouter.ai/api/v1
 
-presets:
-  # ── tst-default ──────────────────────────────────────────────────
-  # Documented swaps (uncomment to use, or copy into another preset):
-  #   brain — z-ai/glm-5.2 (cheaper brain)
-  #   validator — z-ai/glm-5.2 (stronger validator)
-  #   worker — deepseek/deepseek-v4-pro (heavier worker)
-  tst-default:
-    brain:
-      slug: moonshotai/kimi-k3
-      base_url: https://openrouter.ai/api/v1
-      credential: openrouter
-      input_price: 2.80
-      output_price: 14.00
-      cache_read_price: 0.30
-      context_window: 1000000
-      max_output_tokens: 8192
-    worker:
-      slug: deepseek/deepseek-v4-flash
-      base_url: https://openrouter.ai/api/v1
-      credential: openrouter
-      input_price: 0.07
-      output_price: 0.17
-      cache_read_price: 0.07
-      context_window: 128000
-      max_output_tokens: 16384
-    validator:
-      slug: deepseek/deepseek-v4-pro
-      base_url: https://openrouter.ai/api/v1
-      credential: openrouter
-      input_price: 0.44
-      output_price: 0.87
-      cache_read_price: 0.44
-      context_window: 128000
-      max_output_tokens: 8192
-
-  # ── budget ───────────────────────────────────────────────────────
-  # Cheaper brain (GLM-5.2), same worker and validator.
-  budget:
-    brain:
-      # GLM-5.2 — cheaper brain, also works as a stronger validator
-      slug: z-ai/glm-5.2
-      base_url: https://openrouter.ai/api/v1
-      credential: openrouter
-      input_price: 0.15
-      output_price: 0.60
-      cache_read_price: 0.015
-      context_window: 128000
-      max_output_tokens: 8192
-    worker:
-      slug: deepseek/deepseek-v4-flash
-      base_url: https://openrouter.ai/api/v1
-      credential: openrouter
-      input_price: 0.07
-      output_price: 0.17
-      cache_read_price: 0.07
-      context_window: 128000
-      max_output_tokens: 16384
-    validator:
-      # DeepSeek V4 Pro — stronger validator, also works as a heavier worker
-      slug: deepseek/deepseek-v4-pro
-      base_url: https://openrouter.ai/api/v1
-      credential: openrouter
-      input_price: 0.44
-      output_price: 0.87
-      cache_read_price: 0.44
-      context_window: 128000
-      max_output_tokens: 8192
-
-  # ── local ────────────────────────────────────────────────────────
-  # Zero-cost local models on this machine. Targets Ollama's
-  # OpenAI-compatible endpoint (the default port); any OpenAI-compatible
-  # server on loopback works — point base_url at it.
-  # A loopback base_url needs no API key at all (TD-1801).
-  #
-  # No slug is named on purpose: the endpoint is a convention, the model
-  # tag is your machine. With slug left out, the model is read from the
-  # endpoint's /v1/models the first time a turn needs it. That requires
-  # the server to be serving exactly one model — pick one explicitly by
-  # uncommenting slug below, which always wins over discovery.
-  #
-  # One model serves all three tiers: a single local server usually has
-  # room for one loaded model, and swapping per tier would pay an unload
-  # and reload on every routing hop.
-  #
-  # context_window is a compaction budget, not a request parameter. It
-  # must be no larger than what the *server* actually serves: Ollama caps
-  # context at num_ctx (OLLAMA_CONTEXT_LENGTH or the Modelfile),
-  # independent of a model's much larger architectural ceiling. Shipping
-  # the ceiling would keep compaction from ever firing and let the server
-  # silently truncate the oldest messages — the steering block goes
-  # first. 32768 is a conservative floor that local hardware can hold.
-  # Raise it here once you have raised num_ctx to match.
-  local:
-    brain:
-      # slug: your-model-tag   # omitted → resolved from /v1/models
-      base_url: http://127.0.0.1:11434/v1
-      input_price: 0.0
-      output_price: 0.0
-      cache_read_price: 0.0
-      context_window: 32768
-      max_output_tokens: 4096
-    worker:
-      # slug: your-model-tag   # omitted → resolved from /v1/models
-      base_url: http://127.0.0.1:11434/v1
-      input_price: 0.0
-      output_price: 0.0
-      cache_read_price: 0.0
-      context_window: 32768
-      max_output_tokens: 4096
-    validator:
-      # slug: your-model-tag   # omitted → resolved from /v1/models
-      base_url: http://127.0.0.1:11434/v1
-      input_price: 0.0
-      output_price: 0.0
-      cache_read_price: 0.0
-      context_window: 32768
-      max_output_tokens: 4096
-
-  # ── vllm ─────────────────────────────────────────────────────────────
-  # Zero-cost local models on this machine. Targets vLLM's OpenAI-
-  # compatible server (the default port). The GPU server serves the same /v1
-  # shape — attach it with this preset. If the process listens on
-  # another port, edit base_url here; never in Python.
-  # A loopback base_url needs no API key at all (TD-1801).
-  #
-  # No slug is named on purpose: the endpoint is a convention, the model
-  # tag is your machine. With slug left out, the model is read from the
-  # endpoint's /v1/models the first time a turn needs it. That requires
-  # the server to be serving exactly one model — pick one explicitly by
-  # uncommenting slug below, which always wins over discovery.
-  #
-  # One model serves all three tiers: a single local server usually has
-  # room for one loaded model, and swapping per tier would pay an unload
-  # and reload on every routing hop.
-  #
-  # context_window is a compaction budget, not a request parameter. It
-  # must be no larger than what the *server* actually serves. Shipping
-  # a model's architectural ceiling would keep compaction from ever
-  # firing and let the server silently truncate the oldest messages —
-  # the steering block goes first. 32768 is a conservative floor that
-  # local hardware can hold. Raise it here once the server's context
-  # matches.
-  vllm:
-    brain:
-      # slug: your-model-tag   # omitted → resolved from /v1/models
-      base_url: http://127.0.0.1:8000/v1
-      input_price: 0.0
-      output_price: 0.0
-      cache_read_price: 0.0
-      context_window: 32768
-      max_output_tokens: 4096
-    worker:
-      # slug: your-model-tag   # omitted → resolved from /v1/models
-      base_url: http://127.0.0.1:8000/v1
-      input_price: 0.0
-      output_price: 0.0
-      cache_read_price: 0.0
-      context_window: 32768
-      max_output_tokens: 4096
-    validator:
-      # slug: your-model-tag   # omitted → resolved from /v1/models
-      base_url: http://127.0.0.1:8000/v1
-      input_price: 0.0
-      output_price: 0.0
-      cache_read_price: 0.0
-      context_window: 32768
-      max_output_tokens: 4096
+# Models (presets). None ship (TD-5172): the first-run "Add a model"
+# walkthrough, or Settings → Models, writes one for you. A preset is one
+# entry on the model picker. Each needs a label (its name on the picker)
+# and a one-line description (shown under the name).
+#
+# A preset routes three internal roles, called tiers: brain (plans and
+# talks to you), worker (runs the steps, plus compaction and summaries)
+# and validator (checks the work). A plain model entry uses the same
+# model on all three. A "team" uses different models per role and sits
+# under Teams on the picker (picker: team). See docs/models.md.
+#
+# picker: primary (main list, the default), more (under More models) or
+# team (under Teams). A preset with no label is left off the picker.
+#
+# Example (uncomment and edit, or let the walkthrough write it):
+#
+#   my-model:
+#     label: My model
+#     description: General coding and chat
+#     brain:
+#       slug: provider/model-name
+#       base_url: https://api.example.com/v1
+#       credential: my-provider
+#       context_window: 128000
+#       max_output_tokens: 8192
+#       input_price: 0.0        # USD per million tokens
+#       output_price: 0.0
+#       cache_read_price: 0.0
+#     worker:
+#       slug: provider/model-name
+#       base_url: https://api.example.com/v1
+#       credential: my-provider
+#       context_window: 128000
+#       max_output_tokens: 8192
+#       input_price: 0.0        # USD per million tokens
+#       output_price: 0.0
+#       cache_read_price: 0.0
+#     validator:
+#       slug: provider/model-name
+#       base_url: https://api.example.com/v1
+#       credential: my-provider
+#       context_window: 128000
+#       max_output_tokens: 8192
+#       input_price: 0.0        # USD per million tokens
+#       output_price: 0.0
+#       cache_read_price: 0.0
+#
+# context_window is a compaction budget, not a request parameter. Keep it
+# no larger than what the server actually serves: a local server often
+# caps context well below a model's architectural ceiling, and a larger
+# number keeps compaction from firing while the server silently drops the
+# oldest messages. A loopback base_url needs no key (TD-1801), and a
+# loopback tier may leave slug out to read the model from /v1/models.
+presets: {}
 
 # Web search. The agent's web_search tool sends the query to base_url as
 # ?q=... — never a host written into Python. Empty base_url disables the
@@ -403,7 +289,7 @@ lsp:
 # always falls back to the in-process mock.
 # grounding (TD-3902): local UI-TARS (or compatible) click targeting.
 # Empty base_url is off — clicks use the intended (x, y). A filled URL
-# must be loopback (the vllm preset's :8000/v1, or a dedicated sidecar).
+# must be loopback (a local model server, or a dedicated sidecar).
 # Optional slug is discovered from /v1/models when omitted.
 # local_worker_preset (TD-3903): after this session has used a desktop_
 # or browser_ tool, the worker *client* uses that named preset's worker
@@ -417,7 +303,7 @@ computer_use:
   grounding:
     base_url: ""
     timeout_seconds: 8
-  local_worker_preset: vllm
+  local_worker_preset: ""
   max_prompt_images: 1
 
 # Opt-in Tailscale bind (TD-3601). Empty is off: 127.0.0.1 only.

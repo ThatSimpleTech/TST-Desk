@@ -27,6 +27,7 @@ from typing import Any
 
 import pytest
 
+from tests.catalog_helpers import catalog_config_yaml
 from tstd.config import ModelConfig, cached_config
 from tstd.context import calibration as calibration_module
 from tstd.context.calibration import CalibrationKey, CalibrationStore
@@ -63,6 +64,29 @@ def _real_user_data_dirs() -> tuple[Path, ...]:
 # Read at import, before any fixture moves HOME. Nothing in the suite may
 # persist into these (TD-5013).
 _REAL_USER_DATA_DIRS = tuple(d.resolve() for d in _real_user_data_dirs())
+
+
+@pytest.fixture(scope="session")
+def _seeded_config(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The shipped config with the test catalog spliced over ``presets: {}``."""
+    path = tmp_path_factory.mktemp("seed") / "config.yaml"
+    path.write_text(catalog_config_yaml(), encoding="utf-8")
+    return path
+
+
+@pytest.fixture(autouse=True)
+def _seed_test_catalog(
+    request: pytest.FixtureRequest, _seeded_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """New user configs get the test catalog, since none ships (TD-5172).
+
+    A test marked ``shipped_config`` sees the real, empty shipped catalog.
+    """
+    if request.node.get_closest_marker("shipped_config") is not None:
+        return
+    import tstd.config as config_module
+
+    monkeypatch.setattr(config_module, "_seed_source", lambda: _seeded_config)
 
 
 @pytest.fixture(autouse=True)

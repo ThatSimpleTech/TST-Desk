@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 //
-// The model picker: a short model list, an Effort submenu, More models, and
-// a chip that reads "<Model> <Effort>".
+// The model picker: a short model list, an Effort submenu, More models,
+// Teams when one exists, and a chip that reads "<Model> <Effort>".
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mount, tick, unmount } from "svelte";
@@ -14,6 +14,7 @@ import {
 	resetSession,
 	session,
 } from "./session-status.svelte.js";
+import { onboarding, resetOnboarding } from "./onboarding.svelte.js";
 import { resetSettings, settings } from "./settings.svelte.js";
 
 let app: ReturnType<typeof mount> | null = null;
@@ -57,7 +58,13 @@ beforeEach(() => {
 	session.sessionId = "s1";
 	session.preset = "house";
 	settings.presets = ["house", "tst-default", "sub-claude-opus", "sub-grok", "house-raw"];
-	settings.presetLabels = { house: "House" };
+	settings.presetLabels = {
+		house: "House",
+		"tst-default": "Default",
+		"sub-claude-opus": "Claude Opus",
+		"sub-grok": "Grok",
+	};
+	settings.presetDescriptions = { house: "Coding and chat on your own server" };
 	settings.morePresets = ["sub-claude-opus", "sub-grok", "house-raw"];
 	app = mount(ModelPicker, { target: document.body });
 });
@@ -69,6 +76,7 @@ afterEach(async () => {
 	bindClient(null);
 	resetSession();
 	resetSettings();
+	resetOnboarding();
 	vi.restoreAllMocks();
 });
 
@@ -79,23 +87,58 @@ describe("model picker", () => {
 		expect(chip().textContent?.trim()).toBe("House Medium");
 	});
 
-	it("lists the short main list, then Effort and More models", async () => {
+	it("lists the labelled models with their descriptions, then Effort, More, Add and the guide", async () => {
 		await click(chip());
 		expect(texts(".item")).toEqual([
-			"House ✓",
-			"tst-default",
+			"House Coding and chat on your own server ✓",
+			"Default",
 			"Effort Medium ›",
 			"More models ›",
+			"Add a model",
+			"How models work",
 		]);
+		expect(document.querySelector(".sub")?.textContent).toBe("Coding and chat on your own server");
 		expect(document.querySelector('[aria-checked="true"]')?.textContent).toContain("House");
 	});
 
-	it("puts the raw routes under More models", async () => {
+	it("puts the labelled raw routes under More models; unlabelled ones are hidden", async () => {
 		await click(chip());
 		await click(item("More models"));
-		expect(texts(".item")).toEqual(["sub-claude-opus", "sub-grok", "house-raw"]);
-		await click(item("sub-grok"));
+		expect(texts(".item")).toEqual(["Claude Opus", "Grok"]);
+		await click(item("Grok"));
 		expect(sent).toEqual([{ type: "set_session_preset", session_id: "s1", name: "sub-grok" }]);
+	});
+
+	it("shows Teams only when a team exists", async () => {
+		await click(chip());
+		expect(texts(".item")).not.toContain("Teams ›");
+		await click(chip());
+		settings.presets = [...settings.presets, "crew"];
+		settings.presetLabels = { ...settings.presetLabels, crew: "Crew" };
+		settings.teamPresets = ["crew"];
+		await tick();
+		await click(chip());
+		expect(texts(".item")).toContain("Teams ›");
+		expect(texts(".item")).not.toContain("Crew");
+		await click(item("Teams"));
+		expect(texts(".item")).toEqual(["Crew"]);
+	});
+
+	it("Add a model opens the walkthrough", async () => {
+		await click(chip());
+		await click(item("Add a model"));
+		expect(onboarding.open).toBe(true);
+		expect(onboarding.step).toBe("model");
+		expect(document.querySelector(".menu")).toBeNull();
+	});
+
+	it("with no model yet the chip reads Add a model and opens the walkthrough", async () => {
+		settings.hasModel = false;
+		await tick();
+		expect(chip().textContent?.trim()).toBe("Add a model");
+		await click(chip());
+		expect(onboarding.open).toBe(true);
+		expect(document.querySelector(".menu")).toBeNull();
 	});
 
 	it("shows the effort submenu with the hint, badges and Ultracode last", async () => {

@@ -1,8 +1,10 @@
 """M8 exit harness (TD-3904).
 
-Live pass against the shipped ``vllm`` preset's loopback ``/v1`` (vLLM or
-llama.cpp). An absent server — or a machine with no fixture at that URL —
-skips with explicit copy, heading-match style, rather than failing.
+Live pass against a loopback ``/v1`` (vLLM or llama.cpp): ``--endpoint``,
+or the active model's brain URL when it is on this machine (no preset
+ships to borrow one from since TD-5172). An absent server, or a machine
+with no fixture at that URL, skips with explicit copy, heading-match
+style, rather than failing.
 Off-box URLs are refused before any request leaves. Not
 ``e2e_harness.run``. This harness is the M8 exit criterion.
 """
@@ -19,15 +21,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
-import yaml
 
-from .config import ConfigError, ModelConfig, default_config_yaml
+from .config import ConfigError, ModelConfig, config_yaml_path, is_loopback_url, load_config
 from .cost import compute_call_cost
 from .e2e_checks import HarnessResult, _check
 from .e2e_live import LiveProvider, off_box_refusal
 from .provider import ChatCompletionRequest, ChatMessage, ProviderError, Usage, content_as_text
 
-_PRESET = "vllm"
+_PRESET = "m8"
 _PROBE_TIMEOUT = 10.0
 _LIVE_BUDGET = 600.0
 _PROMPT = "Reply with the single word: pong. Do not call tools."
@@ -49,21 +50,41 @@ class M8Preflight:
     model: str | None = None
 
 
-def shipped_vllm_config() -> ModelConfig:
-    """The packaged ``vllm`` preset. URL comes from yaml, never a literal."""
-    loaded = yaml.safe_load(default_config_yaml())
-    if not isinstance(loaded, dict):
-        raise ConfigError("shipped config.yaml is not a mapping")
-    config = ModelConfig.model_validate(loaded)
-    if _PRESET not in config.presets:
-        raise ConfigError(f"shipped config.yaml has no {_PRESET} preset")
-    config.active_preset = _PRESET
-    return config
+def m8_config(endpoint: str) -> ModelConfig:
+    """A one-model, zero-price catalog on *endpoint*: the vLLM-shaped tier."""
+    tier = {
+        "base_url": endpoint,
+        "input_price": 0.0,
+        "output_price": 0.0,
+        "cache_read_price": 0.0,
+        "context_window": 32768,
+        "max_output_tokens": 4096,
+    }
+    return ModelConfig.model_validate(
+        {
+            "presets": {_PRESET: {"brain": tier, "worker": tier, "validator": tier}},
+            "active_preset": _PRESET,
+        }
+    )
 
 
-def shipped_vllm_endpoint() -> str:
-    """Loopback ``/v1`` the shipped ``vllm`` preset names."""
-    return shipped_vllm_config().tier("brain").base_url
+def default_m8_endpoint(data_dir: Path) -> str | None:
+    """The active model's brain URL when it is loopback, from *data_dir*'s config.
+
+    ``None`` when that config is missing, names no model, or points off-box.
+    Never creates a config file.
+    """
+    path = config_yaml_path(data_dir)
+    if not path.exists():
+        return None
+    try:
+        config = load_config(path)
+    except ConfigError:
+        return None
+    if not config.has_model():
+        return None
+    url = config.tier("brain").base_url
+    return url if is_loopback_url(url) else None
 
 
 def fixture_binaries() -> tuple[str, ...]:
@@ -144,13 +165,19 @@ async def run_m8(
     *,
     endpoint: str | None = None,
 ) -> HarnessResult:
-    """Probe the shipped ``vllm`` loopback; skip or run one live turn."""
+    """Probe a loopback model server; skip or run one live turn."""
     started = time.monotonic()
     _prepare(workspace, data_dir)
-    config = shipped_vllm_config()
-    target = endpoint if endpoint is not None else config.tier("brain").base_url
+    target = endpoint if endpoint is not None else default_m8_endpoint(data_dir)
     result = HarnessResult()
     result.notes.append("TD-3904 this harness is the M8 exit criterion")
+    if target is None:
+        result.notes.append(SKIP_COPY)
+        _check(result, "vLLM/llama.cpp fixture", True, "no loopback endpoint configured")
+        _check(result, "m8 exit criterion", True, "skipped heading-match style")
+        result.elapsed = time.monotonic() - started
+        return result
+    config = m8_config(target)
     result.notes.append(f"preset={_PRESET} endpoint={target}")
 
     found = fixture_binaries()
@@ -168,7 +195,7 @@ async def run_m8(
     _check(result, "loopback only", True, target)
     _check(
         result,
-        "vllm preset keyless",
+        "loopback model keyless",
         not config.requires_api_key(),
         "no key on loopback",
     )
@@ -198,7 +225,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--endpoint",
         default=None,
-        help="loopback OpenAI /v1 (default: shipped vllm preset)",
+        help="loopback OpenAI /v1 (default: the active model, when it is loopback)",
     )
     args = parser.parse_args(argv)
     scratch = tempfile.TemporaryDirectory(prefix="tstd-e2e-m8-")

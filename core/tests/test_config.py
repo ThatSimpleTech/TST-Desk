@@ -13,6 +13,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from tests.catalog_helpers import catalog_config_yaml
 from tstd.config import (
     DEFAULT_LOG_MAX_EVENTS,
     PRESETS,
@@ -59,6 +60,11 @@ def _load_shipped(tmp_path: Path) -> ModelConfig:
     return load_config(_write_config(tmp_path, default_config_yaml()))
 
 
+def _load_catalog(tmp_path: Path) -> ModelConfig:
+    """The shipped config with the test model catalog (TD-5172: none ships)."""
+    return load_config(_write_config(tmp_path, catalog_config_yaml()))
+
+
 DEFAULT_YAML_SNIPPET = default_config_yaml()[:200]
 
 
@@ -70,7 +76,11 @@ class TestLoading:
         """The shipped config.yaml must pass validation."""
         cfg = _load_shipped(tmp_path)
         assert isinstance(cfg, ModelConfig)
-        assert cfg.active_preset == "tst-default"
+        # TD-5172: no model ships; the first run adds one.
+        assert cfg.presets == {}
+        assert cfg.active_preset == ""
+        assert cfg.has_model() is False
+        assert cfg.requires_api_key() is False
         assert cfg.session.log_max_events == DEFAULT_LOG_MAX_EVENTS
         assert cfg.engine.kind == "native"
         assert cfg.engine.binary == ""
@@ -101,8 +111,23 @@ class TestLoading:
 
     def test_default_config_yaml_returns_string(self) -> None:
         content = default_config_yaml()
-        assert "moonshotai/kimi-k3" in content
-        assert "deepseek/deepseek-v4-flash" in content
+        assert "\npresets: {}\n" in content
+        parsed = yaml.safe_load(content)
+        for gone in ("tst-default", "budget", "local", "vllm"):
+            assert gone not in parsed["presets"]
+
+    def test_empty_catalog_tiers_are_a_keyless_loopback_stand_in(self, tmp_path: Path) -> None:
+        cfg = _load_shipped(tmp_path)
+        tiers = cfg.tiers()
+        assert sorted(tiers) == ["brain", "validator", "worker"]
+        for tier in tiers.values():
+            assert tier.slug is None
+            assert resolve_credential_id(tier) is None
+
+    def test_bare_presets_key_is_an_empty_catalog(self, tmp_path: Path) -> None:
+        cfg = load_config(_write_config(tmp_path, "presets:\nactive_preset:\n"))
+        assert cfg.presets == {}
+        assert cfg.active_preset == ""
 
     def test_ensure_user_config_creates_if_missing(self, tmp_path: Path) -> None:
         config_path = tmp_path / "config.yaml"
@@ -188,13 +213,13 @@ def _track_config_opens(monkeypatch: pytest.MonkeyPatch) -> list[IO[bytes]]:
 
 class TestTiers:
     def test_tier_method(self, tmp_path: Path) -> None:
-        cfg = _load_shipped(tmp_path)
+        cfg = _load_catalog(tmp_path)
         brain = cfg.tier("brain")
         assert isinstance(brain, TierConfig)
         assert brain.slug == "moonshotai/kimi-k3"
 
     def test_tiers_method(self, tmp_path: Path) -> None:
-        cfg = _load_shipped(tmp_path)
+        cfg = _load_catalog(tmp_path)
         tiers = cfg.tiers()
         assert sorted(tiers) == ["brain", "validator", "worker"]
         assert tiers["brain"].slug == "moonshotai/kimi-k3"
@@ -202,20 +227,20 @@ class TestTiers:
         assert tiers["validator"].slug == "deepseek/deepseek-v4-pro"
 
     def test_tier_alternate_preset(self, tmp_path: Path) -> None:
-        cfg = _load_shipped(tmp_path)
+        cfg = _load_catalog(tmp_path)
         cfg.active_preset = "budget"
         assert cfg.tier("brain").slug == "z-ai/glm-5.2"
 
     def test_tier_local_preset(self, tmp_path: Path) -> None:
-        cfg = _load_shipped(tmp_path)
+        cfg = _load_catalog(tmp_path)
         cfg.active_preset = "local"
         assert cfg.tier("brain").input_price == 0.0
         assert cfg.tier("worker").input_price == 0.0
 
     def test_tier_vllm_preset(self, tmp_path: Path) -> None:
-        """TD-3901: the shipped ``vllm`` preset loads, leaves slugs to
+        """TD-3901: the ``vllm`` test preset loads, leaves slugs to
         discovery, and names the documented loopback port — not a model."""
-        cfg = _load_shipped(tmp_path)
+        cfg = _load_catalog(tmp_path)
         assert cfg.active_preset == "tst-default"
         assert "vllm" in cfg.presets
         cfg.active_preset = "vllm"
@@ -227,7 +252,7 @@ class TestTiers:
 
     def test_worker_max_output(self, tmp_path: Path) -> None:
         """Worker tier defaults to 16K max_output_tokens for edits."""
-        cfg = _load_shipped(tmp_path)
+        cfg = _load_catalog(tmp_path)
         assert cfg.tier("worker").max_output_tokens == 16384
 
     def test_shipped_embeddings_command_is_empty(self, tmp_path: Path) -> None:
@@ -242,12 +267,12 @@ class TestTiers:
         assert cfg.computer_use.command == ""
         assert ComputerUseConfig().command == ""
 
-    def test_shipped_local_worker_preset_is_vllm(self, tmp_path: Path) -> None:
-        """TD-3903: CU-heavy worker remaps to the vllm preset unless emptied."""
+    def test_shipped_local_worker_preset_is_empty(self, tmp_path: Path) -> None:
+        """TD-3903, TD-5172: no preset ships, so the CU worker never remaps by default."""
         cfg = _load_shipped(tmp_path)
-        assert cfg.computer_use.local_worker_preset == "vllm"
-        assert ComputerUseConfig().local_worker_preset == "vllm"
-        assert ComputerUseConfig(local_worker_preset="").local_worker_preset == ""
+        assert cfg.computer_use.local_worker_preset == ""
+        assert ComputerUseConfig().local_worker_preset == ""
+        assert ComputerUseConfig(local_worker_preset="vllm").local_worker_preset == "vllm"
         assert ComputerUseConfig(local_worker_preset="  local  ").local_worker_preset == "local"
 
     def test_shipped_grounding_is_off(self, tmp_path: Path) -> None:
@@ -371,9 +396,10 @@ class TestTiers:
 
 class TestValidation:
     def test_missing_presets_key(self, tmp_path: Path) -> None:
-        path = _write_config(tmp_path, "active_preset: tst-default\n")
-        with pytest.raises(ConfigError, match="presets"):
-            load_config(path)
+        """TD-5172: no presets is an empty catalog, and a dangling name is dropped."""
+        cfg = load_config(_write_config(tmp_path, "active_preset: tst-default\n"))
+        assert cfg.presets == {}
+        assert cfg.active_preset == ""
 
     def test_missing_tier_in_preset(self, tmp_path: Path) -> None:
         path = _write_config(
@@ -500,8 +526,9 @@ presets:
       max_output_tokens: 100
 """,
         )
-        with pytest.raises(ConfigError, match="nonexistent"):
-            load_config(path)
+        # TD-5172: a removed preset must not lock the user out; the first
+        # declared one takes over.
+        assert load_config(path).active_preset == "tst-default"
 
     def test_invalid_yaml(self, tmp_path: Path) -> None:
         path = _write_config(tmp_path, "{invalid: yaml: broken\n")
@@ -519,13 +546,13 @@ presets:
 
 class TestCredentials:
     def test_shipped_catalog_names_openrouter(self, tmp_path: Path) -> None:
-        cfg = _load_shipped(tmp_path)
+        cfg = _load_catalog(tmp_path)
         assert cfg.credentials["openrouter"].name == "OpenRouter"
         assert cfg.credentials["openrouter"].base_url
         assert cfg.tier("brain").credential == "openrouter"
 
     def test_second_openrouter_key_inherits_shipped_host(self, tmp_path: Path) -> None:
-        raw = yaml.safe_load(default_config_yaml())
+        raw = yaml.safe_load(catalog_config_yaml())
         raw["credentials"] = {"openrouter-2": {"name": "OPENROUTER"}}
         path = tmp_path / "config.yaml"
         path.write_text(yaml.dump(raw), encoding="utf-8")
@@ -536,7 +563,7 @@ class TestCredentials:
         assert resolve_base_url(cfg, bound) == host
 
     def test_local_preset_stays_unbound(self, tmp_path: Path) -> None:
-        cfg = _load_shipped(tmp_path).model_copy(update={"active_preset": "local"})
+        cfg = _load_catalog(tmp_path).model_copy(update={"active_preset": "local"})
         for tier in cfg.tiers().values():
             assert tier.credential is None
             assert resolve_credential_id(tier) is None
@@ -554,7 +581,7 @@ class TestCredentials:
         assert resolve_credential_id(tier) == "openrouter"
 
     def test_bound_loopback_needs_a_key(self, tmp_path: Path) -> None:
-        cfg = _load_shipped(tmp_path)
+        cfg = _load_catalog(tmp_path)
         local = cfg.presets["local"].brain.model_copy(update={"credential": "openrouter"})
         cfg.presets["local"].brain = local
         cfg = cfg.model_copy(update={"active_preset": "local"})
@@ -573,7 +600,7 @@ class TestCredentials:
             load_config(path)
 
     def test_unknown_binding_is_rejected(self, tmp_path: Path) -> None:
-        path = _write_config(tmp_path, default_config_yaml())
+        path = _write_config(tmp_path, catalog_config_yaml())
         text = path.read_text().replace(
             "      credential: openrouter\n      input_price: 2.80",
             "      credential: nope\n      input_price: 2.80",

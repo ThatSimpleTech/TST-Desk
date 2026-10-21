@@ -16,7 +16,8 @@ import httpx
 import pytest
 import yaml
 
-from tstd.config import ModelConfig, default_config_yaml, is_loopback_url
+from tests.catalog_helpers import catalog_config_yaml
+from tstd.config import ModelConfig, is_loopback_url
 from tstd.daemon import Daemon
 from tstd.keychain import KeychainError
 from tstd.provider import (
@@ -38,7 +39,7 @@ def _config_with_preset(name: str) -> ModelConfig:
     into test source (§2.7), and so a retargeted preset is picked up here
     without editing the test.
     """
-    config = ModelConfig.model_validate(yaml.safe_load(default_config_yaml()))
+    config = ModelConfig.model_validate(yaml.safe_load(catalog_config_yaml()))
     return config.model_copy(update={"active_preset": name})
 
 

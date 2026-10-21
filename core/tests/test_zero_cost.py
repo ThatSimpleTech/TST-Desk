@@ -26,6 +26,7 @@ from urllib.parse import urlsplit
 import pytest
 import yaml
 
+from tests.catalog_helpers import catalog_config_yaml
 from tests.test_loop import mock_factory, wait_for_turn
 from tstd.audit import AuditStore
 from tstd.audit_queries import cost_by_session
@@ -36,7 +37,6 @@ from tstd.config import (
     Preset,
     TierConfig,
     TierName,
-    default_config_yaml,
     is_loopback_url,
 )
 from tstd.cost import CostTracker, compute_call_cost, compute_call_details
@@ -51,7 +51,7 @@ from tstd.session import Session, SessionRunner
 
 def _shipped_local() -> ModelConfig:
     """The shipped config forced onto the ``local`` preset."""
-    config = ModelConfig.model_validate(yaml.safe_load(default_config_yaml()))
+    config = ModelConfig.model_validate(yaml.safe_load(catalog_config_yaml()))
     return config.model_copy(update={"active_preset": "local"})
 
 

@@ -257,6 +257,23 @@ describe("accountRow", () => {
 		expect(accountRow("-local", true).initial).toBe("L");
 		expect(accountRow("...", true).initial).toBeNull();
 	});
+
+	it("shows the active model's label, not its key (TD-5172)", () => {
+		const row = accountRow("my-model", true, { labels: { "my-model": "My model" } });
+		expect(row).toEqual({ initial: "M", label: "My model", note: "Key stored" });
+	});
+
+	it("a model on this computer needs no key", () => {
+		expect(accountRow("local", false, { keyRequired: false }).note).toBe("No key needed");
+	});
+
+	it("before any model is set up, says so", () => {
+		expect(accountRow("", false, { hasModel: false })).toEqual({
+			initial: null,
+			label: "No model yet",
+			note: "Add a model",
+		});
+	});
 });
 // ── Row lifecycle affordances (TD-1715) ──────────────────────────────────
 //

@@ -14,10 +14,10 @@ import pytest
 from tstd.config import is_loopback_url
 from tstd.e2e_m8 import (
     SKIP_COPY,
+    default_m8_endpoint,
+    m8_config,
     m8_preflight,
     run_m8,
-    shipped_vllm_config,
-    shipped_vllm_endpoint,
 )
 
 # Discard protocol: nothing listens, the probe fails immediately.
@@ -25,10 +25,21 @@ _DEAD_LOOPBACK = "http://127.0.0.1:9/v1"
 _OFF_BOX = "https://example.invalid/v1"
 
 
-def test_shipped_vllm_endpoint_is_loopback() -> None:
-    endpoint = shipped_vllm_endpoint()
-    assert is_loopback_url(endpoint)
-    assert shipped_vllm_config().requires_api_key() is False
+def test_m8_config_is_a_keyless_loopback() -> None:
+    config = m8_config(_DEAD_LOOPBACK)
+    assert is_loopback_url(config.tier("brain").base_url)
+    assert config.requires_api_key() is False
+
+
+def test_no_configured_model_has_no_default_endpoint(tmp_path: Path) -> None:
+    assert default_m8_endpoint(tmp_path) is None
+    assert not (tmp_path / "config.yaml").exists()
+
+
+async def test_m8_run_skips_with_no_endpoint(tmp_path: Path) -> None:
+    result = await run_m8(tmp_path / "workspace", tmp_path / "data")
+    assert SKIP_COPY in result.notes
+    assert result.ok, result.report()
 
 
 async def test_m8_skip_copy_when_probe_fails() -> None:

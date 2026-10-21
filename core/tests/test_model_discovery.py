@@ -30,6 +30,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from tests.catalog_helpers import catalog_config_yaml
 from tests.test_diagnostics import _connect_and_handshake as connect_and_handshake
 from tests.test_diagnostics import _start_daemon as start_daemon
 from tests.test_diagnostics import _stop_daemon as stop_daemon
@@ -42,7 +43,6 @@ from tstd.config import (
     TierConfig,
     TierName,
     cached_config,
-    default_config_yaml,
     load_config,
 )
 from tstd.discovery import discover_model, resolve_tier_slugs
@@ -170,7 +170,7 @@ def local_config(base_url: str, slug: str | None = None) -> ModelConfig:
 
 def shipped_config() -> ModelConfig:
     """The config.yaml that ships in the package, not the user's copy."""
-    parsed: Any = yaml.safe_load(default_config_yaml())
+    parsed: Any = yaml.safe_load(catalog_config_yaml())
     return ModelConfig.model_validate(parsed)
 
 
@@ -342,7 +342,7 @@ class TestDiscovery:
         try:
             config_path = tmp_path / "config.yaml"
             config_path.write_text(
-                default_config_yaml().replace("http://127.0.0.1:11434/v1", server.base_url),
+                catalog_config_yaml().replace("http://127.0.0.1:11434/v1", server.base_url),
                 encoding="utf-8",
             )
             before = config_path.read_bytes()

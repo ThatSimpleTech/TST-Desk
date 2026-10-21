@@ -409,17 +409,30 @@ export interface AccountRow {
 
 /** The bottom-left account row: who the app is running as.
  *
- * TST Desk has no accounts (§2) — the identity is the active provider preset
+ * TST Desk has no accounts (§2) — the identity is the active model preset
  * and whether a key is stored, both of them daemon truth from `setup_state`.
- * The preset name shows verbatim; capitalizing it would invent a name the
- * config never used. */
-export function accountRow(activePreset: string | null, hasApiKey: boolean): AccountRow {
-	const label = activePreset ?? "No provider";
-	const first = activePreset?.match(/[a-z0-9]/i)?.[0] ?? null;
+ * TD-5172: the row shows the preset's configured `label` (what the picker
+ * calls it), falling back to the raw key verbatim when none is set;
+ * capitalizing a key would invent a name the config never used. */
+export function accountRow(
+	activePreset: string | null,
+	hasApiKey: boolean,
+	options: {
+		labels?: Readonly<Record<string, string>>;
+		keyRequired?: boolean;
+		hasModel?: boolean;
+	} = {},
+): AccountRow {
+	const { labels = {}, keyRequired = true, hasModel = true } = options;
+	if (!hasModel || activePreset === "") {
+		return { initial: null, label: "No model yet", note: "Add a model" };
+	}
+	const label = activePreset === null ? "No provider" : (labels[activePreset] ?? activePreset);
+	const first = activePreset === null ? null : (label.match(/[a-z0-9]/i)?.[0] ?? null);
 	return {
 		initial: first === null ? null : first.toUpperCase(),
 		label,
-		note: hasApiKey ? "Key stored" : "No key",
+		note: hasApiKey ? "Key stored" : keyRequired ? "No key" : "No key needed",
 	};
 }
 

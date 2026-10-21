@@ -1,0 +1,170 @@
+# Test-only model catalog (TD-5172). No presets ship, so the suite seeds
+# each throwaway config with these: the four presets the package shipped
+# before 0.4.x. tests/conftest.py splices this over `presets: {}`.
+presets:
+  # ── tst-default ──────────────────────────────────────────────────
+  # Documented swaps (uncomment to use, or copy into another preset):
+  #   brain — z-ai/glm-5.2 (cheaper brain)
+  #   validator — z-ai/glm-5.2 (stronger validator)
+  #   worker — deepseek/deepseek-v4-pro (heavier worker)
+  tst-default:
+    brain:
+      slug: moonshotai/kimi-k3
+      base_url: https://openrouter.ai/api/v1
+      credential: openrouter
+      input_price: 2.80
+      output_price: 14.00
+      cache_read_price: 0.30
+      context_window: 1000000
+      max_output_tokens: 8192
+    worker:
+      slug: deepseek/deepseek-v4-flash
+      base_url: https://openrouter.ai/api/v1
+      credential: openrouter
+      input_price: 0.07
+      output_price: 0.17
+      cache_read_price: 0.07
+      context_window: 128000
+      max_output_tokens: 16384
+    validator:
+      slug: deepseek/deepseek-v4-pro
+      base_url: https://openrouter.ai/api/v1
+      credential: openrouter
+      input_price: 0.44
+      output_price: 0.87
+      cache_read_price: 0.44
+      context_window: 128000
+      max_output_tokens: 8192
+
+  # ── budget ───────────────────────────────────────────────────────
+  # Cheaper brain (GLM-5.2), same worker and validator.
+  budget:
+    brain:
+      # GLM-5.2 — cheaper brain, also works as a stronger validator
+      slug: z-ai/glm-5.2
+      base_url: https://openrouter.ai/api/v1
+      credential: openrouter
+      input_price: 0.15
+      output_price: 0.60
+      cache_read_price: 0.015
+      context_window: 128000
+      max_output_tokens: 8192
+    worker:
+      slug: deepseek/deepseek-v4-flash
+      base_url: https://openrouter.ai/api/v1
+      credential: openrouter
+      input_price: 0.07
+      output_price: 0.17
+      cache_read_price: 0.07
+      context_window: 128000
+      max_output_tokens: 16384
+    validator:
+      # DeepSeek V4 Pro — stronger validator, also works as a heavier worker
+      slug: deepseek/deepseek-v4-pro
+      base_url: https://openrouter.ai/api/v1
+      credential: openrouter
+      input_price: 0.44
+      output_price: 0.87
+      cache_read_price: 0.44
+      context_window: 128000
+      max_output_tokens: 8192
+
+  # ── local ────────────────────────────────────────────────────────
+  # Zero-cost local models on this machine. Targets Ollama's
+  # OpenAI-compatible endpoint (the default port); any OpenAI-compatible
+  # server on loopback works — point base_url at it.
+  # A loopback base_url needs no API key at all (TD-1801).
+  #
+  # No slug is named on purpose: the endpoint is a convention, the model
+  # tag is your machine. With slug left out, the model is read from the
+  # endpoint's /v1/models the first time a turn needs it. That requires
+  # the server to be serving exactly one model — pick one explicitly by
+  # uncommenting slug below, which always wins over discovery.
+  #
+  # One model serves all three tiers: a single local server usually has
+  # room for one loaded model, and swapping per tier would pay an unload
+  # and reload on every routing hop.
+  #
+  # context_window is a compaction budget, not a request parameter. It
+  # must be no larger than what the *server* actually serves: Ollama caps
+  # context at num_ctx (OLLAMA_CONTEXT_LENGTH or the Modelfile),
+  # independent of a model's much larger architectural ceiling. Shipping
+  # the ceiling would keep compaction from ever firing and let the server
+  # silently truncate the oldest messages — the steering block goes
+  # first. 32768 is a conservative floor that local hardware can hold.
+  # Raise it here once you have raised num_ctx to match.
+  local:
+    brain:
+      # slug: your-model-tag   # omitted → resolved from /v1/models
+      base_url: http://127.0.0.1:11434/v1
+      input_price: 0.0
+      output_price: 0.0
+      cache_read_price: 0.0
+      context_window: 32768
+      max_output_tokens: 4096
+    worker:
+      # slug: your-model-tag   # omitted → resolved from /v1/models
+      base_url: http://127.0.0.1:11434/v1
+      input_price: 0.0
+      output_price: 0.0
+      cache_read_price: 0.0
+      context_window: 32768
+      max_output_tokens: 4096
+    validator:
+      # slug: your-model-tag   # omitted → resolved from /v1/models
+      base_url: http://127.0.0.1:11434/v1
+      input_price: 0.0
+      output_price: 0.0
+      cache_read_price: 0.0
+      context_window: 32768
+      max_output_tokens: 4096
+
+  # ── vllm ─────────────────────────────────────────────────────────────
+  # Zero-cost local models on this machine. Targets vLLM's OpenAI-
+  # compatible server (the default port). The GPU server serves the same /v1
+  # shape — attach it with this preset. If the process listens on
+  # another port, edit base_url here; never in Python.
+  # A loopback base_url needs no API key at all (TD-1801).
+  #
+  # No slug is named on purpose: the endpoint is a convention, the model
+  # tag is your machine. With slug left out, the model is read from the
+  # endpoint's /v1/models the first time a turn needs it. That requires
+  # the server to be serving exactly one model — pick one explicitly by
+  # uncommenting slug below, which always wins over discovery.
+  #
+  # One model serves all three tiers: a single local server usually has
+  # room for one loaded model, and swapping per tier would pay an unload
+  # and reload on every routing hop.
+  #
+  # context_window is a compaction budget, not a request parameter. It
+  # must be no larger than what the *server* actually serves. Shipping
+  # a model's architectural ceiling would keep compaction from ever
+  # firing and let the server silently truncate the oldest messages —
+  # the steering block goes first. 32768 is a conservative floor that
+  # local hardware can hold. Raise it here once the server's context
+  # matches.
+  vllm:
+    brain:
+      # slug: your-model-tag   # omitted → resolved from /v1/models
+      base_url: http://127.0.0.1:8000/v1
+      input_price: 0.0
+      output_price: 0.0
+      cache_read_price: 0.0
+      context_window: 32768
+      max_output_tokens: 4096
+    worker:
+      # slug: your-model-tag   # omitted → resolved from /v1/models
+      base_url: http://127.0.0.1:8000/v1
+      input_price: 0.0
+      output_price: 0.0
+      cache_read_price: 0.0
+      context_window: 32768
+      max_output_tokens: 4096
+    validator:
+      # slug: your-model-tag   # omitted → resolved from /v1/models
+      base_url: http://127.0.0.1:8000/v1
+      input_price: 0.0
+      output_price: 0.0
+      cache_read_price: 0.0
+      context_window: 32768
+      max_output_tokens: 4096
