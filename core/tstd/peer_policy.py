@@ -90,6 +90,9 @@ MACHINE_PEER_VERBS: frozenset[str] = frozenset(
         # nothing else and changes nothing, so a viewer of a bridged
         # session can download what that session's agent sent.
         "read_artifact_chunk",
+        # TD-5131: the chip count for a staged PDF, DOCX or XLSX. It reads
+        # only the bytes it is handed, stores nothing and starts no turn.
+        "extract_attachment",
         # Only for its own device id; the existing pairing gate checks that.
         "remove_remote_device",
     }

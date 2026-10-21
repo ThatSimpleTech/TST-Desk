@@ -17176,6 +17176,68 @@ tools, nothing reaches the branch, and "nothing changed" would be untrue. Refuse
 older session), rather than guess its order. Shell writes are not restored:
 they were never on the branch, and the dialog says so.
 
+## 2026-10-20 — TD-5131: PDF, DOCX and XLSX attachments sent as their text (Class B)
+
+- **One PDF library, shared with TD-5130.** `pypdfium2` (Apache-2.0 / BSD-3
+  bindings over PDFium, BSD-3), the dependency TD-5130's `fs_read` adds, so
+  the two stories do not ship two PDF stacks. Imported on the first PDF, under
+  one lock (PDFium is not thread-safe and extraction runs in worker threads).
+  The integrator should point TD-5130's `read_pdf` at
+  `attachment_extract.PDFIUM_LOCK` (or the reverse) so both share one lock.
+  The sidecar build `--collect-all`s `pypdfium2` and `pypdfium2_raw`.
+- **DOCX and XLSX with the standard library.** They are zips of XML; `zipfile`
+  and `xml.etree` read the text with no new dependency. Hostile files: each
+  member is read only to 64 MB decompressed, a DOCTYPE or ENTITY anywhere is
+  refused (Office never writes one), and at most 10,000 members. A part is
+  streamed (`iterparse`) and each element removed from its parent once read,
+  so memory is the XML's depth, not its size; one document may cost at most
+  128 MB of decompressed XML and 4 million elements in all (about ten
+  seconds of parsing at worst), because a part with no text never reaches
+  the text cap. A sheet row keeps only its non-empty cells and pads blanks
+  on output up to the last one with text, so an empty XFD cell costs nothing
+  and padding is tabs the cap counts. A column reference past XFD reads as
+  the next column.
+  Elements are matched by local name, so Strict OOXML (other namespace URIs)
+  reads too, and the source names no remote host (TD-1410's literal scan).
+- **Kind from the bytes.** `%PDF-` must lead the file, so a text file that
+  mentions it stays text; a zip is a DOCX or XLSX only by its parts. The
+  composer guesses from the header and the name for its chip; the daemon
+  decides.
+- **The caps measure the text.** `max_file_bytes` per document and
+  `max_total_bytes` per message count the UTF-8 text the model will read.
+  The file is held only to transport ceilings that are not workspace
+  settings: 10 MB a document and 12 MB of files a message, so the base64'd
+  message still fits the 16 MiB frame instead of being dropped unexplained.
+- **Markers.** `[page N of M]` before each PDF page; `[sheet: Name]` before
+  each sheet, rows tab-separated with empty columns kept (so column C stays
+  third) and line breaks inside a cell turned to spaces. DOCX has no pages
+  until Word lays it out, so it gets no page markers, only paragraphs and
+  tab-separated table rows.
+- **The chip asks the daemon.** A new connection-scoped pair:
+  `extract_attachment` (session id, the composer's `request_id`, one
+  attachment) answered by `attachment_extracted` (kind, pages or sheets,
+  `text_bytes`, `tokens` at 4 characters a token, or `error_code` and
+  `message`). The extracted text never comes back, only its size. It is a
+  machine-peer and forwarded verb: it reads only the bytes it is handed and
+  starts no turn, and a bridged session's caps live on its own computer. The
+  send extracts again rather than trust a client's answer. The answer is
+  worked out in a background task and sent on the asking connection when
+  ready, because the websocket server awaits each frame's handler before
+  reading the next; two documents are read at once daemon-wide, the rest
+  wait. The send itself still extracts inline: it has to, to keep a
+  connection's messages in order.
+- **The send awaits extraction off the loop.** `decode_attachments` runs in
+  `asyncio.to_thread` when a message has files, so drain and session
+  liveness are checked again after it, and the `only_if_idle` check moved
+  after it so nothing awaits between that check and the queueing.
+
+**Conservative answers to questions the story left open (Class C, PR body).**
+No OCR: a PDF with no text is refused with `attachment_no_text` rather than
+sent empty or sent to a vision model. Password-protected files are refused,
+not prompted for. Only the first-party formats named (PDF, DOCX, XLSX); not
+legacy `.doc`/`.xls`, ODF, PPTX or CSV-in-zip. A document is not kept as a
+file in the session; only its text is, the same as a text attachment.
+
 ## 2026-10-20 — TD-5130: fs_read opens images, PDFs and notebooks (Class B)
 
 Approved as specified in the gap audit. Size 5, so the approach is recorded

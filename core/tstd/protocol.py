@@ -249,6 +249,23 @@ class UserMessage(ClientMessage):
         return self
 
 
+class ExtractAttachment(ClientMessage):
+    """Measure a staged PDF, DOCX or XLSX before it is sent (TD-5131).
+
+    The composer cannot read a document itself, so it asks the daemon that
+    will receive the message: the text comes out on that machine, against
+    that session's caps, and the answer is ``attachment_extracted`` on this
+    connection. Nothing is stored or sent to the model; the same file on a
+    ``user_message`` is extracted again, because the client is not trusted
+    to carry an answer back. ``request_id`` is the composer's own, echoed.
+    """
+
+    type: Literal["extract_attachment"] = "extract_attachment"
+    session_id: str
+    request_id: str = Field(min_length=1, max_length=64)
+    attachment: Attachment
+
+
 class SendQueued(ClientMessage):
     """Send a message a restart left held (TD-5155).
 
@@ -1854,6 +1871,30 @@ class FilesRestorePreview(DaemonEvent):
     files: list[RestoreFileEntry] = Field(default_factory=list)
     diff: str = ""
     diff_truncated: bool = False
+
+
+class AttachmentExtracted(DaemonEvent):
+    """Answer to ``extract_attachment`` (TD-5131). This connection only.
+
+    On success: ``kind`` (``pdf`` | ``docx`` | ``xlsx``), ``units`` (pages
+    or sheets; 0 for DOCX), ``text_bytes`` (what the caps measure) and
+    ``tokens`` (an estimate at the daemon's chars-per-token). On a refusal
+    ``error_code`` and ``message`` say why, in the copy the same file would
+    earn on send, and the counts stay 0. A file that is not a document is
+    ``attachment_not_document``.
+    """
+
+    type: Literal["attachment_extracted"] = "attachment_extracted"
+    seq: int = 1
+    session_id: str
+    request_id: str
+    name: str
+    kind: Literal["pdf", "docx", "xlsx"] | None = None
+    units: int = 0
+    text_bytes: int = 0
+    tokens: int = 0
+    error_code: str | None = None
+    message: str = ""
 
 
 class FilesRestored(DaemonEvent):
@@ -4073,6 +4114,7 @@ ClientMessageT = Annotated[
     | SetBranch
     | PreviewRestoreFiles
     | RestoreFiles
+    | ExtractAttachment
     | SetSkipAllApprovals
     | SetLoadGlobalMemory
     | SetCoworker
@@ -4190,6 +4232,7 @@ DaemonEventT = Annotated[
     | ConversationReset
     | FilesRestorePreview
     | FilesRestored
+    | AttachmentExtracted
     | UserTurn
     | QueuedMessages
     | AssistantDelta
@@ -4301,6 +4344,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "compact_context",
         "set_branch",
         "preview_restore_files",
+        "extract_attachment",
         "restore_files",
         "set_skip_all_approvals",
         "set_load_global_memory",
@@ -4418,6 +4462,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "session_state",
         "conversation_reset",
         "files_restore_preview",
+        "attachment_extracted",
         "files_restored",
         "user_turn",
         "queued_messages",
