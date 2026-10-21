@@ -11492,8 +11492,8 @@ loop with the mock provider).
 
 TST Desk had no user-scriptable hooks, so a team could not run its own
 check before a tool call, add context at session start, or keep the agent
-from stopping before its own test passed. Adam decided 2026-10-14 that
-hooks may come from a trusted workspace config as well as user config.
+from stopping before its own test passed. The owner decided 2026-10-14
+that hooks may come from a trusted workspace config as well as user config.
 
 **Acceptance criteria:**
 - [x] Hooks are configured in user config, and in workspace config only

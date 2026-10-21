@@ -17539,7 +17539,7 @@ already had, through the same guard the read tool uses.
 
 ## 2026-10-21 — TD-5134: hook runner (Class B)
 
-Approved as specified in the gap audit, with Adam's 2026-10-14 decision that
+Approved as specified in the gap audit, with the owner's 2026-10-14 decision that
 hooks may also come from a trusted workspace config. Size 8, so the approach
 is recorded here instead of waiting for sign-off. The audit said to split the
 story before building; it shipped as one change because the config, runner,
