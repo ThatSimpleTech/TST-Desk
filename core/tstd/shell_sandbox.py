@@ -309,6 +309,10 @@ def _seen(path: Path) -> _Seen:
     return _Seen("real", ident=(st.st_dev, st.st_ino))
 
 
+GuardSnapshot = dict[str, _Seen]
+"""What :func:`guard_snapshot` saw, for :func:`guard_restore` after the run."""
+
+
 def guard_snapshot(workspace: str) -> dict[str, _Seen]:
     """How each guarded name looks before a sandboxed run.
 

@@ -401,6 +401,64 @@ class TestRealSandbox:
         assert "PRIVATE" not in out
         assert "SSH-HIDDEN" in out
 
+    async def test_background_job_is_sandboxed_and_guarded(self, tmp_path: Path) -> None:
+        # TD-5137 merge: background: true is the same shell call, so it
+        # must not be a way around the sandbox.
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        # /var/tmp is on the real root (read-only inside); /tmp is private.
+        host_dir = Path(tempfile.mkdtemp(dir="/var/tmp"))
+        outside = host_dir / "outside.txt"
+        session = _session(ws, ON)
+        try:
+            started = await run_shell(
+                session,
+                f"echo out > {outside} || echo BLOCKED; echo evil > AGENTS.md",
+                background=True,
+            )
+            assert shell_sandbox.SANDBOX_NOTE in started
+            job = session.shell_jobs.get("job-1")
+            assert job is not None
+            for _ in range(200):
+                if job.status != "running":
+                    break
+                await asyncio.sleep(0.05)
+            assert job.status == "exited"
+            assert not outside.exists()
+            assert not (ws / "AGENTS.md").exists()
+            text, _ = job.output.read()
+            assert "BLOCKED" in text
+            assert "blocked: the sandboxed command changed AGENTS.md" in text
+        finally:
+            await session.shell_jobs.stop_all()
+            shutil.rmtree(host_dir, ignore_errors=True)
+
+    async def test_timed_out_command_moved_to_a_job_stays_guarded(self, tmp_path: Path) -> None:
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        session = _session(ws, ON)
+        try:
+            out = await run_shell(
+                session,
+                "sleep 1.5; echo evil > CLAUDE.md",
+                timeout_secs=1,
+                on_timeout="background",
+            )
+            assert "moved to background job job-1" in out
+            assert shell_sandbox.SANDBOX_NOTE in out
+            job = session.shell_jobs.get("job-1")
+            assert job is not None
+            for _ in range(200):
+                if job.status != "running":
+                    break
+                await asyncio.sleep(0.05)
+            assert job.status == "exited"
+            assert not (ws / "CLAUDE.md").exists()
+            text, _ = job.output.read()
+            assert "blocked: the sandboxed command changed CLAUDE.md" in text
+        finally:
+            await session.shell_jobs.stop_all()
+
     async def test_excluded_command_runs_on_the_host(self, tmp_path: Path) -> None:
         ws = tmp_path / "ws"
         ws.mkdir()

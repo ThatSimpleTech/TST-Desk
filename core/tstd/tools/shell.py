@@ -39,7 +39,10 @@ workspace as the working directory.  Three safety rails surround it:
 
 Output streams to the timeline as ``shell_output`` events while the
 command runs, and the final result carries the exit code plus capped
-stdout/stderr sections.  A non-zero exit is a normal result the model can
+stdout/stderr sections.  ``background: true`` instead returns a job id at
+once, and ``on_timeout: "background"`` hands a command that outlives its
+timeout to the session's jobs rather than killing it (TD-5137,
+``shell_background.py``).  A non-zero exit is a normal result the model can
 reason about, not an error.
 
 Subprocess work uses the event loop's native subprocess support rather
@@ -63,7 +66,7 @@ import sys
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from .. import shell_sandbox
 from ..autonomy.sandbox import WORKSPACE_DEST as _AUTONOMY_WORKSPACE
@@ -78,6 +81,11 @@ from ..shell_read_only import run_env
 from . import shell_memory
 from .shell_memory import ShellMemoryCap
 from .shell_writes import SHELL_WRITE_NOTE, writes_workspace_files
+
+if TYPE_CHECKING:
+    from ..shell_jobs import ShellJob
+
+OnTimeout = Literal["kill", "background"]
 
 # Read chunk size for draining stdout/stderr.
 _READ_CHUNK = 4096
@@ -449,6 +457,17 @@ async def _kill_process_group_offloaded(proc: asyncio.subprocess.Process) -> str
     return await asyncio.to_thread(_kill_process_group, proc)
 
 
+@dataclass
+class _Route:
+    """Where a command's output goes once a background job owns it (TD-5137).
+
+    Set once, from the event loop, so every chunk read after the handover
+    lands in the job and none in the foreground result.
+    """
+
+    job: ShellJob | None = None
+
+
 def _check_workspace(workspace_path: str) -> None:
     """Refuse to run when the workspace directory is missing."""
     if not Path(workspace_path).is_dir():
@@ -461,15 +480,24 @@ async def _drain(
     session: Session,
     tool_call_id: str,
     capture: _StreamCapture,
+    route: _Route | None = None,
 ) -> None:
     """Read *stream* to EOF, streaming chunks to the timeline.
 
     Emits a ``shell_output`` event per chunk while the capture has room,
     then keeps draining silently so the child never blocks on a full pipe.
+    Once *route* names a background job, chunks go to that job instead.
     """
     decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
     while True:
         raw = await stream.read(_READ_CHUNK)
+        if route is not None and route.job is not None:
+            text = decoder.decode(raw, final=not raw)
+            if text:
+                route.job.append(text)
+            if not raw:
+                return
+            continue
         if not raw:
             tail = decoder.decode(b"", final=True)
             if tail:
@@ -495,7 +523,7 @@ async def _drain(
 
 def _format_result(
     header: str,
-    exit_code: int,
+    exit_code: int | None,
     out: _StreamCapture,
     err: _StreamCapture,
     note: str = "",
@@ -504,11 +532,13 @@ def _format_result(
 
     *note* sits under the exit code, ahead of the streams, so a result
     the dispatcher caps for a small window still carries it (TD-5009).
+    A command that is still running as a job has no exit code yet.
     """
     lines: list[str] = []
     if header:
         lines.append(header)
-    lines.append(f"exit code: {exit_code}")
+    if exit_code is not None:
+        lines.append(f"exit code: {exit_code}")
     if note:
         lines.append(note)
     for label, capture in (("stdout", out), ("stderr", err)):
@@ -619,12 +649,16 @@ async def run_shell(
     tool_call_id: str = "",
     *,
     policy: ShellPolicy | None = None,
+    background: bool = False,
+    on_timeout: OnTimeout = "kill",
 ) -> str:
     """Run *command* in the session's workspace and return its result.
 
     Streams stdout/stderr to the timeline while the command runs, kills
     the process group on timeout or cancel, and returns the exit code with
     capped output.  Non-zero exits are normal results, not errors.
+    *background* starts a job instead and returns its id; *on_timeout*
+    ``"background"`` turns a timeout into that job (TD-5137).
 
     Raises:
         ValueError: Refusals — no session, invalid timeout, allowlist
@@ -634,6 +668,8 @@ async def run_shell(
         raise ValueError("shell requires an active session")
     if timeout_secs < 1:
         raise ValueError("timeout_secs must be a positive integer")
+    if on_timeout not in ("kill", "background"):
+        raise ValueError('on_timeout must be "kill" or "background"')
     pol = policy or ShellPolicy()
     check_allowed(command, pol)
     _check_workspace(session.workspace_path)
@@ -642,16 +678,52 @@ async def run_shell(
     if session.stop_turn_requested:
         return "stopped — command not started"
 
+    # A background job runs in the sandbox too: it is the same call.
+    sandboxed = _sandbox_for(session, command, tool_call_id)
+    if background:
+        from .shell_background import start_job
+
+        return await start_job(session, command, sandboxed=sandboxed)
+
+    # Guarded names a bind cannot pin (missing, symlinked) are checked after.
+    guard = shell_sandbox.guard_snapshot(session.workspace_path) if sandboxed else None
+    cap = await shell_memory.plan_cap(session, sanitized_env())
+    proc = await spawn_shell(session, command, cap, sandboxed=sandboxed, guard=guard)
+    return await _run_foreground(
+        session,
+        command,
+        timeout_secs,
+        tool_call_id,
+        pol,
+        proc,
+        cap,
+        on_timeout,
+        sandboxed=sandboxed,
+        guard=guard,
+    )
+
+
+async def spawn_shell(
+    session: Session,
+    command: str,
+    cap: ShellMemoryCap | None,
+    *,
+    sandboxed: bool = False,
+    guard: shell_sandbox.GuardSnapshot | None = None,
+) -> asyncio.subprocess.Process:
+    """Start *command*, killing it again if this task is cancelled mid-spawn.
+
+    *sandboxed* runs it in bubblewrap; *guard* is the snapshot checked
+    again if the spawn is cancelled (TD-5138).
+
+    Raises:
+        ValueError: The shell could not be started.
+    """
     # Spawn under a shield so a cancellation landing mid-spawn does not
     # cancel the spawn coroutine itself — the OS child may already exist,
     # and losing the handle would orphan the whole process group (TD-605
     # AC2; the TestCancel flake family).  On cancellation, wait for the
     # spawn to settle, kill the group, and let cancellation propagate.
-    sandboxed = _sandbox_for(session, command, tool_call_id)
-    # Guarded names a bind cannot pin (missing, symlinked) are checked after.
-    guard = shell_sandbox.guard_snapshot(session.workspace_path) if sandboxed else None
-    guard_notes: list[str] = []
-    cap = await shell_memory.plan_cap(session, sanitized_env())
     spawn = asyncio.ensure_future(_open_shell_process(session, command, cap, sandboxed))
     try:
         proc = await asyncio.shield(spawn)
@@ -677,7 +749,24 @@ async def run_shell(
         raise
     except OSError as e:
         raise ValueError(f"could not start shell: {e}") from e
+    return proc
 
+
+async def _run_foreground(
+    session: Session,
+    command: str,
+    timeout_secs: int,
+    tool_call_id: str,
+    pol: ShellPolicy,
+    proc: asyncio.subprocess.Process,
+    cap: ShellMemoryCap | None,
+    on_timeout: OnTimeout,
+    *,
+    sandboxed: bool = False,
+    guard: shell_sandbox.GuardSnapshot | None = None,
+) -> str:
+    """Wait for a started command, streaming it, until it ends or times out."""
+    guard_notes: list[str] = []
     stdout_stream = proc.stdout
     stderr_stream = proc.stderr
     if stdout_stream is None or stderr_stream is None:  # pragma: no cover — PIPE guarantees both
@@ -689,14 +778,16 @@ async def run_shell(
     work_task: asyncio.Task[None] | None = None
     cancel_task: asyncio.Task[None] | None = None
     header = ""
+    route = _Route()
+    adopted = False
     try:
 
         async def _work() -> None:
             # Drains live inside the work task so cancelling it cancels
             # them too — no orphaned readers.
             await asyncio.gather(
-                _drain(stdout_stream, "stdout", session, tool_call_id, out),
-                _drain(stderr_stream, "stderr", session, tool_call_id, err),
+                _drain(stdout_stream, "stdout", session, tool_call_id, out, route),
+                _drain(stderr_stream, "stderr", session, tool_call_id, err, route),
                 proc.wait(),
             )
 
@@ -708,7 +799,15 @@ async def run_shell(
             return_when=asyncio.FIRST_COMPLETED,
         )
 
-        if not work_task.done():
+        aborted = session.cancel_requested or session.stop_turn_requested
+        if not work_task.done() and on_timeout == "background" and not aborted:
+            from .shell_background import adopt_job
+
+            header = await adopt_job(
+                session, command, proc, work_task, route, timeout_secs, guard=guard
+            )
+            adopted = route.job is not None
+        if not work_task.done() and not adopted:
             # Not a cancellation handler — this is the timeout and the
             # cooperative-cancel path, so the Windows tree kill goes to a
             # thread rather than stalling the socket for up to 2s (§6).
@@ -744,19 +843,25 @@ async def run_shell(
     finally:
         # Sync on purpose. This task may already be cancelled, and the
         # next ``await`` would raise before a dead transport was closed
-        # (TD-4851). A live refused leader is not closed here.
-        retain_subprocess_transport(proc)
-        # Before any await: a cancelled run is checked too.
-        if guard is not None:
+        # (TD-4851). A live refused leader is not closed here. An adopted
+        # command's job watcher owns the transport and the work task now.
+        if not adopted:
+            retain_subprocess_transport(proc)
+        # Before any await: a cancelled run is checked too. An adopted
+        # command is checked by its job watcher when it ends (TD-5138).
+        if guard is not None and not adopted:
             guard_notes = shell_sandbox.guard_restore(session.workspace_path, guard)
             for note in guard_notes:
                 _log.warning("%s", note)
-        for task in (work_task, cancel_task):
+        for task in (cancel_task,) if adopted else (work_task, cancel_task):
             if task is not None and not task.done():
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
 
+    if adopted:
+        adopted_note = shell_sandbox.SANDBOX_NOTE if sandboxed else ""
+        return _format_result(header, None, out, err, adopted_note)
     # A cancelled process may have no returncode; -9 is the conventional
     # "killed by SIGKILL" sentinel (SIGKILL itself is absent on Windows).
     exit_code = proc.returncode if proc.returncode is not None else -9

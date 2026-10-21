@@ -174,6 +174,7 @@ def test_every_builtin_is_decided_and_only_readers_run() -> None:
             "load_skill",
             "send_file",
             "session_search",
+            "shell_job_output",
             "task_list",
             "tool_search",
             "web_fetch",

@@ -2726,6 +2726,26 @@ changes nothing, so it is Class A by a fixed rule (`session-search`). It reads n
 file and reaches no host. A policy rule naming `session_search` still wins. An MCP or plugin
 tool with that name gets no such grant.
 
+**Background shell jobs (TD-5137).** `shell` takes `background: true` for a dev server, a watch
+build or a log tail: the command starts and the call returns a job id (`job-1`, `job-2`, … per
+session) at once. Starting one is a `shell` call like any other, so it asks, runs from the
+read-only list, or is refused in plan mode exactly as the same command would in the foreground.
+`on_timeout: "background"` keeps a command that reaches `timeout_secs` running as a job instead of
+killing it; the result carries what it printed so far, with no exit code yet. The default,
+`"kill"`, kills the process group as before. `shell_job_output` returns what a job printed since
+the last read (stdout and stderr together, at most 20,000 characters a call; `wait_secs` up to 30
+waits for new output first; no `job_id` lists the jobs), and `shell_job_stop` kills the job's whole
+process group. Both touch only this session's own jobs, so they are Class A by a fixed rule
+(`shell-job`); plan mode still runs `shell_job_output` but refuses `shell_job_stop`. A policy rule
+naming either still wins, and an MCP or plugin tool with either name gets no such grant. The
+daemon owns the jobs, not the window: closing the window leaves them running, and ending the
+session (cancel, delete, quitting TST Desk) kills them. A session holds at most 8 running jobs, and
+a job keeps the last 200,000 characters nobody has read (a read says how many it dropped). The
+Plan pane lists every job with its state. A delegated worker and an unattended run (an autonomy
+run, a scheduled job's turn, or `tst run --on-ask deny-and-continue`) cannot start jobs; their
+commands run in the foreground. After a daemon restart the old daemon's running jobs
+show as `lost`: a clean quit killed them, and after a crash TST Desk no longer tracks them.
+
 <!-- verify: workspace -->
 ```yaml
 policy:
@@ -3266,6 +3286,10 @@ sandbox:
 If the config changes between the approval gate and the run, so that a command allowed to run
 unasked would no longer be sandboxed, the shell tool refuses it rather than running it on the
 host; running it again asks.
+
+A background job (`background: true`, or a command `on_timeout: "background"` moves to a job,
+TD-5137) runs in the sandbox under the same rule. Its guard check runs when the job ends, and
+any `blocked:` note goes to the job's output.
 
 ---
 
