@@ -9530,11 +9530,13 @@ after the fact.
 - [x] The title bar shows used against budget for the active tier's
       `context_window`, using the daemon's calibrated estimate (TD-5013),
       from the `context_usage` event
-- [ ] It also shows on the phone. Not checked on a device: the code
-      supports it (the APK is the same UI; TitleBar renders ContextGauge,
-      and AppShell's narrow layout keeps the title bar below 640px), but
-      no device or narrow-width test has shown it yet. (Split out and
-      unticked by TD-5158: it had been ticked unverified.)
+- [x] It also shows on the phone. The APK is this UI in a WebView, so the
+      app walk checks it at a phone's width (375px): the gauge sits whole
+      on screen and its popover opens inside it. That check found the
+      header ran off the right edge and the popover off the left; below
+      640px the header now puts the session's bar on its own wrapping row
+      and the popover opens rightwards. (Split out and unticked by
+      TD-5158: it had been ticked unverified.)
 - [x] `/compact [guidance]` and a button compact now. Guidance is passed
       to the summary (it heads it and keeps more of what it names; no
       model call, DECISIONS.md)
@@ -11485,6 +11487,95 @@ stream, result and error outputs, colour codes stripped, windowed by
 tier. Tests: core/tests/test_fs_read_media.py (handler, dispatch and the
 loop with the mock provider).
 
+### TD-5134 — Hook runner
+**Size:** 8 · **Depends on:** TD-5113 · Gap audit 2026-10-14
+
+TST Desk had no user-scriptable hooks, so a team could not run its own
+check before a tool call, add context at session start, or keep the agent
+from stopping before its own test passed. The owner decided 2026-10-14
+that hooks may come from a trusted workspace config as well as user config.
+
+**Acceptance criteria:**
+- [x] Hooks are configured in user config, and in workspace config only
+      after trust (TD-5113). Events: session start, user prompt, before
+      tool, after tool, stop.
+- [x] A hook is a command with a timeout. Its exit code or JSON can add
+      context, block with a reason, or (before tool) tighten the decision.
+      It can never loosen it or skip the classifier (directive 6).
+- [x] Every hook run and its result go to the audit DB, with secrets
+      redacted.
+- [x] An inspector lists the active hooks and their last results.
+
+Done (2026-10-21): `hooks:` in `config.yaml` and in `.tst/config.yaml`
+holds a list of commands for each of `session_start`, `user_prompt`,
+`before_tool`, `after_tool` and `stop` (`command`, `timeout_seconds`
+default 30, `tools` globs on the tool events, `name`). The workspace list
+is read through the TD-5113 view, so a pending, declined or invalid file
+adds nothing (the Hooks view says why). A hook gets a JSON payload on stdin and
+`TST_HOOK_EVENT`, `TST_SESSION_ID` and `TST_WORKSPACE`, runs in the
+workspace with the shell tool's sanitized environment, and is killed with
+its process group at the timeout. Exit 2 blocks with stderr as the reason;
+JSON `{"decision": "block"|"ask", "reason", "context"}` blocks, asks (before
+tool only) or adds context; plain stdout is context at session start and
+on a prompt. `before_tool` runs after the classifier and policy and can
+only refuse or turn `auto` into `ask` (a refusal under autonomy); a call
+already refused never reaches it. `after_tool` notes go back with the tool
+result. A `user_prompt` block keeps the message out of the conversation; a
+`stop` block sends the agent back to work at most 3 times a turn. Every
+run is a `hook_run` event and a row in the new `hook_runs` audit table
+(schema v7), with command, reason and context redacted. The right pane's
+More menu has a Hooks view (`get_hooks` → `hooks_state`) listing the
+active hooks, their source and their last result. Tests:
+core/tests/test_hooks.py (config, protocol, runner, dispatcher, trust,
+audit, loop), ui/src/lib/hooks-store.test.ts, and the app walk.
+
+Review fixes (PR #60): an autonomous session's hooks run in its container
+(§12.5), never on the host; a message that steers a running turn meets
+`user_prompt` hooks; `[hooks]` notes are added after truncation; and
+`tst run` exits 3 on `hook_blocked`. Tests: `TestAutonomy`, `TestSteer`,
+`TestTstRun` and `test_hook_notes_survive_a_long_result` in
+core/tests/test_hooks.py.
+
+### TD-5133 — Named worker definitions
+**Size:** 5 · **Depends on:** TD-5117 · Gap audit 2026-10-14
+
+TST Desk had one generic `delegate` child with two built-in kinds. Claude
+Code documents subagent files with their own prompt, tools and model.
+
+**Acceptance criteria:**
+- [x] `.tst/agents/*.md` and `~/.tstdesk/agents/*.md` define workers: name,
+      description, prompt, tool allow list, tier or preset, and policy
+      overrides that can only tighten.
+- [x] These files are agent-unwritable, like steering (directive 4).
+- [x] `delegate` picks a worker by name. The model sees the list with
+      descriptions, and `@name` in the composer targets one.
+
+Done (2026-10-21): `core/tstd/context/workers.py` reads both trees
+(user-global wins on a name): frontmatter `name`, `description`
+(required), `tools`, `tier`, `preset`, `policy`, and the body as the
+worker's prompt. Tools must fit inside one built-in child kind (the
+worker kind's or the research kind's) plus `consult`, so writes or
+`shell` never come with the web; no `tools` key means read-only. Only
+a user-global file may set a non-worker `tier` or a `preset`, since
+workspace files load without trust. Policy rules must be `ask` or `never`, and
+`with_worker_rules` drops `auto` again at the gate, so a worker can only
+tighten. A file that breaks a rule, or carries a key TST Desk does not
+read, is not loaded and `delegate` names why. The classifier refuses
+`.tst/agents/` and `.tstdesk/agents/` like slash-command trees, through
+`fs_write`, `fs_edit` and shell writes. `delegate` takes `agent`
+(`core/tstd/tools/delegate_named.py`): the child gets that allow list,
+that tier (from `preset` when named; a missing preset is refused), its
+prompt after the worker stack, and its rules on the child dispatcher.
+Plan mode refuses a worker that can write. Each turn the loop lists the
+workers with descriptions in `delegate`'s definition (with an `agent`
+enum; unchanged when there are none), and `@name` in the message adds a
+note telling the model to delegate to it. Tests:
+`core/tests/test_named_workers.py` (loading, precedence, refused files,
+unwritable trees, tier, preset, policy, refusals, plan mode, the
+definition the model sees, and an `@name` turn through the loop with the
+mock provider) and `core/tests/test_security_suite.py` (paths and shell
+writes). See DECISIONS.md and docs/configuration.md §4.11.
+
 ### TD-5135 — Run a formatter or linter after edits
 **Size:** 5 · **Depends on:** TD-5134 (not built yet; see DECISIONS.md) · Gap audit 2026-10-14
 
@@ -11525,6 +11616,15 @@ not only the leader; a file name starting with `-` reaches the command as
 `./-name`; the workspace root is resolved before matching, so a symlinked
 workspace still matches `src/*.py` patterns and passes relative paths
 (core/tests/test_after_write_hooks.py: the three tests fail on the old code).
+
+Integration with TD-5134 (merge of main): both stories own `hooks:`, so
+there is one `HooksConfig` (core/tstd/hooks_config.py) with the five
+TD-5134 events and `after_write` beside them; `AfterWriteHook` moved
+there. The tool result's per-hook record is now `AfterWriteRun`, since
+TD-5134's `HookRun` is the `hook_run` event. An autonomous session runs no
+after-write hook (TD-5134 keeps its hooks in the container; these have no
+container path). Tests: `test_an_autonomous_session_runs_no_hook_on_the_host`,
+core/tests/test_docs_config_reference.py.
 
 ## Epic E53 — Connectors
 

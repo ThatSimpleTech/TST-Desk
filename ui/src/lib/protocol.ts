@@ -427,6 +427,12 @@ export interface GetInstructionStack extends ClientMessage {
   session_id: string;
 }
 
+/** Ask for the session's active hooks and their last runs (TD-5134). */
+export interface GetHooks extends ClientMessage {
+  type: "get_hooks";
+  session_id: string;
+}
+
 /** List a workspace's Instructions files (TD-2802). Human path. */
 export interface ListInstructions extends ClientMessage {
   type: "list_instructions";
@@ -1137,6 +1143,7 @@ export type ClientMessageUnion =
   | SetPlan
   | SetSessionPreset
   | GetInstructionStack
+  | GetHooks
   | ListInstructions
   | ListCommands
   | ListMemory
@@ -1462,7 +1469,7 @@ export interface WorkerStep {
 
 /** One after-write hook that ran on an fs_write or fs_edit's files
  *  (TD-5135): a formatter or linter, how it ended and how long it took. */
-export interface HookRun {
+export interface AfterWriteRun {
   name: string;
   status: "passed" | "failed" | "timed_out" | "error";
   exit_code?: number | null;
@@ -1485,7 +1492,7 @@ export interface ToolResult extends DaemonEvent {
   /** A `delegate` call's worker transcript (TD-5117); empty for other tools. */
   transcript?: WorkerStep[];
   /** After-write hooks that ran on the write's files (TD-5135); empty otherwise. */
-  hooks?: HookRun[];
+  hooks?: AfterWriteRun[];
 }
 
 export interface ShellOutput extends DaemonEvent {
@@ -2578,6 +2585,52 @@ export interface StopCheck extends DaemonEvent {
   items: StopCheckItem[];
 }
 
+export type HookEventName = "session_start" | "user_prompt" | "before_tool" | "after_tool" | "stop";
+export type HookResult = "ok" | "context" | "block" | "ask" | "error" | "timeout";
+
+/** One hook ran (TD-5134). `block` refused the prompt, call or stop with
+ *  `reason`; `ask` made a call that would have run wait for approval;
+ *  `error` and `timeout` changed nothing. Hooks only ever tighten. */
+export interface HookRun extends DaemonEvent {
+  type: "hook_run";
+  session_id: string;
+  /** `<source>:<event>:<index>`. */
+  hook_id: string;
+  source: "user" | "workspace";
+  event: HookEventName;
+  command: string;
+  result: HookResult;
+  exit_code?: number | null;
+  reason?: string;
+  context?: string;
+  output?: string;
+  duration_ms: number;
+  tool_name?: string | null;
+  tool_call_id?: string | null;
+}
+
+/** One active hook on the inspector, with its last run this session. */
+export interface HookInfo {
+  id: string;
+  source: "user" | "workspace";
+  event: HookEventName;
+  command: string;
+  name?: string | null;
+  timeout_seconds: number;
+  tools?: string[];
+  last?: HookRun | null;
+}
+
+/** Response to `get_hooks` (TD-5134). A workspace's hooks are listed only
+ *  while its config applies; `workspace_state` is its trust state. */
+export interface HooksState extends DaemonEvent {
+  type: "hooks_state";
+  session_id: string;
+  hooks: HookInfo[];
+  workspace_state?: string;
+  workspace_error?: string | null;
+}
+
 /** The session's goal after `/goal` set or cleared it, or a done-check met
  *  it (TD-5124). `goal` is null once cleared. The newest one is the goal. */
 export interface SessionGoal extends DaemonEvent {
@@ -2894,6 +2947,8 @@ export type DaemonEventUnion =
   | TaskList
   | WorktreeState
   | StopCheck
+  | HookRun
+  | HooksState
   | SessionGoal
   | SteeringReloaded
   | RuleActivated

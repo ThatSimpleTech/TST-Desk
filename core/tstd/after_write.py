@@ -22,7 +22,7 @@ tool result instead of costing a turn.
   hook that rewrote the file (a formatter) says so, so the model reads it
   again before its next ``fs_edit``. A clean pass that changed nothing adds
   nothing to the model's context.
-- Each run is recorded as a :class:`~tstd.protocol.HookRun` on the
+- Each run is recorded as a :class:`~tstd.protocol.AfterWriteRun` on the
   ``tool_result`` event, with its time, for the step timeline.
 
 The hook is the user's own configured command, not a tool call the model
@@ -44,14 +44,15 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from .config import AfterWriteHook, ConfigError, HooksConfig
+from .config import ConfigError
+from .hooks_config import AfterWriteHook, HooksConfig
 from .logging import get_logger
 from .proc_lifecycle import (
     kill_left_leader_running,
     reap_subprocess,
     retain_subprocess_transport,
 )
-from .protocol import HookRun
+from .protocol import AfterWriteRun
 
 log = get_logger(__name__)
 
@@ -199,7 +200,7 @@ async def _reap(proc: asyncio.subprocess.Process, note: str | None) -> None:
 
 async def _run_one(
     hook: AfterWriteHook, files: list[Path], cwd: Path, env: dict[str, str], root: Path | None
-) -> tuple[HookRun, str]:
+) -> tuple[AfterWriteRun, str]:
     """Run *hook* on *files*. ``(the record, the note for the model or "")``."""
     label = hook.label
     shown = [as_argument(_relative(f, root)) for f in files]
@@ -211,7 +212,7 @@ async def _run_one(
         return int((time.monotonic() - started) * 1000)
 
     if program is None:
-        run = HookRun(name=label, status="error", duration_ms=elapsed_ms())
+        run = AfterWriteRun(name=label, status="error", duration_ms=elapsed_ms())
         return run, f"[after-write hook `{label}` could not start: {argv[0]} is not on PATH]"
     before = {f: await asyncio.to_thread(_digest, f) for f in files}
     from .tools.shell import _CREATE_NEW_PROCESS_GROUP, _CREATE_NO_WINDOW
@@ -231,12 +232,12 @@ async def _run_one(
             creationflags=_CREATE_NEW_PROCESS_GROUP | _CREATE_NO_WINDOW,
         )
     except OSError as e:
-        run = HookRun(name=label, status="error", duration_ms=elapsed_ms())
+        run = AfterWriteRun(name=label, status="error", duration_ms=elapsed_ms())
         return run, f"[after-write hook `{label}` could not start: {e}]"
     try:
         out = await _communicate(proc, hook.timeout_seconds)
     except TimeoutError:
-        run = HookRun(name=label, status="timed_out", duration_ms=elapsed_ms())
+        run = AfterWriteRun(name=label, status="timed_out", duration_ms=elapsed_ms())
         return run, (
             f"[after-write hook `{label}` stopped after {hook.timeout_seconds:g} s "
             "without finishing]"
@@ -247,11 +248,11 @@ async def _run_one(
     seconds = f"{ms / 1000:.2f} s"
     notes: list[str] = []
     if code == 0:
-        run = HookRun(
+        run = AfterWriteRun(
             name=label, status="passed", exit_code=0, duration_ms=ms, changed=bool(changed_files)
         )
     else:
-        run = HookRun(
+        run = AfterWriteRun(
             name=label, status="failed", exit_code=code, duration_ms=ms, changed=bool(changed_files)
         )
         text = clip_output(out.decode("utf-8", "replace"))
@@ -269,7 +270,7 @@ async def _run_one(
 
 async def run_after_write(
     session: object, files: Sequence[Path]
-) -> tuple[tuple[HookRun, ...], str]:
+) -> tuple[tuple[AfterWriteRun, ...], str]:
     """Run every configured hook that matches *files*, in order.
 
     Returns:
@@ -278,6 +279,11 @@ async def run_after_write(
         Never raises: a hook that cannot be judged is an ``error`` run.
     """
     if not files:
+        return (), ""
+    # An autonomous session's commands run only in its container (TD-5134
+    # puts its hooks there too). After-write hooks have no container path
+    # yet, so they do not run at all rather than run on the host.
+    if getattr(session, "autonomy", False):
         return (), ""
     try:
         hooks = await asyncio.to_thread(session_hooks, session)
@@ -299,7 +305,7 @@ async def run_after_write(
     )
     cwd = root if root is not None and root.is_dir() else Path(files[0]).parent
     env = sanitized_env()
-    runs: list[HookRun] = []
+    runs: list[AfterWriteRun] = []
     notes: list[str] = []
     for hook in hooks:
         chosen = [Path(f) for f in files if matches(hook, _relative(Path(f), root))]
@@ -310,7 +316,7 @@ async def run_after_write(
         except Exception as e:
             log.exception("after-write hook raised", extra={"extra_fields": {"hook": hook.label}})
             run, note = (
-                HookRun(name=hook.label, status="error"),
+                AfterWriteRun(name=hook.label, status="error"),
                 f"[after-write hook `{hook.label}` could not run: {e}]",
             )
         log.info(

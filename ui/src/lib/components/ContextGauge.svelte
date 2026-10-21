@@ -153,6 +153,18 @@
 		animation: rise var(--dur-enter) var(--ease-out);
 	}
 
+	/* On a phone the gauge starts the header's second row (AppShell), so the
+	   popover opens rightwards and never past the screen (TD-5109). Keep in
+	   sync with NARROW_VIEWPORT_PX. */
+	@media (max-width: 639px) {
+		.popover {
+			left: 0;
+			right: auto;
+			max-width: calc(100vw - 2 * var(--space-4));
+			white-space: normal;
+		}
+	}
+
 	.gauge:hover .popover,
 	.gauge:focus-within .popover {
 		display: block;

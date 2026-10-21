@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from ..autonomy import DecisionClass, Notice
-from ..protocol import HookRun, WorkerStep
+from ..protocol import AfterWriteRun, WorkerStep
 
 # ── Result types ────────────────────────────────────────────────────────
 
@@ -82,7 +82,7 @@ class ToolResult:
     verification: str | None = None
     allowed_by: tuple[str, ...] = ()
     transcript: tuple[WorkerStep, ...] = ()
-    hooks: tuple[HookRun, ...] = ()
+    hooks: tuple[AfterWriteRun, ...] = ()
 
 
 @dataclass(frozen=True)

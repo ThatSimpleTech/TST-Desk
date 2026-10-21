@@ -249,6 +249,7 @@ from .protocol import (
     FocusWindow,
     ForkFrom,
     GetCharter,
+    GetHooks,
     GetInstructionStack,
     GetSessionJobSource,
     GetSetupState,
@@ -3546,6 +3547,9 @@ class Daemon:
         if isinstance(msg, ListInstructions):
             return await self._handle_list_instructions(msg)
 
+        if isinstance(msg, GetHooks):
+            return self._handle_get_hooks(msg)
+
         if isinstance(msg, ListCommands):
             return await self._handle_list_commands(msg)
 
@@ -5018,6 +5022,14 @@ class Daemon:
             self._cleanup_attach(connection, session_id, (id(connection), session_id))
         self._attached_clients.pop(session_id, None)
         self.state.active_sessions = max(0, self.state.active_sessions - 1)
+
+    def _handle_get_hooks(self, msg: GetHooks) -> str:
+        """The session's active hooks and each one's last run (TD-5134). Not logged."""
+        found = self.session_registry.get(msg.session_id)
+        if found is None:
+            return build_error("session_not_found", f"Session {msg.session_id!r} not found")
+        found.hooks.user = _session_model_config(found, self.config).hooks
+        return found.hooks.state().model_dump_json()
 
     async def _handle_get_instruction_stack(self, msg: GetInstructionStack) -> str:
         """Assemble and answer with the session's current instruction stack.

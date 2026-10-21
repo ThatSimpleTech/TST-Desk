@@ -30,7 +30,6 @@ from typing import Any
 
 import pytest
 import yaml
-from pydantic import ValidationError
 
 from tstd.attachments import (
     DEFAULT_MAX_COUNT,
@@ -53,7 +52,6 @@ from tstd.boundary_config import (
 )
 from tstd.config import (
     TIER_NAMES,
-    AfterWriteHook,
     AutonomyConfig,
     ClearToolResultsConfig,
     ComputerUseConfig,
@@ -67,7 +65,6 @@ from tstd.config import (
     GithubConnectorConfig,
     GoogleConnectorConfig,
     GroundingConfig,
-    HooksConfig,
     JudgmentsConfig,
     McpConfig,
     McpServerConfig,
@@ -93,6 +90,7 @@ from tstd.config import (
     default_config_yaml,
     load_config,
 )
+from tstd.hooks_config import AfterWriteHook, HookEntry, HooksConfig, load_workspace_hooks
 from tstd.logging import LINUX_DATA_DIR_NAME
 from tstd.policy import PolicyConfig, PolicyRule, load_approved_imports, load_policy
 
@@ -199,14 +197,7 @@ def _load(example: Example, tmp: Path) -> None:
     load_workspace_boundary(workspace)
     load_policy(workspace)
     load_approved_imports(workspace)
-    # The fourth reader (TD-5135) tolerates a bad section at run time, so
-    # the reference is held to the strict model here.
-    data = yaml.safe_load(example.body)
-    if isinstance(data, dict) and data.get("hooks") is not None:
-        try:
-            HooksConfig.model_validate(data["hooks"])
-        except ValidationError as e:
-            raise ConfigError(f"Invalid hooks: {e.errors()[0]['msg']}") from e
+    load_workspace_hooks(workspace)
 
 
 @pytest.mark.parametrize("example", EXAMPLES, ids=repr)
@@ -273,10 +264,11 @@ _WORKTREE_FIELDS = frozenset(WorktreeConfig.model_fields)
 _WORKSPACE_WORKTREE_FIELDS = frozenset(WorktreeSection.model_fields)
 _STOP_CHECK_FIELDS = frozenset(StopCheckSection.model_fields)
 _ATTACHMENT_FIELDS = frozenset(AttachmentLimits.model_fields)
-_HOOKS_FIELDS = frozenset(HooksConfig.model_fields)
 _AFTER_WRITE_FIELDS = frozenset(AfterWriteHook.model_fields)
 _POLICY_FIELDS = frozenset(PolicyConfig.model_fields)
 _RULE_FIELDS = frozenset(PolicyRule.model_fields)
+_HOOKS_FIELDS = frozenset(HooksConfig.model_fields)
+_HOOK_FIELDS = frozenset(HookEntry.model_fields)
 
 
 def _check_keys(mapping: Any, fields: frozenset[str], where: str) -> None:
@@ -294,8 +286,10 @@ def _check_tier(data: Any, where: str) -> None:
 
 def _check_hooks(data: Any, where: str) -> None:
     _check_keys(data, _HOOKS_FIELDS, f"{where} hooks")
-    for i, hook in enumerate(data.get("after_write") or []):
-        _check_keys(hook, _AFTER_WRITE_FIELDS, f"{where} hooks.after_write[{i}]")
+    for event, entries in data.items():
+        fields = _AFTER_WRITE_FIELDS if event == "after_write" else _HOOK_FIELDS
+        for i, entry in enumerate(entries or []):
+            _check_keys(entry, fields, f"{where} hooks.{event}[{i}]")
 
 
 def _check_workspace(data: dict[str, Any], where: str) -> None:
@@ -426,6 +420,8 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
             _check_keys(data["worktree"], _WORKTREE_FIELDS, f"{where} worktree")
         if "autonomy" in data:
             _check_keys(data["autonomy"], _AUTONOMY_FIELDS, f"{where} autonomy")
+        if "hooks" in data:
+            _check_hooks(data["hooks"], where)
         if "mcp" in data:
             _check_keys(data["mcp"], _MCP_FIELDS, f"{where} mcp")
             servers = data["mcp"].get("servers")
@@ -499,6 +495,8 @@ def test_every_config_key_is_documented() -> None:
         | _AFTER_WRITE_FIELDS
         | _POLICY_FIELDS
         | _RULE_FIELDS
+        | _HOOKS_FIELDS
+        | _HOOK_FIELDS
     )
     missing = [key for key in sorted(keys) if f"`{key}`" not in text]
     assert not missing, "undocumented config keys: " + ", ".join(missing)

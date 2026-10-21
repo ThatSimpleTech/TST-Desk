@@ -77,7 +77,10 @@ EXIT_CODES: dict[Status, int] = {
 #: ``never`` policy rule, or a person answering Deny. A handler's own
 #: failure is not a refusal.
 #: ``plan_mode``: the session is planning and refused a change (TD-5123).
-REFUSAL_CODES = frozenset({"boundary_refusal", "policy_denied", "approval_denied", "plan_mode"})
+#: ``hook_blocked``: a ``before_tool`` hook refused the call (TD-5134).
+REFUSAL_CODES = frozenset(
+    {"boundary_refusal", "policy_denied", "approval_denied", "plan_mode", "hook_blocked"}
+)
 
 APPROVAL_NEEDED = "approval_needed"
 
@@ -380,6 +383,10 @@ class _TurnReader:
             code = str(event.get("error_code") or "turn_failed")
             print(code, file=sys.stderr)
             return self.outcome("error", code, code)
+        if event.get("error_code") == "hook_blocked":
+            # A user_prompt hook refused the message itself (TD-5134).
+            self.refusals.append(_Refusal(tool="user_prompt", code="hook_blocked"))
+            print("refused: user_prompt (hook_blocked)", file=sys.stderr)
         if self.refusals:
             listed = ", ".join(f"{r.tool} ({r.code})" for r in self.refusals)
             return self.outcome("refused", self.refusals[0].code, f"refused: {listed}")

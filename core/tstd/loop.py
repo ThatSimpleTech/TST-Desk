@@ -80,12 +80,14 @@ from .context.manifest import ManifestConfig, manifest_config_for_window
 from .context.skills import apply_slash_skill, list_workspace_skills
 from .context.stack import build_instruction_stack
 from .context.tokens import TokenCounter, make_token_counter
+from .context.workers import load_workers_async, mentioned_workers
 from .context_clear import clear_stale_tool_results
 from .context_fit import fit_inflight_turn, tool_result_char_cap, transcript_failure_text
 from .cost import CallRecord, CostTracker
 from .cu_verify import ActuationVerifier
 from .discovery import discover_model, resolve_tier_slugs
 from .fallback import BackupChain, TurnBackups, announce_switch, backup_wanted
+from .hooks import with_hook_context
 from .keychain import KeychainError
 from .local_worker import (
     effective_tier,
@@ -150,7 +152,7 @@ from .provider import (
 )
 from .reply_retry import StreamResult, stream_reply
 from .router import TierName, TierRouter
-from .session import Session, SessionEventLog
+from .session import QueuedUserMessage, Session, SessionEventLog
 from .session_goal import (
     answer_goal_command,
     goal_provider_content,
@@ -163,6 +165,7 @@ from .stop_check import TurnStopCheck
 from .tools import ToolDispatcher, ToolRegistry
 from .tools.boundary import PathGuard
 from .tools.consult import offered_tools
+from .tools.delegate_named import with_named_workers, with_worker_mentions
 from .tools.dispatch import build_decision_request, canonicalize_path_fields
 from .tools.tool_search import TOOL_SEARCH_NAME
 from .workspace_trust import trusted_imports
@@ -586,6 +589,35 @@ async def _emit_turn_complete(
         )
     )
     await session.close_cu_session()
+
+
+async def _refuse_prompt(
+    session: Session,
+    queued: QueuedUserMessage,
+    reason: str,
+    tier: TierName,
+    tracker: CostTracker,
+) -> None:
+    """A user_prompt hook blocked *queued* (TD-5134).
+
+    The window shows the message and why; the model never sees either,
+    so the conversation is left as it was.
+    """
+    turn_start = time.time()
+    await session.event_log.add(
+        UserTurn(
+            session_id=session.id,
+            turn_id=queued.id,
+            content=queued.display,
+            run_permissions=queued.run_permissions,
+            line_comments=queued.line_comments,
+            seq=1,
+        )
+    )
+    await session.user_turn_logged(queued)
+    note = f"A hook blocked this message, so it was not sent: {reason}"
+    await session.event_log.add(AssistantDelta(session_id=session.id, delta=note, seq=1))
+    await _emit_turn_complete(session, tier, turn_start, tracker, error_code="hook_blocked")
 
 
 async def _finish_stopped_turn(
@@ -1532,6 +1564,13 @@ async def agent_loop(
     # the router this loop routes by.
     if session.router is None:
         session.router = router
+    # TD-5134: session_start hooks, once per loop (a revive starts a new one).
+    session.hooks.user = config.hooks
+    started = await session.hooks.run(
+        "session_start", {"source": "resume" if session.conversation else "start"}
+    )
+    if started.context:
+        session.hooks.pending_context.append(started.context)
     # ── Conversation state ──────────────────────────────────────────
     # Learned token ratios (TD-5007). Taken before the assembler, which
     # sizes the workspace map from the brain endpoint's ratio (TD-5013).
@@ -1897,6 +1936,15 @@ async def agent_loop(
         # TD-5112: a message sent from here to turn_complete joins this
         # turn at its next tool-batch boundary.
         session.open_steering(queued.id)
+        # TD-5134: user_prompt hooks see the message before anything acts
+        # on it; a block keeps it out of the conversation.
+        if session.config is not None:
+            session.hooks.user = session.config.hooks
+        session.hooks.stop_blocks = 0
+        prompt_hooks = await session.hooks.run("user_prompt", {"prompt": queued.display})
+        if prompt_hooks.block is not None:
+            await _refuse_prompt(session, queued, prompt_hooks.block, router.active_tier, tracker)
+            continue
         # TD-5124: ``/goal`` is TST Desk's own command, never a skill's.
         goal_command = None if session.autonomy else parse_goal_command(queued.display)
         if goal_command is None:
@@ -1932,6 +1980,17 @@ async def agent_loop(
         )
 
         provider_content = queued.provider
+        # TD-5133: the named workers delegate offers this turn, read fresh
+        # so a definition the user just saved is listed; ``@name`` in the
+        # message points the turn at that worker.
+        workers = await load_workers_async(session.workspace_path)
+        turn_tool_definitions = with_named_workers(all_tool_definitions, workers)
+        if turn_tool_definitions is not None and any(
+            d.function is not None and d.function.name == "delegate" for d in turn_tool_definitions
+        ):
+            provider_content = with_worker_mentions(
+                provider_content, mentioned_workers(queued.display, workers)
+            )
         if goal_command is not None and goal_command.kind == "set":
             # The goal is the task: the model gets it as a directive.
             provider_content = goal_provider_content(goal_command.text, queued.provider)
@@ -1939,6 +1998,10 @@ async def agent_loop(
         # plan-mode note after it; the window shows it as typed.
         if router.plan_mode:
             provider_content = with_plan_note(provider_content)
+        # TD-5134: session_start's context rides on the first turn after it.
+        hook_context = "\n\n".join([*session.hooks.pending_context, prompt_hooks.context])
+        session.hooks.pending_context = []
+        provider_content = with_hook_context(provider_content, hook_context.strip())
         messages.append(ChatMessage(role="user", content=provider_content))
         await session.event_log.add(
             UserTurn(
@@ -2041,7 +2104,7 @@ async def agent_loop(
             # 2a. Determine active tier via router
             tier = router.record_turn_start()
             session.acting_tier = tier
-            tool_definitions = offered_tools(all_tool_definitions, tier, config.consult)
+            tool_definitions = offered_tools(turn_tool_definitions, tier, config.consult)
             cu_heavy = session_is_cu_heavy(session)
             tier_cfg = effective_tier(config, tier, cu_heavy=cu_heavy)
             if tier == "worker" and cu_heavy and tier_cfg.slug is None:

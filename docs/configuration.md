@@ -20,6 +20,7 @@ suite rather than quietly mislead you.
 | `.tst/config.yaml` in a workspace | You, per project | **Yes.** Git-tracked if you want the team to share it. |
 | `.tst/memory/*.md` in a workspace | Distill writes; you correct | **Yes.** Git-tracked on purpose. Standing rules stay in `AGENTS.md`. |
 | `.tst/autonomy/CHARTER.md` | You, from the Charter column | **Yes.** Human path only — the agent cannot write it. Spec §12.4. |
+| `.tst/agents/*.md`, `~/.tstdesk/agents/*.md` | You | **Yes.** Named workers for `delegate` (§4.11). Human path only — the agent cannot write either tree. |
 
 The packaged file is a seed, not a setting. On first load, if your user copy is missing, it is
 copied there verbatim — comments and all — and from then on nothing the daemon reads comes from
@@ -79,7 +80,7 @@ no effect.
 | `engine` | mapping | see below | Which agent loop new sessions use. `native` is the TST 3-tier OpenAI-compatible loop. `grok` spawns the installed Grok Build CLI over ACP. Omitted in an older user copy is filled from the shipped file at load. |
 | `steering` | mapping | see below | User-global steering (TD-4845). Omitted in an older user copy is filled from the shipped file at load. |
 | `worktree` | mapping | see below | A git worktree per session (TD-5126). On by default: a session or scheduled job in a git repository works in its own worktree. Omitted in an older user copy is the defaults, on. |
-| `hooks` | mapping | no hooks | Commands TST Desk runs around the agent's work. Today only `after_write`: a formatter or linter run on the files each `fs_write` or `fs_edit` changed, its failures sent back to the model in that call's result (TD-5135). Omitted in an older user copy is no hooks. |
+| `hooks` | mapping | no hooks | Commands TST Desk runs around the agent's work: at five points in a session (TD-5134, §2 `hooks`), and `after_write`, a formatter or linter run on the files each `fs_write` or `fs_edit` changed, its failures sent back to the model in that call's result (TD-5135, §2 `hooks.after_write`). Omitted in an older user copy is no hooks. |
 
 ### `credentials`
 
@@ -1034,7 +1035,7 @@ worktree:
   setup_timeout_s: 900
 ```
 
-### `hooks`
+### `hooks.after_write`
 
 Run a formatter or linter after the agent writes a file (TD-5135). Local models make more format
 and lint slips than hosted ones; a hook catches them in the same step, so fixing one does not cost
@@ -1094,8 +1095,11 @@ What happens after each write:
 
 The hook is your own command, not a tool call the model made, so it runs without an approval card.
 It sees only files a classified and approved write already changed. A workspace can add its own
-hooks in `.tst/config.yaml` (§4.11), after yours, once you trust that file. A Grok-engine session
-has its own loop and runs no hooks.
+hooks in `.tst/config.yaml` (§4.12), after yours, once you trust that file. A Grok-engine session
+has its own loop and runs no hooks, and an autonomous session runs no `after_write` hook: its
+commands run only in its container, and these have no container path yet. `after_write` is not one of the five events below: it has its
+own keys, its runs show on the write's `tool_result`, not as `hook_run` events, and **More →
+Hooks** does not list it.
 
 ### `remote`
 
@@ -1483,6 +1487,84 @@ voice:
   base_url: ""
   credential: ""
   timeout_seconds: 30
+```
+
+### `hooks`
+
+Commands TST Desk runs at five points in a session (TD-5134). The same block can go in a
+workspace's `.tst/config.yaml` (§4.12), where it applies only once you trust that file. Your
+hooks run first, then the workspace's.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `session_start` | list of hooks | `[]` | Runs when a session's loop starts (open, and again after a restart revives it). What it prints goes to the model with the next message. |
+| `user_prompt` | list of hooks | `[]` | Runs on each message you send, before the model sees it, including one sent while a turn runs (it joins that turn). It can add context, or block the message: the window shows why and the model never sees it. In `tst run`, a blocked message exits 3 (refused). |
+| `before_tool` | list of hooks | `[]` | Runs for a tool call after the decision classifier and your policy have decided, and only when they would let it run or ask. It can block the call (`hook_blocked`, which `tst run` counts as refused), or make a call that would run on its own wait for your approval. It cannot approve anything. In an unattended run nobody can approve, so its ask refuses the call. |
+| `after_tool` | list of hooks | `[]` | Runs after a tool call succeeds. What it says goes back to the model with the result, after it, so a long result cut to `max_result_chars` still carries it. |
+| `after_write` | list of hooks, up to 10 | `[]` | A formatter or linter on the files each write changed, with its own keys (`match`, a `command` list, no `tools`); see `hooks.after_write` above (TD-5135). |
+| `stop` | list of hooks | `[]` | Runs when the model ends a turn, before the done-check (§4.9). A block sends its reason back to the model and the turn goes on, up to 3 times a turn. |
+
+Each hook:
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `command` | string | required | A shell command, run in the session's folder with secret-shaped variables removed from its environment, plus `TST_HOOK_EVENT`, `TST_SESSION_ID` and `TST_WORKSPACE`. It gets the event as JSON on stdin. In an unattended (autonomy) run it runs in that run's container, like its shell calls: the image's `/bin/sh` in `/workspace`, with only the workspace bound in, the charter's network and the memory cap, so a host path such as `~/bin/check.sh` is not there. If the container cannot start, the hook is recorded as an error and does not run on your computer. |
+| `timeout_seconds` | number, up to 600 | `30` | How long it may run before it and what it started are killed. A timeout changes nothing. |
+| `tools` | list of globs | `[]` | `before_tool` and `after_tool` only: the tool names it runs for (`shell`, `fs_*`). Empty is every tool. |
+| `name` | string | none | A label for the inspector. |
+
+What a hook says, by exit code:
+
+- **0, nothing printed:** nothing to say.
+- **0 and a JSON object:** `decision` is `block`, `ask` (`before_tool` only) or `allow`;
+  `reason` says why; `context` is text for the model. `allow` is ignored: a hook can only
+  tighten, never loosen.
+- **0 and plain text:** context for the model on `session_start` and `user_prompt`; ignored on
+  the others.
+- **2:** block, with what it printed on stderr as the reason.
+- **Anything else, a timeout, or a command that will not start:** recorded and otherwise
+  ignored.
+
+Every run is a `hook_run` event and a row in the audit database's `hook_runs` table, with
+secrets redacted. **More → Hooks** lists the session's active hooks and each one's last result.
+
+<!-- verify: model -->
+```yaml
+presets:
+  demo:
+    brain:
+      slug: demo/brain
+      base_url: http://127.0.0.1:11434/v1
+      input_price: 0
+      output_price: 0
+      cache_read_price: 0
+      context_window: 8192
+      max_output_tokens: 256
+    worker:
+      slug: demo/worker
+      base_url: http://127.0.0.1:11434/v1
+      input_price: 0
+      output_price: 0
+      cache_read_price: 0
+      context_window: 8192
+      max_output_tokens: 256
+    validator:
+      slug: demo/validator
+      base_url: http://127.0.0.1:11434/v1
+      input_price: 0
+      output_price: 0
+      cache_read_price: 0
+      context_window: 8192
+      max_output_tokens: 256
+active_preset: demo
+hooks:
+  before_tool:
+    - command: "~/bin/no-force-push.sh"
+      tools: ["shell"]
+      timeout_seconds: 10
+      name: no force push
+  user_prompt:
+    - command: "date"
 ```
 
 ### `engine`
@@ -2894,7 +2976,7 @@ them when:
 | `approved_external_imports` | It lists any path. |
 | `worktree.setup` | It names a command. The daemon runs it in each new worktree (TD-5126), so a repo-shipped one waits for your trust; until then the new chat says it was skipped. |
 | `mcp_servers` | The key is set at all. TST Desk does not read it from a workspace yet; it is judged now so a later feature cannot run it untrusted. |
-| `hooks` | The key is set at all. `hooks.after_write` runs commands after every write the agent makes (§4.11), so a repo's hooks wait for your trust. |
+| `hooks` | The key is set at all. Each hook is a command TST Desk runs on its own (§4.12), and `hooks.after_write` runs one after every write the agent makes, so a repo's hooks run only once you trust the file. |
 | `stop_check.checks` | It names any check (TD-5124). A check runs on its own whenever the model ends a turn: a command through the shell tool, or a statement that goes to the model as a message when it fails. |
 
 Tightening never asks: `allowed_commands`, `ask` and `never` rules, `class_c_default: never`,
@@ -3016,14 +3098,70 @@ copy from the main checkout into each new worktree:
 config/local.json
 ```
 
-### 4.11 `hooks` — a formatter or linter after each write (TD-5135)
+### 4.11 Named workers — `.tst/agents/*.md` (TD-5133)
 
-The same `after_write` list as in `config.yaml` (§2, `hooks`), for one workspace: a project can
-ship the formatter and linter it uses. They run after your own hooks, on the same writes.
+Each markdown file in `.tst/agents/` (this workspace) or `~/.tstdesk/agents/` (every workspace)
+defines one worker that `delegate` can run by name. The frontmatter says what it is; the body is
+its own prompt, added after the worker tier's steering. On the same name the file in
+`~/.tstdesk/agents/` wins, so a cloned repo cannot replace a worker you wrote.
+
+```markdown
+---
+name: reviewer            # optional; defaults to the file name
+description: Reviews a diff for bugs and missing tests
+tools: [fs_read, fs_grep, shell]
+tier: brain               # brain, worker (the default) or validator; ~/.tstdesk/agents/ only
+preset: openrouter        # optional; that preset's tier instead of the active one; ~/.tstdesk/agents/ only
+policy:
+  - tool: shell
+    args: "git push*"
+    effect: never
+---
+Read the diff, run the tests, and list each bug with its file and line.
+```
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `name` | string | the file name | 1–64 letters, digits, `-` or `_`. What `delegate`'s `agent` and `@name` use. |
+| `description` | string | required | Shown to the model in `delegate`'s list, so it knows when to pick this worker. Cut at 300 characters. |
+| `tools` | list | read-only: `fs_read`, `fs_list`, `fs_grep`, `web_search`, `web_fetch` | The allow list, a subset of ONE built-in child kind plus `consult`: either the worker kind's (`fs_read`, `fs_list`, `fs_grep`, `fs_write`, `fs_edit`, `shell`) or the research kind's (`fs_read`, `fs_list`, `fs_grep`, `web_search`, `web_fetch`). A list mixing `fs_write`/`fs_edit`/`shell` with `web_search`/`web_fetch` is refused. `consult` is offered only when `consult.tiers` includes the worker's tier. Never `delegate`, a plugin or an MCP tool. |
+| `tier` | `brain` / `worker` / `validator` | `worker` | The tier the worker's model calls run on, priced and capped like any call on it. Only a file in `~/.tstdesk/agents/` may name a tier other than `worker`. |
+| `preset` | string | the active preset | Take `tier` from this preset. A preset missing from `config.yaml` refuses the call rather than falling back. Only a file in `~/.tstdesk/agents/` may name a preset. |
+| `policy` | list of rules | none | Rules like §4.4's, judged beside the workspace policy for this worker's calls only. `effect` must be `ask` or `never`: a worker's policy can only tighten. |
+
+A file that breaks a rule above — an `auto` rule, a tool outside the list, tools from both kinds,
+a workspace file naming `tier: brain` or a `preset`, a key TST Desk does not read (`model`, say),
+no description — is not loaded, and `delegate` names the reason when the
+model asks for it. The trees are read fresh at the start of each turn and again when `delegate`
+runs, so a saved edit counts on the next call.
+
+- **The model sees them.** `delegate` lists every loaded worker with its description, and its
+  `agent` argument takes one of their names. With no definitions the tool is unchanged.
+- **`@name` in a message** points the turn at that worker: the model is told to hand the task to
+  it with `delegate`. The approval card and the call are the usual ones.
+- **The agent cannot write them.** Both trees are refused like steering files (prime directive
+  4): `fs_write`, `fs_edit` and a shell write are Class C, inside the workspace or not. They are
+  not proposable with `propose_steering_edit` either; edit them yourself.
+- **Plan mode** runs only a worker with no `fs_write`, `fs_edit` or `shell`.
+- They load from a workspace you have not trusted (§4.8), so a definition can only narrow what a
+  built-in delegated child already has: its tools fit inside one child kind, its policy only
+  tightens, and a workspace file runs on the worker tier of the active preset. Choosing another
+  tier or a preset is for your own `~/.tstdesk/agents/` files.
+
+### 4.12 `hooks` — commands that run at points in a session (TD-5134)
+
+The same block as §2's `hooks`, for this workspace. It applies only once you trust the file
+(§4.8): a hook is a command TST Desk runs on its own. Until then, or if the block is invalid,
+the workspace's hooks are left out and **More → Hooks** says why. Your own hooks still run.
+The block may carry `after_write` too (§2 `hooks.after_write`): a project can ship the formatter
+and linter it uses, and they run after yours, on the same writes (TD-5135).
 
 <!-- verify: workspace -->
 ```yaml
 hooks:
+  after_tool:
+    - command: "ruff check --quiet ."
+      tools: ["fs_write", "fs_edit"]
   after_write:
     - name: ruff
       command: "uv run ruff check --fix {files}"
@@ -3031,9 +3169,8 @@ hooks:
       timeout_seconds: 60
 ```
 
-**A repo's hooks wait for your trust (§4.8).** Any `hooks` value counts as loosening, so the
-commands run only once you trust the file. A `hooks` section that does not validate (an unknown
-key, a `command` with no program) applies nothing, and the rest of the file still loads.
+A `hooks` section that does not validate (an unknown key, a `command` with no program) applies
+none of its hooks, and the rest of the file still loads.
 
 ---
 

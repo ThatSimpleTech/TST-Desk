@@ -63,7 +63,7 @@ class _HeldTool:
 
 
 async def _start(
-    session: Session, scripts: list[Script], held: _HeldTool
+    session: Session, scripts: list[Script], held: _HeldTool, config: Any = None
 ) -> tuple[SessionRunner, MockProvider]:
     registry = ToolRegistry()
     registry.register(
@@ -78,7 +78,7 @@ async def _start(
     dispatcher.register_handler("build", held.handler)
     mock = MockProvider(sequences={"test-brain": scripts})
     router = TierRouter(lead_turns=80)
-    config = make_config()
+    config = config if config is not None else make_config()
     factory = mock_factory(mock)
     runner = SessionRunner(
         session,

@@ -17537,6 +17537,161 @@ behind a read rule, even if the model was allowed to read it at the time.
 Re-reading is not a tool call: it is the daemon restoring text the agent
 already had, through the same guard the read tool uses.
 
+## 2026-10-21 — TD-5134: hook runner (Class B)
+
+Approved as specified in the gap audit, with the owner's 2026-10-14 decision that
+hooks may also come from a trusted workspace config. Size 8, so the approach
+is recorded here instead of waiting for sign-off. The audit said to split the
+story before building; it shipped as one change because the config, runner,
+audit row and inspector share one model and none is useful alone.
+
+- **Where hooks come from.** One `hooks:` block shape (`core/tstd/hooks_config.py`)
+  in `config.yaml` and in `.tst/config.yaml`. The workspace list is read only
+  through the TD-5113 view while it applies; `hooks` was already a loosening
+  key there, so an untrusted file adds nothing. User hooks run first. The
+  daemon refreshes user hooks from the session's config at each turn, so a
+  config edit takes effect on the next message.
+- **The protocol.** A hook gets the event as JSON on stdin and
+  `TST_HOOK_EVENT`, `TST_SESSION_ID`, `TST_WORKSPACE` in its environment.
+  Exit 0 with JSON `{"decision": "block"|"ask"|"allow", "reason", "context"}`
+  or plain stdout (context, at session start and on a prompt only); exit 2
+  blocks with stderr as the reason; any other exit is an error. This mirrors
+  the exit-code and JSON control people already write for other agents.
+- **Hooks only tighten (directive 6).** `before_tool` runs after the
+  classifier and the policy, and only for a call they would let run, so a
+  hook never sees, and cannot rescue, a refused call. `block` refuses
+  (`hook_blocked`); `ask` turns `auto` into an approval prompt; `allow` is
+  ignored. A hook `ask` still asks when skip-all is on, since skip-all only
+  promotes the policy's own asks. Under autonomy, where no one can approve,
+  a hook `ask` refuses the call.
+- **Errors and timeouts do not block.** A hook that crashes, prints bad JSON
+  or times out is recorded as `error` or `timeout` and the call goes on; the
+  classifier and policy still hold, and a broken script should not wedge a
+  session. A timeout kills the hook's whole process group.
+- **How it runs.** The system shell (`/bin/sh`, or `cmd` on Windows) in the workspace,
+  with the shell tool's sanitized environment (no daemon secrets), output
+  read up to 64 KB, text clipped to 2,000 characters. A block stops the
+  remaining hooks for that event.
+- **Events in the loop.** `session_start` fires each time the agent loop
+  starts (source `start` or `resume`); its context rides on the next user
+  message rather than the system prompt, so the steering cache prefix is
+  untouched. A `user_prompt` block keeps the message out of the
+  conversation and ends the turn with `hook_blocked`. A `stop` block sends
+  its reason back as a user message and runs another round, at most 3 times
+  a turn. `after_tool` output is appended to the tool result. Delegate
+  workers share the parent's runner; their own stops do not run stop hooks.
+- **Audit.** Every run is a `hook_run` session event and a row in a new
+  `hook_runs` table (schema v7) with command, reason and context redacted
+  by the audit redactor, plus result, exit code and duration.
+- **Inspector.** `get_hooks` returns `hooks_state` (active hooks, source,
+  matched tools, last result, workspace trust note); the UI shows it under
+  the right pane's More menu.
+
+**Conservative answers to questions the story left open (Class C, PR body).**
+Errors and timeouts fail open (the classifier is the safety net, not the
+hook). `get_hooks` is not added to the bridged or peer verbs. A hook's
+`allow` never loosens anything. Stop-hook retries are capped at 3 a turn. A
+workspace file with invalid hooks adds no hooks rather than some of them.
+
+**Review fixes (PR #60).** Four findings, all fixed:
+
+- **Autonomy runs hooks in the container.** §12.5 / TD-4301 require an
+  unattended run to execute in a rootless container with only the workspace
+  bound in. The agent writes the workspace unattended, so a hook that runs a
+  repo script (`./scripts/check.sh`, `make lint`) would have run its code on
+  the host. An autonomous session's hooks now run through the same
+  `autonomy_shell_argv` as its shell calls (`--interactive` for the stdin
+  payload, the hook variables passed with `--env`, the charter's network, the
+  session's memory cap); the payload's `workspace` and `TST_WORKSPACE` are
+  `/workspace`. User hooks go there too: the most conservative choice, at
+  the cost that a user hook naming a host path does not work unattended. If
+  the container argv cannot be built the hook is recorded as `error` and
+  never runs on the host (errors fail open as before; autonomy refuses to
+  start without a runtime anyway).
+- **Steers meet `user_prompt` hooks.** A message that joins a running turn
+  (TD-5112) runs the same hooks before it is appended. A block keeps it out
+  of the conversation; its `user_turn` is still logged and a note says why.
+  Hook context rides on the steer as on a turn's first message.
+- **Hook notes go after truncation.** `after_tool` now returns only the
+  `[hooks]` notes and the dispatcher adds them after `truncate_output`, so a
+  long result cannot cut a flag off. The notes are already clipped to
+  2,000 characters a hook.
+- **`tst run` counts hook blocks as refusals.** `hook_blocked` joins
+  `REFUSAL_CODES` (a `before_tool` block), and a turn that ends with
+  `hook_blocked` (a blocked prompt) is `refused` too: exit 3.
+
+## 2026-10-21 — TD-5133: named worker definitions in `.tst/agents/` and `~/.tstdesk/agents/` (Class B)
+
+**Context.** The gap audit asked for workers with their own prompt, tool
+allow list, tier or preset and tightening policy, picked by name from
+`delegate` or by `@name` in the composer. The 2026-10-14 decisions do
+not cover it beyond directive 4.
+
+**Decision.**
+- **Format.** One markdown file per worker; YAML frontmatter `name`
+  (defaults to the stem), `description` (required: it is what the model
+  picks by), `tools`, `tier` (`brain`/`worker`/`validator`, default
+  `worker`), `preset`, `policy`; the body is the prompt, capped at 32 KiB
+  like a slash command. User-global wins on a name, as for commands, so a
+  cloned repo cannot replace a worker the user wrote.
+- **Fail closed.** A file with an `auto` rule, a tool outside the allowed
+  set, an unknown key (Claude Code's `model`, say), no description or a
+  bad name is not loaded. The reason is kept and `delegate` repeats it when
+  the model asks for that name. Ignoring an unknown key would run the
+  worker differently from what its author wrote.
+- **Tools.** A subset of ONE built-in child kind plus `consult` (still
+  only when `consult.tiers` has the worker's tier): the worker kind's
+  (`fs_*` reads, `fs_write`, `fs_edit`, `shell`) or the research kind's
+  (`fs_*` reads, `web_search`, `web_fetch`). A list mixing writes or
+  `shell` with the web is refused, since TD-5117 kept the web on the
+  read-only child and no built-in child holds both. Never `delegate`,
+  plugin or MCP tools: nothing vouches for them in a child yet. No `tools`
+  key means the read-only research set, the narrower default.
+- **Tier and preset.** `preset` picks that preset's `tier`; a preset not in
+  `config.yaml` refuses the call instead of falling back. Spend lands on
+  that tier in the parent's tracker, still under the parent's caps. Only
+  a user-global file (`~/.tstdesk/agents/`) may set `tier` other than
+  `worker` or name a `preset`; a workspace file that does is not loaded.
+  Workspace definitions load without a trust card, so a cloned repo must
+  not be able to move its child onto the brain tier or another preset's
+  models. Gating the keys behind TD-5113 trust was the alternative; that
+  trust covers `.tst/config.yaml` bytes, not these files, so refusing is
+  the conservative choice (review finding on PR #57).
+- **Policy.** Rules become `WorkerPolicyRule`s on the child dispatcher's
+  `worker_rules`, merged after the workspace and run rules. Resolution is
+  deny first, so `ask`/`never` can only tighten; `with_worker_rules` drops
+  `auto` again so no caller can widen. A refusal names `(worker <name>)`.
+  The read-only shell list's read guards still come from the workspace
+  policy only: a worker's `fs_read` rule does not make a listed shell
+  command ask, but the worker's own `shell` rules still apply by tool.
+- **Unwritable.** `(.tst, agents)` and `(.tstdesk, agents)` join the
+  reserved directory pairs `is_steering_write` checks over the whole path,
+  so `fs_write`, `fs_edit` and shell redirects are Class C in the
+  workspace and in the home tree (a `writable_paths` hole too). They are
+  not added to `propose_steering_edit`: the user edits them by hand.
+- **What the model sees.** Each turn the loop reads both trees (off the
+  event loop) and rewrites `delegate`'s definition: a "Named workers"
+  list with descriptions and an `enum` on `agent`. With no definitions the
+  definition is the registry's own, so requests and the provider's prompt
+  cache are unchanged. `delegate` reads the trees again when it runs, so a
+  removed or edited file is what runs or is refused.
+- **`@name`.** The daemon matches `@name` (not inside an address) against
+  the loaded names and appends a note to the message the model receives;
+  the window shows the message as typed, as plan mode's note does. The
+  model still makes the `delegate` call, so it goes through the
+  classifier and the approval card like any other.
+- **Plan mode.** A named worker holding `fs_write`, `fs_edit` or `shell`
+  is refused while planning; a read-only one runs.
+- **Untrusted workspaces.** Definitions load from a workspace whose
+  `.tst/config.yaml` is not trusted (TD-5113): a definition can only
+  narrow the tools and policy a delegated child already has.
+
+**Conservative answers to questions the story left open (Class C, PR body).**
+No composer autocomplete or new control for `@name`: the daemon recognises
+it in the typed text and no wire message changes. No implicit delegation:
+the model is told to delegate, and the call is still judged and approved.
+Unknown frontmatter keys refuse the file. `agent` with `kind` is refused.
+
 ## 2026-10-21 — TD-5135: after-write hooks run a formatter or linter on the agent's writes (Class B)
 
 **Context.** The gap audit asked for a packaged "after write" hook that runs
@@ -17596,3 +17751,15 @@ call's result). Showing the time through `tool_progress` (it is
 overwritten by the next update and was built for live progress, not a
 finished step). Running the hook after the checkpoint (the commit and the
 diff would show the unformatted file).
+
+**Integration with TD-5134 (2026-10-21, merge of main).** TD-5134 landed
+its own `hooks:` block first. One block, one model: `after_write` became a
+field of TD-5134's `HooksConfig` beside the five events, with its own entry
+keys, rather than a sixth event, because it runs inside the dispatcher on a
+write's canonical paths and reports in the write's result, not through the
+hook runner. The tool result's record was renamed `AfterWriteRun` so it no
+longer shares a name with the `hook_run` event. An autonomous session runs
+no after-write hook: TD-5134 keeps an autonomous session's hooks in its
+container, and running these on the host would be the one way out of it.
+The conservative choice is not to run them there until they have a
+container path.

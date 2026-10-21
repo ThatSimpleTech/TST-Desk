@@ -18,6 +18,7 @@
 	import FilesPanel from './FilesPanel.svelte';
 	import WorkPanel from './WorkPanel.svelte';
 	import StackPanel from './StackPanel.svelte';
+	import HooksPanel from './HooksPanel.svelte';
 	import UsagePanel from './UsagePanel.svelte';
 	import ScreenPane from './ScreenPane.svelte';
 	import PreviewPane from './PreviewPane.svelte';
@@ -66,6 +67,7 @@
 	import { rightPane, showRightPane, type RightPaneTab } from '../right-pane.svelte.js';
 	import { startUsage, refreshUsage, usage } from '../usage.svelte.js';
 	import { startStack, refreshStack } from '../stack-store.svelte.js';
+	import { startHooks, refreshHooks } from '../hooks-store.svelte.js';
 	import { startScreen, screen } from '../screen.svelte.js';
 	import { startCuIndicators } from '../screen-indicator.svelte.js';
 	import { startDesign, toggleDesign } from '../design.svelte.js';
@@ -195,6 +197,7 @@
 		// panel is only mounted on Stack; a reply with no subscriber is
 		// dropped and the pane stays on "No instruction stack yet."
 		const offStack = startStack();
+		const offHooks = startHooks();
 		const offOsNotify = startOsNotify(isTauri() ? createTauriOsNotifyBridge() : undefined);
 		const offCuFocus = startCuFocus();
 		const offArtifacts = startArtifacts();
@@ -241,6 +244,7 @@
 			offCuPerms();
 			offUsage();
 			offStack();
+			offHooks();
 			offOsNotify();
 			offCuFocus();
 			offArtifacts();
@@ -268,6 +272,13 @@
 		if (rightPane.tab !== 'stack') return;
 		void session.sessionId;
 		refreshStack();
+	});
+
+	// Hooks (TD-5134): refreshed the same way; live runs arrive as events.
+	$effect(() => {
+		if (rightPane.tab !== 'hooks') return;
+		void session.sessionId;
+		refreshHooks();
 	});
 
 	$effect(() => {
@@ -330,6 +341,7 @@
 		...(showScreenTab ? ([['screen', 'Screen']] as const) : []),
 		['preview', 'Preview'],
 		['plan', 'Plan'],
+		['hooks', 'Hooks'],
 	]);
 	let moreOpen = $state(false);
 	let moreRoot: HTMLElement | undefined = $state();
@@ -534,6 +546,8 @@
 					<PreviewPane />
 				{:else if rightPane.tab === 'plan'}
 					<PlanPane />
+				{:else if rightPane.tab === 'hooks'}
+					<HooksPanel />
 				{:else}
 					<StackPanel />
 				{/if}
@@ -573,6 +587,7 @@
 	}
 
 	.shell-title {
+		white-space: nowrap;
 		font-family: var(--font-display);
 		font-size: var(--text-base);
 		font-weight: var(--weight-medium);
@@ -773,8 +788,22 @@
 	   inspector stay in the DOM so optional reveal is a class, not a second
 	   shell. Keep in sync with NARROW_VIEWPORT_PX / narrowMediaQuery(). */
 	@media (max-width: 639px) {
+		/* A phone's width can't fit one row: the title and the tool buttons
+		   stay on top and the session's bar (workspace, context gauge, cost,
+		   state) takes a second row of its own that can wrap (TD-5109). */
 		.shell-header {
-			overflow-x: auto;
+			flex-wrap: wrap;
+			height: auto;
+			min-height: var(--space-12);
+			padding: var(--space-2) var(--space-4);
+			row-gap: var(--space-2);
+		}
+
+		.shell-header > :global(.titlebar) {
+			order: 1;
+			flex-basis: 100%;
+			flex-wrap: wrap;
+			row-gap: var(--space-2);
 		}
 
 		.shell-body:not(.shell-show-rail) :global(.rail) {

@@ -15,7 +15,7 @@ import asyncio
 import os
 import shutil
 import sys
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -206,6 +206,8 @@ def container_argv(
     inner: Sequence[str],
     network: str | list[str] = "deny",
     memory_mb: int | None = None,
+    interactive: bool = False,
+    env: Mapping[str, str] | None = None,
 ) -> list[str]:
     """Argv that execs *inner* with only *workspace* bind-mounted.
 
@@ -217,7 +219,9 @@ def container_argv(
     ``--network=host``. Unexpected values fail closed as deny.
     ``--pull=never`` so a start check cannot phone a registry.
     *memory_mb* is ``--memory`` (TD-5116); the runners below always pass
-    one when RAM is known.
+    one when RAM is known. *interactive* keeps stdin open (``-i``), for a
+    hook that reads its payload there (TD-5134). *env* is set inside the
+    container with ``--env``; nothing else of the host's environment is.
     """
     if not inner:
         raise SandboxError("container command is empty")
@@ -245,6 +249,10 @@ def container_argv(
         # MemorySwapMax=0: Podman's default lets a container swap as much
         # again, which is the slow death the cap exists to stop (TD-5160).
         argv.extend([f"--memory={memory_mb}m", f"--memory-swap={memory_mb}m"])
+    if interactive:
+        argv.append("--interactive")
+    for key, value in (env or {}).items():
+        argv.extend(["--env", f"{key}={value}"])
     argv.extend(
         [
             "--userns=keep-id",
@@ -272,12 +280,15 @@ def autonomy_shell_argv(
     network: str | list[str] = "deny",
     which: WhichFn | None = None,
     memory_mb: int | None = None,
+    interactive: bool = False,
+    env: Mapping[str, str] | None = None,
 ) -> list[str]:
     """Argv that runs *command* inside the sandbox via ``/bin/sh -c``.
 
     The inner shell is the *image's* ``/bin/sh``, not the host's. Used by
-    the product shell tool on autonomous sessions (TD-4301). *memory_mb*
-    is the session's ``caps.shell_memory_mb``; None is half of RAM.
+    the product shell tool on autonomous sessions (TD-4301), and by hooks
+    there (TD-5134), which pass *interactive* and *env*. *memory_mb* is
+    the session's ``caps.shell_memory_mb``; None is half of RAM.
     """
     if not command.strip():
         raise SandboxError("container command is empty")
@@ -291,6 +302,8 @@ def autonomy_shell_argv(
         inner=["/bin/sh", "-c", command],
         network=network,
         memory_mb=memory_mb if memory_mb is not None else default_shell_memory_mb(),
+        interactive=interactive,
+        env=env,
     )
 
 

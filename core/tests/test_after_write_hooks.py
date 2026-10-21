@@ -23,8 +23,9 @@ from pydantic import ValidationError
 
 from tests.test_read_tools import make_dispatcher
 from tstd.after_write import build_argv, clip_output, matches, session_hooks
-from tstd.config import AfterWriteHook, HooksConfig, ModelConfig, default_config_yaml
-from tstd.protocol import HookRun
+from tstd.config import ModelConfig, default_config_yaml
+from tstd.hooks_config import AfterWriteHook, HooksConfig
+from tstd.protocol import AfterWriteRun
 from tstd.protocol import ToolResult as ToolResultEvent
 from tstd.workspace_trust import TrustStore, read_view
 
@@ -118,6 +119,18 @@ class TestFailuresGoBackToTheModel:
         result = await _write(tmp_path, session, "a.py", "ok = 1\n")
         assert "after-write" not in result.output
         assert [r.status for r in result.hooks] == ["passed"]
+
+    async def test_an_autonomous_session_runs_no_hook_on_the_host(self, tmp_path: Path) -> None:
+        # TD-5134 runs an autonomous session's hooks in its container;
+        # after-write hooks have no container path, so they do not run.
+        marker = tmp_path.parent / f"{tmp_path.name}-ran"
+        body = f"open({str(marker)!r}, 'w').write('x')"
+        session = _session(tmp_path, _hook(tmp_path, "mark", body))
+        session.autonomy = True
+        result = await _write(tmp_path, session, "a.py", "ok = 1\n")
+        assert result.status == "success"
+        assert result.hooks == ()
+        assert not marker.exists()
 
     async def test_fs_edit_runs_the_hook_too(self, tmp_path: Path) -> None:
         (tmp_path / "a.py").write_text("ok = 1\n")
@@ -328,7 +341,7 @@ def test_the_tool_result_event_carries_each_hook_and_its_time() -> None:
         tool_call_id="c1",
         status="success",
         output="wrote 1 bytes",
-        hooks=[HookRun(name="ruff", status="failed", exit_code=1, duration_ms=420)],
+        hooks=[AfterWriteRun(name="ruff", status="failed", exit_code=1, duration_ms=420)],
         seq=1,
     )
     wire = event.model_dump()
