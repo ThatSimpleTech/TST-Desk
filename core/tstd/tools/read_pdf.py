@@ -147,7 +147,8 @@ def read_pdf(
     """Text of the chosen pages, and images of the first *image_slots*.
 
     Raises ``PagesError`` for a bad range and ``OSError`` for a file
-    PDFium cannot open (damaged, or locked with a password). Blocking:
+    PDFium cannot open or a page it cannot read (damaged, or locked with a
+    password). Blocking:
     call from a worker thread.
     """
     try:
@@ -181,5 +182,9 @@ def read_pdf(
                 finally:
                     page.close()
             return result
+        except pdfium.PdfiumError as e:
+            # A page PDFium cannot load or read: the same refusal as a
+            # document it cannot open, not a crash of the tool.
+            raise OSError(str(e)) from e
         finally:
             pdf.close()

@@ -662,3 +662,41 @@ async def test_the_loop_folds_mid_turn_with_a_summary_written_ahead(
     assert folded[0].messages[-1].role == "tool"
     assert folds_seen
     assert inline == []
+
+
+def test_a_file_cut_inside_a_character_still_comes_back(tmp_path: Path) -> None:
+    """Strict UTF-8 on a byte cut used to drop the whole file."""
+    from tstd.compaction_files import _read_text
+
+    (tmp_path / "notes.md").write_text("é" * 100, encoding="utf-8")  # 200 bytes
+    found = _read_text("notes.md", _access(tmp_path), max_bytes=51)
+    assert found is not None
+    name, text = found
+    assert name == "notes.md"
+    assert text.startswith("é" * 25) and "cut to fit" in text
+
+
+def test_a_notebook_comes_back_as_cells_not_json(tmp_path: Path) -> None:
+    """fs_read showed cells (TD-5130); the raw JSON's base64 outputs are noise."""
+    from tstd.compaction_files import _read_text
+
+    notebook = {
+        "nbformat": 4,
+        "nbformat_minor": 5,
+        "metadata": {},
+        "cells": [
+            {
+                "cell_type": "code",
+                "source": ["print('hi')"],
+                "metadata": {},
+                "outputs": [{"output_type": "display_data", "data": {"image/png": "iVBOR" * 2000}}],
+                "execution_count": 1,
+            },
+        ],
+    }
+    (tmp_path / "nb.ipynb").write_text(json.dumps(notebook), encoding="utf-8")
+    found = _read_text("nb.ipynb", _access(tmp_path), max_bytes=4000)
+    assert found is not None
+    _, text = found
+    assert "print('hi')" in text
+    assert "iVBOR" not in text and '"cell_type"' not in text
