@@ -15,6 +15,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import shlex
 import shutil
 from functools import lru_cache
 from importlib import resources
@@ -590,6 +591,65 @@ class WorktreeConfig(BaseModel):
     enabled: bool = True
     folder: str = ""
     setup_timeout_s: int = Field(default=600, ge=10, le=3600)
+
+
+MAX_AFTER_WRITE_HOOKS = 10
+MAX_AFTER_WRITE_TIMEOUT = 600
+
+
+class AfterWriteHook(BaseModel):
+    """One command run on the files an ``fs_write`` or ``fs_edit`` changed (TD-5135).
+
+    ``command`` is an argument list, run without a shell; a string is split
+    the way a POSIX shell splits words. An item that is exactly ``{files}``
+    becomes the changed files; with none, the files go on the end. ``match``
+    picks the files: a pattern without ``/`` matches the file name, one
+    with ``/`` the workspace-relative path. ``name`` labels it in the
+    timeline and the tool result; empty is the command's first word.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(default="", max_length=60)
+    command: list[str] = Field(min_length=1, max_length=64)
+    match: list[str] = Field(default_factory=lambda: ["*"], min_length=1, max_length=32)
+    timeout_seconds: float = Field(default=30.0, gt=0, le=MAX_AFTER_WRITE_TIMEOUT)
+
+    @field_validator("command", mode="before")
+    @classmethod
+    def _split_command(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            try:
+                return shlex.split(value)
+            except ValueError as e:
+                raise ValueError(f"command cannot be split into words: {e}") from e
+        return value
+
+    @field_validator("command")
+    @classmethod
+    def _command_has_a_program(cls, value: list[str]) -> list[str]:
+        if not value or not value[0].strip() or value[0] == "{files}":
+            raise ValueError("command must start with a program")
+        return value
+
+    @property
+    def label(self) -> str:
+        """``name``, or the program's file name."""
+        return self.name.strip() or Path(self.command[0]).name
+
+
+class HooksConfig(BaseModel):
+    """Commands TST Desk runs around the agent's work (TD-5135).
+
+    Only ``after_write`` exists so far. The general hook runner (TD-5134)
+    adds its events beside it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    after_write: list[AfterWriteHook] = Field(
+        default_factory=list, max_length=MAX_AFTER_WRITE_HOOKS
+    )
 
 
 class SessionConfig(BaseModel):
@@ -1440,6 +1500,7 @@ class ModelConfig(BaseModel):
     provider_retry: ProviderRetryConfig = Field(default_factory=ProviderRetryConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     worktree: WorktreeConfig = Field(default_factory=WorktreeConfig)
+    hooks: HooksConfig = Field(default_factory=HooksConfig)
     computer_use: ComputerUseConfig = Field(default_factory=ComputerUseConfig)
     judgments: JudgmentsConfig = Field(default_factory=JudgmentsConfig)
     remote: RemoteConfig = Field(default_factory=RemoteConfig)

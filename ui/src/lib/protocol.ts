@@ -1457,6 +1457,17 @@ export interface WorkerStep {
   truncated?: boolean;
 }
 
+/** One after-write hook that ran on an fs_write or fs_edit's files
+ *  (TD-5135): a formatter or linter, how it ended and how long it took. */
+export interface HookRun {
+  name: string;
+  status: "passed" | "failed" | "timed_out" | "error";
+  exit_code?: number | null;
+  duration_ms: number;
+  /** The hook rewrote a file, as a formatter does. */
+  changed?: boolean;
+}
+
 export interface ToolResult extends DaemonEvent {
   type: "tool_result";
   session_id: string;
@@ -1470,6 +1481,8 @@ export interface ToolResult extends DaemonEvent {
   allowed_by?: string[];
   /** A `delegate` call's worker transcript (TD-5117); empty for other tools. */
   transcript?: WorkerStep[];
+  /** After-write hooks that ran on the write's files (TD-5135); empty otherwise. */
+  hooks?: HookRun[];
 }
 
 export interface ShellOutput extends DaemonEvent {

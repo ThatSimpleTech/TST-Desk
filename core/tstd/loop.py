@@ -1171,6 +1171,7 @@ async def _dispatch_and_append_results(
                 diff=r.diff,
                 allowed_by=list(r.allowed_by),
                 transcript=list(r.transcript),
+                hooks=list(r.hooks),
                 seq=1,
             )
         )

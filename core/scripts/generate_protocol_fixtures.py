@@ -110,6 +110,7 @@ from tstd.protocol import (
     GrokSessionEntry,
     GrokSessionList,
     Hello,
+    HookRun,
     InstructionFileEntry,
     InstructionFiles,
     InstructionStack,
@@ -757,6 +758,19 @@ FIXTURES = {
                 status="success",
             ),
             WorkerStep(kind="reply", text="animals.md names one animal pair."),
+        ],
+    ),
+    "tool_result_after_write": ToolResult(
+        session_id="sess-1",
+        tool_call_id="tc-1",
+        status="success",
+        output="wrote 9 bytes; created a.py\n\n[after-write hook `ruff check` failed: exit 1]",
+        seq=10,
+        hooks=[
+            HookRun(
+                name="ruff format", status="passed", exit_code=0, duration_ms=120, changed=True
+            ),
+            HookRun(name="ruff check", status="failed", exit_code=1, duration_ms=310),
         ],
     ),
     "tool_result_denied": ToolResult(

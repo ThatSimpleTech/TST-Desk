@@ -981,7 +981,8 @@
     "error_code": null,
     "diff": null,
     "allowed_by": [],
-    "transcript": []
+    "transcript": [],
+    "hooks": []
   },
   "tool_result_truncated": {
     "type": "tool_result",
@@ -994,7 +995,8 @@
     "error_code": null,
     "diff": null,
     "allowed_by": [],
-    "transcript": []
+    "transcript": [],
+    "hooks": []
   },
   "tool_result_diff": {
     "type": "tool_result",
@@ -1007,7 +1009,8 @@
     "error_code": null,
     "diff": "--- a/test.txt\n+++ b/test.txt\n@@ -1 +1 @@\n-old line\n+new line",
     "allowed_by": [],
-    "transcript": []
+    "transcript": [],
+    "hooks": []
   },
   "tool_result_read_only": {
     "type": "tool_result",
@@ -1023,7 +1026,8 @@
       "git log",
       "head"
     ],
-    "transcript": []
+    "transcript": [],
+    "hooks": []
   },
   "tool_result_delegate": {
     "type": "tool_result",
@@ -1065,6 +1069,36 @@
         "status": null,
         "truncated": false
       }
+    ],
+    "hooks": []
+  },
+  "tool_result_after_write": {
+    "type": "tool_result",
+    "seq": 10,
+    "session_id": "sess-1",
+    "tool_call_id": "tc-1",
+    "status": "success",
+    "output": "wrote 9 bytes; created a.py\n\n[after-write hook `ruff check` failed: exit 1]",
+    "truncated": false,
+    "error_code": null,
+    "diff": null,
+    "allowed_by": [],
+    "transcript": [],
+    "hooks": [
+      {
+        "name": "ruff format",
+        "status": "passed",
+        "exit_code": 0,
+        "duration_ms": 120,
+        "changed": true
+      },
+      {
+        "name": "ruff check",
+        "status": "failed",
+        "exit_code": 1,
+        "duration_ms": 310,
+        "changed": false
+      }
     ]
   },
   "tool_result_denied": {
@@ -1078,7 +1112,8 @@
     "error_code": "approval_denied",
     "diff": null,
     "allowed_by": [],
-    "transcript": []
+    "transcript": [],
+    "hooks": []
   },
   "question_request": {
     "type": "question_request",

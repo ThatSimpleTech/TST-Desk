@@ -11485,6 +11485,40 @@ stream, result and error outputs, colour codes stripped, windowed by
 tier. Tests: core/tests/test_fs_read_media.py (handler, dispatch and the
 loop with the mock provider).
 
+### TD-5135 — Run a formatter or linter after edits
+**Size:** 5 · **Depends on:** TD-5134 (not built yet; see DECISIONS.md) · Gap audit 2026-10-14
+
+Local models make more format and lint slips than hosted ones, and
+nothing caught them until the next turn, if at all. Claude Code users run
+a formatter or linter as a PostToolUse hook; TST Desk had no hooks.
+
+**Acceptance criteria:**
+- [x] A packaged "after write" hook template runs a configured command on
+      files changed by fs_write/fs_edit. Failures go back to the model as
+      part of the tool result (`hooks.after_write` in config.yaml, and in
+      a trusted `.tst/config.yaml`; core/tests/test_after_write_hooks.py)
+- [x] Examples for ruff, prettier and eslint are in docs
+      (docs/configuration.md §2 `hooks`, checked by
+      test_docs_config_reference.py)
+- [x] The time it takes shows in the step timeline (the write's row reads
+      `after write 0.43 s`, expanded per hook;
+      ui/src/lib/timeline-hooks.test.ts)
+
+Done (2026-10-21): `hooks.after_write` is a list of commands (argv, or a
+string split into words; no shell), each with `match` globs and
+`timeout_seconds`. The dispatcher runs the matching ones after a
+successful `fs_write` or `fs_edit`, before the checkpoint and the diff, in
+the workspace with secrets stripped from the environment. A failure, a
+timeout or a missing program goes back to the model as a note on the
+(still successful) tool result with the output's start and end; a hook
+that rewrote the file says so; a clean pass adds nothing. User hooks run
+first, then the workspace's, which apply only once the file is trusted
+(TD-5113: any `hooks` value already counted as loosening). Each run rides
+on `tool_result.hooks` (name, status, exit code, duration, changed) for
+the step timeline. The packaged config.yaml and the workspace scaffold
+carry commented templates. The general hook runner (TD-5134) is still to
+come and reuses the `hooks` section.
+
 ## Epic E53 — Connectors
 
 Owner-approved scope 2026-10-02. A connector is a local sign-in to a

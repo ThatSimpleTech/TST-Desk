@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 from jsonschema import ValidationError as SchemaError
 from jsonschema import validate as validate_schema
 
+from ..after_write import WRITE_TOOLS, run_after_write
 from ..autonomy import (
     AmbiguousClassifier,
     Checkpointer,
@@ -38,7 +39,7 @@ from ..policy import (
     with_run_rules,
 )
 from ..protocol import DecisionLogged as DecisionLoggedEvent
-from ..protocol import RunPermissions, WorkerStep
+from ..protocol import HookRun, RunPermissions, WorkerStep
 from .boundary import PathGuard, RefusalError, windows_unsafe_reason
 from .desktop import peel_screenshot_png
 from .diff import render_diff, snapshot_text
@@ -624,6 +625,16 @@ class ToolDispatcher:
         else:
             output = returned
 
+        # 3.2.0 After-write hooks (TD-5135). A formatter or linter runs on
+        #      the files the write changed, before the checkpoint and the
+        #      diff, so both show the file as the hook left it. What they
+        #      report goes to the model in this result. Never raises.
+        hook_runs: tuple[HookRun, ...] = ()
+        if name in WRITE_TOOLS and canonical_writes and session is not None:
+            hook_runs, hook_note = await run_after_write(session, list(canonical_writes.values()))
+            if hook_note:
+                output = f"{output}\n\n{hook_note}"
+
         # 3.2.1 Touch-tracking (TD-503).  The handler ran, so the call's
         #      path targets are genuinely in play: record them on the
         #      session so path-scoped steering rules can activate at the
@@ -786,6 +797,7 @@ class ToolDispatcher:
             verification=verification.status if verification is not None else None,
             allowed_by=allowed_by,
             transcript=transcript,
+            hooks=hook_runs,
         )
 
     # ── Batch dispatch ────────────────────────────────────────────────

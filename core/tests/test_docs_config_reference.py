@@ -30,6 +30,7 @@ from typing import Any
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from tstd.attachments import (
     DEFAULT_MAX_COUNT,
@@ -52,6 +53,7 @@ from tstd.boundary_config import (
 )
 from tstd.config import (
     TIER_NAMES,
+    AfterWriteHook,
     AutonomyConfig,
     ClearToolResultsConfig,
     ComputerUseConfig,
@@ -65,6 +67,7 @@ from tstd.config import (
     GithubConnectorConfig,
     GoogleConnectorConfig,
     GroundingConfig,
+    HooksConfig,
     JudgmentsConfig,
     McpConfig,
     McpServerConfig,
@@ -102,7 +105,7 @@ INVALID_KINDS = frozenset({"model-invalid", "tier-invalid", "workspace-invalid"}
 # `.tst/config.yaml` is one file with several readers, each owning a
 # section; the union is what a workspace example may legally declare.
 WORKSPACE_SECTIONS = frozenset(
-    set(BoundaryConfig.model_fields) | {"policy", "approved_external_imports"}
+    set(BoundaryConfig.model_fields) | {"policy", "approved_external_imports", "hooks"}
 )
 
 _MARKER = re.compile(r"^<!--\s*verify:\s*([a-z-]+)\s*-->\s*$")
@@ -196,6 +199,14 @@ def _load(example: Example, tmp: Path) -> None:
     load_workspace_boundary(workspace)
     load_policy(workspace)
     load_approved_imports(workspace)
+    # The fourth reader (TD-5135) tolerates a bad section at run time, so
+    # the reference is held to the strict model here.
+    data = yaml.safe_load(example.body)
+    if isinstance(data, dict) and data.get("hooks") is not None:
+        try:
+            HooksConfig.model_validate(data["hooks"])
+        except ValidationError as e:
+            raise ConfigError(f"Invalid hooks: {e.errors()[0]['msg']}") from e
 
 
 @pytest.mark.parametrize("example", EXAMPLES, ids=repr)
@@ -262,6 +273,8 @@ _WORKTREE_FIELDS = frozenset(WorktreeConfig.model_fields)
 _WORKSPACE_WORKTREE_FIELDS = frozenset(WorktreeSection.model_fields)
 _STOP_CHECK_FIELDS = frozenset(StopCheckSection.model_fields)
 _ATTACHMENT_FIELDS = frozenset(AttachmentLimits.model_fields)
+_HOOKS_FIELDS = frozenset(HooksConfig.model_fields)
+_AFTER_WRITE_FIELDS = frozenset(AfterWriteHook.model_fields)
 _POLICY_FIELDS = frozenset(PolicyConfig.model_fields)
 _RULE_FIELDS = frozenset(PolicyRule.model_fields)
 
@@ -279,8 +292,16 @@ def _check_tier(data: Any, where: str) -> None:
         _check_keys(backup, _TIER_FIELDS - {"fallbacks"}, f"{where}.fallbacks[{i}]")
 
 
+def _check_hooks(data: Any, where: str) -> None:
+    _check_keys(data, _HOOKS_FIELDS, f"{where} hooks")
+    for i, hook in enumerate(data.get("after_write") or []):
+        _check_keys(hook, _AFTER_WRITE_FIELDS, f"{where} hooks.after_write[{i}]")
+
+
 def _check_workspace(data: dict[str, Any], where: str) -> None:
     _check_keys(data, WORKSPACE_SECTIONS, where)
+    if "hooks" in data:
+        _check_hooks(data["hooks"], where)
     if "boundary" in data:
         _check_keys(data["boundary"], _SECTION_FIELDS, f"{where} boundary")
     if "caps" in data:
@@ -399,6 +420,8 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
                 )
         if "speech" in data:
             _check_keys(data["speech"], _SPEECH_FIELDS, f"{where} speech")
+        if "hooks" in data:
+            _check_hooks(data["hooks"], where)
         if "worktree" in data:
             _check_keys(data["worktree"], _WORKTREE_FIELDS, f"{where} worktree")
         if "autonomy" in data:
@@ -472,6 +495,8 @@ def test_every_config_key_is_documented() -> None:
         | _WORKSPACE_WORKTREE_FIELDS
         | _STOP_CHECK_FIELDS
         | _ATTACHMENT_FIELDS
+        | _HOOKS_FIELDS
+        | _AFTER_WRITE_FIELDS
         | _POLICY_FIELDS
         | _RULE_FIELDS
     )
