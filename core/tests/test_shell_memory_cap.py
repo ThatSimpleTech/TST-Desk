@@ -9,7 +9,7 @@ Acceptance criteria:
 3. A memory hog is killed and the daemon survives.
 
 The scope tests need a systemd user manager with the memory controller
-(EZER has one) and skip without it; the ``RLIMIT_AS`` tests force that
+(TOWER has one) and skip without it; the ``RLIMIT_AS`` tests force that
 path, so CI runs them either way. Every hog stops on its own at 2 GiB, so
 a cap that fails to apply fails the test instead of the machine.
 """
@@ -714,7 +714,7 @@ async def test_a_hog_is_killed_and_the_daemon_survives(
 ) -> None:
     """Through the real daemon: the hog's turn ends, the next call runs.
 
-    ``best`` is whatever the machine has (a scope on EZER, ``RLIMIT_AS`` on
+    ``best`` is whatever the machine has (a scope on TOWER, ``RLIMIT_AS`` on
     a CI runner without a user manager); ``rlimit`` forces the fallback.
     """
     if method == "rlimit":

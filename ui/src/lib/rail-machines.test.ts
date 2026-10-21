@@ -13,7 +13,7 @@ const MCH_GONE = "mch_cccccccccccc";
 function machine(over: Partial<MachineSummary> = {}): MachineSummary {
   return {
     id: MCH_A,
-    name: "EZER",
+    name: "TOWER",
     host: "100.64.0.2",
     port: 39079,
     status: "connected",
@@ -78,7 +78,7 @@ describe("railSections", () => {
 
 describe("machineLabel", () => {
   it("is the plain name when it is unique", () => {
-    expect(machineLabel(machine(), [machine()])).toBe("EZER");
+    expect(machineLabel(machine(), [machine()])).toBe("TOWER");
   });
 
   it("marks a self-pair", () => {
@@ -89,16 +89,16 @@ describe("machineLabel", () => {
   it("tells same-named computers apart by host, then host:port, then handle", () => {
     const a = machine();
     const b = machine({ id: MCH_B, host: "100.64.0.9" });
-    expect(machineLabel(a, [a, b])).toBe("EZER (100.64.0.2)");
-    expect(machineLabel(b, [a, b])).toBe("EZER (100.64.0.9)");
+    expect(machineLabel(a, [a, b])).toBe("TOWER (100.64.0.2)");
+    expect(machineLabel(b, [a, b])).toBe("TOWER (100.64.0.9)");
     const c = machine({ id: MCH_B, port: 39080 });
-    expect(machineLabel(a, [a, c])).toBe("EZER (100.64.0.2:39079)");
-    expect(machineLabel(c, [a, c])).toBe("EZER (100.64.0.2:39080)");
+    expect(machineLabel(a, [a, c])).toBe("TOWER (100.64.0.2:39079)");
+    expect(machineLabel(c, [a, c])).toBe("TOWER (100.64.0.2:39080)");
     // A phone is never sent addresses.
     const p = machine({ host: null, port: null });
     const q = machine({ id: MCH_B, host: null, port: null });
-    expect(machineLabel(p, [p, q])).toBe("EZER (aaaa)");
-    expect(machineLabel(q, [p, q])).toBe("EZER (bbbb)");
+    expect(machineLabel(p, [p, q])).toBe("TOWER (aaaa)");
+    expect(machineLabel(q, [p, q])).toBe("TOWER (bbbb)");
   });
 });
 

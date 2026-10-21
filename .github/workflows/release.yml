@@ -13,6 +13,7 @@ on:
 jobs:
   bundle:
     uses: ./.github/workflows/package.yml
+    secrets: inherit # RELEASE_DENYLIST for the release scan (TD-5163)
 
   publish:
     needs: bundle

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from tests.machine_helpers import eventually
 from tests.test_context_fit import _forge_config, _run, _tier
 from tests.test_loop import wait_for_turn
 from tstd.compaction import (
@@ -282,6 +283,8 @@ async def test_daemon_compacts_and_explains_refusals(tmp_path: Path) -> None:
         {"type": "compact_context", "session_id": session.id, "guidance": "keep tests"},
     )
     assert reply is None
+    # Folded beside the connection, not before the reply (TD-5128 review).
+    await eventually(lambda: bool(_events(session, ContextCompacted)))
     (compacted,) = _events(session, ContextCompacted)
     assert compacted.guidance == "keep tests"
 
@@ -306,3 +309,31 @@ def test_ui_fixtures_parse_as_daemon_events() -> None:
     assert isinstance(plain, ContextCompacted) and plain.trigger == "auto"
     progress = parse_daemon_event(json.dumps(fixtures["tool_progress"]))
     assert isinstance(progress, ToolProgress)
+
+
+async def test_a_slow_summary_does_not_hold_the_connection(tmp_path: Path) -> None:
+    """The reply comes before the worker answers; a second ask is refused."""
+    import asyncio
+
+    daemon = Daemon(data_dir=tmp_path / "data")
+    session = await daemon.session_registry.create(str(tmp_path))
+    session.conversation.extend(_conversation(3))
+    session.context_meter = _meter()
+    release = asyncio.Event()
+
+    class Slow:
+        async def summarize(self, dropped: object, guidance: str) -> str:
+            await release.wait()
+            return "the summary"
+
+        async def files(self, *args: object) -> str:
+            return ""
+
+    session.compaction_summarizer = Slow()  # type: ignore[assignment]
+    ask = {"type": "compact_context", "session_id": session.id}
+    assert await asyncio.wait_for(_send(daemon, ask), 2.0) is None
+    again = await _send(daemon, ask)
+    assert again is not None and again["code"] == "compaction_in_progress"
+    assert not _events(session, ContextCompacted)
+    release.set()
+    await eventually(lambda: bool(_events(session, ContextCompacted)))

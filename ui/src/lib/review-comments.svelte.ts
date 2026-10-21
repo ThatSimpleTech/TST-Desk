@@ -9,8 +9,9 @@
 // is when that turn ends, and a held message may never become a turn at
 // all. So a send moves the drafts out of the editable list at once and keeps
 // a copy, shown as waiting, until the `user_turn` that carries their ids
-// arrives. A refusal (an `error` naming `in_reply_to`, which the daemon sends
-// straight back) hands the copy back as drafts with the daemon's reason, so
+// arrives. A refusal (an `error` naming `in_reply_to` and the refused
+// `comment_ids`, which the daemon sends straight back) hands those back as
+// drafts with the daemon's reason, so
 // nothing the person wrote is lost, and so does the session ending while
 // they wait. A held queue (`queued_messages`) now owns
 // the message, so the copy is dropped there too. Sent comments are not kept
@@ -62,8 +63,14 @@ onDaemonEvent((event) => {
     event.in_reply_to === "submit_line_comments"
   ) {
     if (event.session_id != null && event.session_id !== boundSessionId) return;
-    // Hand the refused comments back ahead of any written since.
-    const back = review.waiting.splice(0, review.waiting.length);
+    // Hand the refused comments back ahead of any written since. A refusal
+    // names its comments, so ones an earlier send queued stay waiting (and
+    // are not sent twice); an older daemon's refusal hands back them all.
+    const refused = event.comment_ids ? new Set(event.comment_ids) : null;
+    const back = review.waiting.filter((d) => refused === null || refused.has(d.id));
+    if (back.length === 0) return;
+    const kept = review.waiting.filter((d) => !back.includes(d));
+    review.waiting.splice(0, review.waiting.length, ...kept);
     review.drafts.splice(0, 0, ...back);
     review.notice = event.message;
   }

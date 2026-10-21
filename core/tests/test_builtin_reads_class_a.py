@@ -1,6 +1,6 @@
 """Built-in reads inside the wall are static Class A (TD-5141).
 
-Adam, 2026-10-14: the shipped read tools are pre-approved, ``.env``
+Alex, 2026-10-14: the shipped read tools are pre-approved, ``.env``
 included.  fs_read, fs_list and fs_grep inside the workspace classify A
 from the rule table with no worker call; a user policy rule (ask or
 never) still decides; outside the wall nothing changes.
@@ -102,7 +102,7 @@ def test_each_builtin_read_is_static_a_inside_the_wall(tmp_path: Path, name: str
 
 
 def test_env_file_read_is_class_a(tmp_path: Path) -> None:
-    """Adam's call: .env is not special-cased by the table."""
+    """Alex's call: .env is not special-cased by the table."""
     _tree(tmp_path)
     decision = DecisionClassifier(Boundary(workspace_root=tmp_path)).classify(
         _request(tmp_path, "fs_read", {"path": ".env"})

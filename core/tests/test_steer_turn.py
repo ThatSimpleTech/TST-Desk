@@ -348,7 +348,7 @@ async def test_messages_sent_to_steer_a_turn_that_ended_each_keep_a_turn() -> No
 
 def _small_tier() -> TierConfig:
     return TierConfig(
-        slug="ezer-forge",
+        slug="gateway-model",
         base_url="http://mock.local/v1",
         input_price=0.0,
         output_price=0.0,
@@ -722,3 +722,30 @@ async def test_a_skill_named_in_a_steer_is_in_the_prompt_of_the_step_that_reads_
     assert second.messages[0].role == "system"
     assert "REVIEW-SKILL-BODY" in str(second.messages[0].content)
     assert session.loaded_skills == ["review"]
+
+
+async def test_line_comments_that_join_a_running_turn_keep_their_anchors() -> None:
+    """TD-5132: the window marks a comment resolved from the user_turn's anchors."""
+    from tstd.protocol import LineCommentAnchor
+    from tstd.session import QueuedUserMessage
+
+    session = Session("/tmp/ws")
+    held = _HeldTool()
+    runner, _mock = await _start(session, _tool_then_text(), held)
+    try:
+        await session.add_user_message("Build it")
+        await asyncio.wait_for(held.started.wait(), 3)
+        anchor = LineCommentAnchor(id="c1", path="/tmp/ws/a.py", start_line=2, end_line=2, body="x")
+        await session.add_user_message(
+            QueuedUserMessage(
+                display="Review comments", provider="Review comments", line_comments=[anchor]
+            ),
+            steer=True,
+        )
+        held.release.set()
+        await wait_for_turn(session, 1)
+        _start_turn, steer = _user_turns(session)
+        assert steer.steer is not None
+        assert steer.line_comments == [anchor]
+    finally:
+        await runner.cancel()

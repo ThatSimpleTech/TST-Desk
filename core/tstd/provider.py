@@ -287,7 +287,7 @@ class ChatCompletionRequest:
         }
         if self.tools:
             d["tools"] = [tool_definition_payload(t) for t in self.tools]
-            # OpenAI's default when tools are present. Some gateways (EZER
+            # OpenAI's default when tools are present. Some gateways (the GPU server
             # LiteLLM guided_json) treat an omitted tool_choice as "JSON in
             # content" and never fill message.tool_calls (TD-1724).
             d["tool_choice"] = "auto"

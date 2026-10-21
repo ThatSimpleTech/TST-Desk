@@ -1170,7 +1170,7 @@ describe("sessions on another computer (TD-5015)", () => {
     machines.list = [
       {
         id: MCH,
-        name: "ezer",
+        name: "tower",
         host: null,
         port: null,
         status,
@@ -1191,7 +1191,7 @@ describe("sessions on another computer (TD-5015)", () => {
       session_id: REMOTE,
       machine: MCH,
       code: "machine_unreachable",
-      message: "ezer isn't reachable.",
+      message: "tower isn't reachable.",
     });
     mocks.chatState.sessionId = "own";
     expect(newSession()).toBe(true);
@@ -1201,7 +1201,7 @@ describe("sessions on another computer (TD-5015)", () => {
   it("lets New work again after a remote error with no session, or this daemon's unknown anchor", () => {
     emit(sessionList([["own", "2026-08-14T09:00:00Z"], [REMOTE, "2026-08-14T10:00:00Z"]]));
     expect(newSessionFrom(REMOTE)).toBe(true);
-    emit({ type: "error", seq: 6, machine: MCH, code: "session_not_found", message: "On ezer: not found" });
+    emit({ type: "error", seq: 6, machine: MCH, code: "session_not_found", message: "On tower: not found" });
     mocks.chatState.sessionId = "own";
     expect(newSession()).toBe(true);
     emit({ type: "error", seq: 7, code: "session_not_found", message: "Session 'own' not found" });

@@ -33,7 +33,7 @@ beforeEach(() => {
 	session.sessionId = "s1";
 	session.tier = "brain";
 	session.modelSlugs = { brain: "kimi", worker: "flash", validator: "pro" };
-	session.hosts = { brain: "192.168.1.49:4000" };
+	session.hosts = { brain: "192.0.2.49:4000" };
 	session.preset = "vllm";
 	settings.presets = ["vllm", "local"];
 });
@@ -125,6 +125,6 @@ describe("composer model controls", () => {
 		expect(labels).not.toContain("Plan");
 		expect(labels.some((label) => label?.includes("brain"))).toBe(false);
 		expect(document.querySelector('[aria-label="Live model"]')).toBeNull();
-		expect(document.body.textContent).not.toContain("192.168.1.49:4000");
+		expect(document.body.textContent).not.toContain("192.0.2.49:4000");
 	});
 });
