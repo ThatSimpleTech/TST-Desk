@@ -381,6 +381,8 @@ export function turnEntry(event: UserTurn, number: number): TimelineEntry {
     details: {
       turn_id: event.turn_id,
       number,
+      // TD-5132: the diff comments this message carried, for the Files pane.
+      line_comments: event.line_comments ?? null,
       // running → complete | failed (turn_complete), or cancelled |
       // interrupted when the session stops with the turn still open.
       status: "running",

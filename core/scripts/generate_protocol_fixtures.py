@@ -120,6 +120,8 @@ from tstd.protocol import (
     JobRuns,
     JobTemplateEntry,
     JobTemplates,
+    LineComment,
+    LineCommentAnchor,
     ListArtifacts,
     ListCommands,
     ListGrokExtensions,
@@ -248,6 +250,7 @@ from tstd.protocol import (
     SteerPoint,
     StopCheck,
     StopCheckItem,
+    SubmitLineComments,
     TaskList,
     TaskListItem,
     TestEmail,
@@ -304,6 +307,21 @@ FIXTURES = {
     # TD-5155: the person's choice on a message a restart left held.
     "send_queued": SendQueued(session_id="sess-1", queued_id="q-1"),
     "remove_queued": RemoveQueued(session_id="sess-1", queued_id="q-1"),
+    # TD-5132: the diff view's line comments, sent as one message.
+    "submit_line_comments": SubmitLineComments(
+        session_id="sess-1",
+        comments=[
+            LineComment(
+                id="c-1",
+                path="/home/user/project/src/app.py",
+                start_line=4,
+                end_line=5,
+                body="Use a constant here",
+                lines=["x = 3", "y = 3"],
+                base_seq=7,
+            )
+        ],
+    ),
     "fork_from": ForkFrom(session_id="sess-1", user_index=0, content="hello again"),
     "set_branch": SetBranch(session_id="sess-1", user_index=0, sibling_index=1),
     # TD-5125: "Restore files to here" and the preview it shows first.
@@ -632,6 +650,23 @@ FIXTURES = {
         content="Also run the linter",
         steer=SteerPoint(turn_id="turn-1", step=2, after_tool_call_ids=["tc-1", "tc-2"]),
         seq=9,
+    ),
+    # TD-5132: a turn that carried the diff view's line comments.
+    "user_turn_line_comments": UserTurn(
+        session_id="sess-1",
+        turn_id="turn-4",
+        content="Review comments on your changes (1 comment).",
+        line_comments=[
+            LineCommentAnchor(
+                id="c-1",
+                path="/home/user/project/src/app.py",
+                start_line=4,
+                end_line=5,
+                body="Use a constant here",
+                base_seq=7,
+            )
+        ],
+        seq=12,
     ),
     # TD-5118: a tst run turn echoes the permissions it runs under.
     "user_turn_run_permissions": UserTurn(

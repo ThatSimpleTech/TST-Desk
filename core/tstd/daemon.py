@@ -139,6 +139,7 @@ from .keychain import (
     delete_api_key,
     store_api_key,
 )
+from .line_comments import LineCommentError, build_comments_turn
 from .local_worker import (
     effective_tier,
     last_cu_surface,
@@ -365,6 +366,7 @@ from .protocol import (
     SteeringEdit,
     SteeringReject,
     StopTurn,
+    SubmitLineComments,
     TestEmail,
     TierState,
     Transcribe,
@@ -625,6 +627,7 @@ DRAINING_MESSAGE = (
 # stop and resume only let an open turn finish, so they still pass.
 _TURN_STARTS = (
     UserMessage,
+    SubmitLineComments,
     SendQueued,
     ForkFrom,
     RunGrokCommand,
@@ -2801,6 +2804,9 @@ class Daemon:
         if isinstance(msg, SendQueued | RemoveQueued):
             return await self._held_message_action(msg)
 
+        if isinstance(msg, SubmitLineComments):
+            return await self._submit_line_comments(msg)
+
         if isinstance(msg, ForkFrom):
             found = self.session_registry.get(msg.session_id)
             if found is None:
@@ -4057,6 +4063,69 @@ class Daemon:
         log.info(
             "held message sent" if isinstance(msg, SendQueued) else "held message removed",
             extra={"extra_fields": {"session_id": msg.session_id}},
+        )
+        return None
+
+    async def _submit_line_comments(self, msg: SubmitLineComments) -> str | None:
+        """Queue the diff view's comments as one user turn (TD-5132).
+
+        Refused as a whole, never in part, with ``in_reply_to`` on every
+        refusal so the window can keep the comments to send again. The
+        liveness and save checks are ``user_message``'s; a drain hold
+        already refused it before this.
+        """
+        found = self.session_registry.get(msg.session_id)
+        if found is None:
+            return build_error(
+                "session_not_found",
+                f"Session {msg.session_id!r} not found",
+                in_reply_to=msg.type,
+            )
+        runner = self.session_registry.get_runner(msg.session_id)
+        if found.state in TERMINAL_STATES or runner is None or not runner.is_running:
+            return build_error(
+                "session_not_running",
+                f"This session is {found.state} and can no longer run turns; "
+                "the comments were not sent. Start a new session and send them again.",
+                session_id=msg.session_id,
+                in_reply_to=msg.type,
+            )
+        try:
+            # Reads the commented files: off the event loop.
+            turn = await asyncio.to_thread(
+                build_comments_turn, msg.comments, Path(found.workspace_path), found.policy
+            )
+        except LineCommentError as e:
+            return build_error(e.code, e.message, session_id=msg.session_id, in_reply_to=msg.type)
+        try:
+            await found.add_user_message(
+                QueuedUserMessage(
+                    display=turn.text, provider=turn.text, line_comments=turn.anchors
+                ),
+                refuse_unsaved=True,
+            )
+        except OSError as e:
+            reason = e.strerror or type(e).__name__
+            log.warning(
+                "line comments not saved; refused",
+                extra={"extra_fields": {"session_id": msg.session_id, "error": str(e)}},
+            )
+            return build_error(
+                "message_not_saved",
+                f"Couldn't save the comments to disk ({reason}), so they were not sent. "
+                "Check that TST Desk's data folder is writable, then send them again.",
+                session_id=msg.session_id,
+                in_reply_to=msg.type,
+            )
+        log.info(
+            "line comments enqueued",
+            extra={
+                "extra_fields": {
+                    "session_id": msg.session_id,
+                    "comment_count": len(turn.anchors),
+                    "content_length": len(turn.text),
+                }
+            },
         )
         return None
 

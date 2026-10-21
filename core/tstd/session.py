@@ -33,6 +33,7 @@ from .policy import (
 from .protocol import (
     ConversationReset,
     DaemonEvent,
+    LineCommentAnchor,
     RunPermissions,
     TaskListItem,
     ToolResult,
@@ -80,6 +81,9 @@ class QueuedUserMessage:
     # saved to the queue file: a message a restart holds is sent again by
     # a person in the window, who can answer what it asks.
     run_permissions: RunPermissions | None = None
+    # TD-5132: the diff comments this message carries. The loop logs them
+    # on the user_turn, so the window can tell when a write resolves one.
+    line_comments: list[LineCommentAnchor] | None = None
 
     @classmethod
     def plain(cls, text: str) -> QueuedUserMessage:

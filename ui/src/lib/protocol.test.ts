@@ -74,6 +74,7 @@ import type {
   AssistantReasoning,
   AssistantRetract,
   UserTurn,
+  SubmitLineComments,
   BoundaryUpdate,
   ConfigTrust,
   LoosenedSetting,
@@ -667,6 +668,22 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(m.run_permissions?.allow).toEqual([{ tool: "shell", args: "npm test*" }]);
     expect(m.run_permissions?.deny).toEqual([{ tool: "fs_write", args: "**" }]);
     expect(m.run_permissions?.on_ask).toBe("deny_and_continue");
+  });
+
+  it("user_turn_line_comments", () => {
+    // TD-5132: a turn that carried diff comments echoes their anchors.
+    expect((fixtures.user_turn as UserTurn).line_comments ?? null).toBeNull();
+    const m = fixtures.user_turn_line_comments as UserTurn;
+    expect(m.line_comments).toEqual([
+      { id: "c-1", path: "/home/user/project/src/app.py", start_line: 4, end_line: 5, body: "Use a constant here", base_seq: 7 },
+    ]);
+  });
+
+  it("submit_line_comments", () => {
+    const m = fixtures.submit_line_comments as SubmitLineComments;
+    expect(m.type).toBe("submit_line_comments");
+    expect(m.comments[0].lines).toEqual(["x = 3", "y = 3"]);
+    expect(m.comments[0].base_seq).toBe(7);
   });
 
   it("assistant_delta", () => {

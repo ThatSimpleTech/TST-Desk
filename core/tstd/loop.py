@@ -1943,6 +1943,7 @@ async def agent_loop(
                 turn_id=queued.id,
                 content=queued.display,
                 run_permissions=queued.run_permissions,
+                line_comments=queued.line_comments,
                 seq=1,
             )
         )

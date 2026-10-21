@@ -18,11 +18,15 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from pydantic import TypeAdapter, ValidationError
+
 from .logging import get_logger
-from .protocol import DaemonEvent, QueuedMessages, UserTurn
+from .protocol import DaemonEvent, LineCommentAnchor, QueuedMessages, UserTurn
 from .session import QueuedUserMessage, Session
 
 log = get_logger("tstd.queued_messages")
+
+_ANCHORS: TypeAdapter[list[LineCommentAnchor]] = TypeAdapter(list[LineCommentAnchor])
 
 
 def dropped_note(count: int) -> str:
@@ -58,7 +62,23 @@ def queue_rows(messages: Sequence[QueuedUserMessage]) -> list[dict[str, Any]]:
                 "images_dropped": message.images_dropped + images,
             }
         )
+        # TD-5132: a held message keeps its diff comments, so the turn it
+        # starts after a restart still carries them.
+        if message.line_comments:
+            rows[-1]["line_comments"] = [c.model_dump() for c in message.line_comments]
     return rows
+
+
+def _line_comments(row: dict[str, Any]) -> list[LineCommentAnchor] | None:
+    """A row's diff comments; a malformed list is dropped, the text stays."""
+    raw = row.get("line_comments")
+    if raw is None:
+        return None
+    try:
+        return _ANCHORS.validate_python(raw) or None
+    except ValidationError:
+        log.warning("dropping malformed queued line comments")
+        return None
 
 
 def messages_from_rows(rows: Sequence[dict[str, Any]]) -> list[QueuedUserMessage]:
@@ -78,7 +98,13 @@ def messages_from_rows(rows: Sequence[dict[str, Any]]) -> list[QueuedUserMessage
             log.warning("dropping malformed queued message")
             continue
         messages.append(
-            QueuedUserMessage(display=display, provider=provider, id=ident, images_dropped=dropped)
+            QueuedUserMessage(
+                display=display,
+                provider=provider,
+                id=ident,
+                images_dropped=dropped,
+                line_comments=_line_comments(row),
+            )
         )
     return messages
 
