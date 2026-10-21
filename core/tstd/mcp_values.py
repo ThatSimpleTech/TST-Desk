@@ -30,6 +30,10 @@ ENTRY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 RESERVED_HEADERS = frozenset(
     {"accept", "connection", "content-length", "content-type", "host", "transfer-encoding"}
 )
+#: MCP's own headers (``MCP-Protocol-Version``, ``Mcp-Session-Id``,
+#: ``Mcp-Method``, ``Mcp-Name``, ``Mcp-Param-*``) are the client's too
+#: (TD-5136): a configured one could contradict the request body.
+PROTOCOL_HEADER_PREFIX = "mcp-"
 
 #: Shortest secret the daemon accepts. The logs, the audit DB and the wire
 #: scrub every secret it has read by its exact text, and a shorter string
@@ -73,7 +77,7 @@ def check_name(kind: ValueKind, name: str) -> None:
         return
     if not HEADER_NAME_RE.match(name):
         raise ValueError(f"header name {name!r} is not a valid HTTP field name")
-    if name.lower() in RESERVED_HEADERS:
+    if name.lower() in RESERVED_HEADERS or name.lower().startswith(PROTOCOL_HEADER_PREFIX):
         raise ValueError(f"header {name!r} is set by TST Desk and cannot be configured")
 
 

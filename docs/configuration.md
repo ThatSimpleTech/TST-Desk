@@ -76,7 +76,7 @@ no effect.
 | `remote` | mapping | see below | Opt-in Tailscale bind. Omitted in an older user copy is filled from the shipped file at load. Empty `bind` is loopback only. |
 | `notify` | mapping | see below | Outbound notification channels. Omitted in an older user copy is filled from the shipped file at load. Slack and ntfy are off until their `enabled` flag is true and a destination URL is stored in the OS keychain. |
 | `autonomy` | mapping | see below | Rootless container for autonomous runs (TD-4301) and interactive verify after writes (TD-4204). Interactive sessions ignore `runtime` and `image`. Omitted in an older user copy is filled from the shipped file at load. A missing or rootful runtime refuses start with install copy. |
-| `mcp` | mapping | empty servers | User-listed MCP servers (TD-4401). Omitted in an older user copy defaults to no servers. Empty `servers` adds no doctor rows. HTTP `url` must be loopback; off-box is refused before dial. A server's token is `keychain:<entry>` in its `env` or `headers`, never the value (TD-5110). |
+| `mcp` | mapping | empty servers | User-listed MCP servers (TD-4401). Omitted in an older user copy defaults to no servers. Empty `servers` adds no doctor rows. HTTP `url` must be loopback unless that server sets `allow_remote: true` and uses https (TD-5136); anything else is refused before dial. A server's token is `keychain:<entry>` in its `env` or `headers`, never the value (TD-5110). |
 | `engine` | mapping | see below | Which agent loop new sessions use. `native` is the TST 3-tier OpenAI-compatible loop. `grok` spawns the installed Grok Build CLI over ACP. Omitted in an older user copy is filled from the shipped file at load. |
 | `steering` | mapping | see below | User-global steering (TD-4845). Omitted in an older user copy is filled from the shipped file at load. |
 | `worktree` | mapping | see below | A git worktree per session (TD-5126). On by default: a session or scheduled job in a git repository works in its own worktree. Omitted in an older user copy is the defaults, on. |
@@ -1267,7 +1267,7 @@ the server does not start without it. `env` on an http server, or
 `headers` on a stdio one, fails the server the same way.
 Requests to an http server never use a proxy: `HTTP_PROXY`,
 `ALL_PROXY` and the macOS or Windows system proxy are ignored for them,
-so a header goes only to the configured loopback URL.
+so a header goes only to the configured URL.
 
 Settings → MCP servers stores a token without ever showing it. Under a
 listed server, name it (an env var for stdio, a header such as
@@ -1300,8 +1300,43 @@ reports resets the call's idle timer, so a render or a build can run past
 `max_call_seconds`. Progress shows on the tool's row in the step
 timeline, on the desktop and the phone. A call that times out, or whose
 turn the user stops, sends `notifications/cancelled` to the server so it
-can stop its work too. Over `http` there is no progress yet (one JSON
-reply per call), so `timeout_seconds` bounds the whole call.
+can stop its work too. This holds over `http` as well: the reply may be
+an SSE stream, and each progress message on it resets the timer the same
+way (TD-5136).
+
+**Protocol versions (TD-5136).** TST Desk speaks both MCP eras. It first
+sends `server/discover` at 2026-07-28. A server that answers with that
+version is used without a handshake: every request carries the version,
+TST Desk's name and its capabilities in `_meta`, and over http the
+`MCP-Protocol-Version`, `Mcp-Method` and `Mcp-Name` headers too, plus an
+`Mcp-Param-*` header for each tool parameter the server marks with
+`x-mcp-header` (a value that is not plain ASCII goes as
+`=?base64?…?=`). A tool whose marks break the spec's rules is left out
+and named on the doctor row. Any other answer, or silence for 2 seconds
+on stdio, means an older server: TST Desk runs `initialize` offering
+2025-11-25 and accepts 2024-11-05, 2025-03-26, 2025-06-18 or 2025-11-25,
+sending the session id the server gives and, from 2025-06-18,
+`MCP-Protocol-Version`. A server that names only versions TST Desk does
+not speak fails with a doctor row that lists them. Every http request
+sends `Accept: application/json, text/event-stream`. TST Desk declares no
+client capabilities (no roots, sampling or elicitation) and answers only
+`ping`, so a call that asks it for input fails. The doctor row reads
+`MCP <version>: <n> tool(s) listed`.
+
+When a server says `notifications/tools/list_changed` (on a newer server
+TST Desk asks for it with `subscriptions/listen`; an older one sends it
+on its stream), TST Desk lists the tools again and swaps that server's
+tools in every open session: the next model call is offered the new set,
+and a dropped tool is gone. Saving MCP settings reloads the servers;
+sessions already open keep the tools they had and stop following
+changes until they are reopened.
+
+**Off-box servers (TD-5136).** An http server off this machine needs
+`allow_remote: true` on that server and an `https` URL. Its `headers`
+(a keychain token, say) then go to that host, and only that host. There
+is no Settings switch for it: it is set in this file by hand, and
+Settings keeps it when it edits the server. Without both, the server
+fails at load with a doctor row and nothing is sent.
 
 **Tool search (TD-5127).** Every MCP tool's schema goes into every
 request unless they get too big for the window. Once a tier's MCP tool
@@ -1347,14 +1382,15 @@ loaded five tools.
 |---|---|---|---|
 | `transport` | `stdio` or `http` | *required* | How the daemon talks to the server. stdio spawns `command`. http POSTs JSON-RPC to `url`. |
 | `command` | list of strings | `[]` | Argv for a stdio server. Required when `transport` is `stdio`. A string is a load error (not split). Empty skips the server with a doctor fail. |
-| `url` | string | *empty* | Loopback `http(s)` endpoint for an http server. Required when `transport` is `http`. Non-loopback is refused before any request. Empty skips the server with a doctor fail. |
+| `url` | string | *empty* | `http(s)` endpoint for an http server. Required when `transport` is `http`. Must be loopback unless `allow_remote` is true, and then must be `https`; anything else is refused before any request. Empty skips the server with a doctor fail. |
+| `allow_remote` | bool | `false` | http only. Lets `url` be off this machine, over `https` only (TD-5136). Set by hand; Settings keeps it when it edits the server. |
 | `enabled` | bool | `true` | When false, the server is skipped (doctor `skip`). |
-| `timeout_seconds` | number > 0 | `30` | Longest silence in a tool call: no result and no progress for this long ends the call and sends `notifications/cancelled`. Over http it bounds the whole call. Settings keeps it when it toggles or edits the server. |
-| `startup_timeout_seconds` | number > 0 | `8` | Time allowed for each step of the handshake (`initialize`, then `tools/list`), whatever `timeout_seconds` says. Raise it for a server that loads a model before it answers. |
-| `max_call_seconds` | number > 0 | `600` | Hard cap on one stdio tool call, progress or not. Never below `timeout_seconds`. |
+| `timeout_seconds` | number > 0 | `30` | Longest silence in a tool call: no result and no progress for this long ends the call and sends `notifications/cancelled`. The same over http (TD-5136). Settings keeps it when it toggles or edits the server. |
+| `startup_timeout_seconds` | number > 0 | `8` | Time allowed for each step of the handshake (`server/discover` or `initialize`, then `tools/list`), whatever `timeout_seconds` says. Raise it for a server that loads a model before it answers. |
+| `max_call_seconds` | number > 0 | `600` | Hard cap on one tool call, stdio or http, progress or not. Never below `timeout_seconds`. |
 | `read_only_tools` | list of strings | `[]` | The server's tools, by the name the server gives them (not the `<id>__` name), that only read (TD-5123). Read-only plan mode lets these run and refuses every other tool of the server. Only this list counts: a server's own `readOnlyHint` is not trusted. Names are matched exactly, no globs. It changes nothing outside plan mode: a listed tool still asks like any MCP tool. Settings keeps it when it toggles or edits the server. |
 | `env` | mapping of name → string | `{}` | stdio only. Extra environment for this server's child, on top of the daemon's. Names are `[A-Za-z_][A-Za-z0-9_]*`. A value is a literal or `keychain:<entry>` (entry: lowercase letters, digits, `_` and `-`, at most 64). Numbers become strings; a YAML boolean is refused, so quote it. A value may not hold a line break or NUL. |
-| `headers` | mapping of name → string | `{}` | http only. Extra headers on every request to this server, same value rules as `env`. Names are HTTP field names, one spelling each (case is ignored). `Accept`, `Connection`, `Content-Length`, `Content-Type`, `Host` and `Transfer-Encoding` are TST Desk's own and are refused. |
+| `headers` | mapping of name → string | `{}` | http only. Extra headers on every request to this server, same value rules as `env`. Names are HTTP field names, one spelling each (case is ignored). `Accept`, `Connection`, `Content-Length`, `Content-Type`, `Host`, `Transfer-Encoding` and any name starting `Mcp-` are TST Desk's own and are refused. |
 
 <!-- verify: model -->
 ```yaml

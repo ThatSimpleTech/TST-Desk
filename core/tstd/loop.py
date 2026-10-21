@@ -1803,15 +1803,26 @@ async def agent_loop(
     # TD-5127: MCP schemas over the threshold stay out of the request
     # until ``tool_search`` loads them; it is offered only then.
     mcp_deferral: McpToolDeferral | None = None
-    if tool_registry is not None:
-        all_tool_definitions = tool_registry.to_provider_definitions()
+    # TD-5136: an MCP server's tools/list_changed swaps its tools in this
+    # session's registry mid-session; a new version is re-read below.
+    tools_version = -1
+
+    def _read_tool_definitions() -> None:
+        nonlocal all_tool_definitions, mcp_deferral, tools_version
+        if tool_registry is None or tool_registry.version == tools_version:
+            return
+        tools_version = tool_registry.version
         unusable = {"delegate"} if session.delegate_depth >= 1 else set()
         if tool_dispatcher is None or not tool_dispatcher.has_handler(TOOL_SEARCH_NAME):
             unusable.add(TOOL_SEARCH_NAME)
         all_tool_definitions = [
-            d for d in all_tool_definitions if d.function is None or d.function.name not in unusable
+            d
+            for d in tool_registry.to_provider_definitions()
+            if d.function is None or d.function.name not in unusable
         ]
         mcp_deferral = McpToolDeferral(tool_registry, config.mcp.tool_search)
+
+    _read_tool_definitions()
 
     # Tracks the last steering prefix hash for change detection (TD-509).
     _last_prefix_hash: str | None = None
@@ -2104,6 +2115,10 @@ async def agent_loop(
             # 2a. Determine active tier via router
             tier = router.record_turn_start()
             session.acting_tier = tier
+            # TD-5136: pick up a tools/list_changed swap; TD-5133: keep
+            # this turn's named workers on ``delegate``.
+            _read_tool_definitions()
+            turn_tool_definitions = with_named_workers(all_tool_definitions, workers)
             tool_definitions = offered_tools(turn_tool_definitions, tier, config.consult)
             cu_heavy = session_is_cu_heavy(session)
             tier_cfg = effective_tier(config, tier, cu_heavy=cu_heavy)

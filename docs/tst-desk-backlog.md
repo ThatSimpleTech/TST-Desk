@@ -9388,9 +9388,11 @@ The GPU server tool (a render, a build, a local-model call) died at 30 s.
       reset an idle timer, and up to the hard cap they extend the call.
       Progress shows in the step timeline (the phone runs the same UI) as
       thinned `tool_progress` events
-- [ ] An HTTP server gets no `progressToken`: the plain-POST transport
-      returns one JSON reply, so `timeout_seconds` bounds the whole call.
-      Follow-up: TD-5136 (streamable HTTP)
+- [x] An HTTP call sends a `progressToken` too (since TD-5136): the
+      reply may be an SSE stream, and each progress notification on it
+      resets the same idle timer up to the hard cap, as on stdio
+      (core/tests/test_mcp_protocol.py::test_progress_keeps_a_call_alive,
+      against the reference SDK server over both transports and eras)
 - [x] When a call times out or the user stops the turn, the client sends
       `notifications/cancelled` to the server (stdio and HTTP; since
       TD-5154 each HTTP notice names its own call's request id)
@@ -11486,6 +11488,71 @@ stream, result and error outputs, colour codes stripped, windowed by
 `limit`/`offset`. Delegate workers get the same, judged by the worker
 tier. Tests: core/tests/test_fs_read_media.py (handler, dispatch and the
 loop with the mock provider).
+
+---
+
+### TD-5136 — MCP protocol upgrade
+**Size:** 8 · **Depends on:** TD-5105 · Gap audit 2026-10-14
+
+The MCP client spoke only the 2024-11-05 handshake over plain JSON POST,
+with empty capabilities and no version negotiation, SSE, list-change
+handling or off-box servers. Servers on newer SDKs refuse that.
+
+**Acceptance criteria:**
+- [x] The client negotiates the protocol version and advertises real
+      capabilities. It keeps working with servers that only speak
+      2024-11-05. (`server/discover` at 2026-07-28 first, then
+      `initialize` offering 2025-11-25 and accepting any legacy version;
+      the capabilities are the truthful empty set, since tstd answers only
+      `ping`)
+- [x] Streamable HTTP sends `Accept: application/json, text/event-stream`,
+      parses SSE responses, and sends the required protocol headers
+      (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`, `Mcp-Param-*`
+      with the base64 form; `Mcp-Session-Id` for a legacy session)
+- [x] Off-box MCP URLs work behind an explicit opt-in per server
+      (`allow_remote: true`, https only). Decision 6 says this satisfies
+      directive 1
+- [x] `tools/list_changed` refreshes live sessions (the registry swaps
+      the server's tools and the loop offers the new set on its next call)
+- [x] After a settings reload, sessions already open keep working tools on
+      both transports: an HTTP client the reload closed handshakes again on
+      its next call (as a stdio one respawns), without a `tools/list_changed`
+      listener
+- [x] Tests run against the reference SDK servers for both protocol eras
+      (`mcp` 2.0 as a dev dependency; stdio and HTTP, modern and a
+      2024-11-05-only build)
+
+Done (2026-10-21): `core/tstd/mcp/era.py` negotiates for both transports.
+A DiscoverResult offering 2026-07-28 means the modern era: no handshake,
+and every request carries the version, client info and capabilities in
+`_meta`. -32022 naming a modern version tstd speaks retries once with it;
+naming only versions it does not speak is a doctor fail that lists them.
+Anything else (a -32601, a plain 400/404/405 over HTTP, 2 s of stdio
+silence) falls back to `initialize`. `core/tstd/mcp/stdio.py` now has a
+reader task, so calls overlap and a legacy server's `ping` is answered.
+`core/tstd/mcp/http.py` streams every POST and reads JSON or SSE
+(`answers.py`), sends the modern headers (`headers.py`, which also leaves
+out a tool with invalid `x-mcp-header` marks and names it on the doctor
+row) or the legacy session id and version header, ends a legacy session
+with DELETE, and listens for changes on the legacy GET stream or a modern
+`subscriptions/listen`. Both transports run a call through
+`calls.watch_call`, so progress resets the idle timer the same way
+(TD-5105). The supervisor holds each session's registry weakly
+(`attach.py`); on `tools/list_changed` it lists again and swaps that
+server's tools, and `ToolRegistry.version` makes the loop re-read its
+tool definitions before the next model call. `allow_remote` (default
+false, hand-set, kept by Settings) lets an http URL leave the machine,
+https only (`urls.py`, `config_write.py`). User headers starting `Mcp-`
+are refused as TST Desk's own. The doctor row reads `MCP <version>: <n>
+tool(s) listed`. Tests: `core/tests/test_mcp_protocol.py` (the reference
+SDK server over stdio and HTTP in both eras: load, progress past the idle
+timeout, list-changed into a live registry, a loop turn offered the new
+tool; scripted servers for the headers and SSE, -32022 fallback, a server
+with no shared version, no version header for 2024-11-05, and the
+opt-in), plus the updated fakes in the other `test_mcp_*` files. See
+DECISIONS.md and docs/configuration.md §2 `mcp`.
+
+---
 
 ### TD-5134 — Hook runner
 **Size:** 8 · **Depends on:** TD-5113 · Gap audit 2026-10-14

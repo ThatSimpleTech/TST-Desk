@@ -3861,6 +3861,8 @@ class Daemon:
                     max_call_seconds=prior.max_call_seconds if prior else None,
                     # Nor the plan-mode read-only list (TD-5123).
                     read_only_tools=list(prior.read_only_tools) if prior else [],
+                    # Nor the off-box opt-in (TD-5136), which is hand-set.
+                    allow_remote=prior.allow_remote if prior and kept else False,
                     # Nor env or headers (TD-5110): only set_mcp_secret edits
                     # those. A new transport cannot use the old ones.
                     env=dict(prior.env) if prior and kept else {},

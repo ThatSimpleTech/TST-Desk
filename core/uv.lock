@@ -1660,6 +1660,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "mcp" },
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "pyinstaller" },
@@ -1694,6 +1695,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "mcp", specifier = "==2.0.0" },
     { name = "mypy", specifier = ">=1.11" },
     { name = "pre-commit", specifier = ">=4.6.2" },
     { name = "pyinstaller", specifier = ">=6.22.0" },
