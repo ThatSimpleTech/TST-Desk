@@ -12192,6 +12192,6 @@ mounted behind it.
       opens expanded even when the desktop rail was collapsed.
 - [x] App walk: `shows one panel at a time on a phone's width`.
 
-The gauge missing from the same screenshots is not a bug: EZER's last turn
-(10-17) predates TD-5109 (10-19), so no session there has a reading until its
-next turn.
+The gauge missing from the same screenshots is not a bug: the paired
+desktop's last turn (10-17) predates TD-5109 (10-19), so no session there has
+a reading until its next turn.
