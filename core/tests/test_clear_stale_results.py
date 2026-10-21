@@ -650,5 +650,5 @@ def test_every_rerun_safe_tool_is_a_registered_read_only_tool() -> None:
     from tstd.tools.registry import create_registry
 
     registered = {tool.name for tool in create_registry().list_tools()}
-    assert RERUN_SAFE_TOOLS <= registered
+    assert registered >= RERUN_SAFE_TOOLS
     assert "session_search" in RERUN_SAFE_TOOLS

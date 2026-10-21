@@ -564,6 +564,8 @@ _COMPACT_REFUSALS: dict[str, str] = {
     "nothing_to_compact": "Nothing to compact yet. Only the latest turn is in the conversation.",
     "user_turn_compacted": "That message is already inside a summary. Summarize from a later one.",
     "user_turn_not_found": "That message is not in this conversation.",
+    "compaction_in_progress": "A compaction is already running. It will finish on its own.",
+    "compaction_failed": "Compaction failed. The conversation is unchanged; try again.",
 }
 
 # Why an edit (``fork_from``) or a branch switch (``set_branch``) was refused
@@ -2586,6 +2588,23 @@ class Daemon:
         # a remote peer's setup_state drops this computer's devices.
         return scrub_wire_json(self.hub.finish(reply, _connection))
 
+    async def _compact_in_background(
+        self, session: Session, msg: CompactContext, connection: Any
+    ) -> None:
+        try:
+            code = await session.compact_now(msg.guidance, msg.user_index)
+        except Exception:
+            log.exception(
+                "manual compaction failed",
+                extra={"extra_fields": {"session_id": msg.session_id}},
+            )
+            code = "compaction_failed"
+        if code is None or connection is None:
+            return
+        reply = build_error(code, _COMPACT_REFUSALS.get(code, code), session_id=msg.session_id)
+        with contextlib.suppress(websockets.exceptions.ConnectionClosed):
+            await connection.send(scrub_wire_json(self.hub.finish(reply, connection)))
+
     async def _dispatch_message(self, raw: str, _connection: Any) -> str | None:
         """Handle a post-handshake message from a client.
 
@@ -2868,11 +2887,22 @@ class Daemon:
                     "session_not_found",
                     f"Session {msg.session_id!r} not found",
                 )
-            code = await found.compact_now(msg.guidance, msg.user_index)
+            code = found.compact_refusal(msg.user_index)
             if code is not None:
                 return build_error(
                     code, _COMPACT_REFUSALS.get(code, code), session_id=msg.session_id
                 )
+            # The worker writes the summary, which can take up to its
+            # timeout (TD-5128). Awaited here it would hold every later
+            # message on this connection, a stop or an approval included,
+            # so it runs beside it: the fold arrives as context_compacted,
+            # a late refusal as an error frame.
+            self._tasks.append(
+                asyncio.create_task(
+                    self._compact_in_background(found, msg, _connection),
+                    name=f"compact:{msg.session_id[:8]}",
+                )
+            )
             return None
 
         if isinstance(msg, SetBranch):
@@ -4417,6 +4447,9 @@ class Daemon:
         chosen = self._resolved_preset(name)
         sess.preset = chosen
         sess.config = self.config.model_copy(update={"active_preset": chosen})
+        # /compact between turns uses the new preset's worker too.
+        if sess.compaction_summarizer is not None:
+            sess.compaction_summarizer.rebind(sess.config.compaction, sess.config.tier("worker"))
         if sess.on_config_reloaded is not None:
             sess.on_config_reloaded()
         return chosen

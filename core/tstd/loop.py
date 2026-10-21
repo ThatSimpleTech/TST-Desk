@@ -1912,6 +1912,8 @@ async def agent_loop(
             runtime = session.delegate_runtime
             if runtime is not None:
                 runtime.config = config
+            if session.compaction_summarizer is not None:
+                session.compaction_summarizer.rebind(config.compaction, config.tier("worker"))
 
         # Turn observability (TD-1713): mark the dequeue itself. The
         # existing "turn start" log lands after prompt assembly, so a
