@@ -764,8 +764,13 @@ async def test_the_loop_folds_mid_turn_with_a_summary_written_ahead(
     brain = [c for c in mock.calls if c.model == "test-brain"]
     assert folds
     folded = [c for c in brain if c.messages[1].role == "system"]
-    # The first fold came with a tool result: in the middle of a turn.
-    assert folded[0].messages[-1].role == "tool"
+    # A fold came with a tool result: in the middle of a turn.
+    mid_turn = [c for c in folded if c.messages[-1].role == "tool"]
+    assert mid_turn, (
+        "no fold landed mid-turn, so this proves nothing about a mid-turn fold: "
+        "the tools prelude has moved the budget and WINDOW needs re-tuning "
+        f"(folded requests ended with {[c.messages[-1].role for c in folded]})"
+    )
     assert folds_seen
     assert inline == []
 
