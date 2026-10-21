@@ -22,7 +22,8 @@ from typing import Any
 import pytest
 import yaml
 
-from tstd.config import ModelConfig, default_config_yaml
+from tests.catalog_helpers import catalog_config_yaml
+from tstd.config import ModelConfig
 from tstd.daemon import Daemon
 from tstd.discovery import resolve_tier_slugs
 
@@ -31,7 +32,7 @@ _TAG = "qwen3.8:27b"
 
 def _config_with_preset(name: str) -> ModelConfig:
     """The shipped config forced onto *name*, read through the real loader."""
-    config = ModelConfig.model_validate(yaml.safe_load(default_config_yaml()))
+    config = ModelConfig.model_validate(yaml.safe_load(catalog_config_yaml()))
     return config.model_copy(update={"active_preset": name})
 
 

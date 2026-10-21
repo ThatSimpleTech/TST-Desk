@@ -565,6 +565,28 @@
     "api_key": null,
     "credential": null
   },
+  "list_endpoint_models": {
+    "type": "list_endpoint_models",
+    "base_url": "https://api.example.com/v1",
+    "api_key": "sk-test-key",
+    "credential": null
+  },
+  "add_model": {
+    "type": "add_model",
+    "label": "My model",
+    "description": "General coding and chat",
+    "base_url": "https://api.example.com/v1",
+    "slug": "vendor/model-a",
+    "api_key": null,
+    "credential": "openrouter",
+    "context_window": 128000,
+    "input_price": null,
+    "output_price": null
+  },
+  "test_model": {
+    "type": "test_model",
+    "preset": null
+  },
   "set_preset": {
     "type": "set_preset",
     "name": "tst-default"
@@ -2055,8 +2077,18 @@
     ],
     "active_preset": "tst-default",
     "tier_slugs": {},
-    "preset_labels": {},
+    "preset_labels": {
+      "tst-default": "Default",
+      "budget": "Budget"
+    },
     "more_presets": [],
+    "preset_descriptions": {
+      "tst-default": "General coding and chat"
+    },
+    "team_presets": [
+      "budget"
+    ],
+    "has_model": true,
     "skip_all_approvals": false,
     "load_global_memory": false,
     "coworker_enabled": true,
@@ -2241,6 +2273,41 @@
     "seq": 1,
     "ok": true,
     "detail": "Key accepted by provider."
+  },
+  "endpoint_models": {
+    "type": "endpoint_models",
+    "seq": 1,
+    "base_url": "https://api.example.com/v1",
+    "models": [
+      {
+        "id": "vendor/model-a",
+        "context_window": 128000,
+        "input_price": 3.0,
+        "output_price": 15.0
+      },
+      {
+        "id": "vendor/model-b",
+        "context_window": null,
+        "input_price": null,
+        "output_price": null
+      }
+    ],
+    "error": null
+  },
+  "endpoint_models_error": {
+    "type": "endpoint_models",
+    "seq": 1,
+    "base_url": "https://api.example.com/v1",
+    "models": [],
+    "error": "The server refused the key. Check it and try again."
+  },
+  "model_tested": {
+    "type": "model_tested",
+    "seq": 1,
+    "preset": "tst-default",
+    "ok": true,
+    "reply": "I am working.",
+    "detail": ""
   },
   "diagnostics_report": {
     "type": "diagnostics_report",

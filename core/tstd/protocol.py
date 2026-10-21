@@ -1218,6 +1218,54 @@ class DeleteApiKey(ClientMessage):
     provider: str = "openrouter"
 
 
+class ListEndpointModels(ClientMessage):
+    """List the models an OpenAI-compatible server offers (TD-5172).
+
+    The "Add a model" walkthrough's model step: ``GET {base_url}/models``
+    with ``api_key`` (typed, not stored yet) or the stored ``credential``
+    as the bearer token. User-initiated, to the URL the user typed. The key
+    never appears in the reply. Answered with ``endpoint_models``.
+    """
+
+    type: Literal["list_endpoint_models"] = "list_endpoint_models"
+    base_url: str = Field(min_length=1)
+    api_key: str | None = None
+    credential: str | None = None
+
+
+class AddModel(ClientMessage):
+    """Add a single-model entry to the picker and make it active (TD-5172).
+
+    Writes one preset with ``slug`` on all three tiers, ``label`` and
+    ``description`` to the user's ``config.yaml``. ``api_key``, when set,
+    is stored in the OS keychain under a new named key (never in the
+    file); ``credential`` reuses a stored one instead. Neither on a
+    loopback ``base_url`` means no key. Acked with ``setup_state``.
+    """
+
+    type: Literal["add_model"] = "add_model"
+    label: str = Field(min_length=1, max_length=40)
+    description: str = Field(default="", max_length=120)
+    base_url: str = Field(min_length=1)
+    slug: str = Field(min_length=1)
+    api_key: str | None = None
+    credential: str | None = None
+    context_window: int | None = Field(default=None, gt=0)
+    input_price: float | None = Field(default=None, ge=0)
+    output_price: float | None = Field(default=None, ge=0)
+
+
+class TestModel(ClientMessage):
+    """Send one short test message to a preset's model (TD-5172).
+
+    ``preset`` omitted is the active one. Answered with ``model_tested``.
+    """
+
+    __test__ = False  # not a pytest class
+    type: Literal["test_model"] = "test_model"
+    preset: str | None = None
+
+
 class SetPreset(ClientMessage):
     """Pick the active model preset (TD-1101); applied to new sessions."""
 
@@ -3430,6 +3478,13 @@ class SetupState(DaemonEvent):
     # shows every preset by key on the main list.
     preset_labels: dict[str, str] = Field(default_factory=dict)
     more_presets: list[str] = Field(default_factory=list)
+    # TD-5172: the one-line subtitle per preset that sets a ``description``,
+    # the presets listed under "Teams" (tiers on different models), and
+    # whether any model is set up. ``has_model`` False is a first run: the
+    # wizard opens on "Add a model". Additive; an older client ignores them.
+    preset_descriptions: dict[str, str] = Field(default_factory=dict)
+    team_presets: list[str] = Field(default_factory=list)
+    has_model: bool = True
     # TD-804: skip-all approvals. Additive, default off — an older client
     # that ignores the field keeps asking, which is the safe read.
     skip_all_approvals: bool = False
@@ -3688,6 +3743,40 @@ class ApiKeyValidated(DaemonEvent):
     seq: int = 1
     ok: bool
     detail: str
+
+
+class EndpointModel(BaseModel):
+    """One row of a server's ``/v1/models`` (TD-5172).
+
+    ``context_window`` and the per-million prices are filled only when the
+    server reports them (``context_length``/``max_model_len``, ``pricing``).
+    """
+
+    id: str
+    context_window: int | None = None
+    input_price: float | None = None
+    output_price: float | None = None
+
+
+class EndpointModels(DaemonEvent):
+    """Reply to ``list_endpoint_models`` (TD-5172). ``error`` is set on failure."""
+
+    type: Literal["endpoint_models"] = "endpoint_models"
+    seq: int = 1
+    base_url: str
+    models: list[EndpointModel] = Field(default_factory=list)
+    error: str | None = None
+
+
+class ModelTested(DaemonEvent):
+    """Reply to ``test_model`` (TD-5172): the model's answer, or why it failed."""
+
+    type: Literal["model_tested"] = "model_tested"
+    seq: int = 1
+    preset: str
+    ok: bool
+    reply: str = ""
+    detail: str = ""
 
 
 class DiagnosticCheck(BaseModel):
@@ -4401,6 +4490,9 @@ ClientMessageT = Annotated[
     | GetSetupState
     | SetApiKey
     | ValidateApiKey
+    | ListEndpointModels
+    | AddModel
+    | TestModel
     | SetPreset
     | SetEngine
     | SetGrokMode
@@ -4524,6 +4616,8 @@ DaemonEventT = Annotated[
     | MachineList
     | DrainResult
     | ApiKeyValidated
+    | EndpointModels
+    | ModelTested
     | DiagnosticsReport
     | UsageReport
     | UsageExported
@@ -4638,6 +4732,9 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "get_setup_state",
         "set_api_key",
         "validate_api_key",
+        "list_endpoint_models",
+        "add_model",
+        "test_model",
         "delete_api_key",
         "set_preset",
         "set_engine",
@@ -4761,6 +4858,8 @@ _KNOWN_EVENT_TYPES = frozenset(
         "machine_list",
         "drain_result",
         "api_key_validated",
+        "endpoint_models",
+        "model_tested",
         "diagnostics_report",
         "usage_report",
         "usage_exported",

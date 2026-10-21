@@ -131,6 +131,11 @@ import type {
   SetWorkspacePin,
   SetupState,
   ApiKeyValidated,
+  AddModel,
+  EndpointModels,
+  ListEndpointModels,
+  ModelTested,
+  TestModel,
   RunDiagnostics,
   DiagnosticsReport,
   GetUsage,
@@ -1128,6 +1133,10 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(Array.isArray(m.presets)).toBe(true);
     expect(m.presets.every(isString)).toBe(true);
     expect(isString(m.active_preset)).toBe(true);
+    // TD-5172: picker subtitles, the Teams group, the first-run signal.
+    expect(m.preset_descriptions).toEqual({ "tst-default": "General coding and chat" });
+    expect(m.team_presets).toEqual(["budget"]);
+    expect(m.has_model).toBe(true);
     expect(isBoolean(m.skip_all_approvals)).toBe(true);
     expect(isBoolean(m.coworker_enabled)).toBe(true);
     expect(isBoolean(m.cu_glow)).toBe(true);
@@ -1209,6 +1218,41 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isString(m.detail)).toBe(true);
     expect(m.seq).toBe(1);
     expect("session_id" in m).toBe(false);
+  });
+
+  // TD-5172 "Add a model" walkthrough.
+  it("list_endpoint_models / add_model / test_model", () => {
+    const list = fixtures.list_endpoint_models as ListEndpointModels;
+    expect(list.type).toBe("list_endpoint_models");
+    expect(isString(list.base_url)).toBe(true);
+    const add = fixtures.add_model as AddModel;
+    expect(add.type).toBe("add_model");
+    expect(add.label).toBe("My model");
+    expect(add.description).toBe("General coding and chat");
+    expect(add.slug).toBe("vendor/model-a");
+    expect(add.context_window).toBe(128000);
+    const test = fixtures.test_model as TestModel;
+    expect(test.type).toBe("test_model");
+  });
+
+  it("endpoint_models lists rows or says why not, never the key", () => {
+    const ok = fixtures.endpoint_models as EndpointModels;
+    expect(ok.type).toBe("endpoint_models");
+    expect(ok.models.map((m) => m.id)).toEqual(["vendor/model-a", "vendor/model-b"]);
+    expect(ok.models[0].context_window).toBe(128000);
+    expect(ok.error ?? null).toBeNull();
+    const bad = fixtures.endpoint_models_error as EndpointModels;
+    expect(bad.models).toEqual([]);
+    expect(isString(bad.error)).toBe(true);
+    expect(JSON.stringify(bad)).not.toContain("sk-");
+  });
+
+  it("model_tested", () => {
+    const m = fixtures.model_tested as ModelTested;
+    expect(m.type).toBe("model_tested");
+    expect(m.ok).toBe(true);
+    expect(isString(m.reply)).toBe(true);
+    expect(isString(m.detail)).toBe(true);
   });
 
   it("diagnostics_report", () => {
@@ -1363,7 +1407,7 @@ describe("All fixtures have required shape", () => {
       "tier_state", "tier_state_plan", "context_compacted", "context_compacted_manual", "context_compacted_inflight_trim", "context_compacted_clear_stale", "context_usage", "task_list", "shell_jobs", "stop_check", "session_goal", "worktree_state", "worktree_state_closed", "session_list_worktree", "steering_reloaded", "rule_activated", "tier_switched",
       "model_fallback", "context_usage_fallback", "tier_state_fallback",
       "instruction_stack", "instruction_files", "command_list", "context_pins", "session_search_results", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "steering_proposal", "steering_decision", "session_list", "policy_rules", "error",
-      "error_with_session", "setup_state", "api_key_validated",
+      "error_with_session", "setup_state", "api_key_validated", "endpoint_models", "model_tested",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",
       "artifact_ready", "artifact_list", "artifact", "artifact_chunk",
       "screen_frame",

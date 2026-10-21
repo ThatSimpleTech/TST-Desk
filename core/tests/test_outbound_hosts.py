@@ -253,6 +253,10 @@ _ASYNCIO_NETWORK_CALLS = frozenset(
 _OUTBOUND_CAPABLE = {
     "provider.py": "the one chat client; base_url is a constructor argument from config",
     "discovery.py": "GET /v1/models, refused before sending unless the endpoint is loopback",
+    "model_setup.py": (
+        "Add a model (TD-5172): GET /v1/models at the URL the user types in the "
+        "walkthrough, with the key they typed or chose; user-initiated, never automatic"
+    ),
     "ws.py": (
         "the loopback WebSocket server plus opt-in Tailscale bind "
         "(remote.bind); validate_interface() and resolve_remote_bind() "
@@ -267,9 +271,8 @@ _OUTBOUND_CAPABLE = {
     "e2e_m6.py": "the M6 exit harness, a protocol client of our own loopback daemon",
     "e2e_m7.py": "the M7 exit harness, a protocol client of our own loopback daemon",
     "e2e_m8.py": (
-        "the M8 exit harness; probes and dials only the shipped vllm "
-        "preset's loopback /v1 (or a loopback override); off-box is refused "
-        "before send"
+        "the M8 exit harness; probes and dials only the active model's "
+        "loopback /v1 (or a loopback override); off-box is refused before send"
     ),
     "e2e_m10.py": "the M10 exit harness, a protocol client of our own loopback daemon",
     "cli.py": "tst attach; dials only 127.0.0.1 from the daemon port file",

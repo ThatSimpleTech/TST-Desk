@@ -288,10 +288,12 @@ suite off the host Secret Service (TD-1105), and a missing or failing `secret-to
 live on its data dir, and needs a reachable OpenAI-compatible model endpoint. The daemon
 reads `config.yaml` from that data dir: `--data-dir`, or
 `${XDG_DATA_HOME:-~/.local/share}/tst-desk/` by default (TD-4843). A missing file is copied
-from `core/tstd/config.yaml`. To run with no network or key, copy `core/tstd/config.yaml`
-into a scratch dir with `active_preset: local` added at the top, serve an OpenAI-compatible
-model on `127.0.0.1:11434`, and pass `--data-dir <scratch>`. The `local` preset needs no key
-on loopback and takes the model name from the server's `/v1/models`.
+from `core/tstd/config.yaml`, which ships no model (TD-5172). To run with no network or
+key, copy `core/tstd/config.yaml` into a scratch dir, replace `presets: {}` with one
+loopback entry (the "A model on your own computer" example in `docs/models.md`, pointed at
+`127.0.0.1:11434`), serve an OpenAI-compatible model there, and pass `--data-dir <scratch>`.
+A loopback entry needs no key and, with `slug` left out, takes the model name from the
+server's `/v1/models`.
 
 ### What cannot run here
 - The Tauri desktop app (`npm run tauri:dev`, the `shell/` host) needs a display and

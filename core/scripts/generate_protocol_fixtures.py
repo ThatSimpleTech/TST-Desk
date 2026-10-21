@@ -19,6 +19,7 @@ from tstd.protocol import (
     CHUNK_MAX,
     PROTOCOL_VERSION,
     AddMachine,
+    AddModel,
     AddPin,
     AfterWriteRun,
     AlwaysAllow,
@@ -81,6 +82,8 @@ from tstd.protocol import (
     Drain,
     DrainResult,
     EmailTestResult,
+    EndpointModel,
+    EndpointModels,
     EndSession,
     Error,
     ExportUsage,
@@ -129,6 +132,7 @@ from tstd.protocol import (
     LineCommentAnchor,
     ListArtifacts,
     ListCommands,
+    ListEndpointModels,
     ListGrokExtensions,
     ListGrokSessions,
     ListInstructions,
@@ -158,6 +162,7 @@ from tstd.protocol import (
     MicrosoftDisconnect,
     MicrosoftStatus,
     ModelFallback,
+    ModelTested,
     MoveSession,
     OpenArtifact,
     OpenInTerminal,
@@ -262,6 +267,7 @@ from tstd.protocol import (
     TaskList,
     TaskListItem,
     TestEmail,
+    TestModel,
     TierState,
     TierSwitched,
     ToolCall,
@@ -534,6 +540,19 @@ FIXTURES = {
     "set_api_key": SetApiKey(api_key="sk-or-test-key"),
     "delete_api_key": DeleteApiKey(),
     "validate_api_key": ValidateApiKey(),
+    # "Add a model" walkthrough (TD-5172)
+    "list_endpoint_models": ListEndpointModels(
+        base_url="https://api.example.com/v1", api_key="sk-test-key"
+    ),
+    "add_model": AddModel(
+        label="My model",
+        description="General coding and chat",
+        base_url="https://api.example.com/v1",
+        slug="vendor/model-a",
+        credential="openrouter",
+        context_window=128000,
+    ),
+    "test_model": TestModel(),
     "set_preset": SetPreset(name="tst-default"),
     "set_engine": SetEngine(kind="grok"),
     "set_grok_mode": SetGrokMode(session_id="sess-1", mode="plan"),
@@ -1444,6 +1463,10 @@ FIXTURES = {
         has_api_key=False,
         presets=["budget", "local", "tst-default"],
         active_preset="tst-default",
+        preset_labels={"tst-default": "Default", "budget": "Budget"},
+        preset_descriptions={"tst-default": "General coding and chat"},
+        team_presets=["budget"],
+        has_model=True,
         skip_all_approvals=False,
         coworker_enabled=True,
         cu_glow=True,
@@ -1529,6 +1552,20 @@ FIXTURES = {
         hold_until="2026-10-14T10:47:00+00:00",
     ),
     "api_key_validated": ApiKeyValidated(ok=True, detail="Key accepted by provider."),
+    "endpoint_models": EndpointModels(
+        base_url="https://api.example.com/v1",
+        models=[
+            EndpointModel(
+                id="vendor/model-a", context_window=128000, input_price=3.0, output_price=15.0
+            ),
+            EndpointModel(id="vendor/model-b"),
+        ],
+    ),
+    "endpoint_models_error": EndpointModels(
+        base_url="https://api.example.com/v1",
+        error="The server refused the key. Check it and try again.",
+    ),
+    "model_tested": ModelTested(preset="tst-default", ok=True, reply="I am working."),
     # Diagnostics (TD-1104): connection-scoped like setup_state. Mixed rows so
     # consumers see every status — the fail row carries the concrete fix.
     "diagnostics_report": DiagnosticsReport(

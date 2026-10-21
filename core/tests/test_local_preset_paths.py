@@ -29,9 +29,10 @@ from pathlib import Path
 
 import pytest
 
+from tests.catalog_helpers import catalog_config_yaml
 from tests.test_model_discovery import ModelsEndpoint, closed_endpoint
 from tstd.benchmarks import measure_first_token_latency
-from tstd.config import ModelDiscoveryError, cached_config, default_config_yaml
+from tstd.config import ModelDiscoveryError, cached_config
 from tstd.config_write import save_active_preset
 from tstd.discovery import discover_model
 from tstd.e2e_harness import main, mock_plan, run
@@ -58,7 +59,7 @@ def _install_config(
     config_path = user_data_dir() / "config.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
-        default_config_yaml().replace("http://127.0.0.1:11434/v1", base_url),
+        catalog_config_yaml().replace("http://127.0.0.1:11434/v1", base_url),
         encoding="utf-8",
     )
     save_active_preset(preset)

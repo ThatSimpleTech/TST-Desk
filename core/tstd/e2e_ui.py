@@ -19,6 +19,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from .config import default_config_yaml
 from .daemon import Daemon
 from .keychain import KeychainBackend, KeychainError, store_api_key
 from .mock import MockProvider, Script
@@ -219,11 +220,63 @@ async def _wait_for_port(data_dir: Path) -> dict[str, object]:
     raise TimeoutError("daemon did not write port.json")
 
 
+# The shipped config has no models (TD-5172), so the walk seeds two labelled
+# ones and one team. Loopback with pinned slugs: no key, no discovery; the
+# mock model answers every call.
+_WALK_PRESETS = """
+presets:
+  walk-main:
+    label: "Main"
+    description: "General coding and chat"
+    brain: &walk_a
+      base_url: "http://127.0.0.1:9/v1"
+      slug: "walk/model-a"
+      context_window: 32768
+      max_output_tokens: 4096
+      input_price: 0.0
+      output_price: 0.0
+      cache_read_price: 0.0
+    worker: *walk_a
+    validator: *walk_a
+  walk-fast:
+    label: "Fast"
+    description: "Quick answers"
+    brain: &walk_b
+      base_url: "http://127.0.0.1:9/v1"
+      slug: "walk/model-b"
+      context_window: 32768
+      max_output_tokens: 4096
+      input_price: 0.0
+      output_price: 0.0
+      cache_read_price: 0.0
+    worker: *walk_b
+    validator: *walk_b
+  walk-team:
+    label: "Walk team"
+    description: "Plans on one model, works on another"
+    picker: team
+    brain: *walk_a
+    worker: *walk_b
+    validator: *walk_b
+"""
+
+
+def _seed_config(data_dir: Path) -> None:
+    text = default_config_yaml()
+    marker = "\npresets: {}\n"
+    if marker not in text:
+        raise RuntimeError("shipped config.yaml no longer ends its catalog with `presets: {}`")
+    # No `active_preset:` line: the first entry, walk-main, is active.
+    text = text.replace(marker, _WALK_PRESETS, 1)
+    (data_dir / "config.yaml").write_text(text, encoding="utf-8")
+
+
 async def serve(runtime_file: Path) -> None:
     root = Path(tempfile.mkdtemp(prefix="tstd-e2e-ui-"))
     workspace = root / "workspace"
     data_dir = root / "data"
     data_dir.mkdir()
+    _seed_config(data_dir)
     _prepare_workspace(workspace)
     await _seed_held_session(data_dir, workspace)
     _install_keychain()

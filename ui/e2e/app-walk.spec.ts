@@ -77,51 +77,47 @@ test("opens a workspace and gets a mock reply", async () => {
 });
 
 /**
- * Plan, Model tier and the model picker each go to the daemon, and the bar
- * only moves when its tier_state comes back. A select keeps whatever was
- * picked even if nothing is sent, so each step checks something only the
- * daemon's answer can change: the pin hint, aria-pressed, the disabled
- * tiers, the model names in the tier labels.
+ * Plan and the model picker each go to the daemon, and the bar only moves
+ * when its tier_state comes back, so each step checks something only the
+ * daemon's answer can change: aria-pressed, the chip text. There is no tier
+ * chip (TD-5172); the walk seeds two labelled models and one team.
  */
 async function walkModelBar(): Promise<void> {
 	const bar = page.getByRole("group", { name: "Model" });
-	const tier = bar.getByRole("combobox", { name: "Model tier" });
 	const picker = bar.getByRole("button", { name: "Model and effort" });
 	const plan = bar.getByRole("button", { name: "Plan", exact: true });
 
-	await expect(tier).toHaveAttribute("title", /^Choosing a tier pins it/);
-	await tier.selectOption("worker");
-	await expect(tier).toHaveAttribute("title", /^Pinned for this session/);
-	await expect(tier).toHaveValue("worker");
-
+	await expect(bar.getByRole("combobox", { name: "Model tier" })).toHaveCount(0);
+	await expect(plan).toHaveAttribute("title", /shows you a plan/);
 	await expect(plan).toHaveAttribute("aria-pressed", "false");
 	await plan.click();
 	await expect(plan).toHaveAttribute("aria-pressed", "true");
-	await expect(tier).toHaveValue("brain");
-	for (const locked of ["worker", "validator"]) {
-		await expect(tier.locator(`option[value='${locked}']`)).toBeDisabled();
-	}
 	await plan.click();
 	await expect(plan).toHaveAttribute("aria-pressed", "false");
-	await expect(tier.locator("option[value='worker']")).toBeEnabled();
 
-	// The picker's chip reads "<model> <effort>"; the main list is the models,
-	// and the check mark is on the current one.
-	await expect(picker).toHaveText(/ Medium\s*$/);
+	// The picker's chip reads "<model> <effort>"; the main list is the
+	// labelled models with their descriptions, and the check mark is on the
+	// current one.
+	await expect(picker).toHaveText(/^Main Medium\s*$/);
 	await picker.click();
 	const menu = page.getByRole("menu", { name: "Model and effort" });
 	const models = menu.getByRole("menuitemradio");
-	const current = models.and(page.locator('[aria-checked="true"]'));
-	const start = ((await current.innerText()) ?? "").replace("\u2713", "").trim();
-	const other = (await models.allInnerTexts())
-		.map((text) => text.replace("\u2713", "").trim())
-		.find((name) => name !== start);
-	if (other === undefined) throw new Error("the walk needs a second preset to switch to");
-	const brain = tier.locator("option[value='brain']");
-	const startLabel = await brain.innerText();
-	await models.filter({ hasText: other }).first().click();
-	await expect(brain).not.toHaveText(startLabel);
-	await expect(picker).toContainText(other);
+	await expect(menu.getByText("General coding and chat")).toBeVisible();
+	await expect(menu.getByRole("menuitem", { name: "How models work" })).toBeVisible();
+	await expect(menu.getByRole("menuitem", { name: "Add a model" })).toBeVisible();
+	await models.filter({ hasText: "Fast" }).first().click();
+	await expect(picker).toHaveText(/^Fast Medium\s*$/);
+
+	// Teams: listed only under their own submenu.
+	await picker.click();
+	await expect(models.filter({ hasText: "Walk team" })).toHaveCount(0);
+	await menu.getByRole("menuitem", { name: /^Teams/ }).click();
+	await models.filter({ hasText: "Walk team" }).first().click();
+	await expect(picker).toHaveText(/^Walk team Medium\s*$/);
+
+	await picker.click();
+	await models.filter({ hasText: "Main" }).first().click();
+	await expect(picker).toHaveText(/^Main Medium\s*$/);
 
 	// Effort: pick Max, the chip follows the daemon's tier_state, then back to Medium.
 	await picker.click();
@@ -133,10 +129,6 @@ async function walkModelBar(): Promise<void> {
 	await menu.getByRole("menuitem", { name: /^Effort/ }).click();
 	await menu.getByRole("menuitemradio", { name: /^Medium/ }).click();
 	await expect(picker).toHaveText(/ Medium\s*$/);
-
-	await picker.click();
-	await models.filter({ hasText: start }).first().click();
-	await expect(brain).toHaveText(startLabel);
 }
 
 /** Copy, Retry, Edit, Summarize from here and Restore files to here on the first
@@ -596,7 +588,7 @@ async function removeWalkServer(dialog: Locator): Promise<void> {
 }
 
 const SKIP_CLICK =
-	/^(Close|Sign in with Microsoft|Sign in with Google|Connect GitHub|Disconnect|Send test email|Delete|Remove|Forget|Copy code|Open browser|Try again)$/;
+	/^(Close|Sign in with Microsoft|Sign in with Google|Connect GitHub|Disconnect|Send test email|Delete|Remove|Forget|Copy code|Open browser|Try again|How models work)$/;
 
 async function exercise(page: Page, content: Locator): Promise<void> {
 	const buttons = content.locator("button");
@@ -624,6 +616,13 @@ async function dismissExtraDialogs(page: Page): Promise<void> {
 			await dialog.getByRole("button", { name: /^(Close|Cancel)$/ }).click();
 			await expect(dialog).toBeHidden();
 		}
+	}
+	// "Add a model" (TD-5172) swaps Settings for the walkthrough.
+	const wizard = page.getByRole("dialog", { name: "First-run setup" });
+	if (await wizard.isVisible()) {
+		await expect(wizard.getByRole("heading", { name: "Add a model" })).toBeVisible();
+		await wizard.click({ position: { x: 4, y: 4 } });
+		await expect(wizard).toBeHidden();
 	}
 	if ((await page.getByRole("dialog", { name: "Settings" }).count()) === 0) {
 		await page.getByRole("button", { name: /Open settings/ }).click();

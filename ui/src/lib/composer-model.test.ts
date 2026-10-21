@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 //
-// The composer keeps the draft full width. Plan and the model dropdowns
-// sit on a bar under the text, with Send on the right. The title bar does
-// not repeat the model name.
+// The composer keeps the draft full width. Plan and the model chip sit on
+// a bar under the text, with Send on the right. There is no tier chip
+// (TD-5172). The title bar does not repeat the model name.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mount, tick, unmount } from "svelte";
@@ -50,67 +50,55 @@ afterEach(async () => {
 });
 
 describe("composer model controls", () => {
-	it("keeps the draft full width and the model bar under it", async () => {
+	it("keeps the draft full width and Plan plus the model chip under it", async () => {
 		mountComposer("hello");
 		await tick();
 
 		const draft = document.querySelector(".draft");
 		const bar = document.querySelector(".bar");
 		const send = document.querySelector('[aria-label="Send message"]');
-		const tier = document.querySelector<HTMLSelectElement>('[aria-label="Model tier"]');
+		const picker = document.querySelector('[aria-label="Model and effort"]');
 		const field = document.querySelector("textarea");
 		expect(draft?.contains(field ?? null)).toBe(true);
-		expect(draft?.contains(tier ?? null)).toBe(false);
-		expect(bar?.contains(tier ?? null)).toBe(true);
+		expect(draft?.contains(picker ?? null)).toBe(false);
+		expect(bar?.contains(picker ?? null)).toBe(true);
 		expect(document.querySelector(".actions")?.contains(send ?? null)).toBe(true);
-		expect(document.querySelector(".model-slot")?.contains(tier ?? null)).toBe(true);
-		expect(tier!.compareDocumentPosition(send!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
-		expect(tier?.value).toBe("brain");
-		expect([...tier!.options].map((option) => option.text)).toEqual([
-			"brain (kimi)",
-			"worker (flash)",
-			"validator (pro)",
-		]);
-		expect(document.querySelector('[aria-label="Model and effort"]')?.textContent).toContain(
-			"vllm Medium",
-		);
+		expect(document.querySelector(".model-slot")?.contains(picker ?? null)).toBe(true);
+		expect(picker!.compareDocumentPosition(send!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+		expect(picker?.textContent).toContain("vllm Medium");
 		expect(document.body.textContent).toContain("Plan");
 	});
 
-	it("uses that same bar when the draft is more than one line", async () => {
+	it("has no brain/worker/validator chip (TD-5172)", async () => {
 		mountComposer("hello\nthere");
 		await tick();
 
-		const tier = document.querySelector('[aria-label="Model tier"]');
-		expect(document.querySelector(".draft")?.contains(tier ?? null)).toBe(false);
-		expect(document.querySelector(".model-slot")?.contains(tier ?? null)).toBe(true);
-		expect(document.querySelector(".actions")?.contains(document.querySelector('[aria-label="Send message"]'))).toBe(
-			true,
+		expect(document.querySelector('[aria-label="Model tier"]')).toBeNull();
+		const options = [...document.querySelectorAll("option")].map((o) => o.textContent ?? "");
+		expect(options.some((text) => /brain|worker|validator/.test(text))).toBe(false);
+	});
+
+	it("explains Plan in its tooltip", async () => {
+		mountComposer("");
+		await tick();
+
+		const plan = [...document.querySelectorAll<HTMLButtonElement>("button")].find(
+			(el) => el.textContent?.trim() === "Plan",
 		);
+		expect(plan?.title).toContain("shows you a plan");
+		expect(plan?.title).toContain("approve");
 	});
 
-	it("lists each tier with its model in parentheses", async () => {
-		session.modelSlugs = { brain: "moonshotai/kimi-k3", validator: "pro" };
+	it("shows the chip as Add a model before any model is set up", async () => {
+		session.preset = "";
+		settings.presets = [];
+		settings.hasModel = false;
 		mountComposer("");
 		await tick();
 
-		const tier = document.querySelector<HTMLSelectElement>('[aria-label="Model tier"]');
-		expect([...tier!.options].map((option) => option.text)).toEqual([
-			"brain (moonshotai/kimi-k3)",
-			"worker",
-			"validator (pro)",
-		]);
-	});
-
-	it("keeps worker and validator unavailable while Plan is on", async () => {
-		session.planMode = true;
-		mountComposer("");
-		await tick();
-
-		const tier = document.querySelector<HTMLSelectElement>('[aria-label="Model tier"]');
-		expect(tier?.options[0]?.disabled).toBe(false);
-		expect(tier?.options[1]?.disabled).toBe(true);
-		expect(tier?.options[2]?.disabled).toBe(true);
+		expect(document.querySelector('[aria-label="Model and effort"]')?.textContent?.trim()).toBe(
+			"Add a model",
+		);
 	});
 
 	it("leaves the model name out of the title bar", async () => {

@@ -12195,3 +12195,47 @@ mounted behind it.
 The gauge missing from the same screenshots is not a bug: the paired
 desktop's last turn (10-17) predates TD-5109 (10-19), so no session there has
 a reading until its next turn.
+
+### TD-5172 — Model picker cleanup: one job and a walkthrough per item
+**Size:** 5 · **Depends on:** TD-1101, TD-1703, TD-5007 · **Status:** Done
+
+Every item in the model picker needs one clear job and a walkthrough a new
+person can follow; anything without both is removed. The composer's
+brain/worker/validator chip had no job a newcomer could name, the picker
+listed raw preset keys with no word on what each was for, and the shipped
+catalog's four presets pointed at one maintainer's routes. A new install
+now ships no model and starts the "Add a model" walkthrough; every listed
+model has a label and a one-line description; per-role setups are "teams"
+under their own submenu; and docs/models.md explains all of it.
+
+- [x] The composer shows Plan (tooltip says what it does) and the model chip;
+      no tier chip. `set_tier` stays on the wire (`composer-model.test.ts`,
+      app walk).
+- [x] A preset `description` (≤120 characters) reaches the picker as a
+      subtitle through `setup_state.preset_descriptions`; presets with no
+      label are hidden unless current (`effort.test.ts`,
+      `model-picker.test.ts`).
+- [x] `picker: team` lists a preset under "Teams", shown only when one
+      exists; Settings → Models frames the per-role editor as "Build a team"
+      with what brain, worker and validator do and when a team is worth it.
+- [x] The shipped config.yaml has no tst-default/budget/local/vllm presets
+      (`presets: {}` with a commented example); `PRESETS` is empty,
+      `DEFAULT_PRESET` and `computer_use.local_worker_preset` are "". An
+      empty catalog loads, `setup_state.has_model` is false, and a turn fails
+      with "No model is set up yet" instead of crashing
+      (`test_add_model.py::TestFirstRun`). An old config naming a removed
+      preset falls back to its first preset.
+- [x] "Add a model": server URL → key (keychain; skipped on loopback) →
+      pick from the server's `/models` (`list_endpoint_models`) → label and
+      description → `add_model` writes a single-model preset and makes it
+      active → `test_model` sends one short message
+      (`onboarding.test.ts`, `test_add_model.py`). It opens on the first run
+      and from the picker and Settings.
+- [x] The account row shows the active preset's label, not its key
+      (`rail.test.ts`).
+- [x] docs/models.md is a generic walkthrough linked from the picker ("How
+      models work"), the wizard and Settings; its YAML examples load
+      (`test_docs_models_guide.py`). docs/configuration.md updated.
+- [x] Protocol fixtures regenerated with the three new messages, two events
+      and `setup_state` fields; the app walk seeds two labelled models and a
+      team and walks the picker; census drops "Model tier".

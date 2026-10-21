@@ -22,8 +22,8 @@ import pytest
 import websockets
 import yaml
 
+from tests.catalog_helpers import catalog_config_yaml
 from tstd.cli import daemon_argv
-from tstd.config import default_config_yaml
 from tstd.daemon import Daemon
 from tstd.logging import LOG_FILE_NAME, log_directory, setup_logging
 from tstd.memory_distill import DISTILL_SYSTEM_PROMPT
@@ -204,7 +204,7 @@ def test_finished_session_stops_inside_the_budget(tmp_path: Path, mode: str) -> 
 
 
 def _write_loopback_config(data_dir: Path, base_url: str) -> None:
-    loaded = yaml.safe_load(default_config_yaml())
+    loaded = yaml.safe_load(catalog_config_yaml())
     assert isinstance(loaded, dict)
     loaded["active_preset"] = "local"
     for tier in loaded["presets"]["local"].values():
@@ -292,6 +292,11 @@ def test_stuck_provider_read_does_not_burn_the_shutdown_budget(tmp_path: Path) -
 def _child() -> None:
     mode, raw_dir = sys.argv[1], sys.argv[2]
     data_dir = Path(raw_dir)
+    # The child is a fresh interpreter, outside conftest's seed (TD-5172).
+    data_dir.mkdir(parents=True, exist_ok=True)
+    seeded = data_dir / "config.yaml"
+    if not seeded.exists():
+        seeded.write_text(catalog_config_yaml(), encoding="utf-8")
     setup_logging(level="INFO", log_dir=log_directory(data_dir))
     if mode == "mock":
         provider: MockProvider = MockProvider(default=Script(kind="stream", content="hi"))

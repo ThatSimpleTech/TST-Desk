@@ -5,6 +5,7 @@ import {
 	DEFAULT_EFFORT,
 	EFFORT_OPTIONS,
 	groupModels,
+	modelDescription,
 	modelLabel,
 } from "./effort";
 
@@ -41,12 +42,12 @@ describe("effort levels", () => {
 
 describe("model grouping", () => {
 	it("splits by the config's picker flag, main list first", () => {
-		const groups = groupModels(
-			["house", "tst-default", "sub-claude-opus", "sub-grok", "house-raw"],
-			["sub-claude-opus", "sub-grok", "house-raw"],
-		);
+		const groups = groupModels(["house", "tst-default", "sub-claude-opus", "sub-grok", "house-raw"], {
+			more: ["sub-claude-opus", "sub-grok", "house-raw"],
+		});
 		expect(groups.main).toEqual(["house", "tst-default"]);
 		expect(groups.more).toEqual(["sub-claude-opus", "sub-grok", "house-raw"]);
+		expect(groups.teams).toEqual([]);
 	});
 
 	it("puts every preset on the main list when none says more", () => {
@@ -55,7 +56,39 @@ describe("model grouping", () => {
 	});
 
 	it("still shows a current model the daemon did not list", () => {
-		expect(groupModels(["house"], ["sub-grok"], "sub-grok").more).toEqual(["sub-grok"]);
+		expect(groupModels(["house"], { more: ["sub-grok"], current: "sub-grok" }).more).toEqual([
+			"sub-grok",
+		]);
+	});
+
+	it("hides presets with no label, except the current one", () => {
+		const labels = { house: "House", "sub-grok": "Grok" };
+		const groups = groupModels(["house", "raw", "old", "sub-grok"], {
+			more: ["sub-grok", "raw"],
+			labels,
+			current: "old",
+		});
+		expect(groups.main).toEqual(["house", "old"]);
+		expect(groups.more).toEqual(["sub-grok"]);
+	});
+
+	it("lists teams only under Teams", () => {
+		const groups = groupModels(["house", "crew"], {
+			teams: ["crew"],
+			labels: { house: "House", crew: "Crew" },
+		});
+		expect(groups.main).toEqual(["house"]);
+		expect(groups.more).toEqual([]);
+		expect(groups.teams).toEqual(["crew"]);
+	});
+
+	it("an empty catalog lists nothing", () => {
+		expect(groupModels([], { labels: {} })).toEqual({ main: [], more: [], teams: [] });
+	});
+
+	it("reads a description, or none", () => {
+		expect(modelDescription("house", { house: "Coding and chat" })).toBe("Coding and chat");
+		expect(modelDescription("raw", {})).toBe("");
 	});
 });
 

@@ -9,7 +9,8 @@ from typing import Any
 import pytest
 import yaml
 
-from tstd.config import ModelConfig, ProviderRetryConfig, default_config_yaml, resolve_base_url
+from tests.catalog_helpers import catalog_config_yaml
+from tstd.config import ModelConfig, ProviderRetryConfig, resolve_base_url
 from tstd.daemon import Daemon
 from tstd.keychain import KeychainError
 from tstd.protocol import parse_client_message
@@ -60,7 +61,7 @@ def fake_keychain(monkeypatch: pytest.MonkeyPatch) -> FakeKeychain:
 
 
 def _config() -> ModelConfig:
-    return ModelConfig.model_validate(yaml.safe_load(default_config_yaml()))
+    return ModelConfig.model_validate(yaml.safe_load(catalog_config_yaml()))
 
 
 def _daemon(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> Daemon:

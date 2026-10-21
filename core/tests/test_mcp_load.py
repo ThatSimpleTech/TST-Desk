@@ -18,11 +18,11 @@ import pytest
 from pydantic import ValidationError
 from websockets.asyncio.client import connect
 
+from tests.catalog_helpers import catalog_config_yaml
 from tstd.config import (
     McpConfig,
     McpServerConfig,
     cached_config,
-    default_config_yaml,
 )
 from tstd.daemon import Daemon
 from tstd.logging import user_data_dir
@@ -264,7 +264,7 @@ def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _write_config(dest: Path, mcp_yaml: str) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(default_config_yaml().rstrip() + "\n" + mcp_yaml + "\n", encoding="utf-8")
+    dest.write_text(catalog_config_yaml().rstrip() + "\n" + mcp_yaml + "\n", encoding="utf-8")
     cached_config.cache_clear()
     return dest
 

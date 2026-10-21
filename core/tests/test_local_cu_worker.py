@@ -11,12 +11,13 @@ from pathlib import Path
 
 import yaml
 
+from tests.catalog_helpers import catalog_config_yaml
 from tests.test_dispatch import (
     attach_auto_approver,
     make_classifier,
     wait_for_turn,
 )
-from tstd.config import ComputerUseConfig, ModelConfig, Preset, TierConfig, default_config_yaml
+from tstd.config import ComputerUseConfig, ModelConfig, Preset, TierConfig
 from tstd.desktop.mock import MockDesktopDriver
 from tstd.local_worker import (
     effective_tier,
@@ -37,7 +38,7 @@ from tstd.tools.dispatch import ToolDispatcher
 
 def _vllm_worker_url() -> str:
     """The shipped vllm worker URL — slugs/URLs stay in yaml (§2.7)."""
-    data = yaml.safe_load(default_config_yaml())
+    data = yaml.safe_load(catalog_config_yaml())
     assert isinstance(data, dict)
     presets = data["presets"]
     assert isinstance(presets, dict)

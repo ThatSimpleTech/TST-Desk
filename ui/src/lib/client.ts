@@ -102,6 +102,8 @@ const KNOWN_EVENT_TYPES = new Set([
   "pairing_completed", // TD-5014
   "machine_list", // TD-5015
   "api_key_validated", // TD-1101
+  "endpoint_models", // TD-5172
+  "model_tested", // TD-5172
   "diagnostics_report", // TD-1104 doctor
   "usage_report", // TD-1706: was missing; the usage panel never loaded
   "usage_exported", // TD-1706

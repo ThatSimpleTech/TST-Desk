@@ -18,6 +18,7 @@ import re
 import shutil
 from functools import lru_cache
 from importlib import resources
+from importlib.resources.abc import Traversable
 from ipaddress import ip_address
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -45,10 +46,14 @@ from .shell_read_only import READ_ONLY_ENTRIES
 TierName = Literal["brain", "worker", "validator"]
 TIER_NAMES: tuple[TierName, ...] = ("brain", "worker", "validator")
 
-# Presets shipped with the package. Users may add more.
-PRESETS: tuple[str, ...] = ("tst-default", "budget", "local", "vllm")
+# Presets shipped with the package (TD-5172): none. A new install adds its
+# first model through the "Add a model" walkthrough, so every entry on the
+# picker is one the user set up and can name.
+PRESETS: tuple[str, ...] = ()
 
-DEFAULT_PRESET = "tst-default"
+# Empty means "no model set up yet"; the loader falls back to the first
+# declared preset when the configured name is missing.
+DEFAULT_PRESET = ""
 
 # Implicit keychain account for an unbound remote tier (TD-1717).
 DEFAULT_CREDENTIAL_ID = "openrouter"
@@ -436,11 +441,21 @@ class Preset(BaseModel):
     brain: TierConfig
     worker: TierConfig
     validator: TierConfig
-    # How the composer's model picker shows this preset: the name on the
-    # list and chip (default: the preset's key), and whether it sits on the
-    # main list (``primary``) or under "More models" (``more``).
+    # How the composer's model picker shows this preset (TD-5172): the name
+    # on the list and chip, a one-line ``description`` shown under it, and
+    # where it sits: the main list (``primary``), "More models" (``more``),
+    # or "Teams" (``team``, tiers on different models). A preset with no
+    # label is left off the picker unless it is the active one.
     label: str | None = Field(default=None, min_length=1, max_length=40)
-    picker: Literal["primary", "more"] = "primary"
+    description: str | None = Field(default=None, max_length=120)
+    picker: Literal["primary", "more", "team"] = "primary"
+
+    @field_validator("description")
+    @classmethod
+    def _blank_description_is_unset(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
 
 
 class CredentialConfig(BaseModel):
@@ -1161,14 +1176,14 @@ class ComputerUseConfig(BaseModel):
 
     ``local_worker_preset`` names the preset whose *worker* tier is used
     for the worker client after a session has used a desktop_ or
-    browser_ tool (TD-3903). Default ``vllm``. Empty never remaps.
+    browser_ tool (TD-3903). Default empty: never remap (TD-5172).
     Brain stays on the active preset.
     """
 
     command: str | list[str] = ""
     browser: Literal["mock", "playwright"] = "mock"
     grounding: GroundingConfig = Field(default_factory=GroundingConfig)
-    local_worker_preset: str = "vllm"
+    local_worker_preset: str = ""
     # Hosted vLLM forge is --limit-mm-per-prompt image:1 (TD-1730).
     max_prompt_images: int = Field(default=1, ge=0)
 
@@ -1456,7 +1471,9 @@ class JudgmentsConfig(BaseModel):
 class ModelConfig(BaseModel):
     """Top-level model configuration loaded from config.yaml."""
 
-    presets: dict[str, Preset]
+    # Empty is a valid catalog (TD-5172): a new install has no model yet,
+    # and the first-run walkthrough adds one.
+    presets: dict[str, Preset] = Field(default_factory=dict)
     active_preset: str = DEFAULT_PRESET
     credentials: dict[str, CredentialConfig] = Field(default_factory=dict)
     search: SearchConfig = Field(default_factory=SearchConfig)
@@ -1504,6 +1521,33 @@ class ModelConfig(BaseModel):
             )
         return value
 
+    @model_validator(mode="before")
+    @classmethod
+    def _null_presets_is_empty(cls, data: Any) -> Any:
+        # ``presets:`` with nothing under it parses as None.
+        if isinstance(data, dict):
+            if data.get("presets") is None and "presets" in data:
+                data = {**data, "presets": {}}
+            if data.get("active_preset") is None and "active_preset" in data:
+                data = {**data, "active_preset": ""}
+        return data
+
+    @model_validator(mode="after")
+    def _active_preset_falls_back(self) -> ModelConfig:
+        """A missing or unknown ``active_preset`` lands on the first preset.
+
+        An old config can name a preset the user since removed; refusing to
+        load would lock them out of Settings, where they would fix it. An
+        empty catalog keeps it empty: no model is set up yet (TD-5172).
+        """
+        if self.active_preset not in self.presets:
+            self.active_preset = next(iter(self.presets), "")
+        return self
+
+    def has_model(self) -> bool:
+        """Whether any model is set up, i.e. the active preset exists."""
+        return self.active_preset in self.presets
+
     @model_validator(mode="after")
     def _bound_credentials_exist(self) -> ModelConfig:
         known = set(self.credentials) | {DEFAULT_CREDENTIAL_ID}
@@ -1539,8 +1583,16 @@ class ModelConfig(BaseModel):
         return self.tiers()[name]
 
     def tiers(self) -> dict[TierName, TierConfig]:
-        """Get all tier configs for the active preset."""
-        preset = self.presets[self.active_preset]
+        """Get all tier configs for the active preset.
+
+        With an empty catalog (TD-5172) every tier is a keyless loopback
+        stand-in that is never contacted: ``resolve_tier_slugs`` fails the
+        turn with the "add a model" fix before any request is built. Code
+        that only reads windows or prices keeps working on a first run.
+        """
+        preset = self.presets.get(self.active_preset)
+        if preset is None:
+            return {name: _no_model_tier() for name in TIER_NAMES}
         return {name: preset.__getattribute__(name) for name in TIER_NAMES}
 
     def requires_api_key(self) -> bool:
@@ -1551,11 +1603,32 @@ class ModelConfig(BaseModel):
         Conservative on purpose: a mixed preset never degrades into an
         unauthenticated remote call.
         """
+        if not self.has_model():
+            return False
         return any(resolve_credential_id(t) is not None for t in self.tiers().values())
 
 
 class ConfigError(Exception):
     """Raised when the model configuration is invalid or missing."""
+
+
+NO_MODEL_MESSAGE = "No model is set up yet"
+NO_MODEL_FIX = "Add one in Settings → Models → Add a model."
+
+# The discard port on loopback: a stand-in that is never sent anything.
+_NO_MODEL_BASE_URL = "http://127.0.0.1:9/v1"
+
+
+def _no_model_tier() -> TierConfig:
+    """The stand-in tier while no model is set up (TD-5172)."""
+    return TierConfig(
+        base_url=_NO_MODEL_BASE_URL,
+        input_price=0.0,
+        output_price=0.0,
+        cache_read_price=0.0,
+        context_window=32768,
+        max_output_tokens=4096,
+    )
 
 
 def _merge_shipped_credential_hosts(data: dict[str, Any], shipped: dict[str, Any]) -> None:
@@ -1620,6 +1693,15 @@ def config_yaml_path(data_dir: Path | None = None) -> Path:
     return root / "config.yaml"
 
 
+def _seed_source() -> Traversable:
+    """The file a new user config is copied from: the shipped default.
+
+    One seam so the test suite can seed its throwaway configs with a model
+    catalog, since none ships (TD-5172).
+    """
+    return resources.files("tstd").joinpath(_DEFAULT_CONFIG_RESOURCE)
+
+
 def ensure_user_config(path: Path | None = None) -> Path:
     """Copy the shipped default config to the resolved path if missing.
 
@@ -1631,7 +1713,7 @@ def ensure_user_config(path: Path | None = None) -> Path:
     config_path = path if path is not None else config_yaml_path()
     if not config_path.exists():
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        source = resources.files("tstd").joinpath(_DEFAULT_CONFIG_RESOURCE)
+        source = _seed_source()
         with source.open("rb") as src, config_path.open("wb") as dst:
             shutil.copyfileobj(src, dst)
     return config_path
@@ -1701,11 +1783,6 @@ def load_config(path: Path | None = None) -> ModelConfig:
             f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}" for err in e.errors()
         )
         raise ConfigError(f"Invalid model configuration in {config_path}: {details}") from e
-
-    if config.active_preset not in config.presets:
-        raise ConfigError(
-            f"active_preset '{config.active_preset}' not found in presets {sorted(config.presets)}"
-        )
 
     return config
 

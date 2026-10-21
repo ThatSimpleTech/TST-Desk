@@ -4,12 +4,14 @@
 Stdlib only — runs on Linux, macOS, and Windows (no ``websockets`` dep).
 Two modes:
 
-* ``--serve`` — OpenAI-compatible loopback on 127.0.0.1:11434 (the shipped
-  ``local`` preset). First completion is ``fs_write``; the follow-up is text.
-* ``--client`` — handshake the already-running bundled ``tstd``, switch to
-  ``local``, open a workspace, send one turn, assert the write and the reply.
-* ``--probe-keychain`` — on a clean guest, ``set_preset`` + ``validate_api_key``
-  must return actionable copy, not hang (TD-4906).
+* ``--serve`` — OpenAI-compatible loopback on 127.0.0.1:11434. First
+  completion is ``fs_write``; the follow-up is text.
+* ``--client`` — handshake the already-running bundled ``tstd``, add that
+  loopback as a model (``add_model``; nothing ships, TD-5172), open a
+  workspace, send one turn, assert the write and the reply.
+* ``--probe-keychain`` — on a clean guest, add a hosted model bound to the
+  shipped ``openrouter`` key id with no key stored; ``validate_api_key`` must
+  return actionable copy, not hang (TD-4906).
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+_PORT = 11434
 _REPLY = "Wrote hello.txt as requested."
 _WRITE_NAME = "hello.txt"
 _WRITE_BODY = "hello from clean guest\n"
@@ -134,7 +137,7 @@ def _text_stream(text: str) -> bytes:
 
 class _MockServer(ThreadingHTTPServer):
     def __init__(self, workspace: Path) -> None:
-        super().__init__(("127.0.0.1", 11434), _MockHandler)
+        super().__init__(("127.0.0.1", _PORT), _MockHandler)
         self.workspace = workspace
 
 
@@ -142,7 +145,7 @@ def serve(workspace: Path) -> None:
     httpd = _MockServer(workspace)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
-    sys.stderr.write("mock openai listening on 127.0.0.1:11434\n")
+    sys.stderr.write(f"mock openai listening on 127.0.0.1:{_PORT}\n")
     try:
         while True:
             time.sleep(3600)
@@ -262,6 +265,11 @@ def _recv_until(ws: _Ws, typ: str, timeout: float) -> dict[str, Any]:
     raise TimeoutError(f"timed out waiting for {typ}; last={last!r}")
 
 
+def _send_and_wait_setup(ws: _Ws, msg: dict[str, Any]) -> dict[str, Any]:
+    _send(ws, msg)
+    return _recv_until(ws, "setup_state", 15.0)
+
+
 def client(port_file: Path, workspace: Path) -> None:
     info = json.loads(port_file.read_text())
     port = int(info["port"])
@@ -270,8 +278,21 @@ def client(port_file: Path, workspace: Path) -> None:
     try:
         _send(ws, {"type": "hello", "token": token, "version": 1})
         _recv_until(ws, "hello_ack", 10.0)
-        _send(ws, {"type": "set_preset", "name": "local"})
-        _recv_until(ws, "setup_state", 15.0)
+        first = _send_and_wait_setup(ws, {"type": "get_setup_state"})
+        if first.get("has_model") is not False:
+            raise RuntimeError(f"a clean install must ship no model, got {first!r}")
+        state = _send_and_wait_setup(
+            ws,
+            {
+                "type": "add_model",
+                "label": "Smoke",
+                "description": "Loopback mock for the packaged smoke",
+                "base_url": f"http://127.0.0.1:{_PORT}/v1",
+                "slug": "smoke-model",
+            },
+        )
+        if not state.get("has_model") or state.get("key_required"):
+            raise RuntimeError(f"add_model did not set up a keyless model: {state!r}")
         _send(ws, {"type": "open_workspace", "path": str(workspace)})
         state = _recv_until(ws, "session_state", 15.0)
         session_id = str(state["session_id"])
@@ -337,10 +358,18 @@ def probe_keychain(port_file: Path) -> None:
     try:
         _send(ws, {"type": "hello", "token": token, "version": 1})
         _recv_until(ws, "hello_ack", 10.0)
-        _send(ws, {"type": "set_preset", "name": "tst-default"})
-        state = _recv_until(ws, "setup_state", 15.0)
+        state = _send_and_wait_setup(
+            ws,
+            {
+                "type": "add_model",
+                "label": "Hosted",
+                "base_url": "https://api.example.com/v1",
+                "slug": "vendor/model",
+                "credential": "openrouter",
+            },
+        )
         if not state.get("key_required"):
-            raise RuntimeError("tst-default must require a key on this preset")
+            raise RuntimeError("a hosted model must require a key")
         if state.get("has_api_key"):
             raise RuntimeError("clean guest must not report a stored API key")
         _send(ws, {"type": "validate_api_key"})

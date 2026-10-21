@@ -5,7 +5,7 @@ same signal as the Screen tab — may pin the *worker client* to another
 preset's worker tier. Brain, lead-turns, ``set_tier``, and escalation stay
 on the active preset (TD-303). Empty ``computer_use.local_worker_preset``
 disables the remap. A name that is not a preset is treated the same as
-empty so a test config without ``vllm`` does not crash.
+empty, so a config without that preset does not crash.
 """
 
 from __future__ import annotations

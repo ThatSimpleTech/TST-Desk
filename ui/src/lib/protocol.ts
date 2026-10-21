@@ -712,6 +712,38 @@ export interface DeleteApiKey extends ClientMessage {
   provider?: string;
 }
 
+// TD-5172 "Add a model": list what an OpenAI-compatible server offers.
+// `api_key` is the key the user typed (sent only to `base_url`, never
+// stored by this call); `credential` names a stored key instead.
+export interface ListEndpointModels extends ClientMessage {
+  type: "list_endpoint_models";
+  base_url: string;
+  api_key?: string | null;
+  credential?: string | null;
+}
+
+// TD-5172: write a single-model preset (all three roles on one model),
+// store a typed key in the keychain, and make it active. Acked with
+// setup_state.
+export interface AddModel extends ClientMessage {
+  type: "add_model";
+  label: string;
+  description?: string;
+  base_url: string;
+  slug: string;
+  api_key?: string | null;
+  credential?: string | null;
+  context_window?: number | null;
+  input_price?: number | null;
+  output_price?: number | null;
+}
+
+// TD-5172: one short test message to a preset's model (default: active).
+export interface TestModel extends ClientMessage {
+  type: "test_model";
+  preset?: string | null;
+}
+
 export interface ValidateApiKey extends ClientMessage {
   type: "validate_api_key";
   // TD-1106: when present, the typed key is checked directly instead of
@@ -1188,6 +1220,9 @@ export type ClientMessageUnion =
   | SetApiKey
   | DeleteApiKey
   | ValidateApiKey
+  | ListEndpointModels
+  | AddModel
+  | TestModel
   | SetPreset
   | SetEngine
   | SetGrokMode
@@ -2041,6 +2076,12 @@ export interface SetupState extends DaemonEvent {
   // presets under "More models". Omitted by older daemons.
   preset_labels?: Record<string, string>;
   more_presets?: string[];
+  // TD-5172: one-line subtitle per preset that sets a `description`, the
+  // presets under "Teams" (`picker: team`), and whether any model is set up
+  // (false on a fresh install: the UI starts "Add a model").
+  preset_descriptions?: Record<string, string>;
+  team_presets?: string[];
+  has_model?: boolean;
   // TD-804: skip-all approvals. Additive, default off.
   skip_all_approvals?: boolean;
   // TD-2603: load ~/.tstdesk/memory/ after workspace memory. Additive, default off.
@@ -2269,6 +2310,34 @@ export interface CredentialSummary {
 
 // TD-1101: reply to validate_api_key — a one-token live probe of the
 // stored key. `detail` is actionable text; the key never appears.
+// TD-5172: one row of a server's /models list.
+export interface EndpointModel {
+  id: string;
+  context_window?: number | null;
+  input_price?: number | null;
+  output_price?: number | null;
+}
+
+// TD-5172: reply to list_endpoint_models. `error` is plain text for the
+// user; the key never appears.
+export interface EndpointModels extends DaemonEvent {
+  type: "endpoint_models";
+  seq: number;
+  base_url: string;
+  models: EndpointModel[];
+  error?: string | null;
+}
+
+// TD-5172: reply to test_model.
+export interface ModelTested extends DaemonEvent {
+  type: "model_tested";
+  seq: number;
+  preset: string;
+  ok: boolean;
+  reply: string;
+  detail: string;
+}
+
 export interface ApiKeyValidated extends DaemonEvent {
   type: "api_key_validated";
   seq: number;
@@ -3013,6 +3082,8 @@ export type DaemonEventUnion =
   | PairingCompleted
   | MachineList
   | ApiKeyValidated
+  | EndpointModels
+  | ModelTested
   | DiagnosticsReport
   | UsageReport
   | UsageExported

@@ -24,7 +24,7 @@ from ..logging import redact_secrets
 if TYPE_CHECKING:
     from .models import Job
 
-# A catalog key, not a URL or a path. ``tst-default`` and ``vllm`` pass;
+# A catalog key, not a URL or a path. ``my-model`` and ``walk.v2`` pass;
 # anything with a slash, a colon, or a space does not, and the message
 # does not repeat the text (it may have been a secret-shaped string).
 _PRESET_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
