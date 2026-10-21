@@ -269,6 +269,23 @@ class TestPdf:
         out = await fs_read(text_only(), str(f))
         assert isinstance(out, str) and out.startswith("Error: could not read PDF")
 
+    async def test_a_page_pdfium_cannot_read_is_an_error_not_a_crash(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import pypdfium2 as pdfium
+
+        from tstd.tools import read_pdf as read_pdf_module
+
+        f = tmp_path / "doc.pdf"
+        f.write_bytes(make_pdf(["one", "two"]))
+
+        def broken(page: object) -> str:
+            raise pdfium.PdfiumError("Failed to load page.")
+
+        monkeypatch.setattr(read_pdf_module, "_page_text", broken)
+        out = await fs_read(text_only(), str(f))
+        assert isinstance(out, str) and out.startswith("Error: could not read PDF")
+
     async def test_page_images_on_vision_tier(self, tmp_path: Path) -> None:
         f = tmp_path / "doc.pdf"
         f.write_bytes(make_pdf(["Alpha", "Bravo", "Charlie"]))
@@ -347,21 +364,30 @@ class TestDispatch:
         assert base64.b64encode(PNG).decode() not in result.output
 
 
-def _config(vision_on: bool) -> ModelConfig:
+def _config(vision_on: bool, worker_vision: bool | None = None) -> ModelConfig:
     tier = _tier().model_copy(update={"vision": vision_on})
+    worker = tier.model_copy(
+        update={"vision": vision_on if worker_vision is None else worker_vision}
+    )
     return ModelConfig(
-        presets={"test": Preset(brain=tier, worker=tier, validator=tier)},
+        presets={"test": Preset(brain=tier, worker=worker, validator=tier)},
         active_preset="test",
     )
 
 
-async def _run_read(workspace: Path, vision_on: bool) -> object:
+async def _run_read(
+    workspace: Path,
+    vision_on: bool,
+    *,
+    worker_vision: bool | None = None,
+    lead_turns: int = 1_000,
+) -> object:
     """One turn: the model reads shot.png, then answers. The second
     request's tool message is what the model was given."""
     (workspace / "shot.png").write_bytes(PNG)
     mock = MockProvider(
         sequences={
-            "ezer-forge": [
+            "gateway-model": [
                 Script(
                     kind="tool_call",
                     tool_name="fs_read",
@@ -373,12 +399,12 @@ async def _run_read(workspace: Path, vision_on: bool) -> object:
     )
     session = Session(str(workspace))
     dispatcher = make_dispatcher(workspace)
-    config = _config(vision_on)
+    config = _config(vision_on, worker_vision)
     runner = SessionRunner(
         session,
         loop_factory=lambda s: agent_loop(
             s,
-            TierRouter(lead_turns=1_000),
+            TierRouter(lead_turns=lead_turns),
             mock_factory(mock),
             config,
             tool_registry=dispatcher.registry,
@@ -409,6 +435,14 @@ class TestLoop:
 
     async def test_text_tier_model_is_told_it_cannot(self, tmp_path: Path) -> None:
         content = await _run_read(tmp_path, vision_on=False)
+        assert isinstance(content, str)
+        assert "does not accept images" in content
+
+    async def test_the_tier_the_result_goes_to_decides_not_the_one_that_asked(
+        self, tmp_path: Path
+    ) -> None:
+        """The lead turn ends mid-turn: a vision brain asks, a text worker reads."""
+        content = await _run_read(tmp_path, vision_on=True, worker_vision=False, lead_turns=1)
         assert isinstance(content, str)
         assert "does not accept images" in content
 

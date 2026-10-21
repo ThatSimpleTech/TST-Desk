@@ -223,7 +223,7 @@ under the user data dir. Playwright missing always falls back to mock.
 | `browser` | `mock` or `playwright` | `mock` | Browser driver. `mock` never launches Chrome. `playwright` uses a persistent profile under the user data dir when Playwright is installed; otherwise the mock. |
 | `grounding` | mapping | see below | Local vision model for click targeting (TD-3902). |
 | `local_worker_preset` | string | `vllm` | After this session has used a `desktop_` or `browser_` tool, the worker *client* uses that named preset's worker tier (loopback URL + optional slug). Brain stays on the active preset. Empty never remaps. The name is a preset key, not a model slug. Lead-turns, `set_tier`, and escalation are unchanged. |
-| `max_prompt_images` | int ≥ 0 | `1` | How many `image_url` parts a completion may keep. Oldest images (screenshots, and images `fs_read` returned) are dropped first. `1` matches ezer-forge (`--limit-mm-per-prompt image:1`). It also caps the page images one PDF read returns (at most 5), and `0` makes `fs_read` treat every tier as text-only (TD-5130). |
+| `max_prompt_images` | int ≥ 0 | `1` | How many `image_url` parts a completion may keep. Oldest images (screenshots, and images `fs_read` returned) are dropped first. `1` matches gateway-model (`--limit-mm-per-prompt image:1`). It also caps the page images one PDF read returns (at most 5), and `0` makes `fs_read` treat every tier as text-only (TD-5130). |
 
 #### `computer_use.grounding`
 
@@ -1150,7 +1150,7 @@ host allowlist omits that flag so Podman slirp can work, and never
 `caps.shell_memory_mb`, else this file's, else half of RAM, TD-5116,
 TD-5160). The argv never bind-mounts `$HOME`, `~/.ssh`, cloud
 creds, the OS keychain, or the user-data-dir; there is no extra-mount
-API. Firecracker / EZER is a follow-up, not this key.
+API. Firecracker is a follow-up, not this key.
 
 `verify` is the unused validator call for *interactive* mode (spec §12.6
 first sentence, TD-4204). It is not the autonomy supervisor. A write
@@ -1255,7 +1255,7 @@ is a plain `tools` array, so it works on any OpenAI-compatible endpoint.
 `tool_search` is Class A (§4.4); loading a tool grants it nothing, and
 each call to it is classified as before. Whether a tier defers is decided
 on its first call and kept for the session, so the learned token ratio
-cannot make the tool list come and go. Measured on EZER with six servers
+cannot make the tool list come and go. Measured on the GPU server with six servers
 (70 tools, `core/scripts/measure_mcp_tool_search.py`) on the local 27B's
 tokenizer: the first request of a turn was 15,294 prompt tokens with
 every schema and 8,272 with tool search, and 9,037 after one search
@@ -1806,10 +1806,10 @@ slug is required for the off-box endpoint https://openrouter.ai/api/v1;
 only a loopback endpoint discovers its model from /v1/models
 ```
 
-### 3.5 Attaching vLLM or EZER
+### 3.5 Attaching vLLM or llama.cpp
 
 The shipped `vllm` preset points every tier at `http://127.0.0.1:8000/v1` — vLLM's
-OpenAI-compatible server default. EZER serves the same `/v1` shape, so attaching EZER is this
+OpenAI-compatible server default. The GPU server serves the same `/v1` shape, so attaching the GPU server is this
 preset, not a different code path. Set it in the user `config.yaml` and restart the daemon
 (or pick `vllm` from the first-run wizard / settings):
 
@@ -1843,7 +1843,7 @@ active_preset: vllm
 
 In a copy that already has the shipped presets, the only edit is `active_preset: vllm`. Start
 the server so `GET http://127.0.0.1:8000/v1/models` answers (vLLM's default `vllm serve …`
-listens on 8000; EZER's documented command does the same if it uses that port). If the process
+listens on 8000; the GPU server's documented command does the same if it uses that port). If the process
 listens elsewhere, change `base_url` in this file — never in Python.
 
 `slug` is omitted on purpose, same as `local` (§3.4). What "unresolved" means on this
@@ -1861,7 +1861,7 @@ The doctor's `provider` row always names the endpoint (`reachable at …` or the
 failure's `fix`). It does not print the developer's model list.
 
 **Timeouts for a slow local model (TD-5106).** The tier defaults suit a hosted API. A local
-model on EZER can spend minutes reading a long prompt before its first token, and a server
+model on the GPU server can spend minutes reading a long prompt before its first token, and a server
 that hangs mid-load may keep the socket open with keep-alive pings. Give each local tier room
 to read and a ceiling on the whole reply:
 
@@ -1899,7 +1899,7 @@ down or unnamed falls back the same way — it does not fail the click.
 ### 3.6 Provider-specific request fields (`extra_body`)
 
 Some servers take settings the OpenAI shape has no field for. `extra_body` on a tier is added
-to the JSON body of every chat request that tier makes (TD-5008). On EZER, a llama.cpp
+to the JSON body of every chat request that tier makes (TD-5008). On the GPU server, a llama.cpp
 reasoning model behind LiteLLM, this keeps the thinking short so the answer fits inside
 `max_output_tokens`:
 
@@ -1959,7 +1959,7 @@ that run on the worker ask for a one-word answer in 8 tokens (TD-5012). On a rea
 the 8 tokens end inside the thinking, so the reply is empty: the classifier falls back to
 Class B and a prose DoD item never goes green. `verdict_extra_body` is merged over `extra_body`
 on those calls only, so the thinking can be off there and stay on for the turn and a delegated
-worker. On EZER, a llama.cpp Qwen model behind LiteLLM:
+worker. On the GPU server, a llama.cpp Qwen model behind LiteLLM:
 
 <!-- verify: tier -->
 ```yaml
@@ -1980,7 +1980,7 @@ verdict_extra_body:
 A verdict call then sends `chat_template_kwargs: {reasoning_effort: low, enable_thinking:
 false}`; everything else sends `{reasoning_effort: low}`. Nested maps merge key by key, and
 `verdict_extra_body` wins where both set the same key. With `reasoning_effort: low` alone,
-EZER's verdicts came back empty with `finish_reason: length`; with `enable_thinking: false`
+The GPU server's verdicts came back empty with `finish_reason: length`; with `enable_thinking: false`
 the classifier answered in 2 tokens. Check your own server's documentation for its switch.
 The same reserved keys and the plain-JSON rule apply. When a verdict comes back empty at its
 cap, the daemon logs one warning per endpoint and model that names `verdict_extra_body`. If
@@ -1994,7 +1994,7 @@ llama.cpp restart or a GPU swap fails the turn: every retry goes back to the ser
 refused it. With them, the same request goes to the next backup once the tier's own retries are
 spent, and the turn carries on there.
 
-On EZER, the brain runs on a local llama.cpp server. A second local server is the first backup,
+On the GPU server, the brain runs on a local llama.cpp server. A second local server is the first backup,
 and a hosted model is the last resort:
 
 <!-- verify: tier -->

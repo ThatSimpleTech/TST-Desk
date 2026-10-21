@@ -92,7 +92,7 @@ class Log:
             )
         )
 
-    def reset(self, user_index: int, content: str) -> DaemonEvent:
+    def reset(self, user_index: int, content: str, user_turns: int | None = None) -> DaemonEvent:
         return self._add(
             ConversationReset(
                 session_id=self.session_id,
@@ -100,6 +100,7 @@ class Log:
                 sibling_index=1,
                 sibling_count=2,
                 content=content,
+                user_turns=user_turns,
                 seq=1,
             )
         )
@@ -221,6 +222,18 @@ def test_a_fork_numbers_the_edited_turn_as_the_window_does(index: SessionIndex) 
     assert (hit.turn, hit.turn_id) == (2, "t2b")
 
 
+def test_a_sibling_switch_numbers_later_turns_after_the_sibling(index: SessionIndex) -> None:
+    """The arrows restore a whole sibling and no user_turn follows the reset."""
+    log = Log()
+    _feed(index, _two_turns(log))
+    _feed(index, [log.user("Now add a test for it", "t3"), log.says("Added.", "r4"), log.done()])
+    # Back to turn 1's other sibling, which held three turns too.
+    _feed(index, [log.reset(0, "Why does the date parser drop it?", user_turns=3)])
+    _feed(index, [log.user("And the docs, kumquat", "t4"), log.done()])
+    [hit] = index.search("kumquat")
+    assert (hit.turn, hit.turn_id) == (4, "t4")
+
+
 def test_scoping_and_one_hit_per_session(index: SessionIndex) -> None:
     a, b = Log("a"), Log("b")
     _feed(index, _two_turns(a) + _two_turns(b))
@@ -317,3 +330,56 @@ def test_an_unopenable_index_turns_search_off_without_breaking_writes(tmp_path: 
 
     with pytest.raises(IndexUnavailable):
         index.search("parser")
+
+
+def test_a_long_search_does_not_hold_up_writes(
+    index: SessionIndex, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every session's events wait on observe(); ranking must not block it."""
+    import threading
+
+    log = Log()
+    _feed(index, _two_turns(log))
+    ranking = threading.Event()
+    release = threading.Event()
+    real = SessionIndex._ranked
+
+    def slow(self: SessionIndex, *args: Any) -> Any:
+        ranking.set()
+        release.wait(5)
+        return real(self, *args)
+
+    monkeypatch.setattr(SessionIndex, "_ranked", slow)
+    searching = threading.Thread(target=index.search, args=("zoneinfo",))
+    searching.start()
+    assert ranking.wait(5)
+    wrote = threading.Thread(target=_feed, args=(index, [log.user("written meanwhile", "t3")]))
+    wrote.start()
+    wrote.join(2)
+    try:
+        assert not wrote.is_alive(), "a write waited for a search"
+    finally:
+        release.set()
+        searching.join(5)
+        wrote.join(5)
+
+
+def test_a_failed_query_says_search_is_off_rather_than_raising_sqlite(
+    index: SessionIndex, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A raw sqlite3.Error would escape the handler and drop the connection."""
+    import sqlite3
+
+    from tstd.session_index import IndexUnavailable
+
+    _feed(index, _two_turns(Log()))
+
+    def broken(self: SessionIndex, *args: Any) -> Any:
+        raise sqlite3.DatabaseError("database disk image is malformed")
+
+    monkeypatch.setattr(SessionIndex, "_ranked", broken)
+    with pytest.raises(IndexUnavailable):
+        index.search("zoneinfo")
+    monkeypatch.undo()
+    # One failed search does not turn the index off for good.
+    assert [hit.turn for hit in index.search("zoneinfo")] == [2]

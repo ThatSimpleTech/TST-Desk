@@ -7549,19 +7549,19 @@ filed, not yet staffed.
 ## 2026-08-21 — TD-3901: a fourth shipped preset, not a retarget of `local` (Class B)
 
 **Decision:** Ship a `vllm` preset with every tier at `http://127.0.0.1:8000/v1`
-(vLLM's OpenAI server default; EZER attaches at the same `/v1` shape). Leave
+(vLLM's OpenAI server default; the GPU server attaches at the same `/v1` shape). Leave
 `local` on Ollama `http://127.0.0.1:11434/v1`. `active_preset` stays
-`tst-default`. A different EZER/vLLM port is a `base_url` edit in
+`tst-default`. A different llama.cpp/vLLM port is a `base_url` edit in
 `config.yaml`, never a URL in Python (§2.7).
 
-**Rationale:** Spec §7 already treats a local vLLM/EZER server as the same
+**Rationale:** Spec §7 already treats a local vLLM/llama.cpp server as the same
 OpenAI-compatible client. Retargeting `local` would break the Ollama
 convention TD-1802/TD-1805 documented. Two loopback presets, one port each,
 keeps both attach paths honest. Slugs stay omitted; discovery and
 `model_unresolved` are unchanged. Doctor `provider` rows keep naming
 `base_url`, not a model tag (TD-1809).
 
-**Alternative rejected:** Pointing `local` at 8000, or adding an `ezer`
+**Alternative rejected:** Pointing `local` at 8000, or adding an `gpu-box`
 preset that duplicates `vllm`. The first silently moves every Ollama user.
 The second is two names for one URL.
 
@@ -7631,11 +7631,11 @@ is the opt-in turn.
 
 **Rationale:** Folding this into `e2e_harness.run` would change a
 frozen signature (TD-1401) and require a tool-calling model. An
-absent vLLM/EZER is a fact about the machine, the same as a down
+absent vLLM/llama.cpp is a fact about the machine, the same as a down
 embeddings sidecar. "Binary absent" is that failed probe: a
 docker-hosted server has no `vllm` on PATH and must still count.
 
-**Alternative rejected:** Requiring `vllm`/`ezer` on PATH before
+**Alternative rejected:** Requiring `vllm`/`llama-server` on PATH before
 probing (false-skips a listening container). Also rejected: treating
 skip as a failed check.
 
@@ -7725,7 +7725,7 @@ four-artifact release run (TD-1302 box 1). Nothing was re-ticked to make the cro
 clean; those boxes are open in the backlog today and stay that way until real hardware
 verifies them.
 
-**Authorization:** Adam Crocker, product owner. Recorded retroactively on 2026-08-22 by the
+**Authorization:** The product owner. Recorded retroactively on 2026-08-22 by the
 TD-4812 lane because no contemporaneous approval note exists anywhere in the repo — no
 `DECISIONS.md` entry, no commit message, no backlog note. The call survives only as the
 backlog's own re-plan: the M4 milestone header was rewritten on 2026-08-19 to add project
@@ -7783,7 +7783,7 @@ live in `config.yaml`, never in Python. The argv bind-mounts only the
 workspace at `/workspace`, passes `--network=none`, `--userns=keep-id`,
 `--security-opt no-new-privileges`, and `--pull=never`. A missing,
 down, or rootful runtime refuses start with install copy. Interactive
-sessions do not import `tstd.autonomy.sandbox`. Firecracker / EZER is
+sessions do not import `tstd.autonomy.sandbox`. Firecracker is
 not this story.
 
 **Rationale:** Spec §12.5 and TD-101 require a container with only the
@@ -9988,8 +9988,8 @@ shipped OpenRouter URL. No `PROTOCOL_VERSION` bump. The host is not a
 secret; the key still never appears in YAML, `setup_state`, or logs.
 
 **Rationale:** TD-1718 made the key own the host, then showed it on
-Settings → Model as a hint. There was no field to set it, so an EZER
-box on Tailscale (`http://ezer…:4000/v1`) had to be pasted into
+Settings → Model as a hint. There was no field to set it, so a GPU-server
+box on Tailscale (`http://gpu-box…:4000/v1`) had to be pasted into
 `config.yaml`. The catalog already stored the URL; the missing piece
 was the settings row.
 
@@ -10006,7 +10006,7 @@ Also rejected: inferring the host from the key name.
 **Decision:** `ChatCompletionRequest.to_dict()` writes `tool_choice:
 "auto"` whenever `tools` is present. OpenAI's default; we now say it.
 
-**Rationale:** EZER LiteLLM's guided_json hook treats omitted
+**Rationale:** The GPU server LiteLLM's guided_json hook treats omitted
 `tool_choice` as "JSON in `content`" (`{"name","arguments"}`) and
 leaves `message.tool_calls` empty. TST Desk only dispatches
 `tool_calls`, so `desktop_click` appeared as chat text. The family
@@ -10082,7 +10082,7 @@ every OS. Also rejected: one input protocol for macOS/Windows/Linux.
 on the long edge. Compaction still cannot drop an in-flight screenshot;
 the frame has to be small enough to sit beside the system prompt.
 
-**Rationale:** First CU turn on ezer-forge (32768) failed with
+**Rationale:** First CU turn on gateway-model (32768) failed with
 ContextWindowExceededError: system prompt included cytoscape's
 AGENTS.md from `ui/node_modules`, plus a full-size PNG as base64.
 
@@ -10094,7 +10094,7 @@ AGENTS.md from `ui/node_modules`, plus a full-size PNG as base64.
 carry compact JSON (`path`, `width`, `height`) plus an `image_url`
 part. Base64 is not duplicated into the text field. Measured: 50k
 chars of truncated PNG text plus AGENTS.md plus tool schemas is what
-hit 32769 on ezer-forge after a successful capture.
+hit 32769 on gateway-model after a successful capture.
 
 **Alternative rejected:** Lowering `max_result_chars` — that still
 sends tens of thousands of tokens of truncated (invalid) PNG.
@@ -10106,7 +10106,7 @@ sends tens of thousands of tokens of truncated (invalid) PNG.
 **Decision:** Before each completion, drop oldest `image_url` parts so
 at most `computer_use.max_prompt_images` remain (default 1). Text of
 those tool results stays. Measured: second `desktop_screenshot` on
-ezer-forge failed with "At most 1 image(s) may be provided in one
+gateway-model failed with "At most 1 image(s) may be provided in one
 prompt."
 
 **Alternative rejected:** Hardcoding the forge limit in Python. The
@@ -11987,7 +11987,7 @@ protocol version.
 
 ## TD-5001 — Android shell is a loopback WebView (Class B)
 
-2026-10-03. Adam overrode the E49 exclusion of a native phone app and
+2026-10-03. The owner overrode the E49 exclusion of a native phone app and
 chose a sideload APK rather than Play Console.
 
 **Decision:** The phone app bundles the existing static UI in a WebView.
@@ -12115,7 +12115,7 @@ several tiers, and a fixed number is predictable in the guide.
 
 ## TD-5005 — The phone keeps its connection (Class B; reverses part of TD-3602 and TD-3701)
 
-2026-10-08. Adam, in chat, after hearing the trade-off: "Yes fix it". The
+2026-10-08. The owner, in chat, after hearing the trade-off: "Yes fix it". The
 phone asked for the address and the token on every launch, and both
 changed on every daemon start, so a saved value would have died at the
 next restart anyway.
@@ -12140,7 +12140,7 @@ address filled in. Phone Settings has "Forget this computer".
 **Rationale:** A token that rotates on restart protected against a stale
 token lingering after its daemon died. With a 0600 file on the daemon
 side, an explicit rotate, and revoke-on-off, the remaining exposure is
-the phone itself, which Adam accepted: an unlocked phone on the tailnet
+the phone itself, which the owner accepted: an unlocked phone on the tailnet
 can drive this daemon without pasting anything. The Keystore keeps the
 token out of plain storage and out of backups. Platform APIs only, so no
 new dependency.
@@ -12173,7 +12173,7 @@ the agent can list and read files with tools. Tying it to the window
 makes the same code right for a 32k local model and a 1M hosted one.
 Hidden directories in a non-repo folder are tool state, not the user's
 work. Real home folder after the change: 20,380 characters (~5,100
-tokens, 15% of the 32,768 ezer-forge window). TST Desk itself: ~7,700
+tokens, 15% of the 32,768 gateway-model window). TST Desk itself: ~7,700
 tokens in total.
 
 **Rejected:** No map on the home folder. A map of home's visible top
@@ -12188,7 +12188,7 @@ one, taken when the loop builds its assembler.
 
 ## TD-5007 — Token estimates count tools and learn the provider's ratio (Class B)
 
-2026-10-09. On EZER's ezer-forge tier the 4 chars/token estimate ran
+2026-10-09. On the GPU server's gateway-model tier the 4 chars/token estimate ran
 1.55-1.6x under `usage.prompt_tokens`, and it never counted the tool
 definitions at all (about 2,900 tokens for a 20-tool registry, sent
 on every call). Compaction and in-turn elision aimed at a budget the
@@ -12241,7 +12241,7 @@ load, which answers the stale-ratio concern above.
 
 **Known gap:** The workspace manifest budget (15% of the brain window,
 TD-5006) still converts at a flat 4 characters per token. It is fixed
-once when the loop starts, before any ratio is learned. At EZER's 1.6
+once when the loop starts, before any ratio is learned. At the GPU server's 1.6
 the manifest is about 24% of a 32k window in real tokens. The
 calibrated estimate counts it correctly, so nothing overflows, but it
 is part of the prompt elision cannot shrink.
@@ -12253,10 +12253,10 @@ the brain endpoint's learned ratio, which survives a restart.
 
 2026-10-09. `max_output_tokens` was a compaction reservation only: the
 turn, the progress check and the delegate worker sent no `max_tokens`,
-so a reasoning model behind EZER's LiteLLM ran to the server's own
+so a reasoning model behind the GPU server's LiteLLM ran to the server's own
 default, thinking included. There was also no way to pass a server's
 own request fields, such as llama.cpp's `chat_template_kwargs`, which
-is how EZER's model is told to think less.
+is how the GPU server's model is told to think less.
 
 **Decision:** `_stream_and_parse` (the turn and the progress check)
 and the delegate worker send `max_tokens = max_output_tokens` from
@@ -12333,7 +12333,7 @@ the thinking off on the verdict calls only.
 until the prompt fit the compaction budget, so it landed a few tokens
 under it. The next tool round added a small result, the prompt was
 over again, and the largest earlier result was rewritten. Every
-rewrite changes the prompt prefix, so llama.cpp on EZER threw away its
+rewrite changes the prompt prefix, so llama.cpp on the GPU server threw away its
 prefix cache and re-read the prompt from the rewritten result on, once
 per tool round of a long tool turn.
 
@@ -12471,7 +12471,7 @@ parse.
 the workspace is the home folder, `~/.claude/skills/` is that
 workspace's tree and loads without the key. Same reason as TD-4845:
 Claude Code's global files are Claude Code's, and their cost lands on
-every brain prompt. Measured on EZER for the TST-Desk workspace: the
+every brain prompt. Measured on the GPU server for the TST-Desk workspace: the
 13-entry catalog is 3,550 characters, 888 heuristic tokens (about
 1,200 real at the 1.36x text ratio), most of it YouTube skills a coding
 session never uses, on a 65k forge slot that already overflows.
@@ -12519,8 +12519,8 @@ holds other files (the directory line makes them whole).
 
 2026-10-09. The worker's one-word verdict calls (the tool-call
 classifier, DoD polls and worker-backed judgment calls) all go through
-`_worker_completion` with `max_tokens=8` and `temperature=0`. On EZER
-the worker is ezer-forge: Qwen Flash-Next on llama.cpp behind LiteLLM.
+`_worker_completion` with `max_tokens=8` and `temperature=0`. On the GPU server
+the worker is gateway-model: a Qwen model on llama.cpp behind LiteLLM.
 With `chat_template_kwargs.reasoning_effort: low` in `extra_body`, the 8
 tokens ended inside the thinking: content `''` and `finish_reason:
 length`. The classifier failed closed to Class B and prose DoD items
@@ -12579,12 +12579,12 @@ nothing reads it. A warning on every empty verdict. See above.
 **Known gap:** The warning only sees an empty reply. A server that puts
 its thinking in `content` (a `<think>` block) returns text at the cap,
 the parse still fails closed, and nothing is logged. The 2-token answer
-was measured by hand against ezer-forge; the tests run on MockProvider.
+was measured by hand against gateway-model; the tests run on MockProvider.
 
 ## TD-5013 — Learned token ratios survive a restart and size the workspace map (Class B)
 
 2026-10-09. TD-5007 kept the learned ratios in memory, so after every
-daemon restart the first call was estimated at ratio 1.0. On EZER the
+daemon restart the first call was estimated at ratio 1.0. On the GPU server the
 real ratio is about 1.17, so that call ran about 15% under. The
 workspace map (TD-5006) was sized once at loop start at a flat 4
 characters per token, before any ratio was known; TD-5007 left that as
@@ -12667,11 +12667,11 @@ TD-5013.
 
 ## TD-5014 — Pair a phone with a code; each device keeps its own key (Class B; reverses part of TD-5005)
 
-2026-10-14. Adam, in chat: "How can I systematically get the information
+2026-10-14. The owner, in chat: "How can I systematically get the information
 to set up the mobile app? Asking you is not a good way... it needs to
 connect automatically. Once it's set up, it should be remembered... it
 could have a dedicated port to that phone... But it needs to be
-remembered because this is not working." The phone last reached EZER on
+remembered because this is not working." The phone last reached the GPU server on
 2026-10-08 at 21:10Z, with no refusal logged since, so the phone itself
 had lost its saved computer. Setting it up again meant reading the
 `remote-token` file, which is what he asked not to have to do.
@@ -12705,7 +12705,7 @@ never clears anything, and after a minute offers "Pair again" without
 forgetting the old computer until a new pairing succeeds.
 
 **Rationale:** The QR carries everything the phone needs, so nobody reads
-a file or asks Claude. Per-device keys give Adam's "dedicated" connection
+a file or asks Claude. Per-device keys give the owner's "dedicated" connection
 without per-device listeners: a port is not a secret, one listener is
 one Tailscale bind, and a key can be revoked alone. The `pair` frame is
 the one new pre-auth input; it is bounded by the code's lifetime, the
@@ -12733,7 +12733,7 @@ no multicast).
 
 ## TD-5015 — One session list across computers: the daemon is a one-hop hub (Class B)
 
-2026-10-14. Adam wants the sessions on every computer he works from in one
+2026-10-14. The owner wants the sessions on every computer they work from in one
 list, in the window he already has open, and on the phone. Each computer
 runs its own daemon; TD-5014 already pairs a device with a code and gives it
 its own key.
@@ -12856,7 +12856,7 @@ looking at).
 2026-10-14. From the gap audit (docs/gap-audit-2026-10-14.md). There was
 no content search tool, so every search was a `shell` call. Shell sits
 under the `shell-floor` rule and can never be model-granted A, so on
-EZER every grep asked. `fs_grep` is a read tool: regex, path, glob, a
+The GPU server every grep asked. `fs_grep` is a read tool: regex, path, glob, a
 case flag, context lines, and `files` / `content` / `count` modes. Results
 are capped at 200 lines by default (2000 at most), and the cut is stated.
 It shares one glob dialect with `fs_list`: `*` stays in one folder, `**`
@@ -12871,13 +12871,13 @@ static rule, so the worker tier judges it or a policy rule such as
 and the path guard refuses it. The audit story said "Class A". That was
 wrong about `fs_read` too: in-workspace reads have never been static A.
 A static A rule for built-in reads would save a worker call per read on
-local models. It is left to Adam, because it would also let a read of
+local models. It is left to the owner, because it would also let a read of
 `.env` run without judgment.
 
 **Search engine:** Pure Python. Files come from `git ls-files --cached
 --others --exclude-standard` when the root is in a work tree, so
 `.gitignore` holds; otherwise from a walk that skips the `fs_list`
-folders. ripgrep is not on EZER's PATH. One engine gives the same output
+folders. ripgrep is not on the GPU server's PATH. One engine gives the same output
 everywhere, and the caps keep a scan bounded: 20,000 files, 2 MB per
 file, binary files skipped by a NUL sniff, and lines cut at 300 characters.
 A link whose target leaves the search root is skipped and counted. The
@@ -12941,7 +12941,7 @@ That hides the good tools for no reason.
 ## TD-5105 — MCP calls: per-server timeouts, progress, cancellation
 
 2026-10-14. From the gap audit. Every MCP call had a fixed 30 s timeout
-and an 8 s handshake, so a long EZER tool (a render, a build, a local
+and an 8 s handshake, so a long tool (a render, a build, a local
 model call) died at 30 s. Three keys per server now:
 `timeout_seconds` (idle limit, default 30), `startup_timeout_seconds`
 (handshake, default 8) and `max_call_seconds` (hard cap, default 600,
@@ -13072,7 +13072,7 @@ opt-in. Counting tokens in the window. Two estimates would drift apart.
 
 ## TD-5141 — Built-in reads inside the workspace are static Class A (Class B)
 
-Adam, 2026-10-14: "built in files should be preapproved." This answers
+The owner, 2026-10-14: "built in files should be preapproved." This answers
 the question TD-5102 left open. `fs_read`, `fs_list` and `fs_grep` on a
 path inside the workspace are Class A by a rule in the static table
 (`builtin-read`), so they run without asking and without a worker call.
@@ -13082,7 +13082,7 @@ always A, and a B (an approval card) whenever the worker was unsure or
 down.
 
 **`.env` included, on purpose.** The table does not special-case secret
-files. Adam accepted that; a user who wants a file to keep asking writes
+files. The owner accepted that; a user who wants a file to keep asking writes
 a policy rule (`fs_read: "*.env*" → ask` or `never`). Policy only falls
 back to the class default when no rule matches, so a rule still wins.
 `docs/configuration.md` §4.4 says how, and that a rule matches the path
@@ -13125,7 +13125,7 @@ checkpointer's `git add`. That is TD-5108's ground (paths that execute
 later), now first in the safety batch, with hardening of every daemon
 git call added to its criteria.
 
-**Rejected:** Excluding `.env` and similar names by default. Adam chose
+**Rejected:** Excluding `.env` and similar names by default. The owner chose
 the simpler rule, and a name list would still miss secrets in other
 files. Making it a default policy rule instead of a table rule: the
 worker would still be asked before policy runs, which is the cost this
@@ -13133,11 +13133,11 @@ removes.
 
 ## TD-5142 — A compacted session goes out with one system message (Class B)
 
-Found 2026-10-14 from Adam's phone: "I encountered an error: The provider
+Found 2026-10-14 from the owner's phone: "I encountered an error: The provider
 rejected the request." on every message, about four minutes each. Cause:
 compaction stores its summary as a second system message
 (core/tstd/compaction.py, `maybe_compact`). The
-Qwen3.8 template on ezer-forge raises "System message must be at the
+Qwen3.8 template on gateway-model raises "System message must be at the
 beginning." for that, llama.cpp answers 500, LiteLLM relays it, and the
 daemon retried it eight times. Every later request in the session failed
 the same way. Both stuck sessions in the log (4919aeb7 on 10-14 and
@@ -13162,7 +13162,7 @@ cache don't change.
 templates (Mistral, older Gemma) raise on two user messages in a row, which a
 stored user summary followed by the next user turn produces. Fixing it
 at the wire also repairs sessions already stuck, with no migration:
-the stored histories of both sessions render on the live ezer-forge
+the stored histories of both sessions render on the live gateway-model
 server's `/apply-template` with the fix and fail without it.
 
 **A template refusal is not retried.** llama.cpp's "Jinja Exception:
@@ -13182,7 +13182,7 @@ message too, and one code path is easier to trust.
 
 ## TD-5018, TD-5019 — A turn cut by a restart is sealed, and Continue picks it up (Class B)
 
-2026-10-14. Every app restart on EZER that day stopped tstd through the
+2026-10-14. Every app restart on the GPU server that day stopped tstd through the
 parent-pid watchdog (TD-2903). A turn that was running stayed open in the
 log forever: no TurnComplete, a typing row that never ended, and an
 assistant message whose tool_calls had no answer, which the provider
@@ -13311,7 +13311,7 @@ budget.
 port.json as the lock (written late, meant for discovery); failing at
 once (every quick restart would fail).
 
-## TD-5023 — A loopback-only drain for deploys (Class B; Adam approved 2026-10-14)
+## TD-5023 — A loopback-only drain for deploys (Class B; the owner approved 2026-10-14)
 
 2026-10-14. New client message `drain {timeout_s 0..600 = 30, hold_s
 0..600 = 120}` and event `drain_result {drained, running[],
@@ -13351,7 +13351,7 @@ one in the gap. Refusing with clear copy, rather than queueing, keeps
 what is open); a hold that never expires (a failed deploy would leave the
 daemon refusing work); waiting on approval-parked turns (hours).
 
-## TD-5024 — A second launch shows the running app (Class B; new dependency, Adam approved 2026-10-14)
+## TD-5024 — A second launch shows the running app (Class B; new dependency, the owner approved 2026-10-14)
 
 2026-10-14. A relaunch was a full second host attached to the running
 tstd, whose `--parent-pid` still named the first host, so the first
@@ -13384,12 +13384,12 @@ result).
 
 ## TD-5146 — The work check and memory distill stream, think less, and don't resend a timeout (Class B)
 
-Found 2026-10-14 22:55-23:15 on EZER: session c14cc3e8 stopped
-answering for about 20 minutes, and Adam's two messages from the phone
+Found 2026-10-14 22:55-23:15 on the GPU server: session c14cc3e8 stopped
+answering for about 20 minutes, and the owner's two messages from the phone
 failed. An hour-long turn had written files, so the after-write review
 ran. It was one non-streamed validator call with a 25-33k token prompt,
 no `extra_body` (so the model's default thinking) and `max_tokens`
-8192. ezer-forge needs two to six minutes for that answer. The 120 s read
+8192. gateway-model needs two to six minutes for that answer. The 120 s read
 timeout fired, the timeout was retryable, and it was resent eight times
 while the session stayed busy. LiteLLM does not pass a non-streamed
 client's hang-up on to llama.cpp, so each abandoned attempt kept
@@ -13403,7 +13403,7 @@ within about a second; a non-streamed one keeps running.
 **Decision.** `complete_streamed` (core/tstd/provider.py) sends one
 request over the streaming wire and folds the chunks into a
 `ChatCompletionResponse`. The validator review and memory distill use
-it, send their tier's `extra_body` (EZER's validator and worker tiers
+it, send their tier's `extra_body` (the GPU server's validator and worker tiers
 set `reasoning_effort: low`), and set `retry_on_timeout=False` on the
 request. That flag is never sent; `retry_call` and `retry_stream` take an
 optional narrower test, and the provider client passes "not a timeout"
@@ -13441,12 +13441,12 @@ classifier, DoD polls and judgment calls stay non-streamed: they ask for
 8 tokens with thinking off (TD-5013) and finish in seconds.
 
 **Rejected:** raising the read timeout (an abandoned call would still
-hold a forge slot for minutes); turning verify off on EZER (it hides the
+hold a forge slot for minutes); turning verify off on the GPU server (it hides the
 review rather than fixing the call).
 
 ## TD-5143 — The agent sends files to the chat (Class B; reverses part of TD-3201 and TD-3202)
 
-2026-10-15. Adam asked the agent for an APK; it built one and could not hand it over.
+2026-10-15. The owner asked the agent for an APK; it built one and could not hand it over.
 
 **Decision:** a built-in tool `send_file(files, caption?)` copies up to ten workspace files to
 `sessions/<id>/artifacts/<artifact_id>/<name>` (0600, folder 0700) and records each in the
@@ -13938,7 +13938,7 @@ argv in `tstd` outside the developer harnesses.
 
 Skip-all still runs these writes without asking. It is skip-everything
 (TD-806), Claude Code's bypass mode allows protected-path writes, and
-the approvals are off on EZER by Adam's choice. An autonomous run stops
+the approvals are off on the GPU server by the owner's choice. An autonomous run stops
 on them (Class C never auto-runs there, TD-4101). With or without
 skip-all, the daemon's own git never runs a repo's fsmonitor command or
 a hook.
@@ -14326,7 +14326,7 @@ busybox 1.36.1 ash (alpine 3.20). The bash-only checks live in
 ## 2026-10-19 — TD-5140: agent-proposed steering edits, written only on the user's approval (Class B)
 
 **Decision:** Directive 4 now reads "the agent never writes steering files; it may propose an
-exact diff, and only the user's approval writes it" (Adam, 2026-10-14, gap-audit decision 4).
+exact diff, and only the user's approval writes it" (the owner, 2026-10-14, gap-audit decision 4).
 A new builtin tool, `propose_steering_edit` (`path`, full new `text`), reads the file, builds a
 unified diff, parks the proposal on the session and logs `steering_proposal`; it writes
 nothing. The window's card sends `steering_accept`, `steering_edit` (the user's own `content`)
@@ -14371,7 +14371,7 @@ refused in the tool, in every mode.
   reason, and a stale Accept whose file now holds one gets no fresh diff (Reject still
   works). Most conservative option, chosen in review: the scrub stays as it is for every
   other event, and a file that trips it is changed by hand (none of 87 steering files on
-  EZER does).
+  the GPU server does).
 - **Where proposals live:** in memory on the session, with the exact text; writing it to the
   data dir would put whatever the agent proposed on disk outside the workspace. A restart
   drops them, so when the daemon restores a session it logs `steering_decision` `expired`
@@ -14583,7 +14583,7 @@ to own the review's task, and the loop's task already owns it).
 
 ## 2026-10-19 — TD-5155: queued messages live in the session's store, and drain names a paused turn (Class B)
 
-2026-10-19, EZER: a session's turn was paused by the progress guard (52
+2026-10-19, the GPU server: a session's turn was paused by the progress guard (52
 model calls without a file write). The window does not hold sends while a
 turn is paused (`showCancel` is false), so the user's next message went
 straight to the daemon, which logged `user message enqueued` and put it on
@@ -14715,7 +14715,7 @@ follow than a separate check on the few events that contain `"error"`).
 ## 2026-10-19 — TD-5153: the after-write review is cut to a token budget (Class B)
 
 The after-write review (TD-4204) sent every diff and every shell output of
-the turn. EZER's validator is a local llama.cpp model (65,536-token slots,
+the turn. The GPU server's validator is a local llama.cpp model (65,536-token slots,
 ~390-830 tokens/s uncached) behind LiteLLM with a 120 s read timeout
 (TD-5106). Since TD-5146 the call streams and a timeout is not resent, but
 the first chunk arrives only after the whole prompt is read: a turn past
@@ -14738,7 +14738,7 @@ loop passes its calibration store to the review. The review's own
 `usage.prompt_tokens` is folded into that ratio, measured on the base
 counter over exactly the messages sent, as the turn does: a validator on
 an endpoint the turn never calls would otherwise be estimated at the flat
-4 characters per token, about 1.55x low on code for EZER's model.
+4 characters per token, about 1.55x low on code for the GPU server's model.
 
 **Order of cuts.** (1) Shell output loses its head: every output keeps its
 tail, where a test run prints its result, down to a floor of 2,000
@@ -15372,7 +15372,7 @@ pattern here (that is the redaction's own scope, TD-1405).
 ## 2026-10-20 — TD-5103: a static, parsed read-only list for shell (Class B)
 
 **Decision:** TD-4805's "shell is never Class A" is reversed only for a
-fixed list Adam approved on 2026-10-14 (`core/tstd/shell_read_only.py`):
+fixed list the owner approved on 2026-10-14 (`core/tstd/shell_read_only.py`):
 `ls`, `pwd`, `cat`, `head`, `tail`, `wc`, `file`, `stat`, `git status`,
 `git log`, `git diff`, `git show`, `git branch`, `rg`, `grep`, `find`. A
 line whose every command is a list entry, read as below, is Class A by a
@@ -15547,7 +15547,7 @@ run twice.
 provider_retry"):
 
 - One retry per model call, not `max_retries`: each attempt can wait a
-  whole `stream_idle_timeout` (300 s by default, 600 s in the EZER
+  whole `stream_idle_timeout` (300 s by default, 600 s in the GPU-server
   example), so four of them would hold a turn for 20 to 40 minutes. A
   second stall ends the turn as `stream_stalled`, as before, and its
   partial text stays on screen above the failure line, as before.
@@ -15824,7 +15824,7 @@ row with the preview "Cleared earlier tool results".
   this change reads the unknown trigger as "Context compacted", which
   TD-5150 already guarantees.
 
-**Measured** on EZER with the replay in
+**Measured** on the GPU server with the replay in
 `core/tests/test_clear_stale_results.py` (`_long_session`: the real loop
 and dispatcher with MockProvider on a 32,768-token tier; each turn reads a
 ~7.7k-character file and answers). The test runs 30 turns: 4 compactions
@@ -15856,8 +15856,8 @@ the tool calls' arguments too (`clear_tool_inputs`; small, and the
 placeholder already names the target); a per-tier policy (one policy
 reads the same everywhere, and the budget already scales with the tier).
 
-**Live result (TD-5162, 2026-10-21).** Measured against ezer-forge
-(llama.cpp Flash-Next on GPU1, through LiteLLM) with
+**Live result (TD-5162, 2026-10-21).** Measured against gateway-model
+(a Qwen model under llama.cpp on the GPU server, through LiteLLM) with
 `core/scripts/measure_clear_stale.py`: current main (8935769) in a
 separate daemon with its own scratch data dir holding a copy of the
 window's config.yaml (`tst-default`: a 65,536-token tier, compaction at
@@ -15942,7 +15942,7 @@ split out to keep `delegate.py` under the file budget.
    under which every tool still dispatches, and the brain can still call
    `fs_write`, `fs_edit` and `shell` itself there, so refusing the
    writing child would remove a capability without adding safety, and
-   that change to TD-4603 is Adam's call, not this story's. This is the
+   that change to TD-4603 is the owner's call, not this story's. This is the
    conservative reading (a Class C question the story and the
    2026-10-14 decisions do not answer). TD-5123 is where writes are
    refused, the child's included. Outside plan mode the default stays
@@ -16001,7 +16001,7 @@ how each mechanism is driven and how a kill is recognised were left open.
   `create_subprocess_shell` as before. `exec` keeps the spawned pid as the
   process-group leader, so the timeout and cancel kills are unchanged, and
   the command still runs as `/bin/sh -c <command>`. `MemorySwapMax=0`
-  makes a hog die at the cap rather than fill swap (EZER's trouble).
+  makes a hog die at the cap rather than fill swap (the GPU server's trouble).
   `--expand-environment=no` is required: systemd 254+ otherwise rewrites
   `$$` and `${x}` in `systemd-run` arguments, which would change what every
   command means. systemd before 254 has no flag and does not expand.
@@ -16363,7 +16363,7 @@ counting a child's consults separately from its parent's turn.
 
 ## 2026-10-20 — TD-5120: backup endpoints per tier (Class B)
 
-A tier's endpoint going down (a llama.cpp restart, a GPU swap on EZER)
+A tier's endpoint going down (a llama.cpp restart, a GPU swap on the GPU server)
 failed the turn: `provider_retry` resent to the same endpoint and then
 gave up. Claude Code's fallback model chains move to another model
 instead.
@@ -16598,7 +16598,7 @@ become `grok_plan`). Local models drift on multi-step work, and the gap
 audit asked for a task list the native loop keeps, shown in the Plan pane
 and on the phone, that survives compaction. The story names the tool and
 its three states; the call shape, the event, where the list lives and how
-it is re-injected were left open. Adam approved the story as written
+it is re-injected were left open. The owner approved the story as written
 (gap audit decisions, 2026-10-14); no Class C question came up.
 
 **Decision.**
@@ -16678,7 +16678,7 @@ workspace `stop_check` (a `$` command or a worker-judged statement, reusing
 then the turn ending with the failure shown, and `/goal <statement>`
 checked the same way, all without a charter. The shape of the setting, of
 the feedback and of `/goal`, and what the window shows were left open.
-Adam approved the story as written (gap audit decisions, 2026-10-14); the
+The owner approved the story as written (gap audit decisions, 2026-10-14); the
 open Class C questions below took the most conservative answer that still
 meets it.
 
@@ -16783,7 +16783,7 @@ tool still dispatched. The gap audit's TD-5123 asks for Claude Code's
 "analyze before you edit": refuse every mutating call while planning, end
 with a plan the user approves, rejects or edits, and toggle it from the
 composer, a slash command and the phone. Size 5, so the approach is
-recorded here instead of waiting for sign-off (Adam approved the gap-audit
+recorded here instead of waiting for sign-off (the owner approved the gap-audit
 stories on 2026-10-14). The story and the 2026-10-14 decisions leave the
 mechanism, the MCP marking and the plan's lifetime open.
 
@@ -16895,7 +16895,7 @@ the card); trusting MCP annotations.
 
 ## 2026-10-20 — TD-5126: a git worktree per session, on by default (Class B)
 
-Approved as specified in the gap audit with Adam's decision 7 (on by default
+Approved as specified in the gap audit with the owner's decision 7 (on by default
 in git repos, with the story's safeguards). Size 5, so the approach is
 recorded here instead of waiting for sign-off.
 
@@ -17051,7 +17051,7 @@ tools leave the request and a built-in search loads the ones the model
 needs, on any OpenAI-compatible endpoint. The story sets the behaviour and
 the threshold's unit (tool tokens as a share of the window); the config
 shape, the search, what a loaded tool means and when the decision is made
-were left open. Adam approved the story as written (gap audit decisions,
+were left open. The owner approved the story as written (gap audit decisions,
 2026-10-14); no Class C question came up. Sized 5, so this entry records
 the approach in place of a sign-off.
 
@@ -17123,7 +17123,7 @@ the approach in place of a sign-off.
   `read_only_tools` could not be reached while planning. It is on the
   list; each tool it loads is still judged on its own, so a tool outside
   `read_only_tools` stays refused.
-- **Measured on EZER** (`core/scripts/measure_mcp_tool_search.py`, six
+- **Measured on the GPU server** (`core/scripts/measure_mcp_tool_search.py`, six
   stdio catalog servers written for the measurement in
   `core/scripts/mcp_catalog_server.py`, 70 tools, sized like public
   tracker, wiki, calendar, mail, SQL and storage servers; exact counts
@@ -17142,7 +17142,7 @@ but undo meant copying a `git revert <sha>` out of the decisions list. The gap
 audit asked for a one-click restore of the files to a chosen user turn, with
 the diff shown first, files changed by hand flagged and left alone unless
 confirmed, an offer from Edit and resend, and the phone. The story is sized 5;
-Adam approved it as specified (gap audit decisions, 2026-10-14), so the
+The owner approved it as specified (gap audit decisions, 2026-10-14), so the
 approach is recorded here rather than proposed.
 
 **Decision.**
@@ -17384,7 +17384,7 @@ are named, not shown.
 **Context.** The gap audit asked for searching and recalling earlier
 sessions: an SQLite FTS index updated as sessions write, a rail that
 searches message text, and a Class A `session_search` tool that cites
-session and turn, with nothing leaving the computer. Adam approved the
+session and turn, with nothing leaving the computer. The owner approved the
 story as written (gap audit decisions, 2026-10-14). The index's shape,
 what goes in it, how the rail asks, and the tool's scope were left open.
 Sized 5, so this entry records the approach in place of a sign-off.
@@ -17463,7 +17463,7 @@ of compactions. The gap audit asked for a worker-written structured summary
 with a prompt the user can set, falling back to the extractive one; for it
 to run in the background before the threshold; and for recent files and
 loaded skill bodies to come back after compaction within a budget. Story
-sized 5; approach recorded here per Adam's 2026-10-14 approval of the
+sized 5; approach recorded here per the owner's 2026-10-14 approval of the
 gap-audit stories.
 
 **Decision.**

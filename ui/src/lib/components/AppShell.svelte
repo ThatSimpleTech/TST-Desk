@@ -587,6 +587,7 @@
 	}
 
 	.shell-title {
+		white-space: nowrap;
 		font-family: var(--font-display);
 		font-size: var(--text-base);
 		font-weight: var(--weight-medium);
@@ -787,8 +788,22 @@
 	   inspector stay in the DOM so optional reveal is a class, not a second
 	   shell. Keep in sync with NARROW_VIEWPORT_PX / narrowMediaQuery(). */
 	@media (max-width: 639px) {
+		/* A phone's width can't fit one row: the title and the tool buttons
+		   stay on top and the session's bar (workspace, context gauge, cost,
+		   state) takes a second row of its own that can wrap (TD-5109). */
 		.shell-header {
-			overflow-x: auto;
+			flex-wrap: wrap;
+			height: auto;
+			min-height: var(--space-12);
+			padding: var(--space-2) var(--space-4);
+			row-gap: var(--space-2);
+		}
+
+		.shell-header > :global(.titlebar) {
+			order: 1;
+			flex-basis: 100%;
+			flex-wrap: wrap;
+			row-gap: var(--space-2);
 		}
 
 		.shell-body:not(.shell-show-rail) :global(.rail) {

@@ -124,15 +124,15 @@ describe("noticeFor", () => {
 
 	it("names the computer for another computer's session (TD-5015)", () => {
 		const remote = "s1:mch_0123456789ab";
-		const nameOf = (mch: string) => (mch === "mch_0123456789ab" ? "EZER" : null);
+		const nameOf = (mch: string) => (mch === "mch_0123456789ab" ? "TOWER" : null);
 		expect(noticeFor({ ...approval(), session_id: remote } as DaemonEventUnion, nameOf)?.title).toBe(
-			"Approval needed on EZER",
+			"Approval needed on TOWER",
 		);
 		expect(noticeFor({ ...turn(), session_id: remote } as DaemonEventUnion, nameOf)?.title).toBe(
-			"Turn complete on EZER",
+			"Turn complete on TOWER",
 		);
 		expect(noticeFor({ ...turn(true), session_id: remote } as DaemonEventUnion, nameOf)?.title).toBe(
-			"Turn failed on EZER",
+			"Turn failed on TOWER",
 		);
 		// A handle the list doesn't name yet still says it is elsewhere.
 		expect(noticeFor({ ...approval(), session_id: remote } as DaemonEventUnion)?.title).toBe(
@@ -188,7 +188,7 @@ describe("handleOsEvent", () => {
 		machines.list = [
 			{
 				id: "mch_0123456789ab",
-				name: "EZER",
+				name: "TOWER",
 				host: null,
 				port: null,
 				status: "connected",
@@ -200,7 +200,7 @@ describe("handleOsEvent", () => {
 		];
 		await handleOsEvent({ ...approval(), session_id: "s1:mch_0123456789ab" } as DaemonEventUnion);
 		machines.list = [];
-		expect(sent[0]?.title).toBe("Approval needed on EZER");
+		expect(sent[0]?.title).toBe("Approval needed on TOWER");
 	});
 
 	it("notifies an unfocused turn completion", async () => {

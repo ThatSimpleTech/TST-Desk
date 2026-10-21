@@ -37,9 +37,10 @@ def attach_summarizer(
     access: Callable[[], FileAccess],
 ) -> CompactionSummarizer:
     """Build the session's summarizer, set it, and return it."""
-    worker = config.tier("worker")
 
     async def complete(request: ChatCompletionRequest) -> ChatCompletionResponse | ProviderError:
+        # The worker as of this call: a preset switch rebinds it.
+        worker = summarizer.worker
         client = await client_for(worker)
         response = await complete_streamed(client, request)
         if not isinstance(response, ProviderError) and response.usage is not None:
@@ -47,7 +48,7 @@ def attach_summarizer(
             await session.event_log.add(tracker.emit_cost_update(session.id))
         return response
 
-    summarizer = CompactionSummarizer(config.compaction, worker, complete, access)
+    summarizer = CompactionSummarizer(config.compaction, config.tier("worker"), complete, access)
     session.compaction_summarizer = summarizer
     current = asyncio.current_task()
     if current is not None:

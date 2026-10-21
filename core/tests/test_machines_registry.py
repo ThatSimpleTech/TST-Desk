@@ -39,7 +39,7 @@ _MID = "mid_0123456789abcdef"
 def _record(mch: str = "mch_1a2b3c4d5e6f", **over: Any) -> MachineRecord:
     fields: dict[str, Any] = {
         "id": mch,
-        "name": "ezer",
+        "name": "tower",
         "host": "100.64.7.7",
         "port": 39079,
         "device_id": "dev_abcdef012345",
@@ -211,7 +211,7 @@ class _Remote:
             device_id=self.device_id,
             device_name="hub",
             token=_KEY,
-            desktop_name="ezer",
+            desktop_name="tower",
             machine_id=self.machine_id,
         )
 
@@ -234,7 +234,7 @@ def keychain(monkeypatch: pytest.MonkeyPatch) -> FakeKeychain:
 
 
 def _target(host: str = "100.64.7.7", port: int = 39079) -> PairTarget:
-    return PairTarget(host=host, port=port, code="ABCD2345", name="ezer")
+    return PairTarget(host=host, port=port, code="ABCD2345", name="tower")
 
 
 async def _pair(reg: MachineRegistry, keys: MachineKeys, target: PairTarget) -> MachineRecord:
@@ -309,13 +309,13 @@ async def test_re_pairing_the_same_machine_id_at_a_new_address_keeps_the_mch(
     keychain.keys[first.id] = "old" * 20
     keys.drop(first.id)
     remote.device_id = "dev_000000000777"
-    second = await _pair(reg, keys, _target(host="ezer.tail1234.ts.net"))
+    second = await _pair(reg, keys, _target(host="tower.tail1234.ts.net"))
     assert second.id == first.id and second.paired_at == first.paired_at
-    assert second.host == "ezer.tail1234.ts.net" and second.device_id == "dev_000000000777"
+    assert second.host == "tower.tail1234.ts.net" and second.device_id == "dev_000000000777"
     assert len(reg) == 1 and keychain.keys[first.id] == _KEY
     # A new address sends no ``replaces``; the old entry there goes with the old key.
     assert remote.redeemed[1]["replaces"] is None
-    assert remote.removed == [("ezer.tail1234.ts.net", 39079, "old" * 20, "dev_abcdef012345")]
+    assert remote.removed == [("tower.tail1234.ts.net", 39079, "old" * 20, "dev_abcdef012345")]
 
 
 async def test_re_pairing_the_same_address_sends_replaces(

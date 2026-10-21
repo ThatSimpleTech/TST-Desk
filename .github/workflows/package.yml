@@ -85,6 +85,17 @@ jobs:
           TAURI_APP_PATH: ../shell
           TAURI_BUNDLER_DMG_IGNORE_CI: "false"
 
+      # TD-5163: the shipped sidecar (modules inflated) and UI must carry no
+      # maintainer-private names or hosts. The list is a repository secret,
+      # never in the tree; a fork without it skips, this repo fails without it.
+      - name: Scan the build for private strings
+        shell: bash
+        working-directory: core
+        env:
+          TST_RELEASE_DENYLIST_TEXT: ${{ secrets.RELEASE_DENYLIST }}
+          REQUIRE: ${{ github.repository == 'ThatSimpleTech/TST-Desk' && '--require' || '' }}
+        run: uv run python scripts/release_scan.py $REQUIRE ../shell/binaries ../ui/build
+
       # The smoke test treats the runner as the clean machine: install the
       # produced bundle, find the bundled tstd sidecar inside it, and prove
       # it serves a port file with no system Python involved.

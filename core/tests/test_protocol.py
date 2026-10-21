@@ -1318,7 +1318,7 @@ class TestMachineMessages:
     def test_machine_list_roundtrip(self) -> None:
         row = MachineSummary(
             id="mch_0123456789ab",
-            name="EZER",
+            name="TOWER",
             host="100.64.1.5",
             port=39079,
             status="connected",

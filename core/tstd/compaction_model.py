@@ -202,6 +202,18 @@ class CompactionSummarizer:
     def enabled(self) -> bool:
         return self.settings.summary == "model" and bool(self.worker.slug)
 
+    def rebind(self, settings: CompactionConfig, worker: TierConfig) -> None:
+        """Follow a preset switch: later summaries use its worker and settings.
+
+        A summary being written ahead by the old worker is dropped, so a
+        fold never uses one written to the old preset's settings.
+        """
+        if settings == self.settings and worker == self.worker:
+            return
+        self.close()
+        self.settings = settings
+        self.worker = worker
+
     def close(self) -> None:
         """Stop a summary being written ahead; the loop has ended."""
         for ahead in self._ahead.values():
@@ -253,6 +265,11 @@ class CompactionSummarizer:
         if not self.enabled or not dropped:
             return None
         ahead = self._ahead.pop(_fingerprint(dropped, guidance), None)
+        # This fold changes the conversation, so a summary written ahead of
+        # any other span will never match: stop paying for it.
+        for other in self._ahead.values():
+            other.task.cancel()
+        self._ahead.clear()
         if ahead is not None:
             return await ahead.task
         return await self._write(dropped, guidance)
@@ -404,5 +421,9 @@ async def compact_manual(
     plain = run()
     if plain is None:
         return None
-    files = await summarizer.files(dropped, kept, counter, _room_for_files(tier, plain[1]))
+    # A /compact the user asked for must not leave the prompt larger than
+    # it was: the files may take no more than the fold saved.
+    stats = plain[1]
+    room = min(_room_for_files(tier, stats), max(0, stats.tokens_before - stats.tokens_after))
+    files = await summarizer.files(dropped, kept, counter, room)
     return run(files) if files else plain

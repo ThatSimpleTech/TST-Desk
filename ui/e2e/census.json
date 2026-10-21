@@ -140,7 +140,7 @@
 	],
 	"settings:API keys": [
 		"Add source",
-		"OpenRouter, EZER, …",
+		"OpenRouter, vLLM, …",
 		"Paste API key",
 		"Remove",
 		"Test",

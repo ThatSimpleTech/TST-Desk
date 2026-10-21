@@ -9,18 +9,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PairLinkTest {
-    private val good = "tstdesk://pair?h=100.64.7.7&p=39079&c=ABCD2345&n=ezer"
+    private val good = "tstdesk://pair?h=100.64.7.7&p=39079&c=ABCD2345&n=tower"
 
     @Test
     fun aPairingLinkIsKeptAsGiven() {
         assertEquals(good, pairLinkOrNull(good))
         assertEquals(good, pairLinkOrNull("  $good\n"))
-        val spaced = "tstdesk://pair?h=desk.tailnet.ts.net&p=39079&c=abcd-2345&n=Adam%27s%20desk"
+        val spaced = "tstdesk://pair?h=desk.tailnet.ts.net&p=39079&c=abcd-2345&n=Alex%27s%20desk"
         assertEquals(spaced, pairLinkOrNull(spaced))
         assertEquals(
             "a trailing slash and any param order",
-            "tstdesk://pair/?n=ezer&c=ABCD2345&p=1&h=fd7a:115c:a1e0::1",
-            pairLinkOrNull("tstdesk://pair/?n=ezer&c=ABCD2345&p=1&h=fd7a:115c:a1e0::1"),
+            "tstdesk://pair/?n=tower&c=ABCD2345&p=1&h=fd7a:115c:a1e0::1",
+            pairLinkOrNull("tstdesk://pair/?n=tower&c=ABCD2345&p=1&h=fd7a:115c:a1e0::1"),
         )
         assertEquals("the name is optional", good.substringBefore("&n="), pairLinkOrNull(good.substringBefore("&n=")))
     }
@@ -128,7 +128,7 @@ class PairLinkTest {
 
     @Test
     fun theDeviceNameIsTheUsersOwnFirst() {
-        assertEquals("Adam's Fold", deviceLabel("Adam's Fold", "Google", "Pixel 11 Pro Fold"))
+        assertEquals("Alex's Fold", deviceLabel("Alex's Fold", "Google", "Pixel 11 Pro Fold"))
         assertEquals("Google Pixel 11 Pro Fold", deviceLabel(null, "Google", "Pixel 11 Pro Fold"))
         assertEquals("Google Pixel 11 Pro Fold", deviceLabel("  ", "Google", "Pixel 11 Pro Fold"))
         assertEquals("OnePlus 12", deviceLabel(null, "OnePlus", "OnePlus 12"))

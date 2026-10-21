@@ -767,9 +767,9 @@ describe("machines (TD-5015)", () => {
     await client.start();
     sockets[0].onopen?.();
     sockets[0].onmessage?.({
-      data: JSON.stringify({ type: "hello_ack", version: 1, machine_id: "mid_0123456789abcdef", desktop_name: "ezer" }),
+      data: JSON.stringify({ type: "hello_ack", version: 1, machine_id: "mid_0123456789abcdef", desktop_name: "tower" }),
     });
-    expect(seen).toEqual(["connecting", "ack:mid_0123456789abcdef:ezer", "connected"]);
+    expect(seen).toEqual(["connecting", "ack:mid_0123456789abcdef:tower", "connected"]);
     client.stop();
   });
 

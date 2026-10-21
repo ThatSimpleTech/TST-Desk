@@ -42,7 +42,7 @@ _COUNTER = HeuristicTokenCounter()
 
 def _tier(context_window: int = 32768, max_output_tokens: int = 4096) -> TierConfig:
     return TierConfig(
-        slug="ezer-forge",
+        slug="gateway-model",
         base_url="http://mock.local/v1",
         input_price=0.0,
         output_price=0.0,
@@ -280,10 +280,10 @@ def test_overflow_message_names_config_not_the_provider() -> None:
     text = transcript_failure_text(
         "context_overflow",
         _RAW_OVERFLOW,
-        model="ezer-forge",
+        model="gateway-model",
         context_window=32768,
     )
-    assert "ezer-forge" in text
+    assert "gateway-model" in text
     assert "32768-token" in text
     assert "litellm" not in text
     assert "32769" not in text
@@ -293,7 +293,7 @@ def test_raw_json_is_not_assistant_prose() -> None:
     text = transcript_failure_text(
         "bad_request",
         '{"error":"RAWJSONTOKEN"}',
-        model="ezer-forge",
+        model="gateway-model",
         context_window=32768,
     )
     assert text == "I encountered an error: The provider rejected the request."
@@ -304,7 +304,7 @@ def test_clean_provider_prose_is_kept() -> None:
     text = transcript_failure_text(
         "auth_failed",
         "Authentication failed.",
-        model="ezer-forge",
+        model="gateway-model",
         context_window=32768,
     )
     assert text == "I encountered an error: Authentication failed."
@@ -335,7 +335,7 @@ async def test_parallel_reads_fit_a_32k_tier(tmp_path: Path) -> None:
     config = _forge_config()
     mock = MockProvider(
         sequences={
-            "ezer-forge": [
+            "gateway-model": [
                 Script(kind="tool_call", tool_batch=batch),
                 Script(kind="stream", content="Here is the page."),
             ]
@@ -376,7 +376,7 @@ async def test_parallel_reads_fit_a_32k_tier(tmp_path: Path) -> None:
     for message in sent:
         if message.role == "tool":
             assert len(content_as_text(message.content)) <= 28_672
-    tokens, _ = estimate_tokens(sent, make_token_counter("ezer-forge"))
+    tokens, _ = estimate_tokens(sent, make_token_counter("gateway-model"))
     assert tokens <= budget_threshold(config.tier("brain"))
     events = [
         event for event in session.event_log.all_events if isinstance(event, ContextCompacted)
@@ -390,7 +390,7 @@ async def test_overflow_retries_once_then_fails_clean(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     config = _forge_config()
-    mock = MockProvider(sequences={"ezer-forge": [_overflow_script(), _overflow_script()]})
+    mock = MockProvider(sequences={"gateway-model": [_overflow_script(), _overflow_script()]})
     session = Session(str(tmp_path))
     with caplog.at_level(logging.WARNING, logger="tstd.loop"):
         runner = await _run(session, mock, config, tmp_path)
@@ -404,7 +404,7 @@ async def test_overflow_retries_once_then_fails_clean(
     assert turn.failed is True
     assert turn.error_code == "context_overflow"
     shown = _assistant_text(session)
-    assert "ezer-forge" in shown
+    assert "gateway-model" in shown
     assert "32768" in shown
     assert "32769" not in shown
     assert "litellm" not in shown.lower()
@@ -426,7 +426,7 @@ async def test_overflow_retry_elides_to_half_the_budget(tmp_path: Path) -> None:
     config = _forge_config()
     mock = MockProvider(
         sequences={
-            "ezer-forge": [
+            "gateway-model": [
                 Script(kind="tool_call", tool_batch=batch),
                 _overflow_script(),
                 _overflow_script(),
@@ -444,7 +444,7 @@ async def test_overflow_retry_elides_to_half_the_budget(tmp_path: Path) -> None:
     assert len(mock.calls) == 3
     assert turn.failed is True
     assert turn.error_code == "context_overflow"
-    counter = make_token_counter("ezer-forge")
+    counter = make_token_counter("gateway-model")
     first, _ = estimate_tokens(list(mock.calls[1].messages), counter)
     second, _ = estimate_tokens(list(mock.calls[2].messages), counter)
     half = max(1, budget_threshold(config.tier("brain")) // 2)
@@ -453,14 +453,14 @@ async def test_overflow_retry_elides_to_half_the_budget(tmp_path: Path) -> None:
     shown = _assistant_text(session)
     assert "32769" not in shown
     assert "litellm" not in shown.lower()
-    assert "ezer-forge" in shown
+    assert "gateway-model" in shown
 
 
 async def test_raw_upstream_json_is_not_assistant_text(tmp_path: Path) -> None:
     raw = '{"error":"RAWJSONTOKEN","message":"temperature must be between 0 and 2"}'
     mock = MockProvider(
         sequences={
-            "ezer-forge": [
+            "gateway-model": [
                 Script(kind="error", error_code="bad_request", status_code=400, content=raw)
             ]
         }

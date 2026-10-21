@@ -177,7 +177,7 @@ def peel_screenshot_png(raw: str) -> tuple[str, bytes | None]:
     """Split a driver screenshot into compact JSON plus PNG bytes (TD-1729).
 
     50k chars of base64 in a tool message blows a 32k local window
-    (ezer-forge). The pixels go to the model as a vision part; ``output``
+    (gateway-model). The pixels go to the model as a vision part; ``output``
     keeps the saved path (when the session persists) and the size.
     """
     png = _png_from_driver_json(raw)

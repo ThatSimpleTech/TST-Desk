@@ -576,7 +576,7 @@ FIXTURES = {
     "cancel_pairing": CancelPairing(),
     "remove_remote_device": RemoveRemoteDevice(device_id="dev_0123456789ab"),
     # Other computers (TD-5015). Loopback only; the code is a placeholder.
-    "add_machine": AddMachine(link="tstdesk://pair?h=100.64.1.5&p=39079&c=ABCD2345&n=ezer"),
+    "add_machine": AddMachine(link="tstdesk://pair?h=100.64.1.5&p=39079&c=ABCD2345&n=tower"),
     "add_machine_address": AddMachine(host="100.64.1.5", port=39079, code="ABCD-2345"),
     "remove_machine": RemoveMachine(machine="mch_0123456789ab"),
     "list_machines": ListMachines(),
@@ -1465,7 +1465,7 @@ FIXTURES = {
         machines=[
             MachineSummary(
                 id="mch_0123456789ab",
-                name="EZER",
+                name="TOWER",
                 host="100.64.1.5",
                 port=39079,
                 status="connected",

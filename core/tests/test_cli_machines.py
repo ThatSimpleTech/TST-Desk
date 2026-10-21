@@ -41,7 +41,7 @@ class TestParser:
     [
         ("100.64.0.9:39079", ("100.64.0.9", 39079)),
         ("[fd7a:115c:a1e0::9]:1", ("fd7a:115c:a1e0::9", 1)),
-        ("ezer.tail1.ts.net:39079", ("ezer.tail1.ts.net", 39079)),
+        ("tower.tail1.ts.net:39079", ("tower.tail1.ts.net", 39079)),
     ],
 )
 def test_split_address(text: str, expected: tuple[str, int]) -> None:

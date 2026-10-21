@@ -12,7 +12,7 @@ import { redact } from "./redact";
  *  (TD-5015). Null for a handle the list doesn't name yet. */
 export type MachineNamer = (machine: string) => string | null;
 
-/** "Approval needed", or "Approval needed on EZER" for another computer's
+/** "Approval needed", or "Approval needed on Studio" for another computer's
  *  session. A handle with no name yet still says it is elsewhere. */
 function onWhere(base: string, sessionId: string | undefined, nameOf: MachineNamer | undefined): string {
 	const machine = machineOf(sessionId);
