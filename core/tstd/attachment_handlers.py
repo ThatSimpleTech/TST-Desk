@@ -31,6 +31,12 @@ log = logging.getLogger(__name__)
 # waits its turn instead of multiplying that.
 EXTRACT_SLOTS = 2
 
+# Asks held at once, running or waiting, daemon-wide. Each holds its whole
+# frame (up to WS_MAX_FRAME_BYTES), so the slots alone bound the work but
+# not the memory; past this an ask is refused at once. A message carries
+# at most a handful of documents, so a person staging them never meets it.
+MAX_PENDING_EXTRACTIONS = 12
+
 
 async def extract_attachment(msg: ExtractAttachment, limits: AttachmentLimits) -> str:
     """The ``attachment_extracted`` answer for *msg*, as wire JSON."""
@@ -75,7 +81,20 @@ class Extractions:
         limits: AttachmentLimits,
         send: Callable[[str], Awaitable[None]],
     ) -> None:
-        task = asyncio.create_task(self._answer(msg, limits, send), name="extract-attachment")
+        if len(self._tasks) >= MAX_PENDING_EXTRACTIONS:
+            busy = AttachmentExtracted(
+                session_id=msg.session_id,
+                request_id=msg.request_id,
+                name=msg.attachment.name,
+                error_code="attachment_busy",
+                message=(
+                    f"Too many documents are being read at once to read {msg.attachment.name}. "
+                    "Attach it again in a moment."
+                ),
+            ).model_dump_json()
+            task = asyncio.create_task(self._send_quietly(send, busy), name="extract-busy")
+        else:
+            task = asyncio.create_task(self._answer(msg, limits, send), name="extract-attachment")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
@@ -98,6 +117,10 @@ class Extractions:
                 error_code="attachment_unreadable",
                 message=f"{msg.attachment.name} couldn't be read. Nothing was sent.",
             ).model_dump_json()
+        await self._send_quietly(send, reply)
+
+    @staticmethod
+    async def _send_quietly(send: Callable[[str], Awaitable[None]], reply: str) -> None:
         # The window may have gone while the document was read.
         with contextlib.suppress(Exception):
             await send(reply)

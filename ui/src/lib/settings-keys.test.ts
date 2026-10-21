@@ -46,7 +46,7 @@ function setupState(over: Partial<SetupState> = {}): SetupState {
 		active_preset: "local",
 		tier_slugs: { brain: null, worker: null, validator: null },
 		credentials: [
-			{ id: "ezer", name: "EZER", stored: true },
+			{ id: "tower", name: "TOWER", stored: true },
 			{ id: "local", name: "Local", stored: false },
 		],
 		...over,
@@ -94,7 +94,7 @@ describe("API key fields (TD-4838)", () => {
 		expect(button("Test", 0).disabled).toBe(false);
 		expect(button("Test", 1).disabled).toBe(true);
 		button("Test", 0).click();
-		expect(mocks.sent.at(-1)).toEqual({ type: "validate_api_key", credential: "ezer" });
+		expect(mocks.sent.at(-1)).toEqual({ type: "validate_api_key", credential: "tower" });
 	});
 
 	it("shows the daemon reason when Test fails", async () => {

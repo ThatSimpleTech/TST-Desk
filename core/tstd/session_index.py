@@ -176,15 +176,19 @@ def match_expression(query: str, *, any_term: bool = False) -> str | None:
 class SessionIndex:
     """The FTS index file and the per-session state that feeds it.
 
-    Thread-safe: every method takes one lock, and the daemon calls them
-    from ``asyncio.to_thread``. The file opens on first use, so a daemon
-    that never logs or searches never creates it.
+    Thread-safe, and the daemon calls it from ``asyncio.to_thread``. Writes
+    take one lock; a search reads on a connection of its own under another,
+    so ranking a big index never holds up the events every session logs
+    (WAL lets a reader and the writer run at once). The file opens on first
+    use, so a daemon that never logs or searches never creates it.
     """
 
     def __init__(self, data_dir: Path) -> None:
         self._path = data_dir / INDEX_FILE
         self._lock = threading.Lock()
         self._conn: sqlite3.Connection | None = None
+        self._read_lock = threading.Lock()
+        self._reader: sqlite3.Connection | None = None
         self._failed: str | None = None
         self._live: dict[str, _Live] = {}
 
@@ -203,6 +207,10 @@ class SessionIndex:
             return True
 
     def close(self) -> None:
+        with self._read_lock:
+            if self._reader is not None:
+                self._reader.close()
+                self._reader = None
         with self._lock:
             if self._conn is not None:
                 self._conn.close()
@@ -333,24 +341,34 @@ class SessionIndex:
         Every word must match (as a prefix); when that finds nothing, any
         word may, ranked by BM25 so rare words count most. *session_ids*
         narrows the search to those sessions (an empty collection finds
-        nothing). Raises :class:`IndexUnavailable` when the index is off.
+        nothing). Raises :class:`IndexUnavailable` when the index is off,
+        or when this search failed in SQLite (the next one may not).
         """
         limit = max(limit, 1)
         per_session = max(per_session, 1)
         tokens = min(max(snippet_tokens, 1), 64)
         with self._lock:
-            # Opened first, so an index that is off says so even when
-            # there is nothing to search.
-            conn = self._db()
-            if session_ids is not None and not session_ids:
-                return []
-            for any_term in (False, True):
-                expression = match_expression(query, any_term=any_term)
-                if expression is None:
-                    return []
-                hits = self._ranked(conn, expression, session_ids, limit, per_session, tokens)
-                if hits:
-                    return hits
+            # Opened (and migrated) first, so an index that is off says so
+            # even when there is nothing to search.
+            self._db()
+        if session_ids is not None and not session_ids:
+            return []
+        with self._read_lock:
+            try:
+                conn = self._read_db()
+                for any_term in (False, True):
+                    expression = match_expression(query, any_term=any_term)
+                    if expression is None:
+                        return []
+                    hits = self._ranked(conn, expression, session_ids, limit, per_session, tokens)
+                    if hits:
+                        return hits
+            except sqlite3.Error as e:
+                log.warning(
+                    "session index search failed",
+                    extra={"extra_fields": {"error": str(e)}},
+                )
+                raise IndexUnavailable(str(e) or type(e).__name__) from e
         return []
 
     def _ranked(
@@ -420,6 +438,18 @@ class SessionIndex:
             )
             raise IndexUnavailable(self._failed) from e
         return self._conn
+
+    def _read_db(self) -> sqlite3.Connection:
+        """The search connection; opened after :meth:`_db` made the file."""
+        if self._reader is None:
+            reader = sqlite3.connect(self._path, check_same_thread=False)
+            try:
+                reader.execute("PRAGMA query_only=ON")
+            except BaseException:
+                reader.close()
+                raise
+            self._reader = reader
+        return self._reader
 
     def _open(self) -> sqlite3.Connection:
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -504,8 +534,13 @@ class SessionIndex:
             if event.content.strip():
                 ops.rows.append((event.seq, live.turn, turn_id, "user", None, event.content))
         elif isinstance(event, ConversationReset):
-            # The edited message is turn user_index + 1; its user_turn follows.
-            live.turn = max(event.user_index, 0)
+            if event.user_turns is not None:
+                # A sibling was selected: no user_turn follows, and the next
+                # one sent comes after every turn the sibling holds.
+                live.turn = max(event.user_turns, 0)
+            else:
+                # The edited message is turn user_index + 1; its user_turn follows.
+                live.turn = max(event.user_index, 0)
             live.turn_id = None
             ops.state_changed = True
         return ops

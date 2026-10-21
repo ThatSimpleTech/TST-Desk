@@ -96,12 +96,13 @@ def _read_image(target: Path, mime: str, *, vision: bool) -> str | HandlerOutput
             f"Error: {what}, over the {format_bytes(FS_READ_MAX_IMAGE_BYTES)} "
             "limit for an image read, so it was not opened."
         )
-    data = target.read_bytes()
+    with target.open("rb") as f:
+        data = f.read(FS_READ_MAX_IMAGE_BYTES + 1)
     # Checked again on the bytes sent: the file may have changed since the probe.
-    if detect_image_mime(data) != mime:
+    if len(data) > FS_READ_MAX_IMAGE_BYTES or detect_image_mime(data) != mime:
         return f"Error: '{target}' changed while it was read; read it again."
     return HandlerOutput(
-        text=f"Image: {target} ({mime}, {format_bytes(size)}). It follows as an image.",
+        text=f"Image: {target} ({mime}, {format_bytes(len(data))}). It follows as an image.",
         images=(ToolImage(mime, data),),
     )
 

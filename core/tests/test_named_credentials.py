@@ -122,13 +122,13 @@ class TestCatalog:
             return Path("/unused")
 
         monkeypatch.setattr("tstd.daemon.save_credential", _save)
-        host = "http://ezer.example.ts.net:4000/v1"
+        host = "http://tower.example.ts.net:4000/v1"
         reply = await _send(
             daemon,
-            {"type": "set_api_key", "api_key": _TAG, "name": "EZER", "base_url": host},
+            {"type": "set_api_key", "api_key": _TAG, "name": "TOWER", "base_url": host},
         )
-        assert fake_keychain.stored["ezer"] == _TAG
-        assert ("ezer", "EZER", host) in writes
+        assert fake_keychain.stored["tower"] == _TAG
+        assert ("tower", "TOWER", host) in writes
         assert _TAG not in json.dumps(reply)
 
     async def test_set_credential_writes_and_clears_a_host(
@@ -145,7 +145,7 @@ class TestCatalog:
             return Path("/unused")
 
         monkeypatch.setattr("tstd.daemon.save_credential", _save)
-        host = "http://ezer.example.ts.net:4000/v1"
+        host = "http://tower.example.ts.net:4000/v1"
         reply = await _send(
             daemon,
             {
@@ -278,10 +278,10 @@ class TestParse:
         assert cred.type == "set_credential"
         assert cred.base_url is None
         with_host = parse_client_message(
-            '{"type": "set_credential", "name": "EZER", '
-            '"base_url": "http://ezer.example.ts.net:4000/v1"}'
+            '{"type": "set_credential", "name": "TOWER", '
+            '"base_url": "http://tower.example.ts.net:4000/v1"}'
         )
-        assert with_host.base_url == "http://ezer.example.ts.net:4000/v1"
+        assert with_host.base_url == "http://tower.example.ts.net:4000/v1"
         gone = parse_client_message('{"type": "delete_credential", "credential": "local"}')
         assert gone.type == "delete_credential"
         bind = parse_client_message(

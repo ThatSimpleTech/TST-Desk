@@ -148,7 +148,7 @@
 </p>
 <label class="field">
 	<span class="field-name">Name</span>
-	<input class="input" type="text" bind:value={newName} placeholder="OpenRouter, EZER, …" />
+	<input class="input" type="text" bind:value={newName} placeholder="OpenRouter, vLLM, …" />
 </label>
 <label class="field">
 	<span class="field-name">Key</span>

@@ -140,8 +140,12 @@ async def test_compaction_on_request_survives_a_restart(tmp_path: Path) -> None:
             None,
         )
         assert reply is None, reply
-        compacted = [e for e in session.event_log.all_events if isinstance(e, ContextCompacted)]
-        assert [e.trigger for e in compacted] == ["from_here"]
+
+        def compacted() -> list[ContextCompacted]:
+            return [e for e in session.event_log.all_events if isinstance(e, ContextCompacted)]
+
+        await eventually(lambda: bool(compacted()))
+        assert [e.trigger for e in compacted()] == ["from_here"]
         assert _users(session.conversation) == ["question 0"]
         assert _users(_saved(daemon, session.id)) == ["question 0"]
         session_id = session.id

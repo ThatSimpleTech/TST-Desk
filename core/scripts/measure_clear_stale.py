@@ -201,20 +201,25 @@ def read_turn_events(turns_dir: Path) -> list[list[dict[str, Any]]]:
     return turns
 
 
-def peak_prompt_tokens(audit_db: Path) -> list[int]:
-    """Each turn's largest real prompt (provider usage), in turn order."""
+def peak_prompt_tokens(audit_db: Path) -> list[int | None]:
+    """Each completed turn's largest real prompt (provider usage), in order.
+
+    The audit writes a turn row only at ``turn_complete``, so these pair
+    with the turns that completed, in the order they did; a turn with no
+    model call of its own still has a row (None), so later ones stay paired.
+    """
     if not audit_db.exists():
         return []
     with sqlite3.connect(audit_db) as db:
         rows = db.execute(
-            "SELECT t.turn_index, MAX(m.prompt_tokens) FROM model_calls m"
-            " JOIN turns t ON m.turn_id = t.id WHERE m.is_classifier = 0"
-            " GROUP BY t.session_id, t.turn_index ORDER BY MIN(m.ts)"
+            "SELECT t.id, MAX(m.prompt_tokens) FROM turns t"
+            " LEFT JOIN model_calls m ON m.turn_id = t.id AND m.is_classifier = 0"
+            " GROUP BY t.id ORDER BY t.id"
         ).fetchall()
-    return [int(peak) for _, peak in rows]
+    return [None if peak is None else int(peak) for _, peak in rows]
 
 
-def summarize_turns(turns: list[list[dict[str, Any]]], peaks: list[int]) -> dict[str, Any]:
+def summarize_turns(turns: list[list[dict[str, Any]]], peaks: list[int | None]) -> dict[str, Any]:
     """Counts for the whole run, and one row per turn."""
     triggers: Counter[str] = Counter()
     cleared = 0
@@ -222,8 +227,19 @@ def summarize_turns(turns: list[list[dict[str, Any]]], peaks: list[int]) -> dict
     rereads = 0
     rows = []
     sessions = set()
+    completed = 0
     for n, events in enumerate(turns, start=1):
-        row: dict[str, Any] = {"turn": n, "auto": 0, "clear": 0, "trim": 0, "reads": 0}
+        # Failed until a clean turn_complete says otherwise: a turn cut off
+        # by the timeout never sends one.
+        row: dict[str, Any] = {
+            "turn": n,
+            "auto": 0,
+            "clear": 0,
+            "trim": 0,
+            "reads": 0,
+            "failed": True,
+        }
+        peak: int | None = None
         estimates = [0]
         for event in events:
             kind = event.get("type")
@@ -246,12 +262,15 @@ def summarize_turns(turns: list[list[dict[str, Any]]], peaks: list[int]) -> dict
                 rereads += path in read_before
                 read_before.add(path)
             elif kind == "turn_complete":
-                row["failed"] = bool(event.get("failed"))
+                row["failed"] = bool(event.get("failed")) or bool(event.get("error_code"))
                 row["seconds"] = round(float(event.get("duration", 0.0)), 1)
+                if completed < len(peaks):
+                    peak = peaks[completed]
+                completed += 1
         row["peak_estimate"] = max(estimates)
-        row["peak_prompt"] = peaks[n - 1] if n <= len(peaks) else None
+        row["peak_prompt"] = peak
         rows.append(row)
-    real = [p for p in peaks if p]
+    real = [r["peak_prompt"] for r in rows if r["peak_prompt"]]
     return {
         "turns": len(turns),
         "sessions": len(sessions),

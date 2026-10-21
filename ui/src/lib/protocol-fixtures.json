@@ -706,7 +706,7 @@
   },
   "add_machine": {
     "type": "add_machine",
-    "link": "tstdesk://pair?h=100.64.1.5&p=39079&c=ABCD2345&n=ezer",
+    "link": "tstdesk://pair?h=100.64.1.5&p=39079&c=ABCD2345&n=tower",
     "host": null,
     "port": null,
     "code": null
@@ -750,7 +750,8 @@
     "user_index": 0,
     "sibling_index": 1,
     "sibling_count": 2,
-    "content": "hello again"
+    "content": "hello again",
+    "user_turns": null
   },
   "attachment_extracted": {
     "type": "attachment_extracted",
@@ -1453,7 +1454,8 @@
     "message": "fail",
     "machine": null,
     "in_reply_to": null,
-    "proposal_id": null
+    "proposal_id": null,
+    "comment_ids": null
   },
   "error_with_session": {
     "type": "error",
@@ -1463,7 +1465,8 @@
     "message": "fail",
     "machine": null,
     "in_reply_to": null,
-    "proposal_id": null
+    "proposal_id": null,
+    "comment_ids": null
   },
   "shell_output": {
     "type": "shell_output",
@@ -2104,7 +2107,7 @@
     "machines": [
       {
         "id": "mch_0123456789ab",
-        "name": "EZER",
+        "name": "TOWER",
         "host": "100.64.1.5",
         "port": 39079,
         "status": "connected",

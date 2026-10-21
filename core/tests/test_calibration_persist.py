@@ -1,7 +1,7 @@
 """Learned token ratios survive a restart, and size the workspace map (TD-5013).
 
 TD-5007 kept the ratios in memory only, so the first call after a daemon
-restart was estimated at 1.0: about 15% under on EZER, where the real
+restart was estimated at 1.0: about 15% under on TOWER, where the real
 ratio is ~1.17. The daemon now saves them to ``token-calibration.json``
 in its data folder. Persistence is opt-in: a store built with no path,
 which is what every other test builds, never writes.
@@ -55,7 +55,7 @@ from tstd.mock import MockProvider, Script
 from tstd.router import TierRouter
 from tstd.session import Session, SessionRunner
 
-_KEY = ("http://mock.local/v1", "ezer-forge")
+_KEY = ("http://mock.local/v1", "gateway-model")
 _OTHER = ("http://other.local/v1", "qwen")
 _LOGGER = "tstd.context.calibration"
 
@@ -574,7 +574,7 @@ def _record_manifest_configs(monkeypatch: pytest.MonkeyPatch) -> list[ManifestCo
 
 
 async def _one_turn(session: Session, config: ModelConfig, store: CalibrationStore) -> None:
-    mock = MockProvider(sequences={"ezer-forge": [Script(kind="stream", content="hello")]})
+    mock = MockProvider(sequences={"gateway-model": [Script(kind="stream", content="hello")]})
     runner = SessionRunner(
         session,
         loop_factory=lambda s: loop_module.agent_loop(
@@ -587,7 +587,7 @@ async def _one_turn(session: Session, config: ModelConfig, store: CalibrationSto
         await wait_for_turn(session, 1, 10.0)
     finally:
         await runner.cancel()
-    assert mock.calls and {c.model for c in mock.calls} == {"ezer-forge"}
+    assert mock.calls and {c.model for c in mock.calls} == {"gateway-model"}
 
 
 async def test_the_loop_sizes_its_map_from_the_store(

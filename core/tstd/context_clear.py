@@ -26,7 +26,7 @@ The clearing policy is ``clear_tool_results`` in config.yaml:
   older turn to fold does a clear that lands higher still go ahead.
 
 Every clear rewrites the prompt from the oldest result it touches on,
-which costs a local server (llama.cpp on EZER) its cached prefix. So a
+which costs a local server (llama.cpp on the GPU server) its cached prefix. So a
 clear is a batch, and between clears nothing earlier changes: a cleared
 result is never rewritten, and its placeholder depends only on its own
 tool call (in the assistant message just before it) and the result it
@@ -67,7 +67,7 @@ ALWAYS_KEPT_TOOLS = frozenset({"ask_user"})
 #: something, and its placeholder does not invite a second run (TD-5160):
 #: with approvals off nothing would stop it.
 RERUN_SAFE_TOOLS = frozenset(
-    {"fs_read", "fs_list", "fs_grep", "web_fetch", "web_search", "load_skill"}
+    {"fs_read", "fs_list", "fs_grep", "web_fetch", "web_search", "load_skill", "session_search"}
 )
 
 

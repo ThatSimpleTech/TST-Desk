@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import base64
 import contextlib
+import json
 import os
 import shutil
 import subprocess
@@ -177,6 +178,7 @@ from .notify.ntfy import send as send_ntfy_notify
 from .notify.slack import schedule as schedule_slack_notify
 from .notify.slack import send as send_slack_notify
 from .notify.telegram import schedule as schedule_telegram_notify
+from .peer_policy import outbound_event, service_hosts
 from .plan_review import answer as answer_plan
 from .plan_review import keep_pinned_plan_visible, restore_pinned_plan, restored_plan_mode
 from .policy import (
@@ -563,6 +565,8 @@ _COMPACT_REFUSALS: dict[str, str] = {
     "nothing_to_compact": "Nothing to compact yet. Only the latest turn is in the conversation.",
     "user_turn_compacted": "That message is already inside a summary. Summarize from a later one.",
     "user_turn_not_found": "That message is not in this conversation.",
+    "compaction_in_progress": "A compaction is already running. It will finish on its own.",
+    "compaction_failed": "Compaction failed. The conversation is unchanged; try again.",
 }
 
 # Why an edit (``fork_from``) or a branch switch (``set_branch``) was refused
@@ -581,6 +585,29 @@ _BRANCH_REFUSALS: dict[str, str] = {
     "user_turn_not_found": "That message is not in this conversation.",
     "branch_not_found": "That version of the message is no longer available.",
 }
+
+
+def _comment_ids(msg: object) -> list[str] | None:
+    """The line comment ids a ``submit_line_comments`` carried, else None."""
+    if isinstance(msg, SubmitLineComments):
+        return [comment.id for comment in msg.comments]
+    return None
+
+
+def _refused_frame(raw: str) -> tuple[str | None, list[str] | None]:
+    """Best effort: the type, and any line comment ids, of a frame that failed to parse."""
+    try:
+        frame = json.loads(raw)
+    except ValueError:
+        return None, None
+    if not isinstance(frame, dict) or not isinstance(frame.get("type"), str):
+        return None, None
+    kind: str = frame["type"]
+    comments = frame.get("comments")
+    if kind != "submit_line_comments" or not isinstance(comments, list):
+        return kind, None
+    ids = [c["id"] for c in comments if isinstance(c, dict) and isinstance(c.get("id"), str)]
+    return kind, ids
 
 
 def _snapshot_slugs(config: ModelConfig) -> dict[str, dict[str, str | None]]:
@@ -2585,6 +2612,23 @@ class Daemon:
         # a remote peer's setup_state drops this computer's devices.
         return scrub_wire_json(self.hub.finish(reply, _connection))
 
+    async def _compact_in_background(
+        self, session: Session, msg: CompactContext, connection: Any
+    ) -> None:
+        try:
+            code = await session.compact_now(msg.guidance, msg.user_index)
+        except Exception:
+            log.exception(
+                "manual compaction failed",
+                extra={"extra_fields": {"session_id": msg.session_id}},
+            )
+            code = "compaction_failed"
+        if code is None or connection is None:
+            return
+        reply = build_error(code, _COMPACT_REFUSALS.get(code, code), session_id=msg.session_id)
+        with contextlib.suppress(websockets.exceptions.ConnectionClosed):
+            await connection.send(scrub_wire_json(self.hub.finish(reply, connection)))
+
     async def _dispatch_message(self, raw: str, _connection: Any) -> str | None:
         """Handle a post-handshake message from a client.
 
@@ -2594,7 +2638,10 @@ class Daemon:
         try:
             msg: ClientMessageT = parse_client_message(raw)
         except HandshakeError as e:
-            return build_error(e.code, e.message)
+            # Name what was refused when the frame says, so a window waiting
+            # on its message (line comments, TD-5132) is not left waiting.
+            kind, comment_ids = _refused_frame(raw)
+            return build_error(e.code, e.message, in_reply_to=kind, comment_ids=comment_ids)
 
         # TD-5015: peer policy, machine verbs, bridged ids. Never awaits
         # the network.
@@ -2608,7 +2655,11 @@ class Daemon:
         if isinstance(msg, _TURN_STARTS) and self._drain.active:
             sid = getattr(msg, "session_id", None)
             return build_error(
-                "daemon_draining", DRAINING_MESSAGE, session_id=sid, in_reply_to=msg.type
+                "daemon_draining",
+                DRAINING_MESSAGE,
+                session_id=sid,
+                in_reply_to=msg.type,
+                comment_ids=_comment_ids(msg),
             )
 
         if isinstance(msg, Drain):
@@ -2867,11 +2918,22 @@ class Daemon:
                     "session_not_found",
                     f"Session {msg.session_id!r} not found",
                 )
-            code = await found.compact_now(msg.guidance, msg.user_index)
+            code = found.compact_refusal(msg.user_index)
             if code is not None:
                 return build_error(
                     code, _COMPACT_REFUSALS.get(code, code), session_id=msg.session_id
                 )
+            # The worker writes the summary, which can take up to its
+            # timeout (TD-5128). Awaited here it would hold every later
+            # message on this connection, a stop or an approval included,
+            # so it runs beside it: the fold arrives as context_compacted,
+            # a late refusal as an error frame.
+            self._tasks.append(
+                asyncio.create_task(
+                    self._compact_in_background(found, msg, _connection),
+                    name=f"compact:{msg.session_id[:8]}",
+                )
+            )
             return None
 
         if isinstance(msg, SetBranch):
@@ -4074,29 +4136,48 @@ class Daemon:
         liveness and save checks are ``user_message``'s; a drain hold
         already refused it before this.
         """
+        ids = _comment_ids(msg)
         found = self.session_registry.get(msg.session_id)
         if found is None:
             return build_error(
                 "session_not_found",
                 f"Session {msg.session_id!r} not found",
                 in_reply_to=msg.type,
+                comment_ids=ids,
             )
-        runner = self.session_registry.get_runner(msg.session_id)
-        if found.state in TERMINAL_STATES or runner is None or not runner.is_running:
+
+        def not_running() -> str | None:
+            runner = self.session_registry.get_runner(msg.session_id)
+            if found.state not in TERMINAL_STATES and runner is not None and runner.is_running:
+                return None
             return build_error(
                 "session_not_running",
                 f"This session is {found.state} and can no longer run turns; "
                 "the comments were not sent. Start a new session and send them again.",
                 session_id=msg.session_id,
                 in_reply_to=msg.type,
+                comment_ids=ids,
             )
+
+        if (refused := not_running()) is not None:
+            return refused
         try:
             # Reads the commented files: off the event loop.
             turn = await asyncio.to_thread(
                 build_comments_turn, msg.comments, Path(found.workspace_path), found.policy
             )
         except LineCommentError as e:
-            return build_error(e.code, e.message, session_id=msg.session_id, in_reply_to=msg.type)
+            return build_error(
+                e.code,
+                e.message,
+                session_id=msg.session_id,
+                in_reply_to=msg.type,
+                comment_ids=ids,
+            )
+        # The read can take a while on a slow disk: the session may have
+        # ended meanwhile, and a message queued then would never be read.
+        if (refused := not_running()) is not None:
+            return refused
         try:
             await found.add_user_message(
                 QueuedUserMessage(
@@ -4116,6 +4197,7 @@ class Daemon:
                 "Check that TST Desk's data folder is writable, then send them again.",
                 session_id=msg.session_id,
                 in_reply_to=msg.type,
+                comment_ids=ids,
             )
         log.info(
             "line comments enqueued",
@@ -4416,6 +4498,9 @@ class Daemon:
         chosen = self._resolved_preset(name)
         sess.preset = chosen
         sess.config = self.config.model_copy(update={"active_preset": chosen})
+        # /compact between turns uses the new preset's worker too.
+        if sess.compaction_summarizer is not None:
+            sess.compaction_summarizer.rebind(sess.config.compaction, sess.config.tier("worker"))
         if sess.on_config_reloaded is not None:
             sess.on_config_reloaded()
         return chosen
@@ -4733,8 +4818,11 @@ class Daemon:
                 ).model_dump_json()
             )
         replay_from = max(msg.from_seq, earliest)
+        # TD-5169: another computer gets the events without service hosts.
+        peer = self.ws_server.peer_view(connection)
+        hosts = service_hosts(self.config.model_dump()) if peer.machine else frozenset()
         for event in session.event_log.events_from(replay_from):
-            await connection.send(event.model_dump_json())
+            await connection.send(outbound_event(event, peer, hosts).model_dump_json())
 
         # Register as attached
         if session_id not in self._attached_clients:
@@ -4746,8 +4834,10 @@ class Daemon:
             try:
                 while True:
                     new_seq = await session.event_log.wait_for_new_event(seen_seq)
+                    # Read each wake: the config may have changed since attach.
+                    live = service_hosts(self.config.model_dump()) if peer.machine else ()
                     for event in session.event_log.events_from(seen_seq + 1):
-                        await connection.send(event.model_dump_json())
+                        await connection.send(outbound_event(event, peer, live).model_dump_json())
                     seen_seq = new_seq
             except websockets.exceptions.ConnectionClosed:
                 pass

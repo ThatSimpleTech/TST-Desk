@@ -10,6 +10,7 @@ yield no diff rather than failing the write.
 from __future__ import annotations
 
 import difflib
+import stat
 from pathlib import Path
 
 # Skip snapshotting files larger than this; the diff would be noise.
@@ -24,7 +25,9 @@ def snapshot_text(path: Path) -> str | None:
     diff — a missing diff must never fail a write).
     """
     try:
-        if path.stat().st_size > _MAX_SNAPSHOT_BYTES:
+        info = path.stat()
+        # Only a regular file: reading a FIFO or a device blocks, or never ends.
+        if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_SNAPSHOT_BYTES:
             return None
         return path.read_bytes().decode("utf-8")
     except (OSError, UnicodeDecodeError):

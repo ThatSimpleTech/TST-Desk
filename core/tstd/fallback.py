@@ -128,6 +128,17 @@ class TurnBackups:
         self.chains[tier] = chain
         return chain
 
+    def peek(self, tier: TierName, own: TierConfig) -> TierConfig:
+        """The model *tier* would call now, changing nothing.
+
+        Its chain's current model when the chain was built for *own*, else
+        *own* itself (a chain not built yet starts there).
+        """
+        chain = self.chains.get(tier)
+        if chain is not None and _identity(chain.models[0]) == _identity(own):
+            return chain.current
+        return own
+
     def positions(self) -> dict[str, int]:
         """Tier name → backup position, for the tiers on a backup."""
         return {tier: chain.position for tier, chain in self.chains.items() if chain.position}

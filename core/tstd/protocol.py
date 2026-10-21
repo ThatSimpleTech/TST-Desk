@@ -1912,6 +1912,11 @@ class ConversationReset(DaemonEvent):
     sibling_index: int
     sibling_count: int
     content: str
+    #: User turns the conversation holds after a sibling is selected, in the
+    #: window's numbering (TD-5129: the session index numbers turns from it).
+    #: None for an edit, whose ``user_turn`` follows and is turn
+    #: ``user_index + 1``.
+    user_turns: int | None = None
 
 
 class RestoreFileEntry(BaseModel):
@@ -3780,6 +3785,10 @@ class Error(DaemonEvent):
     # so the window shows the refusal on that card even after the user has
     # acted on another one. Absent from older daemons.
     proposal_id: str | None = None
+    # TD-5132: the line comments a refused ``submit_line_comments`` carried,
+    # so the window hands back only those, not comments an earlier send
+    # already queued. Absent from older daemons.
+    comment_ids: list[str] | None = None
 
 
 class ScreenFrame(DaemonEvent):
@@ -4847,6 +4856,7 @@ def build_error(
     machine: str | None = None,
     in_reply_to: str | None = None,
     proposal_id: str | None = None,
+    comment_ids: list[str] | None = None,
 ) -> str:
     """Build a typed error message.
 
@@ -4857,9 +4867,14 @@ def build_error(
     the session whose message was refused. ``machine`` (TD-5015) marks an
     error that came from, or is about, a paired computer. ``in_reply_to``
     (TD-5144) names the client message type the error answers, and
-    ``proposal_id`` (TD-5158) the steering proposal it was about.
+    ``proposal_id`` (TD-5158) the steering proposal it was about, and
+    ``comment_ids`` (TD-5132) the line comments a refused send carried.
     """
-    payload: dict[str, str] = {"type": "error", "code": code, "message": redact_secrets(message)}
+    payload: dict[str, str | list[str]] = {
+        "type": "error",
+        "code": code,
+        "message": redact_secrets(message),
+    }
     if session_id is not None:
         payload["session_id"] = session_id
     if machine is not None:
@@ -4868,6 +4883,8 @@ def build_error(
         payload["in_reply_to"] = in_reply_to
     if proposal_id is not None:
         payload["proposal_id"] = proposal_id
+    if comment_ids is not None:
+        payload["comment_ids"] = comment_ids
     return json.dumps(payload)
 
 

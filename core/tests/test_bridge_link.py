@@ -103,7 +103,7 @@ def _link(
         on_frame=probe.on_frame,
         on_status=status,
         on_seen=probe.seen.append,
-        name="ezer",
+        name="tower",
         clock=clock or Clock(),
         jitter=lambda: 0.0,
         sleep=sleep,
@@ -316,7 +316,7 @@ async def test_a_wrong_key_is_refused_and_stops_dialing(other: _Other) -> None:
     link.start()
     try:
         await eventually(lambda: link.status == "refused")
-        assert link.detail == REFUSED_MESSAGE.format(name="ezer")
+        assert link.detail == REFUSED_MESSAGE.format(name="tower")
         await asyncio.sleep(0.3)
         assert link.delays == [] and probe.opened == 0 and link.running
     finally:
@@ -346,8 +346,8 @@ async def test_a_locked_keychain_parks_as_locked_and_a_missing_key_as_refused() 
         raise KeychainError("not found")
 
     for get, status, detail in (
-        (locked, "locked", LOCKED_MESSAGE.format(name="ezer")),
-        (missing, "refused", MISSING_KEY_MESSAGE.format(name="ezer")),
+        (locked, "locked", LOCKED_MESSAGE.format(name="tower")),
+        (missing, "refused", MISSING_KEY_MESSAGE.format(name="tower")),
     ):
         probe = _Probe()
         link = _link(_free_port(), get, probe)

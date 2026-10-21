@@ -134,9 +134,9 @@ class TestMessageBuilders:
 
     def test_hello_ack_names_the_computer(self) -> None:
         """TD-5015: which computer this is, for "same computer" and "this is me"."""
-        msg = json.loads(build_hello_ack(machine_id="mid_0123456789abcdef", desktop_name="ezer"))
+        msg = json.loads(build_hello_ack(machine_id="mid_0123456789abcdef", desktop_name="tower"))
         assert msg["machine_id"] == "mid_0123456789abcdef"
-        assert msg["desktop_name"] == "ezer"
+        assert msg["desktop_name"] == "tower"
 
     def test_error(self) -> None:
         msg = json.loads(build_error("test_code", "test message"))

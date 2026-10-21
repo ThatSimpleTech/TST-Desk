@@ -1294,6 +1294,9 @@ export interface ConversationReset extends DaemonEvent {
   sibling_index: number;
   sibling_count: number;
   content: string;
+  /** Turns the conversation holds after a sibling is selected (TD-5129);
+   *  null for an edit, whose user_turn follows. */
+  user_turns?: number | null;
 }
 
 /** One file a restore would change (TD-5125): `modify` its content, `delete`
@@ -2395,6 +2398,9 @@ export interface Error extends DaemonEvent {
   /** TD-5158: the steering proposal a refused accept, edit or reject named.
    *  Absent from older daemons. */
   proposal_id?: string | null;
+  /** TD-5132: the line comments a refused `submit_line_comments` carried.
+   *  Absent from older daemons. */
+  comment_ids?: string[] | null;
 }
 
 /** A browser screenshot written to the session dir (TD-1710). Path, not bytes. */
