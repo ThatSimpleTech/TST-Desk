@@ -15856,6 +15856,50 @@ the tool calls' arguments too (`clear_tool_inputs`; small, and the
 placeholder already names the target); a per-tier policy (one policy
 reads the same everywhere, and the budget already scales with the tier).
 
+**Live result (TD-5162, 2026-10-21).** Measured against ezer-forge
+(llama.cpp Flash-Next on GPU1, through LiteLLM) with
+`core/scripts/measure_clear_stale.py`: current main (8935769) in a
+separate daemon with its own scratch data dir holding a copy of the
+window's config.yaml (`tst-default`: a 65,536-token tier, compaction at
+45,875 estimated tokens), never the running app or its data dir. Each
+turn is a `tst run --continue` asking the model to read two ~10k-character
+`tstd` modules in full and grep for their importers, every sixth turn
+asking about a file read earlier. Forge was idle before every turn; the
+other sessions' work on it stopped two runs (a first attempt after one
+turn, and the clearing-on run after turn 7), so the budget allowed 8
+turns off and 7 on (about 25 minutes of turns).
+
+| turn | peak prompt, off | peak prompt, on | off | on |
+|---|---|---|---|---|
+| 1 | 13,669 | 13,672 | | |
+| 2 | 20,620 | 19,615 | | |
+| 3 | 26,691 | 25,654 | | |
+| 4 | 34,071 | 32,987 | | |
+| 5 | 42,102 | 41,015 | | |
+| 6 | 42,409 | 41,374 | | |
+| 7 | 42,615 | 41,595 | compaction: 39 messages folded, 47,668 to 15,673 | clear: 10 results, 38 messages kept, 46,421 to 17,835 |
+| 8 | 21,320 | (not run) | | |
+
+Over the 7 turns both ran: one compaction with clearing off, none with it
+on. At the same point in the same session the clear replaced the
+compaction, kept every message verbatim, and landed 2,162 estimated tokens
+above where the summary did. **This does not meet TD-5115's criterion**
+(fewer compactions on a long session), which stays unticked: turns 1 to 6
+had no reduction either way, so the threshold was crossed at the same turn
+in both runs, one reduction replaced another, and the clear left the
+prompt higher, so the next limit would come sooner. The clearing-on run
+stopped right after its clear, so whether it reaches its next compaction
+later than the clearing-off run, or at all, was not observed. No turn failed and no file was read twice in
+either run. Peak prompts run about 1k lower with clearing on from turn 2:
+the placeholders are not the cause (nothing is cleared before turn 7),
+most likely the two runs' answers differ in length.
+
+*Follow-up (needed to close TD-5115):* one compaction cycle cannot show
+the effect. A run of 24 turns or more each way (about 40 minutes of forge per run, when
+forge is free) would show whether clearing keeps compaction away over
+several cycles, as the 60-turn replay did (9 off, 2 on), and whether a
+recall turn after a clear makes the model re-read the cleared file.
+
 ---
 
 ## 2026-10-20 — TD-5117: a read-only research kind for `delegate`; its transcript rides on the result (Class B; revises TD-4602)
