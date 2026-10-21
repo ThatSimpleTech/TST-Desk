@@ -20,6 +20,7 @@ from .autonomy.classifier import DecisionClass
 from .autonomy.judgment import JudgmentBackend
 from .boundary_config import BoundaryConfig
 from .compaction import ContextMeter, window_user_turns
+from .hooks import HookRunner
 from .logging import get_logger, redact_structure
 from .plan_review import PendingPlan, carry_for
 from .plan_review import resolve_all as resolve_plans
@@ -375,6 +376,9 @@ class Session:
         # ``config_view`` is the read the boundary was last loaded from.
         self.trust_store: TrustStore | None = None
         self.config_view: WorkspaceConfigView | None = None
+        # Hooks (TD-5134): user hooks the loop binds, workspace hooks read
+        # from ``config_view`` while it applies, and each hook's last run.
+        self.hooks = HookRunner(self)
         # Pending approvals (TD-802), owned by the session — NOT by any
         # websocket — so a client disconnect leaves them parked and
         # resumable (prime directive §2.5).  Each record carries the call

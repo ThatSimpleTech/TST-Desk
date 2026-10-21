@@ -75,6 +75,8 @@ const KNOWN_EVENT_TYPES = new Set([
   "task_list", // TD-5122
   "worktree_state", // TD-5126
   "stop_check", // TD-5124
+  "hook_run", // TD-5134
+  "hooks_state", // TD-5134
   "session_goal", // TD-5124
   "steering_reloaded",
   "rule_activated",

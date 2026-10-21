@@ -838,6 +838,13 @@ class GetInstructionStack(ClientMessage):
     session_id: str
 
 
+class GetHooks(ClientMessage):
+    """Request the session's active hooks and their last results (TD-5134)."""
+
+    type: Literal["get_hooks"] = "get_hooks"
+    session_id: str
+
+
 class ListInstructions(ClientMessage):
     """List a workspace's Instructions files (TD-2802). Human path."""
 
@@ -2644,6 +2651,69 @@ class StopCheck(DaemonEvent):
     items: list[StopCheckItem] = Field(default_factory=list)
 
 
+HookEventName = Literal["session_start", "user_prompt", "before_tool", "after_tool", "stop"]
+HookResult = Literal["ok", "context", "block", "ask", "error", "timeout"]
+
+
+class HookRun(DaemonEvent):
+    """One hook ran (TD-5134). Each run also lands in the audit DB.
+
+    ``result``: ``ok`` (nothing to say), ``context`` (text added for the
+    model), ``block`` (exit 2 or ``{"decision": "block"}``: the prompt,
+    the tool call, or the stop was refused with ``reason``), ``ask``
+    (``before_tool`` only: a call that would have run must be approved),
+    ``error`` (another exit code, unreadable output, or it would not
+    start) or ``timeout`` (killed after ``timeout_seconds``). An error or
+    a timeout changes nothing: hooks only ever tighten. ``hook_id`` is
+    ``<source>:<event>:<index>``. ``output`` is the start of what the
+    command printed.
+    """
+
+    type: Literal["hook_run"] = "hook_run"
+    session_id: str
+    hook_id: str
+    source: Literal["user", "workspace"]
+    event: HookEventName
+    command: str
+    result: HookResult
+    exit_code: int | None = None
+    reason: str = ""
+    context: str = ""
+    output: str = ""
+    duration_ms: int = Field(ge=0)
+    tool_name: str | None = None
+    tool_call_id: str | None = None
+
+
+class HookInfo(BaseModel):
+    """One active hook on the inspector, with its last run in this session."""
+
+    id: str
+    source: Literal["user", "workspace"]
+    event: HookEventName
+    command: str
+    name: str | None = None
+    timeout_seconds: float
+    tools: list[str] = Field(default_factory=list)
+    last: HookRun | None = None
+
+
+class HooksState(DaemonEvent):
+    """Response to ``get_hooks``: the session's active hooks (TD-5134).
+
+    ``workspace_state`` is the workspace config's trust state
+    (``none``, ``pending``, ``trusted``, ``declined``); a workspace's
+    hooks are listed only while its config applies. ``workspace_error``
+    says why a workspace ``hooks`` block was set aside.
+    """
+
+    type: Literal["hooks_state"] = "hooks_state"
+    session_id: str
+    hooks: list[HookInfo] = Field(default_factory=list)
+    workspace_state: str = "none"
+    workspace_error: str | None = None
+
+
 class SessionGoal(DaemonEvent):
     """The session's goal after ``/goal`` changed it, or a done-check met it (TD-5124).
 
@@ -4214,6 +4284,7 @@ ClientMessageT = Annotated[
     | SetPlan
     | SetSessionPreset
     | GetInstructionStack
+    | GetHooks
     | ListInstructions
     | ListCommands
     | ListMemory
@@ -4341,6 +4412,8 @@ DaemonEventT = Annotated[
     | TaskList
     | WorktreeState
     | StopCheck
+    | HookRun
+    | HooksState
     | SessionGoal
     | SteeringReloaded
     | RuleActivated
@@ -4446,6 +4519,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_plan",
         "set_session_preset",
         "get_instruction_stack",
+        "get_hooks",
         "list_instructions",
         "list_commands",
         "list_memory",
@@ -4573,6 +4647,8 @@ _KNOWN_EVENT_TYPES = frozenset(
         "task_list",
         "worktree_state",
         "stop_check",
+        "hook_run",
+        "hooks_state",
         "session_goal",
         "steering_reloaded",
         "rule_activated",

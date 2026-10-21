@@ -38,7 +38,7 @@ ToolCallStatus = Literal["success", "error", "refused"]
 #
 # Schema objects: sessions, turns, tool_calls, decisions, model_calls,
 # judgments (TD-708), allowed_calls (TD-5103), steers (TD-5112), questions
-# (TD-5121) — and
+# (TD-5121), hook_runs (TD-5134) — and
 # `costs`, which is a
 # VIEW over model_calls, not a table. Rollup rows would duplicate truth in
 # a store that can never correct them; a view aggregates on read instead
@@ -222,6 +222,30 @@ CREATE TABLE questions (
 CREATE INDEX idx_questions_session ON questions(session_id, ts);
 """
 
+# v7 records every hook run (TD-5134): which hook (``<source>:<event>:<n>``
+# and its command), the tool call it ran for, what it decided, and why.
+# Command, reason and context are scrubbed like tool arguments; the
+# hook's raw output is not kept, only its decision and the text it gave.
+_SCHEMA_V7 = """
+CREATE TABLE hook_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(session_id),
+    hook_id TEXT NOT NULL,
+    source TEXT NOT NULL CHECK(source IN ('user', 'workspace')),
+    event TEXT NOT NULL,
+    command TEXT NOT NULL,
+    tool_call_id TEXT,
+    result TEXT NOT NULL
+        CHECK(result IN ('ok', 'context', 'block', 'ask', 'error', 'timeout')),
+    exit_code INTEGER,
+    reason TEXT NOT NULL,
+    context TEXT NOT NULL,
+    duration_ms INTEGER NOT NULL,
+    ts REAL NOT NULL
+);
+CREATE INDEX idx_hook_runs_session ON hook_runs(session_id, ts);
+"""
+
 # Ordered migration steps; index + 1 is the schema version that step
 # produces. Every release that changes the schema appends one entry.
 MIGRATIONS: tuple[str, ...] = (
@@ -231,6 +255,7 @@ MIGRATIONS: tuple[str, ...] = (
     _SCHEMA_V4,
     _SCHEMA_V5,
     _SCHEMA_V6,
+    _SCHEMA_V7,
 )
 
 
@@ -551,6 +576,44 @@ class AuditStore:
                 json.dumps(redact_structure(list(questions)), ensure_ascii=False),
                 outcome,
                 json.dumps(redact_structure(list(answers)), ensure_ascii=False),
+                ts or time.time(),
+            ),
+        )
+        self._conn.commit()
+        return int(cur.lastrowid or 0)
+
+    def append_hook_run(
+        self,
+        session_id: str,
+        hook_id: str,
+        source: str,
+        event: str,
+        command: str,
+        tool_call_id: str | None,
+        result: str,
+        exit_code: int | None,
+        reason: str,
+        context: str,
+        duration_ms: int,
+        ts: float | None = None,
+    ) -> int:
+        """Record one hook run and what it decided (TD-5134), scrubbed."""
+        cur = self._conn.execute(
+            "INSERT INTO hook_runs (session_id, hook_id, source, event, command, tool_call_id,"
+            " result, exit_code, reason, context, duration_ms, ts)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                session_id,
+                hook_id,
+                source,
+                event,
+                redact_secrets(command),
+                tool_call_id,
+                result,
+                exit_code,
+                redact_secrets(reason),
+                redact_secrets(context),
+                duration_ms,
                 ts or time.time(),
             ),
         )

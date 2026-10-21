@@ -27,6 +27,7 @@ from ..autonomy import (
 )
 from ..cu_verify import ActuationVerifier, StateProbe, Verification
 from ..desktop.protocol import DesktopError
+from ..hooks import after_tool, before_tool, hook_runner
 from ..logging import get_logger
 from ..memory_commit import MemoryCommitter
 from ..plan_mode import PLAN_MODE_REFUSED, planning_refusal
@@ -498,7 +499,32 @@ class ToolDispatcher:
                 error_code="policy_denied",
                 decision_class=decision_class,
             )
-        if decision.effect == "ask":
+        # 3.3 Before-tool hooks (TD-5134). They run after the classifier
+        # and the policy, only for a call those would let run, and can
+        # only tighten: block refuses, ask turns ``auto`` into approval.
+        effect, effect_reason = decision.effect, decision.reason
+        hooks = hook_runner(session)
+        hook_context = ""
+        if hooks is not None:
+            gate = await before_tool(hooks, tool_call_id, name, arguments, gate_class, effect)
+            hook_context = gate.context
+            refusal = gate.block
+            if refusal is None and gate.ask is not None and effect == "auto":
+                if autonomy:
+                    # Nobody can approve an unattended call: asking is refusing.
+                    refusal = f"{gate.ask} (no one can approve it in an unattended run)"
+                else:
+                    effect, effect_reason = "ask", f"A hook asked for approval: {gate.ask}"
+            if refusal is not None:
+                return ToolResult(
+                    tool_call_id=tool_call_id,
+                    name=name,
+                    status="error",
+                    output=f"Blocked by a hook: {refusal}",
+                    error_code="hook_blocked",
+                    decision_class=decision_class,
+                )
+        if effect == "ask":
             if self.approval_handler is None:
                 raise UnclassifiedToolCall(
                     f"tool '{name}' requires approval but no approval handler is attached"
@@ -509,7 +535,7 @@ class ToolDispatcher:
                 arguments,
                 gate_class,
                 format_summary(tool, arguments, self.workspace),
-                decision.reason,
+                effect_reason,
             )
             if not approval.approved:
                 log.info(
@@ -533,9 +559,7 @@ class ToolDispatcher:
 
         # What let the call run without asking, for the audit (TD-5103):
         # the read-only list, only when no policy rule or approval decided.
-        allowed_by = (
-            classification.allowed_by if decision.effect == "auto" and decision.rule is None else ()
-        )
+        allowed_by = classification.allowed_by if effect == "auto" and decision.rule is None else ()
 
         # 3.25 Diff snapshot (TD-604).  A successful mutation reports the
         # change it made: snapshot the canonical write targets before the
@@ -713,6 +737,11 @@ class ToolDispatcher:
         image_png: bytes | None = None
         if name in {"desktop_screenshot", "browser_screenshot"} and isinstance(output, str):
             output, image_png = peel_screenshot_png(output)
+
+        # 4.05 After-tool hooks (TD-5134): what they say goes back with the
+        #     result. A block cannot undo the call; the model is told.
+        if hooks is not None:
+            output = await after_tool(hooks, tool_call_id, name, arguments, output, hook_context)
 
         # 4. Truncate. fs_read's marker names offset/limit; other tools
         #    keep the historical marker (TD-4839).
