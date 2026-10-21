@@ -670,6 +670,13 @@ class ToolDispatcher:
             hook_runs, hook_note = await run_after_write(session, list(canonical_writes.values()))
             if hook_note:
                 output = f"{output}\n\n{hook_note}"
+            # TD-5139: what a language server now finds in the files, after
+            # the hooks so it judges the file as the formatter left it.
+            from ..lsp.diagnostics import diagnostics_after_write
+
+            lsp_note = await diagnostics_after_write(session, list(canonical_writes.values()))
+            if lsp_note:
+                output = f"{output}\n\n{lsp_note}"
 
         # 3.2.1 Touch-tracking (TD-503).  The handler ran, so the call's
         #      path targets are genuinely in play: record them on the

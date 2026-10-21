@@ -11693,6 +11693,44 @@ after-write hook (TD-5134 keeps its hooks in the container; these have no
 container path). Tests: `test_an_autonomous_session_runs_no_hook_on_the_host`,
 core/tests/test_docs_config_reference.py.
 
+### TD-5139 — Language-server diagnostics and navigation
+**Size:** 8 · **Depends on:** none · Gap audit 2026-10-14
+
+Small local models find their way around a codebase far better when they
+can ask a language server where a symbol is defined and are told about a
+type error the moment they write it. Claude Code ships code-intelligence
+plugins built on language servers; TST Desk had none.
+
+**Acceptance criteria:**
+- [x] Per-language LSP servers are configured in config and launched over
+      stdio on loopback (`lsp.servers` in config.yaml: `command`, `match`,
+      `language_id`; a `--port`/`--socket`/`--tcp`/`--listen`-style
+      argument is a load error; the child's stdin/stdout carry LSP and no
+      socket is opened; core/tests/test_lsp.py `TestConfig`)
+- [x] After fs_write/fs_edit, new diagnostics for the touched files come
+      back with the tool result (only errors and warnings the model was
+      not already told about; "no problems left" when fixed; a clean file
+      adds nothing; core/tests/test_lsp.py `TestDiagnosticsAfterWrite`)
+- [x] Class A tools for definition, references and symbols
+      (`lsp_definition`, `lsp_references`, `lsp_symbols`, static Class A
+      by the `lsp-read` rule inside the workspace and allowed in plan mode;
+      core/tests/test_lsp.py `TestNavigation`)
+
+Done (2026-10-21): `core/tstd/lsp/` holds a stdio JSON-RPC client
+(`client.py`), the daemon's pool of running servers, one per workspace and
+entry, reaped after `lsp.idle_seconds` and closed on daemon shutdown
+(`pool.py`), and the after-write diagnostics the dispatcher folds into
+`fs_write`/`fs_edit` results after the `after_write` hooks
+(`diagnostics.py`). `core/tstd/tools/lsp.py` holds the three tools; they
+are registered only when a server is configured, so an unconfigured
+install pays no prompt tokens for them. A position is a 1-based line plus
+the symbol's name (or a column), converted to the server's UTF-16/UTF-8
+units. Servers run with secrets stripped from their environment, in their
+own process group. Only the user's config.yaml can list a server; an
+autonomous session starts none. The gap audit said "split before
+building"; the approach is recorded in DECISIONS.md instead. Docs:
+docs/configuration.md §2 `lsp` and §4.4, docs/architecture.md seams.
+
 ## Epic E53 — Connectors
 
 Owner-approved scope 2026-10-02. A connector is a local sign-in to a
