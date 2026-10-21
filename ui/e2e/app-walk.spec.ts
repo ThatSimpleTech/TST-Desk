@@ -226,6 +226,42 @@ test("shows the context gauge on a phone's width", async () => {
 	await page.setViewportSize({ width: 1280, height: 800 });
 });
 
+// TD-5171: on a phone's width an open panel fills the screen alone; the
+// sessions list or the activity pane never shares it with the chat.
+test("shows one panel at a time on a phone's width", async () => {
+	await page.setViewportSize({ width: 375, height: 812 });
+	const chat = page.locator(".pane-chat");
+	const rail = page.locator(".rail");
+	const activity = page.locator(".pane-activity");
+	const sessionsBtn = page.getByRole("button", { name: "Show sessions" });
+	const activityBtn = page.getByRole("button", { name: /activity pane/ });
+	const width = async (l: typeof chat) => (await l.boundingBox())?.width ?? 0;
+
+	await expect(chat).toBeVisible();
+	await expect(rail).toBeHidden();
+	await expect(activity).toBeHidden();
+
+	await sessionsBtn.click();
+	await expect(rail).toBeVisible();
+	await expect(chat).toBeHidden();
+	expect(await width(rail)).toBeGreaterThan(360);
+
+	await activityBtn.click();
+	await expect(activity).toBeVisible();
+	await expect(rail).toBeHidden();
+	await expect(chat).toBeHidden();
+	expect(await width(activity)).toBeGreaterThan(360);
+
+	await sessionsBtn.click();
+	await expect(activity).toBeHidden();
+	await expect(rail).toBeVisible();
+	await sessionsBtn.click();
+	await expect(rail).toBeHidden();
+	await expect(chat).toBeVisible();
+	expect(await width(chat)).toBeGreaterThan(360);
+	await page.setViewportSize({ width: 1280, height: 800 });
+});
+
 test("plans read-only and reviews the plan on a phone's width", async () => {
 	await page.setViewportSize({ width: 375, height: 812 });
 	const bar = page.getByRole("group", { name: "Model" });
