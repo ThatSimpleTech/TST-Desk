@@ -9657,11 +9657,23 @@ client.
       it on; 60 turns 9 times off and 2 times on (DECISIONS.md, with the
       prefix-rebuild cost). The scripted model never needs a cleared
       output, so this cannot show whether clearing causes tool re-runs
-- [ ] Measured on EZER: fewer compactions on a long session, against the
-      live local model in the running app. Not done: it needs this change
-      deployed, which this story does not do
+- [x] Measured on EZER: fewer compactions on a long session, against the
+      live local model (TD-5162, 2026-10-21). Current main in a separate
+      daemon with its own data dir and Adam's config.yaml (`tst-default`,
+      ezer-forge through LiteLLM, 65,536-token tier, compaction at
+      45,875), the same seed repo and prompts, each turn a `tst run
+      --continue` reading two ~10k-character files and grepping: over the
+      7 turns both runs completed, clearing off compacted once (turn 7,
+      39 messages folded, 47,668 to 15,673 estimated tokens) and clearing
+      on never (one clear at turn 7: 10 results cleared, all 38 messages
+      kept verbatim, 46,421 to 17,835). Peak real prompt per turn, off /
+      on: 13.7k/13.7k, 20.6k/19.6k, 26.7k/25.7k, 34.1k/33.0k, 42.1k/41.0k,
+      42.4k/41.4k, 42.6k/41.6k. Short (one compaction cycle, inside the
+      ~60-minute forge budget); a longer run is a follow-up in
+      DECISIONS.md. Not the window's own daemon: the measurement must not
+      touch the running app
 
-**Status:** Blocked — merged, but the live measurement above (AC3) is not done (TD-5160 review).
+**Status:** Done — the live measurement above was made in TD-5162.
 - [x] A clear is announced as `context_compacted` with the trigger
       `clear_stale` (`dropped_messages` counts the results cleared), shown
       as the quiet "Trim" row previewed "Cleared earlier tool results";
@@ -10512,6 +10524,35 @@ fix); one that is not, or no longer applies, says why.
       for code that was already right (note 21's counter test, the key
       framings in note 13, the native-thread lines in note 31); ruff, mypy,
       tsc and vitest pass; DECISIONS.md has the TD-5160 entry
+
+### TD-5162 — Measure TD-5115 stale-result clearing on EZER
+**Size:** 2 · **Depends on:** TD-5115, TD-5111
+
+TD-5115's last criterion asked for a live measurement: fewer compactions
+on a long session against the local model. This measures it without
+touching the running app: current main in its own daemon and data dir,
+on a scratch git repo, through `tst run --continue`.
+
+**Acceptance criteria:**
+- [x] A separate daemon with its own scratch `--data-dir` (Adam's
+      config.yaml and token calibration copied in, only
+      `clear_tool_results.enabled` and `session.log_max_events` changed),
+      on a scratch git repo seeded with 40 real `tstd` modules;
+      `~/.local/share/tst-desk` and the window's daemon untouched
+- [x] Forge `/slots` checked idle before every turn; a run stops rather
+      than send while someone else's request is in flight (it did, twice,
+      and waited out a busy forge in between); forge time about 25
+      minutes of turns in all
+- [x] The same prompts and seed files with clearing on and off; real
+      compactions (`context_compacted` with trigger `auto`) counted apart
+      from clears and in-turn trims, and each turn's peak real prompt
+      tokens read from the scratch `audit.db`
+      (`core/scripts/measure_clear_stale.py`, tested in
+      `core/tests/test_measure_clear_stale.py`)
+- [x] Result: over the 7 turns both runs finished, 1 compaction with
+      clearing off, 0 with it on (1 clear, landing 2.2k estimated tokens
+      above where the compaction did, with every message kept); TD-5115's criterion ticked with the numbers
+      and DECISIONS.md has the results and the follow-up (a longer run)
 
 ### TD-5111 — `tst run` for scripts
 **Size:** 3 · **Depends on:** none · Gap audit 2026-10-14
