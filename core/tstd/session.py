@@ -364,6 +364,9 @@ class Session:
         self._resume_event = asyncio.Event()
         # Workspace boundary (TD-706), resolved by the daemon on open.
         self.boundary_config = BoundaryConfig()
+        # Shell calls the gate let run unasked because they run under
+        # bubblewrap (TD-5138). The shell tool refuses one it no longer can.
+        self.bwrap_promised: set[str] = set()
         # Tier router (TD-1006 / TD-4603), attached by the daemon on
         # open so ``set_tier`` and ``set_plan`` reach the live loop.
         # Plan mode lives on the router. ``None`` on a restored

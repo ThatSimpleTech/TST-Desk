@@ -161,6 +161,11 @@ def _boundary_loosened(path: Path, data: dict[str, Any]) -> list[Loosened]:
     # as it names one.
     for check in cfg.stop_check.checks:
         out.append(Loosened("stop_check.checks", check, "none"))
+    # A repo that turns on auto-run in its own sandbox would run commands
+    # without asking (TD-5138). ``enabled`` and ``exclude`` alone never loosen:
+    # an excluded command still goes through the normal gate.
+    if cfg.sandbox.enabled and cfg.sandbox.auto_allow:
+        out.append(Loosened("sandbox.auto_allow", "true", "false (each command asks)"))
     return out
 
 

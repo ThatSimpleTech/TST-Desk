@@ -19,6 +19,10 @@ workspace as the working directory.  Three safety rails surround it:
   (TD-5116): a systemd user scope where one works, else ``RLIMIT_AS``,
   and Podman's ``--memory`` in a container.  A command killed for going
   over says so in its result (``shell_memory.py``).
+- **Sandbox (opt-in).**  With ``sandbox.enabled`` in the workspace config
+  an interactive command runs under bubblewrap: writes fenced to the
+  workspace and a private ``/tmp``, no network, keys unreadable
+  (TD-5138, ``shell_sandbox.py``).
 - **``allowed_commands`` allowlist.**  When configured, each top-level
   segment's leading binary is resolved with ``shutil.which`` and matched
   by basename.  Unresolvable binaries and unparseable commands are
@@ -64,6 +68,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from .. import shell_sandbox
 from ..autonomy.sandbox import WORKSPACE_DEST as _AUTONOMY_WORKSPACE
 from ..proc_lifecycle import (
     kill_left_leader_running,
@@ -545,20 +550,60 @@ def _format_result(
     return "\n".join(lines)
 
 
+def _sandbox_for(session: Session, command: str, tool_call_id: str) -> bool:
+    """Whether *command* runs in the interactive sandbox (TD-5138).
+
+    Raises:
+        ValueError: The sandbox applies but this host cannot run it, or
+            the gate let the call run unasked and the sandbox no longer
+            applies (the config changed in between). Never falls back to
+            the host: an unsandboxed run is what the user did not approve.
+    """
+    promised = tool_call_id in session.bwrap_promised
+    session.bwrap_promised.discard(tool_call_id)
+    sandboxed = shell_sandbox.applies(
+        session.boundary_config.sandbox, command, autonomy=session.autonomy
+    )
+    if promised and not sandboxed:
+        raise ValueError(
+            "refused: this command was allowed to run without asking because it would run "
+            "in the shell sandbox, and the sandbox no longer applies; run it again to be asked"
+        )
+    reason = shell_sandbox.unavailable_reason() if sandboxed else None
+    if reason is not None:
+        raise ValueError(f"refused: {reason}")
+    return sandboxed
+
+
 def _open_shell_process(
-    session: Session, command: str, cap: ShellMemoryCap | None = None
+    session: Session,
+    command: str,
+    cap: ShellMemoryCap | None = None,
+    sandboxed: bool = False,
 ) -> Awaitable[asyncio.subprocess.Process]:
     """Host shell for interactive sessions; container argv when autonomous.
 
-    *cap* is the memory cap the command runs under (TD-5116).
+    *cap* is the memory cap the command runs under (TD-5116). *sandboxed*
+    wraps the interactive command in bubblewrap (TD-5138).
     """
     env = sanitized_env()
     if not session.autonomy:
         # A git command the read-only list reads runs with git's command
         # hooks pinned off (TD-5103). The container needs none of this.
         env.update(run_env(command, env, Path(session.workspace_path)))
+        text = command
+        if sandboxed:
+            # Session state lives at <data dir>/sessions/<id>: hide that root.
+            persist = session.persist_dir
+            plan = shell_sandbox.build_plan(
+                session.workspace_path,
+                command,
+                session.boundary_config.sandbox,
+                extra_hidden=[persist.parent.parent] if persist is not None else [],
+            )
+            text = plan.shell_text()
         return asyncio.create_subprocess_shell(
-            shell_memory.host_command(cap, command),
+            shell_memory.host_command(cap, text),
             cwd=session.workspace_path,
             env=env,
             stdout=asyncio.subprocess.PIPE,
@@ -633,22 +678,43 @@ async def run_shell(
     if session.stop_turn_requested:
         return "stopped — command not started"
 
+    # A background job runs in the sandbox too: it is the same call.
+    sandboxed = _sandbox_for(session, command, tool_call_id)
     if background:
         from .shell_background import start_job
 
-        return await start_job(session, command)
+        return await start_job(session, command, sandboxed=sandboxed)
 
+    # Guarded names a bind cannot pin (missing, symlinked) are checked after.
+    guard = shell_sandbox.guard_snapshot(session.workspace_path) if sandboxed else None
     cap = await shell_memory.plan_cap(session, sanitized_env())
-    proc = await spawn_shell(session, command, cap)
+    proc = await spawn_shell(session, command, cap, sandboxed=sandboxed, guard=guard)
     return await _run_foreground(
-        session, command, timeout_secs, tool_call_id, pol, proc, cap, on_timeout
+        session,
+        command,
+        timeout_secs,
+        tool_call_id,
+        pol,
+        proc,
+        cap,
+        on_timeout,
+        sandboxed=sandboxed,
+        guard=guard,
     )
 
 
 async def spawn_shell(
-    session: Session, command: str, cap: ShellMemoryCap | None
+    session: Session,
+    command: str,
+    cap: ShellMemoryCap | None,
+    *,
+    sandboxed: bool = False,
+    guard: shell_sandbox.GuardSnapshot | None = None,
 ) -> asyncio.subprocess.Process:
     """Start *command*, killing it again if this task is cancelled mid-spawn.
+
+    *sandboxed* runs it in bubblewrap; *guard* is the snapshot checked
+    again if the spawn is cancelled (TD-5138).
 
     Raises:
         ValueError: The shell could not be started.
@@ -658,7 +724,7 @@ async def spawn_shell(
     # and losing the handle would orphan the whole process group (TD-605
     # AC2; the TestCancel flake family).  On cancellation, wait for the
     # spawn to settle, kill the group, and let cancellation propagate.
-    spawn = asyncio.ensure_future(_open_shell_process(session, command, cap))
+    spawn = asyncio.ensure_future(_open_shell_process(session, command, cap, sandboxed))
     try:
         proc = await asyncio.shield(spawn)
     except asyncio.CancelledError:
@@ -674,6 +740,9 @@ async def spawn_shell(
             # must not fall through into ``proc.kill()``.
             if not kill_left_leader_running(spawned, kill_note):
                 await reap_subprocess(spawned, timeout=_KILL_GRACE_SECS)
+        if guard is not None:
+            for note in shell_sandbox.guard_restore(session.workspace_path, guard):
+                _log.warning("%s", note)
         # The outer ``finally`` does not cover this raise. Same close
         # rule: a dead transport is closed, a live leader is watched.
         retain_subprocess_transport(spawned)
@@ -692,8 +761,12 @@ async def _run_foreground(
     proc: asyncio.subprocess.Process,
     cap: ShellMemoryCap | None,
     on_timeout: OnTimeout,
+    *,
+    sandboxed: bool = False,
+    guard: shell_sandbox.GuardSnapshot | None = None,
 ) -> str:
     """Wait for a started command, streaming it, until it ends or times out."""
+    guard_notes: list[str] = []
     stdout_stream = proc.stdout
     stderr_stream = proc.stderr
     if stdout_stream is None or stderr_stream is None:  # pragma: no cover — PIPE guarantees both
@@ -730,7 +803,9 @@ async def _run_foreground(
         if not work_task.done() and on_timeout == "background" and not aborted:
             from .shell_background import adopt_job
 
-            header = await adopt_job(session, command, proc, work_task, route, timeout_secs)
+            header = await adopt_job(
+                session, command, proc, work_task, route, timeout_secs, guard=guard
+            )
             adopted = route.job is not None
         if not work_task.done() and not adopted:
             # Not a cancellation handler — this is the timeout and the
@@ -772,6 +847,12 @@ async def _run_foreground(
         # command's job watcher owns the transport and the work task now.
         if not adopted:
             retain_subprocess_transport(proc)
+        # Before any await: a cancelled run is checked too. An adopted
+        # command is checked by its job watcher when it ends (TD-5138).
+        if guard is not None and not adopted:
+            guard_notes = shell_sandbox.guard_restore(session.workspace_path, guard)
+            for note in guard_notes:
+                _log.warning("%s", note)
         for task in (cancel_task,) if adopted else (work_task, cancel_task):
             if task is not None and not task.done():
                 task.cancel()
@@ -779,7 +860,8 @@ async def _run_foreground(
                     await task
 
     if adopted:
-        return _format_result(header, None, out, err)
+        adopted_note = shell_sandbox.SANDBOX_NOTE if sandboxed else ""
+        return _format_result(header, None, out, err, adopted_note)
     # A cancelled process may have no returncode; -9 is the conventional
     # "killed by SIGKILL" sentinel (SIGKILL itself is absent on Windows).
     exit_code = proc.returncode if proc.returncode is not None else -9
@@ -790,5 +872,8 @@ async def _run_foreground(
     wrote = writes_workspace_files(command, session.workspace_path, mount=mount)
     # A command this tool killed (timeout, cancel, stop) already says why.
     memory = "" if header else await shell_memory.cap_note(cap, exit_code, err.tail)
-    notes = "\n".join(n for n in (memory, SHELL_WRITE_NOTE if wrote else "") if n)
+    sandbox = shell_sandbox.SANDBOX_NOTE if sandboxed else ""
+    notes = "\n".join(
+        n for n in (sandbox, *guard_notes, memory, SHELL_WRITE_NOTE if wrote else "") if n
+    )
     return _format_result(header, exit_code, out, err, notes)

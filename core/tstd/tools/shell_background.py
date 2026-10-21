@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from typing import Any
 
+from .. import shell_sandbox
 from ..proc_lifecycle import reap_subprocess, retain_subprocess_transport
 from ..session import Session
 from ..shell_jobs import ShellJob
@@ -35,6 +37,7 @@ from .shell import (
 )
 
 _REAP_SECS = 5.0
+_log = logging.getLogger(__name__)
 
 
 def job_refusal(session: Session) -> str | None:
@@ -62,23 +65,36 @@ async def _watch(
     job: ShellJob,
     proc: asyncio.subprocess.Process,
     work: asyncio.Future[Any],
+    guard: shell_sandbox.GuardSnapshot | None = None,
 ) -> None:
-    """Wait for the command to end by itself, then mark the job exited."""
+    """Wait for the command to end by itself, then mark the job exited.
+
+    A sandboxed job's guarded names are checked once it ends, however it
+    ended (TD-5138); what was moved aside is noted in the job's output.
+    """
     try:
         with contextlib.suppress(asyncio.CancelledError):
             await work
     finally:
         retain_subprocess_transport(proc)
+        if guard is not None:
+            for note in shell_sandbox.guard_restore(session.workspace_path, guard):
+                _log.warning("%s", note)
+                job.append(f"\n[{note}]\n")
     await session.shell_jobs.finished(job, proc.returncode)
 
 
-async def start_job(session: Session, command: str) -> str:
-    """Start *command* as a background job and return the job id line."""
+async def start_job(session: Session, command: str, *, sandboxed: bool = False) -> str:
+    """Start *command* as a background job and return the job id line.
+
+    *sandboxed* runs it in the interactive shell sandbox (TD-5138).
+    """
     refusal = job_refusal(session)
     if refusal is not None:
         raise HandlerRefusal("shell_job_refused", refusal)
+    guard = shell_sandbox.guard_snapshot(session.workspace_path) if sandboxed else None
     cap = await shell_memory.plan_cap(session, sanitized_env())
-    proc = await spawn_shell(session, command, cap)
+    proc = await spawn_shell(session, command, cap, sandboxed=sandboxed, guard=guard)
     stdout, stderr = proc.stdout, proc.stderr
     if stdout is None or stderr is None:  # pragma: no cover — PIPE guarantees both
         retain_subprocess_transport(proc)
@@ -92,13 +108,15 @@ async def start_job(session: Session, command: str) -> str:
         _drain(stderr, "stderr", session, "", unused, route),
         proc.wait(),
     )
-    job.watcher = asyncio.create_task(_watch(session, job, proc, work), name=job.job_id)
+    job.watcher = asyncio.create_task(_watch(session, job, proc, work, guard), name=job.job_id)
     await session.shell_jobs.add(job)
+    sandbox = f"\n{shell_sandbox.SANDBOX_NOTE}" if sandboxed else ""
     return (
         f"started background job {job.job_id} (pid {proc.pid}).\n"
         f"Read its output with shell_job_output job_id={job.job_id}; "
         f"end it with shell_job_stop job_id={job.job_id}. "
         "It stops when the session ends."
+        f"{sandbox}"
     )
 
 
@@ -109,6 +127,8 @@ async def adopt_job(
     work: asyncio.Task[None],
     route: _Route,
     timeout_secs: int,
+    *,
+    guard: shell_sandbox.GuardSnapshot | None = None,
 ) -> str:
     """Move a command that hit its timeout to a job. Returns the result header.
 
@@ -119,7 +139,7 @@ async def adopt_job(
         return ""
     job = session.shell_jobs.new_job(command, lambda: _kill_and_reap(proc))
     route.job = job
-    job.watcher = asyncio.create_task(_watch(session, job, proc, work), name=job.job_id)
+    job.watcher = asyncio.create_task(_watch(session, job, proc, work, guard), name=job.job_id)
     await session.shell_jobs.add(job)
     return (
         f"still running after {timeout_secs}s — moved to background job {job.job_id}. "

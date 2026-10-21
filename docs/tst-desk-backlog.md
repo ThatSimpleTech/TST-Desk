@@ -11732,6 +11732,50 @@ deny-and-continue`; `test_a_scheduled_turn_cannot_start_jobs`,
 start one. A revived session logs the old daemon's running jobs
 as `lost`. Approach and limits in DECISIONS.md.
 
+### TD-5138 — Sandbox for interactive shell
+**Size:** 8 · **Depends on:** TD-5101 · Gap audit 2026-10-14
+
+Only autonomy runs were contained (Podman); an interactive shell command
+ran straight on the host. Decided 2026-10-14: bubblewrap on Linux for
+interactive commands, Podman stays for autonomy runs.
+
+**Acceptance criteria:**
+- [x] An opt-in sandbox (bubblewrap on Linux, decided 2026-10-14; Podman
+      stays for autonomy runs) runs interactive shell commands with writes
+      fenced to the workspace and temp, and network off or allow-listed
+      (`sandbox.enabled` in `.tst/config.yaml`; read-only root, writable
+      workspace, private `/tmp`, every namespace unshared so no TCP/IP,
+      and a seccomp filter refusing `socket(AF_UNIX)` and io_uring so no
+      host socket file such as docker.sock; `.git` and steering files
+      read-only; core/tests/test_shell_sandbox.py `TestRealSandbox`,
+      `test_network_off`, `test_no_host_unix_sockets`,
+      `test_git_dir_cannot_be_swapped_for_a_planted_config`,
+      `test_missing_steering_file_created_inside_is_moved_aside`)
+- [x] Inside the sandbox, commands that would otherwise ask can auto-run,
+      configured per workspace. Commands on an exclude list run outside
+      it, through the normal gate (`sandbox.auto_allow`, `sandbox.exclude`;
+      `TestPromote`, `TestGateEndToEnd`)
+- [x] `~/.ssh`, `~/.aws` and keychain paths are unreadable inside it
+      (mode-000 tmpfs over them, the keyrings, TST Desk's data dir and
+      `$XDG_RUNTIME_DIR`; `test_keys_unreadable`)
+
+Done (2026-10-21): `core/tstd/shell_sandbox.py` builds the `bwrap` argv
+and decides promotion. The shell tool wraps a sandboxed command in it
+under the memory cap (TD-5116) and refuses, never falls back to the host,
+when bwrap is missing or the platform is not Linux. The dispatcher turns
+only a class-default `ask` of a Class A/B shell call into `auto`, after
+policy and before hooks; a workspace `ask` rule, Class C, a `never` rule
+and an unsplittable line keep their effect. The promise is recorded per
+tool call and the shell tool refuses a promised call the sandbox no
+longer covers. Steering files, `.tst/` and the whole `.git` are
+read-only inside; a guarded name that is missing or a symlink is checked
+after the run and anything put there is moved aside (review of #63: the
+earlier `.git/config`/`.git/hooks` pins could be renamed away, and
+socket files on the read-only root were reachable). A repo-shipped `auto_allow` waits for trust
+(TD-5113). Network allow-listing is not offered: off is the only mode
+(see DECISIONS.md). CI's python job installs bubblewrap; the real-run
+tests skip where bwrap cannot start.
+
 ## Epic E53 — Connectors
 
 Owner-approved scope 2026-10-02. A connector is a local sign-in to a

@@ -93,6 +93,7 @@ from tstd.config import (
 from tstd.hooks_config import AfterWriteHook, HookEntry, HooksConfig, load_workspace_hooks
 from tstd.logging import LINUX_DATA_DIR_NAME
 from tstd.policy import PolicyConfig, PolicyRule, load_approved_imports, load_policy
+from tstd.shell_sandbox import SandboxSection
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 DOC = ROOT / "docs" / "configuration.md"
@@ -263,6 +264,7 @@ _MEMORY_FIELDS = frozenset(MemorySection.model_fields)
 _WORKTREE_FIELDS = frozenset(WorktreeConfig.model_fields)
 _WORKSPACE_WORKTREE_FIELDS = frozenset(WorktreeSection.model_fields)
 _STOP_CHECK_FIELDS = frozenset(StopCheckSection.model_fields)
+_SANDBOX_FIELDS = frozenset(SandboxSection.model_fields)
 _ATTACHMENT_FIELDS = frozenset(AttachmentLimits.model_fields)
 _AFTER_WRITE_FIELDS = frozenset(AfterWriteHook.model_fields)
 _POLICY_FIELDS = frozenset(PolicyConfig.model_fields)
@@ -308,6 +310,8 @@ def _check_workspace(data: dict[str, Any], where: str) -> None:
         _check_keys(data["worktree"], _WORKSPACE_WORKTREE_FIELDS, f"{where} worktree")
     if "stop_check" in data:
         _check_keys(data["stop_check"], _STOP_CHECK_FIELDS, f"{where} stop_check")
+    if "sandbox" in data:
+        _check_keys(data["sandbox"], _SANDBOX_FIELDS, f"{where} sandbox")
     if "policy" in data:
         _check_keys(data["policy"], _POLICY_FIELDS, f"{where} policy")
         for i, rule in enumerate(data["policy"].get("rules", [])):
@@ -490,6 +494,7 @@ def test_every_config_key_is_documented() -> None:
         | _WORKTREE_FIELDS
         | _WORKSPACE_WORKTREE_FIELDS
         | _STOP_CHECK_FIELDS
+        | _SANDBOX_FIELDS
         | _ATTACHMENT_FIELDS
         | _HOOKS_FIELDS
         | _AFTER_WRITE_FIELDS

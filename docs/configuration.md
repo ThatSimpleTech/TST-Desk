@@ -3033,6 +3033,7 @@ them when:
 | `worktree.setup` | It names a command. The daemon runs it in each new worktree (TD-5126), so a repo-shipped one waits for your trust; until then the new chat says it was skipped. |
 | `mcp_servers` | The key is set at all. TST Desk does not read it from a workspace yet; it is judged now so a later feature cannot run it untrusted. |
 | `hooks` | The key is set at all. Each hook is a command TST Desk runs on its own (§4.12), and `hooks.after_write` runs one after every write the agent makes, so a repo's hooks run only once you trust the file. |
+| `sandbox.auto_allow` | It is `true` with `sandbox.enabled` (TD-5138): commands would run without asking. `enabled` and `exclude` alone never loosen. |
 | `stop_check.checks` | It names any check (TD-5124). A check runs on its own whenever the model ends a turn: a command through the shell tool, or a statement that goes to the model as a message when it fails. |
 
 Tightening never asks: `allowed_commands`, `ask` and `never` rules, `class_c_default: never`,
@@ -3227,6 +3228,68 @@ hooks:
 
 A `hooks` section that does not validate (an unknown key, a `command` with no program) applies
 none of its hooks, and the rest of the file still loads.
+
+### 4.13 `sandbox` — run shell commands under bubblewrap (TD-5138)
+
+Off by default. With `enabled: true`, every interactive `shell` command runs under
+[bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) on Linux. Autonomy runs keep
+their Podman container (§2 `autonomy`); this section does not touch them.
+
+Inside the sandbox:
+
+- **Writes reach only the workspace and a private `/tmp`.** The rest of the filesystem is
+  read-only, and `/tmp` is a fresh empty tmpfs that is gone when the command ends.
+  `AGENTS.md`, `CLAUDE.md`, `.tst/` and the whole `.git` are read-only too, so a command
+  cannot edit steering, rewrite this file's policy, or plant a git hook or `core.fsmonitor`
+  that your next `git status` on the host runs. Each is a mount point inside, so it cannot be
+  renamed away either. A guarded name that is missing, or is a symlink, is checked after the
+  command: whatever the command put there is moved aside to `<name>.sandbox-blocked-<time>`
+  (never deleted), a replaced symlink is put back, and the result says `blocked:`. Because
+  `.git` is read-only, git commands that write (`git add`, `git commit`, `git checkout`) fail
+  inside; put them on `exclude` to run them on the host through the gate. A *new* steering
+  file in a subfolder can still be written.
+- **There is no network and no host socket.** Every namespace is unshared (TCP/IP, loopback
+  and abstract sockets are gone), and a seccomp filter refuses `socket(AF_UNIX)` and io_uring,
+  so a command cannot reach a host daemon through a socket file either: `/run/docker.sock`,
+  tailscaled, the system D-Bus. `socketpair` still works. A command that needs the network or
+  a local daemon (`npm install`, `git push`, `docker`, Python's `multiprocessing` with the
+  `forkserver` start method) goes on `exclude`. x86_64 and aarch64 only; elsewhere a command
+  that would be sandboxed is refused.
+- **Keys are unreadable.** `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.local/share/keyrings`,
+  `~/.password-store`, `~/.netrc`, `~/.git-credentials`, `~/.config/gh`, `~/.config/gcloud`,
+  `~/.azure`, `~/.docker`, `~/.kube`, TST Desk's data dir and your runtime dir
+  (`$XDG_RUNTIME_DIR`: the D-Bus socket the Secret Service keychain answers on, and the ssh
+  and gpg agents) are covered by an empty, unreadable folder. A file such as `~/.netrc` reads
+  as empty.
+- The command's result says `ran in the shell sandbox` under the exit code.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `enabled` | bool | `false` | Run interactive shell commands in the sandbox. On a host without `bwrap`, or off Linux, a command that would be sandboxed is refused, never run on the host. |
+| `auto_allow` | bool | `false` | Inside the sandbox, a command that would otherwise ask runs without asking. Only the default ask of a Class A or B call: an `ask` rule of your own still asks, Class C still asks, a `never` rule still refuses, a hook can still ask, and a line policy cannot split with confidence (§4.4) still asks. A repo-shipped file that sets it waits for your trust (§4.8). |
+| `exclude` | list of globs | `[]` | Commands matching one run outside the sandbox, on the host, through the normal gate (so they ask as usual). Matched against each command of the line the way `ask` and `never` rules are, so `docker *` also catches `cd x && sudo docker build .`. |
+| `hidden_paths` | list of paths | `[]` | More files or folders to make unreadable inside, on top of the list above. `~` is expanded. |
+
+<!-- verify: workspace -->
+```yaml
+sandbox:
+  enabled: true
+  auto_allow: true
+  exclude:
+    - "docker *"
+    - "git push*"
+    - "npm install*"
+  hidden_paths:
+    - "~/.config/my-tool/token"
+```
+
+If the config changes between the approval gate and the run, so that a command allowed to run
+unasked would no longer be sandboxed, the shell tool refuses it rather than running it on the
+host; running it again asks.
+
+A background job (`background: true`, or a command `on_timeout: "background"` moves to a job,
+TD-5137) runs in the sandbox under the same rule. Its guard check runs when the job ends, and
+any `blocked:` note goes to the job's output.
 
 ---
 

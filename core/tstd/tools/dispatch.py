@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 from jsonschema import ValidationError as SchemaError
 from jsonschema import validate as validate_schema
 
+from .. import shell_sandbox
 from ..after_write import WRITE_TOOLS, run_after_write
 from ..autonomy import (
     AmbiguousClassifier,
@@ -35,6 +36,7 @@ from ..plan_mode import PLAN_MODE_REFUSED, planning_refusal
 from ..policy import (
     ApprovalOutcome,
     PolicyConfig,
+    PolicyDecision,
     PolicyRule,
     format_summary,
     resolve_explained,
@@ -43,6 +45,7 @@ from ..policy import (
 )
 from ..protocol import AfterWriteRun, RunPermissions, WorkerStep
 from ..protocol import DecisionLogged as DecisionLoggedEvent
+from ..session import Session
 from .boundary import PathGuard, RefusalError, windows_unsafe_reason
 from .desktop import peel_screenshot_png
 from .diff import render_diff, snapshot_text
@@ -493,6 +496,9 @@ class ToolDispatcher:
         )
         if autonomy and gate_class is DecisionClass.C:
             self._record_class_c(decision.reason)
+        decision = self._sandbox_promotion(
+            tool_call_id, name, arguments, gate_class, decision, session
+        )
         if decision.effect == "never":
             log.warning(
                 "policy refusal",
@@ -847,6 +853,35 @@ class ToolDispatcher:
         )
 
     # ── Batch dispatch ────────────────────────────────────────────────
+
+    def _sandbox_promotion(
+        self,
+        tool_call_id: str,
+        name: str,
+        arguments: dict[str, Any],
+        gate_class: DecisionClass,
+        decision: PolicyDecision,
+        session: Any,
+    ) -> PolicyDecision:
+        """A shell ``ask`` that runs unasked inside the sandbox (TD-5138).
+
+        The promise is recorded on the session, and the shell tool refuses
+        a promised call it cannot sandbox, so the auto-run never lands on
+        the host. Hooks still run after this and can turn it back to ask.
+        """
+        if name != "shell" or not isinstance(session, Session):
+            return decision
+        promoted = shell_sandbox.promote(
+            session.boundary_config.sandbox,
+            arguments.get("command"),
+            decision,
+            gate_class,
+            autonomy=session.autonomy,
+        )
+        if promoted is None:
+            return decision
+        session.bwrap_promised.add(tool_call_id)
+        return promoted
 
     async def dispatch_many(
         self,
