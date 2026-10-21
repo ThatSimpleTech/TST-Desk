@@ -232,8 +232,9 @@ class PathGuard:
             raise RefusalError(
                 "steering_file",
                 target,
-                "steering files (AGENTS.md/CLAUDE.md/.tst/rules) and the "
-                "approval policy (.tst/config.yaml) are read-only; to change a "
+                "steering files (AGENTS.md/CLAUDE.md/.tst/rules), named worker "
+                "definitions (.tst/agents) and the approval policy "
+                "(.tst/config.yaml) are read-only; to change a "
                 "steering file, propose it with propose_steering_edit",
             )
         root = self.boundary.workspace_root

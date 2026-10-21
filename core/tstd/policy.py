@@ -23,7 +23,7 @@ import fnmatch
 import json
 import os
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -102,6 +102,30 @@ def with_run_rules(config: PolicyConfig, run: RunPermissions | None) -> PolicyCo
         *(RunPolicyRule(tool=r.tool, args=r.args, effect="auto") for r in run.allow),
     ]
     return config.model_copy(update={"rules": [*config.rules, *extra]})
+
+
+class WorkerPolicyRule(PolicyRule):
+    """A rule from a named worker's definition (TD-5133).
+
+    Only ``ask`` or ``never``: the definition loader refuses ``auto``, and
+    resolution is deny first, so one can only tighten what the workspace
+    policy allows. It lives only in that worker's child dispatcher.
+    """
+
+    worker: str = ""
+
+
+def with_worker_rules(config: PolicyConfig, rules: Sequence[PolicyRule]) -> PolicyConfig:
+    """*config* with a named worker's rules beside its own (TD-5133).
+
+    A rule that would loosen (``auto``) is dropped here too, so a caller
+    that skipped the loader still cannot widen the policy. *config* itself
+    is not changed.
+    """
+    tighter = [r for r in rules if r.effect != "auto"]
+    if not tighter:
+        return config
+    return config.model_copy(update={"rules": [*config.rules, *tighter]})
 
 
 @dataclass(frozen=True)
@@ -319,7 +343,11 @@ def _targets(tool: Tool, arguments: dict[str, Any], workspace: Path | None) -> _
 
 def _named(rule: PolicyRule) -> str:
     named = f"`{rule.tool}: {rule.args}`"
-    return f"{named} (this run)" if isinstance(rule, RunPolicyRule) else named
+    if isinstance(rule, RunPolicyRule):
+        return f"{named} (this run)"
+    if isinstance(rule, WorkerPolicyRule):
+        return f"{named} (worker {rule.worker})"
+    return named
 
 
 def _on(text: str) -> str:
