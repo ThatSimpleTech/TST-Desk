@@ -375,7 +375,7 @@ class TestStdioLoad:
         try:
             builtin = registry.require("fs_read")
             assert builtin.provenance is None
-            assert "Read a text file" in builtin.description
+            assert builtin.description.startswith("Read a file.")
             mcp_tool = registry.require("collide__fs_read")
             assert mcp_tool.provenance == "mcp:collide"
         finally:

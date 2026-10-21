@@ -847,7 +847,9 @@ In `core/tstd/tools/handlers.py`. Handlers are async and receive `session` and `
 plus the validated arguments, all as keyword arguments, and return a string. (A handler may
 instead return a `HandlerOutput` from `core/tstd/tools/results.py`: its `text` is the result,
 and its `transcript` goes on the `tool_result` event for the window and never to the model.
-`delegate` uses it for its child's steps, TD-5117.)
+`delegate` uses it for its child's steps, TD-5117. Its `images` go to the model as vision parts
+after the text and never onto an event or into a log; `fs_read` uses them for an image file or
+PDF page images when the session's `tool_vision` says the reading tier takes images, TD-5130.)
 
 <!-- verify: tool-handler -->
 ```python

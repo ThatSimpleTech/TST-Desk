@@ -11309,6 +11309,35 @@ Code document a model-written summary and what survives it.
 - [ ] versionCode 11 / 0.1.10, installs over 0.1.9 with the same keystore
 - [ ] Live: the agent on EZER sends an APK and the Pixel's installer opens
 
+### TD-5130 — fs_read opens images, PDFs and notebooks
+**Size:** 5 · **Depends on:** none · Gap audit 2026-10-14
+
+`fs_read` refused images and PDFs as binary and dumped notebooks as raw
+JSON, so the agent could not look at a screenshot already in the repo.
+Claude Code's read tool handles all three.
+
+**Acceptance criteria:**
+- [x] `fs_read` on an image returns it as an image part when the tier has
+      vision (TD-4705 path), or says it can't otherwise.
+- [x] `fs_read` on a PDF takes a page range and returns text. On a vision
+      tier it can also return page images.
+- [x] `fs_read` on `.ipynb` returns cells and text outputs.
+
+Done (2026-10-20): the file's type comes from its bytes. An image goes to
+the model as an `image_url` part after one line of text when the tier the
+loop just called has `vision: true` (and `max_prompt_images` is not 0); a
+text-only tier gets a refusal that says so. A PDF returns page text under
+`── page N ──` markers through PDFium (`pypdfium2`), 10 pages by default,
+`pages="3"` or `"1-5"`, at most 20 a call with the next range named,
+and stops at whole pages under the dispatcher's result cap so a dense PDF
+still names the next page instead of hitting the offset/limit marker;
+`page_images: true` on a vision tier adds PNG page images (at most 5 and
+at most `max_prompt_images`). A notebook returns each cell's source and its
+stream, result and error outputs, colour codes stripped, windowed by
+`limit`/`offset`. Delegate workers get the same, judged by the worker
+tier. Tests: core/tests/test_fs_read_media.py (handler, dispatch and the
+loop with the mock provider).
+
 ## Epic E53 — Connectors
 
 Owner-approved scope 2026-10-02. A connector is a local sign-in to a

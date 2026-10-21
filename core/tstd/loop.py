@@ -1097,19 +1097,28 @@ async def _build_assistant_tool_call(
     return provider_tool_calls
 
 
+def _image_part(mime: str, data: bytes) -> dict[str, Any]:
+    """One ``image_url`` part carrying *data* as a data URL (TD-4705)."""
+    url = f"data:{mime};base64," + base64.b64encode(data).decode("ascii")
+    return {"type": "image_url", "image_url": {"url": url}}
+
+
 def _tool_message_content(result: Any) -> Any:
-    """Tool output for the provider. Screenshots are a vision part, not text."""
+    """Tool output for the provider. Images are vision parts, not text.
+
+    A screenshot (TD-1729) and a file ``fs_read`` opened (TD-5130) both
+    follow the text, in that order.
+    """
     text = result.output
+    parts: list[dict[str, Any]] = []
     png = getattr(result, "image_png", None)
-    if not png:
+    if png:
+        parts.append(_image_part("image/png", png))
+    for image in getattr(result, "images", ()):
+        parts.append(_image_part(image.mime, image.data))
+    if not parts:
         return text
-    return [
-        {"type": "text", "text": text},
-        {
-            "type": "image_url",
-            "image_url": {"url": "data:image/png;base64," + base64.b64encode(png).decode("ascii")},
-        },
-    ]
+    return [{"type": "text", "text": text}, *parts]
 
 
 async def _dispatch_and_append_results(
@@ -2649,6 +2658,11 @@ async def agent_loop(
                         prefix_tokens,
                         effective_chars_per_token(counter),
                     )
+                    # The results go back to the model just called, so
+                    # its tier says whether fs_read may return an image
+                    # (TD-5130). After a backup switch that is the backup.
+                    session.tool_vision = tier_cfg.vision
+                    session.tool_max_images = config.computer_use.max_prompt_images
                     # Yield control so the event loop can process cancellation
                     # between the ToolCall event emission and the dispatch.
                     # 0.05s is enough for the test to detect the event and cancel.
