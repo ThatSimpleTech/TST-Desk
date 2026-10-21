@@ -11894,6 +11894,131 @@ after-write hook (TD-5134 keeps its hooks in the container; these have no
 container path). Tests: `test_an_autonomous_session_runs_no_hook_on_the_host`,
 core/tests/test_docs_config_reference.py.
 
+### TD-5137 — Background shell jobs
+**Size:** 8 · **Depends on:** TD-5101 · Gap audit 2026-10-14
+
+The shell tool was synchronous: it killed the process group at the
+timeout, so dev servers, watch builds and log tails could not run. Claude
+Code documents background commands and a tool that reads their output.
+
+**Acceptance criteria:**
+- [x] `shell` takes `background: true`. It returns a job id, and new tools
+      read new output and stop the job. Starting a job is classified like
+      any shell call (`shell_job_output` / `shell_job_stop`;
+      core/tests/test_shell_jobs.py, including
+      `test_starting_a_job_is_classified_like_any_shell_call` with plan mode
+      on and off and `test_a_background_start_still_asks`)
+- [x] The daemon owns the jobs (directive 5). It kills them when the
+      session ends and lists them in the UI (`Session.shell_jobs`, killed
+      by `Session.cancel` and `SessionRegistry.remove`; the `shell_jobs`
+      event and the Plan pane's "Background jobs" list;
+      `test_ending_the_session_kills_its_jobs`,
+      `test_removing_a_session_kills_its_jobs`, ui/src/lib/shell-jobs.test.ts)
+- [x] A command that hits the foreground timeout can be moved to the
+      background instead of being killed (`on_timeout: "background"`;
+      `test_a_timeout_can_move_the_command_to_the_background`; the default
+      still kills, `test_the_default_timeout_still_kills`)
+
+Done (2026-10-21): a job's output (stdout and stderr together) goes to a
+buffer on the session that keeps the last 200,000 unread characters;
+`shell_job_output` returns what is new since the last read (20,000 a call,
+`wait_secs` up to 30, no `job_id` lists the jobs) and `shell_job_stop`
+kills the whole process group. Both are Class A by the `shell-job` rule
+(builtin shape only); plan mode runs the read and refuses the stop. A
+session holds at most 8 running jobs. A delegated child and an unattended
+run (autonomy, a scheduled job's turn, or `tst run --on-ask
+deny-and-continue`; `test_a_scheduled_turn_cannot_start_jobs`,
+`test_a_deny_and_continue_run_cannot_start_jobs`,
+`test_a_scheduled_turn_is_marked_unattended_only_while_it_runs`) cannot
+start one. A revived session logs the old daemon's running jobs
+as `lost`. Approach and limits in DECISIONS.md.
+
+### TD-5138 — Sandbox for interactive shell
+**Size:** 8 · **Depends on:** TD-5101 · Gap audit 2026-10-14
+
+Only autonomy runs were contained (Podman); an interactive shell command
+ran straight on the host. Decided 2026-10-14: bubblewrap on Linux for
+interactive commands, Podman stays for autonomy runs.
+
+**Acceptance criteria:**
+- [x] An opt-in sandbox (bubblewrap on Linux, decided 2026-10-14; Podman
+      stays for autonomy runs) runs interactive shell commands with writes
+      fenced to the workspace and temp, and network off or allow-listed
+      (`sandbox.enabled` in `.tst/config.yaml`; read-only root, writable
+      workspace, private `/tmp`, every namespace unshared so no TCP/IP,
+      and a seccomp filter refusing `socket(AF_UNIX)` and io_uring so no
+      host socket file such as docker.sock; `.git` and steering files
+      read-only; core/tests/test_shell_sandbox.py `TestRealSandbox`,
+      `test_network_off`, `test_no_host_unix_sockets`,
+      `test_git_dir_cannot_be_swapped_for_a_planted_config`,
+      `test_missing_steering_file_created_inside_is_moved_aside`)
+- [x] Inside the sandbox, commands that would otherwise ask can auto-run,
+      configured per workspace. Commands on an exclude list run outside
+      it, through the normal gate (`sandbox.auto_allow`, `sandbox.exclude`;
+      `TestPromote`, `TestGateEndToEnd`)
+- [x] `~/.ssh`, `~/.aws` and keychain paths are unreadable inside it
+      (mode-000 tmpfs over them, the keyrings, TST Desk's data dir and
+      `$XDG_RUNTIME_DIR`; `test_keys_unreadable`)
+
+Done (2026-10-21): `core/tstd/shell_sandbox.py` builds the `bwrap` argv
+and decides promotion. The shell tool wraps a sandboxed command in it
+under the memory cap (TD-5116) and refuses, never falls back to the host,
+when bwrap is missing or the platform is not Linux. The dispatcher turns
+only a class-default `ask` of a Class A/B shell call into `auto`, after
+policy and before hooks; a workspace `ask` rule, Class C, a `never` rule
+and an unsplittable line keep their effect. The promise is recorded per
+tool call and the shell tool refuses a promised call the sandbox no
+longer covers. Steering files, `.tst/` and the whole `.git` are
+read-only inside; a guarded name that is missing or a symlink is checked
+after the run and anything put there is moved aside (review of #63: the
+earlier `.git/config`/`.git/hooks` pins could be renamed away, and
+socket files on the read-only root were reachable). A repo-shipped `auto_allow` waits for trust
+(TD-5113). Network allow-listing is not offered: off is the only mode
+(see DECISIONS.md). CI's python job installs bubblewrap; the real-run
+tests skip where bwrap cannot start.
+
+### TD-5139 — Language-server diagnostics and navigation
+**Size:** 8 · **Depends on:** none · Gap audit 2026-10-14
+
+Small local models find their way around a codebase far better when they
+can ask a language server where a symbol is defined and are told about a
+type error the moment they write it. Claude Code ships code-intelligence
+plugins built on language servers; TST Desk had none.
+
+**Acceptance criteria:**
+- [x] Per-language LSP servers are configured in config and launched over
+      stdio on loopback (`lsp.servers` in config.yaml: `command`, `match`,
+      `language_id`; a `--port`/`--socket`/`--tcp`/`--listen`-style
+      argument is a load error; the child's stdin/stdout carry LSP and no
+      socket is opened; core/tests/test_lsp.py `TestConfig`)
+- [x] After fs_write/fs_edit, new diagnostics for the touched files come
+      back with the tool result (only errors and warnings the model was
+      not already told about, remembered per session so sessions sharing
+      a server each hear every problem; URIs matched however the server
+      escapes them; "no problems left" when fixed; a clean file adds
+      nothing; no server in a workspace whose config is untrusted;
+      core/tests/test_lsp.py `TestDiagnosticsAfterWrite`, `TestUris`)
+- [x] Class A tools for definition, references and symbols
+      (`lsp_definition`, `lsp_references`, `lsp_symbols`, static Class A
+      by the `lsp-read` rule inside the workspace and allowed in plan mode;
+      core/tests/test_lsp.py `TestNavigation`)
+
+Done (2026-10-21): `core/tstd/lsp/` holds a stdio JSON-RPC client
+(`client.py`), the daemon's pool of running servers, one per workspace and
+entry, reaped after `lsp.idle_seconds` and closed on daemon shutdown
+(`pool.py`), and the after-write diagnostics the dispatcher folds into
+`fs_write`/`fs_edit` results after the `after_write` hooks
+(`diagnostics.py`). `core/tstd/tools/lsp.py` holds the three tools; they
+are registered only when a server is configured, so an unconfigured
+install pays no prompt tokens for them. A position is a 1-based line plus
+the symbol's name (or a column), converted to the server's UTF-16/UTF-8
+units. Servers run with secrets stripped from their environment, in their
+own process group. Only the user's config.yaml can list a server; an
+autonomous session starts none, and neither does a workspace whose
+`.tst/config.yaml` is pending or declined trust (review of PR #62). The gap audit said "split before
+building"; the approach is recorded in DECISIONS.md instead. Docs:
+docs/configuration.md §2 `lsp` and §4.4, docs/architecture.md seams.
+
 ## Epic E53 — Connectors
 
 Owner-approved scope 2026-10-02. A connector is a local sign-in to a

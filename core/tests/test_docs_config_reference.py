@@ -92,7 +92,9 @@ from tstd.config import (
 )
 from tstd.hooks_config import AfterWriteHook, HookEntry, HooksConfig, load_workspace_hooks
 from tstd.logging import LINUX_DATA_DIR_NAME
+from tstd.lsp_config import LspConfig, LspServerConfig
 from tstd.policy import PolicyConfig, PolicyRule, load_approved_imports, load_policy
+from tstd.shell_sandbox import SandboxSection
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 DOC = ROOT / "docs" / "configuration.md"
@@ -263,12 +265,15 @@ _MEMORY_FIELDS = frozenset(MemorySection.model_fields)
 _WORKTREE_FIELDS = frozenset(WorktreeConfig.model_fields)
 _WORKSPACE_WORKTREE_FIELDS = frozenset(WorktreeSection.model_fields)
 _STOP_CHECK_FIELDS = frozenset(StopCheckSection.model_fields)
+_SANDBOX_FIELDS = frozenset(SandboxSection.model_fields)
 _ATTACHMENT_FIELDS = frozenset(AttachmentLimits.model_fields)
 _AFTER_WRITE_FIELDS = frozenset(AfterWriteHook.model_fields)
 _POLICY_FIELDS = frozenset(PolicyConfig.model_fields)
 _RULE_FIELDS = frozenset(PolicyRule.model_fields)
 _HOOKS_FIELDS = frozenset(HooksConfig.model_fields)
 _HOOK_FIELDS = frozenset(HookEntry.model_fields)
+_LSP_FIELDS = frozenset(LspConfig.model_fields)
+_LSP_SERVER_FIELDS = frozenset(LspServerConfig.model_fields)
 
 
 def _check_keys(mapping: Any, fields: frozenset[str], where: str) -> None:
@@ -308,6 +313,8 @@ def _check_workspace(data: dict[str, Any], where: str) -> None:
         _check_keys(data["worktree"], _WORKSPACE_WORKTREE_FIELDS, f"{where} worktree")
     if "stop_check" in data:
         _check_keys(data["stop_check"], _STOP_CHECK_FIELDS, f"{where} stop_check")
+    if "sandbox" in data:
+        _check_keys(data["sandbox"], _SANDBOX_FIELDS, f"{where} sandbox")
     if "policy" in data:
         _check_keys(data["policy"], _POLICY_FIELDS, f"{where} policy")
         for i, rule in enumerate(data["policy"].get("rules", [])):
@@ -431,6 +438,10 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
             search = data["mcp"].get("tool_search")
             if isinstance(search, dict):
                 _check_keys(search, _MCP_TOOL_SEARCH_FIELDS, f"{where} mcp.tool_search")
+        if "lsp" in data:
+            _check_keys(data["lsp"], _LSP_FIELDS, f"{where} lsp")
+            for i, server in enumerate(data["lsp"].get("servers") or []):
+                _check_keys(server, _LSP_SERVER_FIELDS, f"{where} lsp.servers[{i}]")
         if "credentials" in data:
             for cid, body in data["credentials"].items():
                 _check_keys(body, _CREDENTIAL_FIELDS, f"{where} credentials.{cid}")
@@ -490,6 +501,7 @@ def test_every_config_key_is_documented() -> None:
         | _WORKTREE_FIELDS
         | _WORKSPACE_WORKTREE_FIELDS
         | _STOP_CHECK_FIELDS
+        | _SANDBOX_FIELDS
         | _ATTACHMENT_FIELDS
         | _HOOKS_FIELDS
         | _AFTER_WRITE_FIELDS
@@ -497,6 +509,8 @@ def test_every_config_key_is_documented() -> None:
         | _RULE_FIELDS
         | _HOOKS_FIELDS
         | _HOOK_FIELDS
+        | _LSP_FIELDS
+        | _LSP_SERVER_FIELDS
     )
     missing = [key for key in sorted(keys) if f"`{key}`" not in text]
     assert not missing, "undocumented config keys: " + ", ".join(missing)

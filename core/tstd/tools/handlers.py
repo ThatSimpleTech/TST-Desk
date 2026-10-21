@@ -45,7 +45,8 @@ from .results import DEFAULT_MAX_RESULT_CHARS, HandlerOutput, ToolImage
 from .search import DEFAULT_MAX_RESULTS, STOPPED, glob_crosses_folders, glob_matcher, grep
 from .send_file import send_file
 from .session_search import SessionRecall, register_session_search_handler
-from .shell import ShellPolicy, run_shell
+from .shell import OnTimeout, ShellPolicy, run_shell
+from .shell_job_tools import shell_job_output, shell_job_stop
 from .steering_edit import propose_steering_edit
 from .task_list import task_list
 from .tool_search import register_tool_search_handler
@@ -528,10 +529,20 @@ async def _shell_under_live_allowlist(
     tool_call_id: str = "",
     *,
     allowlist: Callable[[], tuple[str, ...] | None],
+    background: bool = False,
+    on_timeout: OnTimeout = "kill",
 ) -> str:
     """``run_shell`` with the allowlist read at the call, not at registration."""
     policy = ShellPolicy(allowed_commands=allowlist())
-    return await run_shell(session, command, timeout_secs, tool_call_id, policy=policy)
+    return await run_shell(
+        session,
+        command,
+        timeout_secs,
+        tool_call_id,
+        policy=policy,
+        background=background,
+        on_timeout=on_timeout,
+    )
 
 
 def register_builtin_handlers(
@@ -573,6 +584,8 @@ def register_builtin_handlers(
     else:
         shell = partial(run_shell, policy=ShellPolicy(allowed_commands=allowed_commands))
     dispatcher.register_handler("shell", shell)
+    dispatcher.register_handler("shell_job_output", shell_job_output)
+    dispatcher.register_handler("shell_job_stop", shell_job_stop)
     register_desktop_handlers(
         dispatcher,
         desktop_driver if desktop_driver is not None else MockDesktopDriver(),
@@ -597,6 +610,9 @@ def register_builtin_handlers(
     dispatcher.register_handler("exit_plan_mode", exit_plan_mode)
     register_tool_search_handler(dispatcher)
     register_session_search_handler(dispatcher, session_recall)
+    from .lsp import register_lsp_handlers
+
+    register_lsp_handlers(dispatcher)
     from ..connectors.github_tools import register_github_handlers
 
     register_github_handlers(dispatcher)

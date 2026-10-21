@@ -2167,6 +2167,10 @@ class Daemon:
         await phases.run("desktop", self.desktop_driver.aclose())
         await phases.run("browser", self.browser_driver.aclose())
         await phases.run("mcp", self._mcp.aclose())
+        # TD-5139: language servers are the daemon's children.
+        from .lsp import default_pool
+
+        await phases.run("lsp", default_pool().aclose())
 
     def _close_session_index(self) -> None:
         self._session_index.flush()
@@ -4081,6 +4085,8 @@ class Daemon:
         restore_pinned_plan(sess, loaded.events)
         # TD-5140: open steering proposals lived in the old process's memory.
         await expire_restored_steering(sess, loaded.events)
+        # TD-5137: so did its background shell jobs.
+        await sess.shell_jobs.expire_restored(loaded.events)
         await self._seal_cut_review(sess, loaded.events)
         await self._emit_working_context(sess, config_source(sess))
         log.info(
@@ -4351,9 +4357,11 @@ class Daemon:
             return await self._client_for(target)
 
         bound_search = sess.config.search if sess.config is not None else self.config.search
+        bound_lsp = sess.config.lsp if sess.config is not None else self.config.lsp
         tool_registry = create_registry(
             candidate_selection=self.config.judgments.candidate_selection,
             search=bound_search,
+            lsp_enabled=bool(bound_lsp.servers),
         )
         tool_dispatcher = ToolDispatcher(tool_registry)
         tool_dispatcher.skip_all_fn = lambda: self.skip_all_approvals

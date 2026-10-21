@@ -380,6 +380,18 @@ worktree:
 hooks:
   after_write: []
 
+# Language servers (TD-5139). Empty is none: nothing starts, and the
+# lsp_definition, lsp_references and lsp_symbols tools are not offered.
+# Each server runs as a child over stdio (never a socket) for the files
+# its patterns match; after an fs_write or fs_edit, its new errors and
+# warnings come back in that call's result. Only this file can list one,
+# never a workspace's .tst/config.yaml. Examples (docs/configuration.md §2):
+#   servers:
+#     - {name: pyright, command: "pyright-langserver --stdio", match: ["*.py"], language_id: python}
+#     - {name: rust-analyzer, command: "rust-analyzer", match: ["*.rs"], language_id: rust}
+lsp:
+  servers: []
+
 # Desktop computer-use (TD-3301). Empty command is mock-only — no sidecar,
 # no pointer motion. A non-empty command is argv for mcp/tst-cu-mcp over
 # stdio (no socket). The daemon owns the child.

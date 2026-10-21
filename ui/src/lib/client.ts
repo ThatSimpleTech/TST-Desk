@@ -73,6 +73,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "context_compacted",
   "context_usage",
   "task_list", // TD-5122
+  "shell_jobs", // TD-5137
   "worktree_state", // TD-5126
   "stop_check", // TD-5124
   "hook_run", // TD-5134

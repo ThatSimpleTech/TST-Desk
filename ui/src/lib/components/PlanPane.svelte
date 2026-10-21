@@ -7,6 +7,7 @@
 	import { session } from '../session-status.svelte.js';
 	import { progressLabel } from '../task-list';
 	import { pinnedPlanFor, taskListFor } from '../task-list-store.svelte.js';
+	import { jobStateLabel, shellJobsFor } from '../shell-jobs-store.svelte.js';
 	import Markdown from './chat/Markdown.svelte';
 
 	let comment = $state('');
@@ -25,9 +26,27 @@
 	let tasks = $derived(taskListFor(session.sessionId));
 	// TD-5123: the plan the person approved to end plan mode, pinned.
 	let pinned = $derived(pinnedPlanFor(session.sessionId));
+	// TD-5137: the session's background shell jobs. The daemon owns them;
+	// this only lists what its newest `shell_jobs` event says.
+	let jobs = $derived(shellJobsFor(session.sessionId));
+	let runningJobs = $derived(jobs.filter((job) => job.status === 'running').length);
 </script>
 
 <div class="plan">
+	{#if jobs.length > 0}
+		<section class="native" aria-label="Background jobs">
+			<p class="progress">Background jobs · {runningJobs} running</p>
+			<ul class="jobs">
+				{#each jobs as job (job.job_id)}
+					<li class="job">
+						<span class="status">{jobStateLabel(job)}</span>
+						<code class="command" title={job.command}>{job.command}</code>
+						<span class="id">{job.job_id}</span>
+					</li>
+				{/each}
+			</ul>
+		</section>
+	{/if}
 	{#if pinned !== '' || tasks.length > 0}
 		{#if pinned !== ''}
 			<section class="native" aria-label="Approved plan">
@@ -44,10 +63,12 @@
 	{:else if remoteName !== null}
 		<EmptyState align="start" body={staysOnCopy(remoteName)} />
 	{:else if !hasPlan}
-		<EmptyState
-			align="start"
-			body="The agent's task list lands here as it works, and so does a plan you approve to end plan mode. In Grok's plan mode the plan lands here too: approve it to start implementing, or type a revision note first."
-		/>
+		{#if jobs.length === 0}
+			<EmptyState
+				align="start"
+				body="The agent's task list lands here as it works, and so does a plan you approve to end plan mode. In Grok's plan mode the plan lands here too: approve it to start implementing, or type a revision note first."
+			/>
+		{/if}
 	{:else}
 		{#if grok.planEntries.length > 0}
 			<ol class="entries">
@@ -96,6 +117,33 @@
 		margin: 0;
 		color: var(--color-ink-muted);
 		font-size: var(--text-sm);
+	}
+	.jobs {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-1);
+		font-size: var(--text-sm);
+	}
+	.job {
+		display: flex;
+		align-items: baseline;
+		gap: var(--space-2);
+		min-width: 0;
+	}
+	.command {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-family: var(--font-mono);
+	}
+	.id {
+		color: var(--color-ink-muted);
+		font-size: 0.75rem;
 	}
 	.entries {
 		margin: 0;

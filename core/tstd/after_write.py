@@ -136,9 +136,14 @@ def as_argument(rel: str) -> str:
 
 
 def matches(hook: AfterWriteHook, rel: str) -> bool:
+    """Whether *hook*'s patterns pick workspace-relative *rel*."""
+    return patterns_match(hook.match, rel)
+
+
+def patterns_match(patterns: Sequence[str], rel: str) -> bool:
     """A pattern without ``/`` matches the file name, one with ``/`` the path."""
     name = PurePosixPath(rel).name
-    for pattern in hook.match:
+    for pattern in patterns:
         target = rel if "/" in pattern else name
         if fnmatchcase(target, pattern.lstrip("/")):
             return True

@@ -81,6 +81,7 @@ no effect.
 | `steering` | mapping | see below | User-global steering (TD-4845). Omitted in an older user copy is filled from the shipped file at load. |
 | `worktree` | mapping | see below | A git worktree per session (TD-5126). On by default: a session or scheduled job in a git repository works in its own worktree. Omitted in an older user copy is the defaults, on. |
 | `hooks` | mapping | no hooks | Commands TST Desk runs around the agent's work: at five points in a session (TD-5134, §2 `hooks`), and `after_write`, a formatter or linter run on the files each `fs_write` or `fs_edit` changed, its failures sent back to the model in that call's result (TD-5135, §2 `hooks.after_write`). Omitted in an older user copy is no hooks. |
+| `lsp` | mapping | no servers | Language servers by file pattern (TD-5139, §2 `lsp`): new errors and warnings in a file the agent writes come back in that write's result, and the `lsp_definition`, `lsp_references` and `lsp_symbols` tools find definitions, uses and declarations. Each server is a child process over stdio, never a socket. Omitted in an older user copy is no servers. |
 
 ### `credentials`
 
@@ -1120,6 +1121,89 @@ has its own loop and runs no hooks, and an autonomous session runs no `after_wri
 commands run only in its container, and these have no container path yet. `after_write` is not one of the five events below: it has its
 own keys, its runs show on the write's `tool_result`, not as `hook_run` events, and **More →
 Hooks** does not list it.
+
+### `lsp`
+
+Language servers for diagnostics and code navigation (TD-5139). A small local model that can ask
+"where is this defined?" and is told about a type error the moment it writes one finds its way
+around a codebase far better than one that greps. Each entry of `servers` is one server, picked for
+the files its `match` names:
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `servers` | list of servers, up to 10 | `[]` | The servers, first match wins. Empty starts nothing and leaves the three `lsp_*` tools out of every request. |
+| `idle_seconds` | number | `600` | A server unused this long is shut down the next time any server is needed. The daemon stops them all when it stops. |
+| `max_diagnostics` | integer, 1–200 | `20` | Most problems listed per file in one write's result; the rest are counted. |
+| `name` | string, up to 60 characters | *empty* | The label in the note to the model. Empty is the program's file name. |
+| `command` | list of strings, or one string | *required* | The program and its arguments, run **without a shell**, speaking LSP on its stdin and stdout (`pyright-langserver --stdio`). One string is split into words the way a POSIX shell would. An argument that makes the server listen instead (`--port`, `--socket`, `--tcp`, `--listen`, `--host`, `--pipe`, `--node-ipc`) is a load error: TST Desk only speaks stdio, so nothing listens on any address. |
+| `match` | list of glob patterns | *required* | Which files the server handles. A pattern without `/` matches the file name (`*.py`); one with `/` the path from the workspace root (`src/*.ts`), as in `hooks.after_write`. |
+| `language_id` | string | *required* | The LSP language id sent when a file is opened (`python`, `typescript`, `rust`, `go`). |
+| `init_options` | mapping | `{}` | Sent as the server's `initializationOptions`, for servers that read settings there. |
+| `start_timeout_seconds` | number, up to 300 | `30` | How long the `initialize` handshake may take. A server that does not start is reported once, in the next write's result, and not tried again until its entry changes or the daemon restarts. |
+| `request_timeout_seconds` | number, up to 120 | `10` | How long one definition, references or symbols request may take. |
+| `diagnostics_wait_seconds` | number, up to 60 | `3` | After a write, how long to wait for the server's diagnostics. `0` turns diagnostics after writes off for this server; the tools still work. |
+
+<!-- verify: model -->
+```yaml
+presets:
+  local:
+    brain: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    worker: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    validator: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+active_preset: local
+lsp:
+  servers:
+    - name: pyright
+      command: "pyright-langserver --stdio"
+      match: ["*.py"]
+      language_id: python
+    - name: typescript
+      command: ["npx", "--no-install", "typescript-language-server", "--stdio"]
+      match: ["*.ts", "*.tsx", "*.js"]
+      language_id: typescript
+    - name: rust-analyzer
+      command: rust-analyzer
+      match: ["*.rs"]
+      language_id: rust
+      diagnostics_wait_seconds: 10
+```
+
+What it does:
+
+- **After each `fs_write` and `fs_edit`**, a written file a server matches is sent to it (opened,
+  or its whole new text, then saved), after any `after_write` hooks, so the server sees the file as
+  the formatter left it. The errors and warnings it publishes within `diagnostics_wait_seconds`
+  come back in that call's result as `path:line:col error: message (code)`. Only **new** problems
+  are listed: one this session's model was already told about for that file is not repeated (matched on
+  severity, code and message, since an edit above it moves its line), and the note counts the ones
+  still there. When the last problem is fixed the note says so. A clean file adds nothing; hints and
+  information are never sent.
+- **The tools.** `lsp_definition` and `lsp_references` take a file, a 1-based `line` and the
+  `symbol` on it (or a 1-based `column`); `lsp_symbols` lists what a file declares, or with `query`
+  searches the whole workspace. Results are `path:line:col` from the workspace root with the line's
+  text; a location outside the workspace (a library) shows its path only, never its text. A file no
+  server matches is refused with `lsp_unavailable`, and the model is pointed at `fs_grep`.
+- **They never ask.** Each tool reads one file inside the workspace and asks your own configured
+  server, so it is Class A by a fixed rule (`lsp-read`), the same test as `fs_read`, and it runs in
+  plan mode. A path outside the workspace is Class C as for any read. A policy rule naming the tool
+  still wins.
+- **One server per workspace and entry**, started the first time a session needs it, shared by the
+  sessions in that workspace, in the workspace, with secrets stripped from its environment as the
+  shell tool does. Stopping it kills its whole process tree. What was reported is remembered per session,
+  so two sessions sharing a server each hear about every problem in their own results. A server
+  may spell a file's URI differently from TST Desk (on Windows, `file:///c%3A/...`); both name the
+  same file.
+- **Not in an untrusted workspace.** Many servers run the repository's own code while they index
+  (rust-analyzer builds `build.rs` and proc-macros, tsserver loads tsconfig plugins). While the
+  workspace's `.tst/config.yaml` waits on your trust or was declined (TD-5113), or cannot be read,
+  no server starts there: writes get no diagnostics and the tools refuse with `lsp_unavailable`.
+  A workspace with no such file, or one that loosens nothing, is not gated, the same as a repo's
+  `after_write` hooks.
+
+Only this file can list a server: a workspace's `.tst/config.yaml` cannot, trusted or not, since its
+command would start as soon as the agent wrote a file. An autonomous session starts no server (its
+commands run only in its container, and a server has no container path yet), so it gets no
+diagnostics and the tools refuse. A Grok-engine session has its own loop and uses none of this.
 
 ### `remote`
 
@@ -2759,11 +2843,36 @@ and changes which definitions the next requests carry, so it is Class A by a fix
 own, so an MCP tool still asks (§2 `mcp`). A policy rule naming `tool_search` still wins. An MCP
 or plugin tool with that name gets no such grant.
 
+**Language-server lookups never ask (TD-5139).** `lsp_definition`, `lsp_references` and
+`lsp_symbols` read one file inside the workspace and ask the server you listed in `lsp.servers`, so
+they are Class A by a fixed rule (`lsp-read`), on the same terms as `fs_read`. A policy rule naming
+one still wins. An MCP or plugin tool with that name gets no such grant.
+
 **Session search never asks (TD-5129).** `session_search` reads TST Desk's own index of what
 earlier sessions in the same workspace said (`session_index.db` in the data dir; see `session`) and
 changes nothing, so it is Class A by a fixed rule (`session-search`). It reads no workspace
 file and reaches no host. A policy rule naming `session_search` still wins. An MCP or plugin
 tool with that name gets no such grant.
+
+**Background shell jobs (TD-5137).** `shell` takes `background: true` for a dev server, a watch
+build or a log tail: the command starts and the call returns a job id (`job-1`, `job-2`, … per
+session) at once. Starting one is a `shell` call like any other, so it asks, runs from the
+read-only list, or is refused in plan mode exactly as the same command would in the foreground.
+`on_timeout: "background"` keeps a command that reaches `timeout_secs` running as a job instead of
+killing it; the result carries what it printed so far, with no exit code yet. The default,
+`"kill"`, kills the process group as before. `shell_job_output` returns what a job printed since
+the last read (stdout and stderr together, at most 20,000 characters a call; `wait_secs` up to 30
+waits for new output first; no `job_id` lists the jobs), and `shell_job_stop` kills the job's whole
+process group. Both touch only this session's own jobs, so they are Class A by a fixed rule
+(`shell-job`); plan mode still runs `shell_job_output` but refuses `shell_job_stop`. A policy rule
+naming either still wins, and an MCP or plugin tool with either name gets no such grant. The
+daemon owns the jobs, not the window: closing the window leaves them running, and ending the
+session (cancel, delete, quitting TST Desk) kills them. A session holds at most 8 running jobs, and
+a job keeps the last 200,000 characters nobody has read (a read says how many it dropped). The
+Plan pane lists every job with its state. A delegated worker and an unattended run (an autonomy
+run, a scheduled job's turn, or `tst run --on-ask deny-and-continue`) cannot start jobs; their
+commands run in the foreground. After a daemon restart the old daemon's running jobs
+show as `lost`: a clean quit killed them, and after a crash TST Desk no longer tracks them.
 
 <!-- verify: workspace -->
 ```yaml
@@ -3052,6 +3161,7 @@ them when:
 | `worktree.setup` | It names a command. The daemon runs it in each new worktree (TD-5126), so a repo-shipped one waits for your trust; until then the new chat says it was skipped. |
 | `mcp_servers` | The key is set at all. TST Desk does not read it from a workspace yet; it is judged now so a later feature cannot run it untrusted. |
 | `hooks` | The key is set at all. Each hook is a command TST Desk runs on its own (§4.12), and `hooks.after_write` runs one after every write the agent makes, so a repo's hooks run only once you trust the file. |
+| `sandbox.auto_allow` | It is `true` with `sandbox.enabled` (TD-5138): commands would run without asking. `enabled` and `exclude` alone never loosen. |
 | `stop_check.checks` | It names any check (TD-5124). A check runs on its own whenever the model ends a turn: a command through the shell tool, or a statement that goes to the model as a message when it fails. |
 
 Tightening never asks: `allowed_commands`, `ask` and `never` rules, `class_c_default: never`,
@@ -3252,6 +3362,68 @@ hooks:
 
 A `hooks` section that does not validate (an unknown key, a `command` with no program) applies
 none of its hooks, and the rest of the file still loads.
+
+### 4.13 `sandbox` — run shell commands under bubblewrap (TD-5138)
+
+Off by default. With `enabled: true`, every interactive `shell` command runs under
+[bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) on Linux. Autonomy runs keep
+their Podman container (§2 `autonomy`); this section does not touch them.
+
+Inside the sandbox:
+
+- **Writes reach only the workspace and a private `/tmp`.** The rest of the filesystem is
+  read-only, and `/tmp` is a fresh empty tmpfs that is gone when the command ends.
+  `AGENTS.md`, `CLAUDE.md`, `.tst/` and the whole `.git` are read-only too, so a command
+  cannot edit steering, rewrite this file's policy, or plant a git hook or `core.fsmonitor`
+  that your next `git status` on the host runs. Each is a mount point inside, so it cannot be
+  renamed away either. A guarded name that is missing, or is a symlink, is checked after the
+  command: whatever the command put there is moved aside to `<name>.sandbox-blocked-<time>`
+  (never deleted), a replaced symlink is put back, and the result says `blocked:`. Because
+  `.git` is read-only, git commands that write (`git add`, `git commit`, `git checkout`) fail
+  inside; put them on `exclude` to run them on the host through the gate. A *new* steering
+  file in a subfolder can still be written.
+- **There is no network and no host socket.** Every namespace is unshared (TCP/IP, loopback
+  and abstract sockets are gone), and a seccomp filter refuses `socket(AF_UNIX)` and io_uring,
+  so a command cannot reach a host daemon through a socket file either: `/run/docker.sock`,
+  tailscaled, the system D-Bus. `socketpair` still works. A command that needs the network or
+  a local daemon (`npm install`, `git push`, `docker`, Python's `multiprocessing` with the
+  `forkserver` start method) goes on `exclude`. x86_64 and aarch64 only; elsewhere a command
+  that would be sandboxed is refused.
+- **Keys are unreadable.** `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.local/share/keyrings`,
+  `~/.password-store`, `~/.netrc`, `~/.git-credentials`, `~/.config/gh`, `~/.config/gcloud`,
+  `~/.azure`, `~/.docker`, `~/.kube`, TST Desk's data dir and your runtime dir
+  (`$XDG_RUNTIME_DIR`: the D-Bus socket the Secret Service keychain answers on, and the ssh
+  and gpg agents) are covered by an empty, unreadable folder. A file such as `~/.netrc` reads
+  as empty.
+- The command's result says `ran in the shell sandbox` under the exit code.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `enabled` | bool | `false` | Run interactive shell commands in the sandbox. On a host without `bwrap`, or off Linux, a command that would be sandboxed is refused, never run on the host. |
+| `auto_allow` | bool | `false` | Inside the sandbox, a command that would otherwise ask runs without asking. Only the default ask of a Class A or B call: an `ask` rule of your own still asks, Class C still asks, a `never` rule still refuses, a hook can still ask, and a line policy cannot split with confidence (§4.4) still asks. A repo-shipped file that sets it waits for your trust (§4.8). |
+| `exclude` | list of globs | `[]` | Commands matching one run outside the sandbox, on the host, through the normal gate (so they ask as usual). Matched against each command of the line the way `ask` and `never` rules are, so `docker *` also catches `cd x && sudo docker build .`. |
+| `hidden_paths` | list of paths | `[]` | More files or folders to make unreadable inside, on top of the list above. `~` is expanded. |
+
+<!-- verify: workspace -->
+```yaml
+sandbox:
+  enabled: true
+  auto_allow: true
+  exclude:
+    - "docker *"
+    - "git push*"
+    - "npm install*"
+  hidden_paths:
+    - "~/.config/my-tool/token"
+```
+
+If the config changes between the approval gate and the run, so that a command allowed to run
+unasked would no longer be sandboxed, the shell tool refuses it rather than running it on the
+host; running it again asks.
+
+A background job (`background: true`, or a command `on_timeout: "background"` moves to a job,
+TD-5137) runs in the sandbox under the same rule. Its guard check runs when the job ends, and
+any `blocked:` note goes to the job's output.
 
 ---
 

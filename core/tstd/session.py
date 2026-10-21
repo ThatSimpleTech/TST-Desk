@@ -36,12 +36,15 @@ from .protocol import (
     DaemonEvent,
     LineCommentAnchor,
     RunPermissions,
+    ShellJobInfo,
     TaskListItem,
     ToolResult,
 )
 from .protocol import SessionState as SessionStateEvent
+from .protocol import ShellJobs as ShellJobsEvent
 from .provider import ChatMessage
 from .questions import PendingQuestion, resolve_all
+from .shell_jobs import ShellJobs
 from .task_list import follow_branch
 from .workspace_trust import TrustStore, WorkspaceConfigView
 from .worktree import SessionWorktree
@@ -352,6 +355,9 @@ class Session:
         # TD-5161: a restore or a worktree close is rewriting the folder;
         # the daemon refuses a new message until it ends (the reason).
         self.folder_busy: str | None = None
+        # TD-5137: background shell jobs. The session owns them, so ending
+        # it (``cancel``) kills them; each change logs ``shell_jobs``.
+        self.shell_jobs = ShellJobs(self._log_shell_jobs)
         # TD-5124: the goal ``/goal`` set, checked when the model ends a
         # turn until a check passes; rebuilt from the log on revive. And
         # how many checks have judged it, for ``/goal`` on its own.
@@ -368,6 +374,9 @@ class Session:
         self._resume_event = asyncio.Event()
         # Workspace boundary (TD-706), resolved by the daemon on open.
         self.boundary_config = BoundaryConfig()
+        # Shell calls the gate let run unasked because they run under
+        # bubblewrap (TD-5138). The shell tool refuses one it no longer can.
+        self.bwrap_promised: set[str] = set()
         # Tier router (TD-1006 / TD-4603), attached by the daemon on
         # open so ``set_tier`` and ``set_plan`` reach the live loop.
         # Plan mode lives on the router. ``None`` on a restored
@@ -388,6 +397,9 @@ class Session:
         # ``config_view`` is the read the boundary was last loaded from.
         self.trust_store: TrustStore | None = None
         self.config_view: WorkspaceConfigView | None = None
+        # TD-5139: the language-server problems this session's model was
+        # last told, per (server, file), so a write reports only new ones.
+        self.lsp_reported: dict[tuple[str, str], list[dict[str, Any]]] = {}
         # Hooks (TD-5134): user hooks the loop binds, workspace hooks read
         # from ``config_view`` while it applies, and each hook's last run.
         self.hooks = HookRunner(self)
@@ -488,6 +500,11 @@ class Session:
         # TD-4101: unattended runs iterate without a user message.
         # Interactive sessions leave this false and wait on the queue.
         self.autonomy = False
+        # TD-5137: True while a scheduled job's turn runs in this session
+        # (scheduler ``run_turn_on_daemon``). Nobody watches that turn, so
+        # it cannot start background shell jobs. Cleared when the run
+        # returns, so a person who carries on in the window is not refused.
+        self.scheduled_run = False
         self.charter: Charter | None = None
         self.autonomy_turns = 0
         self.autonomy_class_c = False
@@ -689,8 +706,13 @@ class Session:
         if self._state in ("running", "awaiting_approval", "paused"):
             await self.set_state("cancelled", reason=reason)
         await self.close_cu_session()
+        # The session ended, so its background jobs end with it (TD-5137).
+        await self.shell_jobs.stop_all()
         # Wake a loop parked in wait_for_resume so it observes cancellation.
         self._resume_event.set()
+
+    async def _log_shell_jobs(self, jobs: list[ShellJobInfo]) -> None:
+        await self.event_log.add(ShellJobsEvent(session_id=self.id, jobs=jobs, seq=1))
 
     async def stop_turn(self) -> None:
         """Abort the in-flight turn. The session and its transcript stay.
@@ -1697,8 +1719,11 @@ class SessionRegistry:
     async def remove(self, session_id: str) -> None:
         """Remove a session and its runner from the registry."""
         async with self._lock:
-            self._sessions.pop(session_id, None)
+            session = self._sessions.pop(session_id, None)
             self._runners.pop(session_id, None)
+        # A session with no runner was never cancelled; its jobs still end.
+        if session is not None:
+            await session.shell_jobs.stop_all()
 
     async def list_sessions(self) -> list[Session]:
         """Return all registered sessions."""

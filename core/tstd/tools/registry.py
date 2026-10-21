@@ -627,6 +627,16 @@ def _register_builtins(registry: ToolRegistry, *, search: SearchConfig | None = 
                         "description": "Maximum time in seconds before the command is killed",
                         "default": 30,
                     },
+                    "background": {
+                        "type": "boolean",
+                        "description": "Run as a background job (dev server, watch, tail); "
+                        "returns a job id for shell_job_output and shell_job_stop",
+                    },
+                    "on_timeout": {
+                        "type": "string",
+                        "enum": ["kill", "background"],
+                        "description": "At the timeout: kill (default) or keep it as a job",
+                    },
                 },
                 "required": ["command"],
             },
@@ -638,7 +648,10 @@ def _register_builtins(registry: ToolRegistry, *, search: SearchConfig | None = 
 
 
 def create_registry(
-    *, candidate_selection: bool = False, search: SearchConfig | None = None
+    *,
+    candidate_selection: bool = False,
+    search: SearchConfig | None = None,
+    lsp_enabled: bool = False,
 ) -> ToolRegistry:
     """Registry of builtins, skills, delegate, consult, send_file, steering, and plugins.
 
@@ -647,7 +660,9 @@ def create_registry(
     ``tool_search`` (TD-5127), and ``session_search`` (TD-5129).
 
     ``candidate_selection`` (judgments.candidate_selection, TD-711) adds
-    ``browser_pick`` to the tool surface.
+    ``browser_pick`` to the tool surface. ``lsp_enabled`` (a server in
+    ``lsp.servers``, TD-5139) adds the three language-server tools; with
+    none they would only cost prompt tokens.
     """
     from ..context.skills import register_skill_tools
     from .ask_user import register_ask_user_tool
@@ -659,6 +674,7 @@ def create_registry(
     from .plugins import load_plugins
     from .send_file import register_send_file_tool
     from .session_search import register_session_search_tool
+    from .shell_job_tools import register_shell_job_tools
     from .steering_edit import register_steering_edit_tool
     from .task_list import register_task_list_tool
     from .tool_search import register_tool_search_tool
@@ -677,6 +693,11 @@ def create_registry(
     register_exit_plan_tool(registry)
     register_tool_search_tool(registry)
     register_session_search_tool(registry)
+    register_shell_job_tools(registry)
+    if lsp_enabled:
+        from .lsp import register_lsp_tools
+
+        register_lsp_tools(registry)
     # Before plugins so a plugin cannot take a GitHub tool name (TD-4852).
     from ..connectors.github_tools import register_github_tools
 
