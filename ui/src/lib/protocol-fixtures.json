@@ -307,6 +307,11 @@
     "session_id": "sess-1",
     "tier": "brain"
   },
+  "set_effort": {
+    "type": "set_effort",
+    "session_id": "sess-1",
+    "effort": "ultracode"
+  },
   "set_plan": {
     "type": "set_plan",
     "session_id": "sess-1",
@@ -1403,7 +1408,8 @@
     },
     "plan": false,
     "vision": false,
-    "fallbacks": {}
+    "fallbacks": {},
+    "effort": "medium"
   },
   "tier_state_override": {
     "type": "tier_state",
@@ -1424,7 +1430,8 @@
     },
     "plan": false,
     "vision": false,
-    "fallbacks": {}
+    "fallbacks": {},
+    "effort": "medium"
   },
   "tier_state_plan": {
     "type": "tier_state",
@@ -1445,7 +1452,8 @@
     },
     "plan": true,
     "vision": false,
-    "fallbacks": {}
+    "fallbacks": {},
+    "effort": "medium"
   },
   "ping": {
     "type": "ping"
@@ -1925,7 +1933,8 @@
     "vision": false,
     "fallbacks": {
       "brain": 1
-    }
+    },
+    "effort": "medium"
   },
   "session_list_worktree": {
     "type": "session_list",
@@ -2046,6 +2055,8 @@
     ],
     "active_preset": "tst-default",
     "tier_slugs": {},
+    "preset_labels": {},
+    "more_presets": [],
     "skip_all_approvals": false,
     "load_global_memory": false,
     "coworker_enabled": true,
@@ -2943,6 +2954,7 @@
     "run_verify",
     "send_queued",
     "set_branch",
+    "set_effort",
     "set_plan",
     "set_session_preset",
     "set_session_star",

@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Literal
 
+from .effort import DEFAULT_EFFORT, EFFORT_LEVELS, EffortLevel, is_effort_level
+
 TierName = Literal["brain", "worker", "validator"]
 TIER_NAMES: tuple[TierName, ...] = ("brain", "worker", "validator")
 
@@ -62,6 +64,9 @@ class TierRouter:
         # router. Plan mode is read-only since TD-5123, so the session row
         # keeps it and revive sets it again (Daemon._revive_session).
         self._plan_mode: bool = False
+        # The picker's reasoning effort. Persisted on the session row and
+        # set again on revive, like plan mode.
+        self._effort: EffortLevel = DEFAULT_EFFORT
 
     # ── Public API ─────────────────────────────────────────────────────
 
@@ -170,6 +175,17 @@ class TierRouter:
         """Turn plan mode (brain lock) on or off."""
         self._plan_mode = on
 
+    def set_effort(self, effort: str) -> None:
+        """Pick the reasoning effort sent on this session's requests."""
+        if not is_effort_level(effort):
+            raise ValueError(f"Invalid effort: {effort!r}. Must be one of {EFFORT_LEVELS}")
+        self._effort = effort
+
+    @property
+    def effort(self) -> EffortLevel:
+        """The picked reasoning effort (``medium`` until one is picked)."""
+        return self._effort
+
     def clear_override(self) -> None:
         """Remove a runtime override, returning to normal routing.
 
@@ -216,4 +232,5 @@ class TierRouter:
             "override": self._override,
             "escalated": self._escalated,
             "plan_mode": self._plan_mode,
+            "effort": self._effort,
         }

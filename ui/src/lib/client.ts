@@ -14,7 +14,7 @@
 // vitest's node environment with a fake transport, and in the webview with
 // the browser's WebSocket. No Tauri APIs are imported here.
 
-import type { ClientMessageUnion, DaemonEventUnion, HelloAck } from "./protocol";
+import type { ClientMessageUnion, DaemonEventUnion, EffortLevel, HelloAck } from "./protocol";
 import { daemonWsUrl } from "./remote-connect";
 
 /**
@@ -318,6 +318,11 @@ export class ProtocolClient {
   /** Turn plan mode (brain lock) on or off (TD-4603). Acked with tier_state. */
   setPlan(sessionId: string, on: boolean): void {
     this.send({ type: "set_plan", session_id: sessionId, on });
+  }
+
+  /** Pick the session's reasoning effort. Acked with tier_state. */
+  setEffort(sessionId: string, effort: EffortLevel): void {
+    this.send({ type: "set_effort", session_id: sessionId, effort });
   }
 
   /** Retarget this session at a catalog preset (TD-1721). Acked with session_list. */

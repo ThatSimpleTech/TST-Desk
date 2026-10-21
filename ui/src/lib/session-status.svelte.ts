@@ -16,7 +16,14 @@ import { isBridged } from "./bridged-id";
 import type { ProtocolClient } from "./client";
 import type { ContextReading } from "./context-gauge";
 import { persistLastWorkspace } from "./last-workspace";
-import type { AttachmentLimits, BoundaryUpdate, ConfigTrust, DaemonEventUnion } from "./protocol";
+import { DEFAULT_EFFORT } from "./effort";
+import type {
+  AttachmentLimits,
+  BoundaryUpdate,
+  ConfigTrust,
+  DaemonEventUnion,
+  EffortLevel,
+} from "./protocol";
 import { windowBindSessionId } from "./window-bind";
 import { trustMessage } from "./workspace-trust";
 
@@ -75,6 +82,8 @@ export const session = $state({
   fallbacks: {} as Record<string, number>,
   /** Plan mode (TD-4603). False until a tier_state says otherwise. */
   planMode: false,
+  /** Reasoning effort the session sends (the model picker). */
+  effort: DEFAULT_EFFORT as EffortLevel,
   /** Active tier accepts image attachments (TD-4705). False until tier_state. */
   vision: false,
   /** A turn is owed (TD-1721). The daemon refuses a preset switch then. */
@@ -111,6 +120,7 @@ export function resetSession(): void {
   session.hosts = {};
   session.fallbacks = {};
   session.planMode = false;
+  session.effort = DEFAULT_EFFORT;
   session.vision = false;
   session.turnActive = false;
   session.context = null;
@@ -172,6 +182,7 @@ export function ingestEvent(event: DaemonEventUnion): void {
       session.hosts = event.hosts ?? {};
       session.fallbacks = event.fallbacks ?? {};
       session.planMode = event.plan ?? false;
+      session.effort = event.effort ?? DEFAULT_EFFORT;
       session.vision = event.vision ?? false;
       break;
     case "user_turn":
@@ -254,6 +265,7 @@ export function focusSession(
   session.hosts = {};
   session.fallbacks = {};
   session.planMode = false;
+  session.effort = DEFAULT_EFFORT;
   session.vision = false;
   session.turnActive = false;
   session.context = null;
@@ -295,6 +307,13 @@ export function setTier(tier: "brain" | "worker" | "validator"): void {
 export function setPlan(on: boolean): void {
   if (session.sessionId === null) return;
   client?.setPlan(session.sessionId, on);
+}
+
+/** Pick the reasoning effort. The chip follows at once; tier_state confirms. */
+export function setEffort(effort: EffortLevel): void {
+  if (session.sessionId === null) return;
+  session.effort = effort;
+  client?.setEffort(session.sessionId, effort);
 }
 
 /** Retarget this session at a catalog preset. The composer follows tier_state. */

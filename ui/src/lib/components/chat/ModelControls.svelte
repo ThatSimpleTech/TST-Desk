@@ -5,18 +5,14 @@
 	// each role with the model that role is actually running: brain (kimi).
 	import { tierMenuLabel } from "../../composer-layout";
 	import { grok, setGrokMode } from "../../grok.svelte.js";
-	import { session, setPlan, setSessionPreset, setTier } from "../../session-status.svelte.js";
+	import { session, setPlan, setTier } from "../../session-status.svelte.js";
 	import { settings } from "../../settings.svelte.js";
+	import ModelPicker from "./ModelPicker.svelte";
 
 	const TIERS = ["brain", "worker", "validator"] as const;
 	type Tier = (typeof TIERS)[number];
 
 	const grokEngine = $derived((session.engine ?? settings.engine) === "grok");
-	const presetOptions = $derived(
-		session.preset && !settings.presets.includes(session.preset)
-			? [session.preset, ...settings.presets]
-			: settings.presets,
-	);
 
 	function isTier(value: string): value is Tier {
 		return value === "brain" || value === "worker" || value === "validator";
@@ -78,26 +74,8 @@
 			</span>
 		{/if}
 
-		{#if presetOptions.length > 0}
-			<span class="menu">
-				<select
-					class="preset"
-					aria-label="Session preset"
-					title={session.turnActive
-						? "Cannot change preset while a turn is running"
-						: "Preset for this session"}
-					value={session.preset}
-					disabled={session.turnActive}
-					onchange={(e) => {
-						const name = e.currentTarget.value;
-						if (name !== session.preset) setSessionPreset(name);
-					}}
-				>
-					{#each presetOptions as name (name)}
-						<option value={name}>{name}</option>
-					{/each}
-				</select>
-			</span>
+		{#if settings.presets.length > 0 || session.preset !== ""}
+			<ModelPicker />
 		{/if}
 	</div>
 {/if}
@@ -177,8 +155,7 @@
 		pointer-events: none;
 	}
 
-	.tier,
-	.preset {
+	.tier {
 		appearance: none;
 		max-width: 8rem;
 		font-family: var(--font-sans);
@@ -192,18 +169,12 @@
 		cursor: pointer;
 	}
 
-	.tier:hover,
-	.preset:hover {
+	.tier:hover {
 		background: var(--color-sunken);
 		color: var(--color-ink);
 	}
 
 	.tier {
 		max-width: 18rem;
-	}
-
-	.preset:disabled {
-		opacity: 0.45;
-		cursor: not-allowed;
 	}
 </style>

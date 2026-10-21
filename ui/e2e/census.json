@@ -13,12 +13,12 @@
 		"Copy message as markdown",
 		"Edit message",
 		"Message composer",
+		"Model and effort",
 		"Model tier",
 		"Plan",
 		"Restore files to here",
 		"Retry: resend your last message",
 		"Send message",
-		"Session preset",
 		"Summarize from here"
 	],
 	"decisions": [

@@ -28,6 +28,7 @@ from pydantic import (
 
 from .attachments import AttachmentLimits
 from .autonomy.charter import Charter
+from .effort import EffortLevel
 from .logging import redact_secrets, redact_structure
 from .router import TierName
 
@@ -802,6 +803,19 @@ class SetTier(ClientMessage):
     type: Literal["set_tier"] = "set_tier"
     session_id: str
     tier: Literal["brain", "worker", "validator"]
+
+
+class SetEffort(ClientMessage):
+    """Pick the reasoning effort for a session (the model picker).
+
+    Sent on the wire as ``reasoning_effort`` for tiers that opt in.
+    Persists on the session row. Acked with ``tier_state``, whose ``effort``
+    the composer chip follows.
+    """
+
+    type: Literal["set_effort"] = "set_effort"
+    session_id: str
+    effort: EffortLevel
 
 
 class SetPlan(ClientMessage):
@@ -2472,6 +2486,8 @@ class TierState(DaemonEvent):
     # ``hosts`` already name the backup for those tiers. Empty when every
     # tier is on its own model; the next turn starts there again.
     fallbacks: dict[str, int] = Field(default_factory=dict)
+    # Reasoning effort the session sends (the model picker). Additive.
+    effort: EffortLevel = "medium"
 
 
 class LoosenedSetting(BaseModel):
@@ -3409,6 +3425,11 @@ class SetupState(DaemonEvent):
     # Additive with a default, like ``key_required``: an older client that
     # ignores it behaves exactly as it did.
     tier_slugs: dict[str, str | None] = Field(default_factory=dict)
+    # Model picker: the display name per preset that sets a ``label``, and
+    # the presets that sit under "More models". Additive; an older client
+    # shows every preset by key on the main list.
+    preset_labels: dict[str, str] = Field(default_factory=dict)
+    more_presets: list[str] = Field(default_factory=list)
     # TD-804: skip-all approvals. Additive, default off — an older client
     # that ignores the field keeps asking, which is the safe read.
     skip_all_approvals: bool = False
@@ -4343,6 +4364,7 @@ ClientMessageT = Annotated[
     | Attach
     | Detach
     | SetTier
+    | SetEffort
     | SetPlan
     | SetSessionPreset
     | GetInstructionStack
@@ -4579,6 +4601,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "attach",
         "detach",
         "set_tier",
+        "set_effort",
         "set_plan",
         "set_session_preset",
         "get_instruction_stack",

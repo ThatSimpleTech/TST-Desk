@@ -83,6 +83,10 @@ export const settings = $state({
 	theme: "system" as Theme,
 	/** Model section, from setup_state. */
 	presets: [] as string[],
+	/** Picker display names per preset (config `label`). */
+	presetLabels: {} as Record<string, string>,
+	/** Presets the picker lists under "More models" (config `picker: more`). */
+	morePresets: [] as string[],
 	activePreset: null as string | null,
 	/** Slug per tier as the *config file* has it; null = left to discovery. */
 	tierSlugs: {} as Record<string, string | null>,
@@ -207,6 +211,8 @@ export function resetSettings(): void {
 	settings.section = "appearance";
 	settings.theme = "system";
 	settings.presets = [];
+	settings.presetLabels = {};
+	settings.morePresets = [];
 	settings.activePreset = null;
 	settings.tierSlugs = {};
 	settings.savingTier = null;
@@ -372,6 +378,8 @@ function reduce(event: DaemonEventUnion): void {
 	reducePairing(event);
 	if (event.type === "setup_state") {
 		settings.presets = event.presets;
+		settings.presetLabels = event.preset_labels ?? {};
+		settings.morePresets = event.more_presets ?? [];
 		settings.activePreset = event.active_preset;
 		// A daemon too old to send the field leaves the model section empty
 		// rather than inventing slugs it was never given.

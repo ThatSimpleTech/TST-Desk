@@ -34,6 +34,7 @@ from pydantic import (
     model_validator,
 )
 
+from .effort import DEFAULT_EFFORT, EffortLevel
 from .hooks_config import HooksConfig
 from .logging import get_logger, user_data_dir
 from .lsp_config import LspConfig
@@ -233,6 +234,11 @@ class TierConfig(BaseModel):
     # routed to this tier (TD-4705). Default false — capability is config,
     # never inferred from a slug in code.
     vision: bool = False
+    # When true, the picker's effort level goes out as ``reasoning_effort``
+    # on this tier's requests. Turn it on only for a gateway or provider
+    # that supports the field, so a server that rejects unknown fields
+    # never sees it. Default false.
+    reasoning_effort: bool = False
     # Named key from the credentials catalog (TD-1717). None / omitted /
     # blank means unbound: loopback sends no key, remote uses openrouter.
     credential: str | None = None
@@ -430,6 +436,11 @@ class Preset(BaseModel):
     brain: TierConfig
     worker: TierConfig
     validator: TierConfig
+    # How the composer's model picker shows this preset: the name on the
+    # list and chip (default: the preset's key), and whether it sits on the
+    # main list (``primary``) or under "More models" (``more``).
+    label: str | None = Field(default=None, min_length=1, max_length=40)
+    picker: Literal["primary", "more"] = "primary"
 
 
 class CredentialConfig(BaseModel):
@@ -619,6 +630,8 @@ class SessionConfig(BaseModel):
     log_max_events: int = Field(default=DEFAULT_LOG_MAX_EVENTS, ge=1)
     send_file_max_bytes: int = Field(default=536_870_912, ge=1, le=2_147_483_648)
     send_file_session_max_bytes: int = Field(default=4_294_967_296, ge=1)
+    # Reasoning effort a session starts with until the picker sets one.
+    default_effort: EffortLevel = DEFAULT_EFFORT
 
 
 class ClearToolResultsConfig(BaseModel):

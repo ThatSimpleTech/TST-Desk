@@ -407,6 +407,16 @@ export interface SetTier extends ClientMessage {
   tier: "brain" | "worker" | "validator";
 }
 
+/** Reasoning effort, as sent on the wire (`xhigh` is the picker's "Extra"). */
+export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max" | "ultracode";
+
+/** Pick the session's reasoning effort. Acked with tier_state. */
+export interface SetEffort extends ClientMessage {
+  type: "set_effort";
+  session_id: string;
+  effort: EffortLevel;
+}
+
 /** Turn plan mode (brain lock) on or off (TD-4603). */
 export interface SetPlan extends ClientMessage {
   type: "set_plan";
@@ -1140,6 +1150,7 @@ export type ClientMessageUnion =
   | Attach
   | Detach
   | SetTier
+  | SetEffort
   | SetPlan
   | SetSessionPreset
   | GetInstructionStack
@@ -1656,6 +1667,8 @@ export interface TierState extends DaemonEvent {
    *  position in its `fallbacks`. `model_slugs` and `hosts` already name the
    *  backup. Omitted by older daemons — treat as none. */
   fallbacks?: Record<string, number>;
+  /** Reasoning effort the session sends. Omitted by older daemons — treat as medium. */
+  effort?: EffortLevel;
 }
 
 /** One setting a workspace config loosens (TD-5113). */
@@ -2024,6 +2037,10 @@ export interface SetupState extends DaemonEvent {
   // save cannot pin a model the user left floating. Optional because an
   // older daemon does not send it.
   tier_slugs?: Record<string, string | null>;
+  // Model picker: display names for presets that set a `label`, and the
+  // presets under "More models". Omitted by older daemons.
+  preset_labels?: Record<string, string>;
+  more_presets?: string[];
   // TD-804: skip-all approvals. Additive, default off.
   skip_all_approvals?: boolean;
   // TD-2603: load ~/.tstdesk/memory/ after workspace memory. Additive, default off.

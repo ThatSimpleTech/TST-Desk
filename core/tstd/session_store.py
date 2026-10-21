@@ -85,6 +85,9 @@ class SessionRecord:
     # row written before the field; revive then takes the newest
     # ``tier_state`` in the log.
     plan_mode: bool | None = None
+    # Reasoning effort the picker chose. None on a row written before the
+    # field (revive then uses the configured default).
+    effort: str | None = None
 
 
 class SessionStore:
@@ -153,6 +156,7 @@ class SessionStore:
             preset=chosen_preset,
             worktree=worktree if worktree is not None or existing is None else existing.worktree,
             plan_mode=existing.plan_mode if existing else False,
+            effort=existing.effort if existing else None,
         )
         self._records[session_id] = record
         await self._persist()
@@ -254,6 +258,21 @@ class SessionStore:
         if record.plan_mode is on:
             return True
         record.plan_mode = on
+        await self._persist()
+        return True
+
+    async def set_effort(self, session_id: str, effort: str) -> bool:
+        """Record the session's reasoning effort so a restart keeps it.
+
+        Writes only on a change: every ``tier_state`` comes through here.
+        Returns False when the id is unknown.
+        """
+        record = self._records.get(session_id)
+        if record is None:
+            return False
+        if record.effort == effort:
+            return True
+        record.effort = effort
         await self._persist()
         return True
 

@@ -18202,3 +18202,9 @@ servers per session (a worktree per session already multiplies roots;
 sharing by root keeps one server per checkout). Keeping servers for the
 daemon's life (idle ones would hold memory on a box running local models).
 
+
+## Model picker with an Effort submenu
+
+- A "model" in the picker is a catalog preset; picking one is `set_session_preset`. A preset's `picker: primary | more` (default `primary`) puts it on the main list or under "More models", and its optional `label` is the name shown (default: the key). Both reach the UI in `setup_state` (`preset_labels`, `more_presets`). No model name is hard-coded. The gateway's model list is not queried; a route shows up once a preset names it.
+- Effort is per session (`set_effort`, `TierRouter.effort`, session row `effort`), default `session.default_effort: medium`. The wire value is `reasoning_effort` = low | medium | high | xhigh | max | ultracode (Extra = xhigh), sent on the turn's request only for a tier with `reasoning_effort: true`. The picked level wins over a `reasoning_effort` in the tier's `extra_body`. Verdict, compaction and other off-turn calls are not given it.
+- The phone is the same UI in a WebView, so it gets the picker with no Android change.

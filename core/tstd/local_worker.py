@@ -161,5 +161,6 @@ def tier_state_event(session: Session, config: ModelConfig) -> TierState:
         plan=session.router.plan_mode,
         vision=tier_cfg.vision,
         fallbacks=fallbacks,
+        effort=session.router.effort,
         seq=1,  # overwritten by the event log
     )
