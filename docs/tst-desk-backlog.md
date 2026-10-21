@@ -12156,3 +12156,22 @@ in DECISIONS.md.
 
 Suite: 4290 passed / 8 skipped, ruff + `mypy --strict` clean over 217
 files, vitest 1469, svelte-check 731 files 0 errors 0 warnings.
+
+### TD-5170 — Release scan: no chance hits in compressed bytes, no skipped streams
+**Size:** 1 · **Depends on:** TD-5163 · **Status:** Done
+
+The 0.4.0 release failed twice on the linux-aarch64 sidecar with one rule hit
+in raw bytes that sit inside a zlib stream. Compressed bytes are noise, and a
+build compresses the same way every time, so re-running could not clear it.
+The stream's real content is scanned once inflated, so a raw match inside a
+stream's compressed span adds nothing. While there: the stream walk worked out
+a stream's end from a read window that ran past the data, so it could resume
+past the start of the next stream and never scan it.
+
+- [x] A raw match inside a zlib stream's compressed bytes is not a hit; the
+      same word outside the stream still is
+      (`test_chance_match_in_compressed_bytes_is_not_a_hit`, fails on the old
+      scanner).
+- [x] A stream's end is measured on the bytes actually read, so the next
+      stream is scanned (the same test's second half; scanning a local
+      sidecar now walks twice as many streams as before).
