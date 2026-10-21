@@ -15,19 +15,20 @@ passes the caller's cap rather than finishing a million-page file only to
 refuse it.
 
 Deliberately leaf, like ``attachments.py``: nothing from ``tstd`` beyond
-its ``attachment_*`` siblings. Blocking: call from a worker thread.
+its ``attachment_*`` siblings and ``pdfium_lock`` (a leaf itself, shared
+with ``fs_read``'s PDF path). Blocking: call from a worker thread.
 """
 
 from __future__ import annotations
 
 import io
-import threading
 import zipfile
 from dataclasses import dataclass
 from typing import Literal
 
 from .attachment_office import MAX_ZIP_MEMBERS, read_docx, read_xlsx
 from .attachment_text import DocumentError, Sink, TooLong, fmt, unreadable
+from .pdfium_lock import PDFIUM_LOCK
 
 __all__ = [
     "DocumentError",
@@ -38,10 +39,6 @@ __all__ = [
 ]
 
 DocumentKind = Literal["pdf", "docx", "xlsx"]
-
-# PDFium is not thread-safe, and attachments are extracted in worker
-# threads, so one document at a time goes through it.
-PDFIUM_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -70,7 +67,7 @@ def sniff_document(raw: bytes) -> DocumentKind | None:
     try:
         with zipfile.ZipFile(io.BytesIO(raw)) as zf:
             names = set(zf.namelist()[:MAX_ZIP_MEMBERS])
-    except (zipfile.BadZipFile, ValueError, OSError):
+    except (zipfile.BadZipFile, NotImplementedError, ValueError, OSError):
         return None
     if "word/document.xml" in names:
         return "docx"

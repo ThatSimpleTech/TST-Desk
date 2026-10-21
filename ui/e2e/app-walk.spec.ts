@@ -182,6 +182,28 @@ async function walkMessageActions(): Promise<void> {
  * a card, and approving an edited plan ends plan mode with it pinned in
  * the Plan pane. A second plan is rejected, and plan mode stays on.
  */
+// TD-5109: the phone app is this UI in a WebView, so the gauge must stay in
+// the title bar at a phone's width, whole and on screen, with its popover.
+test("shows the context gauge on a phone's width", async () => {
+	await page.setViewportSize({ width: 375, height: 812 });
+	const gauge = page.locator("button[title='Context window']");
+	await expect(gauge).toBeVisible();
+	const box = await gauge.boundingBox();
+	expect(box).not.toBeNull();
+	expect(box!.x).toBeGreaterThanOrEqual(0);
+	expect(box!.x + box!.width).toBeLessThanOrEqual(375);
+	await gauge.click();
+	const popover = page.getByRole("group", { name: "Context window" });
+	await expect(popover).toBeVisible();
+	await expect(popover).toContainText(/% *of the .* window/);
+	const pop = await popover.boundingBox();
+	expect(pop).not.toBeNull();
+	expect(pop!.x).toBeGreaterThanOrEqual(0);
+	expect(pop!.x + pop!.width).toBeLessThanOrEqual(375);
+	await page.keyboard.press("Escape");
+	await page.setViewportSize({ width: 1280, height: 800 });
+});
+
 test("plans read-only and reviews the plan on a phone's width", async () => {
 	await page.setViewportSize({ width: 375, height: 812 });
 	const bar = page.getByRole("group", { name: "Model" });
@@ -251,7 +273,7 @@ test("visits every right-pane view", async () => {
 	const menu = page.getByRole("menu", { name: "More views" });
 	await expect(menu).toBeVisible();
 	await snap("more-views", menu);
-	const items = ["Stack", "Usage", "Preview", "Plan"];
+	const items = ["Stack", "Usage", "Preview", "Plan", "Hooks"];
 	if ((await page.getByRole("menuitemradio", { name: "Screen", exact: true }).count()) > 0) {
 		items.splice(2, 0, "Screen");
 	}

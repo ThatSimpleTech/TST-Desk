@@ -32,7 +32,7 @@ def _compactions(session: Session) -> list[ContextCompacted]:
 async def test_the_in_turn_trim_is_labelled_inflight_trim(tmp_path: Path) -> None:
     mock = MockProvider(
         sequences={
-            "ezer-forge": [
+            "gateway-model": [
                 Script(kind="tool_call", tool_batch=_write_reads(tmp_path)),
                 Script(kind="stream", content="Here is the page."),
             ]

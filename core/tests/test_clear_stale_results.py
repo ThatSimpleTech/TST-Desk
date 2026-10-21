@@ -526,7 +526,7 @@ async def _long_session(
 ) -> tuple[list[ContextCompacted], list[list[str]]]:
     """Drive *turns* read-then-answer turns; return the context events and
     every request's messages as the wire would carry them."""
-    mock = MockProvider(sequences={"ezer-forge": _scripts(turns)})
+    mock = MockProvider(sequences={"gateway-model": _scripts(turns)})
     session = Session(str(workspace))
     dispatcher = make_dispatcher(workspace)
     runner = SessionRunner(
@@ -642,3 +642,13 @@ def test_a_tool_that_may_have_done_something_is_not_invited_to_run_again(
     assert line.endswith("It already ran; do not run it again only to see this output.]")
     for read in ("fs_read", "fs_grep", "web_fetch"):
         assert cleared_placeholder(read, "x", 1).endswith("Run the tool again if you need it.]")
+
+
+def test_every_rerun_safe_tool_is_a_registered_read_only_tool() -> None:
+    """A new read-only tool belongs here (TD-5129's session_search did)."""
+    from tstd.context_clear import RERUN_SAFE_TOOLS
+    from tstd.tools.registry import create_registry
+
+    registered = {tool.name for tool in create_registry().list_tools()}
+    assert registered >= RERUN_SAFE_TOOLS
+    assert "session_search" in RERUN_SAFE_TOOLS

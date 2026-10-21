@@ -1,7 +1,7 @@
 """Token estimates calibrated from provider usage (TD-5007, TD-5013).
 
 The heuristic counter (4 chars/token) runs low against what a provider
-reports: code and JSON tokenize denser than English prose. On EZER's
+reports: code and JSON tokenize denser than English prose. On the GPU server's
 local model the estimate was 1.55-1.6x under ``usage.prompt_tokens``,
 so compaction and in-turn elision aimed at a budget the real prompt had
 already passed.

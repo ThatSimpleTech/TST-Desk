@@ -13,7 +13,9 @@ the *obvious* cases — the ones that must never reach the model:
 - a network call to a host outside the allowlist → C
 - a write to a steering file (``AGENTS.md`` / ``CLAUDE.md`` /
   ``.tst/rules/**``, slash-command trees ``.tst/commands/**`` /
-  ``.claude/commands/**`` — TD-4501, any ``SKILL.md`` — TD-4502, and the
+  ``.claude/commands/**`` — TD-4501, any ``SKILL.md`` — TD-4502, named
+  worker definitions ``.tst/agents/**`` / ``.tstdesk/agents/**`` —
+  TD-5133, and the
   signed charter at ``.tst/autonomy/CHARTER.md`` — TD-4001) → C, even
   inside the workspace
 - a write to a path that runs code later (any ``.git``, ``.vscode``,
@@ -98,6 +100,11 @@ _COMMAND_DIR_PAIRS = frozenset(
         (".tst", "commands"),
         (".claude", "commands"),
         (".tstdesk", "commands"),
+        # Named worker definitions (TD-5133): a worker's prompt, tools and
+        # policy are the user's, so the agent never writes them, in the
+        # workspace or the user-global tree.
+        (".tst", "agents"),
+        (".tstdesk", "agents"),
     }
 )
 _MEMORY_DIR_PARTS = (".tst", "memory")
@@ -438,7 +445,9 @@ def is_steering_write(boundary: Boundary, path: Path) -> bool:
     Steering files — ``AGENTS.md``, ``CLAUDE.md``, any ``SKILL.md``
     (TD-4502), anything under
     ``.tst/rules/``, slash-command trees (``.tst/commands/``,
-    ``.claude/commands/``, and ``.tstdesk/commands/`` — TD-4501), the
+    ``.claude/commands/``, and ``.tstdesk/commands/`` — TD-4501), named
+    worker definitions (``.tst/agents/`` and ``.tstdesk/agents/`` —
+    TD-5133), the
     approval policy at ``.tst/config.yaml`` (TD-4803), and the signed
     charter at ``.tst/autonomy/CHARTER.md`` (TD-4001; spec §12.4) — are
     read-only to the agent, unconditionally.  The charter's own
@@ -996,7 +1005,7 @@ def _rule_in_workspace_edit(req: DecisionRequest, boundary: Boundary) -> bool:
 def _rule_builtin_read(req: DecisionRequest, boundary: Boundary) -> bool:
     """A built-in read inside the workspace is Class A (TD-5141).
 
-    Adam pre-approved the shipped read tools on 2026-10-14, ``.env``
+    The owner pre-approved the shipped read tools on 2026-10-14, ``.env``
     included: a read changes nothing and the wall already refuses every
     path outside the workspace (``path-outside-workspace`` fired above).
     Before this rule the worker tier judged each read, a model call per

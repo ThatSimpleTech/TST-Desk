@@ -52,7 +52,7 @@ from ..provider import ChatMessage, Usage
 log = get_logger(__name__)
 
 #: The budget when ``autonomy.verify_max_prompt_tokens`` is null. On
-#: EZER's 65,536-token slots that is about 39k tokens, which the slowest
+#: a local GPU server's 65,536-token slots that is about 39k tokens, which the slowest
 #: measured prompt rate (~390 tokens/s) reads in about 100 s, inside the
 #: tier's 120 s read timeout.
 DEFAULT_PROMPT_SHARE = 0.6

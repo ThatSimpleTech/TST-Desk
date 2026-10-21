@@ -163,7 +163,7 @@ _ROUND_TRIP = """\
 presets:
   mine:
     brain:
-      # Keep EZER's thinking short so the answer fits.
+      # Keep TOWER's thinking short so the answer fits.
       extra_body:
         chat_template_kwargs:
           reasoning_effort: low
@@ -247,7 +247,7 @@ def test_settings_writes_keep_extra_body(tmp_path: Path) -> None:
     assert after.presets["mine"].worker.credential == "openrouter"
     assert after.active_preset == "mine"
     text = path.read_text(encoding="utf-8")
-    assert "# Keep EZER's thinking short so the answer fits." in text
+    assert "# Keep TOWER's thinking short so the answer fits." in text
     assert "      extra_body: {top_k: 20, chat_template_kwargs: {reasoning_effort: low}}" in text
 
 

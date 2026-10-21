@@ -91,7 +91,7 @@ class FakeRemote:
             await ws.close(1008, "auth_failed")
             return
         ack = {"type": "hello_ack", "version": PROTOCOL_VERSION}
-        ack.update(machine_id=self.machine_id, desktop_name="ezer")
+        ack.update(machine_id=self.machine_id, desktop_name="tower")
         await ws.send(json.dumps(ack))
         idx = next(self._ids)
         self.conns[idx] = ws

@@ -321,6 +321,10 @@
     "type": "get_instruction_stack",
     "session_id": "sess-1"
   },
+  "get_hooks": {
+    "type": "get_hooks",
+    "session_id": "sess-1"
+  },
   "list_instructions": {
     "type": "list_instructions",
     "workspace_path": "/home/user/project"
@@ -706,7 +710,7 @@
   },
   "add_machine": {
     "type": "add_machine",
-    "link": "tstdesk://pair?h=100.64.1.5&p=39079&c=ABCD2345&n=ezer",
+    "link": "tstdesk://pair?h=100.64.1.5&p=39079&c=ABCD2345&n=tower",
     "host": null,
     "port": null,
     "code": null
@@ -750,7 +754,8 @@
     "user_index": 0,
     "sibling_index": 1,
     "sibling_count": 2,
-    "content": "hello again"
+    "content": "hello again",
+    "user_turns": null
   },
   "attachment_extracted": {
     "type": "attachment_extracted",
@@ -981,7 +986,8 @@
     "error_code": null,
     "diff": null,
     "allowed_by": [],
-    "transcript": []
+    "transcript": [],
+    "hooks": []
   },
   "tool_result_truncated": {
     "type": "tool_result",
@@ -994,7 +1000,8 @@
     "error_code": null,
     "diff": null,
     "allowed_by": [],
-    "transcript": []
+    "transcript": [],
+    "hooks": []
   },
   "tool_result_diff": {
     "type": "tool_result",
@@ -1007,7 +1014,8 @@
     "error_code": null,
     "diff": "--- a/test.txt\n+++ b/test.txt\n@@ -1 +1 @@\n-old line\n+new line",
     "allowed_by": [],
-    "transcript": []
+    "transcript": [],
+    "hooks": []
   },
   "tool_result_read_only": {
     "type": "tool_result",
@@ -1023,7 +1031,8 @@
       "git log",
       "head"
     ],
-    "transcript": []
+    "transcript": [],
+    "hooks": []
   },
   "tool_result_delegate": {
     "type": "tool_result",
@@ -1065,6 +1074,36 @@
         "status": null,
         "truncated": false
       }
+    ],
+    "hooks": []
+  },
+  "tool_result_after_write": {
+    "type": "tool_result",
+    "seq": 10,
+    "session_id": "sess-1",
+    "tool_call_id": "tc-1",
+    "status": "success",
+    "output": "wrote 9 bytes; created a.py\n\n[after-write hook `ruff check` failed: exit 1]",
+    "truncated": false,
+    "error_code": null,
+    "diff": null,
+    "allowed_by": [],
+    "transcript": [],
+    "hooks": [
+      {
+        "name": "ruff format",
+        "status": "passed",
+        "exit_code": 0,
+        "duration_ms": 120,
+        "changed": true
+      },
+      {
+        "name": "ruff check",
+        "status": "failed",
+        "exit_code": 1,
+        "duration_ms": 310,
+        "changed": false
+      }
     ]
   },
   "tool_result_denied": {
@@ -1078,7 +1117,8 @@
     "error_code": "approval_denied",
     "diff": null,
     "allowed_by": [],
-    "transcript": []
+    "transcript": [],
+    "hooks": []
   },
   "question_request": {
     "type": "question_request",
@@ -1418,7 +1458,8 @@
     "message": "fail",
     "machine": null,
     "in_reply_to": null,
-    "proposal_id": null
+    "proposal_id": null,
+    "comment_ids": null
   },
   "error_with_session": {
     "type": "error",
@@ -1428,7 +1469,8 @@
     "message": "fail",
     "machine": null,
     "in_reply_to": null,
-    "proposal_id": null
+    "proposal_id": null,
+    "comment_ids": null
   },
   "shell_output": {
     "type": "shell_output",
@@ -1747,6 +1789,60 @@
         "detail": "GREEN"
       }
     ]
+  },
+  "hook_run": {
+    "type": "hook_run",
+    "seq": 21,
+    "session_id": "sess-1",
+    "hook_id": "user:before_tool:0",
+    "source": "user",
+    "event": "before_tool",
+    "command": "~/bin/no-force-push.sh",
+    "result": "block",
+    "exit_code": 2,
+    "reason": "no force pushes",
+    "context": "",
+    "output": "no force pushes",
+    "duration_ms": 41,
+    "tool_name": "shell",
+    "tool_call_id": "call-1"
+  },
+  "hooks_state": {
+    "type": "hooks_state",
+    "seq": 1,
+    "session_id": "sess-1",
+    "hooks": [
+      {
+        "id": "user:before_tool:0",
+        "source": "user",
+        "event": "before_tool",
+        "command": "~/bin/no-force-push.sh",
+        "name": "no force push",
+        "timeout_seconds": 10.0,
+        "tools": [
+          "shell"
+        ],
+        "last": {
+          "type": "hook_run",
+          "seq": 21,
+          "session_id": "sess-1",
+          "hook_id": "user:before_tool:0",
+          "source": "user",
+          "event": "before_tool",
+          "command": "~/bin/no-force-push.sh",
+          "result": "block",
+          "exit_code": 2,
+          "reason": "no force pushes",
+          "context": "",
+          "output": "no force pushes",
+          "duration_ms": 41,
+          "tool_name": "shell",
+          "tool_call_id": "call-1"
+        }
+      }
+    ],
+    "workspace_state": "pending",
+    "workspace_error": null
   },
   "session_goal": {
     "type": "session_goal",
@@ -2069,7 +2165,7 @@
     "machines": [
       {
         "id": "mch_0123456789ab",
-        "name": "EZER",
+        "name": "TOWER",
         "host": "100.64.1.5",
         "port": 39079,
         "status": "connected",

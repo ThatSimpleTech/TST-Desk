@@ -20,11 +20,14 @@ a new verb starts refused for machine peers until it is classified here.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import re
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlsplit
 
-from .protocol import ClientMessage, build_error
+from .protocol import ClientMessage, DaemonEvent, ModelFallback, TierState, build_error
 
 DeviceKind = Literal["phone", "machine"]
 
@@ -155,6 +158,104 @@ def classify(remote: bool, device_kind: DeviceKind | None, features: Iterable[st
     machine = device_kind == "machine" or BRIDGE_FEATURE in wanted
     viewer = not machine and VIEWER_FEATURE in wanted and (not remote or device_kind == "phone")
     return PeerView(remote=remote, machine=machine, viewer=viewer)
+
+
+# Loopback names say nothing about where a service lives.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0"})
+# What a machine peer reads where a service host was.
+HOST_PLACEHOLDER = "model-service"
+
+
+def service_hosts(config_dump: object) -> frozenset[str]:
+    """Every non-loopback host a ``*base_url`` names in a dumped config (TD-5169).
+
+    Tiers, their fallbacks and named keys all carry ``base_url``; each
+    yields ``host:port`` and the bare host, so either spelling in a
+    message can be replaced.
+    """
+    found: set[str] = set()
+
+    def add(url: str) -> None:
+        parts = urlsplit(url if "//" in url else f"//{url}")
+        host = parts.hostname
+        if not host or host in _LOOPBACK_HOSTS:
+            return
+        found.add(parts.netloc.rsplit("@", 1)[-1])
+        found.add(host)
+
+    def walk(node: object) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                named = isinstance(key, str) and key.endswith(("base_url", "base_urls"))
+                if named and isinstance(value, str):
+                    if value:
+                        add(value)
+                elif named and isinstance(value, list | tuple):
+                    # A tier's ``fallback_base_urls``: hosts it fails over to.
+                    for url in value:
+                        if isinstance(url, str) and url:
+                            add(url)
+                else:
+                    walk(value)
+        elif isinstance(node, list | tuple):
+            for item in node:
+                walk(item)
+
+    walk(config_dump)
+    return frozenset(found)
+
+
+def outbound_event(event: DaemonEvent, peer: PeerView, hosts: Collection[str] = ()) -> DaemonEvent:
+    """*event* as *peer* may see it: another computer never learns service hosts (TD-5169).
+
+    The title bar's ``hosts`` and a fallback's ``from_host``/``to_host`` say
+    where this computer's models live. A phone keeps them (it edits
+    Services); a machine peer gets the slugs without the hosts, and a hub
+    relays a bridged session to its own clients with them already gone.
+    *hosts* (from ``service_hosts``) are also replaced anywhere in the
+    event's text, such as a turn's "Failed to connect to <url>" error.
+    A later reply that lists a service's models (``service_models``) is
+    never a machine-peer verb, so it never reaches one either.
+    """
+    if not peer.machine:
+        return event
+    if isinstance(event, TierState) and event.hosts:
+        event = event.model_copy(update={"hosts": {}})
+    elif isinstance(event, ModelFallback) and (event.from_host or event.to_host):
+        event = event.model_copy(update={"from_host": "", "to_host": ""})
+    if not hosts:
+        return event
+    pattern = _host_pattern(frozenset(hosts))
+    changed = False
+
+    def scrub(node: object) -> object:
+        # String values only: a key, or the JSON around a value, is never
+        # touched, so the event always parses back.
+        nonlocal changed
+        if isinstance(node, str):
+            out = pattern.sub(HOST_PLACEHOLDER, node)
+            changed = changed or out != node
+            return out
+        if isinstance(node, dict):
+            return {key: scrub(value) for key, value in node.items()}
+        if isinstance(node, list):
+            return [scrub(item) for item in node]
+        return node
+
+    scrubbed = scrub(event.model_dump(mode="json"))
+    if not changed:
+        return event
+    return type(event).model_validate(scrubbed)
+
+
+@lru_cache(maxsize=8)
+def _host_pattern(hosts: frozenset[str]) -> re.Pattern[str]:
+    """Each host as a whole name: not ``10.0.0.5`` inside ``10.0.0.50``.
+
+    Longest first, so ``host:port`` goes before the bare host inside it.
+    """
+    names = "|".join(re.escape(h) for h in sorted(hosts, key=len, reverse=True))
+    return re.compile(rf"(?<![\w.-])(?:{names})(?![\w-]|\.\w)", re.IGNORECASE)
 
 
 def message_session_id(msg: ClientMessage) -> str | None:

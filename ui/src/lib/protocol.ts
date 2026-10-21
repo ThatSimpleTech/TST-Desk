@@ -427,6 +427,12 @@ export interface GetInstructionStack extends ClientMessage {
   session_id: string;
 }
 
+/** Ask for the session's active hooks and their last runs (TD-5134). */
+export interface GetHooks extends ClientMessage {
+  type: "get_hooks";
+  session_id: string;
+}
+
 /** List a workspace's Instructions files (TD-2802). Human path. */
 export interface ListInstructions extends ClientMessage {
   type: "list_instructions";
@@ -1137,6 +1143,7 @@ export type ClientMessageUnion =
   | SetPlan
   | SetSessionPreset
   | GetInstructionStack
+  | GetHooks
   | ListInstructions
   | ListCommands
   | ListMemory
@@ -1294,6 +1301,9 @@ export interface ConversationReset extends DaemonEvent {
   sibling_index: number;
   sibling_count: number;
   content: string;
+  /** Turns the conversation holds after a sibling is selected (TD-5129);
+   *  null for an edit, whose user_turn follows. */
+  user_turns?: number | null;
 }
 
 /** One file a restore would change (TD-5125): `modify` its content, `delete`
@@ -1457,6 +1467,17 @@ export interface WorkerStep {
   truncated?: boolean;
 }
 
+/** One after-write hook that ran on an fs_write or fs_edit's files
+ *  (TD-5135): a formatter or linter, how it ended and how long it took. */
+export interface AfterWriteRun {
+  name: string;
+  status: "passed" | "failed" | "timed_out" | "error";
+  exit_code?: number | null;
+  duration_ms: number;
+  /** The hook rewrote a file, as a formatter does. */
+  changed?: boolean;
+}
+
 export interface ToolResult extends DaemonEvent {
   type: "tool_result";
   session_id: string;
@@ -1470,6 +1491,8 @@ export interface ToolResult extends DaemonEvent {
   allowed_by?: string[];
   /** A `delegate` call's worker transcript (TD-5117); empty for other tools. */
   transcript?: WorkerStep[];
+  /** After-write hooks that ran on the write's files (TD-5135); empty otherwise. */
+  hooks?: AfterWriteRun[];
 }
 
 export interface ShellOutput extends DaemonEvent {
@@ -2382,6 +2405,9 @@ export interface Error extends DaemonEvent {
   /** TD-5158: the steering proposal a refused accept, edit or reject named.
    *  Absent from older daemons. */
   proposal_id?: string | null;
+  /** TD-5132: the line comments a refused `submit_line_comments` carried.
+   *  Absent from older daemons. */
+  comment_ids?: string[] | null;
 }
 
 /** A browser screenshot written to the session dir (TD-1710). Path, not bytes. */
@@ -2557,6 +2583,52 @@ export interface StopCheck extends DaemonEvent {
   attempt: number;
   max_retries: number;
   items: StopCheckItem[];
+}
+
+export type HookEventName = "session_start" | "user_prompt" | "before_tool" | "after_tool" | "stop";
+export type HookResult = "ok" | "context" | "block" | "ask" | "error" | "timeout";
+
+/** One hook ran (TD-5134). `block` refused the prompt, call or stop with
+ *  `reason`; `ask` made a call that would have run wait for approval;
+ *  `error` and `timeout` changed nothing. Hooks only ever tighten. */
+export interface HookRun extends DaemonEvent {
+  type: "hook_run";
+  session_id: string;
+  /** `<source>:<event>:<index>`. */
+  hook_id: string;
+  source: "user" | "workspace";
+  event: HookEventName;
+  command: string;
+  result: HookResult;
+  exit_code?: number | null;
+  reason?: string;
+  context?: string;
+  output?: string;
+  duration_ms: number;
+  tool_name?: string | null;
+  tool_call_id?: string | null;
+}
+
+/** One active hook on the inspector, with its last run this session. */
+export interface HookInfo {
+  id: string;
+  source: "user" | "workspace";
+  event: HookEventName;
+  command: string;
+  name?: string | null;
+  timeout_seconds: number;
+  tools?: string[];
+  last?: HookRun | null;
+}
+
+/** Response to `get_hooks` (TD-5134). A workspace's hooks are listed only
+ *  while its config applies; `workspace_state` is its trust state. */
+export interface HooksState extends DaemonEvent {
+  type: "hooks_state";
+  session_id: string;
+  hooks: HookInfo[];
+  workspace_state?: string;
+  workspace_error?: string | null;
 }
 
 /** The session's goal after `/goal` set or cleared it, or a done-check met
@@ -2875,6 +2947,8 @@ export type DaemonEventUnion =
   | TaskList
   | WorktreeState
   | StopCheck
+  | HookRun
+  | HooksState
   | SessionGoal
   | SteeringReloaded
   | RuleActivated

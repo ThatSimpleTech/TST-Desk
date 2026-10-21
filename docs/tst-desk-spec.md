@@ -91,7 +91,7 @@ The window is a *view* onto sessions, not the thing that runs them. Design every
 
 ## 3. The shell (this is the actual product)
 
-The engine is the easy part — Adam already has it. **The shell is the work, and the shell is
+The engine is the easy part — the owner already has it. **The shell is the work, and the shell is
 the differentiator.** Budget accordingly: this is bigger than the agent.
 
 ### Layout
@@ -308,7 +308,7 @@ V4 Pro as a heavier worker.
 
 **Router requirements:**
 - One async `httpx` client, OpenAI-compatible. Works against OpenRouter, any compatible
-  endpoint, or a local vLLM server (EZER path) with no code change.
+  endpoint, or a local vLLM server (the GPU server path) with no code change.
 - Slugs and prices live in `config.yaml`, not code. **The landscape moves weekly** — users must
   be able to update model choices without a release.
 - First-run wizard: paste key → pick preset (`TST default` / `budget` / `local` / `vllm`) → go.
@@ -345,10 +345,10 @@ and an idle server each say something different — surfaced on the turn as
 `turn_complete{failed, error_code: "model_unresolved"}` and in diagnostics as a failing
 `provider` row with the endpoint in it.
 
-### The `vllm` preset: vLLM and EZER share one OpenAI `/v1`
+### The `vllm` preset: vLLM and the GPU server share one OpenAI `/v1`
 
 The shipped `vllm` preset points every tier at `http://127.0.0.1:8000/v1` and names **no**
-model. That is vLLM's OpenAI-compatible server default. EZER serves the same `/v1` contract, so
+model. That is vLLM's OpenAI-compatible server default. The GPU server serves the same `/v1` contract, so
 attaching it is `active_preset: vllm`, not a second code path. A different port is a
 `base_url` edit in `config.yaml`. Discovery, `model_unresolved`, and the doctor's `provider`
 row are the same rules as the `local` preset; the row names the 8000 endpoint, not a model
@@ -412,7 +412,7 @@ onboarding.
 
 **v0.5 — Remote + notify.** Tailscale bind, phone attach, Slack notifier, small scheduler.
 
-**v0.6 — Local models.** Point the router at vLLM/EZER. UI-TARS for grounding, local worker.
+**v0.6 — Local models.** Point the router at vLLM/llama.cpp. UI-TARS for grounding, local worker.
 
 **v0.7 — Autonomy engine.** The charter editor, the autonomous runner loop, validator-as-
 supervisor drift checks, circuit breakers, container isolation. Depends on v0.3 (detached
@@ -461,7 +461,7 @@ If that's true, the product exists. Everything else is refinement.
 Hand it a charter and a sprint document. Walk away. Come back to a built thing and a ledger of
 every decision it made along the way.
 
-This is aimed squarely at projects like EZER and TSTOS — greenfield work measured in weeks,
+This is aimed squarely at projects like the GPU server and TSTOS — greenfield work measured in weeks,
 where the plan already exists in writing and the agent stopping to ask *"how fast should the
 window slide?"* is pure friction. That is not a permission question. It is a taste question,
 and the agent was fully equipped to answer it.
@@ -547,7 +547,7 @@ The risk is a bad shell command, a hallucinated install script, a runaway delete
 that a developer laptop has cloud credentials and VPN keys sitting on it.
 
 Therefore: **autonomous runs execute in a container with no credentials mounted** — rootless
-Podman locally, or a Firecracker microVM on EZER. Only the workspace is bound in.
+Podman locally, or a Firecracker microVM on the GPU server. Only the workspace is bound in.
 
 Frame this correctly in the UI: **the sandbox is what *buys* the autonomy.** Inside a
 container with nothing sensitive reachable, Class A and B can open all the way up and mean it.

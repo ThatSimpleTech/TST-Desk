@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from ..autonomy import DecisionClass, Notice
-from ..protocol import WorkerStep
+from ..protocol import AfterWriteRun, WorkerStep
 
 # ── Result types ────────────────────────────────────────────────────────
 
@@ -60,6 +60,9 @@ class ToolResult:
             run without asking (TD-5103); empty when anything else decided.
         transcript: A ``delegate`` worker's steps (TD-5117), for display
             on the event only; never part of ``output``.
+        hooks: The after-write hooks that ran on the write's files
+            (TD-5135), for the step timeline. What they report to the
+            model is already in ``output``.
     """
 
     tool_call_id: str
@@ -79,6 +82,7 @@ class ToolResult:
     verification: str | None = None
     allowed_by: tuple[str, ...] = ()
     transcript: tuple[WorkerStep, ...] = ()
+    hooks: tuple[AfterWriteRun, ...] = ()
 
 
 @dataclass(frozen=True)

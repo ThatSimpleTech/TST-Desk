@@ -838,6 +838,13 @@ class GetInstructionStack(ClientMessage):
     session_id: str
 
 
+class GetHooks(ClientMessage):
+    """Request the session's active hooks and their last results (TD-5134)."""
+
+    type: Literal["get_hooks"] = "get_hooks"
+    session_id: str
+
+
 class ListInstructions(ClientMessage):
     """List a workspace's Instructions files (TD-2802). Human path."""
 
@@ -1912,6 +1919,11 @@ class ConversationReset(DaemonEvent):
     sibling_index: int
     sibling_count: int
     content: str
+    #: User turns the conversation holds after a sibling is selected, in the
+    #: window's numbering (TD-5129: the session index numbers turns from it).
+    #: None for an edit, whose ``user_turn`` follows and is turn
+    #: ``user_index + 1``.
+    user_turns: int | None = None
 
 
 class RestoreFileEntry(BaseModel):
@@ -2141,6 +2153,23 @@ class WorkerStep(BaseModel):
     truncated: bool = False
 
 
+class AfterWriteRun(BaseModel):
+    """One after-write hook that ran on a write's files (TD-5135).
+
+    ``status`` is ``passed`` (exit 0), ``failed`` (another exit code),
+    ``timed_out`` (killed at its ``timeout_seconds``) or ``error`` (it
+    could not start). ``changed`` says it rewrote a file, as a formatter
+    does. The output goes to the model in the call's ``output``; this is
+    the step timeline's record of it.
+    """
+
+    name: str
+    status: Literal["passed", "failed", "timed_out", "error"]
+    exit_code: int | None = None
+    duration_ms: int = 0
+    changed: bool = False
+
+
 class ToolResult(DaemonEvent):
     """The result of a tool call."""
 
@@ -2163,6 +2192,9 @@ class ToolResult(DaemonEvent):
     # A ``delegate`` call's worker transcript (TD-5117), for display.
     # Empty for every other tool.
     transcript: list[WorkerStep] = Field(default_factory=list)
+    # The after-write hooks that ran on an fs_write or fs_edit's files
+    # (TD-5135), with how long each took. Empty for every other call.
+    hooks: list[AfterWriteRun] = Field(default_factory=list)
 
 
 class ShellOutput(DaemonEvent):
@@ -2642,6 +2674,69 @@ class StopCheck(DaemonEvent):
     attempt: int = Field(ge=1)
     max_retries: int = Field(ge=0)
     items: list[StopCheckItem] = Field(default_factory=list)
+
+
+HookEventName = Literal["session_start", "user_prompt", "before_tool", "after_tool", "stop"]
+HookResult = Literal["ok", "context", "block", "ask", "error", "timeout"]
+
+
+class HookRun(DaemonEvent):
+    """One hook ran (TD-5134). Each run also lands in the audit DB.
+
+    ``result``: ``ok`` (nothing to say), ``context`` (text added for the
+    model), ``block`` (exit 2 or ``{"decision": "block"}``: the prompt,
+    the tool call, or the stop was refused with ``reason``), ``ask``
+    (``before_tool`` only: a call that would have run must be approved),
+    ``error`` (another exit code, unreadable output, or it would not
+    start) or ``timeout`` (killed after ``timeout_seconds``). An error or
+    a timeout changes nothing: hooks only ever tighten. ``hook_id`` is
+    ``<source>:<event>:<index>``. ``output`` is the start of what the
+    command printed.
+    """
+
+    type: Literal["hook_run"] = "hook_run"
+    session_id: str
+    hook_id: str
+    source: Literal["user", "workspace"]
+    event: HookEventName
+    command: str
+    result: HookResult
+    exit_code: int | None = None
+    reason: str = ""
+    context: str = ""
+    output: str = ""
+    duration_ms: int = Field(ge=0)
+    tool_name: str | None = None
+    tool_call_id: str | None = None
+
+
+class HookInfo(BaseModel):
+    """One active hook on the inspector, with its last run in this session."""
+
+    id: str
+    source: Literal["user", "workspace"]
+    event: HookEventName
+    command: str
+    name: str | None = None
+    timeout_seconds: float
+    tools: list[str] = Field(default_factory=list)
+    last: HookRun | None = None
+
+
+class HooksState(DaemonEvent):
+    """Response to ``get_hooks``: the session's active hooks (TD-5134).
+
+    ``workspace_state`` is the workspace config's trust state
+    (``none``, ``pending``, ``trusted``, ``declined``); a workspace's
+    hooks are listed only while its config applies. ``workspace_error``
+    says why a workspace ``hooks`` block was set aside.
+    """
+
+    type: Literal["hooks_state"] = "hooks_state"
+    session_id: str
+    hooks: list[HookInfo] = Field(default_factory=list)
+    workspace_state: str = "none"
+    workspace_error: str | None = None
 
 
 class SessionGoal(DaemonEvent):
@@ -3760,6 +3855,10 @@ class Error(DaemonEvent):
     # so the window shows the refusal on that card even after the user has
     # acted on another one. Absent from older daemons.
     proposal_id: str | None = None
+    # TD-5132: the line comments a refused ``submit_line_comments`` carried,
+    # so the window hands back only those, not comments an earlier send
+    # already queued. Absent from older daemons.
+    comment_ids: list[str] | None = None
 
 
 class ScreenFrame(DaemonEvent):
@@ -4214,6 +4313,7 @@ ClientMessageT = Annotated[
     | SetPlan
     | SetSessionPreset
     | GetInstructionStack
+    | GetHooks
     | ListInstructions
     | ListCommands
     | ListMemory
@@ -4341,6 +4441,8 @@ DaemonEventT = Annotated[
     | TaskList
     | WorktreeState
     | StopCheck
+    | HookRun
+    | HooksState
     | SessionGoal
     | SteeringReloaded
     | RuleActivated
@@ -4446,6 +4548,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_plan",
         "set_session_preset",
         "get_instruction_stack",
+        "get_hooks",
         "list_instructions",
         "list_commands",
         "list_memory",
@@ -4573,6 +4676,8 @@ _KNOWN_EVENT_TYPES = frozenset(
         "task_list",
         "worktree_state",
         "stop_check",
+        "hook_run",
+        "hooks_state",
         "session_goal",
         "steering_reloaded",
         "rule_activated",
@@ -4827,6 +4932,7 @@ def build_error(
     machine: str | None = None,
     in_reply_to: str | None = None,
     proposal_id: str | None = None,
+    comment_ids: list[str] | None = None,
 ) -> str:
     """Build a typed error message.
 
@@ -4837,9 +4943,14 @@ def build_error(
     the session whose message was refused. ``machine`` (TD-5015) marks an
     error that came from, or is about, a paired computer. ``in_reply_to``
     (TD-5144) names the client message type the error answers, and
-    ``proposal_id`` (TD-5158) the steering proposal it was about.
+    ``proposal_id`` (TD-5158) the steering proposal it was about, and
+    ``comment_ids`` (TD-5132) the line comments a refused send carried.
     """
-    payload: dict[str, str] = {"type": "error", "code": code, "message": redact_secrets(message)}
+    payload: dict[str, str | list[str]] = {
+        "type": "error",
+        "code": code,
+        "message": redact_secrets(message),
+    }
     if session_id is not None:
         payload["session_id"] = session_id
     if machine is not None:
@@ -4848,6 +4959,8 @@ def build_error(
         payload["in_reply_to"] = in_reply_to
     if proposal_id is not None:
         payload["proposal_id"] = proposal_id
+    if comment_ids is not None:
+        payload["comment_ids"] = comment_ids
     return json.dumps(payload)
 
 

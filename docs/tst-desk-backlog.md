@@ -51,7 +51,7 @@ See `AGENTS.md` §10. It applies to every story without exception.
 | **M5 — Cowork (v0.3)** | E29–E32, E48 | Close the window; the session keeps running. CLI attach. Artifacts. Named sessions |
 | **M6 — Computer use (v0.4)** | E20, E33–E34 | Screen pane watches a real desktop or browser; glow/cursor; Design mode; OS permission onboarding |
 | **M7 — Remote (v0.5)** | E36–E38 | Tailscale bind (never `0.0.0.0`). Phone attach. Slack. Scheduler rail goes live |
-| **M8 — Local remainder (v0.6)** | E39 | EZER/vLLM path. UI-TARS grounding. Floor already shipped as M1.5 |
+| **M8 — Local remainder (v0.6)** | E39 | llama.cpp/vLLM path. UI-TARS grounding. Floor already shipped as M1.5 |
 | **M9 — Autonomy (v0.7)** | E40–E43 | Charter, unattended runner, drift checks, circuit breakers, hard-required container, wake-up |
 | **M10 — Extensibility (v0.8)** | E44–E46 | MCP through the classifier. Slash + `SKILL.md`. One-level subagent. Plan lock |
 | **Later** | E47, E49, E53 | Voice, tray, updater, vision; Wayland CU; signing; aarch64; CI recovery; connectors. Unversioned; do not pull forward |
@@ -387,7 +387,7 @@ test pinning it are gone; §3 now says the sets are checked against the unions i
 - [x] Streaming responses yielded as deltas
 - [x] Tool/function calling supported in both request and response parsing
 - [x] Base URL configurable — **verified against OpenRouter and against a local vLLM-style
-      endpoint with no code change** (the EZER path must work by configuration alone)
+      endpoint with no code change** (the GPU-server path must work by configuration alone)
 - [x] API key read from OS keychain, never from config or environment files
 - [x] Timeouts on connect, read, and total
 
@@ -2716,7 +2716,7 @@ where this schedule most likely slips. Start early, timebox, and escalate if it 
 host, with `PATH` empty, and inside `ubuntu:22.04` (no system Python).
 
 **Local (2026-08-27):** Rebuilt AppImage (101 MB) and `.deb` (27 MB) on
-the 16-core EPYC host. `core/scripts/smoke_linux_bundle.sh` against
+the 16-core server host. `core/scripts/smoke_linux_bundle.sh` against
 stock `ubuntu:22.04` / `ubuntu:24.04` Docker guests (no `/dev/kvm`, so
 Docker is the Linux clean guest — `DECISIONS.md`). Proved: sidecar
 with empty PATH; windowed host via `dpkg -i` + xvfb; protocol E2E
@@ -4322,7 +4322,7 @@ stays the default for new sessions.
 
 TD-1718 put `credentials.<id>.base_url` in config and showed it under
 the Model key picker. Settings → API keys still had only Name and Key,
-so a Tailscale EZER (or any off-box OpenAI `/v1`) host had to be typed
+so a Tailscale GPU server (or any off-box OpenAI `/v1`) host had to be typed
 into YAML.
 
 **Acceptance criteria:**
@@ -4366,7 +4366,7 @@ Existing rows said "No key stored" with no field to paste one.
 ### TD-1724 — Send `tool_choice: auto` when tools are present
 **Size:** 1 · **Depends on:** TD-303
 
-EZER LiteLLM's guided_json hook treats `tools` without `tool_choice` as
+The GPU server LiteLLM's guided_json hook treats `tools` without `tool_choice` as
 "constrain the whole completion to JSON". The model then writes
 `{"name":"desktop_click","arguments":{...}}` into assistant *content*
 and `message.tool_calls` stays empty, so TST Desk never dispatches.
@@ -4390,7 +4390,7 @@ Empty `computer_use.command` is mock-only. The AppImage sidecar can
 run `tstd --cu-mcp` but the freeze did not include `tst-cu-mcp` / `mcp`
 / Pillow, so computer-use stayed a tiny PNG. After a desktop tool,
 `local_worker_preset: vllm` remapped the worker to `stealth/ox-alpha`
-on the EZER host (credential `base_url` wins).
+on the GPU server (credential `base_url` wins).
 
 **Acceptance criteria:**
 - [x] Frozen tstd with empty command drives `tstd --cu-mcp`, not the mock
@@ -4441,7 +4441,7 @@ sidecar (TCC). Windows still uses stdio MCP.
 ### TD-1728 — Keep 32k local CU inside the window
 **Size:** 2 · **Depends on:** TD-1727, TD-405
 
-ezer-forge is 32768 tokens. Nested `node_modules/**/AGENTS.md` plus a
+gateway-model is 32768 tokens. Nested `node_modules/**/AGENTS.md` plus a
 1568px screenshot as base64 overflowed on the first CU turn.
 Compaction cannot drop the in-flight screenshot. Skip dependency trees
 in the nested walk; Linux in-process screenshots cap at 768px.
@@ -4472,7 +4472,7 @@ screenshot. Peel the pixels out of `output` and send them as
 ### TD-1730 — At most one image on a local VLM prompt
 **Size:** 1 · **Depends on:** TD-1729
 
-ezer-forge is `--limit-mm-per-prompt image:1`. A second
+gateway-model is `--limit-mm-per-prompt image:1`. A second
 `desktop_screenshot` sent two `image_url` parts and the host returned
 400. Cap outbound messages at `computer_use.max_prompt_images` (default
 1), keeping the newest.
@@ -6577,24 +6577,24 @@ files, vitest 1460, svelte-check 727 files 0 errors 0 warnings.
 # MILESTONE M8 — Local models remainder (v0.6)
 
 M1.5 already ships keyless loopback + the `local` preset. This milestone
-is EZER/vLLM as a first-class path and UI-TARS for computer-use grounding.
+is llama.cpp/vLLM as a first-class path and UI-TARS for computer-use grounding.
 
-**Do not start until M6 if the work is grounding; EZER routing can start
+**Do not start until M6 if the work is grounding; the GPU server routing can start
 after M1.5.** Prefer after M6 so CU has something to ground.
 
 **M8 exit:** TD-3904.
 
 ---
 
-## Epic E39 — EZER, vLLM, UI-TARS
+## Epic E39 — The GPU server, vLLM, UI-TARS
 
 ---
 
-### TD-3901 — EZER / vLLM preset
+### TD-3901 — llama.cpp / vLLM preset
 **Size:** 5 · **Depends on:** TD-1805
 
 **Acceptance criteria:**
-- [x] A shipped preset points at a documented EZER or vLLM loopback
+- [x] A shipped preset points at a documented the GPU server or vLLM loopback
       URL; slugs still optional on loopback
 - [x] Docs: how to attach, what "unresolved" means
 - [x] Doctor rows name the endpoint, not the developer's model list
@@ -6641,7 +6641,7 @@ the remapped worker slug or omits it if unresolved (TD-1805).
 **Size:** 3 · **Depends on:** TD-3901
 
 **Acceptance criteria:**
-- [x] Live harness against a loopback vLLM or EZER fixture (or skip
+- [x] Live harness against a loopback vLLM or llama.cpp fixture (or skip
       with copy if the binary is absent — heading-match style)
 - [x] **This harness is the M8 exit criterion**
 
@@ -6853,7 +6853,7 @@ TD-101: hard-required container. No unsandboxed autonomy.
       equivalent) with only the workspace mounted
 - [x] Missing runtime refuses start with install copy
 - [x] Interactive mode does not require a container
-- [x] Size 8 — Firecracker/EZER is a follow-up, not this story
+- [x] Size 8 — Firecracker/the GPU server is a follow-up, not this story
 
 **Completed (2026-08-26):** start gate probes rootless Podman and refuses
 with install copy. Interactive sessions never import the sandbox.
@@ -7446,7 +7446,7 @@ every later turn until restart. An empty stored value went out as
       digest are not logged
 - [x] An unchanged key fails the turn with `api_key_rejected` and a
       message naming the credential and host, for example
-      "EZER (192.0.2.49:4000) rejected the API key (401) — check it in
+      "the GPU server (192.0.2.49:4000) rejected the API key (401) — check it in
       Settings → API keys". `error-copy.ts` maps the code. The
       conversation is preserved
 - [x] A missing or empty key (`KeychainError`) is not cached, so the
@@ -9105,7 +9105,7 @@ files, vitest 1404, svelte-check 707 files 0 errors 0 warnings.
 
 # Epic E50 — Android remote shell
 
-Filed 2026-10-03. Adam overrode the E49 line that a native phone app is out
+Filed 2026-10-03. The owner overrode the E49 line that a native phone app is out
 of scope. The first ship is a sideload APK, not Play Console. Prime
 directives still hold: no account, no relay, no `0.0.0.0`, no telemetry.
 
@@ -9217,7 +9217,7 @@ The composer stop control sent `cancel`, and `cancel` marks the session
 ### TD-5146 — The work check and memory distill stream, think less, and don't resend a timeout
 **Size:** 3 · **Depends on:** TD-4204, TD-2301, TD-5008
 
-A 25-33k token after-write review on ezer-forge ran with default thinking,
+A 25-33k token after-write review on gateway-model ran with default thinking,
 timed out at 120 s, and was resent eight times. Each abandoned attempt
 kept generating behind LiteLLM. The session was busy for about 20
 minutes (2026-10-14).
@@ -9299,7 +9299,7 @@ fail on the old code). Class B entry in DECISIONS.md.
 **Size:** 3 · **Depends on:** TD-4204, TD-5007, TD-5106, TD-5146
 
 The after-write review sent every diff and every shell output of the turn,
-with no cap. On EZER the validator is a local llama.cpp model (65,536-token
+with no cap. On the GPU server the validator is a local llama.cpp model (65,536-token
 slots, ~390-830 tokens/s uncached) behind LiteLLM with a 120 s read
 timeout. The call streams, but the first chunk arrives only after the whole
 prompt is read: about 45k tokens fit in 120 s at the slow rate, a bigger
@@ -9328,7 +9328,7 @@ turn timed out as a verify error, and one past the slot failed outright.
 **Size:** 3 · **Depends on:** none · Gap audit 2026-10-14, local-model batch (PR #10)
 
 There was no content search tool, so every search was a `shell` call,
-and shell can never be model-granted A: on EZER every grep asked.
+and shell can never be model-granted A: on the GPU server every grep asked.
 Choices (pure-Python search, the `regex` package with a time limit) are
 in DECISIONS.md.
 
@@ -9378,7 +9378,7 @@ turn.
 **Size:** 3 · **Depends on:** none · Gap audit 2026-10-14, local-model batch (PR #10)
 
 Every MCP call had a fixed 30 s timeout and an 8 s handshake, so a long
-EZER tool (a render, a build, a local-model call) died at 30 s.
+The GPU server tool (a render, a build, a local-model call) died at 30 s.
 
 **Acceptance criteria:**
 - [x] `mcp.servers.<id>.timeout_seconds` and `startup_timeout_seconds`
@@ -9452,7 +9452,7 @@ comments while sending no tokens.
       (DECISIONS.md). A scheduled job also tries again later (TD-5154)
 - [x] The misnamed "total" is fixed: the old field is `pool` (not a key),
       and `total_timeout` is a real wall-clock cap on one attempt
-- [x] docs/configuration.md documents the keys and shows an EZER
+- [x] docs/configuration.md documents the keys and shows a GPU-server
       local-model example
 - [x] Tests in core/tests/test_provider_timeouts.py
 
@@ -9525,18 +9525,20 @@ to load such a skill and warn.
 ### TD-5109 — Context gauge and compact-on-demand
 **Size:** 3 · **Depends on:** none · Gap audit 2026-10-14, local-model batch (PR #10)
 
-On 32k-65k local windows compaction ran often and Adam learned of it
+On 32k-65k local windows compaction ran often and the owner learned of it
 after the fact.
 
 **Acceptance criteria:**
 - [x] The title bar shows used against budget for the active tier's
       `context_window`, using the daemon's calibrated estimate (TD-5013),
       from the `context_usage` event
-- [ ] It also shows on the phone. Not checked on a device: the code
-      supports it (the APK is the same UI; TitleBar renders ContextGauge,
-      and AppShell's narrow layout keeps the title bar below 640px), but
-      no device or narrow-width test has shown it yet. (Split out and
-      unticked by TD-5158: it had been ticked unverified.)
+- [x] It also shows on the phone. The APK is this UI in a WebView, so the
+      app walk checks it at a phone's width (375px): the gauge sits whole
+      on screen and its popover opens inside it. That check found the
+      header ran off the right edge and the popover off the left; below
+      640px the header now puts the session's bar on its own wrapping row
+      and the popover opens rightwards. (Split out and unticked by
+      TD-5158: it had been ticked unverified.)
 - [x] `/compact [guidance]` and a button compact now. Guidance is passed
       to the summary (it heads it and keeps more of what it names; no
       model call, DECISIONS.md)
@@ -9550,7 +9552,7 @@ after the fact.
       the compaction, the toasts)
 
 ### TD-5141 — Built-in reads inside the workspace are static Class A
-**Size:** 1 · **Depends on:** TD-5102 · Adam 2026-10-14: "built in files should be preapproved"
+**Size:** 1 · **Depends on:** TD-5102 · The owner 2026-10-14: "built in files should be preapproved"
 
 **Acceptance criteria:**
 - [x] `fs_read`, `fs_list` and `fs_grep` on a path inside the workspace
@@ -9654,15 +9656,15 @@ client.
       two clears on consecutive requests in the tests, though a live turn
       can produce them (TD-5160 review)
 - [x] Not the story's measurement (TD-5160 review): a replayed long
-      session through the real loop on EZER (MockProvider, 32,768-token
+      session through the real loop on the GPU server (MockProvider, 32,768-token
       tier): 30 turns compacted 4 times with clearing off and never with
       it on; 60 turns 9 times off and 2 times on (DECISIONS.md, with the
       prefix-rebuild cost). The scripted model never needs a cleared
       output, so this cannot show whether clearing causes tool re-runs
-- [ ] Measured on EZER: fewer compactions on a long session, against the
+- [ ] Measured on the GPU server: fewer compactions on a long session, against the
       live local model in the running app. Partial (TD-5162, 2026-10-21),
       not enough to tick: current main in a separate daemon with its own
-      data dir and Adam's config.yaml (`tst-default`, ezer-forge through
+      data dir and the maintainer's config.yaml (`tst-default`, gateway-model through
       LiteLLM, 65,536-token tier, compaction at 45,875), the same seed
       repo and prompts, each turn a `tst run --continue` reading two
       ~10k-character files and grepping. Turns 1 to 6 had no clear or
@@ -9816,7 +9818,7 @@ in `core/tests/test_git_no_filters.py` and
 ### TD-5101 — Shell rules: judge every segment of a chained command, deny first
 **Size:** 5 · **Depends on:** none
 
-From the 2026-10-14 gap audit (docs/gap-audit-2026-10-14.md, Adam's
+From the 2026-10-14 gap audit (docs/gap-audit-2026-10-14.md, the owner's
 decision 1). One `fnmatch` glob over the whole command line let
 `npm test*` auto-run `npm test; curl x`, and a narrow `auto` rule beat
 a broad `never`.
@@ -9927,7 +9929,7 @@ command spelled through a variable.
 ### TD-5103 — Static read-only command list for shell
 **Size:** 5 · **Depends on:** TD-5101
 
-From the 2026-10-14 gap audit (docs/gap-audit-2026-10-14.md, Adam's
+From the 2026-10-14 gap audit (docs/gap-audit-2026-10-14.md, the owner's
 decision 2: "TD-4805 is reversed only for the static parsed list; model
 judgment still never auto-approves shell"). Every `ls`, `git status` and
 `cat` asked, because every shell call was Class B.
@@ -10072,9 +10074,9 @@ updated `core/tests/test_research_worker.py`. See DECISIONS.md.
 ---
 
 ### TD-5140 — Agent-proposed steering edits, written only on approval
-**Size:** 5 · **Depends on:** TD-5101, TD-5108, TD-5113 (Adam's order: after the safety batch)
+**Size:** 5 · **Depends on:** TD-5101, TD-5108, TD-5113 (the owner's order: after the safety batch)
 
-From the 2026-10-14 gap audit (docs/gap-audit-2026-10-14.md, Adam's decision 4: "agents may
+From the 2026-10-14 gap audit (docs/gap-audit-2026-10-14.md, the owner's decision 4: "agents may
 propose edits to steering files; only the user's approval writes them"). Directive 4 barred
 any agent path to a steering edit, even one the user would approve, so "add this to
 AGENTS.md" and "draft a starter AGENTS.md" had no hand-off like memory's.
@@ -10530,7 +10532,7 @@ fix); one that is not, or no longer applies, says why.
       framings in note 13, the native-thread lines in note 31); ruff, mypy,
       tsc and vitest pass; DECISIONS.md has the TD-5160 entry
 
-### TD-5162 — Measure TD-5115 stale-result clearing on EZER
+### TD-5162 — Measure TD-5115 stale-result clearing on the GPU server
 **Size:** 2 · **Depends on:** TD-5115, TD-5111
 
 TD-5115's last criterion asked for a live measurement: fewer compactions
@@ -10539,7 +10541,7 @@ touching the running app: current main in its own daemon and data dir,
 on a scratch git repo, through `tst run --continue`.
 
 **Acceptance criteria:**
-- [x] A separate daemon with its own scratch `--data-dir` (Adam's
+- [x] A separate daemon with its own scratch `--data-dir` (the maintainer's
       config.yaml and token calibration copied in, only
       `clear_tool_results.enabled` and `session.log_max_events` changed),
       on a scratch git repo seeded with 40 real `tstd` modules;
@@ -10669,7 +10671,7 @@ audit, a paired phone over the socket, refusals) and
 
 A runaway build could take the box's memory, and the kernel's
 out-of-memory killer could take the daemon with it: the shell tool only
-killed the process group on timeout. EZER has had swap and OOM trouble
+killed the process group on timeout. The GPU server has had swap and OOM trouble
 before.
 
 **Acceptance criteria:**
@@ -10702,7 +10704,7 @@ fails and the line is read from the command's own out-of-memory error.
 Autonomous runs: Podman gets `--memory=<cap>m` and an exit of 137 is
 reported as the likely cause. macOS and Windows hosts are not capped
 (no `RLIMIT_AS` enforcement, no scopes). A value above half of RAM
-loosens the default and waits for trust (TD-5113). Verified on EZER-class
+loosens the default and waits for trust (TD-5113). Verified on GPU-server-class
 Linux (systemd 259) for the scope path and with the scope forced off for
 `ulimit`; Podman is checked by argv and a fake runtime, as it is not
 installed here. Tests: `core/tests/test_shell_memory_cap.py` (config,
@@ -10756,7 +10758,7 @@ architecture.md "`tst run` for scripts".
 **Size:** 5 · **Depends on:** TD-5106 · Gap audit 2026-10-14
 
 If a tier's endpoint was down, every retry went back to it and the turn
-failed: a llama.cpp restart or a GPU swap on EZER killed turns. The only
+failed: a llama.cpp restart or a GPU swap on the GPU server killed turns. The only
 fallback list covered web search.
 
 **Acceptance criteria:**
@@ -10788,7 +10790,7 @@ fallback list covered web search.
       point (the prompt is fitted before it is asked, and
       `context_usage` names its model), and cost at its prices under its
       slug
-- [x] docs/configuration.md (tier table, §3.7 with an EZER example),
+- [x] docs/configuration.md (tier table, §3.7 with a GPU-server example),
       docs/architecture.md (event table) and DECISIONS.md updated
 - [x] Tests in core (`core/tests/test_backup_endpoints.py`,
       `test_backup_endpoints_config.py`) and ui (`protocol.test.ts`,
@@ -11018,8 +11020,8 @@ See DECISIONS.md, docs/configuration.md §4.4 and docs/architecture.md.
 
 Sessions shared one working tree, so two sessions in one repository saw
 each other's half-made edits. Claude Code and its desktop app run
-parallel sessions in separate git worktrees; Adam did this by hand.
-On by default in git repos (Decisions, Adam, 2026-10-14).
+parallel sessions in separate git worktrees; the owner did this by hand.
+On by default in git repos (Decisions, the owner, 2026-10-14).
 
 **Acceptance criteria:**
 - [x] Sessions and scheduled jobs in a git repo get their own worktree by
@@ -11115,11 +11117,11 @@ search to scale to many servers.
       matching tools, which then load for the rest of the session.
 - [x] Works on any OpenAI-compatible endpoint; it needs no provider
       feature.
-- [x] Measured on EZER: prompt tokens with 5+ servers before and after.
+- [x] Measured on the GPU server: prompt tokens with 5+ servers before and after.
       Six stdio servers (70 tools; `core/scripts/mcp_catalog_server.py`,
       catalogs written for the measurement and sized like public tracker,
       wiki, calendar, mail, SQL and storage servers), counted exactly by
-      the local 27B's vLLM `/tokenize` on EZER with
+      the local 27B's vLLM `/tokenize` on the GPU server with
       `core/scripts/measure_mcp_tool_search.py`: the first request of a
       turn was 15,294 prompt tokens with every schema and 8,272 with tool
       search (-46%), 9,037 after one search loaded five tools. Five
@@ -11274,7 +11276,7 @@ docs/configuration.md §2 `session` and docs/architecture.md.
 
 # Epic E52 — Files to the user
 
-Filed 2026-10-15. The agent built an APK for Adam and had no way to hand it over in the chat.
+Filed 2026-10-15. The agent built an APK for the owner and had no way to hand it over in the chat.
 
 ---
 
@@ -11456,7 +11458,7 @@ Code document a model-written summary and what survives it.
 - [ ] A signing-key or downgrade conflict is named before the installer opens
 - [ ] The file bridge refuses calls without the page key
 - [ ] versionCode 11 / 0.1.10, installs over 0.1.9 with the same keystore
-- [ ] Live: the agent on EZER sends an APK and the Pixel's installer opens
+- [ ] Live: the agent on the GPU server sends an APK and the Pixel's installer opens
 
 ### TD-5130 — fs_read opens images, PDFs and notebooks
 **Size:** 5 · **Depends on:** none · Gap audit 2026-10-14
@@ -11549,6 +11551,147 @@ tool; scripted servers for the headers and SSE, -32022 fallback, a server
 with no shared version, no version header for 2024-11-05, and the
 opt-in), plus the updated fakes in the other `test_mcp_*` files. See
 DECISIONS.md and docs/configuration.md §2 `mcp`.
+
+---
+
+### TD-5134 — Hook runner
+**Size:** 8 · **Depends on:** TD-5113 · Gap audit 2026-10-14
+
+TST Desk had no user-scriptable hooks, so a team could not run its own
+check before a tool call, add context at session start, or keep the agent
+from stopping before its own test passed. The owner decided 2026-10-14
+that hooks may come from a trusted workspace config as well as user config.
+
+**Acceptance criteria:**
+- [x] Hooks are configured in user config, and in workspace config only
+      after trust (TD-5113). Events: session start, user prompt, before
+      tool, after tool, stop.
+- [x] A hook is a command with a timeout. Its exit code or JSON can add
+      context, block with a reason, or (before tool) tighten the decision.
+      It can never loosen it or skip the classifier (directive 6).
+- [x] Every hook run and its result go to the audit DB, with secrets
+      redacted.
+- [x] An inspector lists the active hooks and their last results.
+
+Done (2026-10-21): `hooks:` in `config.yaml` and in `.tst/config.yaml`
+holds a list of commands for each of `session_start`, `user_prompt`,
+`before_tool`, `after_tool` and `stop` (`command`, `timeout_seconds`
+default 30, `tools` globs on the tool events, `name`). The workspace list
+is read through the TD-5113 view, so a pending, declined or invalid file
+adds nothing (the Hooks view says why). A hook gets a JSON payload on stdin and
+`TST_HOOK_EVENT`, `TST_SESSION_ID` and `TST_WORKSPACE`, runs in the
+workspace with the shell tool's sanitized environment, and is killed with
+its process group at the timeout. Exit 2 blocks with stderr as the reason;
+JSON `{"decision": "block"|"ask", "reason", "context"}` blocks, asks (before
+tool only) or adds context; plain stdout is context at session start and
+on a prompt. `before_tool` runs after the classifier and policy and can
+only refuse or turn `auto` into `ask` (a refusal under autonomy); a call
+already refused never reaches it. `after_tool` notes go back with the tool
+result. A `user_prompt` block keeps the message out of the conversation; a
+`stop` block sends the agent back to work at most 3 times a turn. Every
+run is a `hook_run` event and a row in the new `hook_runs` audit table
+(schema v7), with command, reason and context redacted. The right pane's
+More menu has a Hooks view (`get_hooks` → `hooks_state`) listing the
+active hooks, their source and their last result. Tests:
+core/tests/test_hooks.py (config, protocol, runner, dispatcher, trust,
+audit, loop), ui/src/lib/hooks-store.test.ts, and the app walk.
+
+Review fixes (PR #60): an autonomous session's hooks run in its container
+(§12.5), never on the host; a message that steers a running turn meets
+`user_prompt` hooks; `[hooks]` notes are added after truncation; and
+`tst run` exits 3 on `hook_blocked`. Tests: `TestAutonomy`, `TestSteer`,
+`TestTstRun` and `test_hook_notes_survive_a_long_result` in
+core/tests/test_hooks.py.
+
+### TD-5133 — Named worker definitions
+**Size:** 5 · **Depends on:** TD-5117 · Gap audit 2026-10-14
+
+TST Desk had one generic `delegate` child with two built-in kinds. Claude
+Code documents subagent files with their own prompt, tools and model.
+
+**Acceptance criteria:**
+- [x] `.tst/agents/*.md` and `~/.tstdesk/agents/*.md` define workers: name,
+      description, prompt, tool allow list, tier or preset, and policy
+      overrides that can only tighten.
+- [x] These files are agent-unwritable, like steering (directive 4).
+- [x] `delegate` picks a worker by name. The model sees the list with
+      descriptions, and `@name` in the composer targets one.
+
+Done (2026-10-21): `core/tstd/context/workers.py` reads both trees
+(user-global wins on a name): frontmatter `name`, `description`
+(required), `tools`, `tier`, `preset`, `policy`, and the body as the
+worker's prompt. Tools must fit inside one built-in child kind (the
+worker kind's or the research kind's) plus `consult`, so writes or
+`shell` never come with the web; no `tools` key means read-only. Only
+a user-global file may set a non-worker `tier` or a `preset`, since
+workspace files load without trust. Policy rules must be `ask` or `never`, and
+`with_worker_rules` drops `auto` again at the gate, so a worker can only
+tighten. A file that breaks a rule, or carries a key TST Desk does not
+read, is not loaded and `delegate` names why. The classifier refuses
+`.tst/agents/` and `.tstdesk/agents/` like slash-command trees, through
+`fs_write`, `fs_edit` and shell writes. `delegate` takes `agent`
+(`core/tstd/tools/delegate_named.py`): the child gets that allow list,
+that tier (from `preset` when named; a missing preset is refused), its
+prompt after the worker stack, and its rules on the child dispatcher.
+Plan mode refuses a worker that can write. Each turn the loop lists the
+workers with descriptions in `delegate`'s definition (with an `agent`
+enum; unchanged when there are none), and `@name` in the message adds a
+note telling the model to delegate to it. Tests:
+`core/tests/test_named_workers.py` (loading, precedence, refused files,
+unwritable trees, tier, preset, policy, refusals, plan mode, the
+definition the model sees, and an `@name` turn through the loop with the
+mock provider) and `core/tests/test_security_suite.py` (paths and shell
+writes). See DECISIONS.md and docs/configuration.md §4.11.
+
+### TD-5135 — Run a formatter or linter after edits
+**Size:** 5 · **Depends on:** TD-5134 (not built yet; see DECISIONS.md) · Gap audit 2026-10-14
+
+Local models make more format and lint slips than hosted ones, and
+nothing caught them until the next turn, if at all. Claude Code users run
+a formatter or linter as a PostToolUse hook; TST Desk had no hooks.
+
+**Acceptance criteria:**
+- [x] A packaged "after write" hook template runs a configured command on
+      files changed by fs_write/fs_edit. Failures go back to the model as
+      part of the tool result (`hooks.after_write` in config.yaml, and in
+      a trusted `.tst/config.yaml`; core/tests/test_after_write_hooks.py)
+- [x] Examples for ruff, prettier and eslint are in docs
+      (docs/configuration.md §2 `hooks`, checked by
+      test_docs_config_reference.py)
+- [x] The time it takes shows in the step timeline (the write's row reads
+      `after write 0.43 s`, expanded per hook;
+      ui/src/lib/timeline-hooks.test.ts)
+
+Done (2026-10-21): `hooks.after_write` is a list of commands (argv, or a
+string split into words; no shell), each with `match` globs and
+`timeout_seconds`. The dispatcher runs the matching ones after a
+successful `fs_write` or `fs_edit`, before the checkpoint and the diff, in
+the workspace with secrets stripped from the environment. A failure, a
+timeout or a missing program goes back to the model as a note on the
+(still successful) tool result with the output's start and end; a hook
+that rewrote the file says so; a clean pass adds nothing. User hooks run
+first, then the workspace's, which apply only once the file is trusted
+(TD-5113: any `hooks` value already counted as loosening). Each run rides
+on `tool_result.hooks` (name, status, exit code, duration, changed) for
+the step timeline. The packaged config.yaml and the workspace scaffold
+carry commented templates. The general hook runner (TD-5134) is still to
+come and reuses the `hooks` section.
+
+Review fixes (PR #58): the command leads its own process group and a
+timeout or cancelled turn kills the whole tree (as the shell tool does),
+not only the leader; a file name starting with `-` reaches the command as
+`./-name`; the workspace root is resolved before matching, so a symlinked
+workspace still matches `src/*.py` patterns and passes relative paths
+(core/tests/test_after_write_hooks.py: the three tests fail on the old code).
+
+Integration with TD-5134 (merge of main): both stories own `hooks:`, so
+there is one `HooksConfig` (core/tstd/hooks_config.py) with the five
+TD-5134 events and `after_write` beside them; `AfterWriteHook` moved
+there. The tool result's per-hook record is now `AfterWriteRun`, since
+TD-5134's `HookRun` is the `hook_run` event. An autonomous session runs no
+after-write hook (TD-5134 keeps its hooks in the container; these have no
+container path). Tests: `test_an_autonomous_session_runs_no_hook_on_the_host`,
+core/tests/test_docs_config_reference.py.
 
 ## Epic E53 — Connectors
 

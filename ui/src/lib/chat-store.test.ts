@@ -1703,7 +1703,7 @@ describe("sessions on another computer (TD-5015)", () => {
       seq: 1,
       machines: ids.map((id) => ({
         id,
-        name: "ezer",
+        name: "tower",
         host: "100.64.7.7",
         port: 39079,
         status: "connected",

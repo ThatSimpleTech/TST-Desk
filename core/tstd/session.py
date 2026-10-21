@@ -20,6 +20,7 @@ from .autonomy.classifier import DecisionClass
 from .autonomy.judgment import JudgmentBackend
 from .boundary_config import BoundaryConfig
 from .compaction import ContextMeter, window_user_turns
+from .hooks import HookRunner
 from .logging import get_logger, redact_structure
 from .plan_review import PendingPlan, carry_for
 from .plan_review import resolve_all as resolve_plans
@@ -352,6 +353,8 @@ class Session:
         # user_index -> sibling snapshots of conversation
         self._branches: dict[int, list[list[ChatMessage]]] = {}
         self._branch_cursor: dict[int, int] = {}
+        # A manual compaction is waiting on the worker (TD-5128).
+        self._compacting = False
         self._resume_event = asyncio.Event()
         # Workspace boundary (TD-706), resolved by the daemon on open.
         self.boundary_config = BoundaryConfig()
@@ -375,6 +378,9 @@ class Session:
         # ``config_view`` is the read the boundary was last loaded from.
         self.trust_store: TrustStore | None = None
         self.config_view: WorkspaceConfigView | None = None
+        # Hooks (TD-5134): user hooks the loop binds, workspace hooks read
+        # from ``config_view`` while it applies, and each hook's last run.
+        self.hooks = HookRunner(self)
         # Pending approvals (TD-802), owned by the session — NOT by any
         # websocket — so a client disconnect leaves them parked and
         # resumable (prime directive §2.5).  Each record carries the call
@@ -1298,7 +1304,9 @@ class Session:
             siblings.append([])
         siblings[cursor] = self._copy_conversation()
 
-    def _emit_reset(self, user_index: int, content: str) -> ConversationReset:
+    def _emit_reset(
+        self, user_index: int, content: str, *, user_turns: int | None = None
+    ) -> ConversationReset:
         siblings = self._branches.get(user_index, [[]])
         return ConversationReset(
             session_id=self.id,
@@ -1306,6 +1314,7 @@ class Session:
             sibling_index=self._branch_cursor.get(user_index, 0),
             sibling_count=max(len(siblings), 1),
             content=content,
+            user_turns=user_turns,
             seq=1,
         )
 
@@ -1333,6 +1342,24 @@ class Session:
         await self.add_user_message(text)
         return self._emit_reset(user_index, text)
 
+    def compact_refusal(self, user_index: int | None = None) -> str | None:
+        """Why :meth:`compact_now` would refuse before calling the worker, or None.
+
+        Answered at once, so the daemon can refuse on the spot and run the
+        rest off the connection that asked (the worker may take a while).
+        """
+        if self.turn_in_flight:
+            return "turn_in_progress"
+        if self._compacting:
+            return "compaction_in_progress"
+        if self.context_meter is None:
+            return "nothing_to_compact"
+        if user_index is not None:
+            found = self._find_user_turn(user_index)
+            if isinstance(found, str):
+                return found
+        return None
+
     async def compact_now(self, guidance: str = "", user_index: int | None = None) -> str | None:
         """Compact on request (TD-5109).  Returns an error code, or None.
 
@@ -1343,19 +1370,25 @@ class Session:
         many user turns it stands for, so it holds after any compaction
         and after a restart.
         """
+        refused = self.compact_refusal(user_index)
+        if refused is not None:
+            return refused
+        self._compacting = True
+        try:
+            return await self._compact_now(guidance, user_index)
+        finally:
+            self._compacting = False
+
+    async def _compact_now(self, guidance: str, user_index: int | None) -> str | None:
         from .compaction_model import compact_manual
         from .protocol import ContextCompacted
 
-        if self.turn_in_flight:
-            return "turn_in_progress"
         meter = self.context_meter
-        if meter is None:
-            return "nothing_to_compact"
+        assert meter is not None  # compact_refusal said so
         position: int | None = None
         if user_index is not None:
             found = self._find_user_turn(user_index)
-            if isinstance(found, str):
-                return found
+            assert not isinstance(found, str)  # compact_refusal said so
             position = found
         # The worker may take a while (TD-5128). Folded from a copy, and
         # dropped if a turn started or the conversation changed meanwhile:
@@ -1475,7 +1508,11 @@ class Session:
             if isinstance(position, str)
             else content_as_text(self.conversation[position].content)
         )
-        return self._emit_reset(user_index, text)
+        # No user_turn follows a sibling switch, so the reset says how many
+        # turns the restored sibling holds.
+        return self._emit_reset(
+            user_index, text, user_turns=len(window_user_turns(self.conversation))
+        )
 
     @property
     def summary(self) -> dict[str, Any]:

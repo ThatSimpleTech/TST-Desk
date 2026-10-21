@@ -101,7 +101,7 @@ describe("questions for another computer's session", () => {
     machines.list = [
       {
         id: MCH,
-        name: "ezer",
+        name: "tower",
         host: null,
         port: null,
         status,
@@ -136,11 +136,11 @@ describe("questions for another computer's session", () => {
       session_id: REMOTE,
       machine: MCH,
       code: "machine_unreachable",
-      message: "ezer isn't reachable.",
+      message: "tower isn't reachable.",
       in_reply_to: "answer_question",
     });
     expect(pending[0]!.sent).toBe(false);
-    expect(pending[0]!.notice).toBe("ezer isn't reachable.");
+    expect(pending[0]!.notice).toBe("tower isn't reachable.");
     answer(pending[0]!, DRAFTS);
     expect(connection.send).toHaveBeenCalledTimes(2);
   });

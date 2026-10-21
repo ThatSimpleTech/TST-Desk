@@ -1,6 +1,6 @@
 """MCP timeouts per server, progress and cancellation (TD-5105).
 
-A scripted stdio server stands in for a long EZER tool.  The timeouts are
+A scripted stdio server stands in for a long TOWER tool.  The timeouts are
 scaled down (a 0.3 s idle timeout instead of 30 s) so the suite stays fast;
 the claim is the same: a tool that keeps reporting progress outlives the
 idle timeout, silence ends a call, the hard cap ends one that only reports

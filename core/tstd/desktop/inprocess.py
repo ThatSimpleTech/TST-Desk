@@ -17,7 +17,7 @@ from typing import Any
 from .protocol import DesktopError
 
 _STOP_ENV = "TST_CU_MCP_STOP"
-# 32k local VLMs (ezer-forge) cannot eat a 1568px PNG as text. 768 keeps
+# 32k local VLMs (gateway-model) cannot eat a 1568px PNG as text. 768 keeps
 # the frame usable for click targeting without blowing the window (TD-1728).
 _SCREENSHOT_MAX_EDGE = 768
 

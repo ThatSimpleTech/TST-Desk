@@ -39,6 +39,7 @@ from .autonomy.dod import (
     poll_definition_of_done,
     shell_exit_zero,
 )
+from .hooks import MAX_STOP_BLOCKS
 from .logging import get_logger
 from .protocol import StopCheck, StopCheckItem, StopCheckOutcome
 from .protocol import ToolCall as ToolCallEvent
@@ -165,6 +166,9 @@ class TurnStopCheck:
         ``failed`` ends it with the failure shown; ``stopped`` means Stop or
         cancel landed during the check.
         """
+        hooked = await self._stop_hooks(messages)
+        if hooked is not None:
+            return hooked
         items = self.items()
         if not items:
             return "end"
@@ -231,6 +235,38 @@ class TurnStopCheck:
             await session.conversation_changed()
             return "retry"
         return "failed" if outcome == "failed" else "end"
+
+    async def _stop_hooks(self, messages: list[ChatMessage]) -> TurnEnd | None:
+        """Run ``stop`` hooks (TD-5134); a block sends the model back to work.
+
+        Up to :data:`MAX_STOP_BLOCKS` times a turn, so a hook that always
+        blocks cannot keep a turn going forever. ``None`` lets the
+        done-check go on.
+        """
+        session = self.session
+        if session.delegate_depth >= 1:
+            return None
+        hooks = session.hooks
+        verdict = await hooks.run("stop", {"last_message": last_assistant_text(messages)})
+        if session.cancel_requested or session.stop_turn_requested:
+            return "stopped"
+        if verdict.block is None or hooks.stop_blocks >= MAX_STOP_BLOCKS:
+            return None
+        hooks.stop_blocks += 1
+        messages.append(
+            ChatMessage(
+                role="user",
+                content=(
+                    f"A stop hook says the work is not finished (try {hooks.stop_blocks} of "
+                    f"{MAX_STOP_BLOCKS}): {verdict.block}\n"
+                    "Deal with that, then end your turn again."
+                ),
+                steer=True,
+                check=True,
+            )
+        )
+        await session.conversation_changed()
+        return "retry"
 
     async def _run_shell(self, command: str) -> tuple[bool | None, str]:
         dispatcher = self.dispatcher

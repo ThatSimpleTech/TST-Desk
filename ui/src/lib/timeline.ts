@@ -19,7 +19,7 @@
 // the chat conversation, not an activity record. The AC enumerates exactly the
 // activity kinds shown here.
 
-import type { ContextCompacted, DaemonEventUnion, ModelFallback, SessionState, TurnComplete, UserTurn } from "./protocol";
+import type { ContextCompacted, DaemonEventUnion, AfterWriteRun, ModelFallback, SessionState, TurnComplete, UserTurn } from "./protocol";
 import { formatTokens } from "./context-gauge";
 
 /** Presentation category driving visually distinct treatment (AC #6).
@@ -78,6 +78,39 @@ export function formatProgress(event: { progress: number; total?: number | null;
     amount = String(progress);
   }
   return message ? `${amount} · ${truncate(message, 80)}` : amount;
+}
+
+/** Seconds for a hook's time: "0.42 s", "12 s". */
+function hookSeconds(ms: number): string {
+  const s = ms / 1000;
+  return s < 10 ? `${s.toFixed(2)} s` : `${Math.round(s)} s`;
+}
+
+const HOOK_OUTCOME: Record<AfterWriteRun["status"], string> = {
+  passed: "ok",
+  failed: "failed",
+  timed_out: "timed out",
+  error: "could not start",
+};
+
+/** One line per after-write hook (TD-5135): "ruff format · 0.12 s · ok, changed the file". */
+export function formatHookRuns(hooks: readonly AfterWriteRun[]): string {
+  return hooks
+    .map((h) => {
+      let outcome = HOOK_OUTCOME[h.status] ?? h.status;
+      if (h.status === "failed" && typeof h.exit_code === "number") outcome += ` (exit ${h.exit_code})`;
+      if (h.changed) outcome += ", changed the file";
+      return `${h.name} · ${hookSeconds(h.duration_ms)} · ${outcome}`;
+    })
+    .join("\n");
+}
+
+/** The collapsed row's note for a write's hooks: "after write 0.43 s" or
+ *  "after write failed · 0.43 s" — the time the hooks added to the step. */
+export function hookSummary(hooks: readonly AfterWriteRun[]): string {
+  const total = hooks.reduce((sum, h) => sum + (h.duration_ms || 0), 0);
+  const bad = hooks.some((h) => h.status !== "passed");
+  return `after write${bad ? " failed ·" : ""} ${hookSeconds(total)}`;
 }
 
 /** "qwen on 127.0.0.1:8080 failed (connection_error); backup 1, gpt on
@@ -186,7 +219,14 @@ export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
           ...(event.transcript !== undefined && event.transcript.length > 0
             ? { transcript: event.transcript }
             : {}),
+          // The formatter/linter hooks a write ran, with their times (TD-5135).
+          ...(event.hooks !== undefined && event.hooks.length > 0
+            ? { after_write: formatHookRuns(event.hooks) }
+            : {}),
         },
+        ...(event.hooks !== undefined && event.hooks.length > 0
+          ? { progress: hookSummary(event.hooks) }
+          : {}),
       };
     case "approval_request":
       return {

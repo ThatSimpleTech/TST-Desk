@@ -28,7 +28,7 @@ import {
 import { nativeAttachBridge } from "./attach-store";
 
 const KEY = "a".repeat(64);
-const LINK = "tstdesk://pair?h=100.64.7.7&p=39079&c=ABCD2345&n=ezer";
+const LINK = "tstdesk://pair?h=100.64.7.7&p=39079&c=ABCD2345&n=tower";
 
 describe("normalizePairCode (TD-5014)", () => {
   it("uppercases and drops spaces and dashes", () => {
@@ -58,15 +58,15 @@ describe("parsePairLink (TD-5014)", () => {
   it("reads a good link", () => {
     expect(parsePairLink(LINK)).toEqual({
       ok: true,
-      link: { host: "100.64.7.7", port: 39079, code: "ABCD2345", desktopName: "ezer" },
+      link: { host: "100.64.7.7", port: 39079, code: "ABCD2345", desktopName: "tower" },
     });
   });
 
   it("decodes the name, normalizes the code, and allows no name", () => {
-    const parsed = parsePairLink("TSTDESK://pair/?h=box.tail1234.ts.net&p=1&c=abcd-o0il&n=Adam%27s%20PC");
+    const parsed = parsePairLink("TSTDESK://pair/?h=box.tail1234.ts.net&p=1&c=abcd-o0il&n=Alex%27s%20PC");
     expect(parsed).toEqual({
       ok: true,
-      link: { host: "box.tail1234.ts.net", port: 1, code: "ABCD0011", desktopName: "Adam's PC" },
+      link: { host: "box.tail1234.ts.net", port: 1, code: "ABCD0011", desktopName: "Alex's PC" },
     });
     const bare = parsePairLink("tstdesk://pair?h=100.64.0.1&p=65535&c=ABCD2345");
     expect(bare.ok && bare.link.desktopName).toBeNull();
@@ -143,7 +143,7 @@ function harness() {
       port: 39079,
       code: "ABCD2345",
       deviceName: "Pixel 11 Pro Fold",
-      desktopName: "ezer",
+      desktopName: "tower",
       socketFactory: (url: string) => {
         const socket = new FakeSocket(url);
         sockets.push(socket);
@@ -182,11 +182,11 @@ describe("redeemPairing (TD-5014)", () => {
       device_id: "dev_0123456789ab",
       device_name: "Pixel 11 Pro Fold",
       token: KEY,
-      desktop_name: "ezer",
+      desktop_name: "tower",
     });
     expect(await pending).toEqual({
       ok: true,
-      target: { host: "100.64.7.7", port: 39079, token: KEY, deviceId: "dev_0123456789ab", desktopName: "ezer" },
+      target: { host: "100.64.7.7", port: 39079, token: KEY, deviceId: "dev_0123456789ab", desktopName: "tower" },
     });
     expect(socket.closed).toBe(true);
     expect(h.timers[0].ms).toBe(10_000);
@@ -231,7 +231,7 @@ describe("redeemPairing (TD-5014)", () => {
     h.timers[0].fn();
     const result = await pending;
     expect(result.ok).toBe(false);
-    expect(!result.ok && result.message).toContain("ezer");
+    expect(!result.ok && result.message).toContain("tower");
     expect(h.sockets[0].closed).toBe(true);
   });
 
@@ -242,7 +242,7 @@ describe("redeemPairing (TD-5014)", () => {
       h.sockets[0][fail]?.();
       const result = await pending;
       expect(result.ok).toBe(false);
-      expect(!result.ok && result.message).toMatch(/Couldn't reach ezer/);
+      expect(!result.ok && result.message).toMatch(/Couldn't reach tower/);
     }
   });
 
@@ -260,7 +260,7 @@ describe("redeemPairing (TD-5014)", () => {
   it("refuses a pair_ok whose key is the wrong shape", async () => {
     const h = harness();
     const pending = redeemPairing(h.opts);
-    h.sockets[0].frame({ type: "pair_ok", version: 1, device_id: "dev_0123456789ab", token: "short", desktop_name: "ezer" });
+    h.sockets[0].frame({ type: "pair_ok", version: 1, device_id: "dev_0123456789ab", token: "short", desktop_name: "tower" });
     expect((await pending).ok).toBe(false);
   });
 
@@ -379,7 +379,7 @@ describe("shell bridge (TD-5014)", () => {
 });
 
 describe("re-pairing (TD-5014 addendum 1)", () => {
-  const link = { host: "100.64.7.7", port: 39079, code: "ABCD2345", desktopName: "ezer" };
+  const link = { host: "100.64.7.7", port: 39079, code: "ABCD2345", desktopName: "tower" };
   const saved = { host: "100.64.7.7", port: 39079, token: KEY, deviceId: "dev_0123456789ab" };
 
   it("replaces the saved device key on the computer that issued it", () => {
@@ -395,11 +395,11 @@ describe("re-pairing (TD-5014 addendum 1)", () => {
 });
 
 describe("a link from the shell (TD-5014)", () => {
-  const link = { host: "100.64.7.7", port: 39079, code: "ABCD2345", desktopName: "ezer" };
+  const link = { host: "100.64.7.7", port: 39079, code: "ABCD2345", desktopName: "tower" };
 
   it("asks before pairing, and says what it replaces", () => {
     expect(pairOfferCopy(link, "office")).toEqual({
-      question: "Pair with ezer at 100.64.7.7?",
+      question: "Pair with tower at 100.64.7.7?",
       replaces: "This replaces office.",
       decline: "Back to office",
     });
@@ -421,11 +421,11 @@ describe("a link from the shell (TD-5014)", () => {
 
 describe("refusal copy (TD-5014)", () => {
   it("names the computer", () => {
-    expect(refusedKeyMessage("ezer", true)).toBe(
-      "This phone isn't paired with ezer anymore. Scan the code on the computer again.",
+    expect(refusedKeyMessage("tower", true)).toBe(
+      "This phone isn't paired with tower anymore. Scan the code on the computer again.",
     );
     expect(refusedKeyMessage(null, true)).toContain("this computer");
-    expect(refusedKeyMessage("ezer", false)).toMatch(/^This browser/);
+    expect(refusedKeyMessage("tower", false)).toMatch(/^This browser/);
   });
 });
 

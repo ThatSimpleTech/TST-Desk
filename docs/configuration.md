@@ -20,6 +20,7 @@ suite rather than quietly mislead you.
 | `.tst/config.yaml` in a workspace | You, per project | **Yes.** Git-tracked if you want the team to share it. |
 | `.tst/memory/*.md` in a workspace | Distill writes; you correct | **Yes.** Git-tracked on purpose. Standing rules stay in `AGENTS.md`. |
 | `.tst/autonomy/CHARTER.md` | You, from the Charter column | **Yes.** Human path only — the agent cannot write it. Spec §12.4. |
+| `.tst/agents/*.md`, `~/.tstdesk/agents/*.md` | You | **Yes.** Named workers for `delegate` (§4.11). Human path only — the agent cannot write either tree. |
 
 The packaged file is a seed, not a setting. On first load, if your user copy is missing, it is
 copied there verbatim — comments and all — and from then on nothing the daemon reads comes from
@@ -79,6 +80,7 @@ no effect.
 | `engine` | mapping | see below | Which agent loop new sessions use. `native` is the TST 3-tier OpenAI-compatible loop. `grok` spawns the installed Grok Build CLI over ACP. Omitted in an older user copy is filled from the shipped file at load. |
 | `steering` | mapping | see below | User-global steering (TD-4845). Omitted in an older user copy is filled from the shipped file at load. |
 | `worktree` | mapping | see below | A git worktree per session (TD-5126). On by default: a session or scheduled job in a git repository works in its own worktree. Omitted in an older user copy is the defaults, on. |
+| `hooks` | mapping | no hooks | Commands TST Desk runs around the agent's work: at five points in a session (TD-5134, §2 `hooks`), and `after_write`, a formatter or linter run on the files each `fs_write` or `fs_edit` changed, its failures sent back to the model in that call's result (TD-5135, §2 `hooks.after_write`). Omitted in an older user copy is no hooks. |
 
 ### `credentials`
 
@@ -223,7 +225,7 @@ under the user data dir. Playwright missing always falls back to mock.
 | `browser` | `mock` or `playwright` | `mock` | Browser driver. `mock` never launches Chrome. `playwright` uses a persistent profile under the user data dir when Playwright is installed; otherwise the mock. |
 | `grounding` | mapping | see below | Local vision model for click targeting (TD-3902). |
 | `local_worker_preset` | string | `vllm` | After this session has used a `desktop_` or `browser_` tool, the worker *client* uses that named preset's worker tier (loopback URL + optional slug). Brain stays on the active preset. Empty never remaps. The name is a preset key, not a model slug. Lead-turns, `set_tier`, and escalation are unchanged. |
-| `max_prompt_images` | int ≥ 0 | `1` | How many `image_url` parts a completion may keep. Oldest images (screenshots, and images `fs_read` returned) are dropped first. `1` matches ezer-forge (`--limit-mm-per-prompt image:1`). It also caps the page images one PDF read returns (at most 5), and `0` makes `fs_read` treat every tier as text-only (TD-5130). |
+| `max_prompt_images` | int ≥ 0 | `1` | How many `image_url` parts a completion may keep. Oldest images (screenshots, and images `fs_read` returned) are dropped first. `1` matches gateway-model (`--limit-mm-per-prompt image:1`). It also caps the page images one PDF read returns (at most 5), and `0` makes `fs_read` treat every tier as text-only (TD-5130). |
 
 #### `computer_use.grounding`
 
@@ -1033,6 +1035,72 @@ worktree:
   setup_timeout_s: 900
 ```
 
+### `hooks.after_write`
+
+Run a formatter or linter after the agent writes a file (TD-5135). Local models make more format
+and lint slips than hosted ones; a hook catches them in the same step, so fixing one does not cost
+a turn. Each entry of `after_write` is one command:
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `after_write` | list of hooks, up to 10 | `[]` | Commands run, in order, after every successful `fs_write` and `fs_edit`, on the files that call changed. Empty means none. |
+| `name` | string, up to 60 characters | *empty* | The label in the step timeline and in the note to the model. Empty is the program's file name. |
+| `command` | list of strings, or one string | *required* | The program and its arguments, run **without a shell** (no pipes, `&&` or globbing). One string is split into words the way a POSIX shell would; on Windows, give a list when a path holds backslashes. An item that is exactly `{files}` is replaced by the changed files, as paths from the workspace root (a name starting with `-` is passed as `./-name`, so it is never read as an option); with none, the files go on the end. |
+| `match` | list of glob patterns | `["*"]` | Which changed files the hook runs on. A pattern without `/` matches the file name (`*.py`); one with `/` matches the path from the workspace root (`src/*.ts`). A write that matches no pattern skips the hook. |
+| `timeout_seconds` | number, up to 600 | `30` | How long the command may run before it is stopped. Stopping it (or stopping the turn) kills the command's whole process tree, so a formatter `npx` started cannot keep writing after the diff is taken. |
+
+<!-- verify: model -->
+```yaml
+presets:
+  local:
+    brain: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    worker: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    validator: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+active_preset: local
+hooks:
+  after_write:
+    # ruff: format, then lint with safe fixes. Python files only.
+    - name: ruff format
+      command: "ruff format {files}"
+      match: ["*.py"]
+    - name: ruff check
+      command: "ruff check --fix --quiet {files}"
+      match: ["*.py"]
+    # prettier: rewrite web and docs files in place.
+    - name: prettier
+      command: ["npx", "--no-install", "prettier", "--write", "{files}"]
+      match: ["*.ts", "*.tsx", "*.js", "*.css", "*.md", "*.json"]
+    # eslint: lint and fix; a rule it cannot fix fails the hook.
+    - name: eslint
+      command: "npx --no-install eslint --fix {files}"
+      match: ["*.ts", "*.tsx", "*.js"]
+      timeout_seconds: 60
+```
+
+What happens after each write:
+
+- **The hook runs in the workspace, with secrets stripped from its environment**, as the shell tool
+  and `worktree.setup` do. File paths are passed relative to the workspace root.
+- **A failure goes back to the model in that call's result.** The write itself still succeeded, so
+  the result is a success with a note after it: the hook's name, its exit code and time, and its
+  output (the start and end, up to 2000 characters). A hook that runs past `timeout_seconds` is
+  stopped and reported the same way, and so is a program that is not on `PATH`.
+- **A hook that rewrites the file says so.** When a formatter changes the file, the note tells the
+  model to read it again before its next `fs_edit`. The diff and the checkpoint are taken after the
+  hooks, so both show the file as the formatter left it.
+- **A clean pass adds nothing** to the model's context.
+- **The time shows in the step timeline.** The write's result row reads `after write 0.43 s` (or
+  `after write failed · 0.43 s`), and expanding it lists each hook with its time and outcome. The
+  `tool_result` event carries them in `hooks`.
+
+The hook is your own command, not a tool call the model made, so it runs without an approval card.
+It sees only files a classified and approved write already changed. A workspace can add its own
+hooks in `.tst/config.yaml` (§4.12), after yours, once you trust that file. A Grok-engine session
+has its own loop and runs no hooks, and an autonomous session runs no `after_write` hook: its
+commands run only in its container, and these have no container path yet. `after_write` is not one of the five events below: it has its
+own keys, its runs show on the write's `tool_result`, not as `hook_run` events, and **More →
+Hooks** does not list it.
+
 ### `remote`
 
 Opt-in bind on a Tailscale address (TD-3601). Empty is off: the daemon
@@ -1150,7 +1218,7 @@ host allowlist omits that flag so Podman slirp can work, and never
 `caps.shell_memory_mb`, else this file's, else half of RAM, TD-5116,
 TD-5160). The argv never bind-mounts `$HOME`, `~/.ssh`, cloud
 creds, the OS keychain, or the user-data-dir; there is no extra-mount
-API. Firecracker / EZER is a follow-up, not this key.
+API. Firecracker is a follow-up, not this key.
 
 `verify` is the unused validator call for *interactive* mode (spec §12.6
 first sentence, TD-4204). It is not the autonomy supervisor. A write
@@ -1290,7 +1358,7 @@ is a plain `tools` array, so it works on any OpenAI-compatible endpoint.
 `tool_search` is Class A (§4.4); loading a tool grants it nothing, and
 each call to it is classified as before. Whether a tier defers is decided
 on its first call and kept for the session, so the learned token ratio
-cannot make the tool list come and go. Measured on EZER with six servers
+cannot make the tool list come and go. Measured on the GPU server with six servers
 (70 tools, `core/scripts/measure_mcp_tool_search.py`) on the local 27B's
 tokenizer: the first request of a turn was 15,294 prompt tokens with
 every schema and 8,272 with tool search, and 9,037 after one search
@@ -1455,6 +1523,84 @@ voice:
   base_url: ""
   credential: ""
   timeout_seconds: 30
+```
+
+### `hooks`
+
+Commands TST Desk runs at five points in a session (TD-5134). The same block can go in a
+workspace's `.tst/config.yaml` (§4.12), where it applies only once you trust that file. Your
+hooks run first, then the workspace's.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `session_start` | list of hooks | `[]` | Runs when a session's loop starts (open, and again after a restart revives it). What it prints goes to the model with the next message. |
+| `user_prompt` | list of hooks | `[]` | Runs on each message you send, before the model sees it, including one sent while a turn runs (it joins that turn). It can add context, or block the message: the window shows why and the model never sees it. In `tst run`, a blocked message exits 3 (refused). |
+| `before_tool` | list of hooks | `[]` | Runs for a tool call after the decision classifier and your policy have decided, and only when they would let it run or ask. It can block the call (`hook_blocked`, which `tst run` counts as refused), or make a call that would run on its own wait for your approval. It cannot approve anything. In an unattended run nobody can approve, so its ask refuses the call. |
+| `after_tool` | list of hooks | `[]` | Runs after a tool call succeeds. What it says goes back to the model with the result, after it, so a long result cut to `max_result_chars` still carries it. |
+| `after_write` | list of hooks, up to 10 | `[]` | A formatter or linter on the files each write changed, with its own keys (`match`, a `command` list, no `tools`); see `hooks.after_write` above (TD-5135). |
+| `stop` | list of hooks | `[]` | Runs when the model ends a turn, before the done-check (§4.9). A block sends its reason back to the model and the turn goes on, up to 3 times a turn. |
+
+Each hook:
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `command` | string | required | A shell command, run in the session's folder with secret-shaped variables removed from its environment, plus `TST_HOOK_EVENT`, `TST_SESSION_ID` and `TST_WORKSPACE`. It gets the event as JSON on stdin. In an unattended (autonomy) run it runs in that run's container, like its shell calls: the image's `/bin/sh` in `/workspace`, with only the workspace bound in, the charter's network and the memory cap, so a host path such as `~/bin/check.sh` is not there. If the container cannot start, the hook is recorded as an error and does not run on your computer. |
+| `timeout_seconds` | number, up to 600 | `30` | How long it may run before it and what it started are killed. A timeout changes nothing. |
+| `tools` | list of globs | `[]` | `before_tool` and `after_tool` only: the tool names it runs for (`shell`, `fs_*`). Empty is every tool. |
+| `name` | string | none | A label for the inspector. |
+
+What a hook says, by exit code:
+
+- **0, nothing printed:** nothing to say.
+- **0 and a JSON object:** `decision` is `block`, `ask` (`before_tool` only) or `allow`;
+  `reason` says why; `context` is text for the model. `allow` is ignored: a hook can only
+  tighten, never loosen.
+- **0 and plain text:** context for the model on `session_start` and `user_prompt`; ignored on
+  the others.
+- **2:** block, with what it printed on stderr as the reason.
+- **Anything else, a timeout, or a command that will not start:** recorded and otherwise
+  ignored.
+
+Every run is a `hook_run` event and a row in the audit database's `hook_runs` table, with
+secrets redacted. **More → Hooks** lists the session's active hooks and each one's last result.
+
+<!-- verify: model -->
+```yaml
+presets:
+  demo:
+    brain:
+      slug: demo/brain
+      base_url: http://127.0.0.1:11434/v1
+      input_price: 0
+      output_price: 0
+      cache_read_price: 0
+      context_window: 8192
+      max_output_tokens: 256
+    worker:
+      slug: demo/worker
+      base_url: http://127.0.0.1:11434/v1
+      input_price: 0
+      output_price: 0
+      cache_read_price: 0
+      context_window: 8192
+      max_output_tokens: 256
+    validator:
+      slug: demo/validator
+      base_url: http://127.0.0.1:11434/v1
+      input_price: 0
+      output_price: 0
+      cache_read_price: 0
+      context_window: 8192
+      max_output_tokens: 256
+active_preset: demo
+hooks:
+  before_tool:
+    - command: "~/bin/no-force-push.sh"
+      tools: ["shell"]
+      timeout_seconds: 10
+      name: no force push
+  user_prompt:
+    - command: "date"
 ```
 
 ### `engine`
@@ -1765,10 +1911,10 @@ slug is required for the off-box endpoint https://openrouter.ai/api/v1;
 only a loopback endpoint discovers its model from /v1/models
 ```
 
-### 3.5 Attaching vLLM or EZER
+### 3.5 Attaching vLLM or llama.cpp
 
 The shipped `vllm` preset points every tier at `http://127.0.0.1:8000/v1` — vLLM's
-OpenAI-compatible server default. EZER serves the same `/v1` shape, so attaching EZER is this
+OpenAI-compatible server default. The GPU server serves the same `/v1` shape, so attaching the GPU server is this
 preset, not a different code path. Set it in the user `config.yaml` and restart the daemon
 (or pick `vllm` from the first-run wizard / settings):
 
@@ -1802,7 +1948,7 @@ active_preset: vllm
 
 In a copy that already has the shipped presets, the only edit is `active_preset: vllm`. Start
 the server so `GET http://127.0.0.1:8000/v1/models` answers (vLLM's default `vllm serve …`
-listens on 8000; EZER's documented command does the same if it uses that port). If the process
+listens on 8000; the GPU server's documented command does the same if it uses that port). If the process
 listens elsewhere, change `base_url` in this file — never in Python.
 
 `slug` is omitted on purpose, same as `local` (§3.4). What "unresolved" means on this
@@ -1820,7 +1966,7 @@ The doctor's `provider` row always names the endpoint (`reachable at …` or the
 failure's `fix`). It does not print the developer's model list.
 
 **Timeouts for a slow local model (TD-5106).** The tier defaults suit a hosted API. A local
-model on EZER can spend minutes reading a long prompt before its first token, and a server
+model on the GPU server can spend minutes reading a long prompt before its first token, and a server
 that hangs mid-load may keep the socket open with keep-alive pings. Give each local tier room
 to read and a ceiling on the whole reply:
 
@@ -1858,7 +2004,7 @@ down or unnamed falls back the same way — it does not fail the click.
 ### 3.6 Provider-specific request fields (`extra_body`)
 
 Some servers take settings the OpenAI shape has no field for. `extra_body` on a tier is added
-to the JSON body of every chat request that tier makes (TD-5008). On EZER, a llama.cpp
+to the JSON body of every chat request that tier makes (TD-5008). On the GPU server, a llama.cpp
 reasoning model behind LiteLLM, this keeps the thinking short so the answer fits inside
 `max_output_tokens`:
 
@@ -1918,7 +2064,7 @@ that run on the worker ask for a one-word answer in 8 tokens (TD-5012). On a rea
 the 8 tokens end inside the thinking, so the reply is empty: the classifier falls back to
 Class B and a prose DoD item never goes green. `verdict_extra_body` is merged over `extra_body`
 on those calls only, so the thinking can be off there and stay on for the turn and a delegated
-worker. On EZER, a llama.cpp Qwen model behind LiteLLM:
+worker. On the GPU server, a llama.cpp Qwen model behind LiteLLM:
 
 <!-- verify: tier -->
 ```yaml
@@ -1939,7 +2085,7 @@ verdict_extra_body:
 A verdict call then sends `chat_template_kwargs: {reasoning_effort: low, enable_thinking:
 false}`; everything else sends `{reasoning_effort: low}`. Nested maps merge key by key, and
 `verdict_extra_body` wins where both set the same key. With `reasoning_effort: low` alone,
-EZER's verdicts came back empty with `finish_reason: length`; with `enable_thinking: false`
+The GPU server's verdicts came back empty with `finish_reason: length`; with `enable_thinking: false`
 the classifier answered in 2 tokens. Check your own server's documentation for its switch.
 The same reserved keys and the plain-JSON rule apply. When a verdict comes back empty at its
 cap, the daemon logs one warning per endpoint and model that names `verdict_extra_body`. If
@@ -1953,7 +2099,7 @@ llama.cpp restart or a GPU swap fails the turn: every retry goes back to the ser
 refused it. With them, the same request goes to the next backup once the tier's own retries are
 spent, and the turn carries on there.
 
-On EZER, the brain runs on a local llama.cpp server. A second local server is the first backup,
+On the GPU server, the brain runs on a local llama.cpp server. A second local server is the first backup,
 and a hosted model is the last resort:
 
 <!-- verify: tier -->
@@ -2067,8 +2213,9 @@ template whose values are the defaults, so a scaffolded file changes nothing unt
 file is read when a workspace opens and again when a paused session resumes, which is what lets
 you raise a cap and continue without restarting.
 
-Eight top-level sections live here, each read by a different part of the daemon: `boundary`,
-`caps`, `attachments`, `policy`, `approved_external_imports`, `memory`, `stop_check`, and `worktree`.
+Nine top-level sections live here, each read by a different part of the daemon: `boundary`,
+`caps`, `attachments`, `policy`, `approved_external_imports`, `memory`, `stop_check`, `worktree`,
+and `hooks`.
 
 **A file that loosens anything waits for your trust (TD-5113).** This file usually arrives with
 a clone, so one that loosens the packaged defaults (an `auto` rule, a network host, a raised
@@ -2864,7 +3011,8 @@ them when:
 | `caps.*`, `attachments.*`, `memory.max_lines` | The value is above the default. For `caps.shell_memory_mb` the default is half of this machine's RAM, so the same file can loosen on a small laptop and not on a big box. |
 | `approved_external_imports` | It lists any path. |
 | `worktree.setup` | It names a command. The daemon runs it in each new worktree (TD-5126), so a repo-shipped one waits for your trust; until then the new chat says it was skipped. |
-| `mcp_servers`, `hooks` | The key is set at all. TST Desk does not read either from a workspace yet; they are judged now so a later feature cannot run them untrusted. |
+| `mcp_servers` | The key is set at all. TST Desk does not read it from a workspace yet; it is judged now so a later feature cannot run it untrusted. |
+| `hooks` | The key is set at all. Each hook is a command TST Desk runs on its own (§4.12), and `hooks.after_write` runs one after every write the agent makes, so a repo's hooks run only once you trust the file. |
 | `stop_check.checks` | It names any check (TD-5124). A check runs on its own whenever the model ends a turn: a command through the shell tool, or a statement that goes to the model as a message when it fails. |
 
 Tightening never asks: `allowed_commands`, `ask` and `never` rules, `class_c_default: never`,
@@ -2985,6 +3133,80 @@ copy from the main checkout into each new worktree:
 .env
 config/local.json
 ```
+
+### 4.11 Named workers — `.tst/agents/*.md` (TD-5133)
+
+Each markdown file in `.tst/agents/` (this workspace) or `~/.tstdesk/agents/` (every workspace)
+defines one worker that `delegate` can run by name. The frontmatter says what it is; the body is
+its own prompt, added after the worker tier's steering. On the same name the file in
+`~/.tstdesk/agents/` wins, so a cloned repo cannot replace a worker you wrote.
+
+```markdown
+---
+name: reviewer            # optional; defaults to the file name
+description: Reviews a diff for bugs and missing tests
+tools: [fs_read, fs_grep, shell]
+tier: brain               # brain, worker (the default) or validator; ~/.tstdesk/agents/ only
+preset: openrouter        # optional; that preset's tier instead of the active one; ~/.tstdesk/agents/ only
+policy:
+  - tool: shell
+    args: "git push*"
+    effect: never
+---
+Read the diff, run the tests, and list each bug with its file and line.
+```
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `name` | string | the file name | 1–64 letters, digits, `-` or `_`. What `delegate`'s `agent` and `@name` use. |
+| `description` | string | required | Shown to the model in `delegate`'s list, so it knows when to pick this worker. Cut at 300 characters. |
+| `tools` | list | read-only: `fs_read`, `fs_list`, `fs_grep`, `web_search`, `web_fetch` | The allow list, a subset of ONE built-in child kind plus `consult`: either the worker kind's (`fs_read`, `fs_list`, `fs_grep`, `fs_write`, `fs_edit`, `shell`) or the research kind's (`fs_read`, `fs_list`, `fs_grep`, `web_search`, `web_fetch`). A list mixing `fs_write`/`fs_edit`/`shell` with `web_search`/`web_fetch` is refused. `consult` is offered only when `consult.tiers` includes the worker's tier. Never `delegate`, a plugin or an MCP tool. |
+| `tier` | `brain` / `worker` / `validator` | `worker` | The tier the worker's model calls run on, priced and capped like any call on it. Only a file in `~/.tstdesk/agents/` may name a tier other than `worker`. |
+| `preset` | string | the active preset | Take `tier` from this preset. A preset missing from `config.yaml` refuses the call rather than falling back. Only a file in `~/.tstdesk/agents/` may name a preset. |
+| `policy` | list of rules | none | Rules like §4.4's, judged beside the workspace policy for this worker's calls only. `effect` must be `ask` or `never`: a worker's policy can only tighten. |
+
+A file that breaks a rule above — an `auto` rule, a tool outside the list, tools from both kinds,
+a workspace file naming `tier: brain` or a `preset`, a key TST Desk does not read (`model`, say),
+no description — is not loaded, and `delegate` names the reason when the
+model asks for it. The trees are read fresh at the start of each turn and again when `delegate`
+runs, so a saved edit counts on the next call.
+
+- **The model sees them.** `delegate` lists every loaded worker with its description, and its
+  `agent` argument takes one of their names. With no definitions the tool is unchanged.
+- **`@name` in a message** points the turn at that worker: the model is told to hand the task to
+  it with `delegate`. The approval card and the call are the usual ones.
+- **The agent cannot write them.** Both trees are refused like steering files (prime directive
+  4): `fs_write`, `fs_edit` and a shell write are Class C, inside the workspace or not. They are
+  not proposable with `propose_steering_edit` either; edit them yourself.
+- **Plan mode** runs only a worker with no `fs_write`, `fs_edit` or `shell`.
+- They load from a workspace you have not trusted (§4.8), so a definition can only narrow what a
+  built-in delegated child already has: its tools fit inside one child kind, its policy only
+  tightens, and a workspace file runs on the worker tier of the active preset. Choosing another
+  tier or a preset is for your own `~/.tstdesk/agents/` files.
+
+### 4.12 `hooks` — commands that run at points in a session (TD-5134)
+
+The same block as §2's `hooks`, for this workspace. It applies only once you trust the file
+(§4.8): a hook is a command TST Desk runs on its own. Until then, or if the block is invalid,
+the workspace's hooks are left out and **More → Hooks** says why. Your own hooks still run.
+The block may carry `after_write` too (§2 `hooks.after_write`): a project can ship the formatter
+and linter it uses, and they run after yours, on the same writes (TD-5135).
+
+<!-- verify: workspace -->
+```yaml
+hooks:
+  after_tool:
+    - command: "ruff check --quiet ."
+      tools: ["fs_write", "fs_edit"]
+  after_write:
+    - name: ruff
+      command: "uv run ruff check --fix {files}"
+      match: ["*.py"]
+      timeout_seconds: 60
+```
+
+A `hooks` section that does not validate (an unknown key, a `command` with no program) applies
+none of its hooks, and the rest of the file still loads.
 
 ---
 

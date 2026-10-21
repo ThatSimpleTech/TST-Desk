@@ -22,7 +22,7 @@ from typing import Any
 
 import pytest
 
-from tests.doc_fixtures import make_docx, make_pdf, make_xlsx, raw_xlsx
+from tests.doc_fixtures import _S, _zip, make_docx, make_pdf, make_xlsx, raw_xlsx
 from tests.test_attachments import _open, _send, attach
 from tstd.attachment_extract import DocumentError, extract_document, sniff_document
 from tstd.attachment_office import MAX_XML_BYTES, MAX_XML_ELEMENTS
@@ -177,6 +177,81 @@ def test_entity_expansion_is_refused() -> None:
     with pytest.raises(DocumentError) as excinfo:
         extract_document("x.docx", "docx", out.getvalue(), max_text_bytes=10_000)
     assert excinfo.value.code == "attachment_unreadable"
+
+
+_W = "xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'"
+
+
+def _docx_part(xml: bytes) -> bytes:
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("word/document.xml", xml)
+    return out.getvalue()
+
+
+def _docx_code(raw: bytes) -> str:
+    try:
+        return extract_document("x.docx", "docx", raw, max_text_bytes=10_000).text
+    except DocumentError as e:
+        return e.code
+
+
+def test_a_dtd_in_utf16_is_refused_too() -> None:
+    """The ASCII byte test never sees ``<!DOCTYPE`` written in UTF-16."""
+    bomb = (
+        '<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE d [<!ENTITY a "AAAA">]>'
+        f"<w:document {_W}><w:body><w:p><w:r><w:t>&a;&a;</w:t></w:r></w:p></w:body></w:document>"
+    )
+    for codec in ("utf-16", "utf-16-le", "utf-16-be"):
+        assert _docx_code(_docx_part(bomb.encode(codec))) == "attachment_unreadable", codec
+
+
+def test_a_part_in_an_encoding_that_hides_the_markers_is_refused() -> None:
+    body = f"<!DOCTYPE d [<!ENTITY a 'A'>]><w:document {_W}><w:body/></w:document>"
+    part = b'<?xml version="1.0" encoding="cp037"?>' + body.encode("cp037")
+    assert _docx_code(_docx_part(part)) == "attachment_unreadable"
+
+
+def test_utf16_and_8bit_parts_without_a_dtd_still_read() -> None:
+    doc = (
+        f"<w:document {_W}><w:body><w:p><w:r><w:t>caf\u00e9</w:t></w:r></w:p></w:body></w:document>"
+    )
+    utf16 = ('<?xml version="1.0" encoding="UTF-16"?>' + doc).encode("utf-16")
+    cp1252 = ('<?xml version="1.0" encoding="windows-1252"?>' + doc).encode("cp1252")
+    assert _docx_code(_docx_part(utf16)) == "caf\u00e9"
+    assert _docx_code(_docx_part(cp1252)) == "caf\u00e9"
+
+
+def test_a_damaged_member_is_unreadable_not_a_dropped_connection() -> None:
+    """A broken deflate stream raises zlib.error; it must come back a refusal."""
+    good = make_docx(["hello world " * 2000])
+    member = good.index(b"word/document.xml") + len("word/document.xml") + 40
+    bad = good[:member] + bytes(b ^ 0xFF for b in good[member : member + 30]) + good[member + 30 :]
+    with pytest.raises(AttachmentError) as excinfo:
+        decode_attachments([_item("bad.docx", bad)], LIMITS)
+    assert excinfo.value.code == "attachment_unreadable"
+
+
+def test_furigana_is_not_part_of_the_cell_text() -> None:
+    files = {
+        "[Content_Types].xml": "<Types/>",
+        "xl/workbook.xml": (
+            f"<workbook {_S}><sheets><sheet name='S1' sheetId='1'/></sheets></workbook>"
+        ),
+        "xl/sharedStrings.xml": (
+            f"<sst {_S}><si><t>\u6f22\u5b57</t>"
+            "<rPh sb='0' eb='2'><t>\u304b\u3093\u3058</t></rPh></si></sst>"
+        ),
+        "xl/worksheets/sheet1.xml": (
+            f"<worksheet {_S}><sheetData><row r='1'>"
+            "<c r='A1' t='s'><v>0</v></c>"
+            "<c r='B1' t='inlineStr'><is><t>\u6771</t><rPh><t>\u3072\u304c\u3057</t></rPh></is></c>"
+            "</row></sheetData></worksheet>"
+        ),
+    }
+    text = _extract_xlsx(_zip(files))
+    assert "\u6f22\u5b57" in text and "\u6771" in text
+    assert "\u304b\u3093\u3058" not in text and "\u3072\u304c\u3057" not in text
 
 
 def test_a_zip_bomb_stops_at_the_member_cap(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -512,3 +587,43 @@ async def test_a_turn_begun_during_extraction_refuses_an_only_if_idle_send(
     assert captured == []
     sess._open_turns -= 1
     await daemon._shutdown()
+
+
+async def test_asks_past_the_pending_cap_are_refused_at_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The slots bound the work; the cap bounds the frames held waiting for one."""
+    from tstd import attachment_handlers
+    from tstd.attachment_handlers import MAX_PENDING_EXTRACTIONS, Extractions
+
+    release = asyncio.Event()
+
+    async def slow(msg: Any, limits: Any) -> str:
+        await release.wait()
+        return json.dumps({"request_id": msg.request_id, "error_code": None})
+
+    monkeypatch.setattr(attachment_handlers, "extract_attachment", slow)
+    sent: list[dict[str, Any]] = []
+
+    async def send(reply: str) -> None:
+        sent.append(json.loads(reply))
+
+    extractions = Extractions()
+    raw = base64.b64encode(make_docx(["x"])).decode()
+    for n in range(MAX_PENDING_EXTRACTIONS + 3):
+        msg = parse_client_message(
+            json.dumps(
+                {
+                    "type": "extract_attachment",
+                    "session_id": "s",
+                    "request_id": f"r{n}",
+                    "attachment": {"name": f"{n}.docx", "content_b64": raw},
+                }
+            )
+        )
+        extractions.start(msg, AttachmentLimits(), send)  # type: ignore[arg-type]
+    await asyncio.sleep(0)
+    busy = [m["request_id"] for m in sent if m.get("error_code") == "attachment_busy"]
+    assert busy == [f"r{n}" for n in range(MAX_PENDING_EXTRACTIONS, MAX_PENDING_EXTRACTIONS + 3)]
+    release.set()
+    await extractions.stop()

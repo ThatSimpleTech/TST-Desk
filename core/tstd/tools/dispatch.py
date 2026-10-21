@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 from jsonschema import ValidationError as SchemaError
 from jsonschema import validate as validate_schema
 
+from ..after_write import WRITE_TOOLS, run_after_write
 from ..autonomy import (
     AmbiguousClassifier,
     Checkpointer,
@@ -27,18 +28,21 @@ from ..autonomy import (
 )
 from ..cu_verify import ActuationVerifier, StateProbe, Verification
 from ..desktop.protocol import DesktopError
+from ..hooks import after_tool, before_tool, hook_runner
 from ..logging import get_logger
 from ..memory_commit import MemoryCommitter
 from ..plan_mode import PLAN_MODE_REFUSED, planning_refusal
 from ..policy import (
     ApprovalOutcome,
     PolicyConfig,
+    PolicyRule,
     format_summary,
     resolve_explained,
     with_run_rules,
+    with_worker_rules,
 )
+from ..protocol import AfterWriteRun, RunPermissions, WorkerStep
 from ..protocol import DecisionLogged as DecisionLoggedEvent
-from ..protocol import RunPermissions, WorkerStep
 from .boundary import PathGuard, RefusalError, windows_unsafe_reason
 from .desktop import peel_screenshot_png
 from .diff import render_diff, snapshot_text
@@ -293,6 +297,9 @@ class ToolDispatcher:
         # flight, judged beside the workspace policy. A delegate child
         # reads its parent's, since its calls are that turn's.
         self.run_permissions_fn: Callable[[], RunPermissions | None] | None = None
+        # TD-5133: a named worker's own rules, judged beside the workspace
+        # policy. Only ask or never, so they can only tighten it.
+        self.worker_rules: tuple[PolicyRule, ...] = ()
         # TD-709 (dev): actuation verification.  Both None in tests and
         # whenever judgments.verification is off — the dispatch path is
         # then byte-identical to today.
@@ -471,8 +478,11 @@ class ToolDispatcher:
         autonomy = self.autonomy_fn() if self.autonomy_fn is not None else False
         run_permissions = self.run_permissions_fn() if self.run_permissions_fn is not None else None
         decision = resolve_explained(
-            with_run_rules(
-                self.policy if self.policy is not None else PolicyConfig(), run_permissions
+            with_worker_rules(
+                with_run_rules(
+                    self.policy if self.policy is not None else PolicyConfig(), run_permissions
+                ),
+                self.worker_rules,
             ),
             tool,
             arguments,
@@ -502,7 +512,32 @@ class ToolDispatcher:
                 error_code="policy_denied",
                 decision_class=decision_class,
             )
-        if decision.effect == "ask":
+        # 3.3 Before-tool hooks (TD-5134). They run after the classifier
+        # and the policy, only for a call those would let run, and can
+        # only tighten: block refuses, ask turns ``auto`` into approval.
+        effect, effect_reason = decision.effect, decision.reason
+        hooks = hook_runner(session)
+        hook_context = ""
+        if hooks is not None:
+            gate = await before_tool(hooks, tool_call_id, name, arguments, gate_class, effect)
+            hook_context = gate.context
+            refusal = gate.block
+            if refusal is None and gate.ask is not None and effect == "auto":
+                if autonomy:
+                    # Nobody can approve an unattended call: asking is refusing.
+                    refusal = f"{gate.ask} (no one can approve it in an unattended run)"
+                else:
+                    effect, effect_reason = "ask", f"A hook asked for approval: {gate.ask}"
+            if refusal is not None:
+                return ToolResult(
+                    tool_call_id=tool_call_id,
+                    name=name,
+                    status="error",
+                    output=f"Blocked by a hook: {refusal}",
+                    error_code="hook_blocked",
+                    decision_class=decision_class,
+                )
+        if effect == "ask":
             if self.approval_handler is None:
                 raise UnclassifiedToolCall(
                     f"tool '{name}' requires approval but no approval handler is attached"
@@ -513,7 +548,7 @@ class ToolDispatcher:
                 arguments,
                 gate_class,
                 format_summary(tool, arguments, self.workspace),
-                decision.reason,
+                effect_reason,
             )
             if not approval.approved:
                 log.info(
@@ -537,9 +572,7 @@ class ToolDispatcher:
 
         # What let the call run without asking, for the audit (TD-5103):
         # the read-only list, only when no policy rule or approval decided.
-        allowed_by = (
-            classification.allowed_by if decision.effect == "auto" and decision.rule is None else ()
-        )
+        allowed_by = classification.allowed_by if effect == "auto" and decision.rule is None else ()
 
         # 3.25 Diff snapshot (TD-604).  A successful mutation reports the
         # change it made: snapshot the canonical write targets before the
@@ -627,6 +660,16 @@ class ToolDispatcher:
             output, transcript, images = returned.text, returned.transcript, returned.images
         else:
             output = returned
+
+        # 3.2.0 After-write hooks (TD-5135). A formatter or linter runs on
+        #      the files the write changed, before the checkpoint and the
+        #      diff, so both show the file as the hook left it. What they
+        #      report goes to the model in this result. Never raises.
+        hook_runs: tuple[AfterWriteRun, ...] = ()
+        if name in WRITE_TOOLS and canonical_writes and session is not None:
+            hook_runs, hook_note = await run_after_write(session, list(canonical_writes.values()))
+            if hook_note:
+                output = f"{output}\n\n{hook_note}"
 
         # 3.2.1 Touch-tracking (TD-503).  The handler ran, so the call's
         #      path targets are genuinely in play: record them on the
@@ -718,9 +761,19 @@ class ToolDispatcher:
         if name in {"desktop_screenshot", "browser_screenshot"} and isinstance(output, str):
             output, image_png = peel_screenshot_png(output)
 
+        # 4.05 After-tool hooks (TD-5134): what they say goes back with the
+        #     result. A block cannot undo the call; the model is told.
+        hook_notes = ""
+        if hooks is not None:
+            hook_notes = await after_tool(
+                hooks, tool_call_id, name, arguments, output, hook_context
+            )
+
         # 4. Truncate. fs_read's marker names offset/limit; other tools
-        #    keep the historical marker (TD-4839).
+        #    keep the historical marker (TD-4839). Hook notes go on after,
+        #    so a long result cannot cut them off.
         truncated_output, truncated = truncate_output(output, self.max_result_chars, tool_name=name)
+        truncated_output += hook_notes
 
         # 4.1 Decisions ledger (TD-704).  A Class A/B decision that
         #     executed appends to .tst/autonomy/DECISIONS.md and emits
@@ -790,6 +843,7 @@ class ToolDispatcher:
             verification=verification.status if verification is not None else None,
             allowed_by=allowed_by,
             transcript=transcript,
+            hooks=hook_runs,
         )
 
     # ── Batch dispatch ────────────────────────────────────────────────

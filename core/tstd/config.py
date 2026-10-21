@@ -34,6 +34,7 @@ from pydantic import (
     model_validator,
 )
 
+from .hooks_config import HooksConfig
 from .logging import get_logger, user_data_dir
 from .mcp_values import coerce_map
 from .provider import TimeoutConfig
@@ -1456,6 +1457,8 @@ class ModelConfig(BaseModel):
     engine: EngineConfig = Field(default_factory=EngineConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     mcp: McpConfig = Field(default_factory=McpConfig)
+    # User hooks (TD-5134). A workspace's own ``hooks`` apply once trusted.
+    hooks: HooksConfig = Field(default_factory=HooksConfig)
 
     @field_validator("credentials")
     @classmethod
