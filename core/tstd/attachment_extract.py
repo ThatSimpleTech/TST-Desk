@@ -67,7 +67,7 @@ def sniff_document(raw: bytes) -> DocumentKind | None:
     try:
         with zipfile.ZipFile(io.BytesIO(raw)) as zf:
             names = set(zf.namelist()[:MAX_ZIP_MEMBERS])
-    except (zipfile.BadZipFile, ValueError, OSError):
+    except (zipfile.BadZipFile, NotImplementedError, ValueError, OSError):
         return None
     if "word/document.xml" in names:
         return "docx"
