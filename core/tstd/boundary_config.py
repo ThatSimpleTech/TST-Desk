@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from .attachments import AttachmentLimits
 from .config import ConfigError
 from .host_memory import MIN_SHELL_MEMORY_MB, shell_memory_cap_mb
+from .shell_sandbox import SandboxSection
 
 # Defaults when `.tst/config.yaml` is absent: workspace-only writes, no
 # network, a conservative spend cap, 8 wall-clock hours, 200 iterations.
@@ -203,6 +204,9 @@ class BoundaryConfig(BaseModel):
     # Done-check for interactive turns (TD-5124). Its own section: it runs
     # when the model ends a turn, and neither pauses nor refuses anything.
     stop_check: StopCheckSection = Field(default_factory=StopCheckSection)
+    # Bubblewrap around interactive shell commands (TD-5138). Off by
+    # default; ``auto_allow`` loosens and waits for trust (TD-5113).
+    sandbox: SandboxSection = Field(default_factory=SandboxSection)
 
     @property
     def allowed_hosts(self) -> frozenset[str]:
@@ -265,6 +269,15 @@ DEFAULT_CONFIG_TEMPLATE = """\
 #   checks: []
 #   max_retries: 3   # failures sent back per turn before it gives up
 #   timeout_secs: 300  # how long a "$" check may run
+
+# sandbox:
+#   # Run interactive shell commands under bubblewrap (Linux): writes reach
+#   # only this folder and a private /tmp, no network, ~/.ssh, ~/.aws and
+#   # the keyrings unreadable (TD-5138).
+#   enabled: false
+#   auto_allow: false  # inside the sandbox, a command that would ask runs
+#   exclude: []        # globs ("docker *"); these run outside, asking as usual
+#   hidden_paths: []   # more paths to make unreadable inside
 
 # hooks:
 #   # Run after the agent writes a file (TD-5135); a failure goes back to

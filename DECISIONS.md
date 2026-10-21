@@ -17825,3 +17825,53 @@ no after-write hook: TD-5134 keeps an autonomous session's hooks in its
 container, and running these on the host would be the one way out of it.
 The conservative choice is not to run them there until they have a
 container path.
+
+## 2026-10-21 — TD-5138: bubblewrap sandbox for interactive shell commands (Class B)
+
+**Context.** The gap audit asked for an opt-in sandbox around interactive
+shell commands: writes fenced to the workspace and temp, network off or
+allow-listed, keys unreadable, an auto-run mode and an exclude list. The
+owner chose bubblewrap on Linux on 2026-10-14 (Podman stays for autonomy).
+Sized 8; approach recorded here per the 2026-10-14 approval.
+
+**Decision.**
+- **Config.** A `sandbox:` section in `.tst/config.yaml`
+  (`SandboxSection`: `enabled`, `auto_allow`, `exclude`, `hidden_paths`;
+  unknown keys refused). Per workspace, as the story says. Off by default.
+- **Walls.** `bwrap --die-with-parent --new-session --unshare-all`,
+  `--ro-bind / /`, fresh `--dev`/`--proc`, `--tmpfs /tmp`, the workspace
+  `--bind` read-write, then `AGENTS.md`, `CLAUDE.md`, `.tst/`,
+  `.git/config` and `.git/hooks` bound back read-only (steering is
+  directive 4; `.tst/config.yaml` holds the policy; git config and hooks
+  would run code later outside the sandbox), then the masks last so they
+  win even when the workspace is the home directory. The masks are a
+  mode-000 tmpfs over each existing folder and `/dev/null` over each file:
+  `~/.ssh`, `~/.aws`, `~/.gnupg`, the keyrings, password stores, cloud and
+  registry credentials, TST Desk's data dir and `$XDG_RUNTIME_DIR` (the
+  D-Bus socket the Secret Service keychain answers on, ssh-agent,
+  gpg-agent). The socket variables are unset inside.
+- **Network: off only.** bubblewrap has no host filter; an allow-list would
+  need a proxy in the daemon. The most conservative option that meets "off
+  or allow-listed" is off. A command that needs the network goes on
+  `exclude` and asks on the host as before.
+- **Auto-run.** `shell_sandbox.promote` in the dispatcher, after policy and
+  before hooks, turns only the class-default `ask` of a Class A/B shell call
+  into `auto` when `enabled` and `auto_allow` are on, the command is not
+  excluded, the line splits with confidence (TD-5101) and bwrap is present.
+  The user's own `ask` rule, Class C, `never` and autonomy are untouched;
+  hooks can still ask. A repo-shipped `auto_allow` counts as loosening
+  (TD-5113). `exclude` matches the deny readings policy uses, so it reads
+  more, which only sends more to the normal gate.
+- **Fail closed.** The dispatcher records each promoted call on the session;
+  the shell tool refuses a promised call that the sandbox no longer covers
+  (config changed in between). A command the sandbox covers on a host
+  without bwrap, or off Linux, is refused, never run on the host.
+- **Memory cap and kills.** The bwrap argv is `exec`ed by the host shell
+  inside the existing TD-5116 wrapper, so the pid stays the group leader;
+  `--die-with-parent` plus the pid namespace take the whole tree down on a
+  timeout or cancel (`test_timeout_kills_the_sandboxed_tree`).
+
+**Known gap.** A new steering file in a subfolder (nested `AGENTS.md`) can
+still be written inside the sandbox; only existing top-level ones and
+`.tst/` are pinned. Walking the tree before every command was judged too
+slow for large workspaces.

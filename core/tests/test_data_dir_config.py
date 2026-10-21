@@ -67,6 +67,7 @@ _USER_DATA_DIR_CALLS = frozenset(
         ("daemon.py", "self.data_dir = data_dir or user_data_dir()"),
         ("daemon.py", "data_dir = Path(args.data_dir) if args.data_dir else user_data_dir()"),
         ("cli.py", "return user_data_dir()"),
+        ("shell_sandbox.py", "names.append(user_data_dir())"),
     }
 )
 
