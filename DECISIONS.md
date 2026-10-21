@@ -17543,8 +17543,8 @@ already had, through the same guard the read tool uses.
 a configured command on the files `fs_write`/`fs_edit` changed, with failures
 going back to the model in the tool result and the time shown in the step
 timeline. The story depends on TD-5134 (the general hook runner), which is
-not built. Story sized 5; approach recorded here per Adam's 2026-10-14
-approval of the gap-audit stories.
+not built. Story sized 5; approach recorded here per Adam's 2026-10-14 approval of the
+gap-audit stories.
 
 **Decision.**
 - **Build the one hook point the story needs, not the runner.** A `hooks`
@@ -17590,8 +17590,8 @@ approval of the gap-audit stories.
 
 **Alternatives rejected.** Waiting for TD-5134 (the story is useful on its
 own and the section shape carries over). A shell string like
-`worktree.setup` (more power than a formatter needs). A new `hook_run`
-event (a second thing every client must learn; the hooks belong to the
+`worktree.setup` (more power than a formatter needs). A separate hook
+event type (a second thing every client must learn; the hooks belong to the
 call's result). Showing the time through `tool_progress` (it is
 overwritten by the next update and was built for live progress, not a
 finished step). Running the hook after the checkpoint (the commit and the
