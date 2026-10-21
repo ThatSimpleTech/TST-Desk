@@ -17845,3 +17845,89 @@ no after-write hook: TD-5134 keeps an autonomous session's hooks in its
 container, and running these on the host would be the one way out of it.
 The conservative choice is not to run them there until they have a
 container path.
+
+## 2026-10-21 — TD-5161: low-severity review notes from waves 7-10 (Class B)
+
+The reviewers of waves 7-10 (TD-5118 to TD-5136, plus TD-5160 and
+TD-5162) left 79 low-severity notes. Each was checked against main; the
+choices below are the ones that are Class B, or Class C questions the
+notes left open (each the conservative option).
+
+- **Task list per branch.** An edit or a sibling switch takes the newest
+  saved `task_list` call on that branch, or no list. A refused call does
+  not count, and a branch that starts after a summary keeps the session's
+  list, since the summary may have carried one this code does not parse.
+  The rejected options were clearing the list on every fork (it would
+  drop a plan the branch made before the edit) and storing a list per
+  sibling (more state for the same answer the conversation already holds).
+- **Held messages keep their deny rules.** A restart keeps a held
+  message's `deny` rules and drops its `allow` rules: dropping a deny
+  widens the gate as much as keeping an allow does. A row whose rules
+  cannot be read back is dropped, not sent under the workspace rules
+  alone.
+- **A paused `tst run` exits 4.** A turn the progress guard or a spend cap
+  pauses waits for a person, the same as a call this run could not
+  approve, so it gets the same exit code at once instead of a timeout.
+- **`$` goals stay commands.** A goal starting with `$` runs through the
+  shell tool's gate, as a check does, and a failure sends its output back.
+  Making it a statement would quietly change what an existing `/goal $
+  npm test` does; the docs now say it is a command.
+- **`/goal` mid-turn.** A `/goal` sent with Send now takes effect at once,
+  like `/skill` (TD-5160), so `/goal clear` ends a chase without Stop.
+- **Consult stays Class A.** The old reason (a card would stall unattended
+  runs) was wrong: autonomy never prompts A or B. The grant stands
+  because the call writes nothing, reaches only the session's own
+  configured endpoints and is capped per turn and by the spend cap; a
+  policy rule can still make it ask.
+- **The window's `sk-` rule is core's.** OS banners are a human-facing
+  surface, so the old pattern's blanked words showed there; the other UI
+  patterns stay wider.
+- **`/plan` is reserved,** like `/compact`: typing it always toggles plan
+  mode. A skill named `plan` is loaded with `load_skill` or renamed.
+- **A relative `worktree.folder` is refused.** Python and git resolved it
+  from different places; the docs already defaulted to an absolute folder,
+  and `~` is still expanded.
+- **A busy folder refuses messages.** While a session closes its worktree
+  or restores files, `user_message` is refused with `session_busy` and a
+  note to send it again. Queueing it was rejected: the turn would start
+  in a folder that may be gone.
+- **Delete is refused while worktree setup runs.** Cancelling the setup
+  mid-command could leave its output in an unknown state; the person
+  deletes once it finishes. An open or archived session keeps its
+  worktree, changed or not, until it is deleted (by design).
+- **XLSX dates.** A numeric cell whose number format is a date or time is
+  sent as an ISO date (`2024-10-18`, with a time when it has one; a bare
+  time for a serial under 1), using the workbook's 1900 or 1904 epoch.
+  Formats are read from `xl/styles.xml`: built-in ids 14-22, 27-36, 45-47
+  and 50-58, and any custom code with a date or time letter outside quoted
+  text and `[...]` sections (elapsed `[h]` counts). Anything else stays
+  the raw value.
+- **The agents refusal.** A write into `.tst/agents` says to ask the
+  person to add or change that worker definition, since
+  `propose_steering_edit` refuses agents files on purpose.
+- **Review comments past a cut diff.** The truncation marker is one
+  unnumbered row and the partial last line is dropped. A comment whose
+  change block lies past the cut stays Open rather than being marked
+  sent.
+- **MCP url on a new host.** A host or port change in Settings drops the
+  server's `allow_remote` and headers and deletes their keychain items, as
+  a transport change already did: the opt-in and the token were for the
+  old host. A path change on the same host keeps them.
+- **MCP's reserved headers.** Only `MCP-Protocol-Version`,
+  `Mcp-Session-Id`, `Mcp-Method`, `Mcp-Name` and `Mcp-Param-*` are
+  refused, so a server's own `Mcp-Api-Key` loads. A config naming a
+  reserved one still fails to load, as before.
+- **The era probe.** Any HTTP refusal of `server/discover` without a
+  JSON-RPC error body means a legacy server, and `initialize` follows. A
+  JSON-RPC error is still the server's own answer.
+- **A Stop during after-write hooks.** The write already landed, so its
+  checkpoint commit runs (shielded from the cancel) before the cancel
+  goes on; otherwise rewind could not undo the write.
+
+**Dismissed, with reasons in the backlog:** a per-document extraction
+budget (bounded by the pending cap and file caps), the 12 MB text cap
+(the reply carries counts, not text), sideways scrolling of long diff
+lines (by design), one extra worker call when a dropped /compact cancels
+a summary ahead, the single PDFium lock (PDFium is not thread-safe), the
+unbuilt packaged sidecar (needs a release build), and the 24+ turn
+TD-5115 follow-up (tracked by TD-5115's open AC3).

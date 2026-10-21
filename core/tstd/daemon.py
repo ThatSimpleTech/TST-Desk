@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
+from urllib.parse import urlsplit
 
 import websockets.exceptions
 from pydantic import ValidationError
@@ -586,6 +587,17 @@ _BRANCH_REFUSALS: dict[str, str] = {
     "user_turn_not_found": "That message is not in this conversation.",
     "branch_not_found": "That version of the message is no longer available.",
 }
+
+
+def _url_host(url: str | None) -> str | None:
+    """An MCP url's host and port, lowercased; None for no url (stdio)."""
+    if not url:
+        return None
+    try:
+        parts = urlsplit(url)
+        return f"{(parts.hostname or '').lower()}:{parts.port}"
+    except ValueError:
+        return url
 
 
 def _comment_ids(msg: object) -> list[str] | None:
@@ -3869,7 +3881,13 @@ class Daemon:
             try:
                 # Settings sends no timeouts; keep the ones already set (TD-5105).
                 prior = self.config.mcp.servers.get(msg.id)
-                kept = prior is not None and prior.transport == msg.transport
+                # A new transport, or a url on another host (TD-5161), cannot
+                # use the old opt-in or credentials: they were for that server.
+                kept = (
+                    prior is not None
+                    and prior.transport == msg.transport
+                    and _url_host(prior.url) == _url_host(msg.url)
+                )
                 spec = McpServerConfig(
                     transport=msg.transport,
                     command=msg.command,

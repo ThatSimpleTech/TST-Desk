@@ -156,7 +156,9 @@ async def find_repo(workspace: Path, env: Mapping[str, str]) -> RepoSpot | None:
 
 
 #: ``.tst`` entries that are the user's shared content, not TST Desk's own.
-_SHARED_TST = frozenset({"rules", "skills", "commands", "context", "worktree-include"})
+_SHARED_TST = frozenset(
+    {"rules", "skills", "commands", "context", "agents", "worktree-include"}  # agents: TD-5161
+)
 
 
 def _own_untracked(xy: str, path: str) -> bool:
@@ -167,7 +169,8 @@ def _own_untracked(xy: str, path: str) -> bool:
     neither make one "changed" nor travel back in a merge, where an
     untracked copy in the main checkout would stop it. Memory the user
     accepts is committed, so it still counts, and so does anything new in
-    the shared ``rules``, ``skills``, ``commands`` and ``context`` folders.
+    the shared ``rules``, ``skills``, ``commands``, ``context`` and
+    ``agents`` folders.
     """
     if xy != "??":
         return False

@@ -12,7 +12,6 @@ from httpx_sse import EventSource
 
 from ..logging import get_logger
 from .answers import (
-    BadAnswer,
     OnMessage,
     json_answer,
     parse_message,
@@ -29,7 +28,7 @@ from .calls import (
     tool_call_params,
     watch_call,
 )
-from .era import Negotiated, NotModernError, negotiate
+from .era import McpRpcError, Negotiated, NotModernError, negotiate
 from .errors import McpError
 from .headers import mirrored_params, modern_headers
 from .jsonrpc import (
@@ -326,11 +325,20 @@ class HttpMcpClient:
         return headers
 
     async def _raw_request(self, method: str, params: dict[str, Any] | None, wait: float) -> Any:
-        """One request for the era probe; a non-JSON-RPC reply means legacy."""
+        """One request for the era probe; a non-JSON-RPC reply means legacy.
+
+        Any refusal without a JSON-RPC error counts (TD-5161), not only 400,
+        404 and 405: a simple legacy server may answer an unknown method
+        with 406, 415, 422 or 500, and ``initialize`` is the next step.
+        """
         payload = self._payload(self._take_id(), method, params)
         try:
             return await asyncio.wait_for(self._post(payload, wait), timeout=wait)
-        except BadAnswer as e:
+        except McpRpcError:
+            raise
+        except McpError as e:
+            if isinstance(e, NotModernError):
+                raise
             raise NotModernError(str(e)) from e
 
     async def _post(

@@ -7,6 +7,7 @@ import {
   rangeLines,
   sentComments,
   toWire,
+  TRUNCATION_MARKER,
 } from "./review-comments";
 import { turnEntry, type TimelineEntry } from "./timeline";
 
@@ -225,5 +226,16 @@ describe("from the user_turn the daemon logs", () => {
       1,
     );
     expect(sentComments([entry]).map((c) => [c.id, c.path, c.start_line, c.turnSeq])).toEqual([["c1", PATH, 4, 5]]);
+  });
+});
+
+describe("a diff the output cap cut (TD-5161)", () => {
+  it("numbers neither the marker nor the line cut partway", () => {
+    const whole = "--- a/f\n+++ b/f\n@@ -1,0 +1,3 @@\n+one\n+two\n+thr";
+    const rows = numberDiffRows(whole + TRUNCATION_MARKER);
+    const numbered = rows.filter((r) => r.newLine !== null).map((r) => r.text);
+    expect(numbered).toEqual(["one", "two"]);
+    expect(rows[rows.length - 1].text).toContain("truncated");
+    expect(rows[rows.length - 1].newLine).toBeNull();
   });
 });

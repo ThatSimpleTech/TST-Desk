@@ -6,6 +6,7 @@ Each test pins one note that was real on main: it fails on the old code.
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
 import pytest
@@ -406,6 +407,261 @@ async def test_a_session_whose_worktree_is_setting_up_is_not_deleted(tmp_path: P
         refused = await _send(daemon, {"type": "delete_session", "session_id": sid})
         assert refused.get("code") == "worktree_busy"
         assert daemon._session_store.get(sid) is not None
-        assert Path(sess.worktree.path).is_dir()
+        assert await asyncio.to_thread(Path(sess.worktree.path).is_dir)
     finally:
         await _shutdown(daemon, sid)
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "mkfifo"), reason="needs FIFOs")
+async def test_a_file_swapped_for_a_fifo_never_blocks_the_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Note 49: the stat said regular file, then the read opened a FIFO and blocked."""
+    import contextlib
+    import os
+
+    from tstd.tools.diff import snapshot_text
+
+    regular = tmp_path / "regular.txt"
+    regular.write_text("hi", encoding="utf-8")
+    fifo = tmp_path / "swapped"
+    os.mkfifo(fifo)
+    real_stat = Path.stat
+    # What a stat saw just before the swap: a regular file.
+    monkeypatch.setattr(
+        Path, "stat", lambda self, **kw: real_stat(regular if self == fifo else self, **kw)
+    )
+    try:
+        assert await asyncio.wait_for(asyncio.to_thread(snapshot_text, fifo), 2) is None
+    finally:
+        # Unblock a reader the old code left waiting on the FIFO.
+        with contextlib.suppress(OSError):
+            os.close(os.open(fifo, os.O_WRONLY | os.O_NONBLOCK))
+
+
+async def test_a_cancelled_summary_ahead_falls_back_instead_of_raising() -> None:
+    """Note 51: a summary written ahead and cancelled raised CancelledError."""
+    from tstd.compaction_model import CompactionSummarizer, _Ahead, _fingerprint
+    from tstd.config import CompactionConfig, TierConfig
+    from tstd.provider import ChatMessage
+
+    async def never(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("no new summary call")
+
+    worker = TierConfig(
+        slug="w",
+        base_url="http://127.0.0.1:9/v1",
+        input_price=0,
+        output_price=0,
+        cache_read_price=0,
+        context_window=32_768,
+        max_output_tokens=1_000,
+    )
+    summarizer = CompactionSummarizer(
+        CompactionConfig(summary="model"),
+        worker,
+        never,
+        lambda: None,  # type: ignore[arg-type,return-value]
+    )
+    dropped = [ChatMessage(role="user", content="earlier")]
+    key = _fingerprint(dropped, "")
+    task: asyncio.Task[str | None] = asyncio.create_task(asyncio.sleep(10))  # type: ignore[arg-type]
+    summarizer._ahead[key] = _Ahead(key, task)
+    asyncio.get_running_loop().call_later(0.01, task.cancel)
+    assert await summarizer.summarize(dropped) is None
+
+
+def test_the_page_images_schema_does_not_promise_five() -> None:
+    """Note 56: the schema said "up to 5"; the default cap is 1."""
+    from tstd.config import ComputerUseConfig
+    from tstd.tools import create_registry
+
+    fs_read = create_registry().get("fs_read")
+    assert fs_read is not None
+    text = fs_read.parameters["properties"]["page_images"]["description"]
+    assert "up to 5" not in text
+    assert ComputerUseConfig().max_prompt_images == 1
+
+
+def test_an_xlsx_date_reaches_the_model_as_a_date() -> None:
+    """Note 61: dates went out as Excel serial numbers (45583, not 2024-10-18)."""
+    import io
+    import zipfile
+
+    from tstd.attachment_extract import extract_document
+
+    ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    styles = (
+        f'<styleSheet {ns}><numFmts count="1">'
+        '<numFmt numFmtId="164" formatCode="dd/mm/yyyy hh:mm"/></numFmts>'
+        '<cellXfs count="4"><xf numFmtId="0"/><xf numFmtId="14"/>'
+        '<xf numFmtId="164"/><xf numFmtId="2"/></cellXfs></styleSheet>'
+    )
+    cells = (
+        '<c r="A1" s="1"><v>45583</v></c><c r="B1" s="2"><v>45583.5</v></c>'
+        '<c r="C1" s="3"><v>45583</v></c><c r="D1"><v>7</v></c>'
+    )
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as zf:
+        zf.writestr(
+            "xl/workbook.xml",
+            f'<workbook {ns}><sheets><sheet name="S" sheetId="1"/></sheets></workbook>',
+        )
+        zf.writestr("xl/styles.xml", styles)
+        zf.writestr(
+            "xl/worksheets/sheet1.xml",
+            f'<worksheet {ns}><sheetData><row r="1">{cells}</row></sheetData></worksheet>',
+        )
+    text = extract_document("d.xlsx", "xlsx", out.getvalue(), max_text_bytes=10_000).text
+    assert "2024-10-18\t2024-10-18 12:00:00\t45583\t7" in text
+
+
+def test_the_1904_epoch_and_a_bare_time() -> None:
+    from tstd.attachment_xlsx_dates import as_date, is_date_format
+
+    assert as_date("0", epoch_1904=True) == "1904-01-01"
+    assert as_date("0.25") == "06:00:00"
+    assert as_date("nope") is None
+    assert is_date_format("[$-409]mmm d, yyyy") and not is_date_format('0.00 "days"')
+    assert not is_date_format("[Red]0.00")
+
+
+def test_the_window_knows_the_output_caps_marker() -> None:
+    """Note 64: the window strips this marker from a cut diff; keep them the same."""
+    import json
+
+    from tstd.tools.results import _TRUNCATION_MARKER
+
+    ts = (Path(__file__).parents[2] / "ui/src/lib/review-comments.ts").read_text(encoding="utf-8")
+    assert f"TRUNCATION_MARKER = {json.dumps(_TRUNCATION_MARKER, ensure_ascii=False)};" in ts
+
+
+def test_a_worker_definition_write_is_not_sent_to_propose_steering_edit(tmp_path: Path) -> None:
+    """Note 71: the refusal pointed at a tool that refuses agents files too."""
+    from tstd.autonomy.classifier import Boundary
+    from tstd.tools.boundary import PathGuard, RefusalError
+
+    guard = PathGuard(Boundary(workspace_root=tmp_path))
+    with pytest.raises(RefusalError) as agents:
+        guard.check_write(tmp_path / ".tst" / "agents" / "x.md")
+    assert "propose_steering_edit" not in agents.value.reason
+    with pytest.raises(RefusalError) as rules:
+        guard.check_write(tmp_path / "AGENTS.md")
+    assert "propose_steering_edit" in rules.value.reason
+
+
+def test_a_new_worker_definition_counts_as_a_worktree_change() -> None:
+    """Note 70: .tst/agents was missing from the shared folders, unlike .tst/commands."""
+    from tstd.worktree import _own_untracked
+
+    assert not _own_untracked("??", ".tst/agents/reviewer.md")
+    assert not _own_untracked("??", ".tst/commands/ship.md")
+    assert _own_untracked("??", ".tst/memory/notes.md")
+
+
+async def test_a_childs_hooks_run_in_its_own_worktree(tmp_path: Path) -> None:
+    """Note 73: a worktree child's after_tool lint ran in the parent's tree."""
+    import sys
+
+    from tstd.hooks_config import HookEntry, HooksConfig
+
+    parent_root = tmp_path / "parent"
+    child_root = tmp_path / "child"
+    parent_root.mkdir()
+    child_root.mkdir()
+    seen = tmp_path / "cwd.txt"
+    script = tmp_path / "where.py"
+    script.write_text(
+        f"import os, pathlib\npathlib.Path({str(seen)!r}).write_text(os.getcwd() + '|' + "
+        "os.environ['TST_WORKSPACE'])\n",
+        encoding="utf-8",
+    )
+    parent = Session(str(parent_root))
+    parent.hooks.user = HooksConfig(
+        after_tool=[HookEntry(command=f'"{sys.executable}" "{script}"')]
+    )
+    child_hooks = parent.hooks.in_folder(str(child_root))
+    await child_hooks.run("after_tool", {}, tool_name="fs_write")
+    cwd, workspace = seen.read_text(encoding="utf-8").split("|")
+    assert await asyncio.to_thread(os.path.samefile, cwd, child_root)
+    assert workspace == str(child_root)
+    # The run still lands on the parent's log, and the parent's own runner is unchanged.
+    assert parent.hooks.cwd is None
+    assert parent.hooks.last
+
+
+def test_a_windows_hook_timeout_kills_the_tree(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Note 74: on Windows only the hook's shell was killed, not what it started."""
+    import tstd.hooks as hooks
+    import tstd.tools.shell as shell
+
+    walked: list[int] = []
+    killed: list[int] = []
+
+    class _Proc:
+        pid = 4242
+
+        def kill(self) -> None:
+            killed.append(self.pid)
+
+    monkeypatch.setattr(hooks.sys, "platform", "win32")
+    monkeypatch.setattr(shell, "_kill_windows_tree", lambda pid: walked.append(pid))
+    hooks._kill(_Proc())  # type: ignore[arg-type]
+    assert walked == [4242] and killed == []
+
+
+async def test_before_tool_context_reaches_a_failed_call(tmp_path: Path) -> None:
+    """Note 75: a before_tool hook's context was dropped when the tool failed."""
+    import sys
+
+    from tests.test_shell_tools import make_shell_dispatcher
+    from tstd.hooks_config import HookEntry, HooksConfig
+
+    script = tmp_path / "hooks-src" / "ctx.py"
+    script.parent.mkdir()
+    script.write_text(
+        'import sys\nsys.stdin.read()\nsys.stdout.write(\'{"context": "repo is frozen"}\')\n',
+        encoding="utf-8",
+    )
+    session = Session(str(tmp_path))
+    hook = HookEntry(command=f'"{sys.executable}" "{script}"')
+    session.hooks.user = HooksConfig(before_tool=[hook])
+    dispatcher = make_shell_dispatcher(tmp_path)
+
+    async def _broken(**_kwargs: object) -> str:
+        raise RuntimeError("disk gone")
+
+    dispatcher._handlers["fs_read"] = _broken
+    result = await dispatcher.dispatch("c1", "fs_read", {"path": "a.txt"}, session)
+    assert result.status == "error"
+    assert result.output.endswith("[hooks]\nrepo is frozen")
+
+
+async def test_a_write_stopped_in_its_hooks_is_still_checkpointed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Note 76: a Stop during after-write hooks skipped the write's checkpoint."""
+    import tstd.tools.dispatch as dispatch_module
+    from tests.test_shell_tools import make_shell_dispatcher
+
+    committed: list[list[str]] = []
+
+    class _Checkpointer:
+        async def preimage(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        async def checkpoint(self, paths: list[str], **_kwargs: object) -> object:
+            committed.append(paths)
+            return None
+
+    async def _stopped(*_args: object) -> object:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(dispatch_module, "run_after_write", _stopped)
+    dispatcher = make_shell_dispatcher(tmp_path)
+    dispatcher.checkpointer = _Checkpointer()  # type: ignore[assignment]
+    session = Session(str(tmp_path))
+    with pytest.raises(asyncio.CancelledError):
+        await dispatcher.dispatch("c1", "fs_write", {"path": "a.txt", "content": "x"}, session)
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "x"
+    assert len(committed) == 1

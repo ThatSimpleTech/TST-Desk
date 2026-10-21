@@ -25,6 +25,7 @@ from collections.abc import Iterator
 from xml.etree import ElementTree
 
 from .attachment_text import DocumentError, Sink, fmt, unreadable
+from .attachment_xlsx_dates import DateStyles, as_date, date_styles
 
 # Decompressed bytes one zip member may cost. A real document.xml or
 # sheet1.xml past this is beyond anything an attachment cap would take.
@@ -260,16 +261,23 @@ def read_xlsx(name: str, raw: bytes, sink: Sink) -> int:
     budget = _Budget(name)
     with _open_zip(name, raw, what) as zf:
         shared = _shared_strings(zf, name, budget)
-        sheets = _sheet_parts(zf, name, budget)
+        sheets, epoch_1904 = _sheet_parts(zf, name, budget)
+        styles = _read_member(zf, "xl/styles.xml", name, what, budget)
+        dates = DateStyles(
+            date_styles(_events(styles, name, what, budget)) if styles else frozenset(),
+            epoch_1904,
+        )
         for sheet_name, part in sheets:
             sink.add(f"[sheet: {sheet_name}]", marker=True)
             data = _read_member(zf, part, name, what, budget)
             if data is not None:
-                _sheet(data, name, shared, sink, budget)
+                _sheet(data, name, shared, dates, sink, budget)
     return len(sheets)
 
 
-def _sheet(data: bytes, name: str, shared: list[str], sink: Sink, budget: _Budget) -> None:
+def _sheet(
+    data: bytes, name: str, shared: list[str], dates: DateStyles, sink: Sink, budget: _Budget
+) -> None:
     row: _Row | None = None
     cell: _Cell | None = None
     for event, tag, el in _events(data, name, "spreadsheet", budget):
@@ -277,7 +285,7 @@ def _sheet(data: bytes, name: str, shared: list[str], sink: Sink, budget: _Budge
             if tag == "row":
                 row = _Row()
             elif tag == "c" and row is not None:
-                cell = _Cell(_attr(el, "r"), _attr(el, "t"))
+                cell = _Cell(_attr(el, "r"), _attr(el, "t"), _attr(el, "s"))
             elif tag == "is" and cell is not None:
                 cell.inline_depth += 1
             elif tag == "rPh" and cell is not None:
@@ -293,7 +301,7 @@ def _sheet(data: bytes, name: str, shared: list[str], sink: Sink, budget: _Budge
             elif tag == "is":
                 cell.inline_depth -= 1
             elif tag == "c" and row is not None:
-                row.add(cell.ref, cell.text(shared))
+                row.add(cell.ref, cell.text(shared, dates))
                 cell = None
         if tag == "row" and row is not None:
             line = row.line()
@@ -337,15 +345,16 @@ class _Row:
 
 
 class _Cell:
-    def __init__(self, ref: str | None, kind: str | None) -> None:
+    def __init__(self, ref: str | None, kind: str | None, style: str | None = None) -> None:
         self.ref = ref
         self.kind = kind
+        self.style = int(style) if style is not None and style.isdigit() else 0
         self.value = ""
         self.inline: list[str] = []
         self.inline_depth = 0
         self.phonetic_depth = 0
 
-    def text(self, shared: list[str]) -> str:
+    def text(self, shared: list[str], dates: DateStyles) -> str:
         if self.kind == "inlineStr":
             return "".join(self.inline)
         raw = self.value
@@ -356,6 +365,8 @@ class _Cell:
                 return ""
         if self.kind == "b":
             return "TRUE" if raw == "1" else "FALSE" if raw == "0" else raw
+        if self.kind in (None, "n") and self.style in dates.styles:
+            return as_date(raw, epoch_1904=dates.epoch_1904) or raw
         return raw
 
 
@@ -385,8 +396,10 @@ def _shared_strings(zf: zipfile.ZipFile, name: str, budget: _Budget) -> list[str
     return out
 
 
-def _sheet_parts(zf: zipfile.ZipFile, name: str, budget: _Budget) -> list[tuple[str, str]]:
-    """(sheet name, zip member) in workbook order."""
+def _sheet_parts(
+    zf: zipfile.ZipFile, name: str, budget: _Budget
+) -> tuple[list[tuple[str, str]], bool]:
+    """(sheet name, zip member) in workbook order, and whether dates count from 1904."""
     what = "spreadsheet"
     book = _read_member(zf, "xl/workbook.xml", name, what, budget)
     if book is None:
@@ -402,14 +415,17 @@ def _sheet_parts(zf: zipfile.ZipFile, name: str, budget: _Budget) -> list[tuple[
                 targets[_attr(el, "Id") or ""] = target
     out: list[tuple[str, str]] = []
     in_sheets = 0
+    epoch_1904 = False
     for event, tag, el in _events(book, name, what, budget):
-        if tag == "sheets":
+        if tag == "workbookPr" and event == "end":
+            epoch_1904 = (_attr(el, "date1904") or "").lower() in ("1", "true")
+        elif tag == "sheets":
             in_sheets += 1 if event == "start" else -1
         elif tag == "sheet" and event == "end" and in_sheets:
             i = len(out) + 1
             part = targets.get(_attr(el, "id") or "", f"xl/worksheets/sheet{i}.xml")
             out.append((_attr(el, "name") or f"Sheet{i}", part))
-    return out
+    return out, epoch_1904
 
 
 _COLUMN = re.compile(r"[A-Z]+")

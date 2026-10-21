@@ -340,8 +340,10 @@ def _register_builtins(registry: ToolRegistry, *, search: SearchConfig | None = 
                     "page_images": {
                         "type": "boolean",
                         "description": (
-                            "PDF only: also send images of the pages read (up to 5), "
-                            "for figures and scans. Needs a model that takes images."
+                            "PDF only: also send images of the first pages read, for "
+                            "figures and scans; the result says how many it sent (the "
+                            "image limit is set per machine, 1 by default). Needs a "
+                            "model that takes images."
                         ),
                         "default": False,
                     },

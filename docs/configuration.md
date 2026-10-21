@@ -531,6 +531,15 @@ and, on start, catches up from each session's log, so sessions written before
 the index existed become searchable on the first start. It has no keys: delete
 the file to rebuild it from the logs that remain.
 
+What it cannot do (TD-5161). It needs SQLite 3.35 or later (from 2021). On an
+older system library the search box says search is unavailable
+rather than degrading. A row's "turn N" counts the user messages the index has
+seen: for a session indexed only after its log was trimmed (`log_max_events`),
+it counts from the trim point, and after a sibling switch (`set_branch`) a
+sibling's older rows can share a number with the new branch's. A result still
+opens at the right message, since it links by the event's seq. A write SQLite
+refuses (a full disk) leaves that one message out until the file is rebuilt.
+
 ### `clear_tool_results`
 
 How old tool output leaves a full context window (TD-5115). Compaction
@@ -636,7 +645,11 @@ message; `/compact` and "Summarize from here" do the same on request
   before, so this costs about one worker call per turn. When a compaction
   folds one of those spans, the summary is ready and the turn does not wait
   for the worker. Clearing stale tool results does not count as a change.
-  `0` turns writing ahead off.
+  `0` turns writing ahead off. When the worker and the brain are the same
+  local server with one slot (the `local` preset's shape), the summary
+  written ahead queues behind the brain's request, or the brain's behind it,
+  so the turn can slow down; give the worker its own server or slot, or set
+  `0` (TD-5161).
 - **Recent files.** After a compaction, the files read (`fs_read`), written
   (`fs_write`) or edited (`fs_edit`) in the folded turns are read again from
   disk, newest first, and go under the summary, headed
@@ -1093,6 +1106,8 @@ What happens after each write:
 - **A hook that rewrites the file says so.** When a formatter changes the file, the note tells the
   model to read it again before its next `fs_edit`. The diff and the checkpoint are taken after the
   hooks, so both show the file as the formatter left it.
+- **Stop during a hook still checkpoints the write.** The write has already landed, so its
+  checkpoint commit is made before the turn stops, and rewind can still undo it (TD-5161).
 - **A clean pass adds nothing** to the model's context.
 - **The time shows in the step timeline.** The write's result row reads `after write 0.43 s` (or
   `after write failed · 0.43 s`), and expanding it lists each hook with its time and outcome. The
@@ -1255,8 +1270,9 @@ path/host fields). Settings persist add / disable / remove through
 `set_mcp_server` and `delete_mcp_server`; the write is surgical so
 teaching comments survive. There is no `env` or `headers` field on those
 messages: a rewrite keeps the server's existing ones, unless it changes
-the transport, which drops them and deletes their keychain items. Live
-sessions keep the tool set they attached with until a new session.
+the transport or moves the url to another host or port (TD-5161), which
+drops them (and a hand-set `allow_remote`) and deletes their keychain
+items. Live sessions keep the tool set they attached with until a new session.
 
 **Tokens per server (TD-5110).** A stdio server's `env` and an http
 server's `headers` map names to values. A value is either a literal,
@@ -1322,7 +1338,9 @@ on stdio, means an older server: TST Desk runs `initialize` offering
 2025-11-25 and accepts 2024-11-05, 2025-03-26, 2025-06-18 or 2025-11-25,
 sending the session id the server gives and, from 2025-06-18,
 `MCP-Protocol-Version`. A server that names only versions TST Desk does
-not speak fails with a doctor row that lists them. Every http request
+not speak fails with a doctor row that lists them. Over http TST Desk
+speaks Streamable HTTP only: a 2024-11-05 server still on the older
+HTTP+SSE transport (a `GET /sse` endpoint) is not supported (TD-5161). Every http request
 sends `Accept: application/json, text/event-stream`. TST Desk declares no
 client capabilities (no roots, sampling or elicitation) and answers only
 `ping`, so a call that asks it for input fails. The doctor row reads
@@ -1398,7 +1416,7 @@ loaded five tools.
 | `max_call_seconds` | number > 0 | `600` | Hard cap on one tool call, stdio or http, progress or not. Never below `timeout_seconds`. |
 | `read_only_tools` | list of strings | `[]` | The server's tools, by the name the server gives them (not the `<id>__` name), that only read (TD-5123). Read-only plan mode lets these run and refuses every other tool of the server. Only this list counts: a server's own `readOnlyHint` is not trusted. Names are matched exactly, no globs. It changes nothing outside plan mode: a listed tool still asks like any MCP tool. Settings keeps it when it toggles or edits the server. |
 | `env` | mapping of name → string | `{}` | stdio only. Extra environment for this server's child, on top of the daemon's. Names are `[A-Za-z_][A-Za-z0-9_]*`. A value is a literal or `keychain:<entry>` (entry: lowercase letters, digits, `_` and `-`, at most 64). Numbers become strings; a YAML boolean is refused, so quote it. A value may not hold a line break or NUL. |
-| `headers` | mapping of name → string | `{}` | http only. Extra headers on every request to this server, same value rules as `env`. Names are HTTP field names, one spelling each (case is ignored). `Accept`, `Connection`, `Content-Length`, `Content-Type`, `Host`, `Transfer-Encoding` and any name starting `Mcp-` are TST Desk's own and are refused. |
+| `headers` | mapping of name → string | `{}` | http only. Extra headers on every request to this server, same value rules as `env`. Names are HTTP field names, one spelling each (case is ignored). `Accept`, `Connection`, `Content-Length`, `Content-Type`, `Host`, `Transfer-Encoding` and MCP's own `MCP-Protocol-Version`, `Mcp-Session-Id`, `Mcp-Method`, `Mcp-Name` and `Mcp-Param-*` are TST Desk's own and are refused. Another `Mcp-` name, such as a server's `Mcp-Api-Key`, is allowed (TD-5161). |
 
 <!-- verify: model -->
 ```yaml
@@ -1561,7 +1579,8 @@ What a hook says, by exit code:
 
 - **0, nothing printed:** nothing to say.
 - **0 and a JSON object:** `decision` is `block`, `ask` (`before_tool` only) or `allow`;
-  `reason` says why; `context` is text for the model. `allow` is ignored: a hook can only
+  `reason` says why; `context` is text for the model (a `before_tool` hook's context reaches it
+  on the call's result, failed or not, TD-5161). `allow` is ignored: a hook can only
   tighten, never loosen.
 - **0 and plain text:** context for the model on `session_start` and `user_prompt`; ignored on
   the others.
@@ -2558,6 +2577,8 @@ The bytes are kept as they are. A file over `max_file_bytes` is refused whole.
 with no network: PDF through PDFium, DOCX and XLSX with the standard library. The kind comes from
 the file's bytes, not its name. The model reads a `[page 3 of 12]` line before each PDF page and a
 `[sheet: Totals]` line before each sheet, whose rows are tab-separated with empty columns kept.
+A cell formatted as a date or time reads as one (`2024-10-18`, `2024-10-18 12:00:00`, `06:00:00`)
+rather than Excel's serial number, from the workbook's own number formats (TD-5161).
 A DOCX gives its paragraphs and its table rows, tab-separated. The caps above measure the text,
 so a 6 MB PDF of 20 KB of text fits and a small XLSX that expands past `max_file_bytes` does not.
 The file itself may be up to 10 MB, and the files on one message up to 12 MB together, whatever
@@ -3197,8 +3218,11 @@ runs, so a saved edit counts on the next call.
 - **`@name` in a message** points the turn at that worker: the model is told to hand the task to
   it with `delegate`. The approval card and the call are the usual ones.
 - **The agent cannot write them.** Both trees are refused like steering files (prime directive
-  4): `fs_write`, `fs_edit` and a shell write are Class C, inside the workspace or not. They are
-  not proposable with `propose_steering_edit` either; edit them yourself.
+  4): `fs_write`, `fs_edit`, and a shell redirect or `tee` into them, are Class C, inside the
+  workspace or not. Other shell write forms (`cp`, `mv`, `sed -i`, `rm`, a `cd` first) are not
+  parsed and fall to the shell floor's Class B, as for `AGENTS.md` and `.tst/commands`
+  (TD-5161), so Skip all approvals or an autonomous run can run them. They are not proposable
+  with `propose_steering_edit` either, and the refusal says so; edit them yourself.
 - **Plan mode** runs only a worker with no `fs_write`, `fs_edit` or `shell`.
 - They load from a workspace you have not trusted (§4.8), so a definition can only narrow what a
   built-in delegated child already has: its tools fit inside one child kind, its policy only

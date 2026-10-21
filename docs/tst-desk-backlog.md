@@ -10535,6 +10535,183 @@ fix); one that is not, or no longer applies, says why.
       the old dev/inode check already refused that swap); ruff, mypy,
       tsc and vitest pass; DECISIONS.md has the TD-5160 entry
 
+### TD-5161 — Low-severity review notes from waves 7-10
+**Size:** 5 · **Depends on:** TD-5118, TD-5119, TD-5120, TD-5121, TD-5122, TD-5123, TD-5124, TD-5125, TD-5126, TD-5127, TD-5128, TD-5129, TD-5130, TD-5131, TD-5132, TD-5133, TD-5134, TD-5135, TD-5136, TD-5160, TD-5162
+
+The reviewers of waves 7-10 left 79 low-severity notes, each with
+evidence. Each was checked against main. A real one is fixed with a test
+that fails on the old code (or, where the note is about docs disagreeing
+with the code, a docs fix); one that is not, or no longer applies, says
+why. Notes are numbered in the order the reviews listed them.
+
+**Acceptance criteria:**
+- [x] 1-4. TD-5122 task list. (1) An edit or sibling switch kept the
+      abandoned branch's list, and the next compaction told the model to
+      keep working from it: the branch takes its newest saved `task_list`
+      call, or none. (2) The attach re-log had no test: one now drives the
+      attach handler (coverage; the wiring was right). (3) Docs said the
+      Plan pane shows the native list "then" Grok's plan: it shows one or
+      the other, and DECISIONS.md, configuration.md and the backlog say so
+      (docs fix). (4) "It shows on the phone" was checked at a 375 px
+      viewport only: qualified, the APK needs a rebuild (docs fix)
+- [x] 5-7. TD-5119 consult. (5) The research child's tool list in
+      configuration.md left out `consult`: fixed, and TD-5117's criterion
+      is annotated (docs fix). (6) The Class A reason ("a card would stall
+      unattended runs") was wrong, since autonomy never prompts A or B:
+      DECISIONS.md corrected, the grant stands on its other reasons
+      (docs fix). (7) The tool told a brain its default target is the
+      brain: the description names the default per tier
+- [x] 8-10. TD-5120 backups. (8) `save_tier_slug` could splice a slug
+      into a backup's list item: it replaces only a placeholder at the
+      tier's own indent. (9) A mid-turn
+      set_plan, set_tier or set_preset sent a tier_state without the
+      backup: it carries the turn's fallbacks. (10) "The meter" was read as
+      the context gauge: qualified; marking the cost meter is new UI, left
+      for a later story (docs fix)
+- [x] 11-15. TD-5121 questions. (11) An answer over 4000 characters left
+      the card stuck on "Sending": the card caps the text at the daemon's
+      limit. (12) No test covered cancel: one does (coverage; cancel
+      worked). (13) "The phone shows them as taps" was not tried on a
+      phone: qualified (docs fix). (14) A scheduled run parked on a
+      question was described as an approval: it names the question.
+      (15) `decline_message` was dead code and the two plans disagreed: it
+      is removed and DECISIONS.md says why
+- [x] 16-17. TD-5118 `tst run`. (16) A daemon restart dropped a held
+      message's deny rules, widening the gate: the queue file keeps the
+      denies (only those), and a row whose rules cannot be read back is
+      dropped. (17) A turn the progress guard paused left `tst run` waiting
+      until its timeout: it returns exit 4 (approval needed) at once
+- [x] 18-21. TD-5160 follow-ups. (18) Its last criterion missed one test
+      that passes on the old code: the criterion now names it (docs fix).
+      (19) More GPU OOM text was blamed on the shell memory cap, and the
+      loader's noexec `failed to map segment` counted as one: CUDA, cupy,
+      JAX and llama.cpp text is excluded, and `Operation not permitted` is
+      not counted. (20) A `%G` or `%(signature` format lost git's read-only
+      pins on an approved run: the pins apply whenever the command is a
+      built-in-list git read. (21) The window's `redact` still blanked
+      words after `sk-` in OS banners: its `sk-` rule is now core's
+- [x] 22-23. TD-5124 goals. (22) A `/goal` sent with Send now mid-turn
+      went to the model as text: it takes effect at once, so `/goal clear`
+      ends a chase without Stop. (23) A `$` goal ran as a command although
+      the docs said statement, and its failure dropped the output: kept as
+      a command like a check (Class B, DECISIONS.md), docs say so, and the
+      failure sends the command's output
+- [x] 24-27. TD-5127 tool search. (24) A backup's first call got the
+      primary's tool list: it gets one sized for its own window.
+      (25) `select:` dropped names past 5 without a word: it loads up to
+      20 and names any it left out. (26) A non-UTF-8 loaded-tools file
+      raised: it is read as none, as promised. (27) The 5+ servers were
+      fixture servers: already disclosed in the criterion; a real-server
+      measurement is a follow-up, not a fix here (dismissed)
+- [x] 28-31. TD-5123 plan mode. (28) A call parked on an approval before
+      plan mode was turned on could run once released: an approved call is
+      classified again and plan mode refuses it. (29) The phone criterion
+      was checked at a 375 px viewport: qualified (docs fix). (30) `/plan`
+      now always toggles plan mode, so a skill named `plan` is reached
+      through `load_skill` or a rename (Class B, documented). (31) The
+      set_plan row named no exceptions to the read-only set: corrected
+      (docs fix)
+- [x] 32-35. TD-5126 worktrees. (32) A message could start a turn while
+      close_worktree ran: a session whose folder is busy (closing,
+      restoring) refuses `user_message` with `session_busy`. (33) Three
+      modules only imported after another: the cycles are broken (type
+      imports and lazy imports). (34) A relative `worktree.folder` meant
+      two places: it is refused (conservative). (35) Delete during setup
+      left the worktree behind: delete is refused while setup runs, and an
+      open or archived session keeping its worktree is by design (docs)
+- [x] 36-38. TD-5125 rewind. (36) A turn could start during a file
+      restore: the folder-busy guard covers restores. (37) The dirty
+      baseline notice said only the agent's writes are saved: it says the
+      person's version of a file is saved before the agent writes it.
+      (38) file_rewind.py was 493 lines: the log reading moved to
+      `file_rewind_log.py`
+- [x] 39-40. TD-5131 attachment caps. (39) The extraction budget is per
+      document: dismissed, the work is bounded by `MAX_PENDING_EXTRACTIONS`
+      and each file's cap. (40) The 12 MB text cap is near the frame
+      limit: dismissed, the `attachment_extracted` reply carries counts,
+      not the text
+- [x] 41. TD-5131 (41) A chip could spin on "reading…" after a lost
+      reply: a disconnect turns pending chips into their measured size
+- [x] 42-44. TD-5129 search limits. (42) SQLite 3.35 or later, (43) turn
+      numbers after a trim, (44) sibling rows sharing a turn number:
+      documented under "What it cannot do" (docs fix; only labels are off)
+- [x] 45-46. TD-5132 comments. (45) `LineComment.lines` items had no cap:
+      already fixed, 4000 characters each (protocol.py). (46) Long lines
+      scroll sideways: dismissed, by design, as in DiffPreview
+- [x] 47. TD-5132 (47) A file swapped for a FIFO between stat and read
+      could block `snapshot_text`: it opens with `O_NONBLOCK`, checks
+      `fstat`, and reads at most the cap
+- [x] 48-50. TD-5128 summaries ahead. (48) A dropped /compact cancels the
+      summary ahead: dismissed, it costs one more worker call in a rare
+      race. (49) A cancelled ahead task raised `CancelledError` into
+      compact_now: it is read as no summary unless the caller itself is
+      cancelling. (50) A single-slot local server shared by worker and
+      brain: documented (docs fix)
+- [x] 51-53. TD-5129 index. (51) The docstring promised a catch-up after
+      a failed write: corrected, and the docs say a failed write leaves a
+      gap until a rebuild. (52) Turn numbers in a log trimmed before the
+      index: documented with note 43 (docs fix). (53) search held the
+      lock observe takes: already fixed (eee9df2c, search has its own read
+      connection); a slow short-prefix query is dismissed, since it no
+      longer holds up writes
+- [x] 54-57, 60. TD-5130 PDFs. (54) The schema promised "up to 5" images: it
+      no longer names a number; the result states the real cap. (55) One
+      process-wide PDFium lock: dismissed, PDFium is not thread-safe.
+      (56) Size check and read were separate: already fixed (the handler
+      reads cap+1 bytes). (57) The packaged sidecar was not built:
+      dismissed here, not verifiable without a release build. (60) Two
+      PDFium locks: already fixed (one shared lock, `pdfium_lock.py`)
+- [x] 58-59. TD-5131 documents. (58) The composer decided DOCX/XLSX by
+      extension: it reads the zip's entries, with the extension as a
+      fallback. (59) XLSX dates reached the model as serial numbers: a
+      date-formatted cell is sent as an ISO date (Class B)
+- [x] 61-62. TD-5132 review. (61) Drafts kept per path, not per write:
+      already fixed (drafts carry `base_seq`). (62) The truncation marker
+      and a line cut partway got line numbers: the marker is one
+      unnumbered row and the partial line is dropped; a comment on a
+      block past the cut stays Open (conservative)
+- [x] 63-66. TD-5162 measurement. (63) The criterion's wording was
+      changed when ticked: already restored (22d9e8b0). (64) The 24+ turn
+      follow-up had no story: dismissed, TD-5115 is Blocked with AC3 open,
+      which tracks it. (65) Turns matched by position: already fixed
+      (LEFT JOIN, with a test). (66) `stop_daemon` matched a longer data
+      dir: it matches a whole argv element
+- [x] 67-70. TD-5133 workers. (67) `tstd.context.workers` only imported
+      after `tstd.tools`: fixed with note 33. (68) `.tst/agents` was not
+      shared into worktrees: it is. (69) The agents refusal pointed at
+      `propose_steering_edit`, which refuses those files: it says to ask
+      the person. (70) Only redirects and `tee` into the agents trees are
+      Class C: docs and the TD-5133 text are qualified (docs fix)
+- [x] 71-73. TD-5134 hooks. (71) A delegate child's hooks ran in the
+      parent's folder: the child's runner runs in its own worktree.
+      (72) On Windows a timeout killed only the shell: the hook gets its
+      own process group and the whole tree is killed. (73) A before_tool
+      hook's context was dropped when the tool failed: it is added to the
+      error result
+- [x] 74-75. TD-5135 after-write. (74) A Stop during an after-write hook
+      skipped the write's checkpoint: the checkpoint still runs (shielded)
+      before the cancel goes on. (75) No CREATE_NO_WINDOW on Windows:
+      already fixed (after_write passes it)
+- [x] 76-79. TD-5136 MCP. (76) A url on a new host kept `allow_remote`
+      and the keychain headers: a host or port change drops both and
+      deletes the items (conservative). (77) Every `Mcp-` header was
+      refused, so a config with `Mcp-Api-Key` failed to load: only the
+      spec's reserved names are refused. (78) "2024-11-05 over HTTP" was a
+      Streamable HTTP server: qualified, the old HTTP+SSE transport is not
+      supported (docs fix). (79) Only 400, 404 and 405 counted as a legacy
+      answer to the probe: any refusal without a JSON-RPC error does
+- [x] Tests fail on the old code (merge-base c621396f) and pass on the
+      new, except coverage tests for code that was already right:
+      `test_cancel_ends_the_wait` (note 12),
+      `test_an_attach_logs_a_list_the_window_lost` (note 2),
+      `test_a_branch_after_a_summary_keeps_the_list` (a guard for note 1),
+      `test_a_module_imports_on_its_own[tstd.tools.delegate_named]` (that
+      module already imported alone) and
+      `test_the_window_knows_the_output_caps_marker` (a parity test);
+      ruff, mypy, tsc and vitest pass; DECISIONS.md has the TD-5161 entry
+
+**Status:** Done (2026-10-21).
+
 ### TD-5162 — Measure TD-5115 stale-result clearing on the GPU server
 **Size:** 2 · **Depends on:** TD-5115, TD-5111
 
@@ -11539,7 +11716,10 @@ handling or off-box servers. Servers on newer SDKs refuse that.
       listener
 - [x] Tests run against the reference SDK servers for both protocol eras
       (`mcp` 2.0 as a dev dependency; stdio and HTTP, modern and a
-      2024-11-05-only build)
+      2024-11-05-only build). TD-5161: the HTTP half of the 2024-11-05
+      case is a Streamable HTTP server reporting 2024-11-05. A real
+      2024-11-05 HTTP server uses the old HTTP+SSE transport, which TST
+      Desk does not speak, so that case is untested and unsupported
 
 Done (2026-10-21): `core/tstd/mcp/era.py` negotiates for both transports.
 A DiscoverResult offering 2026-07-28 means the modern era: no handshake,
@@ -11648,7 +11828,9 @@ workspace files load without trust. Policy rules must be `ask` or `never`, and
 tighten. A file that breaks a rule, or carries a key TST Desk does not
 read, is not loaded and `delegate` names why. The classifier refuses
 `.tst/agents/` and `.tstdesk/agents/` like slash-command trees, through
-`fs_write`, `fs_edit` and shell writes. `delegate` takes `agent`
+`fs_write`, `fs_edit` and shell writes (redirects and `tee` only; other
+shell write forms fall to the shell floor's Class B, the same gap as
+`AGENTS.md`, qualified by TD-5161). `delegate` takes `agent`
 (`core/tstd/tools/delegate_named.py`): the child gets that allow list,
 that tier (from `preset` when named; a missing preset is refused), its
 prompt after the worker stack, and its rules on the child dispatcher.
