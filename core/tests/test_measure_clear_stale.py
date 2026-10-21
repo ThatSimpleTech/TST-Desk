@@ -14,6 +14,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -200,6 +201,12 @@ def test_stop_daemon_leaves_another_data_dirs_daemon_alone(
 def test_stop_daemon_stops_its_own_data_dirs_daemon(measure: ModuleType, tmp_path: Path) -> None:
     child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", str(tmp_path)])
     try:
+        # Until the child has exec'd, /proc shows the parent's command line.
+        cmdline = Path(f"/proc/{child.pid}/cmdline")
+        for _ in range(500):
+            if str(tmp_path) in cmdline.read_text(errors="replace"):
+                break
+            time.sleep(0.01)
         (tmp_path / "port.json").write_text(json.dumps({"pid": child.pid, "port": 1}))
         measure.stop_daemon(tmp_path)
         assert child.wait(timeout=10) == -signal.SIGTERM
