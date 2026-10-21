@@ -1419,7 +1419,8 @@
     "message": "fail",
     "machine": null,
     "in_reply_to": null,
-    "proposal_id": null
+    "proposal_id": null,
+    "comment_ids": null
   },
   "error_with_session": {
     "type": "error",
@@ -1429,7 +1430,8 @@
     "message": "fail",
     "machine": null,
     "in_reply_to": null,
-    "proposal_id": null
+    "proposal_id": null,
+    "comment_ids": null
   },
   "shell_output": {
     "type": "shell_output",

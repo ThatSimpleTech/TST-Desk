@@ -2385,6 +2385,9 @@ export interface Error extends DaemonEvent {
   /** TD-5158: the steering proposal a refused accept, edit or reject named.
    *  Absent from older daemons. */
   proposal_id?: string | null;
+  /** TD-5132: the line comments a refused `submit_line_comments` carried.
+   *  Absent from older daemons. */
+  comment_ids?: string[] | null;
 }
 
 /** A browser screenshot written to the session dir (TD-1710). Path, not bytes. */

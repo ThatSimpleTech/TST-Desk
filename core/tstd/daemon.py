@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import base64
 import contextlib
+import json
 import os
 import shutil
 import subprocess
@@ -584,6 +585,29 @@ _BRANCH_REFUSALS: dict[str, str] = {
     "user_turn_not_found": "That message is not in this conversation.",
     "branch_not_found": "That version of the message is no longer available.",
 }
+
+
+def _comment_ids(msg: object) -> list[str] | None:
+    """The line comment ids a ``submit_line_comments`` carried, else None."""
+    if isinstance(msg, SubmitLineComments):
+        return [comment.id for comment in msg.comments]
+    return None
+
+
+def _refused_frame(raw: str) -> tuple[str | None, list[str] | None]:
+    """Best effort: the type, and any line comment ids, of a frame that failed to parse."""
+    try:
+        frame = json.loads(raw)
+    except ValueError:
+        return None, None
+    if not isinstance(frame, dict) or not isinstance(frame.get("type"), str):
+        return None, None
+    kind: str = frame["type"]
+    comments = frame.get("comments")
+    if kind != "submit_line_comments" or not isinstance(comments, list):
+        return kind, None
+    ids = [c["id"] for c in comments if isinstance(c, dict) and isinstance(c.get("id"), str)]
+    return kind, ids
 
 
 def _snapshot_slugs(config: ModelConfig) -> dict[str, dict[str, str | None]]:
@@ -2614,7 +2638,10 @@ class Daemon:
         try:
             msg: ClientMessageT = parse_client_message(raw)
         except HandshakeError as e:
-            return build_error(e.code, e.message)
+            # Name what was refused when the frame says, so a window waiting
+            # on its message (line comments, TD-5132) is not left waiting.
+            kind, comment_ids = _refused_frame(raw)
+            return build_error(e.code, e.message, in_reply_to=kind, comment_ids=comment_ids)
 
         # TD-5015: peer policy, machine verbs, bridged ids. Never awaits
         # the network.
@@ -2628,7 +2655,11 @@ class Daemon:
         if isinstance(msg, _TURN_STARTS) and self._drain.active:
             sid = getattr(msg, "session_id", None)
             return build_error(
-                "daemon_draining", DRAINING_MESSAGE, session_id=sid, in_reply_to=msg.type
+                "daemon_draining",
+                DRAINING_MESSAGE,
+                session_id=sid,
+                in_reply_to=msg.type,
+                comment_ids=_comment_ids(msg),
             )
 
         if isinstance(msg, Drain):
@@ -4105,29 +4136,48 @@ class Daemon:
         liveness and save checks are ``user_message``'s; a drain hold
         already refused it before this.
         """
+        ids = _comment_ids(msg)
         found = self.session_registry.get(msg.session_id)
         if found is None:
             return build_error(
                 "session_not_found",
                 f"Session {msg.session_id!r} not found",
                 in_reply_to=msg.type,
+                comment_ids=ids,
             )
-        runner = self.session_registry.get_runner(msg.session_id)
-        if found.state in TERMINAL_STATES or runner is None or not runner.is_running:
+
+        def not_running() -> str | None:
+            runner = self.session_registry.get_runner(msg.session_id)
+            if found.state not in TERMINAL_STATES and runner is not None and runner.is_running:
+                return None
             return build_error(
                 "session_not_running",
                 f"This session is {found.state} and can no longer run turns; "
                 "the comments were not sent. Start a new session and send them again.",
                 session_id=msg.session_id,
                 in_reply_to=msg.type,
+                comment_ids=ids,
             )
+
+        if (refused := not_running()) is not None:
+            return refused
         try:
             # Reads the commented files: off the event loop.
             turn = await asyncio.to_thread(
                 build_comments_turn, msg.comments, Path(found.workspace_path), found.policy
             )
         except LineCommentError as e:
-            return build_error(e.code, e.message, session_id=msg.session_id, in_reply_to=msg.type)
+            return build_error(
+                e.code,
+                e.message,
+                session_id=msg.session_id,
+                in_reply_to=msg.type,
+                comment_ids=ids,
+            )
+        # The read can take a while on a slow disk: the session may have
+        # ended meanwhile, and a message queued then would never be read.
+        if (refused := not_running()) is not None:
+            return refused
         try:
             await found.add_user_message(
                 QueuedUserMessage(
@@ -4147,6 +4197,7 @@ class Daemon:
                 "Check that TST Desk's data folder is writable, then send them again.",
                 session_id=msg.session_id,
                 in_reply_to=msg.type,
+                comment_ids=ids,
             )
         log.info(
             "line comments enqueued",
