@@ -282,6 +282,19 @@ turn's results from before the steer. The Grok engine runs its own tools, so the
 waits for the turn to end. Which connection sent it does not matter, so a phone steers the same
 way.
 
+**Compaction summaries come from the worker, written ahead (TD-5128).** The agent loop gives its
+session a `CompactionSummarizer` (`core/tstd/compaction_model.py`) bound to the worker client and
+the cost tracker. A compaction, by budget or on request, asks it for a structured summary of the
+turns it folds (goal, decisions, files touched, open items) and falls back to the extractive
+summary on any failure; the pure folding stays in `compaction.py`, the summary text in
+`compaction_text.py`. Once a request passes `compaction.background_percent` of the budget, the
+summarizer starts the next fold's summary as a background task while the turn runs, keyed by the
+turns it covers (tool result text aside, since clearing stale results rewrites it). The fold
+that matches takes it without a new call; the task is cancelled when the loop ends. The files
+the folded turns read or changed are then read again within a budget
+(`compaction_files.py`), through the session's path guard and read rules, and go under the
+summary. `/compact` folds from a copy and drops its result if a turn started meanwhile.
+
 ### The session state machine
 
 Derived from `Session.VALID_TRANSITIONS`. States with no outgoing transitions are terminal —
@@ -662,7 +675,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `boundary_update` | session | The resolved workspace boundary and caps, and where they came from. Additive `config_trust` (TD-5113) is set when the workspace config loosens anything: `state` (`pending`, `trusted` or `declined`), its `sha256`, and each loosened setting with its default. Pending and declined run on packaged defaults. |
 | `turn_complete` | session | A finished turn: tokens, cost, tier, duration, and any failure code. A turn a restart cut is sealed once at revive with `failed`, zeros and `error_code: interrupted_by_restart` (TD-5018). |
 | `tier_state` | session | The active tier, any pinned override, slugs, preset, hosts (TD-1720), and plan-mode lock (TD-4603; read-only since TD-5123). Native-engine sessions only. Additive `fallbacks` maps a tier that moved to a backup endpoint this turn to the backup's 1-based position in its list; `model_slugs` and `hosts` then name the backup (TD-5120). |
-| `context_compacted` | session | Older turns were compacted to fit the context window. Never silent. Additive `trigger` (`auto` \| `manual` \| `from_here`) and `guidance` say who asked and what to keep (TD-5109). The trigger `inflight_trim` is not compaction: the loop trimmed the middles of this turn's tool results and no message left, so `dropped_messages` counts the results trimmed. The window shows it as a quieter "Trim" row that leads with the results trimmed and the tokens freed (TD-5150). The trigger `clear_stale` is not compaction either: before any turn is compacted, tool results from earlier turns were replaced with a one-line placeholder naming the tool, its target and the size that went (`clear_tool_results` in config.yaml), and no message left, so `dropped_messages` counts the results cleared. The window shows it as the same quiet "Trim" row, previewed "Cleared earlier tool results" (TD-5115). |
+| `context_compacted` | session | Older turns were compacted to fit the context window. Never silent. Additive `trigger` (`auto` \| `manual` \| `from_here`) and `guidance` say who asked and what to keep (TD-5109). The trigger `inflight_trim` is not compaction: the loop trimmed the middles of this turn's tool results and no message left, so `dropped_messages` counts the results trimmed. The window shows it as a quieter "Trim" row that leads with the results trimmed and the tokens freed (TD-5150). The trigger `clear_stale` is not compaction either: before any turn is compacted, tool results from earlier turns were replaced with a one-line placeholder naming the tool, its target and the size that went (`clear_tool_results` in config.yaml), and no message left, so `dropped_messages` counts the results cleared. The window shows it as the same quiet "Trim" row, previewed "Cleared earlier tool results" (TD-5115). Whether the worker or the extractive fallback wrote the summary, and whether recent files came back under it, does not change the event (TD-5128). |
 | `context_usage` | session | The next request's estimated tokens against the tier's window and its compaction point, for the title-bar gauge. Sent before each model call and after a compaction (TD-5109). Additive `model` names the model the figures are for, and `fallback` its 1-based position in the tier's `fallbacks` (0 for the tier's own model): on a backup the window and the calibrated estimate are the backup's (TD-5120). |
 | `worktree_state` | session | The session's git worktree changed: made, set up, or closed (TD-5126). `worktree` is the state now (`branch`, `path`, `main_dirty`, `setup`, `setup_note`), null once the session works in the folder it was opened on; `note` says what happened in a sentence (a setup failure, a merge, or why no worktree could be made). The window refreshes the session list on it. |
 | `task_list` | session | The session's whole task list after the native loop's `task_list` tool changed it: items, each with `content` and a `status` of `pending`, `in_progress` or `done` (TD-5122). The newest one is the list; an empty list clears it. The Plan pane and the task strip above the composer (what the phone shows) read it. Logged again as soon as the log window rotates the last one out, and on attach if it is missing, so a restart and a late window always find it. |

@@ -277,6 +277,25 @@ clear_tool_results:
   clear_at_least_tokens: 2000
   exclude_tools: []
 
+# How compaction writes its summary (TD-5128). summary: model asks the worker
+# tier for a structured summary (goal, decisions, files touched, open items);
+# summary_prompt replaces the built-in prompt when set. A worker that fails,
+# takes longer than summary_timeout_seconds or answers without the built-in
+# prompt's four headings leaves the short extractive summary instead, and
+# summary: extractive never calls a model. From background_percent of the
+# compaction budget the summary is written in the background, so the turn
+# that reaches the budget does not wait (0 turns that off). Afterwards the
+# files read or changed in the folded turns are read again, newest first,
+# within reinject_files files and reinject_tokens tokens.
+compaction:
+  summary: model
+  summary_prompt: ""
+  summary_max_tokens: 1200
+  summary_timeout_seconds: 120
+  background_percent: 75
+  reinject_files: 5
+  reinject_tokens: 6000
+
 # The consult tool (TD-5119): the tier doing the work asks the brain (or
 # the validator) one short question with the context it picks, and gets the
 # answer back as the tool result. A tier not listed in tiers is off. The

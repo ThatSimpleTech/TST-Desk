@@ -69,6 +69,7 @@ no effect.
 | `computer_use` | mapping | see below | Desktop computer-use sidecar. Omitted in an older user copy is filled from the shipped file at load. Empty `command` is mock-only — the daemon never spawns `mcp/tst-cu-mcp`. Empty `grounding.base_url` leaves click targeting on the intended (x, y). |
 | `session` | mapping | see below | On-disk session event-log window. Omitted in an older user copy is filled from the shipped file at load. Zero is invalid, not unbounded. |
 | `clear_tool_results` | mapping | see below | Clear stale tool results before whole turns are compacted (TD-5115). Omitted in an older user copy is filled from the shipped file at load, which turns it on. |
+| `compaction` | mapping | see below | How compaction writes its summary and what it brings back (TD-5128): a worker-written structured summary, written ahead in the background, and the recent files read again. Omitted in an older user copy is filled from the shipped file at load, which turns the worker summary on. A config with the block but no `summary` key is `extractive`. |
 | `consult` | mapping | see below | Which tiers get the `consult` tool, which asks the brain or the validator one question mid-task, and how many consults one turn may make (TD-5119). Omitted in an older user copy is filled from the shipped file at load: the worker only, two a turn. |
 | `shell` | mapping | see below | The read-only shell list (TD-5103): commands that run without asking. Omitted in an older user copy means the whole built-in list, on. Config can shrink it or switch it off, never add to it. |
 | `remote` | mapping | see below | Opt-in Tailscale bind. Omitted in an older user copy is filled from the shipped file at load. Empty `bind` is loopback only. |
@@ -590,6 +591,82 @@ clear_tool_results:
   keep_recent_tool_results: 5
   clear_at_least_tokens: 4000
   exclude_tools: [load_skill]
+```
+
+### `compaction`
+
+What a compaction leaves in place of the turns it folds (TD-5128). When the
+prompt passes the tier's budget (and clearing stale tool results was not
+enough), the turns before the last two user turns become one summary
+message; `/compact` and "Summarize from here" do the same on request
+(TD-5109).
+
+- **The summary.** With `summary: model` the worker tier writes it, as a
+  structured summary under four headings: `## Goal`, `## Decisions`,
+  `## Files touched` and `## Open items`. `summary_prompt` replaces the
+  built-in prompt; the worker gets the folded turns (a prior summary whole,
+  then the newest messages first when they do not all fit its window) and,
+  for `/compact guidance`, your guidance. The summary falls back to the
+  short extractive one (about 200 characters of each folded message, 2,000
+  in all) when the worker fails, takes longer than
+  `summary_timeout_seconds`, is cut off at `summary_max_tokens`, or, with the
+  built-in prompt, answers without the four headings in order. A custom
+  prompt's answer only has to be non-empty. Compaction never fails because
+  of the worker. `summary: extractive` never calls a model.
+- **In the background.** Once a request passes `background_percent` of the
+  budget, the turns the next compaction can fold are summarized while the
+  turn runs. There are two such spans: everything before the previous user
+  turn (what a compaction in the middle of this turn folds, the usual case
+  when tool results grow the prompt) and everything before the last user
+  turn (what the next turn's compaction, or `/compact` with no guidance,
+  folds). The first is normally the one already written during the turn
+  before, so this costs about one worker call per turn. When a compaction
+  folds one of those spans, the summary is ready and the turn does not wait
+  for the worker. Clearing stale tool results does not count as a change.
+  `0` turns writing ahead off.
+- **Recent files.** After a compaction, the files read (`fs_read`), written
+  (`fs_write`) or edited (`fs_edit`) in the folded turns are read again from
+  disk, newest first, and go under the summary, headed
+  `[Recent files, read again after compaction]`. At most `reinject_files`
+  files and `reinject_tokens` tokens, and never more than half the room left
+  under the budget, so the files cannot bring the next request straight
+  back to it; the last file that fits is cut, with a note. A file the kept
+  turns read or changed too is left out (it is still in the prompt), and so
+  is any file outside the workspace, any file an `ask` or `never` rule over
+  the built-in reads matches (§4.4), and anything that is not UTF-8 text.
+  A later compaction folds only the summary itself, never an old copy of
+  the files.
+- **Skills.** A skill loaded with `load_skill` or `/name` lives in the
+  system prompt, which compaction never folds, so its body is in every
+  request after a compaction too, within its own size cap.
+- The worker's calls are priced as worker calls outside the turn (as the
+  memory distill is) and show in the cost meter. The `context_compacted`
+  row is the same whichever summary was used.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `summary` | `model` \| `extractive` | `model` in the shipped file | Who writes the summary. A config with the block and no `summary` key is `extractive`. |
+| `summary_prompt` | string | `""` | Replaces the built-in summary prompt. Empty uses the built-in one, whose four headings the answer must carry. |
+| `summary_max_tokens` | int ≥ 64 | `1200` | The worker's output cap for one summary. An answer cut off there falls back to the extractive summary. |
+| `summary_timeout_seconds` | number > 0 | `120` | How long a compaction waits for the worker before it falls back. |
+| `background_percent` | int 0–99 | `75` | From this share of the compaction budget, the next compaction's summary is written in the background. `0` is off. |
+| `reinject_files` | int ≥ 0 | `5` | How many recent files come back after a compaction. `0` brings none back. |
+| `reinject_tokens` | int ≥ 0 | `6000` | The most estimated tokens those files may take, before the half-the-headroom cap. |
+
+<!-- verify: model -->
+```yaml
+presets:
+  local:
+    brain: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    worker: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    validator: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+active_preset: local
+compaction:
+  summary: model
+  summary_prompt: "Summarize for a coding agent: the goal, what was decided, every file path touched, and what is left."
+  background_percent: 60
+  reinject_files: 3
+  reinject_tokens: 4000
 ```
 
 ### `consult`
