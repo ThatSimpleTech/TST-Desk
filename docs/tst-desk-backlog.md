@@ -11576,6 +11576,56 @@ definition the model sees, and an `@name` turn through the loop with the
 mock provider) and `core/tests/test_security_suite.py` (paths and shell
 writes). See DECISIONS.md and docs/configuration.md §4.11.
 
+### TD-5135 — Run a formatter or linter after edits
+**Size:** 5 · **Depends on:** TD-5134 (not built yet; see DECISIONS.md) · Gap audit 2026-10-14
+
+Local models make more format and lint slips than hosted ones, and
+nothing caught them until the next turn, if at all. Claude Code users run
+a formatter or linter as a PostToolUse hook; TST Desk had no hooks.
+
+**Acceptance criteria:**
+- [x] A packaged "after write" hook template runs a configured command on
+      files changed by fs_write/fs_edit. Failures go back to the model as
+      part of the tool result (`hooks.after_write` in config.yaml, and in
+      a trusted `.tst/config.yaml`; core/tests/test_after_write_hooks.py)
+- [x] Examples for ruff, prettier and eslint are in docs
+      (docs/configuration.md §2 `hooks`, checked by
+      test_docs_config_reference.py)
+- [x] The time it takes shows in the step timeline (the write's row reads
+      `after write 0.43 s`, expanded per hook;
+      ui/src/lib/timeline-hooks.test.ts)
+
+Done (2026-10-21): `hooks.after_write` is a list of commands (argv, or a
+string split into words; no shell), each with `match` globs and
+`timeout_seconds`. The dispatcher runs the matching ones after a
+successful `fs_write` or `fs_edit`, before the checkpoint and the diff, in
+the workspace with secrets stripped from the environment. A failure, a
+timeout or a missing program goes back to the model as a note on the
+(still successful) tool result with the output's start and end; a hook
+that rewrote the file says so; a clean pass adds nothing. User hooks run
+first, then the workspace's, which apply only once the file is trusted
+(TD-5113: any `hooks` value already counted as loosening). Each run rides
+on `tool_result.hooks` (name, status, exit code, duration, changed) for
+the step timeline. The packaged config.yaml and the workspace scaffold
+carry commented templates. The general hook runner (TD-5134) is still to
+come and reuses the `hooks` section.
+
+Review fixes (PR #58): the command leads its own process group and a
+timeout or cancelled turn kills the whole tree (as the shell tool does),
+not only the leader; a file name starting with `-` reaches the command as
+`./-name`; the workspace root is resolved before matching, so a symlinked
+workspace still matches `src/*.py` patterns and passes relative paths
+(core/tests/test_after_write_hooks.py: the three tests fail on the old code).
+
+Integration with TD-5134 (merge of main): both stories own `hooks:`, so
+there is one `HooksConfig` (core/tstd/hooks_config.py) with the five
+TD-5134 events and `after_write` beside them; `AfterWriteHook` moved
+there. The tool result's per-hook record is now `AfterWriteRun`, since
+TD-5134's `HookRun` is the `hook_run` event. An autonomous session runs no
+after-write hook (TD-5134 keeps its hooks in the container; these have no
+container path). Tests: `test_an_autonomous_session_runs_no_hook_on_the_host`,
+core/tests/test_docs_config_reference.py.
+
 ## Epic E53 — Connectors
 
 Owner-approved scope 2026-10-02. A connector is a local sign-in to a

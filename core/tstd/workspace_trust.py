@@ -49,10 +49,10 @@ TRUST_FILE = "workspace_trust.yaml"
 TrustState = Literal["none", "pending", "trusted", "declined"]
 Decision = Literal["trusted", "declined"]
 
-# Top-level keys TST Desk does not read from a workspace yet. A repo that
-# sets them is asking for something only user config may grant today, so
-# they count as loosening now and a later reader (hooks: TD-5134) inherits
-# the gate instead of having to remember it.
+# Top-level keys that loosen as soon as they are set at all. TST Desk does
+# not read ``mcp_servers`` from a workspace yet; ``hooks.after_write``
+# (TD-5135) runs commands after every write, so any ``hooks`` value waits
+# for trust, and the general hook runner (TD-5134) inherits the gate.
 _UNREAD_LOOSENING_KEYS: tuple[str, ...] = ("mcp_servers", "hooks")
 
 _DRIVE = re.compile(r"^[A-Za-z]:")

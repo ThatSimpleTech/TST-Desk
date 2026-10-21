@@ -80,6 +80,7 @@ no effect.
 | `engine` | mapping | see below | Which agent loop new sessions use. `native` is the TST 3-tier OpenAI-compatible loop. `grok` spawns the installed Grok Build CLI over ACP. Omitted in an older user copy is filled from the shipped file at load. |
 | `steering` | mapping | see below | User-global steering (TD-4845). Omitted in an older user copy is filled from the shipped file at load. |
 | `worktree` | mapping | see below | A git worktree per session (TD-5126). On by default: a session or scheduled job in a git repository works in its own worktree. Omitted in an older user copy is the defaults, on. |
+| `hooks` | mapping | no hooks | Commands TST Desk runs around the agent's work: at five points in a session (TD-5134, §2 `hooks`), and `after_write`, a formatter or linter run on the files each `fs_write` or `fs_edit` changed, its failures sent back to the model in that call's result (TD-5135, §2 `hooks.after_write`). Omitted in an older user copy is no hooks. |
 
 ### `credentials`
 
@@ -1034,6 +1035,72 @@ worktree:
   setup_timeout_s: 900
 ```
 
+### `hooks.after_write`
+
+Run a formatter or linter after the agent writes a file (TD-5135). Local models make more format
+and lint slips than hosted ones; a hook catches them in the same step, so fixing one does not cost
+a turn. Each entry of `after_write` is one command:
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `after_write` | list of hooks, up to 10 | `[]` | Commands run, in order, after every successful `fs_write` and `fs_edit`, on the files that call changed. Empty means none. |
+| `name` | string, up to 60 characters | *empty* | The label in the step timeline and in the note to the model. Empty is the program's file name. |
+| `command` | list of strings, or one string | *required* | The program and its arguments, run **without a shell** (no pipes, `&&` or globbing). One string is split into words the way a POSIX shell would; on Windows, give a list when a path holds backslashes. An item that is exactly `{files}` is replaced by the changed files, as paths from the workspace root (a name starting with `-` is passed as `./-name`, so it is never read as an option); with none, the files go on the end. |
+| `match` | list of glob patterns | `["*"]` | Which changed files the hook runs on. A pattern without `/` matches the file name (`*.py`); one with `/` matches the path from the workspace root (`src/*.ts`). A write that matches no pattern skips the hook. |
+| `timeout_seconds` | number, up to 600 | `30` | How long the command may run before it is stopped. Stopping it (or stopping the turn) kills the command's whole process tree, so a formatter `npx` started cannot keep writing after the diff is taken. |
+
+<!-- verify: model -->
+```yaml
+presets:
+  local:
+    brain: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    worker: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    validator: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+active_preset: local
+hooks:
+  after_write:
+    # ruff: format, then lint with safe fixes. Python files only.
+    - name: ruff format
+      command: "ruff format {files}"
+      match: ["*.py"]
+    - name: ruff check
+      command: "ruff check --fix --quiet {files}"
+      match: ["*.py"]
+    # prettier: rewrite web and docs files in place.
+    - name: prettier
+      command: ["npx", "--no-install", "prettier", "--write", "{files}"]
+      match: ["*.ts", "*.tsx", "*.js", "*.css", "*.md", "*.json"]
+    # eslint: lint and fix; a rule it cannot fix fails the hook.
+    - name: eslint
+      command: "npx --no-install eslint --fix {files}"
+      match: ["*.ts", "*.tsx", "*.js"]
+      timeout_seconds: 60
+```
+
+What happens after each write:
+
+- **The hook runs in the workspace, with secrets stripped from its environment**, as the shell tool
+  and `worktree.setup` do. File paths are passed relative to the workspace root.
+- **A failure goes back to the model in that call's result.** The write itself still succeeded, so
+  the result is a success with a note after it: the hook's name, its exit code and time, and its
+  output (the start and end, up to 2000 characters). A hook that runs past `timeout_seconds` is
+  stopped and reported the same way, and so is a program that is not on `PATH`.
+- **A hook that rewrites the file says so.** When a formatter changes the file, the note tells the
+  model to read it again before its next `fs_edit`. The diff and the checkpoint are taken after the
+  hooks, so both show the file as the formatter left it.
+- **A clean pass adds nothing** to the model's context.
+- **The time shows in the step timeline.** The write's result row reads `after write 0.43 s` (or
+  `after write failed · 0.43 s`), and expanding it lists each hook with its time and outcome. The
+  `tool_result` event carries them in `hooks`.
+
+The hook is your own command, not a tool call the model made, so it runs without an approval card.
+It sees only files a classified and approved write already changed. A workspace can add its own
+hooks in `.tst/config.yaml` (§4.12), after yours, once you trust that file. A Grok-engine session
+has its own loop and runs no hooks, and an autonomous session runs no `after_write` hook: its
+commands run only in its container, and these have no container path yet. `after_write` is not one of the five events below: it has its
+own keys, its runs show on the write's `tool_result`, not as `hook_run` events, and **More →
+Hooks** does not list it.
+
 ### `remote`
 
 Opt-in bind on a Tailscale address (TD-3601). Empty is off: the daemon
@@ -1434,6 +1501,7 @@ hooks run first, then the workspace's.
 | `user_prompt` | list of hooks | `[]` | Runs on each message you send, before the model sees it, including one sent while a turn runs (it joins that turn). It can add context, or block the message: the window shows why and the model never sees it. In `tst run`, a blocked message exits 3 (refused). |
 | `before_tool` | list of hooks | `[]` | Runs for a tool call after the decision classifier and your policy have decided, and only when they would let it run or ask. It can block the call (`hook_blocked`, which `tst run` counts as refused), or make a call that would run on its own wait for your approval. It cannot approve anything. In an unattended run nobody can approve, so its ask refuses the call. |
 | `after_tool` | list of hooks | `[]` | Runs after a tool call succeeds. What it says goes back to the model with the result, after it, so a long result cut to `max_result_chars` still carries it. |
+| `after_write` | list of hooks, up to 10 | `[]` | A formatter or linter on the files each write changed, with its own keys (`match`, a `command` list, no `tools`); see `hooks.after_write` above (TD-5135). |
 | `stop` | list of hooks | `[]` | Runs when the model ends a turn, before the done-check (§4.9). A block sends its reason back to the model and the turn goes on, up to 3 times a turn. |
 
 Each hook:
@@ -2109,8 +2177,9 @@ template whose values are the defaults, so a scaffolded file changes nothing unt
 file is read when a workspace opens and again when a paused session resumes, which is what lets
 you raise a cap and continue without restarting.
 
-Eight top-level sections live here, each read by a different part of the daemon: `boundary`,
-`caps`, `attachments`, `policy`, `approved_external_imports`, `memory`, `stop_check`, and `worktree`.
+Nine top-level sections live here, each read by a different part of the daemon: `boundary`,
+`caps`, `attachments`, `policy`, `approved_external_imports`, `memory`, `stop_check`, `worktree`,
+and `hooks`.
 
 **A file that loosens anything waits for your trust (TD-5113).** This file usually arrives with
 a clone, so one that loosens the packaged defaults (an `auto` rule, a network host, a raised
@@ -2907,7 +2976,7 @@ them when:
 | `approved_external_imports` | It lists any path. |
 | `worktree.setup` | It names a command. The daemon runs it in each new worktree (TD-5126), so a repo-shipped one waits for your trust; until then the new chat says it was skipped. |
 | `mcp_servers` | The key is set at all. TST Desk does not read it from a workspace yet; it is judged now so a later feature cannot run it untrusted. |
-| `hooks` | The key is set at all. Each hook is a command TST Desk runs on its own (§4.12), so a repo's hooks run only once you trust the file. |
+| `hooks` | The key is set at all. Each hook is a command TST Desk runs on its own (§4.12), and `hooks.after_write` runs one after every write the agent makes, so a repo's hooks run only once you trust the file. |
 | `stop_check.checks` | It names any check (TD-5124). A check runs on its own whenever the model ends a turn: a command through the shell tool, or a statement that goes to the model as a message when it fails. |
 
 Tightening never asks: `allowed_commands`, `ask` and `never` rules, `class_c_default: never`,
@@ -3084,6 +3153,8 @@ runs, so a saved edit counts on the next call.
 The same block as §2's `hooks`, for this workspace. It applies only once you trust the file
 (§4.8): a hook is a command TST Desk runs on its own. Until then, or if the block is invalid,
 the workspace's hooks are left out and **More → Hooks** says why. Your own hooks still run.
+The block may carry `after_write` too (§2 `hooks.after_write`): a project can ship the formatter
+and linter it uses, and they run after yours, on the same writes (TD-5135).
 
 <!-- verify: workspace -->
 ```yaml
@@ -3091,7 +3162,15 @@ hooks:
   after_tool:
     - command: "ruff check --quiet ."
       tools: ["fs_write", "fs_edit"]
+  after_write:
+    - name: ruff
+      command: "uv run ruff check --fix {files}"
+      match: ["*.py"]
+      timeout_seconds: 60
 ```
+
+A `hooks` section that does not validate (an unknown key, a `command` with no program) applies
+none of its hooks, and the rest of the file still loads.
 
 ---
 

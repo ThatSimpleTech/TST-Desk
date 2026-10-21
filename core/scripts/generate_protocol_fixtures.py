@@ -20,6 +20,7 @@ from tstd.protocol import (
     PROTOCOL_VERSION,
     AddMachine,
     AddPin,
+    AfterWriteRun,
     AlwaysAllow,
     AnswerQuestion,
     ApiKeyValidated,
@@ -762,6 +763,19 @@ FIXTURES = {
                 status="success",
             ),
             WorkerStep(kind="reply", text="animals.md names one animal pair."),
+        ],
+    ),
+    "tool_result_after_write": ToolResult(
+        session_id="sess-1",
+        tool_call_id="tc-1",
+        status="success",
+        output="wrote 9 bytes; created a.py\n\n[after-write hook `ruff check` failed: exit 1]",
+        seq=10,
+        hooks=[
+            AfterWriteRun(
+                name="ruff format", status="passed", exit_code=0, duration_ms=120, changed=True
+            ),
+            AfterWriteRun(name="ruff check", status="failed", exit_code=1, duration_ms=310),
         ],
     ),
     "tool_result_denied": ToolResult(

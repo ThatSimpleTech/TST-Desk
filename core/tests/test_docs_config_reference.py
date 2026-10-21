@@ -90,7 +90,7 @@ from tstd.config import (
     default_config_yaml,
     load_config,
 )
-from tstd.hooks_config import HookEntry, HooksConfig, load_workspace_hooks
+from tstd.hooks_config import AfterWriteHook, HookEntry, HooksConfig, load_workspace_hooks
 from tstd.logging import LINUX_DATA_DIR_NAME
 from tstd.policy import PolicyConfig, PolicyRule, load_approved_imports, load_policy
 
@@ -264,6 +264,7 @@ _WORKTREE_FIELDS = frozenset(WorktreeConfig.model_fields)
 _WORKSPACE_WORKTREE_FIELDS = frozenset(WorktreeSection.model_fields)
 _STOP_CHECK_FIELDS = frozenset(StopCheckSection.model_fields)
 _ATTACHMENT_FIELDS = frozenset(AttachmentLimits.model_fields)
+_AFTER_WRITE_FIELDS = frozenset(AfterWriteHook.model_fields)
 _POLICY_FIELDS = frozenset(PolicyConfig.model_fields)
 _RULE_FIELDS = frozenset(PolicyRule.model_fields)
 _HOOKS_FIELDS = frozenset(HooksConfig.model_fields)
@@ -286,8 +287,9 @@ def _check_tier(data: Any, where: str) -> None:
 def _check_hooks(data: Any, where: str) -> None:
     _check_keys(data, _HOOKS_FIELDS, f"{where} hooks")
     for event, entries in data.items():
+        fields = _AFTER_WRITE_FIELDS if event == "after_write" else _HOOK_FIELDS
         for i, entry in enumerate(entries or []):
-            _check_keys(entry, _HOOK_FIELDS, f"{where} hooks.{event}[{i}]")
+            _check_keys(entry, fields, f"{where} hooks.{event}[{i}]")
 
 
 def _check_workspace(data: dict[str, Any], where: str) -> None:
@@ -412,6 +414,8 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
                 )
         if "speech" in data:
             _check_keys(data["speech"], _SPEECH_FIELDS, f"{where} speech")
+        if "hooks" in data:
+            _check_hooks(data["hooks"], where)
         if "worktree" in data:
             _check_keys(data["worktree"], _WORKTREE_FIELDS, f"{where} worktree")
         if "autonomy" in data:
@@ -487,6 +491,8 @@ def test_every_config_key_is_documented() -> None:
         | _WORKSPACE_WORKTREE_FIELDS
         | _STOP_CHECK_FIELDS
         | _ATTACHMENT_FIELDS
+        | _HOOKS_FIELDS
+        | _AFTER_WRITE_FIELDS
         | _POLICY_FIELDS
         | _RULE_FIELDS
         | _HOOKS_FIELDS

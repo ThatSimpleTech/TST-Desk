@@ -17692,3 +17692,74 @@ it in the typed text and no wire message changes. No implicit delegation:
 the model is told to delegate, and the call is still judged and approved.
 Unknown frontmatter keys refuse the file. `agent` with `kind` is refused.
 
+## 2026-10-21 — TD-5135: after-write hooks run a formatter or linter on the agent's writes (Class B)
+
+**Context.** The gap audit asked for a packaged "after write" hook that runs
+a configured command on the files `fs_write`/`fs_edit` changed, with failures
+going back to the model in the tool result and the time shown in the step
+timeline. The story depends on TD-5134 (the general hook runner), which is
+not built. Story sized 5; approach recorded here per the owner's 2026-10-14 approval of the
+gap-audit stories.
+
+**Decision.**
+- **Build the one hook point the story needs, not the runner.** A `hooks`
+  section with only `after_write` (`HooksConfig` / `AfterWriteHook` in
+  `config.py`), read from the user's config.yaml and, per the 2026-10-14
+  decision on TD-5134, from a workspace `.tst/config.yaml` only while that
+  file is in force (TD-5113). TD-5134 adds its events (session start,
+  prompt, before/after tool, stop) beside `after_write` and its audit rows
+  and inspector; nothing here has to be undone.
+- **Where it runs.** In `ToolDispatcher.dispatch`, after a successful
+  `fs_write`/`fs_edit` handler and before touch tracking, the checkpoint and
+  the diff, so the checkpoint commit and the diff show the file as the
+  formatter left it. Only the canonical write targets the path guard
+  already approved are passed.
+- **How it runs.** Argument list without a shell (a string is `shlex`-split);
+  `{files}` stands for the changed files, else they go on the end;
+  workspace-relative paths; cwd is the workspace; `sanitized_env()` as for
+  the shell tool and `worktree.setup`; `timeout_seconds` (default 30, at most
+  600) then the process is reaped. `match` globs pick the files.
+- **What the model sees.** The write stays a success. A failure, a timeout or
+  a program not on PATH appends a note with the exit code, time and the
+  output's start and end (2000 characters). A hook that changed the file
+  says so, so the next `fs_edit` does not miss on stale text. A clean pass
+  adds nothing, to keep small local contexts small.
+- **What the window sees.** `tool_result.hooks`: one `HookRun` per hook
+  (name, status, exit code, duration_ms, changed). The timeline puts the
+  total on the collapsed row (`after write 0.43 s` / `after write failed ·
+  0.43 s`) and each hook in the expanded details. No new event type, no new
+  control.
+
+**Class C questions the story left open, answered conservatively.**
+- No shell: pipes and `&&` are not available, so a hook cannot smuggle more
+  than one program; a user who needs them writes a script.
+- Not routed through the decision classifier: the command is the user's own
+  configuration (or a workspace's, after trust), like `worktree.setup`, not
+  a tool call the model made, and it only ever sees files an approved write
+  changed. Directive 6 still holds for every model tool call.
+- A workspace's invalid `hooks` section applies nothing instead of failing
+  the whole file, and any `hooks` value keeps counting as loosening, so a
+  repo's hook never runs untrusted.
+- No audit DB rows yet (TD-5134 owns hook auditing); each run is logged.
+- The Grok engine has its own loop and runs no hooks.
+
+**Alternatives rejected.** Waiting for TD-5134 (the story is useful on its
+own and the section shape carries over). A shell string like
+`worktree.setup` (more power than a formatter needs). A separate hook
+event type (a second thing every client must learn; the hooks belong to the
+call's result). Showing the time through `tool_progress` (it is
+overwritten by the next update and was built for live progress, not a
+finished step). Running the hook after the checkpoint (the commit and the
+diff would show the unformatted file).
+
+**Integration with TD-5134 (2026-10-21, merge of main).** TD-5134 landed
+its own `hooks:` block first. One block, one model: `after_write` became a
+field of TD-5134's `HooksConfig` beside the five events, with its own entry
+keys, rather than a sixth event, because it runs inside the dispatcher on a
+write's canonical paths and reports in the write's result, not through the
+hook runner. The tool result's record was renamed `AfterWriteRun` so it no
+longer shares a name with the `hook_run` event. An autonomous session runs
+no after-write hook: TD-5134 keeps an autonomous session's hooks in its
+container, and running these on the host would be the one way out of it.
+The conservative choice is not to run them there until they have a
+container path.

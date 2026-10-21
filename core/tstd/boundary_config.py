@@ -265,6 +265,15 @@ DEFAULT_CONFIG_TEMPLATE = """\
 #   checks: []
 #   max_retries: 3   # failures sent back per turn before it gives up
 #   timeout_secs: 300  # how long a "$" check may run
+
+# hooks:
+#   # Run after the agent writes a file (TD-5135); a failure goes back to
+#   # it in the same tool result. Runs only once you trust this file.
+#   after_write:
+#     - name: ruff
+#       command: "ruff check --fix {files}"
+#       match: ["*.py"]
+#       timeout_seconds: 30
 """
 
 

@@ -2153,6 +2153,23 @@ class WorkerStep(BaseModel):
     truncated: bool = False
 
 
+class AfterWriteRun(BaseModel):
+    """One after-write hook that ran on a write's files (TD-5135).
+
+    ``status`` is ``passed`` (exit 0), ``failed`` (another exit code),
+    ``timed_out`` (killed at its ``timeout_seconds``) or ``error`` (it
+    could not start). ``changed`` says it rewrote a file, as a formatter
+    does. The output goes to the model in the call's ``output``; this is
+    the step timeline's record of it.
+    """
+
+    name: str
+    status: Literal["passed", "failed", "timed_out", "error"]
+    exit_code: int | None = None
+    duration_ms: int = 0
+    changed: bool = False
+
+
 class ToolResult(DaemonEvent):
     """The result of a tool call."""
 
@@ -2175,6 +2192,9 @@ class ToolResult(DaemonEvent):
     # A ``delegate`` call's worker transcript (TD-5117), for display.
     # Empty for every other tool.
     transcript: list[WorkerStep] = Field(default_factory=list)
+    # The after-write hooks that ran on an fs_write or fs_edit's files
+    # (TD-5135), with how long each took. Empty for every other call.
+    hooks: list[AfterWriteRun] = Field(default_factory=list)
 
 
 class ShellOutput(DaemonEvent):

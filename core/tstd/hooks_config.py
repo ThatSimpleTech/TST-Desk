@@ -9,10 +9,18 @@ loosening). Only pydantic here, so ``config.py`` can import it.
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 HookEvent = Literal["session_start", "user_prompt", "before_tool", "after_tool", "stop"]
 HOOK_EVENTS: tuple[HookEvent, ...] = (
@@ -44,8 +52,59 @@ class HookEntry(BaseModel):
     name: str | None = Field(default=None, max_length=80)
 
 
+MAX_AFTER_WRITE_HOOKS = 10
+MAX_AFTER_WRITE_TIMEOUT = 600
+
+
+class AfterWriteHook(BaseModel):
+    """One command run on the files an ``fs_write`` or ``fs_edit`` changed (TD-5135).
+
+    ``command`` is an argument list, run without a shell; a string is split
+    the way a POSIX shell splits words. An item that is exactly ``{files}``
+    becomes the changed files; with none, the files go on the end. ``match``
+    picks the files: a pattern without ``/`` matches the file name, one
+    with ``/`` the workspace-relative path. ``name`` labels it in the
+    timeline and the tool result; empty is the command's first word.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(default="", max_length=60)
+    command: list[str] = Field(min_length=1, max_length=64)
+    match: list[str] = Field(default_factory=lambda: ["*"], min_length=1, max_length=32)
+    timeout_seconds: float = Field(default=30.0, gt=0, le=MAX_AFTER_WRITE_TIMEOUT)
+
+    @field_validator("command", mode="before")
+    @classmethod
+    def _split_command(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            try:
+                return shlex.split(value)
+            except ValueError as e:
+                raise ValueError(f"command cannot be split into words: {e}") from e
+        return value
+
+    @field_validator("command")
+    @classmethod
+    def _command_has_a_program(cls, value: list[str]) -> list[str]:
+        if not value or not value[0].strip() or value[0] == "{files}":
+            raise ValueError("command must start with a program")
+        return value
+
+    @property
+    def label(self) -> str:
+        """``name``, or the program's file name."""
+        return self.name.strip() or Path(self.command[0]).name
+
+
 class HooksConfig(BaseModel):
-    """The ``hooks:`` block: a list of commands per event."""
+    """The ``hooks:`` block: a list of commands per event.
+
+    ``after_write`` (TD-5135) sits beside the events: a formatter or
+    linter run on the files an ``fs_write`` or ``fs_edit`` changed, its
+    report folded into that call's result. It is not a :data:`HookEvent`;
+    :mod:`tstd.after_write` runs it, not :class:`tstd.hooks.HookRunner`.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -54,6 +113,9 @@ class HooksConfig(BaseModel):
     before_tool: list[HookEntry] = Field(default_factory=list, max_length=MAX_HOOKS_PER_EVENT)
     after_tool: list[HookEntry] = Field(default_factory=list, max_length=MAX_HOOKS_PER_EVENT)
     stop: list[HookEntry] = Field(default_factory=list, max_length=MAX_HOOKS_PER_EVENT)
+    after_write: list[AfterWriteHook] = Field(
+        default_factory=list, max_length=MAX_AFTER_WRITE_HOOKS
+    )
 
     @model_validator(mode="after")
     def _tools_only_on_tool_events(self) -> HooksConfig:
