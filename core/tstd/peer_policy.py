@@ -20,8 +20,10 @@ a new verb starts refused for machine peers until it is classified here.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Collection, Iterable
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -184,9 +186,15 @@ def service_hosts(config_dump: object) -> frozenset[str]:
     def walk(node: object) -> None:
         if isinstance(node, dict):
             for key, value in node.items():
-                if isinstance(key, str) and key.endswith("base_url") and isinstance(value, str):
+                named = isinstance(key, str) and key.endswith(("base_url", "base_urls"))
+                if named and isinstance(value, str):
                     if value:
                         add(value)
+                elif named and isinstance(value, list | tuple):
+                    # A tier's ``fallback_base_urls``: hosts it fails over to.
+                    for url in value:
+                        if isinstance(url, str) and url:
+                            add(url)
                 else:
                     walk(value)
         elif isinstance(node, list | tuple):
@@ -217,14 +225,37 @@ def outbound_event(event: DaemonEvent, peer: PeerView, hosts: Collection[str] = 
         event = event.model_copy(update={"from_host": "", "to_host": ""})
     if not hosts:
         return event
-    wire = event.model_dump_json()
-    # Longest first, so host:port goes before the bare host inside it.
-    scrubbed = wire
-    for host in sorted(hosts, key=len, reverse=True):
-        scrubbed = scrubbed.replace(host, HOST_PLACEHOLDER)
-    if scrubbed == wire:
+    pattern = _host_pattern(frozenset(hosts))
+    changed = False
+
+    def scrub(node: object) -> object:
+        # String values only: a key, or the JSON around a value, is never
+        # touched, so the event always parses back.
+        nonlocal changed
+        if isinstance(node, str):
+            out = pattern.sub(HOST_PLACEHOLDER, node)
+            changed = changed or out != node
+            return out
+        if isinstance(node, dict):
+            return {key: scrub(value) for key, value in node.items()}
+        if isinstance(node, list):
+            return [scrub(item) for item in node]
+        return node
+
+    scrubbed = scrub(event.model_dump(mode="json"))
+    if not changed:
         return event
-    return type(event).model_validate_json(scrubbed)
+    return type(event).model_validate(scrubbed)
+
+
+@lru_cache(maxsize=8)
+def _host_pattern(hosts: frozenset[str]) -> re.Pattern[str]:
+    """Each host as a whole name: not ``10.0.0.5`` inside ``10.0.0.50``.
+
+    Longest first, so ``host:port`` goes before the bare host inside it.
+    """
+    names = "|".join(re.escape(h) for h in sorted(hosts, key=len, reverse=True))
+    return re.compile(rf"(?<![\w.-])(?:{names})(?![\w-]|\.\w)", re.IGNORECASE)
 
 
 def message_session_id(msg: ClientMessage) -> str | None:

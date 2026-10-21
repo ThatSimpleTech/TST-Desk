@@ -106,6 +106,26 @@ def test_machine_peer_text_has_hosts_replaced() -> None:
     assert outbound_event(TIER, MACHINE, hosts).hosts == {}  # type: ignore[attr-defined]
 
 
+def test_service_hosts_include_fallback_base_urls() -> None:
+    dump = {"tiers": {"brain": {"fallback_base_urls": ["http://192.0.2.60:8000/v1", ""]}}}
+    assert service_hosts(dump) == {"192.0.2.60:8000", "192.0.2.60"}
+
+
+def test_only_whole_host_names_are_replaced_and_keys_never() -> None:
+    """A host inside a longer address, a longer name, or a JSON key stays as it is."""
+    hosts = service_hosts({"base_url": "http://192.0.2.5:4000/v1", "x_base_url": "http://gpu"})
+    text = "192.0.2.50 and gpu-box and gpu.lan, but 192.0.2.5 and GPU fail"
+    delta = AssistantDelta(session_id="s1", delta=text, seq=5)
+    out = outbound_event(delta, MACHINE, hosts)
+    assert isinstance(out, AssistantDelta)
+    assert out.delta == (
+        f"192.0.2.50 and gpu-box and gpu.lan, but {HOST_PLACEHOLDER} and {HOST_PLACEHOLDER} fail"
+    )
+    # A host that is also the text of a field name (here "delta") cannot break the event.
+    named = outbound_event(delta, MACHINE, frozenset({"delta"}))
+    assert isinstance(named, AssistantDelta) and named.delta == text
+
+
 async def _hello(uri: str, token: str) -> Any:
     ws = await connect(uri)
     await ws.send(json.dumps({"type": "hello", "token": token, "version": PROTOCOL_VERSION}))

@@ -21,8 +21,9 @@ any zlib stream inside a file is inflated and scanned too — a PyInstaller
 onefile binary keeps its Python modules (docstrings included) that way,
 so a grep over the raw bytes would miss them.
 
-Each hit prints as ``path[:entry]: rule N at offset M``; ``--show`` prints
-the matched text instead, for a local run. CI never passes it: a public
+Each hit prints as ``path[:entry]: rule N at offset M``, with any denied
+text in the path itself shown as ``[rule N]``; ``--show`` prints the
+matched text instead, for a local run. CI never passes it: a public
 run's log is public. Exit 0 clean, 1 hits, 2 usage.
 """
 
@@ -98,6 +99,17 @@ class Denylist:
         """
         for rule, offset, context in self.matches(text):
             yield context if show else f"rule {rule} at offset {offset}"
+
+    def redact(self, text: str) -> str:
+        """*text* with every denied match replaced by its rule number.
+
+        A hit's printed line also names its file, and a path or a zip
+        entry name can be the private string itself. Allow rules do not
+        apply here: printing too little is the safe side.
+        """
+        for rule, pattern in enumerate(self.deny, start=1):
+            text = pattern.sub(f"[rule {rule}]", text)
+        return text
 
 
 def load_denylist(path: str | None) -> Denylist | None:
@@ -226,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         found += scan_path(denylist, path, show=args.show)
     for line in found:
-        print(line)
+        print(line if args.show else denylist.redact(line))
     print(f"release scan: {len(found)} hit(s)")
     return 1 if found else 0
 

@@ -118,3 +118,22 @@ def test_list_from_env_text_fails_a_hit(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert release_scan.main([str(target)]) == 1
     target.write_text("clean")
     assert release_scan.main([str(target)]) == 0
+
+
+def test_a_private_string_in_a_path_is_never_printed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """CI logs are public: the path of a hit, or a zip entry's name, can be the string."""
+    import zipfile
+
+    monkeypatch.delenv("TST_RELEASE_DENYLIST", raising=False)
+    monkeypatch.setenv("TST_RELEASE_DENYLIST_TEXT", "secret-host\n")
+    named = tmp_path / "secret-host-notes.txt"
+    named.write_text("secret-host")
+    bundle = tmp_path / "app.apk"
+    with zipfile.ZipFile(bundle, "w") as zf:
+        zf.writestr("assets/secret-host.json", "{}")
+    assert release_scan.main([str(named), str(bundle)]) == 1
+    out = capsys.readouterr().out
+    assert "secret-host" not in out
+    assert "[rule 1]" in out
