@@ -484,6 +484,11 @@ class Session:
         # TD-4101: unattended runs iterate without a user message.
         # Interactive sessions leave this false and wait on the queue.
         self.autonomy = False
+        # TD-5137: True while a scheduled job's turn runs in this session
+        # (scheduler ``run_turn_on_daemon``). Nobody watches that turn, so
+        # it cannot start background shell jobs. Cleared when the run
+        # returns, so a person who carries on in the window is not refused.
+        self.scheduled_run = False
         self.charter: Charter | None = None
         self.autonomy_turns = 0
         self.autonomy_class_c = False

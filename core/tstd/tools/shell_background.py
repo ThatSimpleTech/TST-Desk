@@ -23,6 +23,7 @@ from ..proc_lifecycle import reap_subprocess, retain_subprocess_transport
 from ..session import Session
 from ..shell_jobs import ShellJob
 from . import shell_memory
+from .ask_user import denies_every_ask
 from .results import HandlerRefusal
 from .shell import (
     _drain,
@@ -40,7 +41,10 @@ def job_refusal(session: Session) -> str | None:
     """Why *session* cannot hold a background job now, or None."""
     if session.delegate_depth > 0:
         return "a delegated task cannot start a background job; run it in the foreground"
-    if session.autonomy:
+    # TD-5137: every run nobody watches. An autonomy run, a scheduled
+    # job's turn, and a ``tst run --on-ask deny-and-continue`` turn all
+    # return (or keep looping) with no one to read or stop the job.
+    if session.autonomy or session.scheduled_run or denies_every_ask(session):
         return "an unattended run cannot start a background job; run it in the foreground"
     return session.shell_jobs.refusal()
 

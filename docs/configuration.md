@@ -2741,8 +2741,9 @@ naming either still wins, and an MCP or plugin tool with either name gets no suc
 daemon owns the jobs, not the window: closing the window leaves them running, and ending the
 session (cancel, delete, quitting TST Desk) kills them. A session holds at most 8 running jobs, and
 a job keeps the last 200,000 characters nobody has read (a read says how many it dropped). The
-Plan pane lists every job with its state. A delegated worker and an unattended run cannot start
-jobs; their commands run in the foreground. After a daemon restart the old daemon's running jobs
+Plan pane lists every job with its state. A delegated worker and an unattended run (an autonomy
+run, a scheduled job's turn, or `tst run --on-ask deny-and-continue`) cannot start jobs; their
+commands run in the foreground. After a daemon restart the old daemon's running jobs
 show as `lost`: a clean quit killed them, and after a crash TST Desk no longer tracks them.
 
 <!-- verify: workspace -->

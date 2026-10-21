@@ -6,6 +6,7 @@ import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -18,6 +19,7 @@ from tstd.scheduler.models import Job, JobDraft, validate_draft
 from tstd.scheduler.runner import RecordingDeliver, run_due_jobs, run_turn_on_daemon
 from tstd.scheduler.schedule import advance_job, due_jobs, next_run_after
 from tstd.scheduler.store import list_jobs, save_job
+from tstd.session import Session
 
 _SCHED_FIXTURE_ROOT = Path(__file__).resolve().parent / "_sched_fixture_ws"
 
@@ -372,6 +374,39 @@ async def test_a_run_stamps_a_receipt_on_the_job(tmp_path: Path) -> None:
     # The session that ran it, so the pane can point the user at the work.
     assert stored.last_session_id
     assert daemon.session_registry.get(stored.last_session_id) is not None
+
+
+async def test_a_scheduled_turn_is_marked_unattended_only_while_it_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TD-5137: the turn cannot start background jobs; the window later can."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    workspace = _workspace(tmp_path)
+    save_job(data_dir, _job(workspace, job_id="inbox"))
+    mock = MockProvider(default=Script(kind="stream", content="digest ready"))
+    daemon = Daemon(data_dir=data_dir, provider=mock)
+    daemon.config = make_config()
+    seen: list[bool] = []
+    original = Session.add_user_message
+
+    async def spy(self: Session, *args: Any, **kwargs: Any) -> Any:
+        seen.append(self.scheduled_run)
+        return await original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Session, "add_user_message", spy)
+    await run_due_jobs(
+        data_dir,
+        _now(),
+        run_turn=lambda ws, msg: run_turn_on_daemon(daemon, ws, msg),
+        deliver=RecordingDeliver(),
+    )
+    assert seen == [True]
+    session_id = list_jobs(data_dir)[0].last_session_id
+    assert session_id
+    session = daemon.session_registry.get(session_id)
+    assert isinstance(session, Session)
+    assert session.scheduled_run is False
 
 
 async def test_a_missing_workspace_is_recorded_as_a_failure(tmp_path: Path) -> None:

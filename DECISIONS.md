@@ -17876,6 +17876,15 @@ per the owner's 2026-10-14 approval of the gap-audit stories.
   and a timeout there still kills: a child is gone when its task returns,
   so nothing would read or stop its job, and an autonomy command's
   container lives for the call.
+- The same refusal covers the other runs nobody watches: a scheduled
+  job's turn (`Session.scheduled_run`, set by the scheduler only while
+  that turn runs) and a `tst run --on-ask deny-and-continue` turn (the
+  test `ask_user` already uses). Both return while their session stays
+  in the registry, so a job would outlive the run and its `max_run`
+  budget with nobody to read or stop it. A plain `tst run` (asks
+  prompt a person) is attended and may start jobs; once a scheduled
+  turn ends, a person carrying on in the window may too. Class C
+  default: the most conservative reading that still meets the story.
 - At most 8 running jobs per session, 16 finished ones kept in the list,
   200,000 unread characters kept per job (older text is dropped and the
   next read says how much), 20,000 characters per read, 30 s longest wait.

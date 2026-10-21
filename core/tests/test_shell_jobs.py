@@ -29,7 +29,7 @@ from tests.test_dispatch import make_classifier
 from tstd.autonomy import Boundary, DecisionClass, DecisionClassifier
 from tstd.autonomy.classifier import RULE_TABLE
 from tstd.policy import ApprovalOutcome, PolicyConfig
-from tstd.protocol import ShellJobInfo, ShellJobs
+from tstd.protocol import RunPermissions, ShellJobInfo, ShellJobs
 from tstd.session import Session, SessionRegistry
 from tstd.shell_jobs import MAX_RUNNING_JOBS, JobOutput, lost_jobs_after_restart
 from tstd.shell_read_only import READ_ONLY_ENTRIES
@@ -164,6 +164,24 @@ async def test_a_child_and_an_unattended_run_cannot_start_jobs(session: Session)
     session.autonomy = True
     with pytest.raises(HandlerRefusal):
         await run_shell(session, "sleep 30", background=True)
+    assert session.shell_jobs.list() == []
+
+
+async def test_a_scheduled_turn_cannot_start_jobs(session: Session) -> None:
+    """A scheduled job's turn returns with nobody left to read or stop a job."""
+    session.scheduled_run = True
+    with pytest.raises(HandlerRefusal) as refused:
+        await run_shell(session, "sleep 30", background=True)
+    assert refused.value.code == "shell_job_refused"
+    assert session.shell_jobs.list() == []
+
+
+async def test_a_deny_and_continue_run_cannot_start_jobs(session: Session) -> None:
+    """``tst run --on-ask deny-and-continue`` is unattended like an autonomy run."""
+    session.run_permissions = RunPermissions(on_ask="deny_and_continue")
+    with pytest.raises(HandlerRefusal) as refused:
+        await run_shell(session, "sleep 30", background=True)
+    assert refused.value.code == "shell_job_refused"
     assert session.shell_jobs.list() == []
 
 

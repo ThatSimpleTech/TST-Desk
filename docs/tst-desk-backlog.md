@@ -11725,7 +11725,11 @@ buffer on the session that keeps the last 200,000 unread characters;
 kills the whole process group. Both are Class A by the `shell-job` rule
 (builtin shape only); plan mode runs the read and refuses the stop. A
 session holds at most 8 running jobs. A delegated child and an unattended
-run cannot start one. A revived session logs the old daemon's running jobs
+run (autonomy, a scheduled job's turn, or `tst run --on-ask
+deny-and-continue`; `test_a_scheduled_turn_cannot_start_jobs`,
+`test_a_deny_and_continue_run_cannot_start_jobs`,
+`test_a_scheduled_turn_is_marked_unattended_only_while_it_runs`) cannot
+start one. A revived session logs the old daemon's running jobs
 as `lost`. Approach and limits in DECISIONS.md.
 
 ## Epic E53 — Connectors
