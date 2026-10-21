@@ -17537,6 +17537,89 @@ behind a read rule, even if the model was allowed to read it at the time.
 Re-reading is not a tool call: it is the daemon restoring text the agent
 already had, through the same guard the read tool uses.
 
+## 2026-10-21 — TD-5134: hook runner (Class B)
+
+Approved as specified in the gap audit, with the owner's 2026-10-14 decision that
+hooks may also come from a trusted workspace config. Size 8, so the approach
+is recorded here instead of waiting for sign-off. The audit said to split the
+story before building; it shipped as one change because the config, runner,
+audit row and inspector share one model and none is useful alone.
+
+- **Where hooks come from.** One `hooks:` block shape (`core/tstd/hooks_config.py`)
+  in `config.yaml` and in `.tst/config.yaml`. The workspace list is read only
+  through the TD-5113 view while it applies; `hooks` was already a loosening
+  key there, so an untrusted file adds nothing. User hooks run first. The
+  daemon refreshes user hooks from the session's config at each turn, so a
+  config edit takes effect on the next message.
+- **The protocol.** A hook gets the event as JSON on stdin and
+  `TST_HOOK_EVENT`, `TST_SESSION_ID`, `TST_WORKSPACE` in its environment.
+  Exit 0 with JSON `{"decision": "block"|"ask"|"allow", "reason", "context"}`
+  or plain stdout (context, at session start and on a prompt only); exit 2
+  blocks with stderr as the reason; any other exit is an error. This mirrors
+  the exit-code and JSON control people already write for other agents.
+- **Hooks only tighten (directive 6).** `before_tool` runs after the
+  classifier and the policy, and only for a call they would let run, so a
+  hook never sees, and cannot rescue, a refused call. `block` refuses
+  (`hook_blocked`); `ask` turns `auto` into an approval prompt; `allow` is
+  ignored. A hook `ask` still asks when skip-all is on, since skip-all only
+  promotes the policy's own asks. Under autonomy, where no one can approve,
+  a hook `ask` refuses the call.
+- **Errors and timeouts do not block.** A hook that crashes, prints bad JSON
+  or times out is recorded as `error` or `timeout` and the call goes on; the
+  classifier and policy still hold, and a broken script should not wedge a
+  session. A timeout kills the hook's whole process group.
+- **How it runs.** The system shell (`/bin/sh`, or `cmd` on Windows) in the workspace,
+  with the shell tool's sanitized environment (no daemon secrets), output
+  read up to 64 KB, text clipped to 2,000 characters. A block stops the
+  remaining hooks for that event.
+- **Events in the loop.** `session_start` fires each time the agent loop
+  starts (source `start` or `resume`); its context rides on the next user
+  message rather than the system prompt, so the steering cache prefix is
+  untouched. A `user_prompt` block keeps the message out of the
+  conversation and ends the turn with `hook_blocked`. A `stop` block sends
+  its reason back as a user message and runs another round, at most 3 times
+  a turn. `after_tool` output is appended to the tool result. Delegate
+  workers share the parent's runner; their own stops do not run stop hooks.
+- **Audit.** Every run is a `hook_run` session event and a row in a new
+  `hook_runs` table (schema v7) with command, reason and context redacted
+  by the audit redactor, plus result, exit code and duration.
+- **Inspector.** `get_hooks` returns `hooks_state` (active hooks, source,
+  matched tools, last result, workspace trust note); the UI shows it under
+  the right pane's More menu.
+
+**Conservative answers to questions the story left open (Class C, PR body).**
+Errors and timeouts fail open (the classifier is the safety net, not the
+hook). `get_hooks` is not added to the bridged or peer verbs. A hook's
+`allow` never loosens anything. Stop-hook retries are capped at 3 a turn. A
+workspace file with invalid hooks adds no hooks rather than some of them.
+
+**Review fixes (PR #60).** Four findings, all fixed:
+
+- **Autonomy runs hooks in the container.** §12.5 / TD-4301 require an
+  unattended run to execute in a rootless container with only the workspace
+  bound in. The agent writes the workspace unattended, so a hook that runs a
+  repo script (`./scripts/check.sh`, `make lint`) would have run its code on
+  the host. An autonomous session's hooks now run through the same
+  `autonomy_shell_argv` as its shell calls (`--interactive` for the stdin
+  payload, the hook variables passed with `--env`, the charter's network, the
+  session's memory cap); the payload's `workspace` and `TST_WORKSPACE` are
+  `/workspace`. User hooks go there too: the most conservative choice, at
+  the cost that a user hook naming a host path does not work unattended. If
+  the container argv cannot be built the hook is recorded as `error` and
+  never runs on the host (errors fail open as before; autonomy refuses to
+  start without a runtime anyway).
+- **Steers meet `user_prompt` hooks.** A message that joins a running turn
+  (TD-5112) runs the same hooks before it is appended. A block keeps it out
+  of the conversation; its `user_turn` is still logged and a note says why.
+  Hook context rides on the steer as on a turn's first message.
+- **Hook notes go after truncation.** `after_tool` now returns only the
+  `[hooks]` notes and the dispatcher adds them after `truncate_output`, so a
+  long result cannot cut a flag off. The notes are already clipped to
+  2,000 characters a hook.
+- **`tst run` counts hook blocks as refusals.** `hook_blocked` joins
+  `REFUSAL_CODES` (a `before_tool` block), and a turn that ends with
+  `hook_blocked` (a blocked prompt) is `refused` too: exit 3.
+
 ## 2026-10-21 — TD-5133: named worker definitions in `.tst/agents/` and `~/.tstdesk/agents/` (Class B)
 
 **Context.** The gap audit asked for workers with their own prompt, tool

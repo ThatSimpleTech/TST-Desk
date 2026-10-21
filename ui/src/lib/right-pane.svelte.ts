@@ -17,7 +17,8 @@ export type RightPaneTab =
 	| "usage"
 	| "screen"
 	| "preview"
-	| "plan";
+	| "plan"
+	| "hooks";
 
 export const rightPane = $state({ tab: "activity" as RightPaneTab });
 

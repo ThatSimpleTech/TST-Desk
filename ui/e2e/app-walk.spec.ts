@@ -273,7 +273,7 @@ test("visits every right-pane view", async () => {
 	const menu = page.getByRole("menu", { name: "More views" });
 	await expect(menu).toBeVisible();
 	await snap("more-views", menu);
-	const items = ["Stack", "Usage", "Preview", "Plan"];
+	const items = ["Stack", "Usage", "Preview", "Plan", "Hooks"];
 	if ((await page.getByRole("menuitemradio", { name: "Screen", exact: true }).count()) > 0) {
 		items.splice(2, 0, "Screen");
 	}

@@ -90,6 +90,7 @@ from tstd.config import (
     default_config_yaml,
     load_config,
 )
+from tstd.hooks_config import HookEntry, HooksConfig, load_workspace_hooks
 from tstd.logging import LINUX_DATA_DIR_NAME
 from tstd.policy import PolicyConfig, PolicyRule, load_approved_imports, load_policy
 
@@ -102,7 +103,7 @@ INVALID_KINDS = frozenset({"model-invalid", "tier-invalid", "workspace-invalid"}
 # `.tst/config.yaml` is one file with several readers, each owning a
 # section; the union is what a workspace example may legally declare.
 WORKSPACE_SECTIONS = frozenset(
-    set(BoundaryConfig.model_fields) | {"policy", "approved_external_imports"}
+    set(BoundaryConfig.model_fields) | {"policy", "approved_external_imports", "hooks"}
 )
 
 _MARKER = re.compile(r"^<!--\s*verify:\s*([a-z-]+)\s*-->\s*$")
@@ -196,6 +197,7 @@ def _load(example: Example, tmp: Path) -> None:
     load_workspace_boundary(workspace)
     load_policy(workspace)
     load_approved_imports(workspace)
+    load_workspace_hooks(workspace)
 
 
 @pytest.mark.parametrize("example", EXAMPLES, ids=repr)
@@ -264,6 +266,8 @@ _STOP_CHECK_FIELDS = frozenset(StopCheckSection.model_fields)
 _ATTACHMENT_FIELDS = frozenset(AttachmentLimits.model_fields)
 _POLICY_FIELDS = frozenset(PolicyConfig.model_fields)
 _RULE_FIELDS = frozenset(PolicyRule.model_fields)
+_HOOKS_FIELDS = frozenset(HooksConfig.model_fields)
+_HOOK_FIELDS = frozenset(HookEntry.model_fields)
 
 
 def _check_keys(mapping: Any, fields: frozenset[str], where: str) -> None:
@@ -279,8 +283,17 @@ def _check_tier(data: Any, where: str) -> None:
         _check_keys(backup, _TIER_FIELDS - {"fallbacks"}, f"{where}.fallbacks[{i}]")
 
 
+def _check_hooks(data: Any, where: str) -> None:
+    _check_keys(data, _HOOKS_FIELDS, f"{where} hooks")
+    for event, entries in data.items():
+        for i, entry in enumerate(entries or []):
+            _check_keys(entry, _HOOK_FIELDS, f"{where} hooks.{event}[{i}]")
+
+
 def _check_workspace(data: dict[str, Any], where: str) -> None:
     _check_keys(data, WORKSPACE_SECTIONS, where)
+    if "hooks" in data:
+        _check_hooks(data["hooks"], where)
     if "boundary" in data:
         _check_keys(data["boundary"], _SECTION_FIELDS, f"{where} boundary")
     if "caps" in data:
@@ -403,6 +416,8 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
             _check_keys(data["worktree"], _WORKTREE_FIELDS, f"{where} worktree")
         if "autonomy" in data:
             _check_keys(data["autonomy"], _AUTONOMY_FIELDS, f"{where} autonomy")
+        if "hooks" in data:
+            _check_hooks(data["hooks"], where)
         if "mcp" in data:
             _check_keys(data["mcp"], _MCP_FIELDS, f"{where} mcp")
             servers = data["mcp"].get("servers")
@@ -474,6 +489,8 @@ def test_every_config_key_is_documented() -> None:
         | _ATTACHMENT_FIELDS
         | _POLICY_FIELDS
         | _RULE_FIELDS
+        | _HOOKS_FIELDS
+        | _HOOK_FIELDS
     )
     missing = [key for key in sorted(keys) if f"`{key}`" not in text]
     assert not missing, "undocumented config keys: " + ", ".join(missing)

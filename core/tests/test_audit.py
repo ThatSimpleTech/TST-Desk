@@ -56,6 +56,7 @@ def test_schema_has_the_audit_tables(store: AuditStore) -> None:
         "allowed_calls",
         "steers",
         "questions",
+        "hook_runs",
     }
     assert views == {"costs"}
 
@@ -115,6 +116,7 @@ def test_store_exposes_no_update_methods(store: AuditStore) -> None:
     public = [m for m in dir(store) if not m.startswith("_")]
     assert public == [
         "append_decision",
+        "append_hook_run",
         "append_judgment",
         "append_model_call",
         "append_question",

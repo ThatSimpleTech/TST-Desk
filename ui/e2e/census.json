@@ -42,6 +42,7 @@
 		"Send held message"
 	],
 	"more-views": [
+		"Hooks",
 		"Plan",
 		"Preview",
 		"Stack",

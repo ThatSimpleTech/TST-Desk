@@ -359,6 +359,8 @@ async def run_worker_child(
     child.policy = parent.policy
     child.trust_store = parent.trust_store
     child.config_view = parent.config_view
+    # TD-5134: the parent's hooks, whose runs land on the parent's audited log.
+    child.hooks = parent.hooks
     child.cost_tracker = tracker
     child.touched_paths = parent.touched_paths
     if worktree is not None:

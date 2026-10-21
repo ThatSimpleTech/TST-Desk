@@ -1422,6 +1422,83 @@ voice:
   timeout_seconds: 30
 ```
 
+### `hooks`
+
+Commands TST Desk runs at five points in a session (TD-5134). The same block can go in a
+workspace's `.tst/config.yaml` (§4.12), where it applies only once you trust that file. Your
+hooks run first, then the workspace's.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `session_start` | list of hooks | `[]` | Runs when a session's loop starts (open, and again after a restart revives it). What it prints goes to the model with the next message. |
+| `user_prompt` | list of hooks | `[]` | Runs on each message you send, before the model sees it, including one sent while a turn runs (it joins that turn). It can add context, or block the message: the window shows why and the model never sees it. In `tst run`, a blocked message exits 3 (refused). |
+| `before_tool` | list of hooks | `[]` | Runs for a tool call after the decision classifier and your policy have decided, and only when they would let it run or ask. It can block the call (`hook_blocked`, which `tst run` counts as refused), or make a call that would run on its own wait for your approval. It cannot approve anything. In an unattended run nobody can approve, so its ask refuses the call. |
+| `after_tool` | list of hooks | `[]` | Runs after a tool call succeeds. What it says goes back to the model with the result, after it, so a long result cut to `max_result_chars` still carries it. |
+| `stop` | list of hooks | `[]` | Runs when the model ends a turn, before the done-check (§4.9). A block sends its reason back to the model and the turn goes on, up to 3 times a turn. |
+
+Each hook:
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `command` | string | required | A shell command, run in the session's folder with secret-shaped variables removed from its environment, plus `TST_HOOK_EVENT`, `TST_SESSION_ID` and `TST_WORKSPACE`. It gets the event as JSON on stdin. In an unattended (autonomy) run it runs in that run's container, like its shell calls: the image's `/bin/sh` in `/workspace`, with only the workspace bound in, the charter's network and the memory cap, so a host path such as `~/bin/check.sh` is not there. If the container cannot start, the hook is recorded as an error and does not run on your computer. |
+| `timeout_seconds` | number, up to 600 | `30` | How long it may run before it and what it started are killed. A timeout changes nothing. |
+| `tools` | list of globs | `[]` | `before_tool` and `after_tool` only: the tool names it runs for (`shell`, `fs_*`). Empty is every tool. |
+| `name` | string | none | A label for the inspector. |
+
+What a hook says, by exit code:
+
+- **0, nothing printed:** nothing to say.
+- **0 and a JSON object:** `decision` is `block`, `ask` (`before_tool` only) or `allow`;
+  `reason` says why; `context` is text for the model. `allow` is ignored: a hook can only
+  tighten, never loosen.
+- **0 and plain text:** context for the model on `session_start` and `user_prompt`; ignored on
+  the others.
+- **2:** block, with what it printed on stderr as the reason.
+- **Anything else, a timeout, or a command that will not start:** recorded and otherwise
+  ignored.
+
+Every run is a `hook_run` event and a row in the audit database's `hook_runs` table, with
+secrets redacted. **More → Hooks** lists the session's active hooks and each one's last result.
+
+<!-- verify: model -->
+```yaml
+presets:
+  demo:
+    brain:
+      slug: demo/brain
+      base_url: http://127.0.0.1:11434/v1
+      input_price: 0
+      output_price: 0
+      cache_read_price: 0
+      context_window: 8192
+      max_output_tokens: 256
+    worker:
+      slug: demo/worker
+      base_url: http://127.0.0.1:11434/v1
+      input_price: 0
+      output_price: 0
+      cache_read_price: 0
+      context_window: 8192
+      max_output_tokens: 256
+    validator:
+      slug: demo/validator
+      base_url: http://127.0.0.1:11434/v1
+      input_price: 0
+      output_price: 0
+      cache_read_price: 0
+      context_window: 8192
+      max_output_tokens: 256
+active_preset: demo
+hooks:
+  before_tool:
+    - command: "~/bin/no-force-push.sh"
+      tools: ["shell"]
+      timeout_seconds: 10
+      name: no force push
+  user_prompt:
+    - command: "date"
+```
+
 ### `engine`
 
 Which agent loop new sessions start. The window is always a viewer; this picks whose loop it is viewing.
@@ -2829,7 +2906,8 @@ them when:
 | `caps.*`, `attachments.*`, `memory.max_lines` | The value is above the default. For `caps.shell_memory_mb` the default is half of this machine's RAM, so the same file can loosen on a small laptop and not on a big box. |
 | `approved_external_imports` | It lists any path. |
 | `worktree.setup` | It names a command. The daemon runs it in each new worktree (TD-5126), so a repo-shipped one waits for your trust; until then the new chat says it was skipped. |
-| `mcp_servers`, `hooks` | The key is set at all. TST Desk does not read either from a workspace yet; they are judged now so a later feature cannot run them untrusted. |
+| `mcp_servers` | The key is set at all. TST Desk does not read it from a workspace yet; it is judged now so a later feature cannot run it untrusted. |
+| `hooks` | The key is set at all. Each hook is a command TST Desk runs on its own (§4.12), so a repo's hooks run only once you trust the file. |
 | `stop_check.checks` | It names any check (TD-5124). A check runs on its own whenever the model ends a turn: a command through the shell tool, or a statement that goes to the model as a message when it fails. |
 
 Tightening never asks: `allowed_commands`, `ask` and `never` rules, `class_c_default: never`,
@@ -3000,6 +3078,20 @@ runs, so a saved edit counts on the next call.
   built-in delegated child already has: its tools fit inside one child kind, its policy only
   tightens, and a workspace file runs on the worker tier of the active preset. Choosing another
   tier or a preset is for your own `~/.tstdesk/agents/` files.
+
+### 4.12 `hooks` — commands that run at points in a session (TD-5134)
+
+The same block as §2's `hooks`, for this workspace. It applies only once you trust the file
+(§4.8): a hook is a command TST Desk runs on its own. Until then, or if the block is invalid,
+the workspace's hooks are left out and **More → Hooks** says why. Your own hooks still run.
+
+<!-- verify: workspace -->
+```yaml
+hooks:
+  after_tool:
+    - command: "ruff check --quiet ."
+      tools: ["fs_write", "fs_edit"]
+```
 
 ---
 

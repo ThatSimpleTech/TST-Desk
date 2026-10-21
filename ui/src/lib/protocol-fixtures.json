@@ -321,6 +321,10 @@
     "type": "get_instruction_stack",
     "session_id": "sess-1"
   },
+  "get_hooks": {
+    "type": "get_hooks",
+    "session_id": "sess-1"
+  },
   "list_instructions": {
     "type": "list_instructions",
     "workspace_path": "/home/user/project"
@@ -1750,6 +1754,60 @@
         "detail": "GREEN"
       }
     ]
+  },
+  "hook_run": {
+    "type": "hook_run",
+    "seq": 21,
+    "session_id": "sess-1",
+    "hook_id": "user:before_tool:0",
+    "source": "user",
+    "event": "before_tool",
+    "command": "~/bin/no-force-push.sh",
+    "result": "block",
+    "exit_code": 2,
+    "reason": "no force pushes",
+    "context": "",
+    "output": "no force pushes",
+    "duration_ms": 41,
+    "tool_name": "shell",
+    "tool_call_id": "call-1"
+  },
+  "hooks_state": {
+    "type": "hooks_state",
+    "seq": 1,
+    "session_id": "sess-1",
+    "hooks": [
+      {
+        "id": "user:before_tool:0",
+        "source": "user",
+        "event": "before_tool",
+        "command": "~/bin/no-force-push.sh",
+        "name": "no force push",
+        "timeout_seconds": 10.0,
+        "tools": [
+          "shell"
+        ],
+        "last": {
+          "type": "hook_run",
+          "seq": 21,
+          "session_id": "sess-1",
+          "hook_id": "user:before_tool:0",
+          "source": "user",
+          "event": "before_tool",
+          "command": "~/bin/no-force-push.sh",
+          "result": "block",
+          "exit_code": 2,
+          "reason": "no force pushes",
+          "context": "",
+          "output": "no force pushes",
+          "duration_ms": 41,
+          "tool_name": "shell",
+          "tool_call_id": "call-1"
+        }
+      }
+    ],
+    "workspace_state": "pending",
+    "workspace_error": null
   },
   "session_goal": {
     "type": "session_goal",

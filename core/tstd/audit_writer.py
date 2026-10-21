@@ -34,6 +34,7 @@ from .protocol import (
     DaemonEvent,
     DecisionLogged,
     Error,
+    HookRun,
     QuestionAnswered,
     QuestionRequest,
     SessionState,
@@ -242,6 +243,8 @@ class AuditWriter:
                 ]
             elif isinstance(event, QuestionAnswered):
                 self._on_question_answered(sid, event)
+            elif isinstance(event, HookRun):
+                self._on_hook_run(sid, event)
             elif isinstance(event, SessionState) and event.state in (
                 "complete",
                 "failed",
@@ -355,6 +358,26 @@ class AuditWriter:
                 turn_index=index,
                 step=point.step,
                 after_tool_call_ids=point.after_tool_call_ids,
+                ts=time.time(),
+            ),
+        )
+
+    def _on_hook_run(self, sid: str, event: HookRun) -> None:
+        """Record a hook run (TD-5134)."""
+        self._enqueue(
+            sid,
+            lambda: self._store.append_hook_run(
+                session_id=sid,
+                hook_id=event.hook_id,
+                source=event.source,
+                event=event.event,
+                command=event.command,
+                tool_call_id=event.tool_call_id,
+                result=event.result,
+                exit_code=event.exit_code,
+                reason=event.reason,
+                context=event.context,
+                duration_ms=event.duration_ms,
                 ts=time.time(),
             ),
         )

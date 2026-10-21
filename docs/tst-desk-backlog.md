@@ -11487,6 +11487,55 @@ stream, result and error outputs, colour codes stripped, windowed by
 tier. Tests: core/tests/test_fs_read_media.py (handler, dispatch and the
 loop with the mock provider).
 
+### TD-5134 — Hook runner
+**Size:** 8 · **Depends on:** TD-5113 · Gap audit 2026-10-14
+
+TST Desk had no user-scriptable hooks, so a team could not run its own
+check before a tool call, add context at session start, or keep the agent
+from stopping before its own test passed. The owner decided 2026-10-14
+that hooks may come from a trusted workspace config as well as user config.
+
+**Acceptance criteria:**
+- [x] Hooks are configured in user config, and in workspace config only
+      after trust (TD-5113). Events: session start, user prompt, before
+      tool, after tool, stop.
+- [x] A hook is a command with a timeout. Its exit code or JSON can add
+      context, block with a reason, or (before tool) tighten the decision.
+      It can never loosen it or skip the classifier (directive 6).
+- [x] Every hook run and its result go to the audit DB, with secrets
+      redacted.
+- [x] An inspector lists the active hooks and their last results.
+
+Done (2026-10-21): `hooks:` in `config.yaml` and in `.tst/config.yaml`
+holds a list of commands for each of `session_start`, `user_prompt`,
+`before_tool`, `after_tool` and `stop` (`command`, `timeout_seconds`
+default 30, `tools` globs on the tool events, `name`). The workspace list
+is read through the TD-5113 view, so a pending, declined or invalid file
+adds nothing (the Hooks view says why). A hook gets a JSON payload on stdin and
+`TST_HOOK_EVENT`, `TST_SESSION_ID` and `TST_WORKSPACE`, runs in the
+workspace with the shell tool's sanitized environment, and is killed with
+its process group at the timeout. Exit 2 blocks with stderr as the reason;
+JSON `{"decision": "block"|"ask", "reason", "context"}` blocks, asks (before
+tool only) or adds context; plain stdout is context at session start and
+on a prompt. `before_tool` runs after the classifier and policy and can
+only refuse or turn `auto` into `ask` (a refusal under autonomy); a call
+already refused never reaches it. `after_tool` notes go back with the tool
+result. A `user_prompt` block keeps the message out of the conversation; a
+`stop` block sends the agent back to work at most 3 times a turn. Every
+run is a `hook_run` event and a row in the new `hook_runs` audit table
+(schema v7), with command, reason and context redacted. The right pane's
+More menu has a Hooks view (`get_hooks` → `hooks_state`) listing the
+active hooks, their source and their last result. Tests:
+core/tests/test_hooks.py (config, protocol, runner, dispatcher, trust,
+audit, loop), ui/src/lib/hooks-store.test.ts, and the app walk.
+
+Review fixes (PR #60): an autonomous session's hooks run in its container
+(§12.5), never on the host; a message that steers a running turn meets
+`user_prompt` hooks; `[hooks]` notes are added after truncation; and
+`tst run` exits 3 on `hook_blocked`. Tests: `TestAutonomy`, `TestSteer`,
+`TestTstRun` and `test_hook_notes_survive_a_long_result` in
+core/tests/test_hooks.py.
+
 ### TD-5133 — Named worker definitions
 **Size:** 5 · **Depends on:** TD-5117 · Gap audit 2026-10-14
 

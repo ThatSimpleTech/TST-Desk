@@ -910,7 +910,9 @@ What does **not** carry over, and what to do about it:
   `~/.claude/CLAUDE.md` is not read unless `steering.claude_global_fallback` is true.
   Move anything you need into `~/.tstdesk/AGENTS.md`.
 - **MCP server definitions, hooks, and subagent files** are configuration for
-  another product, not steering. They are ignored. TST Desk's own named workers live in
+  another product, not steering. They are ignored. TST Desk's own hooks are
+  set under `hooks:` in `config.yaml` (or a trusted `.tst/config.yaml`); see
+  docs/configuration.md (TD-5134). TST Desk's own named workers live in
   `.tst/agents/*.md` (and `~/.tstdesk/agents/*.md`); `.claude/agents/` is not read. A
   Claude Code subagent file can be copied over once its `model` key is replaced with
   `tier` or `preset` (configuration §4.11, TD-5133).
