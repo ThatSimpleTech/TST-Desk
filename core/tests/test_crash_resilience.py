@@ -190,7 +190,7 @@ class TestDaemonRestart:
                     break
                 await asyncio.sleep(0.05)
             h = d2.health()
-            assert h["version"] == "0.4.1"
+            assert h["version"] == "0.4.2"
             assert h["active_sessions"] == 0
             assert h["ws_port"] == d2.ws_server.port
 
