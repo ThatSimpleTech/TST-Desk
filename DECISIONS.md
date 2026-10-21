@@ -17543,7 +17543,7 @@ already had, through the same guard the read tool uses.
 a configured command on the files `fs_write`/`fs_edit` changed, with failures
 going back to the model in the tool result and the time shown in the step
 timeline. The story depends on TD-5134 (the general hook runner), which is
-not built. Story sized 5; approach recorded here per Adam's 2026-10-14 approval of the
+not built. Story sized 5; approach recorded here per the owner's 2026-10-14 approval of the
 gap-audit stories.
 
 **Decision.**
