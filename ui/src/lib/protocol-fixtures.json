@@ -750,7 +750,8 @@
     "user_index": 0,
     "sibling_index": 1,
     "sibling_count": 2,
-    "content": "hello again"
+    "content": "hello again",
+    "user_turns": null
   },
   "attachment_extracted": {
     "type": "attachment_extracted",

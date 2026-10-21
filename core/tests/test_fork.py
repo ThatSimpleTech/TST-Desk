@@ -89,6 +89,8 @@ class TestSetBranch:
         ]
         assert result.sibling_index == 0
         assert result.sibling_count == 2
+        # No user_turn follows a switch: the reset says how many it holds.
+        assert result.user_turns == 2
 
         result = await session.set_branch(1, 1)
         assert not isinstance(result, str)

@@ -642,3 +642,13 @@ def test_a_tool_that_may_have_done_something_is_not_invited_to_run_again(
     assert line.endswith("It already ran; do not run it again only to see this output.]")
     for read in ("fs_read", "fs_grep", "web_fetch"):
         assert cleared_placeholder(read, "x", 1).endswith("Run the tool again if you need it.]")
+
+
+def test_every_rerun_safe_tool_is_a_registered_read_only_tool() -> None:
+    """A new read-only tool belongs here (TD-5129's session_search did)."""
+    from tstd.context_clear import RERUN_SAFE_TOOLS
+    from tstd.tools.registry import create_registry
+
+    registered = {tool.name for tool in create_registry().list_tools()}
+    assert RERUN_SAFE_TOOLS <= registered
+    assert "session_search" in RERUN_SAFE_TOOLS

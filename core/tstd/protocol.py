@@ -1912,6 +1912,11 @@ class ConversationReset(DaemonEvent):
     sibling_index: int
     sibling_count: int
     content: str
+    #: User turns the conversation holds after a sibling is selected, in the
+    #: window's numbering (TD-5129: the session index numbers turns from it).
+    #: None for an edit, whose ``user_turn`` follows and is turn
+    #: ``user_index + 1``.
+    user_turns: int | None = None
 
 
 class RestoreFileEntry(BaseModel):

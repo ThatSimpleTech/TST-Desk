@@ -1294,6 +1294,9 @@ export interface ConversationReset extends DaemonEvent {
   sibling_index: number;
   sibling_count: number;
   content: string;
+  /** Turns the conversation holds after a sibling is selected (TD-5129);
+   *  null for an edit, whose user_turn follows. */
+  user_turns?: number | null;
 }
 
 /** One file a restore would change (TD-5125): `modify` its content, `delete`

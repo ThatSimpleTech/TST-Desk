@@ -1298,7 +1298,9 @@ class Session:
             siblings.append([])
         siblings[cursor] = self._copy_conversation()
 
-    def _emit_reset(self, user_index: int, content: str) -> ConversationReset:
+    def _emit_reset(
+        self, user_index: int, content: str, *, user_turns: int | None = None
+    ) -> ConversationReset:
         siblings = self._branches.get(user_index, [[]])
         return ConversationReset(
             session_id=self.id,
@@ -1306,6 +1308,7 @@ class Session:
             sibling_index=self._branch_cursor.get(user_index, 0),
             sibling_count=max(len(siblings), 1),
             content=content,
+            user_turns=user_turns,
             seq=1,
         )
 
@@ -1475,7 +1478,11 @@ class Session:
             if isinstance(position, str)
             else content_as_text(self.conversation[position].content)
         )
-        return self._emit_reset(user_index, text)
+        # No user_turn follows a sibling switch, so the reset says how many
+        # turns the restored sibling holds.
+        return self._emit_reset(
+            user_index, text, user_turns=len(window_user_turns(self.conversation))
+        )
 
     @property
     def summary(self) -> dict[str, Any]:

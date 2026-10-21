@@ -67,7 +67,7 @@ ALWAYS_KEPT_TOOLS = frozenset({"ask_user"})
 #: something, and its placeholder does not invite a second run (TD-5160):
 #: with approvals off nothing would stop it.
 RERUN_SAFE_TOOLS = frozenset(
-    {"fs_read", "fs_list", "fs_grep", "web_fetch", "web_search", "load_skill"}
+    {"fs_read", "fs_list", "fs_grep", "web_fetch", "web_search", "load_skill", "session_search"}
 )
 
 
