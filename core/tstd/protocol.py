@@ -249,6 +249,23 @@ class UserMessage(ClientMessage):
         return self
 
 
+class ExtractAttachment(ClientMessage):
+    """Measure a staged PDF, DOCX or XLSX before it is sent (TD-5131).
+
+    The composer cannot read a document itself, so it asks the daemon that
+    will receive the message: the text comes out on that machine, against
+    that session's caps, and the answer is ``attachment_extracted`` on this
+    connection. Nothing is stored or sent to the model; the same file on a
+    ``user_message`` is extracted again, because the client is not trusted
+    to carry an answer back. ``request_id`` is the composer's own, echoed.
+    """
+
+    type: Literal["extract_attachment"] = "extract_attachment"
+    session_id: str
+    request_id: str = Field(min_length=1, max_length=64)
+    attachment: Attachment
+
+
 class SendQueued(ClientMessage):
     """Send a message a restart left held (TD-5155).
 
@@ -1009,6 +1026,18 @@ class ListSessions(ClientMessage):
     """Request the current session list (id, workspace, state, timestamps)."""
 
     type: Literal["list_sessions"] = "list_sessions"
+
+
+class SearchSessions(ClientMessage):
+    """Search what this computer's sessions said (TD-5129). The rail's search box.
+
+    Answered with ``session_search_results`` from the local full-text
+    index; nothing leaves the computer.
+    """
+
+    type: Literal["search_sessions"] = "search_sessions"
+    query: str = Field(max_length=500)
+    limit: int = Field(default=50, ge=1, le=200)
 
 
 class NewSession(ClientMessage):
@@ -1916,6 +1945,30 @@ class FilesRestorePreview(DaemonEvent):
     files: list[RestoreFileEntry] = Field(default_factory=list)
     diff: str = ""
     diff_truncated: bool = False
+
+
+class AttachmentExtracted(DaemonEvent):
+    """Answer to ``extract_attachment`` (TD-5131). This connection only.
+
+    On success: ``kind`` (``pdf`` | ``docx`` | ``xlsx``), ``units`` (pages
+    or sheets; 0 for DOCX), ``text_bytes`` (what the caps measure) and
+    ``tokens`` (an estimate at the daemon's chars-per-token). On a refusal
+    ``error_code`` and ``message`` say why, in the copy the same file would
+    earn on send, and the counts stay 0. A file that is not a document is
+    ``attachment_not_document``.
+    """
+
+    type: Literal["attachment_extracted"] = "attachment_extracted"
+    seq: int = 1
+    session_id: str
+    request_id: str
+    name: str
+    kind: Literal["pdf", "docx", "xlsx"] | None = None
+    units: int = 0
+    text_bytes: int = 0
+    tokens: int = 0
+    error_code: str | None = None
+    message: str = ""
 
 
 class FilesRestored(DaemonEvent):
@@ -3042,6 +3095,32 @@ class SessionList(DaemonEvent):
     sessions: list[SessionSummary] = Field(default_factory=list)
 
 
+class SessionSearchHit(BaseModel):
+    """The best message of one session for a ``search_sessions`` query (TD-5129)."""
+
+    session_id: str
+    #: 1-based user turn the message belongs to.
+    turn: int = Field(ge=0)
+    role: Literal["user", "assistant"]
+    #: A few words around the match, from the redacted session text.
+    snippet: str
+
+
+class SessionSearchResults(DaemonEvent):
+    """Reply to ``search_sessions`` (TD-5129): one hit per session, best first.
+
+    ``query`` echoes the request so a window that typed on can drop a stale
+    reply. ``available`` is false when the index could not be opened; the
+    rail then filters on titles alone.
+    """
+
+    type: Literal["session_search_results"] = "session_search_results"
+    seq: int = 1
+    query: str
+    hits: list[SessionSearchHit] = Field(default_factory=list)
+    available: bool = True
+
+
 class PolicyRules(DaemonEvent):
     """Response to ``list_policy_rules`` / ``revoke_policy_rule`` (TD-803).
 
@@ -4115,6 +4194,7 @@ ClientMessageT = Annotated[
     | SetBranch
     | PreviewRestoreFiles
     | RestoreFiles
+    | ExtractAttachment
     | SetSkipAllApprovals
     | SetLoadGlobalMemory
     | SetCoworker
@@ -4143,6 +4223,7 @@ ClientMessageT = Annotated[
     | SaveCharter
     | StartAutonomy
     | ListPins
+    | SearchSessions
     | AddPin
     | RemovePin
     | MemoryAccept
@@ -4231,6 +4312,7 @@ DaemonEventT = Annotated[
     | ConversationReset
     | FilesRestorePreview
     | FilesRestored
+    | AttachmentExtracted
     | UserTurn
     | QueuedMessages
     | AssistantDelta
@@ -4268,6 +4350,7 @@ DaemonEventT = Annotated[
     | InstructionFiles
     | CommandList
     | ContextPins
+    | SessionSearchResults
     | MemoryFiles
     | CharterDocument
     | AutonomyStart
@@ -4342,6 +4425,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "compact_context",
         "set_branch",
         "preview_restore_files",
+        "extract_attachment",
         "restore_files",
         "set_skip_all_approvals",
         "set_load_global_memory",
@@ -4371,6 +4455,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "save_charter",
         "start_autonomy",
         "list_pins",
+        "search_sessions",
         "add_pin",
         "remove_pin",
         "memory_accept",
@@ -4458,6 +4543,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "session_state",
         "conversation_reset",
         "files_restore_preview",
+        "attachment_extracted",
         "files_restored",
         "user_turn",
         "queued_messages",
@@ -4496,6 +4582,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "instruction_files",
         "command_list",
         "context_pins",
+        "session_search_results",
         "memory_files",
         "charter",
         "autonomy_start",

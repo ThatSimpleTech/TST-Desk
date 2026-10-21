@@ -133,6 +133,7 @@ def test_planning_refuses_every_call_that_could_change_something(
         ("desktop_screenshot", {}),
         ("exit_plan_mode", {"plan": PLAN}),
         ("tool_search", {"query": "issue"}),
+        ("session_search", {"query": "date parser"}),
         ("github_get_file", {"owner": "o", "repo": "r", "path": "a.py"}),
     ],
 )
@@ -172,6 +173,7 @@ def test_every_builtin_is_decided_and_only_readers_run() -> None:
             "github_pull_checks",
             "load_skill",
             "send_file",
+            "session_search",
             "task_list",
             "tool_search",
             "web_fetch",

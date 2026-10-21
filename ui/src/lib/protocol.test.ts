@@ -50,6 +50,8 @@ import type {
   ContextPins,
   CreateRule,
   ListPins,
+  SearchSessions,
+  SessionSearchResults,
   RemovePin,
   EndSession,
   InstructionFiles,
@@ -1288,7 +1290,7 @@ describe("All fixtures have required shape", () => {
       "get_instruction_stack",
       "list_instructions", "list_commands", "list_memory", "save_memory", "create_rule",
       "get_charter", "save_charter", "start_autonomy",
-      "list_pins", "add_pin", "remove_pin",
+      "list_pins", "add_pin", "remove_pin", "search_sessions",
       "memory_accept", "memory_edit", "memory_reject", "end_session",
       "steering_accept", "steering_edit", "steering_reject",
       "get_setup_state", "set_api_key", "validate_api_key", "set_preset", "set_engine",
@@ -1337,7 +1339,7 @@ describe("All fixtures have required shape", () => {
       "checkpoint_notice", "verify_result", "cost_update", "boundary_update", "boundary_update_config_trust", "turn_complete",
       "tier_state", "tier_state_plan", "context_compacted", "context_compacted_manual", "context_compacted_inflight_trim", "context_compacted_clear_stale", "context_usage", "task_list", "stop_check", "session_goal", "worktree_state", "worktree_state_closed", "session_list_worktree", "steering_reloaded", "rule_activated", "tier_switched",
       "model_fallback", "context_usage_fallback", "tier_state_fallback",
-      "instruction_stack", "instruction_files", "command_list", "context_pins", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "steering_proposal", "steering_decision", "session_list", "policy_rules", "error",
+      "instruction_stack", "instruction_files", "command_list", "context_pins", "session_search_results", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "steering_proposal", "steering_decision", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",
       "artifact_ready", "artifact_list", "artifact", "artifact_chunk",
@@ -1481,6 +1483,22 @@ describe("Session lifecycle messages match TypeScript types", () => {
     expect(Array.isArray(m.commands)).toBe(true);
     expect(isString(m.commands[0]?.name)).toBe(true);
     expect(isString(m.commands[0]?.body)).toBe(true);
+  });
+
+  it("search_sessions", () => {
+    const m = fixtures.search_sessions as SearchSessions;
+    expect(m.type).toBe("search_sessions");
+    expect(m.query).toBe("date parser");
+    expect(m.limit).toBe(50);
+  });
+
+  it("session_search_results", () => {
+    const m = fixtures.session_search_results as SessionSearchResults;
+    expect(m.type).toBe("session_search_results");
+    expect(m.available).toBe(true);
+    expect(m.hits[0].turn).toBe(3);
+    expect(m.hits[0].role).toBe("assistant");
+    expect(m.hits[0].snippet).toContain("date parser");
   });
 
   it("context_pins", () => {

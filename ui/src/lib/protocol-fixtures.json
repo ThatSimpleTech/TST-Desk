@@ -60,6 +60,15 @@
     "user_index": 0,
     "sibling_index": 1
   },
+  "extract_attachment": {
+    "type": "extract_attachment",
+    "session_id": "sess-1",
+    "request_id": "att-1",
+    "attachment": {
+      "name": "report.pdf",
+      "content_b64": "JVBERi0xLjQK"
+    }
+  },
   "preview_restore_files": {
     "type": "preview_restore_files",
     "session_id": "sess-1",
@@ -407,6 +416,11 @@
     "type": "list_pins",
     "workspace_path": "/home/user/project"
   },
+  "search_sessions": {
+    "type": "search_sessions",
+    "query": "date parser",
+    "limit": 50
+  },
   "add_pin": {
     "type": "add_pin",
     "workspace_path": "/home/user/project",
@@ -737,6 +751,32 @@
     "sibling_index": 1,
     "sibling_count": 2,
     "content": "hello again"
+  },
+  "attachment_extracted": {
+    "type": "attachment_extracted",
+    "seq": 1,
+    "session_id": "sess-1",
+    "request_id": "att-1",
+    "name": "report.pdf",
+    "kind": "pdf",
+    "units": 3,
+    "text_bytes": 5120,
+    "tokens": 1280,
+    "error_code": null,
+    "message": ""
+  },
+  "attachment_extracted_refused": {
+    "type": "attachment_extracted",
+    "seq": 1,
+    "session_id": "sess-1",
+    "request_id": "att-2",
+    "name": "scan.pdf",
+    "kind": null,
+    "units": 0,
+    "text_bytes": 0,
+    "tokens": 0,
+    "error_code": "attachment_no_text",
+    "message": "scan.pdf has no text to read."
   },
   "files_restore_preview": {
     "type": "files_restore_preview",
@@ -1575,6 +1615,20 @@
         "too_large": false
       }
     ]
+  },
+  "session_search_results": {
+    "type": "session_search_results",
+    "seq": 1,
+    "query": "date parser",
+    "hits": [
+      {
+        "session_id": "11111111-2222-3333-4444-555555555555",
+        "turn": 3,
+        "role": "assistant",
+        "snippet": "\u2026the date parser now reads ISO weeks\u2026"
+      }
+    ],
+    "available": true
   },
   "context_pins": {
     "type": "context_pins",
@@ -2752,6 +2806,7 @@
     "deny_verify",
     "detach",
     "end_session",
+    "extract_attachment",
     "fork_from",
     "get_instruction_stack",
     "list_sessions",

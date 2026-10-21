@@ -27,6 +27,7 @@ from pydantic import ValidationError
 
 from . import keychain_mcp
 from .artifacts import ArtifactError, ArtifactRecord, ArtifactStore, artifact_ready_for, to_entry
+from .attachment_handlers import Extractions
 from .attachments import (
     AttachmentError,
     build_provider_user_content,
@@ -242,6 +243,7 @@ from .protocol import (
     EmailNotifyState,
     EndSession,
     ExportUsage,
+    ExtractAttachment,
     FocusWindow,
     ForkFrom,
     GetCharter,
@@ -325,6 +327,7 @@ from .protocol import (
     SaveJob,
     SaveJobTemplate,
     SaveMemory,
+    SearchSessions,
     SendQueued,
     SessionJobSource,
     SessionList,
@@ -466,6 +469,7 @@ from .session import (
     SessionRunner,
 )
 from .session_goal import keep_goal_visible, restore_goal
+from .session_index import SessionIndex
 from .session_lifecycle import (
     BUSY_CODE,
     apply_workspace_config,
@@ -479,6 +483,7 @@ from .session_lifecycle import (
     rename_session,
 )
 from .session_persist import LoadedSession, SessionPersist
+from .session_search_handler import search_sessions_reply
 from .session_stars import load_session_stars, save_session_stars
 from .session_store import SessionStore
 from .shutdown_budget import (
@@ -498,6 +503,7 @@ from .steering_proposals import expire_restored as expire_restored_steering
 from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 from .task_list import keep_task_list_visible, restore_task_list
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
+from .tools.session_search import SessionRecall
 from .turn_seal import (
     INTERRUPTED_BY_RESTART,
     REVIEW_CUT_BY_RESTART,
@@ -994,6 +1000,9 @@ class Daemon:
         # (Windows CI). One asyncio lock per session keeps jsonl in seq
         # order.
         self._event_persist_locks: dict[str, asyncio.Lock] = {}
+        # TD-5129: the full-text index the rail and session_search read,
+        # fed from the same redacted events events.jsonl gets.
+        self._session_index = SessionIndex(self.data_dir)
         self._artifacts = ArtifactStore(
             self._session_persist,
             known_session=lambda sid: self.session_registry.get(sid) is not None,
@@ -1012,6 +1021,8 @@ class Daemon:
         self._attached_clients: dict[str, set[Any]] = {}
         # (connection, session_id) -> streaming task
         self._streaming_tasks: dict[tuple[int, str], asyncio.Task[None]] = {}
+        # TD-5131: chip measurements, off the connection's message pump.
+        self._extractions = Extractions()
         # TD-804: machine-wide skip-all.  Loaded from the user data dir so
         # a workspace file cannot carry it into someone else's clone.
         self.skip_all_approvals = load_skip_all(self.data_dir)
@@ -2082,6 +2093,8 @@ class Daemon:
                     f"cancel {session.id[:8]}", runner.cancel(reason="daemon shutdown")
                 )
 
+        await self._extractions.stop()
+
         # Cancel streaming tasks
         for task in list(self._streaming_tasks.values()):
             if not task.done():
@@ -2108,9 +2121,16 @@ class Daemon:
             await phases.run("audit", self._audit_writer.close())
             self._audit_writer = None
 
+        # TD-5129: write any reply text still buffered, then let go of the file.
+        await phases.run("session_index", asyncio.to_thread(self._close_session_index))
+
         await phases.run("desktop", self.desktop_driver.aclose())
         await phases.run("browser", self.browser_driver.aclose())
         await phases.run("mcp", self._mcp.aclose())
+
+    def _close_session_index(self) -> None:
+        self._session_index.flush()
+        self._session_index.close()
 
     async def _close_provider_clients(self) -> None:
         """Drop HTTP pools opened for this process. Never logs a secret."""
@@ -2242,6 +2262,12 @@ class Daemon:
             if record.preset != chosen:
                 await self._session_store.set_preset(record.session_id, chosen)
             loaded = await asyncio.to_thread(self._session_persist.load, record.session_id)
+            if loaded is not None and loaded.events:
+                # TD-5129: index what the last process logged but never
+                # indexed (a crash mid-reply, or a log older than the index).
+                await asyncio.to_thread(
+                    self._session_index.catch_up, record.session_id, loaded.events
+                )
             root, worktree = record_root(record.workspace_path, record.worktree)
             if loaded is not None and loaded.conversation is not None:
                 await self._revive_session(record.session_id, root, loaded)
@@ -2465,6 +2491,8 @@ class Daemon:
                 result = await asyncio.to_thread(
                     self._session_persist.append_event, session_id, event
                 )
+                # Under the same lock, so the index sees seq order too.
+                await asyncio.to_thread(self._session_index.observe, event)
             if result.trimmed:
                 await event_log.drop_before(result.earliest_seq)
                 await self._keep_task_list_on_disk(session_id, event_log)
@@ -2654,17 +2682,6 @@ class Daemon:
                     session_id=msg.session_id,
                     in_reply_to=msg.type,
                 )
-            # Checked with no await before add_user_message counts the turn,
-            # so of two sends that both saw the session idle only one gets
-            # in (TD-5160: `tst run --continue` races its own list_sessions).
-            if msg.only_if_idle and found.turn_in_flight:
-                return build_error(
-                    BUSY_CODE,
-                    "This session is running a turn. Let it finish, or answer its "
-                    "approval in the TST Desk window, then send again.",
-                    session_id=msg.session_id,
-                    in_reply_to=msg.type,
-                )
             # Attachment caps and the text/binary test are enforced here
             # (TD-1709), not in the composer: the client is not trustworthy,
             # so a UI-only gate is no gate at all. A refusal drops the whole
@@ -2674,11 +2691,17 @@ class Daemon:
                 allow_images = found.engine == "grok" or _active_tier_vision(
                     found, _session_model_config(found, self.config)
                 )
-                decoded = decode_attachments(
-                    msg.attachments,
-                    found.boundary_config.attachments,
-                    allow_images=allow_images,
-                )
+                if msg.attachments:
+                    # A PDF, DOCX or XLSX is turned into text here (TD-5131):
+                    # PDFium and unzip block, so off the event loop.
+                    decoded = await asyncio.to_thread(
+                        decode_attachments,
+                        msg.attachments,
+                        found.boundary_config.attachments,
+                        allow_images=allow_images,
+                    )
+                else:
+                    decoded = []
             except AttachmentError as e:
                 log.info(
                     "attachment refused",
@@ -2692,6 +2715,37 @@ class Daemon:
                 )
                 return build_error(
                     e.code, e.message, session_id=msg.session_id, in_reply_to=msg.type
+                )
+
+            # Extraction awaited (TD-5131): a drain or the session's end
+            # that began meanwhile still holds, as if it came first.
+            if msg.attachments:
+                if self._drain.active:
+                    return build_error(
+                        "daemon_draining",
+                        DRAINING_MESSAGE,
+                        session_id=msg.session_id,
+                        in_reply_to=msg.type,
+                    )
+                runner = self.session_registry.get_runner(msg.session_id)
+                if found.state in TERMINAL_STATES or runner is None or not runner.is_running:
+                    return build_error(
+                        "session_not_running",
+                        f"This session is {found.state} and can no longer run turns; "
+                        "the message was not delivered. Start a new session and resend it.",
+                        session_id=msg.session_id,
+                        in_reply_to=msg.type,
+                    )
+            # Checked with no await before add_user_message counts the turn,
+            # so of two sends that both saw the session idle only one gets
+            # in (TD-5160: `tst run --continue` races its own list_sessions).
+            if msg.only_if_idle and found.turn_in_flight:
+                return build_error(
+                    BUSY_CODE,
+                    "This session is running a turn. Let it finish, or answer its "
+                    "approval in the TST Desk window, then send again.",
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
                 )
 
             found.pending_images = [
@@ -2769,6 +2823,27 @@ class Daemon:
                     in_reply_to=msg.type,
                 )
             await found.event_log.add(result)
+            return None
+
+        if isinstance(msg, ExtractAttachment):
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error(
+                    "session_not_found",
+                    f"Session {msg.session_id!r} not found",
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
+                )
+            # TD-5131: the composer's chip for a staged document. Answered
+            # later on this connection: reading a big PDF must not hold up
+            # the next frame (an interrupt, an approval) behind it.
+            connection = _connection
+
+            async def send(reply: str) -> None:
+                with contextlib.suppress(websockets.exceptions.ConnectionClosed):
+                    await connection.send(scrub_wire_json(self.hub.finish(reply, connection)))
+
+            self._extractions.start(msg, found.boundary_config.attachments, send)
             return None
 
         if isinstance(msg, PreviewRestoreFiles | RestoreFiles):
@@ -3374,6 +3449,7 @@ class Daemon:
                 persist=self._session_persist,
             )
             if refusal is None:
+                await asyncio.to_thread(self._session_index.remove, msg.session_id)
                 self.session_stars = [i for i in self.session_stars if i != msg.session_id]
                 save_session_stars(self.data_dir, self.session_stars)
                 # TD-5126: an unchanged worktree goes with its session; one
@@ -3431,6 +3507,9 @@ class Daemon:
 
         if isinstance(msg, ListPins):
             return await self._handle_list_pins(msg)
+
+        if isinstance(msg, SearchSessions):
+            return await search_sessions_reply(self._session_index, self._session_store, msg)
 
         if isinstance(msg, AddPin):
             return await self._handle_add_pin(msg)
@@ -4167,6 +4246,7 @@ class Daemon:
             browser_driver=self.browser_driver,
             grounding_client=GroundingClient.from_config(self.config.computer_use.grounding),
             sent_files=sent_files,
+            session_recall=SessionRecall(self._session_index, self._session_store.records),
         )
         from .tools.plugins import bind_plugin_handlers
 

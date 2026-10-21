@@ -8,6 +8,10 @@ dependencies = [
     "httpx-sse>=0.4.3",
     "jsonschema>=4.26.0",
     "pydantic>=2",
+    # PDF text for attachments (TD-5131), and for fs_read (TD-5130). Apache-2.0
+    # / BSD-3 bindings over PDFium (BSD-3); wheels carry the library for every
+    # platform we build. Imported on the first PDF, not at start; no network.
+    "pypdfium2>=5.14",
     "pyyaml>=6.0",
     # fs_grep matching with a time limit, outside the GIL (TD-5102): the
     # stdlib re can backtrack for hours on one line while holding the GIL.
@@ -75,6 +79,11 @@ python_version = "3.11"
 # (``cu_host._prepare_cu_imports``); it is not a dependency of this package.
 [[tool.mypy.overrides]]
 module = ["tst_cu_mcp", "tst_cu_mcp.*"]
+ignore_missing_imports = true
+
+# PDFium bindings (TD-5130, TD-5131) ship no type information.
+[[tool.mypy.overrides]]
+module = ["pypdfium2", "pypdfium2.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -48,6 +48,7 @@ from .results import (
     HandlerFailed,
     HandlerOutput,
     HandlerRefusal,
+    ToolImage,
     ToolResult,
     ValidationError,
     truncate_output,
@@ -615,9 +616,11 @@ class ToolDispatcher:
                 transcript=e.transcript if isinstance(e, HandlerFailed) else (),
             )
         # A delegate's worker transcript is for the window (TD-5117); only
-        # the text reaches the model.
+        # the text reaches the model. Images (TD-5130) reach the model as
+        # vision parts and nothing else.
+        images: tuple[ToolImage, ...] = ()
         if isinstance(returned, HandlerOutput):
-            output, transcript = returned.text, returned.transcript
+            output, transcript, images = returned.text, returned.transcript, returned.images
         else:
             output = returned
 
@@ -779,6 +782,7 @@ class ToolDispatcher:
             memory_notice=memory_notice,
             diff=diff_text,
             image_png=image_png,
+            images=images,
             verification=verification.status if verification is not None else None,
             allowed_by=allowed_by,
             transcript=transcript,

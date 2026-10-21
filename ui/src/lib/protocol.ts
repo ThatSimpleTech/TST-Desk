@@ -163,6 +163,17 @@ export interface PreviewRestoreFiles extends ClientMessage {
   turn_id: string;
 }
 
+/** Measure a staged PDF, DOCX or XLSX for its chip (TD-5131). The daemon
+ *  that owns the session extracts the text against that session's caps and
+ *  answers on this connection with `attachment_extracted`. Stores nothing. */
+export interface ExtractAttachment extends ClientMessage {
+  type: "extract_attachment";
+  session_id: string;
+  /** The composer's own id, echoed on the answer. */
+  request_id: string;
+  attachment: Attachment;
+}
+
 /** Restore what a preview showed (TD-5125). `plan_id` is the preview's; a
  *  file or the branch changed since is `restore_stale`. Hand-edited files
  *  not named in `include_hand_edited` are left alone. */
@@ -588,6 +599,16 @@ export interface Drain extends ClientMessage {
 
 export interface ListSessions extends ClientMessage {
   type: "list_sessions";
+}
+
+/** Search what this computer's sessions said (TD-5129). Answer:
+ *  session_search_results, from the daemon's local full-text index. */
+export interface SearchSessions extends ClientMessage {
+  type: "search_sessions";
+  /** Up to 500 characters. */
+  query: string;
+  /** 1..200, default 50. */
+  limit?: number;
 }
 
 /** Create a fresh session in an existing session's workspace (TD-1701).
@@ -1087,6 +1108,7 @@ export type ClientMessageUnion =
   | CompactContext
   | SetBranch
   | PreviewRestoreFiles
+  | ExtractAttachment
   | RestoreFiles
   | Approve
   | Deny
@@ -1124,6 +1146,7 @@ export type ClientMessageUnion =
   | SaveCharter
   | StartAutonomy
   | ListPins
+  | SearchSessions
   | AddPin
   | RemovePin
   | MemoryAccept
@@ -1293,6 +1316,23 @@ export interface FilesRestorePreview extends DaemonEvent {
   files: RestoreFileEntry[];
   diff: string;
   diff_truncated: boolean;
+}
+
+/** Answer to `extract_attachment` (TD-5131), this connection only. On a
+ *  refusal `error_code` and `message` are set and the counts are 0. */
+export interface AttachmentExtracted extends DaemonEvent {
+  type: "attachment_extracted";
+  session_id: string;
+  request_id: string;
+  name: string;
+  kind: "pdf" | "docx" | "xlsx" | null;
+  /** Pages for a PDF, sheets for an XLSX, 0 for a DOCX. */
+  units: number;
+  /** UTF-8 size of the extracted text: what the caps measure. */
+  text_bytes: number;
+  tokens: number;
+  error_code: string | null;
+  message: string;
 }
 
 /** Files were put back as they were before a user turn (TD-5125). */
@@ -1914,6 +1954,26 @@ export interface SessionList extends DaemonEvent {
   type: "session_list";
   seq: number;
   sessions: SessionSummary[];
+}
+
+/** The best message of one session for a search (TD-5129). */
+export interface SessionSearchHit {
+  session_id: string;
+  /** 1-based user turn the message belongs to. */
+  turn: number;
+  role: "user" | "assistant";
+  /** A few words around the match, from the redacted session text. */
+  snippet: string;
+}
+
+/** Reply to search_sessions (TD-5129): one hit per session, best first.
+ *  `query` echoes the request; `available` is false when the index is off. */
+export interface SessionSearchResults extends DaemonEvent {
+  type: "session_search_results";
+  seq: number;
+  query: string;
+  hits: SessionSearchHit[];
+  available: boolean;
 }
 
 export interface PolicyRules extends DaemonEvent {
@@ -2785,6 +2845,7 @@ export type DaemonEventUnion =
   | SessionState
   | ConversationReset
   | FilesRestorePreview
+  | AttachmentExtracted
   | FilesRestored
   | UserTurn
   | QueuedMessages
@@ -2823,6 +2884,7 @@ export type DaemonEventUnion =
   | InstructionFiles
   | CommandList
   | ContextPins
+  | SessionSearchResults
   | MemoryFiles
   | CharterDocument
   | AutonomyStart

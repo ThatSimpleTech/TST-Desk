@@ -39,6 +39,8 @@ the *obvious* cases — the ones that must never reach the model:
 - the builtin ``exit_plan_mode``, whose plan review is the one prompt → A
   (TD-5123)
 - the builtin ``tool_search``, which only reads the registry → A (TD-5127)
+- the builtin ``session_search``, which only reads the local session
+  index → A (TD-5129)
 
 Anything the table cannot decide is left unclassified so the worker-tier
 classifier (TD-703) can handle it, defaulting to **B** — fail toward
@@ -741,6 +743,8 @@ PLAN_READ_ONLY_BUILTINS: frozenset[str] = frozenset(
         # TD-5127: loads deferred MCP definitions; each loaded tool is
         # still judged on its own, so an unlisted one stays refused.
         "tool_search",
+        # TD-5129: reads the local index of earlier sessions' text.
+        "session_search",
     }
     | GITHUB_READ_TOOLS
 )
@@ -889,6 +893,26 @@ def _rule_ask_user(req: DecisionRequest, _boundary: Boundary) -> bool:
         req.tool_name == "ask_user"
         and req.provenance is None
         and req.side_effect_class == "auto"
+        and not req.is_mutation
+        and not req.reads
+        and not req.writes
+        and not req.hosts
+    )
+
+
+def _rule_session_search(req: DecisionRequest, _boundary: Boundary) -> bool:
+    """``session_search`` reads the daemon's own session index (TD-5129).
+
+    The index is a file in the data dir holding text the session logs
+    already hold, scoped to the caller's workspace; no workspace file,
+    host or server is touched, and nothing is written. Only the builtin
+    matches: an MCP or plugin tool of that name carries provenance.
+    """
+    return (
+        req.tool_name == "session_search"
+        and req.provenance is None
+        and req.side_effect_class == "auto"
+        and req.actuates is None
         and not req.is_mutation
         and not req.reads
         and not req.writes
@@ -1175,6 +1199,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="exit_plan_mode puts the plan in front of the user; the review is the prompt",
         decision_class=DecisionClass.A,
         match=_rule_exit_plan_mode,
+    ),
+    Rule(
+        id="session-search",
+        description="session_search reads the local index of this workspace's earlier sessions",
+        decision_class=DecisionClass.A,
+        match=_rule_session_search,
     ),
     Rule(
         id="tool-search",

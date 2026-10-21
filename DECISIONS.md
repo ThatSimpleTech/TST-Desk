@@ -17235,3 +17235,260 @@ walker classes lines inside a hunk by the first character alone, counted by
 the hunk header, so `++i;` added or a `--`/`---` line removed is content, not a
 file header; `-a,0` inserts after line a.
 
+## 2026-10-20 — TD-5131: PDF, DOCX and XLSX attachments sent as their text (Class B)
+
+- **One PDF library, shared with TD-5130.** `pypdfium2` (Apache-2.0 / BSD-3
+  bindings over PDFium, BSD-3), the dependency TD-5130's `fs_read` adds, so
+  the two stories do not ship two PDF stacks. Imported on the first PDF, under
+  one lock (PDFium is not thread-safe and extraction runs in worker threads).
+  The integrator should point TD-5130's `read_pdf` at
+  `attachment_extract.PDFIUM_LOCK` (or the reverse) so both share one lock.
+  The sidecar build `--collect-all`s `pypdfium2` and `pypdfium2_raw`.
+- **DOCX and XLSX with the standard library.** They are zips of XML; `zipfile`
+  and `xml.etree` read the text with no new dependency. Hostile files: each
+  member is read only to 64 MB decompressed, a DOCTYPE or ENTITY anywhere is
+  refused (Office never writes one), and at most 10,000 members. A part is
+  streamed (`iterparse`) and each element removed from its parent once read,
+  so memory is the XML's depth, not its size; one document may cost at most
+  128 MB of decompressed XML and 4 million elements in all (about ten
+  seconds of parsing at worst), because a part with no text never reaches
+  the text cap. A sheet row keeps only its non-empty cells and pads blanks
+  on output up to the last one with text, so an empty XFD cell costs nothing
+  and padding is tabs the cap counts. A column reference past XFD reads as
+  the next column.
+  Elements are matched by local name, so Strict OOXML (other namespace URIs)
+  reads too, and the source names no remote host (TD-1410's literal scan).
+- **Kind from the bytes.** `%PDF-` must lead the file, so a text file that
+  mentions it stays text; a zip is a DOCX or XLSX only by its parts. The
+  composer guesses from the header and the name for its chip; the daemon
+  decides.
+- **The caps measure the text.** `max_file_bytes` per document and
+  `max_total_bytes` per message count the UTF-8 text the model will read.
+  The file is held only to transport ceilings that are not workspace
+  settings: 10 MB a document and 12 MB of files a message, so the base64'd
+  message still fits the 16 MiB frame instead of being dropped unexplained.
+- **Markers.** `[page N of M]` before each PDF page; `[sheet: Name]` before
+  each sheet, rows tab-separated with empty columns kept (so column C stays
+  third) and line breaks inside a cell turned to spaces. DOCX has no pages
+  until Word lays it out, so it gets no page markers, only paragraphs and
+  tab-separated table rows.
+- **The chip asks the daemon.** A new connection-scoped pair:
+  `extract_attachment` (session id, the composer's `request_id`, one
+  attachment) answered by `attachment_extracted` (kind, pages or sheets,
+  `text_bytes`, `tokens` at 4 characters a token, or `error_code` and
+  `message`). The extracted text never comes back, only its size. It is a
+  machine-peer and forwarded verb: it reads only the bytes it is handed and
+  starts no turn, and a bridged session's caps live on its own computer. The
+  send extracts again rather than trust a client's answer. The answer is
+  worked out in a background task and sent on the asking connection when
+  ready, because the websocket server awaits each frame's handler before
+  reading the next; two documents are read at once daemon-wide, the rest
+  wait. The send itself still extracts inline: it has to, to keep a
+  connection's messages in order.
+- **The send awaits extraction off the loop.** `decode_attachments` runs in
+  `asyncio.to_thread` when a message has files, so drain and session
+  liveness are checked again after it, and the `only_if_idle` check moved
+  after it so nothing awaits between that check and the queueing.
+
+**Conservative answers to questions the story left open (Class C, PR body).**
+No OCR: a PDF with no text is refused with `attachment_no_text` rather than
+sent empty or sent to a vision model. Password-protected files are refused,
+not prompted for. Only the first-party formats named (PDF, DOCX, XLSX); not
+legacy `.doc`/`.xls`, ODF, PPTX or CSV-in-zip. A document is not kept as a
+file in the session; only its text is, the same as a text attachment.
+
+## 2026-10-20 — TD-5130: fs_read opens images, PDFs and notebooks (Class B)
+
+Approved as specified in the gap audit. Size 5, so the approach is recorded
+here instead of waiting for sign-off.
+
+- **New dependency: `pypdfium2`.** Python bindings (Apache-2.0 / BSD-3) over
+  PDFium (BSD-3), with wheels that carry the library for every platform we
+  build, so no system package. It gives page text and page rendering, all
+  on the machine. Imported on the first PDF read, not at start. PDFium is
+  not thread-safe and reads run in worker threads, so every call holds one
+  lock. Rejected: `pypdf` (text only, no page images), PyMuPDF (AGPL),
+  shelling out to poppler (a system dependency on every OS).
+- **Page images are PNGs encoded with zlib in the daemon.** The daemon has
+  no imaging library (Pillow ships only with the computer-use sidecar), and
+  a PNG writer is twenty lines. A page is rendered at most 1568 px on its
+  long side (at most 2x), then at half scale if it is over 4 MB.
+- **Who decides vision.** The loop sets `Session.tool_vision` and
+  `tool_max_images` from the tier it just called, before the batch runs, so
+  the results are judged by the model that will read them; after a backup
+  switch that is the backup. A delegate child takes the worker tier's.
+  `fs_read` reads both; a session without them counts as text-only.
+- **How images travel.** `HandlerOutput.images` and `ToolResult.images`
+  carry `ToolImage(mime, bytes)`; `_tool_message_content` puts them after
+  the text as `image_url` parts, like a screenshot (TD-1729). They never go
+  onto an event, into the audit log or into the text, and the existing
+  `max_prompt_images` cap drops the oldest first.
+- **Type from bytes.** Images by magic bytes (the TD-4705 detector), PDFs by
+  `%PDF-` in the head, notebooks by the `.ipynb` suffix and then nbformat 4
+  JSON; anything else reads as text exactly as before.
+
+**Conservative answers to questions the story left open (Class C, PR body).**
+Page images only on request (`page_images: true`), never by default, since
+they cost image tokens and most local tiers keep one image a prompt. An
+image read uses the attachment cap (4 MB) and is sent unresized, like an
+attachment. A `max_prompt_images` of 0 counts as no vision, since the image
+would be dropped before it was sent. Notebook image and HTML-only outputs
+are named, not shown.
+
+## 2026-10-20 — TD-5129: a local full-text index of what sessions said (Class B)
+
+**Context.** The gap audit asked for searching and recalling earlier
+sessions: an SQLite FTS index updated as sessions write, a rail that
+searches message text, and a Class A `session_search` tool that cites
+session and turn, with nothing leaving the computer. Adam approved the
+story as written (gap audit decisions, 2026-10-14). The index's shape,
+what goes in it, how the rail asks, and the tool's scope were left open.
+Sized 5, so this entry records the approach in place of a sign-off.
+
+**Decision.**
+
+- **One file, `session_index.db` in the data dir, SQLite FTS5** (stdlib
+  `sqlite3`, no new dependency; external-content table with triggers,
+  `unicode61 remove_diacritics 2`, WAL, mode 0600). It is a view of the
+  session logs, not a record: a failed write is logged and the next
+  start's catch-up repairs it, and deleting the file rebuilds it from the
+  logs that remain. A newer schema than this build turns search off
+  rather than migrating down.
+- **Fed from the redacted events `events.jsonl` gets**, in the daemon's
+  per-session persist lock, so the index never holds a secret the log
+  scrubbed and sees each session in seq order. Indexed: user messages and
+  assistant replies. Not indexed: thinking, tool calls and tool output,
+  daemon notices. Replies are buffered per `response_id` and written once
+  when the next non-text event arrives (one write per reply, not per
+  token); `assistant_retract` drops the buffer and any row. Rows outlive
+  the `log_max_events` window on purpose (that is recall).
+- **Turns** are the 1-based count of user turns in the session's own log;
+  a mid-turn message (TD-5112) counts with the turn it joined, and a fork
+  restarts the count at the edited turn. A log that was trimmed before
+  the index first saw it numbers from its oldest kept turn; that is the
+  only case where the number can differ from the window's.
+- **Restart safety:** `indexed_sessions` keeps, per session, the last seq
+  whose effects are all written (never one inside a buffered reply), and
+  restore replays the log from there before revive adds anything.
+- **Rail:** a connection-scoped `search_sessions` → `session_search_results`
+  pair, one best hit per session over every session this computer knows,
+  sent 200 ms after typing pauses and only from two characters. The rail
+  keeps its own title/id/path filter and adds message matches with their
+  snippet; a reply whose `query` is not what the box holds is dropped.
+  Every word is quoted and prefix-matched, so nothing typed is FTS syntax;
+  when all words find nothing, any word may (BM25 ranks rare words
+  first).
+- **Tool scope (Class C question, conservative choice):** `session_search`
+  searches only the other sessions whose row has the caller's
+  `workspace_path` (a worktree session keeps its project's path), never
+  other projects and never the caller itself, at most two hits per
+  session and ten in all. The story says "in the same workspace"; a wider
+  scope would hand one project's conversations to another's model.
+- **Not forwarded to paired computers (Class C question, conservative
+  choice):** `search_sessions` is not a machine-peer verb, so the rail
+  searches this computer's sessions only; another computer's rows still
+  match on their titles. Searching a peer's text would send it across
+  the link, which the story did not ask for.
+- **Class A by a static rule `session-search`**, shaped like
+  `tool-search`: builtin only, `auto`, no reads, writes, hosts or
+  actuation. It is on `PLAN_READ_ONLY_BUILTINS`. Its result goes to the
+  session's own model like any `fs_read` output; the index and both
+  searches open no socket (tested with `socket` patched to fail).
+
+- **The append-only guard names the exemption.** `test_audit.py` fails
+  on any `DELETE FROM` / `UPDATE ... SET` in `tstd`. The index must
+  delete rows (a deleted session, a withdrawn reply), so
+  `session_index.py` is listed by name as owning a different database,
+  and a test pins that it never names the audit file. Every other module
+  stays under the guard.
+
+**Rejected.** A search inside `events.jsonl` with `grep` at query time:
+the logs are windowed, so old sessions would lose their text, and every
+keystroke would read every log. A vector index: needs an embedding model
+and a dependency, and the story asks for full-text. A config switch: the
+index costs one small write per message, and with no key there is
+nothing to misconfigure.
+
+## 2026-10-20 — TD-5128: model-written compaction summary that keeps recent files (Class B; revises TD-405 and TD-5109)
+
+**Context.** TD-405 chose a deterministic extractive summary so compaction
+never spent a model call, and TD-5109 kept guidance model-free for the same
+reason. On 32k-65k local windows that summary (200 characters a message,
+2,000 in all) loses the goal, the decisions and the files within a couple
+of compactions. The gap audit asked for a worker-written structured summary
+with a prompt the user can set, falling back to the extractive one; for it
+to run in the background before the threshold; and for recent files and
+loaded skill bodies to come back after compaction within a budget. Story
+sized 5; approach recorded here per Adam's 2026-10-14 approval of the
+gap-audit stories.
+
+**Decision.**
+- **Shape.** A new `compaction:` block in config.yaml: `summary`
+  (`model` | `extractive`), `summary_prompt`, `summary_max_tokens`,
+  `summary_timeout_seconds`, `background_percent`, `reinject_files`,
+  `reinject_tokens`. The shipped file sets `summary: model`, and an older
+  user copy without the block gets it from the shipped file at load, so
+  users get the worker summary. A config built in code, or a block without
+  the key, is `extractive`: nothing spends a model call it did not ask for
+  (and every existing scripted loop test stays byte-identical).
+- **Layering.** `compaction.py` stays synchronous and model-free: it takes an
+  optional worker `body` and `files` text. `compaction_text.py` owns the
+  summary text (header, core, `[Kept across compaction]`,
+  `[Recent files, read again after compaction]`); a later fold keeps only
+  the core, so old carries and old file copies are never re-summarized.
+  `compaction_model.py` holds the worker call, validation, background
+  prefetch and the async `compact_auto` / `compact_manual` the loop and
+  `/compact` call. `compaction_files.py` picks and reads the files.
+- **Validation and fallback.** The built-in prompt asks for exactly four
+  headings (`## Goal`, `## Decisions`, `## Files touched`, `## Open items`);
+  an answer without all four in order is not a summary. A custom prompt's
+  answer need only be non-empty, since the user chose its shape. Inline
+  `<think>` blocks are stripped. A provider error, a timeout, a cut-off
+  (`finish_reason: length`), or any exception before the call (a keychain
+  error, say) falls back to the extractive summary with a warning in the
+  log. Compaction never fails, and never waits past the timeout.
+- **What the worker sees.** The folded turns: user and assistant text (4,000
+  characters each), tool calls with their arguments (300), tool results
+  (1,500), a prior summary's core whole. Sized for the worker's window at a
+  conservative three characters a token; over that, the oldest messages
+  go first, with a note. Guidance from `/compact` is passed to the worker.
+- **Background.** At fit time, once the estimate passes
+  `background_percent` of the budget, summaries of two spans are kept as
+  tasks: everything before the last two user turns (the span an auto
+  compaction folds now, which is what a mid-turn crossing takes; agentic
+  turns grow with tool results, so that is the common case) and everything
+  before the last user turn (the next turn's fold and `/compact` without
+  guidance). The first span is the second span of the turn before, so the
+  task already running for it is kept rather than restarted: about one
+  worker call per turn, not two. Only a fold of some other span (a third
+  fold within one turn) writes its own, inline and bounded by the timeout. The span is matched by a
+  hash of roles, ids, calls and text with tool result text left out,
+  because clearing stale results (TD-5115) rewrites those between the
+  prefetch and the fold. At most two tasks; one for a span no longer
+  wanted is cancelled, and the loop task's done-callback cancels it at loop end.
+- **Recent files.** `fs_read`, `fs_write` and `fs_edit` paths in the folded
+  turns, newest first, minus any the kept turns name. Read from disk now
+  (current content), through the session's `PathGuard` (inside the
+  workspace, symlinks resolved), skipping anything an `ask`/`never` rule
+  over the built-in reads matches, and anything not UTF-8 text. Budget:
+  `reinject_files`, and `min(reinject_tokens, half the headroom left under
+  the budget after the fold)`, so the files cannot push the next request
+  back over it. The last file that fits is cut with a note.
+- **Skill bodies** already survive: they are rendered into the system
+  prompt from `session.loaded_skills` on every request, and compaction never
+  folds index 0. A loop test pins it; no new mechanism.
+- **Cost.** Summary calls are worker calls off the turn
+  (`record_off_turn(..., source="compaction")`, as distill), with a cost
+  update so the meter shows them.
+- **`/compact` with a worker call** can take a while, so it folds a copy of
+  the conversation and drops the result with `turn_in_progress` if a turn
+  started or the conversation changed meanwhile.
+
+**Conservative answers to questions the story left open (Class C, PR body).**
+No new protocol event or field: `context_compacted` is unchanged, and the
+window does not say which summary was used (the summary text shows it). No
+UI control. A mid-turn fold does not wait on a background task for a
+different span. Files are never re-read for a path outside the workspace or
+behind a read rule, even if the model was allowed to read it at the time.
+Re-reading is not a tool call: it is the daemon restoring text the agent
+already had, through the same guard the read tool uses.

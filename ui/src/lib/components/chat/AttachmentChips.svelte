@@ -3,7 +3,9 @@
 	// what the user staged and what the transcript shows are the same object
 	// visually. `onremove` is what separates the two: present while the row is
 	// still a draft, absent once it has gone out.
-	import { formatBytes, type AttachmentChip } from "../../attachments";
+	// A PDF, DOCX or XLSX (TD-5131) shows its kind, pages or sheets and a
+	// token count for the text the model will read, instead of its size.
+	import { chipDetail, formatBytes, type AttachmentChip } from "../../attachments";
 	import Icon from "../Icon.svelte";
 
 	let {
@@ -24,7 +26,7 @@
 			<li class="chip">
 				<Icon name="file" size={12} />
 				<span class="name" title={`${chip.name} — ${formatBytes(chip.size)}`}>{chip.name}</span>
-				<span class="size">{formatBytes(chip.size)}</span>
+				<span class="size">{chipDetail(chip)}</span>
 				{#if onremove}
 					<button
 						type="button"
