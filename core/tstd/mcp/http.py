@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from typing import Any
 
 import httpx
@@ -86,6 +86,12 @@ class HttpMcpClient:
         self._session_id: str | None = None
         self._mirrored: dict[str, dict[tuple[str, ...], str]] = {}
         self._listener: asyncio.Task[None] | None = None
+        #: Set by :meth:`aclose`. A closed client still answers the calls of
+        #: a session that attached before a reload: each call handshakes
+        #: again and the last one in flight closes the connection, as
+        #: nothing else would. It follows no ``tools/list_changed``.
+        self._closed = False
+        self._closed_calls = 0
         self.negotiated: Negotiated | None = None
         #: Tools ``tools/list`` offered but this transport must refuse.
         self.excluded: list[ExcludedTool] = []
@@ -123,14 +129,31 @@ class HttpMcpClient:
             self.negotiated = negotiated
             if negotiated.era == "legacy":
                 await self._post({"jsonrpc": "2.0", "method": "notifications/initialized"}, startup)
-                self._listener = asyncio.create_task(self._listen_legacy())
-            elif negotiated.tools_list_changed:
+                if not self._closed:
+                    self._listener = asyncio.create_task(self._listen_legacy())
+            elif negotiated.tools_list_changed and not self._closed:
                 self._listener = asyncio.create_task(self._listen_modern())
 
     @property
     def startup_seconds(self) -> float:
         """Longest :meth:`start` may take: the probe, then the handshake."""
         return 2 * self._startup_timeout
+
+    @contextlib.asynccontextmanager
+    async def _running(self) -> AsyncIterator[None]:
+        """Started for the length of one call."""
+        if not self._closed:
+            await self.start()
+            yield
+            return
+        self._closed_calls += 1
+        try:
+            await self.start()
+            yield
+        finally:
+            self._closed_calls -= 1
+            if self._closed_calls == 0:
+                await self._shut()
 
     def _take_id(self) -> int:
         req_id = self._next_id
@@ -144,11 +167,12 @@ class HttpMcpClient:
         *,
         wait_seconds: float | None = None,
     ) -> Any:
-        await self.start()
-        assert self.negotiated is not None
-        wait = wait_seconds or self._timeout
-        payload = self._payload(self._take_id(), method, self.negotiated.stamp(params))
-        return checked_result(await asyncio.wait_for(self._post(payload, wait), timeout=wait))
+        async with self._running():
+            assert self.negotiated is not None
+            wait = wait_seconds or self._timeout
+            payload = self._payload(self._take_id(), method, self.negotiated.stamp(params))
+            answer = await asyncio.wait_for(self._post(payload, wait), timeout=wait)
+        return checked_result(answer)
 
     async def list_tools(self) -> list[McpRemoteTool]:
         """``tools/list``, every page, with the startup timeout.
@@ -189,7 +213,15 @@ class HttpMcpClient:
         stream (the modern cancel) and, for a legacy server, also posts
         ``notifications/cancelled``.
         """
-        await self.start()
+        async with self._running():
+            return await self._call_tool(name, arguments, on_progress)
+
+    async def _call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any] | None,
+        on_progress: ProgressCallback | None,
+    ) -> Any:
         assert self.negotiated is not None
         # Taken here, so the cancel notice names this call's request
         # (TD-5154).
@@ -245,20 +277,31 @@ class HttpMcpClient:
         task.add_done_callback(self._pending.discard)
 
     async def aclose(self) -> None:
+        """Close the connection; a later call handshakes again (see
+        :attr:`_closed`), as a stdio client respawns after a reload."""
+        self._closed = True
+        await self._shut()
+
+    async def _shut(self) -> None:
         listener, self._listener = self._listener, None
+        client = self._http
+        ending = self._headers({}) if self._session_id is not None else None
+        # Cleared before any wait, so a call that starts meanwhile
+        # handshakes on a client of its own.
+        self._session_id = None
+        self._http = None
+        self.negotiated = None
         if listener is not None:
             listener.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await listener
-        client = self._http
-        if client is not None and self._session_id is not None:
+        if client is None:
+            return
+        if ending is not None:
             # Ending a legacy session is a courtesy; a 405 or an outage is fine.
             with contextlib.suppress(httpx.HTTPError):
-                await client.delete(self._url, headers=self._headers({}), timeout=5.0)
-        self._session_id = None
-        self._http = None
-        if client is not None:
-            await client.aclose()
+                await client.delete(self._url, headers=ending, timeout=5.0)
+        await client.aclose()
 
     # ── wire ────────────────────────────────────────────────────────────
 

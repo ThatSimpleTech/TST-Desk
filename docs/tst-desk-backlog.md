@@ -11512,6 +11512,10 @@ handling or off-box servers. Servers on newer SDKs refuse that.
       directive 1
 - [x] `tools/list_changed` refreshes live sessions (the registry swaps
       the server's tools and the loop offers the new set on its next call)
+- [x] After a settings reload, sessions already open keep working tools on
+      both transports: an HTTP client the reload closed handshakes again on
+      its next call (as a stdio one respawns), without a `tools/list_changed`
+      listener
 - [x] Tests run against the reference SDK servers for both protocol eras
       (`mcp` 2.0 as a dev dependency; stdio and HTTP, modern and a
       2024-11-05-only build)

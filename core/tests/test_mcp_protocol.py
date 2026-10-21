@@ -237,6 +237,24 @@ async def test_progress_keeps_a_call_alive(
 
 @pytest.mark.parametrize("transport", TRANSPORTS)
 @pytest.mark.parametrize(("era", "version"), ERAS)
+async def test_a_live_session_keeps_its_tools_after_a_reload(
+    reference: Any, transport: str, era: str, version: str
+) -> None:
+    """A settings reload closes every client; a session that attached
+    before it still calls its tools. Over HTTP the closed client used to
+    keep its handshake and refuse with "not running"."""
+    spec = await reference(transport, era)
+    supervisor, _, dispatcher = await _load(spec)
+    try:
+        echo = dispatcher._handlers["ref__echo"]
+        await supervisor.reload(McpConfig(servers={"ref": spec}))
+        assert await echo(session=None, tool_call_id="t", text="again") == "again"
+    finally:
+        await supervisor.aclose()
+
+
+@pytest.mark.parametrize("transport", TRANSPORTS)
+@pytest.mark.parametrize(("era", "version"), ERAS)
 async def test_tools_list_changed_reaches_a_live_session(
     reference: Any, transport: str, era: str, version: str
 ) -> None:
