@@ -577,8 +577,9 @@ class ToolDispatcher:
                     decision_class=decision_class,
                 )
             # Plan mode turned on while the call waited: skip-all or a
-            # late Allow must not run a changing call now (TD-5161).
-            if (await self.classifier.classify(request)).refused:
+            # late Allow must not run a changing call now (TD-5161). Only
+            # the plan-mode rule is asked again: no second worker judgment.
+            if self.classifier.plan_mode_refuses(request):
                 return ToolResult(
                     tool_call_id=tool_call_id,
                     name=name,

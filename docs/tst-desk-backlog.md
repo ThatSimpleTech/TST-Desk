@@ -10605,7 +10605,8 @@ why. Notes are numbered in the order the reviews listed them.
       measurement is a follow-up, not a fix here (dismissed)
 - [x] 28-31. TD-5123 plan mode. (28) A call parked on an approval before
       plan mode was turned on could run once released: an approved call is
-      classified again and plan mode refuses it. (29) The phone criterion
+      checked against the plan-mode rule again (no second worker call)
+      and refused. (29) The phone criterion
       was checked at a 375 px viewport: qualified (docs fix). (30) `/plan`
       now always toggles plan mode, so a skill named `plan` is reached
       through `load_skill` or a rename (Class B, documented). (31) The

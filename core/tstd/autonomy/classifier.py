@@ -798,6 +798,16 @@ def _rule_plan_mode(req: DecisionRequest, boundary: Boundary) -> bool:
     return boundary.plan_mode() and not plan_mode_allows(req, boundary)
 
 
+def plan_mode_refuses(req: DecisionRequest, boundary: Boundary) -> bool:
+    """Whether plan mode refuses *req* right now (TD-5123, TD-5161).
+
+    The plan-mode rule alone, with no other rule and no worker call: the
+    dispatcher asks it again after an approval wait, since plan mode may
+    have been turned on while the call was parked.
+    """
+    return _rule_plan_mode(req, boundary)
+
+
 def _rule_mcp_undeclared_fields(req: DecisionRequest, _boundary: Boundary) -> bool:
     """MCP tools with no declared path/host metadata are never Class A.
 
