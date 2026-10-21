@@ -127,8 +127,12 @@ def load_denylist(path: str | None) -> Denylist | None:
     return None
 
 
-def _inflated(data: bytes) -> Iterator[bytes]:
-    """Every zlib stream found in *data*, inflated. Garbage candidates are skipped."""
+def _inflated(data: bytes) -> Iterator[tuple[int, int, bytes]]:
+    """``(start, end, inflated)`` for every zlib stream in *data*.
+
+    Garbage candidates are skipped. *start* and *end* bound the stream's
+    compressed bytes in *data*.
+    """
     view = memoryview(data)
     pos = 0
     while True:
@@ -142,24 +146,35 @@ def _inflated(data: bytes) -> Iterator[bytes]:
         try:
             while not d.eof and at < len(data):
                 out.append(d.decompress(view[at : at + _ZLIB_CHUNK]))
-                at += _ZLIB_CHUNK
+                at = min(at + _ZLIB_CHUNK, len(data))
         except zlib.error:
             pos = start + 1
             continue
         if not d.eof:
             pos = start + 1
             continue
-        yield b"".join(out)
+        end = at - len(d.unused_data)
+        yield start, end, b"".join(out)
         # Resume after the stream's end, not inside it.
-        pos = at - len(d.unused_data)
+        pos = end
 
 
 def scan_bytes(
     denylist: Denylist, label: str, data: bytes, depth: int = 0, *, show: bool = True
 ) -> list[str]:
     """Hits in *data*, its zip entries and its zlib streams, as printable lines."""
-    found = [f"{label}: {hit}" for hit in denylist.hits(data.decode("latin-1"), show=show)]
-    if data[:4] == b"PK\x03\x04":
+    is_zip = data[:4] == b"PK\x03\x04"
+    streams = [] if is_zip or depth >= _MAX_DEPTH else list(_inflated(data))
+    # A match inside a stream's compressed bytes is chance, not text: the
+    # same bytes come out of the same build every time, so a re-run cannot
+    # clear it (0.4.0's linux-aarch64 sidecar). The stream's real content
+    # is scanned below, once inflated.
+    found = [
+        f"{label}: {context if show else f'rule {rule} at offset {offset}'}"
+        for rule, offset, context in denylist.matches(data.decode("latin-1"))
+        if not any(start <= offset < end for start, end, _ in streams)
+    ]
+    if is_zip:
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as zf:
                 for info in zf.infolist():
@@ -174,9 +189,8 @@ def scan_bytes(
                         found.append(f"{label}: entry name {hit}")
         except zipfile.BadZipFile:
             pass
-    elif depth < _MAX_DEPTH:
-        for n, blob in enumerate(_inflated(data)):
-            found += scan_bytes(denylist, f"{label}:zlib#{n}", blob, depth + 1, show=show)
+    for n, (_, _, blob) in enumerate(streams):
+        found += scan_bytes(denylist, f"{label}:zlib#{n}", blob, depth + 1, show=show)
     return found
 
 

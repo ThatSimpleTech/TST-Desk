@@ -6,6 +6,7 @@ The real denylist is private, so every test here uses a made-up one.
 from __future__ import annotations
 
 import io
+import re
 import subprocess
 import sys
 import zipfile
@@ -66,6 +67,27 @@ def test_zlib_stream_inside_a_binary_is_inflated() -> None:
     assert b"secret-host" not in blob
     found = release_scan.scan_bytes(LIST, "tstd", blob)
     assert found == ["tstd:zlib#0: doc: secret-host"]
+
+
+def test_chance_match_in_compressed_bytes_is_not_a_hit() -> None:
+    # Compressed bytes are noise that can spell a denied word by chance, and
+    # the same build compresses the same way every time (0.4.0's aarch64
+    # sidecar failed twice on one). The stream's inflated text is what counts.
+    payload = b" ".join(b"module_%d = value(%d)" % (i, i * 7919 % 1000) for i in range(400))
+    stream = zlib.compress(payload)
+    text = payload.decode("latin-1")
+    word = next(
+        w
+        for i in range(2, len(stream) - 3)
+        if re.fullmatch(rb"[a-z]{3}", stream[i : i + 3])
+        and (w := stream[i : i + 3].decode("latin-1")) not in text
+    )
+    chance = release_scan.Denylist.parse(re.escape(word) + "\n")
+    blob = b"\x7fELF" + b"\0" * 100 + stream + b"\0" * 50
+    assert release_scan.scan_bytes(chance, "tstd", blob) == []
+    # The same word outside the stream is still caught.
+    found = release_scan.scan_bytes(chance, "tstd", blob + word.encode("latin-1"))
+    assert len(found) == 1 and found[0].startswith("tstd: ")
 
 
 def test_nested_zlib_stream_is_found() -> None:
