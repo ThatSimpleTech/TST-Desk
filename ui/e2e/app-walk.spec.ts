@@ -77,7 +77,7 @@ test("opens a workspace and gets a mock reply", async () => {
 });
 
 /**
- * Plan, Model tier and Session preset each go to the daemon, and the bar
+ * Plan, Model tier and the model picker each go to the daemon, and the bar
  * only moves when its tier_state comes back. A select keeps whatever was
  * picked even if nothing is sent, so each step checks something only the
  * daemon's answer can change: the pin hint, aria-pressed, the disabled
@@ -86,7 +86,7 @@ test("opens a workspace and gets a mock reply", async () => {
 async function walkModelBar(): Promise<void> {
 	const bar = page.getByRole("group", { name: "Model" });
 	const tier = bar.getByRole("combobox", { name: "Model tier" });
-	const preset = bar.getByRole("combobox", { name: "Session preset" });
+	const picker = bar.getByRole("button", { name: "Model and effort" });
 	const plan = bar.getByRole("button", { name: "Plan", exact: true });
 
 	await expect(tier).toHaveAttribute("title", /^Choosing a tier pins it/);
@@ -105,15 +105,37 @@ async function walkModelBar(): Promise<void> {
 	await expect(plan).toHaveAttribute("aria-pressed", "false");
 	await expect(tier.locator("option[value='worker']")).toBeEnabled();
 
-	const start = await preset.inputValue();
-	const other = (await preset.locator("option").allInnerTexts()).find((p) => p !== start);
+	// The picker's chip reads "<model> <effort>"; the main list is the models,
+	// and the check mark is on the current one.
+	await expect(picker).toHaveText(/ Medium\s*$/);
+	await picker.click();
+	const menu = page.getByRole("menu", { name: "Model and effort" });
+	const models = menu.getByRole("menuitemradio");
+	const current = models.and(page.locator('[aria-checked="true"]'));
+	const start = ((await current.innerText()) ?? "").replace("\u2713", "").trim();
+	const other = (await models.allInnerTexts())
+		.map((text) => text.replace("\u2713", "").trim())
+		.find((name) => name !== start);
 	if (other === undefined) throw new Error("the walk needs a second preset to switch to");
 	const brain = tier.locator("option[value='brain']");
 	const startLabel = await brain.innerText();
-	await preset.selectOption(other);
+	await models.filter({ hasText: other }).first().click();
 	await expect(brain).not.toHaveText(startLabel);
-	await expect(preset).toHaveValue(other);
-	await preset.selectOption(start);
+	await expect(picker).toContainText(other);
+
+	// Effort: pick Max, the chip follows the daemon's tier_state, then back to Medium.
+	await picker.click();
+	await menu.getByRole("menuitem", { name: /^Effort/ }).click();
+	await expect(menu.getByText("Higher effort means more thorough responses")).toBeVisible();
+	await menu.getByRole("menuitemradio", { name: /^Max/ }).click();
+	await expect(picker).toHaveText(/ Max\s*$/);
+	await picker.click();
+	await menu.getByRole("menuitem", { name: /^Effort/ }).click();
+	await menu.getByRole("menuitemradio", { name: /^Medium/ }).click();
+	await expect(picker).toHaveText(/ Medium\s*$/);
+
+	await picker.click();
+	await models.filter({ hasText: start }).first().click();
 	await expect(brain).toHaveText(startLabel);
 }
 

@@ -772,7 +772,6 @@ async def _stream_and_parse(
         extra_body=with_effort(
             tier_cfg.extra_body,
             session.router.effort if session.router is not None else DEFAULT_EFFORT,
-            slug=model_slug,
             tier_supports=tier_cfg.reasoning_effort,
         ),
     )

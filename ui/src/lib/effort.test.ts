@@ -5,7 +5,6 @@ import {
 	DEFAULT_EFFORT,
 	EFFORT_OPTIONS,
 	groupModels,
-	isMoreModel,
 	modelLabel,
 } from "./effort";
 
@@ -41,43 +40,33 @@ describe("effort levels", () => {
 });
 
 describe("model grouping", () => {
-	it("keeps Ezer on the main list and the raw routes under More models", () => {
-		const groups = groupModels([
-			"ezer",
-			"tst-default",
-			"sub-claude-opus",
-			"sub-claude-sonnet",
-			"sub-grok",
-			"sub-cursor",
-			"ezer-forge",
-		]);
-		expect(groups.main).toEqual(["ezer", "tst-default"]);
-		expect(groups.more).toEqual([
-			"sub-claude-opus",
-			"sub-claude-sonnet",
-			"sub-grok",
-			"sub-cursor",
-			"ezer-forge",
-		]);
+	it("splits by the config's picker flag, main list first", () => {
+		const groups = groupModels(
+			["house", "tst-default", "sub-claude-opus", "sub-grok", "house-raw"],
+			["sub-claude-opus", "sub-grok", "house-raw"],
+		);
+		expect(groups.main).toEqual(["house", "tst-default"]);
+		expect(groups.more).toEqual(["sub-claude-opus", "sub-grok", "house-raw"]);
+	});
+
+	it("puts every preset on the main list when none says more", () => {
+		expect(groupModels(["a", "b"]).main).toEqual(["a", "b"]);
+		expect(groupModels(["a", "b"]).more).toEqual([]);
 	});
 
 	it("still shows a current model the daemon did not list", () => {
-		expect(groupModels(["ezer"], "sub-grok").more).toEqual(["sub-grok"]);
-	});
-
-	it("tells routes from models", () => {
-		expect(isMoreModel("ezer")).toBe(false);
-		expect(isMoreModel("ezer-coder")).toBe(true);
-		expect(isMoreModel("sub-grok")).toBe(true);
+		expect(groupModels(["house"], ["sub-grok"], "sub-grok").more).toEqual(["sub-grok"]);
 	});
 });
 
 describe("chip label", () => {
-	it("reads Model then Effort", () => {
-		expect(modelLabel("ezer")).toBe("Ezer");
-		expect(chipLabel("ezer", "medium")).toBe("Ezer Medium");
-		expect(chipLabel("ezer", "xhigh")).toBe("Ezer Extra");
-		expect(chipLabel("ezer", "ultracode")).toBe("Ezer Ultracode");
+	it("reads Model then Effort, using the configured label", () => {
+		const labels = { house: "House" };
+		expect(modelLabel("house", labels)).toBe("House");
+		expect(modelLabel("budget", labels)).toBe("budget");
+		expect(chipLabel("house", "medium", labels)).toBe("House Medium");
+		expect(chipLabel("house", "xhigh", labels)).toBe("House Extra");
+		expect(chipLabel("house", "ultracode", labels)).toBe("House Ultracode");
 		expect(chipLabel("budget", "low")).toBe("budget Low");
 	});
 });

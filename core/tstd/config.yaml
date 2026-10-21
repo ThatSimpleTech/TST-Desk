@@ -260,8 +260,7 @@ session:
   log_max_events: 10000
   # Reasoning effort a session starts with until the composer's picker sets
   # one: low | medium | high | xhigh | max | ultracode. Sent as
-  # reasoning_effort to the model ezer, and to any tier with
-  # reasoning_effort: true.
+  # reasoning_effort to any tier with reasoning_effort: true.
   default_effort: medium
   # send_file (TD-5143): the largest file the agent may send (512 MiB; at most
   # 2 GiB), and the most this session may hold in sent files (4 GiB).

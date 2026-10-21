@@ -16,9 +16,9 @@ from tests.test_set_tier import (
     _open_workspace,
     _start_daemon,
 )
-from tstd.config import ModelConfig, SessionConfig, TierConfig
+from tstd.config import ModelConfig, Preset, SessionConfig, TierConfig
 from tstd.cost import CostTracker
-from tstd.effort import DEFAULT_EFFORT, EFFORT_LEVELS, effort_applies, with_effort
+from tstd.effort import DEFAULT_EFFORT, EFFORT_LEVELS, with_effort
 from tstd.loop import _stream_and_parse
 from tstd.protocol import HandshakeError, SetEffort, TierState, parse_client_message
 from tstd.provider import ChatCompletionRequest, ChatMessage, Delta, StreamChunk
@@ -95,13 +95,10 @@ def test_router_defaults_to_medium_and_rejects_junk() -> None:
     assert router.effort == "ultracode"  # a reset clears routing, not the picker
 
 
-def test_ezer_always_takes_effort_others_only_when_opted_in() -> None:
-    assert effort_applies("ezer", False)
-    assert not effort_applies("moonshotai/kimi-k3", False)
-    assert effort_applies("moonshotai/kimi-k3", True)
-    assert with_effort(None, "high", slug="other", tier_supports=False) is None
+def test_effort_goes_only_to_tiers_that_opt_in() -> None:
+    assert with_effort(None, "high", tier_supports=False) is None
     base = {"top_k": 20}
-    assert with_effort(base, "max", slug="ezer", tier_supports=False) == {
+    assert with_effort(base, "max", tier_supports=True) == {
         "top_k": 20,
         "reasoning_effort": "max",
     }
@@ -109,27 +106,34 @@ def test_ezer_always_takes_effort_others_only_when_opted_in() -> None:
 
 
 @pytest.mark.parametrize("level", EFFORT_LEVELS)
-async def test_request_body_carries_each_level_for_ezer(level: str) -> None:
-    body = await _body_for("ezer", _tier("ezer"), level)
+async def test_request_body_carries_each_level_for_an_opted_in_tier(level: str) -> None:
+    body = await _body_for("house", _tier("house", reasoning_effort=True), level)
     assert body["reasoning_effort"] == level
 
 
 async def test_default_request_is_medium_and_ultracode_goes_out_as_is() -> None:
-    assert (await _body_for("ezer", _tier("ezer"), None))["reasoning_effort"] == "medium"
-    assert (await _body_for("ezer", _tier("ezer"), "ultracode"))["reasoning_effort"] == "ultracode"
+    tier = _tier("house", reasoning_effort=True)
+    assert (await _body_for("house", tier, None))["reasoning_effort"] == "medium"
+    assert (await _body_for("house", tier, "ultracode"))["reasoning_effort"] == "ultracode"
 
 
-async def test_other_models_get_no_effort_unless_the_tier_opts_in() -> None:
-    assert "reasoning_effort" not in await _body_for("kimi", _tier("kimi"), "high")
-    opted = await _body_for("kimi", _tier("kimi", reasoning_effort=True), "high")
-    assert opted["reasoning_effort"] == "high"
+async def test_a_tier_that_does_not_opt_in_gets_no_effort() -> None:
+    assert "reasoning_effort" not in await _body_for("plain", _tier("plain"), "high")
 
 
 async def test_picked_level_beats_the_tiers_own_extra_body() -> None:
-    tier = _tier("ezer", extra={"reasoning_effort": "low", "top_k": 5})
-    body = await _body_for("ezer", tier, "xhigh")
+    tier = _tier("house", reasoning_effort=True, extra={"reasoning_effort": "low", "top_k": 5})
+    body = await _body_for("house", tier, "xhigh")
     assert body["reasoning_effort"] == "xhigh"
     assert body["top_k"] == 5
+
+
+def test_preset_picker_fields_default_to_primary() -> None:
+    tier = _tier("house")
+    plain = Preset(brain=tier, worker=tier, validator=tier)
+    assert plain.picker == "primary" and plain.label is None
+    more = Preset(brain=tier, worker=tier, validator=tier, picker="more", label="Raw")
+    assert more.picker == "more" and more.label == "Raw"
 
 
 def test_set_effort_message_round_trips_and_checks_the_level() -> None:

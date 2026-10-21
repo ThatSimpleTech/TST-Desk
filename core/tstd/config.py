@@ -235,9 +235,9 @@ class TierConfig(BaseModel):
     # never inferred from a slug in code.
     vision: bool = False
     # When true, the picker's effort level goes out as ``reasoning_effort``
-    # on this tier's requests. The model ``ezer`` always takes it; every
-    # other model only when its provider supports the field, so a server
-    # that rejects unknown fields never sees it. Default false.
+    # on this tier's requests. Turn it on only for a gateway or provider
+    # that supports the field, so a server that rejects unknown fields
+    # never sees it. Default false.
     reasoning_effort: bool = False
     # Named key from the credentials catalog (TD-1717). None / omitted /
     # blank means unbound: loopback sends no key, remote uses openrouter.
@@ -436,6 +436,11 @@ class Preset(BaseModel):
     brain: TierConfig
     worker: TierConfig
     validator: TierConfig
+    # How the composer's model picker shows this preset: the name on the
+    # list and chip (default: the preset's key), and whether it sits on the
+    # main list (``primary``) or under "More models" (``more``).
+    label: str | None = Field(default=None, min_length=1, max_length=40)
+    picker: Literal["primary", "more"] = "primary"
 
 
 class CredentialConfig(BaseModel):

@@ -2,7 +2,7 @@
 	// The model picker, built like Claude's: a short model list with a check
 	// on the current one, an "Effort" row that opens a submenu (Low to Max,
 	// Ultracode last), and a "More models" row for the raw routes. The chip
-	// reads "<Model> <Effort>", e.g. "Ezer Medium". A model is a catalog
+	// reads "<Model> <Effort>", e.g. "House Medium". A model is a catalog
 	// preset; picking one is the same act as the old preset dropdown.
 	import {
 		chipLabel,
@@ -21,7 +21,7 @@
 	let view = $state<View>("main");
 
 	const current = $derived(session.preset);
-	const groups = $derived(groupModels(settings.presets, current));
+	const groups = $derived(groupModels(settings.presets, settings.morePresets, current));
 	const locked = $derived(session.turnActive);
 
 	function close(): void {
@@ -71,7 +71,7 @@
 		aria-expanded={open}
 		onclick={toggle}
 	>
-		{chipLabel(current, session.effort)}
+		{chipLabel(current, session.effort, settings.presetLabels)}
 		<span class="caret" aria-hidden="true"></span>
 	</button>
 
@@ -88,7 +88,7 @@
 						title={locked && name !== current ? "Cannot change model while a turn is running" : ""}
 						onclick={() => pickModel(name)}
 					>
-						<span class="label">{modelLabel(name)}</span>
+						<span class="label">{modelLabel(name, settings.presetLabels)}</span>
 						<span class="check" aria-hidden="true">{name === current ? "✓" : ""}</span>
 					</button>
 				{/each}
@@ -136,7 +136,7 @@
 						disabled={locked && name !== current}
 						onclick={() => pickModel(name)}
 					>
-						<span class="label">{modelLabel(name)}</span>
+						<span class="label">{modelLabel(name, settings.presetLabels)}</span>
 						<span class="check" aria-hidden="true">{name === current ? "✓" : ""}</span>
 					</button>
 				{/each}

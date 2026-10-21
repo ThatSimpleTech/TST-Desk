@@ -808,9 +808,9 @@ class SetTier(ClientMessage):
 class SetEffort(ClientMessage):
     """Pick the reasoning effort for a session (the model picker).
 
-    Sent on the wire as ``reasoning_effort`` for ``ezer`` and for tiers that
-    opt in. Persists on the session row. Acked with ``tier_state``, whose
-    ``effort`` the composer chip follows.
+    Sent on the wire as ``reasoning_effort`` for tiers that opt in.
+    Persists on the session row. Acked with ``tier_state``, whose ``effort``
+    the composer chip follows.
     """
 
     type: Literal["set_effort"] = "set_effort"
@@ -3425,6 +3425,11 @@ class SetupState(DaemonEvent):
     # Additive with a default, like ``key_required``: an older client that
     # ignores it behaves exactly as it did.
     tier_slugs: dict[str, str | None] = Field(default_factory=dict)
+    # Model picker: the display name per preset that sets a ``label``, and
+    # the presets that sit under "More models". Additive; an older client
+    # shows every preset by key on the main list.
+    preset_labels: dict[str, str] = Field(default_factory=dict)
+    more_presets: list[str] = Field(default_factory=list)
     # TD-804: skip-all approvals. Additive, default off — an older client
     # that ignores the field keeps asking, which is the safe read.
     skip_all_approvals: bool = False

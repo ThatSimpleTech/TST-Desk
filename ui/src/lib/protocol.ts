@@ -2037,6 +2037,10 @@ export interface SetupState extends DaemonEvent {
   // save cannot pin a model the user left floating. Optional because an
   // older daemon does not send it.
   tier_slugs?: Record<string, string | null>;
+  // Model picker: display names for presets that set a `label`, and the
+  // presets under "More models". Omitted by older daemons.
+  preset_labels?: Record<string, string>;
+  more_presets?: string[];
   // TD-804: skip-all approvals. Additive, default off.
   skip_all_approvals?: boolean;
   // TD-2603: load ~/.tstdesk/memory/ after workspace memory. Additive, default off.

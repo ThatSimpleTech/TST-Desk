@@ -37,15 +37,9 @@ export function effortLabel(effort: EffortLevel): string {
 	return EFFORT_OPTIONS.find((option) => option.id === effort)?.label ?? "Medium";
 }
 
-/** `ezer` reads as "Ezer"; any other preset keeps the name it was given. */
-export function modelLabel(preset: string): string {
-	return preset === "ezer" ? "Ezer" : preset;
-}
-
-/** `sub-claude-opus`, `ezer-forge` and the other raw routes live under
- *  "More models"; everything else, `ezer` included, is on the main list. */
-export function isMoreModel(preset: string): boolean {
-	return preset.startsWith("sub-") || preset.startsWith("ezer-");
+/** What the list and chip call a preset: its configured `label`, else its key. */
+export function modelLabel(preset: string, labels: Readonly<Record<string, string>> = {}): string {
+	return labels[preset] ?? preset;
 }
 
 export interface ModelGroups {
@@ -53,19 +47,28 @@ export interface ModelGroups {
 	more: string[];
 }
 
-/** Split the declared presets into the main list and "More models". The
- *  current preset stays findable even when the daemon did not list it. */
-export function groupModels(presets: readonly string[], current = ""): ModelGroups {
+/** Split the declared presets into the main list and "More models" (the
+ *  config's `picker: more`). The current preset stays findable even when the
+ *  daemon did not list it. */
+export function groupModels(
+	presets: readonly string[],
+	morePresets: readonly string[] = [],
+	current = "",
+): ModelGroups {
 	const names = current !== "" && !presets.includes(current) ? [current, ...presets] : presets;
 	return {
-		main: names.filter((name) => !isMoreModel(name)),
-		more: names.filter(isMoreModel),
+		main: names.filter((name) => !morePresets.includes(name)),
+		more: names.filter((name) => morePresets.includes(name)),
 	};
 }
 
-/** The chip under the composer: `Ezer Medium`. */
-export function chipLabel(preset: string, effort: EffortLevel): string {
-	const model = modelLabel(preset);
+/** The chip under the composer: `House Medium`. */
+export function chipLabel(
+	preset: string,
+	effort: EffortLevel,
+	labels: Readonly<Record<string, string>> = {},
+): string {
+	const model = modelLabel(preset, labels);
 	const level = effortLabel(effort);
 	return model === "" ? level : `${model} ${level}`;
 }

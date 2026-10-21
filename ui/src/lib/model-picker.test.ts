@@ -55,8 +55,10 @@ beforeEach(() => {
 	resetSettings();
 	bindClient(fakeClient());
 	session.sessionId = "s1";
-	session.preset = "ezer";
-	settings.presets = ["ezer", "tst-default", "sub-claude-opus", "sub-grok", "ezer-forge"];
+	session.preset = "house";
+	settings.presets = ["house", "tst-default", "sub-claude-opus", "sub-grok", "house-raw"];
+	settings.presetLabels = { house: "House" };
+	settings.morePresets = ["sub-claude-opus", "sub-grok", "house-raw"];
 	app = mount(ModelPicker, { target: document.body });
 });
 
@@ -71,27 +73,27 @@ afterEach(async () => {
 });
 
 describe("model picker", () => {
-	it("defaults to Medium and the chip reads Ezer Medium", async () => {
+	it("defaults to Medium and the chip reads House Medium", async () => {
 		await tick();
 		expect(session.effort).toBe("medium");
-		expect(chip().textContent?.trim()).toBe("Ezer Medium");
+		expect(chip().textContent?.trim()).toBe("House Medium");
 	});
 
 	it("lists the short main list, then Effort and More models", async () => {
 		await click(chip());
 		expect(texts(".item")).toEqual([
-			"Ezer ✓",
+			"House ✓",
 			"tst-default",
 			"Effort Medium ›",
 			"More models ›",
 		]);
-		expect(document.querySelector('[aria-checked="true"]')?.textContent).toContain("Ezer");
+		expect(document.querySelector('[aria-checked="true"]')?.textContent).toContain("House");
 	});
 
 	it("puts the raw routes under More models", async () => {
 		await click(chip());
 		await click(item("More models"));
-		expect(texts(".item")).toEqual(["sub-claude-opus", "sub-grok", "ezer-forge"]);
+		expect(texts(".item")).toEqual(["sub-claude-opus", "sub-grok", "house-raw"]);
 		await click(item("sub-grok"));
 		expect(sent).toEqual([{ type: "set_session_preset", session_id: "s1", name: "sub-grok" }]);
 	});
@@ -118,13 +120,13 @@ describe("model picker", () => {
 		await click(item("Effort"));
 		await click(item("Extra"));
 		expect(sent).toEqual([{ type: "set_effort", session_id: "s1", effort: "xhigh" }]);
-		expect(chip().textContent?.trim()).toBe("Ezer Extra");
+		expect(chip().textContent?.trim()).toBe("House Extra");
 
 		await click(chip());
 		await click(item("Effort"));
 		await click(item("Ultracode"));
 		expect(sent.at(-1)).toEqual({ type: "set_effort", session_id: "s1", effort: "ultracode" });
-		expect(chip().textContent?.trim()).toBe("Ezer Ultracode");
+		expect(chip().textContent?.trim()).toBe("House Ultracode");
 	});
 
 	it("follows the effort a tier_state reports, so it persists across a reattach", async () => {
@@ -135,11 +137,11 @@ describe("model picker", () => {
 			tier: "brain",
 			override: null,
 			model_slugs: {},
-			preset: "ezer",
+			preset: "house",
 			effort: "max",
 		} as never);
 		await tick();
-		expect(chip().textContent?.trim()).toBe("Ezer Max");
+		expect(chip().textContent?.trim()).toBe("House Max");
 
 		ingestEvent({
 			type: "tier_state",
@@ -148,9 +150,9 @@ describe("model picker", () => {
 			tier: "brain",
 			override: null,
 			model_slugs: {},
-			preset: "ezer",
+			preset: "house",
 		} as never);
 		await tick();
-		expect(chip().textContent?.trim()).toBe("Ezer Medium");
+		expect(chip().textContent?.trim()).toBe("House Medium");
 	});
 });

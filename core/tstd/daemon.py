@@ -1299,6 +1299,12 @@ class Daemon:
             presets=sorted(self.config.presets),
             active_preset=self.config.active_preset,
             tier_slugs=dict(self._slug_snapshot.get(self.config.active_preset, {})),
+            preset_labels={
+                name: p.label for name, p in sorted(self.config.presets.items()) if p.label
+            },
+            more_presets=sorted(
+                name for name, p in self.config.presets.items() if p.picker == "more"
+            ),
             skip_all_approvals=self.skip_all_approvals,
             load_global_memory=self.load_global_memory,
             coworker_enabled=self.coworker_enabled,
