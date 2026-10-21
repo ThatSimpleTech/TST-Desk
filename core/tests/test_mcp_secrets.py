@@ -187,11 +187,18 @@ class TestConfigShape:
             }
         )
         assert good.headers["Authorization"] == "keychain:authorization"
+        # Only the names MCP reserves are refused (TD-5161), not every Mcp- name.
+        vendor = McpServerConfig.model_validate(
+            {"transport": "http", "url": "http://127.0.0.1:9/mcp", "headers": {"Mcp-Api-Key": "k"}}
+        )
+        assert vendor.headers == {"Mcp-Api-Key": "k"}
         bad_maps: list[dict[str, Any]] = [
             {"Accept": "text/html"},  # the client's own
             {"Host": "elsewhere"},
             {"Mcp-Session-Id": "forged"},  # MCP's own (TD-5136)
             {"MCP-Protocol-Version": "2024-11-05"},
+            {"Mcp-Method": "tools/call"},
+            {"Mcp-Param-Region": "eu"},
             {"X-A": "1", "x-a": "2"},  # same field twice
             {"Bad Name": "1"},
             {"X-A": "one\r\nInjected: yes"},
@@ -639,6 +646,40 @@ class TestSettings:
         assert moved["mcp_servers"][0]["env"] == []
         assert "env" not in _server_row(daemon.config_path, "alpha")
         assert not await keychain_mcp.mcp_secret_is_stored("alpha", "token")
+
+    async def test_a_new_host_drops_and_deletes_the_old_headers(
+        self, isolated_home: Path, tmp_path: Path, memory_keychain: MemoryKeychain
+    ) -> None:
+        """TD-5161: a token kept across a url change would go to the new host."""
+        ensure_user_config()
+        cached_config.cache_clear()
+        daemon = Daemon(data_dir=tmp_path / "data")
+        url = "http://127.0.0.1:9/mcp"
+        await _send(
+            daemon, {"type": "set_mcp_server", "id": "alpha", "transport": "http", "url": url}
+        )
+        await _send(
+            daemon,
+            {
+                "type": "set_mcp_secret",
+                "server_id": "alpha",
+                "target": "header",
+                "name": "Authorization",
+                "value": f"Bearer {HEADER_TOKEN}",
+            },
+        )
+        same_host = "http://127.0.0.1:9/other"
+        await _send(
+            daemon, {"type": "set_mcp_server", "id": "alpha", "transport": "http", "url": same_host}
+        )
+        assert _server_row(daemon.config_path, "alpha")["headers"]
+        assert await keychain_mcp.mcp_secret_is_stored("alpha", "authorization")
+        moved = "http://127.0.0.1:10/mcp"
+        await _send(
+            daemon, {"type": "set_mcp_server", "id": "alpha", "transport": "http", "url": moved}
+        )
+        assert "headers" not in _server_row(daemon.config_path, "alpha")
+        assert not await keychain_mcp.mcp_secret_is_stored("alpha", "authorization")
 
     def test_the_wire_never_takes_a_value_on_the_server_messages(self) -> None:
         for key in ("env", "headers"):

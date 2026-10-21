@@ -10,6 +10,7 @@ yield no diff rather than failing the write.
 from __future__ import annotations
 
 import difflib
+import os
 import stat
 from pathlib import Path
 
@@ -25,13 +26,25 @@ def snapshot_text(path: Path) -> str | None:
     diff — a missing diff must never fail a write).
     """
     try:
-        info = path.stat()
-        # Only a regular file: reading a FIFO or a device blocks, or never ends.
+        # Only a regular file: reading a FIFO or a device blocks, or never
+        # ends. Opened without blocking and judged by fstat on the open
+        # file, so a swap after a stat cannot slip a FIFO in (TD-5161).
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
+    except OSError:
+        return None
+    try:
+        info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_SNAPSHOT_BYTES:
             return None
-        return path.read_bytes().decode("utf-8")
+        with os.fdopen(fd, "rb") as handle:
+            fd = -1
+            data = handle.read(_MAX_SNAPSHOT_BYTES + 1)
+        return None if len(data) > _MAX_SNAPSHOT_BYTES else data.decode("utf-8")
     except (OSError, UnicodeDecodeError):
         return None
+    finally:
+        if fd >= 0:
+            os.close(fd)
 
 
 def render_diff(before: str | None, after: str | None, label: str) -> str | None:

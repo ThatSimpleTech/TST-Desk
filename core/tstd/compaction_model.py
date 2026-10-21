@@ -271,7 +271,16 @@ class CompactionSummarizer:
             other.task.cancel()
         self._ahead.clear()
         if ahead is not None:
-            return await ahead.task
+            try:
+                return await ahead.task
+            except asyncio.CancelledError:
+                # The summary written ahead was cancelled (close() as the
+                # loop ended), not this call: fall back to the extractive
+                # one rather than end compact_now (TD-5161).
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
+                    raise
+                return None
         return await self._write(dropped, guidance)
 
     def prefetch(

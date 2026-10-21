@@ -122,6 +122,13 @@ describe("noticeFor", () => {
 		expect(n?.body).not.toContain(key);
 	});
 
+	it("keeps a file name that only reads like a key (TD-5161)", () => {
+		const summary = "Read docs/tst-desk-gap-audit-2026-10-14.md and task-tool-availability.ts";
+		expect(noticeFor({ ...approval(), summary } as DaemonEventUnion)?.body).toBe(summary);
+		const glued = "x" + "sk-ant-api03-" + "aB3dE5fG7hJ9kL1mN3pQ5r"; // tst-secret-ok
+		expect(noticeFor({ ...approval(), summary: glued } as DaemonEventUnion)?.body).toBe("x[REDACTED]");
+	});
+
 	it("names the computer for another computer's session (TD-5015)", () => {
 		const remote = "s1:mch_0123456789ab";
 		const nameOf = (mch: string) => (mch === "mch_0123456789ab" ? "TOWER" : null);

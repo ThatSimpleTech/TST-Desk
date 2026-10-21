@@ -223,8 +223,11 @@ class SessionIndex:
 
         Never raises for a database problem: the session's log is the
         record and the index only a view of it, so a failed write is
-        logged, the session's state is dropped, and the next restore's
-        catch-up fills the gap from disk.
+        logged and the session's state is dropped. That event's text is
+        not indexed, and if it was a user message the later rows' turn
+        numbers run one short; deleting the file rebuilds the index from
+        the logs (TD-5161 corrected an earlier promise that catch-up
+        refills the gap: it resumes after the last committed seq).
         """
         session_id = getattr(event, "session_id", None)
         if not isinstance(session_id, str) or not session_id:

@@ -925,6 +925,40 @@ def _keychain_failure(error: KeychainError) -> StreamResult:
     )
 
 
+_Reoffer = Callable[[TierConfig, CalibratedTokenCounter], list[ProviderToolDefinition] | None]
+
+
+def _reoffer(
+    deferral: McpToolDeferral | None,
+    definitions: list[ProviderToolDefinition] | None,
+    session: Session,
+    tier: TierName,
+    messages: list[ChatMessage],
+) -> _Reoffer:
+    """The step's tool list as one model's call should send it.
+
+    Called for the tier's own model and again for each backup it moves
+    to, so a backup with a smaller window defers MCP tools on its first
+    call as on every later one (TD-5161).
+    """
+
+    def offer(
+        tier_cfg: TierConfig, counter: CalibratedTokenCounter
+    ) -> list[ProviderToolDefinition] | None:
+        if deferral is None:
+            return definitions
+        return deferral.offer(
+            definitions,
+            session=session,
+            tier=tier,
+            tier_cfg=tier_cfg,
+            counter=counter,
+            messages=messages,
+        )
+
+    return offer
+
+
 async def _reply_with_backups(
     reply: StreamResult,
     chain: BackupChain,
@@ -933,7 +967,7 @@ async def _reply_with_backups(
     provider: ProviderLike,
     counter: CalibratedTokenCounter,
     messages: list[ChatMessage],
-    tool_definitions: list[ProviderToolDefinition] | None,
+    tool_definitions: _Reoffer,
     tracker: CostTracker,
     config: ModelConfig,
     client_for: Callable[[TierConfig], Awaitable[ProviderLike]],
@@ -948,7 +982,8 @@ async def _reply_with_backups(
     window with its own calibrated counter, through its own client, and
     its own ``provider_retry`` budget (TD-5120). The chain stays where it
     stopped, so the rest of the turn uses that backup. When the last one
-    fails too, its failure is the turn's.
+    fails too, its failure is the turn's. *tool_definitions* gives each
+    backup the tool list for its own window (MCP deferral, TD-5161).
     """
     tier_cfg = chain.current
     while backup_wanted(reply) and not (session.cancel_requested or session.stop_turn_requested):
@@ -960,8 +995,9 @@ async def _reply_with_backups(
         await announce_switch(session, chain, previous, reply)
         await on_switch(tier_cfg)
         counter = counter_for(tier_cfg)
+        tools = tool_definitions(tier_cfg, counter)
         session.context_meter = ContextMeter(
-            chain.tier, tier_cfg, counter, tool_definitions, fallback=chain.position
+            chain.tier, tier_cfg, counter, tools, fallback=chain.position
         )
         try:
             provider = await client_for(tier_cfg)
@@ -974,7 +1010,7 @@ async def _reply_with_backups(
             chain.tier,
             tier_cfg,
             counter,
-            tool_definitions,
+            tools,
             overflow_retried=overflow_retried,
             max_prompt_images=config.computer_use.max_prompt_images,
             clear_policy=config.clear_tool_results,
@@ -984,7 +1020,7 @@ async def _reply_with_backups(
             tier_cfg.require_slug(),
             messages,
             session,
-            tool_definitions,
+            tools,
             tracker,
             chain.tier,
             tier_cfg,
@@ -2099,6 +2135,7 @@ async def agent_loop(
         # Tiers this turn moved to a backup endpoint (TD-5120). Fresh per
         # user turn, so the next one starts on each tier's own model.
         backups = TurnBackups()
+        session.turn_backups = backups
         guard = ProgressGuard()
         # TD-5124: the done-check when the model ends this turn.
         stop_check = TurnStopCheck(session, tool_dispatcher, _worker_completion)
@@ -2320,15 +2357,9 @@ async def agent_loop(
             #     disk at 2b, so instructions survive compaction.
             model_slug = tier_cfg.require_slug()
             counter = counter_for(tier_cfg)
-            if mcp_deferral is not None:
-                tool_definitions = mcp_deferral.offer(
-                    tool_definitions,
-                    session=session,
-                    tier=tier,
-                    tier_cfg=tier_cfg,
-                    counter=counter,
-                    messages=messages,
-                )
+            # TD-5161: a backup decides for itself too, from the same list.
+            reoffer = _reoffer(mcp_deferral, tool_definitions, session, tier, messages)
+            tool_definitions = reoffer(tier_cfg, counter)
             session.context_meter = ContextMeter(
                 tier, tier_cfg, counter, tool_definitions, fallback=backup_chain.position
             )
@@ -2541,7 +2572,7 @@ async def agent_loop(
                     provider=provider,
                     counter=counter,
                     messages=messages,
-                    tool_definitions=tool_definitions,
+                    tool_definitions=reoffer,
                     tracker=tracker,
                     config=config,
                     client_for=client_for,

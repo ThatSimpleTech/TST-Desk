@@ -21,12 +21,20 @@ from typing import Any
 from pydantic import TypeAdapter, ValidationError
 
 from .logging import get_logger
-from .protocol import DaemonEvent, LineCommentAnchor, QueuedMessages, UserTurn
+from .protocol import (
+    DaemonEvent,
+    LineCommentAnchor,
+    QueuedMessages,
+    RunPermissions,
+    RunRule,
+    UserTurn,
+)
 from .session import QueuedUserMessage, Session
 
 log = get_logger("tstd.queued_messages")
 
 _ANCHORS: TypeAdapter[list[LineCommentAnchor]] = TypeAdapter(list[LineCommentAnchor])
+_RULES: TypeAdapter[list[RunRule]] = TypeAdapter(list[RunRule])
 
 
 def dropped_note(count: int) -> str:
@@ -66,7 +74,28 @@ def queue_rows(messages: Sequence[QueuedUserMessage]) -> list[dict[str, Any]]:
         # starts after a restart still carries them.
         if message.line_comments:
             rows[-1]["line_comments"] = [c.model_dump() for c in message.line_comments]
+        # TD-5161: a restart drops a run's allow rules (they would widen the
+        # gate for a person's later Send) but keeps its deny rules: dropping
+        # those widens it too, so a write the run refused would run unasked.
+        perms = message.run_permissions
+        if perms is not None and perms.deny:
+            rows[-1]["deny"] = [rule.model_dump() for rule in perms.deny]
     return rows
+
+
+class _Unreadable(Exception):
+    """A held row's deny rules could not be read back."""
+
+
+def _held_permissions(row: dict[str, Any]) -> RunPermissions | None:
+    """A row's kept deny rules, or None. Raises :class:`_Unreadable`."""
+    raw = row.get("deny")
+    if raw is None:
+        return None
+    try:
+        return RunPermissions(deny=_RULES.validate_python(raw))
+    except ValidationError:
+        raise _Unreadable from None
 
 
 def _line_comments(row: dict[str, Any]) -> list[LineCommentAnchor] | None:
@@ -97,6 +126,13 @@ def messages_from_rows(rows: Sequence[dict[str, Any]]) -> list[QueuedUserMessage
         ):
             log.warning("dropping malformed queued message")
             continue
+        try:
+            permissions = _held_permissions(row)
+        except _Unreadable:
+            # Fail closed: without its deny rules the message would run
+            # under a wider gate than the person sent it with.
+            log.warning("dropping queued message whose deny rules are unreadable")
+            continue
         messages.append(
             QueuedUserMessage(
                 display=display,
@@ -104,6 +140,7 @@ def messages_from_rows(rows: Sequence[dict[str, Any]]) -> list[QueuedUserMessage
                 id=ident,
                 images_dropped=dropped,
                 line_comments=_line_comments(row),
+                run_permissions=permissions,
             )
         )
     return messages

@@ -250,6 +250,10 @@ class TestDirtyBaseline:
         assert first.status == "committed"
         assert first.notice is not None
         assert first.notice.code == DIRTY_BASELINE
+        # TD-5161: a pre-image commit saves the person's version of a file
+        # the agent writes, so "captures only the agent's writes" was wrong.
+        assert "capture only" not in first.notice.message
+        assert "saved on the session's checkpoint branch" in first.notice.message
         files = _tree_files(repo, first.commit or "")
         # The committed snapshot carries the COMMITTED a.txt, not the
         # user's dirty edit — their work is neither captured nor lost.

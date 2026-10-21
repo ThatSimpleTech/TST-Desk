@@ -76,4 +76,12 @@ describe("question model", () => {
       declined: true,
     });
   });
+
+  it("will not send words past the daemon's cap (TD-5161)", () => {
+    // The daemon refuses a longer answer with a bare bad_request the card
+    // cannot match, so the card stayed on "Sending your answer…".
+    const long = { selected: [], text: "x".repeat(4001) };
+    expect(canSend([long])).toBe(false);
+    expect(canSend([{ selected: [], text: "x".repeat(4000) }])).toBe(true);
+  });
 });

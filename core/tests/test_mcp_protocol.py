@@ -503,6 +503,27 @@ async def test_a_2024_server_gets_no_version_header() -> None:
     assert "mcp-protocol-version" not in listed.headers
 
 
+@pytest.mark.parametrize("status", [406, 415, 422, 500])
+async def test_any_plain_refusal_of_the_probe_means_legacy(status: int) -> None:
+    """TD-5161: a simple legacy server may refuse server/discover with any status."""
+
+    def handle(body: dict[str, Any], _request: httpx.Request) -> httpx.Response:
+        if "id" not in body:
+            return httpx.Response(202)
+        if body["method"] == "server/discover":
+            return httpx.Response(status)
+        if body["method"] == "initialize":
+            return _ok(body, {"protocolVersion": "2025-06-18", "capabilities": {}})
+        return _ok(body, {"tools": []})
+
+    client, _seen = _scripted(handle)
+    try:
+        await client.start()
+        assert await client.list_tools() == []
+    finally:
+        await client.aclose()
+
+
 class TestOffBoxOptIn:
     def test_loopback_needs_no_opt_in(self) -> None:
         assert_http_url("http://127.0.0.1:8080/mcp")

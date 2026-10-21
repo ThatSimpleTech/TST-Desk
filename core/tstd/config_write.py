@@ -146,6 +146,9 @@ def _find_key(lines: list[str], lo: int, hi: int, key: str, indent: int) -> int:
     return -1
 
 
+_PLACEHOLDER = re.compile(r"#\s*slug:")
+
+
 def save_tier_slug(preset: str, tier: str, slug: str, path: Path | None = None) -> Path:
     """Persist *slug* for *preset*'s *tier* in the user config (TD-1703).
 
@@ -211,12 +214,15 @@ def save_tier_slug(preset: str, tier: str, slug: str, path: Path | None = None) 
     if live_at >= 0:
         lines[live_at] = new_line
     else:
-        # The commented placeholder marks where the author meant it to go.
+        # The commented placeholder marks where the author meant it to go:
+        # at the tier's own indent only, so a commented key inside a nested
+        # block (a `fallbacks` entry, TD-5161) is never spliced over.
         placeholder = next(
             (
                 i
                 for i in range(tier_at + 1, tier_end)
-                if lines[i].lstrip().startswith("#") and "slug:" in lines[i]
+                if len(lines[i]) - len(lines[i].lstrip()) == body_indent
+                and _PLACEHOLDER.match(lines[i].lstrip())
             ),
             -1,
         )

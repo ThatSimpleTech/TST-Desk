@@ -66,7 +66,28 @@ interface WalkedRow {
  *  classed by its first character alone, so an added `++i;` or a removed
  *  `-- note` / `---` rule is a content line, not a `+++`/`---` file header
  *  (which only appear outside hunks). */
+/** The marker the daemon's output cap ends a cut tool result with
+ *  (`truncate_output` in core/tstd/tools/results.py). */
+export const TRUNCATION_MARKER = "\n\n┈─[truncated — results exceed output cap]─┈";
+
+/** A cut diff: the whole lines before the cut, and the marker as one line.
+ *  The last line before it may be cut partway, so it goes too (TD-5161):
+ *  neither it nor the marker is a line of the file to comment on. */
+function splitCut(diff: string): { body: string; cut: string | null } {
+  if (!diff.endsWith(TRUNCATION_MARKER)) return { body: diff, cut: null };
+  const before = diff.slice(0, -TRUNCATION_MARKER.length);
+  const lastBreak = before.lastIndexOf("\n");
+  return { body: lastBreak < 0 ? "" : before.slice(0, lastBreak + 1), cut: TRUNCATION_MARKER.trim() };
+}
+
 function walkDiff(diff: string): WalkedRow[] {
+  const { body, cut } = splitCut(diff);
+  const rows = walkWhole(body);
+  if (cut !== null) rows.push({ line: cut, kind: "meta", oldLine: null, newLine: null });
+  return rows;
+}
+
+function walkWhole(diff: string): WalkedRow[] {
   const rows: WalkedRow[] = [];
   let oldNext = 0;
   let newNext = 0;

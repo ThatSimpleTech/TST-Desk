@@ -229,13 +229,19 @@ class PathGuard:
         if unsafe:
             raise RefusalError("windows_unsafe", target, unsafe)
         if is_steering_write(self.boundary, target):
+            # propose_steering_edit refuses worker definitions, so it is
+            # not offered for one (TD-5161).
+            how = (
+                "ask the person to add or change that worker definition"
+                if _in_agents_tree(target)
+                else "to change a steering file, propose it with propose_steering_edit"
+            )
             raise RefusalError(
                 "steering_file",
                 target,
                 "steering files (AGENTS.md/CLAUDE.md/.tst/rules), named worker "
                 "definitions (.tst/agents) and the approval policy "
-                "(.tst/config.yaml) are read-only; to change a "
-                "steering file, propose it with propose_steering_edit",
+                f"(.tst/config.yaml) are read-only; {how}",
             )
         root = self.boundary.workspace_root
         if root is None or not is_in_workspace(self.boundary, target):
@@ -274,3 +280,12 @@ class PathGuard:
             return os.stat(target).st_nlink > 1
         except OSError:
             return False
+
+
+def _in_agents_tree(path: Path) -> bool:
+    """Whether *path* is under a ``.tst/agents`` or ``.tstdesk/agents`` folder."""
+    folded = [p.casefold() for p in path.parts]
+    return any(
+        folded[i] in (".tst", ".tstdesk") and folded[i + 1] == "agents"
+        for i in range(len(folded) - 1)
+    )

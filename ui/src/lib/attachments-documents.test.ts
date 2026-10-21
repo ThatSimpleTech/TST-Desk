@@ -16,6 +16,7 @@ import {
   formatTokens,
   toChips,
   totalBytes,
+  unmeasurePending,
   type AttachmentDraft,
 } from "./attachments";
 import type { AttachmentExtracted } from "./protocol";
@@ -53,6 +54,15 @@ describe("detectDocument", () => {
     expect(detectDocument("stock.xlsx", ZIP)).toBe("xlsx");
     expect(detectDocument("archive.zip", ZIP)).toBeNull();
     expect(detectDocument("fake.pdf", new TextEncoder().encode("hello"))).toBeNull();
+  });
+
+  it("knows a macro-enabled or unnamed document by what the zip holds (TD-5161)", () => {
+    const holding = (member: string) =>
+      new Uint8Array([...ZIP, ...new TextEncoder().encode(`....${member}....`)]);
+    expect(detectDocument("Report.docm", holding("word/document.xml"))).toBe("docx");
+    expect(detectDocument("budget.xlsm", holding("xl/workbook.xml"))).toBe("xlsx");
+    expect(detectDocument("download", holding("xl/workbook.xml"))).toBe("xlsx");
+    expect(detectDocument("archive.zip", holding("readme.txt"))).toBeNull();
   });
 });
 
@@ -145,5 +155,16 @@ describe("formatTokens", () => {
     expect(formatTokens(999)).toBe("≈999 tokens");
     expect(formatTokens(1250)).toBe("≈1.2k tokens");
     expect(formatTokens(2_400_000)).toBe("≈2.4M tokens");
+  });
+});
+
+describe("a dropped connection (TD-5161)", () => {
+  it("turns a chip still reading into its size, so it never spins forever", () => {
+    const drafts = [staged("a1", "r.pdf", PDF)];
+    const fallen = unmeasurePending(drafts);
+    expect(fallen).not.toBeNull();
+    expect(fallen?.[0].measure).toEqual({ state: "unmeasured" });
+    expect(chipDetail(toChips(fallen ?? [])[0])).not.toContain("reading");
+    expect(unmeasurePending(fallen ?? [])).toBeNull();
   });
 });

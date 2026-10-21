@@ -532,6 +532,15 @@ and, on start, catches up from each session's log, so sessions written before
 the index existed become searchable on the first start. It has no keys: delete
 the file to rebuild it from the logs that remain.
 
+What it cannot do (TD-5161). It needs SQLite 3.35 or later (from 2021). On an
+older system library the search box says search is unavailable
+rather than degrading. A row's "turn N" counts the user messages the index has
+seen: for a session indexed only after its log was trimmed (`log_max_events`),
+it counts from the trim point, and after a sibling switch (`set_branch`) a
+sibling's older rows can share a number with the new branch's. A result still
+opens at the right message, since it links by the event's seq. A write SQLite
+refuses (a full disk) leaves that one message out until the file is rebuilt.
+
 ### `clear_tool_results`
 
 How old tool output leaves a full context window (TD-5115). Compaction
@@ -637,7 +646,11 @@ message; `/compact` and "Summarize from here" do the same on request
   before, so this costs about one worker call per turn. When a compaction
   folds one of those spans, the summary is ready and the turn does not wait
   for the worker. Clearing stale tool results does not count as a change.
-  `0` turns writing ahead off.
+  `0` turns writing ahead off. When the worker and the brain are the same
+  local server with one slot (the `local` preset's shape), the summary
+  written ahead queues behind the brain's request, or the brain's behind it,
+  so the turn can slow down; give the worker its own server or slot, or set
+  `0` (TD-5161).
 - **Recent files.** After a compaction, the files read (`fs_read`), written
   (`fs_write`) or edited (`fs_edit`) in the folded turns are read again from
   disk, newest first, and go under the summary, headed
@@ -1003,10 +1016,15 @@ the folder; its `worktree_state` note says why, and `tst run` prints it.
   merges it back (its changes are committed on the branch and the branch is merged into the
   main checkout; a merge that would conflict, or a main checkout in the middle of a merge or
   rebase, is refused and nothing changes) or removes it with its changes. An unchanged
-  worktree is removed whichever you pick. The session then works in the main checkout.
+  worktree is removed whichever you pick. The session then works in the main checkout. While
+  it closes, a new message to the session is refused with a note to send it again (TD-5161).
 - **Removed on its own when unchanged:** when its session is deleted, and when a scheduled
   run ends. A worktree with changes is never removed without your choice: deleting its
   session leaves it on disk on its branch, and a scheduled run's stays with its session.
+  A session whose `worktree.setup` is still running cannot be deleted until it ends
+  (TD-5161). An open or archived session keeps its worktree, changed or not, until you
+  close the worktree or delete the session: archiving files the chat away, it does not
+  end its work.
 - **`tst run` too.** It opens an ordinary session, so its changes land in that session's
   worktree, and it says so on stderr in every output mode: the branch and the worktree's
   path (`--output json` keeps its one object). Close it from the rail or `git merge` the
@@ -1019,7 +1037,7 @@ the folder; its `worktree_state` note says why, and `tst run` prints it.
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `enabled` | bool | `true` | Worktrees for sessions, scheduled jobs and delegated workers on this computer. A workspace can still turn them off for itself (§4.10). |
-| `folder` | string | `""` | Where worktrees go, one folder each named `<repository>-<id>`. Empty is `worktrees/` in the data dir, outside every repository. `~` is expanded. |
+| `folder` | string | `""` | Where worktrees go, one folder each named `<repository>-<id>`. Empty is `worktrees/` in the data dir, outside every repository. `~` is expanded. A relative path is refused (TD-5161): it would mean one place to TST Desk and another to git. |
 | `setup_timeout_s` | int 10–3600 | `600` | Seconds a workspace's `worktree.setup` may run before it is stopped and reported as failed. |
 
 <!-- verify: model -->
@@ -1089,6 +1107,8 @@ What happens after each write:
 - **A hook that rewrites the file says so.** When a formatter changes the file, the note tells the
   model to read it again before its next `fs_edit`. The diff and the checkpoint are taken after the
   hooks, so both show the file as the formatter left it.
+- **Stop during a hook still checkpoints the write.** The write has already landed, so its
+  checkpoint commit is made before the turn stops, and rewind can still undo it (TD-5161).
 - **A clean pass adds nothing** to the model's context.
 - **The time shows in the step timeline.** The write's result row reads `after write 0.43 s` (or
   `after write failed · 0.43 s`), and expanding it lists each hook with its time and outcome. The
@@ -1334,8 +1354,9 @@ path/host fields). Settings persist add / disable / remove through
 `set_mcp_server` and `delete_mcp_server`; the write is surgical so
 teaching comments survive. There is no `env` or `headers` field on those
 messages: a rewrite keeps the server's existing ones, unless it changes
-the transport, which drops them and deletes their keychain items. Live
-sessions keep the tool set they attached with until a new session.
+the transport or moves the url to another host or port (TD-5161), which
+drops them (and a hand-set `allow_remote`) and deletes their keychain
+items. Live sessions keep the tool set they attached with until a new session.
 
 **Tokens per server (TD-5110).** A stdio server's `env` and an http
 server's `headers` map names to values. A value is either a literal,
@@ -1401,7 +1422,9 @@ on stdio, means an older server: TST Desk runs `initialize` offering
 2025-11-25 and accepts 2024-11-05, 2025-03-26, 2025-06-18 or 2025-11-25,
 sending the session id the server gives and, from 2025-06-18,
 `MCP-Protocol-Version`. A server that names only versions TST Desk does
-not speak fails with a doctor row that lists them. Every http request
+not speak fails with a doctor row that lists them. Over http TST Desk
+speaks Streamable HTTP only: a 2024-11-05 server still on the older
+HTTP+SSE transport (a `GET /sse` endpoint) is not supported (TD-5161). Every http request
 sends `Accept: application/json, text/event-stream`. TST Desk declares no
 client capabilities (no roots, sampling or elicitation) and answers only
 `ping`, so a call that asks it for input fails. The doctor row reads
@@ -1431,7 +1454,8 @@ uses, TD-5007), that tier's requests leave them out and carry the builtin
 (names only, about 4,000 characters at most; a server past that is
 named with its tool count). The agent calls it with a few keywords, or
 `select:<name>,<name>` for exact names, and the best matches (five unless
-it asks for up to twenty) load: from the next model call on, their full
+it asks for up to twenty; named picks load up to twenty, and the result
+lists any it had to leave out, TD-5161) load: from the next model call on, their full
 definitions are in the request, after every other tool, and they stay
 for the rest of the session, through compaction and a restart (the
 session's folder keeps the list in `mcp_tools.json`). A tool the
@@ -1442,7 +1466,9 @@ is a plain `tools` array, so it works on any OpenAI-compatible endpoint.
 `tool_search` is Class A (§4.4); loading a tool grants it nothing, and
 each call to it is classified as before. Whether a tier defers is decided
 on its first call and kept for the session, so the learned token ratio
-cannot make the tool list come and go. Measured on the GPU server with six servers
+cannot make the tool list come and go. A backup model (TD-5120) that
+stands in for the tier is offered the tool list sized for its own
+window, not the primary's (TD-5161). Measured on the GPU server with six servers
 (70 tools, `core/scripts/measure_mcp_tool_search.py`) on the local 27B's
 tokenizer: the first request of a turn was 15,294 prompt tokens with
 every schema and 8,272 with tool search, and 9,037 after one search
@@ -1474,7 +1500,7 @@ loaded five tools.
 | `max_call_seconds` | number > 0 | `600` | Hard cap on one tool call, stdio or http, progress or not. Never below `timeout_seconds`. |
 | `read_only_tools` | list of strings | `[]` | The server's tools, by the name the server gives them (not the `<id>__` name), that only read (TD-5123). Read-only plan mode lets these run and refuses every other tool of the server. Only this list counts: a server's own `readOnlyHint` is not trusted. Names are matched exactly, no globs. It changes nothing outside plan mode: a listed tool still asks like any MCP tool. Settings keeps it when it toggles or edits the server. |
 | `env` | mapping of name → string | `{}` | stdio only. Extra environment for this server's child, on top of the daemon's. Names are `[A-Za-z_][A-Za-z0-9_]*`. A value is a literal or `keychain:<entry>` (entry: lowercase letters, digits, `_` and `-`, at most 64). Numbers become strings; a YAML boolean is refused, so quote it. A value may not hold a line break or NUL. |
-| `headers` | mapping of name → string | `{}` | http only. Extra headers on every request to this server, same value rules as `env`. Names are HTTP field names, one spelling each (case is ignored). `Accept`, `Connection`, `Content-Length`, `Content-Type`, `Host`, `Transfer-Encoding` and any name starting `Mcp-` are TST Desk's own and are refused. |
+| `headers` | mapping of name → string | `{}` | http only. Extra headers on every request to this server, same value rules as `env`. Names are HTTP field names, one spelling each (case is ignored). `Accept`, `Connection`, `Content-Length`, `Content-Type`, `Host`, `Transfer-Encoding` and MCP's own `MCP-Protocol-Version`, `Mcp-Session-Id`, `Mcp-Method`, `Mcp-Name` and `Mcp-Param-*` are TST Desk's own and are refused. Another `Mcp-` name, such as a server's `Mcp-Api-Key`, is allowed (TD-5161). |
 
 <!-- verify: model -->
 ```yaml
@@ -1637,7 +1663,8 @@ What a hook says, by exit code:
 
 - **0, nothing printed:** nothing to say.
 - **0 and a JSON object:** `decision` is `block`, `ask` (`before_tool` only) or `allow`;
-  `reason` says why; `context` is text for the model. `allow` is ignored: a hook can only
+  `reason` says why; `context` is text for the model (a `before_tool` hook's context reaches it
+  on the call's result, failed or not, TD-5161). `allow` is ignored: a hook can only
   tighten, never loosen.
 - **0 and plain text:** context for the model on `session_start` and `user_prompt`; ignored on
   the others.
@@ -1812,8 +1839,10 @@ screen. The strip goes away once every item is done; the Plan pane keeps the fin
 list is saved with the session's events and comes back after a restart: when a long step pushes
 its last copy out of the event log's window (`session.log_max_events`), the daemon logs it again
 at once. Lowering `log_max_events` while a session is stopped can window an old list away; the
-agent's next `task_list` call writes it again. A delegated worker or
-research child has no task list.
+agent's next `task_list` call writes it again. Editing a message or switching to another version
+of it (TD-5161) gives the branch its own list: the newest one that branch saved, or none if it
+never made one. A branch that starts from a compaction summary keeps the list it had. A delegated
+worker or research child has no task list.
 
 **How the prompt is measured (TD-5007).** The estimate counts the message text, the tool-call
 arguments, every tool definition the request sends (as the request serializes it — a few
@@ -2496,8 +2525,8 @@ changes made through the shell (never on the branch, see the paragraph above), a
 autonomously (its own `tst/auto/<slug>` branch and drift revert), a Grok-engine session (Grok
 writes files with its own tools, so nothing is checkpointed), a workspace that is not a git
 repository, and a turn whose later checkpoints were made before TST Desk recorded when (an
-older session; use the decision's `git revert`). It is refused while a turn runs. There is no
-setting.
+older session; use the decision's `git revert`). It is refused while a turn runs, and a message
+sent while it writes is refused with a note to send it again (TD-5161). There is no setting.
 
 ### 4.2 `caps` — when the agent stops and asks
 
@@ -2574,8 +2603,9 @@ out-of-memory killer and systemd-oomd, so the line says the cap is the likely ca
 the counters show was not the cap gets no line (TD-5160). With
 `ulimit` the line says the command ran out of memory at its cap, read from its error text
 (`MemoryError`, `Cannot allocate memory`, `std::bad_alloc`, `out of memory`, `failed to map
-segment from shared object`, …; a JavaScript heap limit and GPU memory, such as PyTorch's "CUDA
-out of memory", are not counted). In a container an exit of 137 (SIGKILL) is reported as the likely
+segment from shared object`, …; a JavaScript heap limit, GPU memory (any line naming CUDA, CuPy,
+XLA, ggml, ROCm or Vulkan, and PyTorch's HIP and MPS messages) and a loader's `Operation not
+permitted` on a noexec mount are not counted; TD-5161). In a container an exit of 137 (SIGKILL) is reported as the likely
 cause. A command the tool itself timed out, cancelled or stopped gets no such line. Each command
 has its own cap; two commands running at once can each use it. A value above half of RAM loosens
 the default, so a repo's config that sets one waits for your trust (§4.8). Skip-all does not
@@ -2596,8 +2626,9 @@ charter breakers and do not take this check.
 on the worker tier. It gets at most 8 model calls, fewer if the session has fewer
 `max_iterations` left, and spend and wall clock are checked before each of its calls the same
 way. There are two kinds (TD-5117). `worker`, the default, can read, write files and run shell.
-`research` is read-only: `fs_read`, `fs_list`, `fs_grep`, `web_search` and `web_fetch`, and
-nothing else, no MCP or plugin tool included. Either kind's calls go through the same
+`research` is read-only: `fs_read`, `fs_list`, `fs_grep`, `web_search` and `web_fetch`, plus
+`consult` while `consult.tiers` lists `worker` (the default, TD-5119), and nothing else, no MCP
+or plugin tool included. Either kind's calls go through the same
 classifier and approval gate as the session's own. Either kind hands back a summary of at most
 500 tokens, counted with the token counter for the worker tier's model: four characters a token
 unless tiktoken knows the slug (it is not installed with TST Desk), and not scaled by the ratio
@@ -2630,6 +2661,8 @@ The bytes are kept as they are. A file over `max_file_bytes` is refused whole.
 with no network: PDF through PDFium, DOCX and XLSX with the standard library. The kind comes from
 the file's bytes, not its name. The model reads a `[page 3 of 12]` line before each PDF page and a
 `[sheet: Totals]` line before each sheet, whose rows are tab-separated with empty columns kept.
+A cell formatted as a date or time reads as one (`2024-10-18`, `2024-10-18 12:00:00`, `06:00:00`)
+rather than Excel's serial number, from the workbook's own number formats (TD-5161).
 A DOCX gives its paragraphs and its table rows, tab-separated. The caps above measure the text,
 so a 6 MB PDF of 20 KB of text fits and a small XLSX that expands past `max_file_bytes` does not.
 The file itself may be up to 10 MB, and the files on one message up to 12 MB together, whatever
@@ -2698,7 +2731,9 @@ first, so a rule here that asks or refuses still wins over an allow, and an allo
 Class C call run. `--on-ask deny-and-continue` answers every approval that turn would ask for
 with a refusal the model reads, and the turn carries on: nothing waits for the window, and the
 run exits 3 (refused) if anything was refused. The next turn, from the window or another run,
-is back to this file alone. With skip-all on, nothing asks, so `--on-ask` changes nothing. Only
+is back to this file alone. A run's message still queued when the daemon restarts comes back
+held for the window with its `--deny` rules and nothing else: its allows and `--on-ask` are
+dropped, and Send runs it with those denies beside this file's rules (TD-5161). With skip-all on, nothing asks, so `--on-ask` changes nothing. Only
 `tst run` on this computer can set these, for this computer's own sessions: a phone or another
 computer approves call by call. A Grok session takes `--on-ask` but refuses `--allow` and
 `--deny`, because Grok's own tools never reach these rules.
@@ -2754,7 +2789,9 @@ then runs on the brain tier, and the agent may only read: the classifier refuses
 `read_only_tools`, plugin tools, desktop and browser actuation, the GitHub write tools,
 `propose_steering_edit`, `delegate` with `kind: worker`, and any other tool not known to only read. The refusal comes first, before your `policy` rules, an approval
 card or Skip all approvals, so none of them can run a refused call, and it tells the agent it is
-planning. Reads (`fs_read`, `fs_list`, `fs_grep`, the GitHub reads, screenshots), web search and
+planning. A call that was already waiting on an approval card when plan mode came on is
+checked again once it is allowed, so a late Allow or Skip all approvals refuses it too
+(TD-5161). Reads (`fs_read`, `fs_list`, `fs_grep`, the GitHub reads, screenshots), web search and
 fetch, `load_skill`, `send_file`, `task_list`, `ask_user`, `consult`, `tool_search` (TD-5127: it
 only loads definitions; a loaded MCP tool still needs `read_only_tools`) and `delegate` for research
 still run under the usual rules. The agent ends plan mode with `exit_plan_mode`: its plan
@@ -2767,7 +2804,9 @@ refused call counts as a refusal (`plan_mode`). Plan mode outlives a daemon rest
 stop and launch, a crash): only approving a plan or turning it off ends it, so a message held
 across the restart still runs read-only. The session row in `sessions.json` keeps it
 (`plan_mode`), and the pinned plan is read back too. A pinned tier (`set_tier`) still lasts only
-until the restart.
+until the restart. `/plan` typed in the window is the window's own command, like `/compact`, so
+a skill named `plan` no longer loads by typing `/plan`: ask for it by name (the agent loads it
+with `load_skill`) or rename it (TD-5161).
 
 **Reads inside the workspace never ask (TD-5141).** `fs_read`, `fs_list` and `fs_grep` on a
 path inside the workspace are Class A by a fixed rule, so they run without asking and without
@@ -3213,11 +3252,14 @@ touch. The goal stays set, and the first turn after plan mode is checked as usua
 **`/goal <statement>` gives one session a goal, checked the same way.** Type it in the composer
 of a native-engine session (or send it with `tst run --message`). The statement becomes the task
 for that turn, so you do not need a second message, and it joins the workspace's checks as a
-statement the worker judges, with the same `max_retries` (3 when the file sets none). The goal
+statement the worker judges, with the same `max_retries` (3 when the file sets none). A goal that
+starts with `$` is a command instead, as a check is (`/goal $ npm test`): it runs through the
+shell tool's gate, and a failure sends its output back (TD-5161). The goal
 lasts until a check passes with it, `/goal clear` (or `off`, `stop`, `none`, `cancel`, `reset`)
 clears it, or another `/goal` replaces it. `/goal` on its own shows the goal and how many checks
-have judged it. Neither of those calls the model. A goal is at most 4000 characters, it needs no
-charter, and it survives a restart.
+have judged it. Neither of those calls the model. Sent while a turn runs (Send now), each of these
+takes effect at once (TD-5161), so `/goal clear` ends a goal chase without Stop. A goal is at most
+4000 characters, it needs no charter, and it survives a restart.
 
 **A repo's `stop_check` waits for your trust (§4.8).** It runs on its own at every turn end, so it
 counts as loosening. Your own `/goal` needs no trust.
@@ -3286,8 +3328,11 @@ runs, so a saved edit counts on the next call.
 - **`@name` in a message** points the turn at that worker: the model is told to hand the task to
   it with `delegate`. The approval card and the call are the usual ones.
 - **The agent cannot write them.** Both trees are refused like steering files (prime directive
-  4): `fs_write`, `fs_edit` and a shell write are Class C, inside the workspace or not. They are
-  not proposable with `propose_steering_edit` either; edit them yourself.
+  4): `fs_write`, `fs_edit`, and a shell redirect or `tee` into them, are Class C, inside the
+  workspace or not. Other shell write forms (`cp`, `mv`, `sed -i`, `rm`, a `cd` first) are not
+  parsed and fall to the shell floor's Class B, as for `AGENTS.md` and `.tst/commands`
+  (TD-5161), so Skip all approvals or an autonomous run can run them. They are not proposable
+  with `propose_steering_edit` either, and the refusal says so; edit them yourself.
 - **Plan mode** runs only a worker with no `fs_write`, `fs_edit` or `shell`.
 - They load from a workspace you have not trusted (§4.8), so a definition can only narrow what a
   built-in delegated child already has: its tools fit inside one child kind, its policy only

@@ -24,6 +24,7 @@ from .classifier import (
     DecisionClass,
     DecisionClassifier,
     DecisionRequest,
+    plan_mode_refuses,
     prepare_read_only,
     relative_parts,
 )
@@ -270,6 +271,10 @@ class AmbiguousClassifier:
 
     def _cache_key(self, request: DecisionRequest) -> tuple[str, str]:
         return (request.tool_name, canonical_arguments(request.arguments))
+
+    def plan_mode_refuses(self, request: DecisionRequest) -> bool:
+        """Whether plan mode refuses *request* now; no worker call (TD-5161)."""
+        return plan_mode_refuses(request, self._static.boundary)
 
     async def classify(self, request: DecisionRequest) -> Classification:
         """Classify *request*, consulting the connector when ambiguous.

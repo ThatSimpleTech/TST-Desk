@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import fnmatch
 import json
 import os
@@ -192,7 +193,12 @@ def _kill(proc: asyncio.subprocess.Process) -> None:
     with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
         if sys.platform != "win32":
             os.killpg(proc.pid, signal.SIGKILL)
-        else:
+            return
+        # TD-5161: the tree, as the shell tool does; proc.kill() reached
+        # only the shell, and what it started kept the pipes open.
+        from .tools.shell import _kill_windows_tree
+
+        if _kill_windows_tree(proc.pid) is not None:
             proc.kill()
 
 
@@ -218,6 +224,12 @@ async def run_command(
     if sys.platform != "win32":
         # Its own process group, so a timeout kills what it started too.
         extra["start_new_session"] = True
+    else:
+        # A group leader, so taskkill /T walks only its tree, and no console
+        # window flashes from the windowless daemon (TD-5161).
+        from .tools.shell import _CREATE_NEW_PROCESS_GROUP, _CREATE_NO_WINDOW
+
+        extra["creationflags"] = _CREATE_NEW_PROCESS_GROUP | _CREATE_NO_WINDOW
     pipes: dict[str, Any] = {
         "stdin": asyncio.subprocess.PIPE,
         "stdout": asyncio.subprocess.PIPE,
@@ -289,6 +301,17 @@ class HookRunner:
         # session_start context waiting for the next user turn.
         self.pending_context: list[str] = []
         self.stop_blocks = 0
+        # TD-5161: a delegate child in its own worktree runs the shared
+        # hooks there, so an after_tool lint checks the child's edit.
+        self.cwd: str | None = None
+
+    def in_folder(self, cwd: str) -> HookRunner:
+        """The same hooks, results and log, run in *cwd* (a child's worktree)."""
+        if cwd == (self.cwd or self.owner.workspace_path):
+            return self
+        moved = copy.copy(self)
+        moved.cwd = cwd
+        return moved
 
     # ── What is active ────────────────────────────────────────────────
 
@@ -362,7 +385,8 @@ class HookRunner:
         from .autonomy.sandbox import WORKSPACE_DEST
 
         sandboxed = bool(getattr(session, "autonomy", False))
-        workspace = WORKSPACE_DEST if sandboxed else session.workspace_path
+        folder = self.cwd or session.workspace_path
+        workspace = WORKSPACE_DEST if sandboxed else folder
         body = {
             "event": event,
             "session_id": session.id,
@@ -389,7 +413,7 @@ class HookRunner:
                     outcome = HookOutcome("error", None, reason=f"could not start: {e}")
                     await self._record(hook, outcome, tool_name, tool_call_id)
                     continue
-            outcome = await run_command(hook, body, session.workspace_path, env, argv=argv)
+            outcome = await run_command(hook, body, folder, env, argv=argv)
             await self._record(hook, outcome, tool_name, tool_call_id)
             if outcome.context:
                 verdict.contexts.append(outcome.context)

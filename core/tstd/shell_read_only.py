@@ -135,8 +135,15 @@ class _Call:
     walks: bool
 
 
-def _calls(command: str, entries: frozenset[str]) -> list[_Call] | None:
-    """Each command of the line as a list entry, or None."""
+def _calls(
+    command: str, entries: frozenset[str], *, signatures: bool = False
+) -> list[_Call] | None:
+    """Each command of the line as a list entry, or None.
+
+    A word that checks a signature keeps the line off the list; with
+    *signatures* (the pins, TD-5161) it still reads as its entry, so a
+    person's approval of such a line does not cost it git's pins.
+    """
     if not entries or "cmd" in host_dialects():
         return None
     segs = segments(command)
@@ -150,7 +157,7 @@ def _calls(command: str, entries: frozenset[str]) -> list[_Call] | None:
             if parsed is None:
                 return None
             word = _SIGNATURE_WORDS.get(parsed[0])
-            if word is not None and any(word in arg for arg in args):
+            if not signatures and word is not None and any(word in arg for arg in args):
                 return None
             entry, read = f"git {parsed[0]}", parsed[1]
         elif program == "find":
@@ -295,7 +302,7 @@ def run_env(command: str, env: Mapping[str, str], root: Path) -> dict[str, str]:
     format, as :func:`probe_repo_config` read it when the call was
     classified; SHA-1's when it has not.
     """
-    calls = _calls(command, frozenset(READ_ONLY_ENTRIES))
+    calls = _calls(command, frozenset(READ_ONLY_ENTRIES), signatures=True)
     if calls is None or not any(c.entry.startswith("git ") for c in calls):
         return {}
     config = _repo_config.get(str(_real(str(root))))

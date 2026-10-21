@@ -139,7 +139,12 @@ def stop_daemon(data_dir: Path) -> None:
         return
     pid = int(json.loads(port_file.read_text(encoding="utf-8")).get("pid", 0))
     cmdline = Path(f"/proc/{pid}/cmdline")
-    if pid > 0 and cmdline.exists() and str(data_dir) in cmdline.read_text(errors="replace"):
+    if not (pid > 0 and cmdline.exists()):
+        return
+    # A whole argument, not a substring: /tmp/x/data must not match the
+    # daemon of /tmp/x/data2 (TD-5161).
+    args = cmdline.read_text(errors="replace").split("\0")
+    if str(data_dir) in args or f"--data-dir={data_dir}" in args:
         os.kill(pid, signal.SIGTERM)
 
 

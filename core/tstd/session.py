@@ -45,6 +45,7 @@ from .protocol import ShellJobs as ShellJobsEvent
 from .provider import ChatMessage
 from .questions import PendingQuestion, resolve_all
 from .shell_jobs import ShellJobs
+from .task_list import follow_branch
 from .workspace_trust import TrustStore, WorkspaceConfigView
 from .worktree import SessionWorktree
 
@@ -53,6 +54,7 @@ if TYPE_CHECKING:
     from .config import ModelConfig
     from .context.memory_loader import MemoryLoad
     from .cost import CostTracker
+    from .fallback import TurnBackups
     from .router import TierName, TierRouter
     from .steering_proposals import ParkedSteering
     from .tools.registry import Tool
@@ -81,9 +83,10 @@ class QueuedUserMessage:
     # hands it to that turn, and only that turn, at its next tool-batch
     # boundary. A turn that ends first leaves it a turn of its own.
     steer_into: str | None = None
-    # TD-5118: ``tst run`` rules for the turn this message starts. Never
-    # saved to the queue file: a message a restart holds is sent again by
-    # a person in the window, who can answer what it asks.
+    # TD-5118: ``tst run`` rules for the turn this message starts. A
+    # restart keeps only the deny rules (TD-5161): a message it holds is
+    # sent again by a person in the window, who can answer what it asks,
+    # but never under a wider gate than the run's.
     run_permissions: RunPermissions | None = None
     # TD-5132: the diff comments this message carries. The loop logs them
     # on the user_turn, so the window can tell when a write resolves one.
@@ -345,6 +348,14 @@ class Session:
         # TD-5122: the model's task list (``task_list`` tool). Carried into
         # every compaction summary; rebuilt from the log on revive.
         self.task_list: list[TaskListItem] = []
+        # TD-5161: the running turn's backup endpoints, so a tier_state the
+        # daemon builds mid-turn (set_plan, set_tier) names the same model
+        # as the loop's own report.
+        self.turn_backups: TurnBackups | None = None
+        # TD-5161: a restore or a worktree close is rewriting the folder;
+        # the daemon refuses a new message until it ends (the reason), and
+        # the loop starts no turn meanwhile.
+        self.folder_busy: str | None = None
         # TD-5137: background shell jobs. The session owns them, so ending
         # it (``cancel``) kills them; each change logs ``shell_jobs``.
         self.shell_jobs = ShellJobs(self._log_shell_jobs)
@@ -1148,7 +1159,9 @@ class Session:
                 is logged and the message runs from memory.
         """
         queued = QueuedUserMessage.plain(content) if isinstance(content, str) else content
-        if steer and self._steer_turn is not None:
+        if steer and self._steer_turn is not None and queued.run_permissions is None:
+            # A message with its own run rules (TD-5118) never steers: the
+            # running turn keeps its own, so the rules would not apply.
             queued = replace(queued, steer_into=self._steer_turn)
         self._open_turns += 1
         try:
@@ -1191,7 +1204,10 @@ class Session:
             self.held_messages = [m for m in self.held_messages if m.id != queued_id]
             # Send on a held row is always a click, so mid-turn it steers,
             # as Send now does (TD-5112).
-            if self._steer_turn is not None:
+            # Not one with its own run rules (TD-5161): the running turn
+            # keeps its own, so a restored --deny would not hold; it waits
+            # for a turn of its own instead.
+            if self._steer_turn is not None and found.run_permissions is None:
                 found = replace(found, steer_into=self._steer_turn)
             self._waiting.append(found)
             self._open_turns += 1
@@ -1293,6 +1309,13 @@ class Session:
                 # TD-5126: the worktree's setup command is still running.
                 await asyncio.sleep(0.05)
                 continue
+            if self.folder_busy is not None:
+                # TD-5161: a restore or worktree close is rewriting the
+                # folder. The daemon refuses what a person sends meanwhile;
+                # this holds anything else (a schedule, an autonomy
+                # continue) until it is done.
+                await asyncio.sleep(0.05)
+                continue
             try:
                 return self._user_message_queue.get_nowait()
             except asyncio.QueueEmpty:
@@ -1352,6 +1375,9 @@ class Session:
             return "empty_content"
         if self.turn_in_flight:
             return "turn_in_progress"
+        if self.folder_busy is not None:
+            # TD-5161: the branch's turn would write into the folder.
+            return "session_busy"
         cut = self._find_user_turn(user_index)
         if isinstance(cut, str):
             return cut
@@ -1361,6 +1387,7 @@ class Session:
         self._branch_cursor[user_index] = len(siblings) - 1
         self.conversation[cut:] = []
         self._drain_user_queue()
+        await follow_branch(self)
         await self.add_user_message(text)
         return self._emit_reset(user_index, text)
 
@@ -1522,6 +1549,7 @@ class Session:
         self._branch_cursor[user_index] = sibling_index
         self.conversation[:] = deepcopy(siblings[sibling_index])
         self._drain_user_queue()
+        await follow_branch(self)
         async with self._queue_lock:
             await self._write_queue()
         position = self._find_user_turn(user_index)

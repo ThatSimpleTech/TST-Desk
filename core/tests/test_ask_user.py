@@ -264,6 +264,24 @@ async def test_stop_ends_the_wait_and_the_turn(asked: Run) -> None:
     assert request.tool_call_id not in run.session.pending_questions
 
 
+async def test_cancel_ends_the_wait(asked: Run) -> None:
+    """TD-5161: the criterion named cancel, but only Stop and the timeout had tests.
+
+    The session's own cancel, which the daemon's ``cancel`` calls before it
+    cancels the runner's task (that second step can cut the log short).
+    """
+    run = asked
+    request = await run.start()
+    await run.session.cancel()
+    await eventually(lambda: bool(run.events(ToolResult)), within=5)
+    [result] = run.events(ToolResult)
+    assert (result.status, result.error_code) == ("error", "question_cancelled")
+    [answered] = run.events(QuestionAnswered)
+    assert answered.outcome == "cancelled"
+    assert request.tool_call_id not in run.session.pending_questions
+    await eventually(lambda: run.session.state == "cancelled", within=5)
+
+
 async def test_the_approval_timeout_expires_a_question(tmp_path: Path) -> None:
     run = await _run(tmp_path, [_ask(DB), Script(kind="stream", content="ok")])
     try:

@@ -637,6 +637,25 @@ class TestSessionScope:
         assert "run_permissions" not in json.dumps(rows)
         assert messages_from_rows(rows)[0].run_permissions is None
 
+    def test_a_restart_keeps_the_deny_rules(self) -> None:
+        """TD-5161: dropping a deny widened the gate for the person's Send."""
+        held = QueuedUserMessage(
+            display="go",
+            provider="go",
+            run_permissions=RunPermissions(
+                allow=[RunRule(tool="*")],
+                deny=[RunRule(tool="fs_write")],
+                on_ask="deny_and_continue",
+            ),
+        )
+        back = messages_from_rows(json.loads(json.dumps(queue_rows([held]))))[0].run_permissions
+        assert back == RunPermissions(deny=[RunRule(tool="fs_write")])
+
+    def test_unreadable_deny_rules_drop_the_row(self) -> None:
+        rows = queue_rows([QueuedUserMessage(display="go", provider="go")])
+        rows[0]["deny"] = [{"tool": ""}]
+        assert messages_from_rows(rows) == []
+
 
 async def test_a_delegate_child_keeps_its_parents_run_rules(tmp_path: Path) -> None:
     ws = _delegate_workspace(tmp_path)

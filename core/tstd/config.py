@@ -593,6 +593,16 @@ class WorktreeConfig(BaseModel):
     folder: str = ""
     setup_timeout_s: int = Field(default=600, ge=10, le=3600)
 
+    @field_validator("folder")
+    @classmethod
+    def _absolute(cls, value: str) -> str:
+        """A relative folder meant one place to Python and another to git (TD-5161)."""
+        if value.strip() and not Path(value.strip()).expanduser().is_absolute():
+            raise ValueError(
+                f"worktree.folder must be an absolute path (or start with ~), not {value!r}"
+            )
+        return value
+
 
 class SessionConfig(BaseModel):
     """On-disk session event-log window (TD-2901).

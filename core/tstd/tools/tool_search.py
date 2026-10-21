@@ -53,7 +53,10 @@ TOOL_SEARCH_TOOL = Tool(
                 "type": "integer",
                 "minimum": 1,
                 "maximum": MAX_RESULTS_CAP,
-                "description": f"Most tools to load (default {DEFAULT_MAX_RESULTS})",
+                "description": (
+                    f"Most tools to load (default {DEFAULT_MAX_RESULTS}; "
+                    f"{MAX_RESULTS_CAP} for select:)"
+                ),
             },
         },
         "required": ["query"],
@@ -189,8 +192,15 @@ async def tool_search(
     candidates = [t for t in registry.list_tools() if is_mcp_tool(t)]
     if not candidates:
         return "No MCP tools are configured, so there is nothing to load."
-    limit = min(max(max_results or DEFAULT_MAX_RESULTS, 1), MAX_RESULTS_CAP)
-    found = search_tools(candidates, query, limit)
+    picks = query.strip().lower().startswith(SELECT_PREFIX)
+    # Named picks load up to the cap, not the keyword default (TD-5161).
+    default = MAX_RESULTS_CAP if picks else DEFAULT_MAX_RESULTS
+    limit = min(max(max_results or default, 1), MAX_RESULTS_CAP)
+    if picks:
+        everything = _select(candidates, query.strip()[len(SELECT_PREFIX) :])
+        found, left = everything[:limit], everything[limit:]
+    else:
+        found, left = search_tools(candidates, query, limit), []
     if not found:
         return (
             f"No MCP tool matched {query.strip()!r}. Try other keywords, or "
@@ -204,4 +214,10 @@ async def tool_search(
     for tool in found:
         note = "" if tool.name in added else " (already loaded)"
         lines.append(f"- {tool.name}{note}: {_one_line(tool.description) or '(no description)'}")
+    if left:
+        lines.append(
+            f"Not loaded, over the limit of {limit} per call: "
+            + ", ".join(t.name for t in left)
+            + ". Select them in another call."
+        )
     return "\n".join(lines)

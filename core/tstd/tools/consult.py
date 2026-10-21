@@ -61,8 +61,8 @@ CONSULT_DESCRIPTION = (
     "are stuck on after a failed attempt. Not for routine steps. The adviser "
     "sees only your question and the context you send (paste the code, error "
     "output or plan it needs), not this conversation or the workspace, and it "
-    "has no tools. to: brain (the default) or validator. Only a few consults "
-    "are allowed per turn."
+    "has no tools. to: brain or validator; it defaults to the brain, or to the "
+    "validator when you are the brain. Only a few consults are allowed per turn."
 )
 
 CONSULT_TOOL = Tool(
@@ -88,7 +88,10 @@ CONSULT_TOOL = Tool(
             "to": {
                 "type": "string",
                 "enum": list(CONSULT_TARGETS),
-                "description": "brain (default) or validator.",
+                "description": (
+                    "brain or validator. Default: the brain, or the validator "
+                    "when you are the brain (a tier cannot ask itself)."
+                ),
             },
         },
         "required": ["question"],

@@ -23,12 +23,11 @@ from __future__ import annotations
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..config import ModelConfig, TierConfig, TierName
 from ..context import PromptAssembler
 from ..context.tokens import make_token_counter
-from ..context.workers import WorkerDefinition
 from ..logging import get_logger
 from ..output_cap import (
     LENGTH_FINISH,
@@ -83,6 +82,9 @@ __all__ = [
     "run_worker_child",
     "worker_child_registry",
 ]
+
+if TYPE_CHECKING:  # TD-5161: context.workers imports tools; no cycle at import
+    from ..context.workers import WorkerDefinition
 
 log = get_logger("tstd.delegate")
 
@@ -367,6 +369,8 @@ async def run_worker_child(
         # Root-bound pieces follow the child into its worktree (TD-5126).
         child.worktree = worktree
         bind_child_root(parent, child, child_dispatcher)
+        # TD-5161: the shared hooks run in the child's worktree, not the parent's.
+        child.hooks = parent.hooks.in_folder(child.workspace_path)
     child.autonomy = False
     # TD-5119: the child acts as the worker tier, and its consults count
     # against the parent's turn.

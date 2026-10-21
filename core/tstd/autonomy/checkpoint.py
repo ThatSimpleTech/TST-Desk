@@ -401,9 +401,10 @@ class Checkpointer:
             return None
         return self._notice_once(
             DIRTY_BASELINE,
-            "This workspace has uncommitted changes. Checkpoints capture only "
-            "the agent's writes on the session branch; your in-progress "
-            "changes are left untouched.",
+            "This workspace has uncommitted changes. They stay in your working "
+            "tree and are never committed to your branch. Before the agent "
+            "writes a file you have changed, your version of that file is "
+            "saved on the session's checkpoint branch.",
         )
 
     async def _rebase_in_progress(self) -> bool:

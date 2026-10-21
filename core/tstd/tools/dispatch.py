@@ -8,6 +8,7 @@ returns structured results.  Parallel-safe tools run concurrently.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from pathlib import Path
@@ -575,6 +576,18 @@ class ToolDispatcher:
                     error_code="approval_denied",
                     decision_class=decision_class,
                 )
+            # Plan mode turned on while the call waited: skip-all or a
+            # late Allow must not run a changing call now (TD-5161). Only
+            # the plan-mode rule is asked again: no second worker judgment.
+            if self.classifier.plan_mode_refuses(request):
+                return ToolResult(
+                    tool_call_id=tool_call_id,
+                    name=name,
+                    status="error",
+                    output=planning_refusal(request),
+                    error_code=PLAN_MODE_REFUSED,
+                    decision_class=decision_class,
+                )
 
         # What let the call run without asking, for the audit (TD-5103):
         # the read-only list, only when no policy rule or approval decided.
@@ -632,7 +645,7 @@ class ToolDispatcher:
                 tool_call_id=tool_call_id,
                 name=name,
                 status="error",
-                output=e.message,
+                output=e.message + _hook_note(hook_context),
                 error_code=e.code,
                 decision_class=decision_class,
                 allowed_by=allowed_by,
@@ -653,7 +666,7 @@ class ToolDispatcher:
                 tool_call_id=tool_call_id,
                 name=name,
                 status="error",
-                output=f"Tool '{name}' failed: {e}",
+                output=f"Tool '{name}' failed: {e}" + _hook_note(hook_context),
                 error_code="handler_error",
                 allowed_by=allowed_by,
                 transcript=e.transcript if isinstance(e, HandlerFailed) else (),
@@ -673,7 +686,27 @@ class ToolDispatcher:
         #      report goes to the model in this result. Never raises.
         hook_runs: tuple[AfterWriteRun, ...] = ()
         if name in WRITE_TOOLS and canonical_writes and session is not None:
-            hook_runs, hook_note = await run_after_write(session, list(canonical_writes.values()))
+            try:
+                hook_runs, hook_note = await run_after_write(
+                    session, list(canonical_writes.values())
+                )
+            except asyncio.CancelledError:
+                # Stopped mid-hook (TD-5161): the write already happened,
+                # so it still gets its checkpoint, or rewind cannot undo it.
+                if tool.mutates and self.checkpointer is not None:
+                    with contextlib.suppress(Exception):
+                        await asyncio.shield(
+                            self.checkpointer.checkpoint(
+                                list(canonical_writes.values()),
+                                tool_name=name,
+                                tool_call_id=tool_call_id,
+                                decision_class=decision_class,
+                                decision_rule=(
+                                    classification.rule.id if classification.rule else None
+                                ),
+                            )
+                        )
+                raise
             if hook_note:
                 output = f"{output}\n\n{hook_note}"
             # TD-5139: what a language server now finds in the files, after
@@ -988,3 +1021,12 @@ class ToolDispatcher:
                 f"Expected schema: {json.dumps(tool.parameters, indent=2)}"
             )
         return None
+
+
+def _hook_note(context: str) -> str:
+    """A ``before_tool`` hook's context on a failed call (TD-5161).
+
+    ``after_tool`` carries it on success; a refused or failed handler
+    returns early, so the note is added here instead of being dropped.
+    """
+    return f"\n\n[hooks]\n{context}" if context else ""

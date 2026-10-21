@@ -19,7 +19,6 @@ from ..memory_commit import MemoryCommitter
 from ..protocol import WorkerStep
 from ..session import Session
 from ..worktree import SessionWorktree, WorktreeError
-from ..worktree_session import open_child, settle_child
 from .boundary import PathGuard
 from .delegate_child import TranscriptRecorder
 from .dispatch import ToolDispatcher
@@ -40,6 +39,8 @@ async def open_child_tree(parent: Session, wanted: object) -> SessionWorktree | 
     if not _wanted(wanted):
         return None
     try:
+        from ..worktree_session import open_child  # TD-5161: it imports session -> tools
+
         return await open_child(parent, uuid.uuid4().hex)
     except WorktreeError as e:
         raise HandlerRefusal(
@@ -55,6 +56,8 @@ async def close_child_tree(
     """Settle the child's worktree; the note goes on the transcript and the summary."""
     if wt is None:
         return ""
+    from ..worktree_session import settle_child
+
     note = await settle_child(wt, task)
     TranscriptRecorder(steps).add("note", note)
     return note

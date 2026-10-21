@@ -198,6 +198,29 @@ def test_stop_daemon_leaves_another_data_dirs_daemon_alone(
     assert signalled == []
 
 
+def test_stop_daemon_leaves_a_longer_data_dirs_daemon_alone(
+    measure: ModuleType, tmp_path: Path
+) -> None:
+    """TD-5161: /x/data is a prefix of /x/data2, whose daemon must keep running."""
+    other = tmp_path / "data2"
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", str(other)])
+    try:
+        cmdline = Path(f"/proc/{child.pid}/cmdline")
+        for _ in range(500):
+            if str(other) in cmdline.read_text(errors="replace"):
+                break
+            time.sleep(0.01)
+        mine = tmp_path / "data"
+        mine.mkdir()
+        (mine / "port.json").write_text(json.dumps({"pid": child.pid, "port": 1}))
+        measure.stop_daemon(mine)
+        time.sleep(0.2)
+        assert child.poll() is None
+    finally:
+        child.kill()
+        child.wait(timeout=10)
+
+
 def test_stop_daemon_stops_its_own_data_dirs_daemon(measure: ModuleType, tmp_path: Path) -> None:
     child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", str(tmp_path)])
     try:

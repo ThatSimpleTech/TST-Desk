@@ -6,7 +6,7 @@
 	// phone shows this same card, so every option is a full-size tap target.
 	import { onMount, untrack } from 'svelte';
 	import Icon from './Icon.svelte';
-	import { canSend, emptyDrafts, sendsOnTap, toggle, type Draft } from '../question';
+	import { ANSWER_TEXT_MAX, canSend, emptyDrafts, sendsOnTap, toggle, type Draft } from '../question';
 	import { answer, canAnswer, decline, type QuestionCard } from '../question-store.svelte.js';
 	import { approvalWaitCopy } from '../machines';
 	import { machineNameFor } from '../machines.svelte.js';
@@ -117,6 +117,7 @@
 				class:own--used={ownWords(index).trim() !== ''}
 				type="text"
 				placeholder="Or type your own answer"
+				maxlength={ANSWER_TEXT_MAX}
 				aria-label={`Your own answer to: ${question.question}`}
 				value={ownWords(index)}
 				oninput={(event) => setText(index, event.currentTarget.value)}

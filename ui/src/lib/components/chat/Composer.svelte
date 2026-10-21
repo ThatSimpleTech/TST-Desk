@@ -24,6 +24,7 @@
 		acceptAttachment,
 		applyExtracted,
 		extractRequest,
+		unmeasurePending,
 		toChips,
 		type AttachmentDraft,
 		type AttachmentRefusal,
@@ -38,7 +39,7 @@
 	import type { AttachmentLimits } from "../../protocol";
 	import { grok, matchingGrokCommands, runGrokCommand } from "../../grok.svelte.js";
 	import { localWorkspacePath, session } from "../../session-status.svelte.js";
-	import { onDaemonEvent, sendToDaemon } from "../../connection-status.svelte.js";
+	import { onConnectionState, onDaemonEvent, sendToDaemon } from "../../connection-status.svelte.js";
 	import {
 		BUILTIN_SLASH_ITEMS,
 		filterCommands,
@@ -173,6 +174,15 @@
 			const result = applyExtracted(attachments, event, limits);
 			attachments = result.drafts;
 			if (result.refusal !== null) refusal = result.refusal;
+		}),
+	);
+
+	// TD-5161: a dropped connection never answers; don't leave "reading…".
+	$effect(() =>
+		onConnectionState((state) => {
+			if (state === "connected") return;
+			const fallen = unmeasurePending(attachments);
+			if (fallen !== null) attachments = fallen;
 		}),
 	);
 

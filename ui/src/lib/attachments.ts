@@ -112,6 +112,13 @@ export function detectDocument(name: string, bytes: Uint8Array): DocumentKind | 
   if (bytes.length >= 5 && String.fromCharCode(...bytes.subarray(0, 5)) === "%PDF-") return "pdf";
   const zip = bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 3 && bytes[3] === 4;
   if (!zip) return null;
+  // By the bytes, as the daemon decides (TD-5161): a zip's member names are
+  // stored uncompressed, so a .docm, an .xlsm or a file with no extension
+  // is judged by what it holds, not what it is called.
+  const text = new TextDecoder("latin1").decode(bytes);
+  if (text.includes("word/document.xml")) return "docx";
+  if (text.includes("xl/workbook.xml")) return "xlsx";
+  // A name alone still stages it; the daemon's answer says if it is not one.
   const lower = name.toLowerCase();
   if (lower.endsWith(".docx")) return "docx";
   if (lower.endsWith(".xlsx")) return "xlsx";
@@ -413,6 +420,19 @@ export function extractRequest(sessionId: string, draft: AttachmentDraft): Extra
     request_id: draft.id,
     attachment: { name: draft.name, content_b64: draft.content_b64 },
   };
+}
+
+/** A connection that dropped loses the answers it owed (TD-5161): the chips
+ *  still "reading…" fall back to their size, and the send measures them. */
+export function unmeasurePending(drafts: readonly AttachmentDraft[]): AttachmentDraft[] | null {
+  if (!drafts.some((d) => d.document !== undefined && (d.measure ?? { state: "pending" }).state === "pending")) {
+    return null;
+  }
+  return drafts.map((d) =>
+    d.document !== undefined && (d.measure ?? { state: "pending" }).state === "pending"
+      ? { ...d, measure: { state: "unmeasured" } }
+      : d,
+  );
 }
 
 /** Fold the daemon's answer into the staged drafts. A refusal, or text that

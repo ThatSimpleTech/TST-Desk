@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
+from urllib.parse import urlsplit
 
 import websockets.exceptions
 from pydantic import ValidationError
@@ -585,7 +586,39 @@ _BRANCH_REFUSALS: dict[str, str] = {
     ),
     "user_turn_not_found": "That message is not in this conversation.",
     "branch_not_found": "That version of the message is no longer available.",
+    "session_busy": (
+        "This session is restoring files or closing its worktree. Edit or switch when that is done."
+    ),
 }
+
+
+def _folder_busy_refusal(session: Session, msg_type: str, **extra: Any) -> str | None:
+    """``session_busy`` while a restore or worktree close rewrites the folder (TD-5161).
+
+    Every path that starts a turn from a person's click checks it, not
+    only ``user_message``: a turn started then would write into the folder
+    being restored, or one about to be deleted.
+    """
+    if session.folder_busy is None:
+        return None
+    return build_error(
+        "session_busy",
+        f"This session is {session.folder_busy}. Send it again when that is done.",
+        session_id=session.id,
+        in_reply_to=msg_type,
+        **extra,
+    )
+
+
+def _url_host(url: str | None) -> str | None:
+    """An MCP url's host and port, lowercased; None for no url (stdio)."""
+    if not url:
+        return None
+    try:
+        parts = urlsplit(url)
+        return f"{(parts.hostname or '').lower()}:{parts.port}"
+    except ValueError:
+        return url
 
 
 def _comment_ids(msg: object) -> list[str] | None:
@@ -2725,6 +2758,11 @@ class Daemon:
                     session_id=msg.session_id,
                     in_reply_to=msg.type,
                 )
+            # TD-5161: a restore or worktree close is rewriting the folder;
+            # a turn started now would write into it (or into a folder
+            # about to be deleted).
+            if (busy := _folder_busy_refusal(found, msg.type)) is not None:
+                return busy
             # TD-5118: Grok's own tools never meet TST Desk's policy gate, so
             # a rule could not be kept there. Refused rather than dropped:
             # a --deny that silently did nothing would be worse than none.
@@ -2870,6 +2908,8 @@ class Daemon:
                     "session_not_found",
                     f"Session {msg.session_id!r} not found",
                 )
+            if (busy := _folder_busy_refusal(found, msg.type)) is not None:
+                return busy
             result = await found.fork_from(msg.user_index, msg.content)
             if isinstance(result, str):
                 return build_error(
@@ -3508,6 +3548,14 @@ class Daemon:
 
         if isinstance(msg, DeleteSession):
             doomed = self._session_worktree(msg.session_id)
+            if doomed is not None and doomed.setup == "running":
+                # TD-5161: deleting now would orphan the worktree and its
+                # branch, with the setup still running for nobody.
+                return build_error(
+                    "worktree_busy",
+                    "The worktree's setup is still running. Delete the session when it ends.",
+                    session_id=msg.session_id,
+                )
             refusal = await delete_session(
                 self.session_registry,
                 self._session_store,
@@ -3521,7 +3569,7 @@ class Daemon:
                 save_session_stars(self.data_dir, self.session_stars)
                 # TD-5126: an unchanged worktree goes with its session; one
                 # with changes stays on disk, on its branch.
-                if doomed is not None and doomed.setup != "running":
+                if doomed is not None:
                     await settle(doomed)
             return refusal if refusal is not None else await self._handle_list_sessions()
 
@@ -3749,6 +3797,8 @@ class Daemon:
             name = msg.name.strip().lstrip("/")
             argument = msg.argument.strip()
             text = f"/{name} {argument}".strip()
+            if (busy := _folder_busy_refusal(found, msg.type)) is not None:
+                return busy
             await found.add_user_message(text)
             return None
 
@@ -3760,6 +3810,8 @@ class Daemon:
             text = "Approve the plan and start implementing."
             if comment:
                 text = f"{text} {comment}"
+            if (busy := _folder_busy_refusal(found, msg.type)) is not None:
+                return busy
             await found.add_user_message(text)
             return None
 
@@ -3854,7 +3906,13 @@ class Daemon:
             try:
                 # Settings sends no timeouts; keep the ones already set (TD-5105).
                 prior = self.config.mcp.servers.get(msg.id)
-                kept = prior is not None and prior.transport == msg.transport
+                # A new transport, or a url on another host (TD-5161), cannot
+                # use the old opt-in or credentials: they were for that server.
+                kept = (
+                    prior is not None
+                    and prior.transport == msg.transport
+                    and _url_host(prior.url) == _url_host(msg.url)
+                )
                 spec = McpServerConfig(
                     transport=msg.transport,
                     command=msg.command,
@@ -4124,6 +4182,8 @@ class Daemon:
                     session_id=msg.session_id,
                     in_reply_to=msg.type,
                 )
+            if (busy := _folder_busy_refusal(found, msg.type)) is not None:
+                return busy
             done = await found.send_held(msg.queued_id)
         else:
             done = await found.remove_held(msg.queued_id)
@@ -4190,6 +4250,8 @@ class Daemon:
         # ended meanwhile, and a message queued then would never be read.
         if (refused := not_running()) is not None:
             return refused
+        if (busy := _folder_busy_refusal(found, msg.type, comment_ids=ids)) is not None:
+            return busy
         try:
             await found.add_user_message(
                 QueuedUserMessage(
@@ -4979,13 +5041,20 @@ class Daemon:
             return build_error(
                 "worktree_busy", "The worktree's setup is still running.", session_id=sid
             )
+        if sess is not None:
+            sess.folder_busy = "closing its worktree"
         try:
-            note = await close_worktree(wt, msg.action, title=record.title or f"Session {sid[:8]}")
-        except WorktreeHasChanges as e:
-            return build_error("worktree_has_changes", str(e), session_id=sid)
-        except WorktreeError as e:
-            return build_error("worktree_failed", str(e), session_id=sid)
-        await self._leave_worktree(sid, note)
+            try:
+                title = record.title or f"Session {sid[:8]}"
+                note = await close_worktree(wt, msg.action, title=title)
+            except WorktreeHasChanges as e:
+                return build_error("worktree_has_changes", str(e), session_id=sid)
+            except WorktreeError as e:
+                return build_error("worktree_failed", str(e), session_id=sid)
+            await self._leave_worktree(sid, note)
+        finally:
+            if sess is not None:
+                sess.folder_busy = None
         log.info(
             "worktree closed",
             extra={"extra_fields": {"session_id": sid, "action": msg.action or "auto"}},

@@ -296,6 +296,15 @@ class TestOutOfMemoryText:
             "RuntimeError: CUDA error: out of memory",
             "torch.OutOfMemoryError: HIP out of memory. Tried to allocate 20.00 MiB",
             "RuntimeError: MPS backend out of memory (MPS allocated: 1 GB)",
+            # TD-5161: other GPU stacks, and a loader refused by a noexec mount.
+            "ggml_backend_cuda_buffer_type_alloc_buffer: allocating 4096.00 MiB on device 0: "
+            "cudaMalloc failed: out of memory",
+            "CUDA_ERROR_OUT_OF_MEMORY: out of memory",
+            "cupy.cuda.memory.OutOfMemoryError: Out of memory allocating 8,000,000,000 bytes",
+            "jaxlib.xla_extension.XlaRuntimeError: RESOURCE_EXHAUSTED: Out of memory while "
+            "trying to allocate 17179869184 bytes.",
+            "error while loading shared libraries: libfoo.so: failed to map segment from "
+            "shared object: Operation not permitted",
             "grep: nothing.txt: No such file or directory",
             "",
         ],

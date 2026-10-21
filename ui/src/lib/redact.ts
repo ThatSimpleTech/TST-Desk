@@ -6,12 +6,20 @@
 // a future daemon path that forgets to redact can't leak through the UI.
 // Wider than core's on purpose: Bearer headers and dashed key forms are
 // cheap to catch here, and over-redaction in a diagnostics report is
-// harmless. Pure module, no runes.
+// harmless. Pure module, no runes. It also cleans OS notification banners
+// (os-notify.ts), which a person reads, so the sk- rule is core's (TD-5161).
+
+// A run after "sk-" that reads as words, not a key (core's _SK_WORDS,
+// TD-5160): short lowercase or Title-case words with up to four digits,
+// short acronyms or short numbers, split by "-" or "_".
+const SK_WORD = "(?:[A-Z]?[a-z]{1,24}[0-9]{0,4}|[A-Z]{1,4}[0-9]{0,4}|[0-9]{1,8})";
+const SK_WORDS = `${SK_WORD}(?:[-_]+${SK_WORD})*[-_]*(?![a-zA-Z0-9_-])`;
 
 const SECRET_PATTERNS: RegExp[] = [
-	// sk-… API keys, including dashed forms (sk-ant-…); core requires 20+
-	// alphanumerics with no dashes, which misses those.
-	/sk-[a-zA-Z0-9][a-zA-Z0-9_-]{15,}/g,
+	// sk-… API keys, including dashed forms (sk-ant-…). Straight after a
+	// lowercase letter a run that reads as words is let go, so a path such
+	// as "tst-desk-gap-audit-2026-10-14.md" keeps its name.
+	new RegExp(`(?:(?<![a-z])|(?!sk-${SK_WORDS}))sk-[a-zA-Z0-9][a-zA-Z0-9_-]{15,}`, "g"),
 	/github_pat_[a-zA-Z0-9_]{20,}/g,
 	/ghp_[a-zA-Z0-9]{20,}/g,
 	/ghu_[a-zA-Z0-9_]{20,}/g,
