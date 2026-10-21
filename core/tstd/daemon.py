@@ -586,7 +586,28 @@ _BRANCH_REFUSALS: dict[str, str] = {
     ),
     "user_turn_not_found": "That message is not in this conversation.",
     "branch_not_found": "That version of the message is no longer available.",
+    "session_busy": (
+        "This session is restoring files or closing its worktree. Edit or switch when that is done."
+    ),
 }
+
+
+def _folder_busy_refusal(session: Session, msg_type: str, **extra: Any) -> str | None:
+    """``session_busy`` while a restore or worktree close rewrites the folder (TD-5161).
+
+    Every path that starts a turn from a person's click checks it, not
+    only ``user_message``: a turn started then would write into the folder
+    being restored, or one about to be deleted.
+    """
+    if session.folder_busy is None:
+        return None
+    return build_error(
+        "session_busy",
+        f"This session is {session.folder_busy}. Send it again when that is done.",
+        session_id=session.id,
+        in_reply_to=msg_type,
+        **extra,
+    )
 
 
 def _url_host(url: str | None) -> str | None:
@@ -2740,14 +2761,8 @@ class Daemon:
             # TD-5161: a restore or worktree close is rewriting the folder;
             # a turn started now would write into it (or into a folder
             # about to be deleted).
-            if found.folder_busy is not None:
-                return build_error(
-                    "session_busy",
-                    f"This session is {found.folder_busy}. Send the message again when "
-                    "that is done.",
-                    session_id=msg.session_id,
-                    in_reply_to=msg.type,
-                )
+            if (busy := _folder_busy_refusal(found, msg.type)) is not None:
+                return busy
             # TD-5118: Grok's own tools never meet TST Desk's policy gate, so
             # a rule could not be kept there. Refused rather than dropped:
             # a --deny that silently did nothing would be worse than none.
@@ -2893,6 +2908,8 @@ class Daemon:
                     "session_not_found",
                     f"Session {msg.session_id!r} not found",
                 )
+            if (busy := _folder_busy_refusal(found, msg.type)) is not None:
+                return busy
             result = await found.fork_from(msg.user_index, msg.content)
             if isinstance(result, str):
                 return build_error(
@@ -3780,6 +3797,8 @@ class Daemon:
             name = msg.name.strip().lstrip("/")
             argument = msg.argument.strip()
             text = f"/{name} {argument}".strip()
+            if (busy := _folder_busy_refusal(found, msg.type)) is not None:
+                return busy
             await found.add_user_message(text)
             return None
 
@@ -3791,6 +3810,8 @@ class Daemon:
             text = "Approve the plan and start implementing."
             if comment:
                 text = f"{text} {comment}"
+            if (busy := _folder_busy_refusal(found, msg.type)) is not None:
+                return busy
             await found.add_user_message(text)
             return None
 
@@ -4161,6 +4182,8 @@ class Daemon:
                     session_id=msg.session_id,
                     in_reply_to=msg.type,
                 )
+            if (busy := _folder_busy_refusal(found, msg.type)) is not None:
+                return busy
             done = await found.send_held(msg.queued_id)
         else:
             done = await found.remove_held(msg.queued_id)
@@ -4227,6 +4250,8 @@ class Daemon:
         # ended meanwhile, and a message queued then would never be read.
         if (refused := not_running()) is not None:
             return refused
+        if (busy := _folder_busy_refusal(found, msg.type, comment_ids=ids)) is not None:
+            return busy
         try:
             await found.add_user_message(
                 QueuedUserMessage(

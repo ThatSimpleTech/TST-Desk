@@ -17888,9 +17888,18 @@ notes left open (each the conservative option).
   from different places; the docs already defaulted to an absolute folder,
   and `~` is still expanded.
 - **A busy folder refuses messages.** While a session closes its worktree
-  or restores files, `user_message` is refused with `session_busy` and a
-  note to send it again. Queueing it was rejected: the turn would start
-  in a folder that may be gone.
+  or restores files, every click that starts a turn or a branch
+  (`user_message`, `send_queued`, `submit_line_comments`, `fork_from`,
+  `run_grok_command`, `approve_grok_plan`) is refused with `session_busy`
+  and a note to send it again. Queueing those was rejected: the person
+  would not know when their turn starts. What nobody clicks (a schedule,
+  an autonomy continue) is held instead: the loop starts no turn until
+  the folder is free, and after a close the turn runs in the folder the
+  session went back to.
+- **A held message with run rules never steers.** Send on a held row
+  that kept `tst run` deny rules, while a turn runs, waits for a turn of
+  its own: the running turn keeps its own rules, so steering would drop
+  the denies.
 - **Delete is refused while worktree setup runs.** Cancelling the setup
   mid-command could leave its output in an unknown state; the person
   deletes once it finishes. An open or archived session keeps its

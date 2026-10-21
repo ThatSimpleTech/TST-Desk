@@ -665,3 +665,77 @@ async def test_a_write_stopped_in_its_hooks_is_still_checkpointed(
         await dispatcher.dispatch("c1", "fs_write", {"path": "a.txt", "content": "x"}, session)
     assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "x"
     assert len(committed) == 1
+
+
+async def test_every_click_that_starts_a_turn_waits_for_a_restore(tmp_path: Path) -> None:
+    """Review of 32/36: only ``user_message`` checked the folder-busy guard."""
+    import json
+
+    from tests.test_artifacts import _open, _shutdown
+    from tstd.daemon import Daemon
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "a.txt").write_text("one\n", encoding="utf-8")
+    daemon = Daemon(data_dir=tmp_path / "data")
+    sid = await _open(daemon, workspace)
+    comment = {
+        "id": "c1",
+        "path": "a.txt",
+        "start_line": 1,
+        "end_line": 1,
+        "body": "why?",
+        "lines": ["one"],
+    }
+    clicks = [
+        {"type": "send_queued", "queued_id": "q1"},
+        {"type": "submit_line_comments", "comments": [comment]},
+        {"type": "fork_from", "user_index": 0, "content": "again"},
+        {"type": "run_grok_command", "name": "plan"},
+        {"type": "approve_grok_plan"},
+    ]
+    try:
+        sess = daemon.session_registry.get(sid)
+        assert sess is not None
+        sess.folder_busy = "restoring files"
+        for click in clicks:
+            raw = json.dumps({**click, "session_id": sid})
+            answer = json.loads(await daemon._handle_message(raw, None) or "{}")
+            assert answer.get("code") == "session_busy", click["type"]
+            assert answer.get("in_reply_to") == click["type"]
+            assert "restoring files" in answer.get("message", "")
+        assert sess.held_messages == [] and sess._user_message_queue.empty()
+    finally:
+        await _shutdown(daemon, sid)
+
+
+async def test_the_loop_starts_no_turn_while_the_folder_is_busy(tmp_path: Path) -> None:
+    """Review of 32/36: a schedule or autonomy continue still started a turn."""
+    session = Session(str(tmp_path))
+    session.folder_busy = "closing its worktree"
+    await session.add_user_message("continue")
+    waiting = asyncio.create_task(session.wait_for_user_message())
+    await asyncio.sleep(0.2)
+    assert not waiting.done()
+    session.folder_busy = None
+    queued = await asyncio.wait_for(waiting, 2)
+    assert queued is not None and queued.display == "continue"
+
+
+async def test_a_held_message_with_run_rules_does_not_steer(tmp_path: Path) -> None:
+    """Review of 16: Send on a held ``--deny`` row mid-turn joined a turn without its rules."""
+    from tstd.protocol import RunPermissions, RunRule
+    from tstd.session import QueuedUserMessage
+
+    session = Session(str(tmp_path))
+    rules = RunPermissions(deny=[RunRule(tool="fs_write")])
+    held = QueuedUserMessage(display="go", provider="go", run_permissions=rules)
+    plain = QueuedUserMessage.plain("also")
+    session.held_messages = [held, plain]
+    session.open_steering("running-turn")
+    assert await session.send_held(held.id)
+    assert await session.send_held(plain.id)
+    first = session._user_message_queue.get_nowait()
+    second = session._user_message_queue.get_nowait()
+    assert first.steer_into is None and first.run_permissions == rules
+    assert second.steer_into == "running-turn"

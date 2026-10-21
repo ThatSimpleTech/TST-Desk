@@ -10579,7 +10579,9 @@ why. Notes are numbered in the order the reviews listed them.
 - [x] 16-17. TD-5118 `tst run`. (16) A daemon restart dropped a held
       message's deny rules, widening the gate: the queue file keeps the
       denies (only those), and a row whose rules cannot be read back is
-      dropped. (17) A turn the progress guard paused left `tst run` waiting
+      dropped. Send on such a row while a turn runs no longer steers it
+      into that turn (which keeps its own rules): it waits for a turn of
+      its own, under its denies. (17) A turn the progress guard paused left `tst run` waiting
       until its timeout: it returns exit 4 (approval needed) at once
 - [x] 18-21. TD-5160 follow-ups. (18) Its last criterion missed one test
       that passes on the old code: the criterion now names it (docs fix).
@@ -10614,7 +10616,11 @@ why. Notes are numbered in the order the reviews listed them.
       (docs fix)
 - [x] 32-35. TD-5126 worktrees. (32) A message could start a turn while
       close_worktree ran: a session whose folder is busy (closing,
-      restoring) refuses `user_message` with `session_busy`. (33) Three
+      restoring) refuses with `session_busy` every click that starts a
+      turn or a branch (`user_message`, `send_queued`,
+      `submit_line_comments`, `fork_from`, `run_grok_command`,
+      `approve_grok_plan`), and the loop starts no turn meanwhile, so a
+      schedule or an autonomy continue waits for it. (33) Three
       modules only imported after another: the cycles are broken (type
       imports and lazy imports). (34) A relative `worktree.folder` meant
       two places: it is refused (conservative). (35) Delete during setup
