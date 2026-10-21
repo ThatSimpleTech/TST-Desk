@@ -24,7 +24,13 @@ from tstd.autonomy.classifier import LSP_READ_TOOLS, PLAN_READ_ONLY_BUILTINS
 from tstd.config import ModelConfig, default_config_yaml
 from tstd.lsp import default_pool
 from tstd.lsp.diagnostics import new_since, note_for
-from tstd.lsp.positions import find_column, from_server_column, to_server_column
+from tstd.lsp.positions import (
+    find_column,
+    from_server_column,
+    to_server_column,
+    uri_key,
+    uri_path,
+)
 from tstd.lsp_config import LspConfig, LspServerConfig
 from tstd.tools import ToolDispatcher, create_registry, register_builtin_handlers
 from tstd.tools.boundary import PathGuard
@@ -46,8 +52,10 @@ async def _fresh_pool() -> AsyncIterator[None]:
     await default_pool().aclose()
 
 
-def _server(log: Path | None = None, **extra: Any) -> LspServerConfig:
+def _server(log: Path | None = None, *, respell: bool = False, **extra: Any) -> LspServerConfig:
     command = [sys.executable, str(FAKE)] + ([str(log)] if log else [])
+    if respell:
+        command.append("--respell-uris")
     fields: dict[str, Any] = {
         "name": "fake",
         "command": command,
@@ -202,6 +210,44 @@ class TestDiagnosticsAfterWrite:
         assert "language server" not in result.output
         assert default_pool().running == 0
 
+    async def test_each_session_hears_about_problems_it_was_not_told(self, tmp_path: Path) -> None:
+        # Two sessions in one workspace share the pooled server, but each
+        # model only knows its own tool results.
+        first = _session(tmp_path, _server())
+        second = _session(tmp_path, _server())
+        a = await _call(tmp_path, first, "fs_write", path="a.toy", content="BAD one\n")
+        assert "1 new problem(s) in a.toy" in a.output
+        b = await _call(tmp_path, second, "fs_write", path="a.toy", content="BAD one\nok\n")
+        assert default_pool().running == 1
+        assert "1 new problem(s) in a.toy" in b.output
+        assert "bad token (E1)" in b.output
+
+    async def test_a_server_that_spells_the_uri_differently_still_reports(
+        self, tmp_path: Path
+    ) -> None:
+        session = _session(tmp_path, _server(respell=True, diagnostics_wait_seconds=3))
+        result = await _call(tmp_path, session, "fs_write", path="a.toy", content="BAD\n")
+        assert "a.toy:1:1 error: bad token (E1)" in result.output
+
+    async def test_an_untrusted_workspace_starts_no_server(self, tmp_path: Path) -> None:
+        from tstd.workspace_trust import TrustStore
+
+        (tmp_path / ".tst").mkdir()
+        (tmp_path / ".tst" / "config.yaml").write_text(
+            "hooks:\n  after_write:\n    - command: [echo]\n      match: ['*.md']\n"
+        )
+        store = TrustStore(tmp_path / "data")
+        session = _session(tmp_path, _server(), trust_store=store)
+        result = await _call(tmp_path, session, "fs_write", path="a.toy", content="BAD\n")
+        assert result.status == "success"
+        assert "language server" not in result.output
+        assert default_pool().running == 0
+        (tmp_path / "lib.toy").write_text(SOURCE)
+        nav = await _call(tmp_path, session, "lsp_symbols", path="lib.toy")
+        assert nav.status != "success"
+        assert "not trusted" in nav.output
+        assert default_pool().running == 0
+
     def test_new_since_counts_duplicates_and_ignores_line_moves(self) -> None:
         def d(line: int, message: str) -> dict[str, Any]:
             return {"range": {"start": {"line": line, "character": 0}}, "message": message}
@@ -301,6 +347,30 @@ class TestNavigation:
     def test_the_classifier_and_the_tools_agree_on_names(self) -> None:
         assert LSP_READ_TOOLS == LSP_TOOL_NAMES
         assert LSP_TOOL_NAMES <= PLAN_READ_ONLY_BUILTINS
+
+
+class TestUris:
+    def test_a_file_uri_becomes_a_path_without_urllib_request(self) -> None:
+        assert uri_path("file:///tmp/a%20b/c.toy") == Path("/tmp/a b/c.toy")
+        assert uri_path("https://example.com/x") is None
+
+    def test_windows_spellings_of_one_file_share_a_key(self) -> None:
+        import ntpath
+
+        ours = uri_key("file:///C:/src/app/main.ts", ntpath)
+        assert ours == ntpath.normcase("C:\\src\\app\\main.ts")
+        assert uri_key("file:///c%3A/src/app/main.ts", ntpath) == ours
+        assert uri_key("file:///c:/src/app/./main.ts", ntpath) == ours
+        assert uri_key("file://server/share/x.ts", ntpath) == ntpath.normcase(
+            "\\\\server\\share\\x.ts"
+        )
+
+    def test_posix_spellings_of_one_file_share_a_key(self) -> None:
+        import posixpath
+
+        assert uri_key("file:///tmp/a%2Etoy", posixpath) == uri_key("file:///tmp/a.toy", posixpath)
+        assert uri_key("file://localhost/tmp/a.toy", posixpath) == "/tmp/a.toy"
+        assert uri_key("untitled:Untitled-1", posixpath) == "untitled:Untitled-1"
 
 
 class TestColumns:

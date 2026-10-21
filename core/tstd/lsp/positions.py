@@ -6,10 +6,14 @@ The model counts lines and columns from 1 in code points; LSP counts from
 
 from __future__ import annotations
 
+import ntpath
+import os
 import re
 from pathlib import Path
+from types import ModuleType
 from urllib.parse import unquote, urlparse
-from urllib.request import url2pathname
+
+_DRIVE_PATH = re.compile(r"^/[A-Za-z]:")
 
 
 def to_server_column(text: str, column: int, encoding: str) -> int:
@@ -46,9 +50,44 @@ def find_column(text: str, symbol: str) -> int | None:
     return at if at >= 0 else None
 
 
+def _uri_path_text(uri: str, pathmod: ModuleType) -> str | None:
+    """The path a ``file:`` URI names, as text for *pathmod*'s platform.
+
+    Written out by hand rather than with ``urllib.request.url2pathname``,
+    which would give this module a network-capable import (§2.3). Every
+    escape is decoded (``%3A`` too, which servers built on vscode-uri send
+    for a drive colon), ``/c:/x`` loses its leading slash, and on Windows
+    a host other than ``localhost`` becomes a UNC path.
+    """
+    parsed = urlparse(uri)
+    if parsed.scheme.lower() != "file":
+        return None
+    path = unquote(parsed.path)
+    host = parsed.netloc if parsed.netloc.lower() != "localhost" else ""
+    if pathmod is ntpath:
+        if _DRIVE_PATH.match(path):
+            path = path[1:]
+        elif host:
+            path = f"//{host}{path}"
+        return path.replace("/", "\\")
+    return path
+
+
 def uri_path(uri: str) -> Path | None:
     """The local path a ``file:`` URI names, or None for any other scheme."""
-    parsed = urlparse(uri)
-    if parsed.scheme != "file":
-        return None
-    return Path(url2pathname(unquote(parsed.path)))
+    text = _uri_path_text(uri, os.path)
+    return Path(text) if text is not None else None
+
+
+def uri_key(uri: str, pathmod: ModuleType = os.path) -> str:
+    """One spelling for every URI that names the same local file.
+
+    Servers do not echo our ``Path.as_uri()`` byte for byte: on Windows
+    many send ``file:///c%3A/...`` for ``file:///C:/...``. Diagnostics are
+    filed and looked up under this key, so either spelling matches. A URI
+    that is not ``file:`` is its own key.
+    """
+    text = _uri_path_text(uri, pathmod)
+    if not text:
+        return uri
+    return str(pathmod.normcase(pathmod.normpath(text)))

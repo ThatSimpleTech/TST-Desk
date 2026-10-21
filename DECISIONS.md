@@ -17897,6 +17897,26 @@ matches is refused with `lsp_unavailable` pointing at `fs_grep`.
   every model call).
 - *Locations outside the workspace* (library definitions) show their path
   only, never their text, since the wall would refuse reading them.
+- *Which workspaces a server runs in* (added after review of PR #62).
+  rust-analyzer runs `build.rs` and proc-macros and tsserver loads
+  tsconfig plugins, so starting a server can run repository code. No
+  server starts while the workspace's `.tst/config.yaml` is pending or
+  declined trust (TD-5113) or unreadable, the gate a repo's
+  `after_write` hooks already sit behind; the tools say why. TST Desk's
+  trust is per config file, not per folder, so a clone with no
+  `.tst/config.yaml` is not gated. That matches the user's own
+  `after_write` hooks (a formatter also loads repo config) and keeps the
+  server the user chose working. A per-workspace approval for the first
+  start was rejected: it needs a new approval surface for a program the
+  user already named in their own config.
+- *What "new" is measured against.* The record of what was reported
+  lives on the session (`Session.lsp_reported`), keyed by server and
+  file, not on the pooled client, so one session's report never hides a
+  problem from another session in the same workspace. Published URIs are
+  matched by a normalized key (decoded escapes, `/c:/` drive form,
+  `normcase`), since servers on vscode-uri send `file:///c%3A/...` on
+  Windows. The `file:` URI is parsed by hand: `urllib.request` would
+  give the module a network-capable import (§2.3).
 - *Autonomous sessions* start no server: their commands run only in the
   container, and a server has no container path yet. The tools refuse
   there and writes get no diagnostics.

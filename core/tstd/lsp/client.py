@@ -25,6 +25,7 @@ from typing import Any
 from ..logging import get_logger
 from ..lsp_config import LspServerConfig
 from ..proc_lifecycle import kill_left_leader_running, reap_subprocess, retain_subprocess_transport
+from .positions import uri_key
 
 log = get_logger(__name__)
 
@@ -72,8 +73,6 @@ class LspClient:
         self.position_encoding = "utf-16"
         self.capabilities: dict[str, Any] = {}
         self.last_used = time.monotonic()
-        #: What the model was last told for each document (diagnostics).
-        self.reported: dict[str, list[dict[str, Any]]] = {}
 
     @property
     def alive(self) -> bool:
@@ -272,7 +271,7 @@ class LspClient:
         raw = params.get("diagnostics")
         diagnostics = [d for d in raw if isinstance(d, dict)] if isinstance(raw, list) else []
         async with self._changed:
-            slot = self._published.setdefault(params["uri"], _Published())
+            slot = self._published.setdefault(uri_key(params["uri"]), _Published())
             slot.diagnostics = diagnostics
             slot.count += 1
             self._changed.notify_all()
@@ -280,13 +279,17 @@ class LspClient:
     # ── documents ────────────────────────────────────────────────────
 
     def publish_count(self, uri: str) -> int:
-        """How many times diagnostics were published for *uri* so far."""
-        slot = self._published.get(uri)
+        """How many times diagnostics were published for *uri* so far.
+
+        Matched by :func:`uri_key`, not by the exact string, since a server
+        may spell the same file's URI differently from ``Path.as_uri()``.
+        """
+        slot = self._published.get(uri_key(uri))
         return slot.count if slot is not None else 0
 
     def diagnostics(self, uri: str) -> list[dict[str, Any]] | None:
         """The last published diagnostics for *uri*, or None if none came."""
-        slot = self._published.get(uri)
+        slot = self._published.get(uri_key(uri))
         return list(slot.diagnostics) if slot is not None else None
 
     async def sync(self, path: Path, text: str, *, saved: bool = False) -> bool:

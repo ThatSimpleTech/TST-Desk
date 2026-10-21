@@ -4,7 +4,10 @@ It knows one toy language: ``def NAME`` defines a function, ``class NAME``
 a class (an indented ``def`` under it is a method), any other whole-word
 use of a name is a reference. A line holding ``BAD`` is an error and one
 holding ``WARN`` a warning. Its first argument names a file it appends each
-method it receives to, so a test can see what the client sent.
+method it receives to, so a test can see what the client sent. With
+``--respell-uris`` it publishes diagnostics under a differently escaped
+URI for the same file (every ``.`` as ``%2E``), as servers built on
+vscode-uri do with a Windows drive colon.
 """
 
 from __future__ import annotations
@@ -17,7 +20,9 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 docs: dict[str, str] = {}
-log_path = sys.argv[1] if len(sys.argv) > 1 else ""
+_args = [a for a in sys.argv[1:] if not a.startswith("--")]
+log_path = _args[0] if _args else ""
+respell = "--respell-uris" in sys.argv[1:]
 
 
 def note(method: str) -> None:
@@ -86,7 +91,7 @@ def publish(uri: str) -> None:
     send(
         {
             "method": "textDocument/publishDiagnostics",
-            "params": {"uri": uri, "diagnostics": diags},
+            "params": {"uri": uri.replace(".", "%2E") if respell else uri, "diagnostics": diags},
         }
     )
 

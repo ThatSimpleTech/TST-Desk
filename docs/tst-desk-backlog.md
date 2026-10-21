@@ -11709,8 +11709,11 @@ plugins built on language servers; TST Desk had none.
       socket is opened; core/tests/test_lsp.py `TestConfig`)
 - [x] After fs_write/fs_edit, new diagnostics for the touched files come
       back with the tool result (only errors and warnings the model was
-      not already told about; "no problems left" when fixed; a clean file
-      adds nothing; core/tests/test_lsp.py `TestDiagnosticsAfterWrite`)
+      not already told about, remembered per session so sessions sharing
+      a server each hear every problem; URIs matched however the server
+      escapes them; "no problems left" when fixed; a clean file adds
+      nothing; no server in a workspace whose config is untrusted;
+      core/tests/test_lsp.py `TestDiagnosticsAfterWrite`, `TestUris`)
 - [x] Class A tools for definition, references and symbols
       (`lsp_definition`, `lsp_references`, `lsp_symbols`, static Class A
       by the `lsp-read` rule inside the workspace and allowed in plan mode;
@@ -11727,7 +11730,8 @@ install pays no prompt tokens for them. A position is a 1-based line plus
 the symbol's name (or a column), converted to the server's UTF-16/UTF-8
 units. Servers run with secrets stripped from their environment, in their
 own process group. Only the user's config.yaml can list a server; an
-autonomous session starts none. The gap audit said "split before
+autonomous session starts none, and neither does a workspace whose
+`.tst/config.yaml` is pending or declined trust (review of PR #62). The gap audit said "split before
 building"; the approach is recorded in DECISIONS.md instead. Docs:
 docs/configuration.md §2 `lsp` and §4.4, docs/architecture.md seams.
 

@@ -6,7 +6,7 @@ new text), and the diagnostics it publishes come back on the same tool
 result, so a type error costs no extra turn.
 
 Only errors and warnings are reported, and only the new ones: a problem
-the model was already told about for that file is not repeated (matched
+this session's model was already told about for that file is not repeated (matched
 on severity, code and message, since an edit above it moves its line).
 When the last problems are gone, the note says so. A clean file that was
 clean before adds nothing. A server that does not answer within
@@ -22,6 +22,7 @@ write already changed.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
@@ -29,6 +30,7 @@ from typing import Any
 
 from ..logging import get_logger
 from . import LspError, LspStartFailed, Target, default_pool, lsp_config, target_for
+from .positions import uri_key
 
 log = get_logger(__name__)
 
@@ -102,7 +104,27 @@ def note_for(
     return ""
 
 
-async def _one(target: Target, path: Path) -> str:
+Reported = dict[tuple[str, str], list[dict[str, Any]]]
+
+
+def reported_for(session: object) -> Reported:
+    """What *session*'s model was last told, per server and file.
+
+    Kept on the session, not on the pooled client: sessions in the same
+    workspace share one server, but each model only knows what its own
+    tool results said, so one session's report must not hide a problem
+    from another.
+    """
+    store = getattr(session, "lsp_reported", None)
+    if isinstance(store, dict):
+        return store
+    store = {}
+    with contextlib.suppress(AttributeError):
+        session.lsp_reported = store  # type: ignore[attr-defined]
+    return store
+
+
+async def _one(target: Target, path: Path, reported: Reported) -> str:
     label = target.server.label
     try:
         client = await default_pool().client(target.config, target.server, target.root)
@@ -128,8 +150,9 @@ async def _one(target: Target, path: Path) -> str:
         )
         return ""
     now = reportable(published)
-    before = client.reported.get(uri, [])
-    client.reported[uri] = now
+    key = (label, uri_key(uri))
+    before = reported.get(key, [])
+    reported[key] = now
     return note_for(label, target.rel, now, before, target.config.max_diagnostics)
 
 
@@ -142,12 +165,13 @@ async def diagnostics_after_write(session: object, files: Sequence[Path]) -> str
     if lsp_config(session) is None:
         return ""
     notes: list[str] = []
+    reported = reported_for(session)
     for path in files:
         try:
             target = await target_for(session, Path(path))
             if target is None or target.server.diagnostics_wait_seconds <= 0:
                 continue
-            note = await _one(target, target.path)
+            note = await _one(target, target.path, reported)
         except Exception:
             log.exception("language server diagnostics failed")
             continue

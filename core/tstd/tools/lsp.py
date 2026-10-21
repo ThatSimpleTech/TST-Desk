@@ -23,7 +23,16 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from ..lsp import LspClient, LspError, LspStartFailed, Target, default_pool, relative, target_for
+from ..lsp import (
+    LspClient,
+    LspError,
+    LspStartFailed,
+    Target,
+    default_pool,
+    relative,
+    target_for,
+    untrusted_workspace,
+)
 from ..lsp.positions import find_column, from_server_column, to_server_column, uri_path
 from .dispatch import ToolDispatcher
 from .registry import Tool, ToolRegistry
@@ -149,6 +158,12 @@ def _lines(text: str) -> list[str]:
 
 async def _target(session: object, path: str, tool: str) -> Target:
     target = await target_for(session, Path(path))
+    if target is None and await untrusted_workspace(session):
+        raise HandlerRefusal(
+            "lsp_unavailable",
+            "This workspace's .tst/config.yaml is not trusted yet, so no language server "
+            f"starts here and {tool} cannot run. Use fs_grep to find the symbol instead.",
+        )
     if target is None:
         raise HandlerRefusal(
             "lsp_unavailable",

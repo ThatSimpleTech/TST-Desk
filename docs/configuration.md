@@ -1154,7 +1154,7 @@ What it does:
   or its whole new text, then saved), after any `after_write` hooks, so the server sees the file as
   the formatter left it. The errors and warnings it publishes within `diagnostics_wait_seconds`
   come back in that call's result as `path:line:col error: message (code)`. Only **new** problems
-  are listed: one the model was already told about for that file is not repeated (matched on
+  are listed: one this session's model was already told about for that file is not repeated (matched on
   severity, code and message, since an edit above it moves its line), and the note counts the ones
   still there. When the last problem is fixed the note says so. A clean file adds nothing; hints and
   information are never sent.
@@ -1169,7 +1169,16 @@ What it does:
   still wins.
 - **One server per workspace and entry**, started the first time a session needs it, shared by the
   sessions in that workspace, in the workspace, with secrets stripped from its environment as the
-  shell tool does. Stopping it kills its whole process tree.
+  shell tool does. Stopping it kills its whole process tree. What was reported is remembered per session,
+  so two sessions sharing a server each hear about every problem in their own results. A server
+  may spell a file's URI differently from TST Desk (on Windows, `file:///c%3A/...`); both name the
+  same file.
+- **Not in an untrusted workspace.** Many servers run the repository's own code while they index
+  (rust-analyzer builds `build.rs` and proc-macros, tsserver loads tsconfig plugins). While the
+  workspace's `.tst/config.yaml` waits on your trust or was declined (TD-5113), or cannot be read,
+  no server starts there: writes get no diagnostics and the tools refuse with `lsp_unavailable`.
+  A workspace with no such file, or one that loosens nothing, is not gated, the same as a repo's
+  `after_write` hooks.
 
 Only this file can list a server: a workspace's `.tst/config.yaml` cannot, trusted or not, since its
 command would start as soon as the agent wrote a file. An autonomous session starts no server (its
