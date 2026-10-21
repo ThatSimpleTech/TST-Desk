@@ -34,6 +34,9 @@ tst = "tstd.cli:main"
 
 [dependency-groups]
 dev = [
+    # Reference MCP SDK servers for the protocol tests (TD-5136); the same
+    # pin as the sidecar group, so the lock carries one version.
+    "mcp==2.0.0",
     "mypy>=1.11",
     "pre-commit>=4.6.2",
     "pyinstaller>=6.22.0",

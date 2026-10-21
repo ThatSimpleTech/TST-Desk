@@ -82,6 +82,9 @@ for line in sys.stdin:
                                  "message": f"step {i}"}})
         send({"jsonrpc": "2.0", "id": msg["id"],
               "result": {"content": [{"type": "text", "text": f"{name} done"}]}})
+    else:
+        send({"jsonrpc": "2.0", "id": msg["id"],
+              "error": {"code": -32601, "message": "Method not found"}})
 """
 
 
@@ -118,6 +121,16 @@ def _text(result: Any) -> str:
 
 
 # ── stdio client ─────────────────────────────────────────────────────────
+
+
+def _legacy_answer(body: dict[str, Any], result: dict[str, Any]) -> httpx.Response:
+    """A legacy (2024-11-05) HTTP server's answer: it refuses the TD-5136
+    era probe with a plain 404 and names its version on initialize."""
+    if body["method"] == "server/discover":
+        return httpx.Response(404)
+    if body["method"] == "initialize":
+        result = {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}}
+    return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
 
 
 class TestStdioProgressAndTimeouts:
@@ -354,12 +367,14 @@ class TestHttp:
         read_timeouts: dict[str, float] = {}
 
         async def handle(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return httpx.Response(405)  # no legacy notice stream
             body = json.loads(request.content)
             read_timeouts[body["method"]] = request.extensions["timeout"]["read"]
             if "id" not in body:
                 return httpx.Response(202)
             result: dict[str, Any] = {"tools": []} if body["method"] == "tools/list" else {}
-            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
+            return _legacy_answer(body, result)
 
         client = HttpMcpClient("http://127.0.0.1:9/mcp", timeout=0.3, startup_timeout=60.0)
         client._http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
@@ -380,13 +395,15 @@ class TestHttp:
         posted: list[dict[str, Any]] = []
 
         async def handle(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return httpx.Response(405)  # no legacy notice stream
             body = json.loads(request.content)
             posted.append(body)
             if body.get("method") == "tools/call":
                 await asyncio.sleep(5.0)
             if "id" not in body:
                 return httpx.Response(202)
-            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": {}})
+            return _legacy_answer(body, {})
 
         client = HttpMcpClient("http://127.0.0.1:9/mcp", timeout=0.3)
         client._http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
@@ -411,13 +428,15 @@ class TestHttp:
         posted: list[dict[str, Any]] = []
 
         async def handle(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return httpx.Response(405)  # no legacy notice stream
             body = json.loads(request.content)
             posted.append(body)
             if body.get("method") == "tools/call":
                 await asyncio.sleep(5.0)
             if "id" not in body:
                 return httpx.Response(202)
-            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": {}})
+            return _legacy_answer(body, {})
 
         client = HttpMcpClient("http://127.0.0.1:9/mcp", timeout=0.3)
         client._http = httpx.AsyncClient(transport=httpx.MockTransport(handle))

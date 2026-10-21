@@ -193,6 +193,9 @@ class ToolRegistry:
 
     def __init__(self) -> None:
         self._tools: dict[str, Tool] = {}
+        #: Bumped on every change, so a running loop can tell its tool
+        #: list is stale (an MCP server's ``tools/list_changed``, TD-5136).
+        self.version = 0
 
     def register(self, tool: Tool) -> None:
         """Register a tool.  Replaces any existing tool with the same name.
@@ -210,6 +213,14 @@ class ToolRegistry:
                         f"'{field_name}' is an array"
                     )
         self._tools[tool.name] = tool
+        self.version += 1
+
+    def unregister(self, name: str) -> bool:
+        """Drop *name*; False when it was not registered."""
+        if self._tools.pop(name, None) is None:
+            return False
+        self.version += 1
+        return True
 
     def get(self, name: str) -> Tool | None:
         """Look up a tool by name.  Returns ``None`` if not found."""

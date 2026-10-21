@@ -72,6 +72,9 @@ for line in sys.stdin:
         name = msg["params"]["arguments"]["name"]
         _write({"jsonrpc": "2.0", "id": req_id, "result": {
             "content": [{"type": "text", "text": os.environ.get(name, "<unset>")}]}})
+    elif req_id is not None:
+        _write({"jsonrpc": "2.0", "id": req_id,
+                "error": {"code": -32601, "message": "Method not found"}})
 """
 
 
@@ -187,6 +190,8 @@ class TestConfigShape:
         bad_maps: list[dict[str, Any]] = [
             {"Accept": "text/html"},  # the client's own
             {"Host": "elsewhere"},
+            {"Mcp-Session-Id": "forged"},  # MCP's own (TD-5136)
+            {"MCP-Protocol-Version": "2024-11-05"},
             {"X-A": "1", "x-a": "2"},  # same field twice
             {"Bad Name": "1"},
             {"X-A": "one\r\nInjected: yes"},
@@ -306,7 +311,11 @@ class TestHttpHeaders:
             for headers in alpha.seen:
                 assert headers["authorization"] == f"Bearer {HEADER_TOKEN}"
                 assert headers["x-client"] == "tst"
-                assert headers["accept"] == "application/json"
+                # POSTs accept both (TD-5136); the GET notice stream only SSE.
+                assert headers["accept"] in (
+                    "application/json, text/event-stream",
+                    "text/event-stream",
+                )
             assert beta.seen
             for headers in beta.seen:
                 assert "authorization" not in headers

@@ -486,6 +486,11 @@ for line in sys.stdin:
                   "serverInfo": {"name": "wx", "version": "1"}}
     elif msg["method"] == "tools/list":
         result = {"tools": TOOLS}
+    elif msg["method"] != "tools/call":
+        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "error": {
+            "code": -32601, "message": "Method not found"}}) + "\n")
+        sys.stdout.flush()
+        continue
     else:
         city = msg["params"]["arguments"].get("city", "?")
         result = {"content": [{"type": "text", "text": f"Sunny in {city}"}]}

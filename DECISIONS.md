@@ -17536,3 +17536,65 @@ different span. Files are never re-read for a path outside the workspace or
 behind a read rule, even if the model was allowed to read it at the time.
 Re-reading is not a tool call: it is the daemon restoring text the agent
 already had, through the same guard the read tool uses.
+
+## 2026-10-21 — TD-5136: MCP protocol upgrade, both eras, Streamable HTTP, off-box opt-in (Class B; revises TD-4401 and TD-5105)
+
+**Context.** The MCP client pinned 2024-11-05, declared empty capabilities,
+and spoke plain JSON POST over HTTP, so an HTTP call got no progress and a
+server on a 2026 SDK could refuse the handshake. Gap-audit decision 6
+(2026-10-14): an explicit opt-in per server is enough for off-box URLs.
+
+**Decisions.**
+- **One negotiation for both transports** (`mcp/era.py`). Probe with
+  `server/discover` at 2026-07-28. Only positive evidence means modern: a
+  DiscoverResult that offers a version tstd speaks, or a -32022 naming one
+  (retried once). Everything else falls back to `initialize` offering
+  2025-11-25 and accepting any of the four legacy revisions the server
+  picks: a -32601, a JSON-RPC error that is not one of the modern-only
+  codes, a plain 400/404/405 or a non-JSON body over HTTP, and on stdio
+  2 s of silence (an old server may never answer a request sent before
+  `initialize`). An HTTP timeout is an outage, not an era. A -32022 that
+  names only versions tstd lacks is a doctor fail listing them. Why: a
+  dual-era server locks its era on the first request, so the probe must
+  go first, and an old server must never be mistaken for a broken one.
+- **Capabilities are the truthful empty set.** tstd answers `ping` and
+  nothing else a server may ask (no roots, sampling or elicitation), so
+  it declares none; "real capabilities" in the story is read as "true
+  ones". A modern `resultType: input_required` fails the call. A legacy
+  server's request for anything but `ping` gets -32601.
+- **stdio gets a reader task** owning stdout: responses by id, progress
+  by token, `ping` answered, `tools/list_changed` reported. Calls can now
+  overlap. Shutdown closes stdin before terminating.
+- **HTTP streams every POST** and reads JSON or SSE; progress on the
+  stream feeds the same `calls.watch_call` as stdio, so the TD-5105 idle
+  reset now holds over HTTP. Modern requests carry `MCP-Protocol-Version`,
+  `Mcp-Method`, `Mcp-Name` and `Mcp-Param-*` (base64 sentinel for
+  non-ASCII); a tool whose `x-mcp-header` marks break the rules is left
+  out and named, as TD-5104 does for bad schemas. Legacy sessions keep
+  `Mcp-Session-Id`, send the version header from 2025-06-18, get a GET
+  stream for notifications (405 or a non-SSE answer means none) and a
+  DELETE on close. User headers starting `Mcp-` are refused at config load.
+- **Off-box needs `allow_remote: true` and https.** The opt-in alone would
+  meet decision 6, but the server's headers may carry a keychain token,
+  and plain http would send it in the clear across the network. The key
+  is hand-set (no Settings control, so the UI census is unchanged);
+  `set_mcp_server` keeps it unless the transport changes.
+- **List changes reach live sessions through the registry.** The
+  supervisor holds each session's (registry, dispatcher) weakly. On
+  `tools/list_changed` it lists again (coalescing bursts), updates the
+  doctor row, and swaps that server's tools: dropped ones are
+  unregistered with their handlers, unchanged ones left alone.
+  `ToolRegistry.version` moves on every register or unregister and the
+  loop re-reads its definitions (and rebuilds the TD-5127 deferral) when
+  it moves, before each model call. A reload of MCP settings still starts
+  from scratch; sessions open across it keep their tools but stop
+  following changes until reopened (the conservative choice: no
+  re-attach of a registry the supervisor no longer owns).
+- **`mcp==2.0.0` is a dev dependency** (the same pin as the sidecar
+  group), only so the tests can run the reference SDK's own servers. A
+  2024-11-05-only server is the same SDK with its runner's version list
+  patched, so both eras are tested against real SDK code.
+
+**Not done (Class C, conservative).** A legacy HTTP session that expires
+(404 on a later request) is an error, not a silent re-`initialize`. No new
+protocol event or UI control.

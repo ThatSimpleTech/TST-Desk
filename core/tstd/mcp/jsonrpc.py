@@ -1,7 +1,8 @@
 """Shared MCP JSON-RPC helpers (TD-4401).
 
-Handshake and tool naming live here so the stdio and HTTP clients stay
-thin copies of the same protocol, not two dialects.
+Tool naming, result shapes and the call watch live here so the stdio and
+HTTP clients stay thin copies of the same protocol, not two dialects. The
+version handshake is in :mod:`.era` (TD-5136).
 """
 
 from __future__ import annotations
@@ -15,9 +16,6 @@ from typing import Any
 from jsonschema import SchemaError
 from jsonschema.validators import validator_for
 
-PROTOCOL_VERSION = "2024-11-05"
-CLIENT_NAME = "tstd"
-CLIENT_VERSION = "0.3.0"
 # Handshake / tools/list — doctor and session start must not hang a dead child.
 HANDSHAKE_TIMEOUT = 8.0
 # tools/call after the server is live: the longest a call may go without
@@ -27,15 +25,6 @@ CALL_TIMEOUT = 30.0
 MAX_CALL_SECONDS = 600.0
 # Screenshots or large tool payloads; matches the CU sidecar's stream cap.
 STREAM_LIMIT = 16 * 1024 * 1024
-
-
-def initialize_params() -> dict[str, Any]:
-    """Body for MCP ``initialize``."""
-    return {
-        "protocolVersion": PROTOCOL_VERSION,
-        "capabilities": {},
-        "clientInfo": {"name": CLIENT_NAME, "version": CLIENT_VERSION},
-    }
 
 
 #: Called with (progress, total, message) for each ``notifications/progress``.

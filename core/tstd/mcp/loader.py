@@ -8,17 +8,23 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import Literal
 
 from ..config import McpConfig, McpServerConfig
 from ..logging import get_logger
-from ..protocol import ToolProgress
 from ..tools.dispatch import ToolDispatcher
-from ..tools.registry import Tool, ToolRegistry
+from ..tools.registry import ToolRegistry
+from .attach import (
+    PROGRESS_EVENT_INTERVAL,
+    AttachedSessions,
+    McpClient,
+    _handler,
+    register_server_tools,
+    replace_server_tools,
+)
 from .errors import McpError
-from .http import HttpMcpClient, assert_loopback_http_url
+from .http import HttpMcpClient
 from .inject import server_values
 from .jsonrpc import (
     CALL_TIMEOUT,
@@ -26,30 +32,16 @@ from .jsonrpc import (
     MAX_CALL_SECONDS,
     ExcludedTool,
     McpRemoteTool,
-    ProgressCallback,
-    format_call_result,
-    local_tool_name,
     sanitize_remote_tools,
-    tool_provenance,
 )
 from .stdio import StdioMcpClient
+from .urls import assert_http_url
+
+__all__ = ["PROGRESS_EVENT_INTERVAL", "McpServerStatus", "McpSupervisor", "_handler"]
 
 log = get_logger("tstd.mcp")
 
 DoctorStatus = Literal["ok", "fail", "skip"]
-
-
-class McpClient(Protocol):
-    async def start(self) -> None: ...
-    async def list_tools(self) -> list[McpRemoteTool]: ...
-    async def call_tool(
-        self,
-        name: str,
-        arguments: dict[str, Any] | None = None,
-        *,
-        on_progress: ProgressCallback | None = None,
-    ) -> Any: ...
-    async def aclose(self) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -80,74 +72,9 @@ def _stdio_fix(server_id: str) -> str:
 
 def _http_fix(server_id: str) -> str:
     return (
-        f"Set mcp.servers.{server_id}.url to a listening loopback http(s) "
-        "endpoint that speaks MCP JSON-RPC."
+        f"Set mcp.servers.{server_id}.url to a listening http(s) endpoint that "
+        "speaks MCP (loopback, or https with allow_remote: true)."
     )
-
-
-#: Least time between two progress events for one call (TD-5105).  Every
-#: notification still resets the idle timer; only the events are thinned.
-PROGRESS_EVENT_INTERVAL = 0.5
-
-
-def _progress_events(session: object, tool_call_id: str) -> ProgressCallback | None:
-    """Turn ``notifications/progress`` into ``tool_progress`` events."""
-    event_log = getattr(session, "event_log", None)
-    session_id = getattr(session, "id", None)
-    if event_log is None or not isinstance(session_id, str) or not tool_call_id:
-        return None
-    last_sent = -PROGRESS_EVENT_INTERVAL
-
-    async def emit(progress: float, total: float | None, message: str | None) -> None:
-        nonlocal last_sent
-        now = asyncio.get_running_loop().time()
-        if now - last_sent < PROGRESS_EVENT_INTERVAL:
-            return
-        last_sent = now
-        await event_log.add(
-            ToolProgress(
-                session_id=session_id,
-                tool_call_id=tool_call_id,
-                progress=progress,
-                total=total,
-                message=message,
-                seq=1,  # overwritten by the event log
-            )
-        )
-
-    return emit
-
-
-def _handler(client: McpClient, remote_name: str) -> Callable[..., Awaitable[str]]:
-    async def call(*, session: object = None, tool_call_id: str = "", **arguments: Any) -> str:
-        work = asyncio.ensure_future(
-            client.call_tool(
-                remote_name, arguments, on_progress=_progress_events(session, tool_call_id)
-            )
-        )
-        wait_for_abort = getattr(session, "wait_for_turn_abort", None)
-        if wait_for_abort is None:
-            return format_call_result(await work)
-        # Stopping the turn ends the call, as it does a shell command
-        # (TD-5105).  Cancelling the call sends the server
-        # notifications/cancelled.
-        abort = asyncio.ensure_future(wait_for_abort())
-        try:
-            await asyncio.wait({work, abort}, return_when=asyncio.FIRST_COMPLETED)
-        finally:
-            abort.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await abort
-            stopped = not work.done()
-            if stopped:
-                work.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await work
-        if stopped:
-            raise McpError(f"MCP tool {remote_name!r} stopped: the user stopped the turn")
-        return format_call_result(work.result())
-
-    return call
 
 
 class McpSupervisor:
@@ -172,6 +99,9 @@ class McpSupervisor:
         self._loaded = False
         self._live: dict[str, _LiveServer] = {}
         self._statuses: list[McpServerStatus] = []
+        self._attached = AttachedSessions()
+        self._refreshing: dict[str, asyncio.Task[None]] = {}
+        self._refresh_again: set[str] = set()
 
     def doctor_rows(self) -> list[McpServerStatus]:
         """Last load statuses, empty when ``mcp.servers`` is empty."""
@@ -186,36 +116,89 @@ class McpSupervisor:
             return list(self._statuses)
 
     def attach(self, registry: ToolRegistry, dispatcher: ToolDispatcher) -> None:
-        """Register live MCP tools and their dispatcher handlers."""
+        """Register live MCP tools and their dispatcher handlers.
+
+        The pair is remembered (weakly), so a server's
+        ``tools/list_changed`` reaches this session too (TD-5136).
+        """
         for live in self._live.values():
-            spec = self._config.servers.get(live.server_id)
-            read_only = frozenset(spec.read_only_tools) if spec is not None else frozenset()
-            for remote in live.remote_tools:
-                local = local_tool_name(live.server_id, remote.name)
-                registry.register(
-                    Tool(
-                        name=local,
-                        description=remote.description,
-                        parameters=remote.parameters,
-                        side_effect_class="ask",
-                        parallel_safe=True,
-                        provenance=tool_provenance(live.server_id),
-                        # TD-4402: do not infer path/host keys from the
-                        # remote schema. Undeclared fields fail toward B.
-                        path_fields=(),
-                        host_fields=(),
-                        # TD-5123: only the user's list marks a tool
-                        # read-only for plan mode, never the server.
-                        read_only=remote.name in read_only,
+            register_server_tools(
+                registry,
+                dispatcher,
+                live.server_id,
+                live.client,
+                live.remote_tools,
+                self._read_only(live.server_id),
+            )
+        self._attached.add(registry, dispatcher)
+
+    def _read_only(self, server_id: str) -> frozenset[str]:
+        spec = self._config.servers.get(server_id)
+        return frozenset(spec.read_only_tools) if spec is not None else frozenset()
+
+    def _tools_changed(self, server_id: str) -> None:
+        """The server said ``tools/list_changed``: list again, off the reader."""
+        if server_id in self._refreshing:
+            self._refresh_again.add(server_id)
+            return
+        task = asyncio.get_running_loop().create_task(self._refresh(server_id))
+        self._refreshing[server_id] = task
+
+    async def _refresh(self, server_id: str) -> None:
+        """Re-list *server_id*'s tools into its row and every live session."""
+        try:
+            while True:
+                self._refresh_again.discard(server_id)
+                live = self._live.get(server_id)
+                if live is None:
+                    return
+                try:
+                    listed = await live.client.list_tools()
+                except Exception as e:
+                    log.warning(
+                        "mcp tool list refresh failed",
+                        extra={"extra_fields": {"server_id": server_id, "error": str(e)}},
                     )
+                    return
+                if self._live.get(server_id) is not live:
+                    return  # reloaded meanwhile
+                tools, excluded = sanitize_remote_tools(server_id, listed)
+                live.remote_tools = tools
+                self._set_row(server_id, live, tools, [*live.client.excluded, *excluded])
+                for registry, dispatcher in self._attached.live():
+                    replace_server_tools(
+                        registry,
+                        dispatcher,
+                        server_id,
+                        live.client,
+                        tools,
+                        self._read_only(server_id),
+                    )
+                log.info(
+                    "mcp tool list refreshed",
+                    extra={"extra_fields": {"server_id": server_id, "tools": len(tools)}},
                 )
-                dispatcher.register_handler(local, _handler(live.client, remote.name))
+                if server_id not in self._refresh_again:
+                    return
+        finally:
+            self._refreshing.pop(server_id, None)
+
+    def _set_row(
+        self,
+        server_id: str,
+        live: _LiveServer,
+        tools: list[McpRemoteTool],
+        excluded: list[ExcludedTool],
+    ) -> None:
+        row = _ok_row(server_id, live.client, tools, excluded)
+        self._statuses = [row if s.server_id == server_id else s for s in self._statuses]
 
     async def reload(self, config: McpConfig) -> list[McpServerStatus]:
         """Drop live clients and handshake a new listing. Never raises.
 
-        Live sessions keep the tool set they attached with; the next
-        session (and doctor) see this list. Hot-attach is out of scope.
+        Live sessions keep the tool set they attached with, and no longer
+        follow ``tools/list_changed``; the next session (and doctor) see
+        this list. Hot-attach is out of scope.
         """
         async with self._lock:
             await self._reset_unlocked()
@@ -230,6 +213,12 @@ class McpSupervisor:
             self._loaded = False
 
     async def _reset_unlocked(self) -> None:
+        for task in list(self._refreshing.values()):
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        self._refreshing.clear()
+        self._attached.clear()
         for live in self._live.values():
             try:
                 await live.client.aclose()
@@ -319,12 +308,12 @@ class McpSupervisor:
                     server_id=server_id,
                     status="fail",
                     detail="http server has no url",
-                    fix=f"Set mcp.servers.{server_id}.url to a loopback http(s) URL.",
+                    fix=f"Set mcp.servers.{server_id}.url to the server's http(s) endpoint.",
                 ),
                 None,
             )
         try:
-            assert_loopback_http_url(spec.url)
+            assert_http_url(spec.url, allow_remote=spec.allow_remote)
         except McpError as e:
             log.warning(
                 "mcp http url refused",
@@ -346,8 +335,10 @@ class McpSupervisor:
             client = HttpMcpClient(
                 spec.url,
                 timeout=spec.timeout_seconds or self._call_timeout,
+                max_call_seconds=spec.max_call_seconds or MAX_CALL_SECONDS,
                 startup_timeout=self._startup_timeout(spec),
                 headers=headers,
+                allow_remote=spec.allow_remote,
             )
             return await self._handshake(server_id, client, spec)
         except Exception as e:
@@ -376,37 +367,47 @@ class McpSupervisor:
     ) -> tuple[McpServerStatus, _LiveServer]:
         # The clients also give each handshake request this long, so a
         # startup timeout above the call timeout is honoured (TD-5105).
+        # ``start`` may probe for the era first (TD-5136).
         startup = self._startup_timeout(spec)
-        await asyncio.wait_for(client.start(), timeout=startup)
+        client.on_tools_changed = lambda: self._tools_changed(server_id)
+        await asyncio.wait_for(client.start(), timeout=client.startup_seconds)
         listed = await asyncio.wait_for(client.list_tools(), timeout=startup)
         tools, excluded = sanitize_remote_tools(server_id, listed)
-        detail = f"{len(tools)} tool(s) listed"
-        fix = None
-        if excluded:
-            for item in excluded:
-                log.warning(
-                    "mcp tool excluded",
-                    extra={
-                        "extra_fields": {
-                            "server_id": server_id,
-                            "tool": item.name,
-                            "reason": item.reason,
-                        }
-                    },
-                )
-            names = "; ".join(f"{item.name} ({item.reason})" for item in excluded)
-            detail += f"; {len(excluded)} excluded: {names}"
-            fix = (
-                "The other tools work. An excluded tool stays out until the server "
-                "advertises a usable name and input schema."
+        excluded = [*client.excluded, *excluded]
+        for item in excluded:
+            log.warning(
+                "mcp tool excluded",
+                extra={
+                    "extra_fields": {
+                        "server_id": server_id,
+                        "tool": item.name,
+                        "reason": item.reason,
+                    }
+                },
             )
         return (
-            McpServerStatus(
-                server_id=server_id,
-                status="ok",
-                detail=detail,
-                fix=fix,
-                excluded=tuple(excluded),
-            ),
+            _ok_row(server_id, client, tools, excluded),
             _LiveServer(server_id=server_id, client=client, remote_tools=tools),
         )
+
+
+def _ok_row(
+    server_id: str, client: McpClient, tools: list[McpRemoteTool], excluded: list[ExcludedTool]
+) -> McpServerStatus:
+    """The doctor row for a live server: the protocol it speaks and its tools."""
+    negotiated = getattr(client, "negotiated", None)
+    version = getattr(negotiated, "version", None)
+    detail = f"{len(tools)} tool(s) listed"
+    if isinstance(version, str):
+        detail = f"MCP {version}: {detail}"
+    fix = None
+    if excluded:
+        names = "; ".join(f"{item.name} ({item.reason})" for item in excluded)
+        detail += f"; {len(excluded)} excluded: {names}"
+        fix = (
+            "The other tools work. An excluded tool stays out until the server "
+            "advertises a usable name and input schema."
+        )
+    return McpServerStatus(
+        server_id=server_id, status="ok", detail=detail, fix=fix, excluded=tuple(excluded)
+    )

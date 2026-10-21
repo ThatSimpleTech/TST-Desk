@@ -27,8 +27,8 @@ from tstd.config import (
 from tstd.daemon import Daemon
 from tstd.logging import user_data_dir
 from tstd.mcp.errors import McpError
-from tstd.mcp.http import assert_loopback_http_url
 from tstd.mcp.loader import McpSupervisor
+from tstd.mcp.urls import assert_http_url
 from tstd.protocol import PROTOCOL_VERSION
 from tstd.tools import ToolDispatcher, create_registry
 from tstd.tools.registry import Tool
@@ -93,6 +93,10 @@ while True:
             "id": req_id,
             "result": {"content": [{"type": "text", "text": str(args.get("text", ""))}]},
         })
+    elif req_id is not None:
+        # Like an SDK legacy server: the TD-5136 era probe is unknown here.
+        _write({"jsonrpc": "2.0", "id": req_id,
+                "error": {"code": -32601, "message": "Method not found"}})
 """
 
 
@@ -407,7 +411,7 @@ class TestHttpLoad:
     @pytest.mark.asyncio
     async def test_non_loopback_url_is_refused(self) -> None:
         with pytest.raises(McpError, match="loopback"):
-            assert_loopback_http_url("https://example.invalid/mcp")
+            assert_http_url("https://example.invalid/mcp")
         config = _mcp(
             {
                 "remote": McpServerConfig(

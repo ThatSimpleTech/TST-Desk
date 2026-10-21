@@ -1270,8 +1270,9 @@ class McpServerConfig(BaseModel):
     """One user-listed MCP server (TD-4401).
 
     Listed in user-data-dir config — no dynamic discovery. HTTP
-    destinations must be loopback; the client refuses anything else
-    before dialing. ``env`` (stdio) and ``headers`` (http) hold a literal
+    destinations must be loopback unless this server sets
+    ``allow_remote`` (TD-5136), and then https; the client refuses
+    anything else before dialing. ``env`` (stdio) and ``headers`` (http) hold a literal
     that is not a secret, or ``keychain:<entry>`` (TD-5110): the token
     itself stays in the keychain and reaches only this server.
     """
@@ -1299,6 +1300,11 @@ class McpServerConfig(BaseModel):
     #: server is refused while planning. The server's own annotations
     #: are not trusted for this, only this list.
     read_only_tools: list[str] = Field(default_factory=list)
+    #: Lets an http server's ``url`` be off this machine (TD-5136). The
+    #: user's explicit opt-in for this one server, as for a model endpoint
+    #: (directive 1 governs what we bind, not what we dial). An off-box
+    #: url must be https, since ``headers`` may carry a keychain token.
+    allow_remote: bool = False
 
     @field_validator("read_only_tools", mode="before")
     @classmethod

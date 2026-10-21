@@ -431,13 +431,20 @@ def _expand_inline_empty_map(lines: list[str], index: int, key: str, indent: int
         lines[index] = f"{' ' * indent}{key}:"
 
 
-def _assert_mcp_http_url(url: str) -> None:
-    """Refuse an HTTP MCP URL we must never persist (TD-4403)."""
+def _assert_mcp_http_url(url: str, *, allow_remote: bool = False) -> None:
+    """Refuse an HTTP MCP URL we must never persist (TD-4403).
+
+    Off-box needs the server's own ``allow_remote`` and https (TD-5136).
+    """
     parts = urlsplit(url)
     if parts.scheme not in {"http", "https"} or not parts.netloc:
         raise ConfigError("MCP url must be an http(s) endpoint")
-    if not is_loopback_url(url):
-        raise ConfigError("MCP url must be loopback; off-box destinations are refused")
+    if is_loopback_url(url):
+        return
+    if not allow_remote:
+        raise ConfigError("MCP url must be loopback; off-box destinations need allow_remote: true")
+    if parts.scheme != "https":
+        raise ConfigError("an off-box MCP url must be https")
 
 
 def _mcp_server_lines(server_id: str, spec: McpServerConfig) -> list[str]:
@@ -465,6 +472,9 @@ def _mcp_server_lines(server_id: str, spec: McpServerConfig) -> list[str]:
     # TD-5123: also hand-set; Settings has no field for it.
     if spec.read_only_tools:
         block.append(f"      read_only_tools: {json.dumps(list(spec.read_only_tools))}")
+    # TD-5136: the off-box opt-in is hand-set too.
+    if spec.allow_remote:
+        block.append("      allow_remote: true")
     for key, mapping in (("env", spec.env), ("headers", spec.headers)):
         if mapping:
             block.append(f"      {key}:")
@@ -499,7 +509,8 @@ def save_mcp_server(server_id: str, spec: McpServerConfig, path: Path | None = N
 
     Surgical for the same reason as :func:`save_credential`: teaching
     comments around ``mcp:`` survive. HTTP destinations are loopback-checked
-    before the write so an off-box URL cannot land in the file.
+    before the write so an off-box URL cannot land in the file unless the
+    server opted in with ``allow_remote`` (TD-5136).
     """
     cleaned_id = server_id.strip()
     if not CREDENTIAL_ID_RE.match(cleaned_id):
@@ -507,7 +518,7 @@ def save_mcp_server(server_id: str, spec: McpServerConfig, path: Path | None = N
             f"mcp server id {cleaned_id!r} must be a lowercase slug [a-z][a-z0-9-]{{0,31}}"
         )
     if spec.transport == "http" and spec.url:
-        _assert_mcp_http_url(spec.url)
+        _assert_mcp_http_url(spec.url, allow_remote=spec.allow_remote)
 
     config_path = ensure_user_config(path)
     lines = config_path.read_text(encoding="utf-8").split("\n")

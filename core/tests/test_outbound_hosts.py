@@ -309,7 +309,8 @@ _OUTBOUND_CAPABLE = {
     "speech.py": ("hold-to-talk transcriptions; destination is speech.base_url from config"),
     "mcp/http.py": (
         "user-listed MCP HTTP client; destination is mcp.servers.<id>.url "
-        "from config; loopback-only, refused before send"
+        "from config; loopback, or off-box only with allow_remote and https "
+        "(TD-5136), refused before send"
     ),
     "connectors/github_http.py": (
         "GitHub device flow and REST; destinations are connectors.github.web_host "

@@ -326,6 +326,10 @@ class ToolDispatcher:
             )
         self._handlers[name] = handler
 
+    def unregister_handler(self, name: str) -> None:
+        """Drop *name*'s handler; a later call is an unknown tool (TD-5136)."""
+        self._handlers.pop(name, None)
+
     def has_handler(self, name: str) -> bool:
         """Whether a call to *name* would reach a handler."""
         return name in self._handlers
