@@ -17536,3 +17536,59 @@ different span. Files are never re-read for a path outside the workspace or
 behind a read rule, even if the model was allowed to read it at the time.
 Re-reading is not a tool call: it is the daemon restoring text the agent
 already had, through the same guard the read tool uses.
+
+## 2026-10-21 — TD-5134: hook runner (Class B)
+
+Approved as specified in the gap audit, with Adam's 2026-10-14 decision that
+hooks may also come from a trusted workspace config. Size 8, so the approach
+is recorded here instead of waiting for sign-off. The audit said to split the
+story before building; it shipped as one change because the config, runner,
+audit row and inspector share one model and none is useful alone.
+
+- **Where hooks come from.** One `hooks:` block shape (`core/tstd/hooks_config.py`)
+  in `config.yaml` and in `.tst/config.yaml`. The workspace list is read only
+  through the TD-5113 view while it applies; `hooks` was already a loosening
+  key there, so an untrusted file adds nothing. User hooks run first. The
+  daemon refreshes user hooks from the session's config at each turn, so a
+  config edit takes effect on the next message.
+- **The protocol.** A hook gets the event as JSON on stdin and
+  `TST_HOOK_EVENT`, `TST_SESSION_ID`, `TST_WORKSPACE` in its environment.
+  Exit 0 with JSON `{"decision": "block"|"ask"|"allow", "reason", "context"}`
+  or plain stdout (context, at session start and on a prompt only); exit 2
+  blocks with stderr as the reason; any other exit is an error. This mirrors
+  the exit-code and JSON control people already write for other agents.
+- **Hooks only tighten (directive 6).** `before_tool` runs after the
+  classifier and the policy, and only for a call they would let run, so a
+  hook never sees, and cannot rescue, a refused call. `block` refuses
+  (`hook_blocked`); `ask` turns `auto` into an approval prompt; `allow` is
+  ignored. A hook `ask` still asks when skip-all is on, since skip-all only
+  promotes the policy's own asks. Under autonomy, where no one can approve,
+  a hook `ask` refuses the call.
+- **Errors and timeouts do not block.** A hook that crashes, prints bad JSON
+  or times out is recorded as `error` or `timeout` and the call goes on; the
+  classifier and policy still hold, and a broken script should not wedge a
+  session. A timeout kills the hook's whole process group.
+- **How it runs.** The system shell (`/bin/sh`, or `cmd` on Windows) in the workspace,
+  with the shell tool's sanitized environment (no daemon secrets), output
+  read up to 64 KB, text clipped to 2,000 characters. A block stops the
+  remaining hooks for that event.
+- **Events in the loop.** `session_start` fires each time the agent loop
+  starts (source `start` or `resume`); its context rides on the next user
+  message rather than the system prompt, so the steering cache prefix is
+  untouched. A `user_prompt` block keeps the message out of the
+  conversation and ends the turn with `hook_blocked`. A `stop` block sends
+  its reason back as a user message and runs another round, at most 3 times
+  a turn. `after_tool` output is appended to the tool result. Delegate
+  workers share the parent's runner; their own stops do not run stop hooks.
+- **Audit.** Every run is a `hook_run` session event and a row in a new
+  `hook_runs` table (schema v7) with command, reason and context redacted
+  by the audit redactor, plus result, exit code and duration.
+- **Inspector.** `get_hooks` returns `hooks_state` (active hooks, source,
+  matched tools, last result, workspace trust note); the UI shows it under
+  the right pane's More menu.
+
+**Conservative answers to questions the story left open (Class C, PR body).**
+Errors and timeouts fail open (the classifier is the safety net, not the
+hook). `get_hooks` is not added to the bridged or peer verbs. A hook's
+`allow` never loosens anything. Stop-hook retries are capped at 3 a turn. A
+workspace file with invalid hooks adds no hooks rather than some of them.

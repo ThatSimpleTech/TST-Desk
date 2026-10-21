@@ -910,7 +910,9 @@ What does **not** carry over, and what to do about it:
   `~/.claude/CLAUDE.md` is not read unless `steering.claude_global_fallback` is true.
   Move anything you need into `~/.tstdesk/AGENTS.md`.
 - **MCP server definitions, hooks, and subagent files** are configuration for
-  another product, not steering. They are ignored.
+  another product, not steering. They are ignored. TST Desk's own hooks are
+  set under `hooks:` in `config.yaml` (or a trusted `.tst/config.yaml`); see
+  docs/configuration.md (TD-5134).
 - **Slash commands** live in `.tst/commands/*.md` (and `~/.tstdesk/commands/*.md`).
   They are not steering: the assembler never puts them in the cache prefix.
   Type `/` in the composer to list them. The agent cannot write those trees.
