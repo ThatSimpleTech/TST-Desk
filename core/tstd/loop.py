@@ -80,6 +80,7 @@ from .context.manifest import ManifestConfig, manifest_config_for_window
 from .context.skills import apply_slash_skill, list_workspace_skills
 from .context.stack import build_instruction_stack
 from .context.tokens import TokenCounter, make_token_counter
+from .context.workers import load_workers_async, mentioned_workers
 from .context_clear import clear_stale_tool_results
 from .context_fit import fit_inflight_turn, tool_result_char_cap, transcript_failure_text
 from .cost import CallRecord, CostTracker
@@ -163,6 +164,7 @@ from .stop_check import TurnStopCheck
 from .tools import ToolDispatcher, ToolRegistry
 from .tools.boundary import PathGuard
 from .tools.consult import offered_tools
+from .tools.delegate_named import with_named_workers, with_worker_mentions
 from .tools.dispatch import build_decision_request, canonicalize_path_fields
 from .tools.tool_search import TOOL_SEARCH_NAME
 from .workspace_trust import trusted_imports
@@ -1929,6 +1931,17 @@ async def agent_loop(
         )
 
         provider_content = queued.provider
+        # TD-5133: the named workers delegate offers this turn, read fresh
+        # so a definition the user just saved is listed; ``@name`` in the
+        # message points the turn at that worker.
+        workers = await load_workers_async(session.workspace_path)
+        turn_tool_definitions = with_named_workers(all_tool_definitions, workers)
+        if turn_tool_definitions is not None and any(
+            d.function is not None and d.function.name == "delegate" for d in turn_tool_definitions
+        ):
+            provider_content = with_worker_mentions(
+                provider_content, mentioned_workers(queued.display, workers)
+            )
         if goal_command is not None and goal_command.kind == "set":
             # The goal is the task: the model gets it as a directive.
             provider_content = goal_provider_content(goal_command.text, queued.provider)
@@ -2038,7 +2051,7 @@ async def agent_loop(
             # 2a. Determine active tier via router
             tier = router.record_turn_start()
             session.acting_tier = tier
-            tool_definitions = offered_tools(all_tool_definitions, tier, config.consult)
+            tool_definitions = offered_tools(turn_tool_definitions, tier, config.consult)
             cu_heavy = session_is_cu_heavy(session)
             tier_cfg = effective_tier(config, tier, cu_heavy=cu_heavy)
             if tier == "worker" and cu_heavy and tier_cfg.slug is None:

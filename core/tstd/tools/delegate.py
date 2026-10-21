@@ -13,6 +13,9 @@ Two kinds of child (TD-5117): ``worker`` reads, writes and runs shell;
 capped in tokens, and its transcript goes to the window on the
 ``delegate`` result, never into the parent's context. In plan mode
 ``research`` is the default and ``kind: worker`` is refused (TD-5123).
+``agent`` runs a named worker instead (TD-5133): its own prompt, tool
+allow list, tier and tightened policy, from ``.tst/agents/*.md`` or
+``~/.tstdesk/agents/*.md``.
 """
 
 from __future__ import annotations
@@ -22,9 +25,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
-from ..config import ModelConfig, TierConfig
+from ..config import ModelConfig, TierConfig, TierName
 from ..context import PromptAssembler
 from ..context.tokens import make_token_counter
+from ..context.workers import WorkerDefinition
 from ..logging import get_logger
 from ..output_cap import (
     LENGTH_FINISH,
@@ -50,6 +54,14 @@ from .delegate_child import (
     cap_worker_summary,
     child_preamble,
     resolve_kind,
+)
+from .delegate_named import (
+    AGENT_ARG,
+    named_preamble,
+    named_system_prompt,
+    named_tool_names,
+    resolve_named_worker,
+    worker_tier,
 )
 from .delegate_worktree import bind_child_root, close_child_tree, open_child_tree, worktree_brief
 from .dispatch import ToolDispatcher
@@ -115,7 +127,8 @@ def register_delegate_tools(registry: ToolRegistry) -> None:
                 "code or the web. In plan mode only research runs. "
                 "worktree: true runs the child in its own git worktree from "
                 "the last commit (your uncommitted edits are not in it); "
-                "its changes come back on a branch for you to merge."
+                "its changes come back on a branch for you to merge. "
+                "agent runs a named worker the user defined instead of a kind."
             ),
             parameters={
                 "type": "object",
@@ -134,6 +147,13 @@ def register_delegate_tools(registry: ToolRegistry) -> None:
                         "description": (
                             "worker (read, write, shell) or research (read-only "
                             "files and web). Default worker; only research in plan mode."
+                        ),
+                    },
+                    AGENT_ARG: {
+                        "type": "string",
+                        "description": (
+                            "A named worker to run (TD-5133). It brings its own "
+                            "prompt, tools and model; do not also give kind."
                         ),
                     },
                     "worktree": {
@@ -162,16 +182,24 @@ def register_delegate_handlers(dispatcher: ToolDispatcher) -> None:
 
 
 def worker_child_registry(
-    parent: ToolRegistry, kind: DelegateKind = "worker", *, consult: bool = False
+    parent: ToolRegistry,
+    kind: DelegateKind = "worker",
+    *,
+    consult: bool = False,
+    names: tuple[str, ...] | None = None,
 ) -> ToolRegistry:
     """Copy *kind*'s tools from *parent*. Never includes ``delegate``.
 
     *consult* adds ``consult`` (TD-5119): config offers it to the worker
-    tier, which every child runs on.
+    tier, which every child runs on. *names*, a named worker's allow list
+    (TD-5133), replaces the kind's tools.
     """
     child = ToolRegistry()
-    names = (*CHILD_TOOLS[kind], CONSULT_TOOL_NAME) if consult else CHILD_TOOLS[kind]
+    if names is None:
+        names = (*CHILD_TOOLS[kind], CONSULT_TOOL_NAME) if consult else CHILD_TOOLS[kind]
     for name in names:
+        if name == "delegate":
+            continue
         tool = parent.get(name)
         if tool is not None:
             child.register(tool)
@@ -184,9 +212,10 @@ async def handle_delegate(
     context: str = "",
     kind: str | None = None,
     worktree: bool | str = False,
+    agent: str | None = None,
     tool_call_id: str = "",
 ) -> HandlerOutput:
-    """``delegate`` handler — run a one-level worker or research child."""
+    """``delegate`` handler — run a one-level worker, research or named child."""
     if not isinstance(session, Session):
         raise HandlerRefusal("delegate_no_session", "Error: delegate requires a session")
     if session.delegate_depth >= 1:
@@ -201,7 +230,14 @@ async def handle_delegate(
             "Error: delegate runtime is not bound on this session",
         )
     router = session.router
-    resolved = resolve_kind(kind, plan_mode=router is not None and router.plan_mode)
+    plan_mode = router is not None and router.plan_mode
+    named: WorkerDefinition | None = None
+    if agent is not None:
+        named = await resolve_named_worker(
+            session.workspace_path, agent, kind=kind, plan_mode=plan_mode
+        )
+        worker_tier(runtime.config, named)
+    resolved = resolve_kind(kind, plan_mode=plan_mode)
     steps: list[WorkerStep] = []
     own_tree = await open_child_tree(session, worktree)
     try:
@@ -212,6 +248,7 @@ async def handle_delegate(
             kind=resolved,
             transcript=steps,
             worktree=own_tree,
+            named=named,
         )
     except HandlerRefusal as e:
         await close_child_tree(own_tree, task, steps)
@@ -235,13 +272,15 @@ async def run_worker_child(
     kind: DelegateKind = "worker",
     transcript: list[WorkerStep] | None = None,
     worktree: SessionWorktree | None = None,
+    named: WorkerDefinition | None = None,
 ) -> str:
     """Slim worker loop: assemble, complete, dispatch, repeat until text or cap.
 
     Does not call ``agent_loop`` — no autonomy overlay, no CU episode, no
     second title-bar session.  Cost records land on the parent tracker
     with ``source="worker"``.  *kind* picks the child's tools (TD-5117);
-    each step is appended to *transcript* for the window.
+    each step is appended to *transcript* for the window. *named* runs a
+    named worker (TD-5133): its tools, tier, prompt and policy rules.
     """
     if parent.delegate_depth >= 1:
         raise HandlerRefusal(
@@ -264,8 +303,17 @@ async def run_worker_child(
         parent.cost_tracker = tracker
 
     parent_dispatcher = runtime.dispatcher
+    tier: TierName = "worker"
+    worker_cfg = runtime.config.tier("worker")
+    allow_list: tuple[str, ...] | None = None
+    if named is not None:
+        tier, worker_cfg = worker_tier(runtime.config, named)
+        allow_list = named_tool_names(named, consult=runtime.config.consult.allows(tier))
     child_registry = worker_child_registry(
-        parent_dispatcher.registry, kind, consult=runtime.config.consult.allows("worker")
+        parent_dispatcher.registry,
+        kind,
+        consult=runtime.config.consult.allows("worker"),
+        names=allow_list,
     )
     child_dispatcher = ToolDispatcher(
         child_registry,
@@ -283,6 +331,13 @@ async def run_worker_child(
     child_dispatcher.autonomy_fn = parent_dispatcher.autonomy_fn
     child_dispatcher.run_permissions_fn = parent_dispatcher.run_permissions_fn
     child_dispatcher.on_class_c = parent_dispatcher.on_class_c
+    # A named worker's rules sit beside the parent's (TD-5133); they can
+    # only tighten, and a generic child has none.
+    child_dispatcher.worker_rules = (
+        (*parent_dispatcher.worker_rules, *named.policy)
+        if named is not None
+        else parent_dispatcher.worker_rules
+    )
     for tool in child_registry.list_tools():
         handler = parent_dispatcher._handlers.get(tool.name)
         if handler is not None:
@@ -313,7 +368,7 @@ async def run_worker_child(
     child.autonomy = False
     # TD-5119: the child acts as the worker tier, and its consults count
     # against the parent's turn.
-    child.acting_tier = "worker"
+    child.acting_tier = tier
     child.consult_tally = parent.consult_tally
     # web_fetch's extract pass (TD-5114) reaches the worker tier and this
     # child's result cap through the runtime; without one a research
@@ -335,7 +390,6 @@ async def run_worker_child(
     remaining = max(0, caps.max_iterations - runtime.iterations)
     child_limit = min(CHILD_MAX_ITERATIONS, remaining)
     last_text = ""
-    worker_cfg = runtime.config.tier("worker")
     # The child's results go back to the worker tier: an image fs_read
     # opens is sent only if that tier takes images (TD-5130).
     max_images = runtime.config.computer_use.max_prompt_images
@@ -352,7 +406,10 @@ async def run_worker_child(
         task_text = f"{task_text}\n\nContext:\n{context.strip()}"
     record.add("task", task_text)
     tool_names = [t.name for t in child_registry.list_tools()]
-    user_blob = f"{child_preamble(kind, tool_names)}\n\nTask:\n{task_text}"
+    preamble = (
+        child_preamble(kind, tool_names) if named is None else named_preamble(named, tool_names)
+    )
+    user_blob = f"{preamble}\n\nTask:\n{task_text}"
     if worktree is not None:
         user_blob = f"{user_blob}\n\n{worktree_brief(parent.workspace_path, worktree)}"
 
@@ -361,8 +418,9 @@ async def run_worker_child(
         task=user_blob,
         matched_paths=set(parent.touched_paths),
     )
+    system = assembled.text if named is None else named_system_prompt(assembled.text, named)
     messages: list[ChatMessage] = [
-        ChatMessage(role="system", content=assembled.text),
+        ChatMessage(role="system", content=system),
         ChatMessage(role="user", content=user_blob),
     ]
 
@@ -405,7 +463,7 @@ async def run_worker_child(
             record.add("note", f"Worker stopped: {resp.message}")
             return finish(last_text or f"Worker stopped: {resp.message}")
         if resp.usage is not None:
-            tracker.record("worker", resp.usage, worker_cfg, source="worker")
+            tracker.record(tier, resp.usage, worker_cfg, source="worker")
             await parent.event_log.add(tracker.emit_cost_update(parent.id))
 
         tool_calls = resp.message.tool_calls or []
@@ -421,7 +479,7 @@ async def run_worker_child(
             tool_calls, cut = split_cut_calls(tool_calls)
             log_output_cap(
                 session_id=parent.id,
-                tier="worker",
+                tier=tier,
                 model=worker_cfg.require_slug(),
                 max_output_tokens=worker_cfg.max_output_tokens,
                 cut_calls=len(cut),

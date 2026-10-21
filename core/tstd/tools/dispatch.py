@@ -33,9 +33,11 @@ from ..plan_mode import PLAN_MODE_REFUSED, planning_refusal
 from ..policy import (
     ApprovalOutcome,
     PolicyConfig,
+    PolicyRule,
     format_summary,
     resolve_explained,
     with_run_rules,
+    with_worker_rules,
 )
 from ..protocol import DecisionLogged as DecisionLoggedEvent
 from ..protocol import RunPermissions, WorkerStep
@@ -293,6 +295,9 @@ class ToolDispatcher:
         # flight, judged beside the workspace policy. A delegate child
         # reads its parent's, since its calls are that turn's.
         self.run_permissions_fn: Callable[[], RunPermissions | None] | None = None
+        # TD-5133: a named worker's own rules, judged beside the workspace
+        # policy. Only ask or never, so they can only tighten it.
+        self.worker_rules: tuple[PolicyRule, ...] = ()
         # TD-709 (dev): actuation verification.  Both None in tests and
         # whenever judgments.verification is off — the dispatch path is
         # then byte-identical to today.
@@ -467,8 +472,11 @@ class ToolDispatcher:
         autonomy = self.autonomy_fn() if self.autonomy_fn is not None else False
         run_permissions = self.run_permissions_fn() if self.run_permissions_fn is not None else None
         decision = resolve_explained(
-            with_run_rules(
-                self.policy if self.policy is not None else PolicyConfig(), run_permissions
+            with_worker_rules(
+                with_run_rules(
+                    self.policy if self.policy is not None else PolicyConfig(), run_permissions
+                ),
+                self.worker_rules,
             ),
             tool,
             arguments,

@@ -11485,6 +11485,44 @@ stream, result and error outputs, colour codes stripped, windowed by
 tier. Tests: core/tests/test_fs_read_media.py (handler, dispatch and the
 loop with the mock provider).
 
+### TD-5133 — Named worker definitions
+**Size:** 5 · **Depends on:** TD-5117 · Gap audit 2026-10-14
+
+TST Desk had one generic `delegate` child with two built-in kinds. Claude
+Code documents subagent files with their own prompt, tools and model.
+
+**Acceptance criteria:**
+- [x] `.tst/agents/*.md` and `~/.tstdesk/agents/*.md` define workers: name,
+      description, prompt, tool allow list, tier or preset, and policy
+      overrides that can only tighten.
+- [x] These files are agent-unwritable, like steering (directive 4).
+- [x] `delegate` picks a worker by name. The model sees the list with
+      descriptions, and `@name` in the composer targets one.
+
+Done (2026-10-21): `core/tstd/context/workers.py` reads both trees
+(user-global wins on a name): frontmatter `name`, `description`
+(required), `tools`, `tier`, `preset`, `policy`, and the body as the
+worker's prompt. Tools come only from the delegate children's own set
+(the research five, `fs_write`, `fs_edit`, `shell`, `consult`); no
+`tools` key means read-only. Policy rules must be `ask` or `never`, and
+`with_worker_rules` drops `auto` again at the gate, so a worker can only
+tighten. A file that breaks a rule, or carries a key TST Desk does not
+read, is not loaded and `delegate` names why. The classifier refuses
+`.tst/agents/` and `.tstdesk/agents/` like slash-command trees, through
+`fs_write`, `fs_edit` and shell writes. `delegate` takes `agent`
+(`core/tstd/tools/delegate_named.py`): the child gets that allow list,
+that tier (from `preset` when named; a missing preset is refused), its
+prompt after the worker stack, and its rules on the child dispatcher.
+Plan mode refuses a worker that can write. Each turn the loop lists the
+workers with descriptions in `delegate`'s definition (with an `agent`
+enum; unchanged when there are none), and `@name` in the message adds a
+note telling the model to delegate to it. Tests:
+`core/tests/test_named_workers.py` (loading, precedence, refused files,
+unwritable trees, tier, preset, policy, refusals, plan mode, the
+definition the model sees, and an `@name` turn through the loop with the
+mock provider) and `core/tests/test_security_suite.py` (paths and shell
+writes). See DECISIONS.md and docs/configuration.md §4.11.
+
 ## Epic E53 — Connectors
 
 Owner-approved scope 2026-10-02. A connector is a local sign-in to a

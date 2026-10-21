@@ -277,6 +277,9 @@ STEERING_POSITIVE = [
     ".tstdesk/commands/review.md",
     ".tst/skills/foo/SKILL.md",  # skill files are Class C writes (TD-4502)
     "src/SKILL.md",
+    ".tst/agents/reviewer.md",  # named worker definitions (TD-5133)
+    ".TST/Agents/reviewer.md",
+    ".tstdesk/agents/reviewer.md",
 ]
 
 STEERING_NEGATIVE = [
@@ -425,6 +428,8 @@ def _shell_decision(ws: Path, command: str) -> Any:
         "echo never >! CLAUDE.md",  # zsh clobber, attached
         "echo never >&! AGENTS.md",
         "echo never >! .tst/config.yaml",  # spaced clobber
+        "echo 'tools: [shell]' > .tst/agents/reviewer.md",  # TD-5133
+        "tee .tst/agents/reviewer.md",
     ],
 )
 def test_shell_write_to_steering_is_static_c(ws: Path, command: str) -> None:
