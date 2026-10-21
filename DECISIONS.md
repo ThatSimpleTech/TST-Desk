@@ -17825,3 +17825,70 @@ no after-write hook: TD-5134 keeps an autonomous session's hooks in its
 container, and running these on the host would be the one way out of it.
 The conservative choice is not to run them there until they have a
 container path.
+
+## 2026-10-21 — TD-5137: background shell jobs (Class B)
+
+**Context.** The gap audit asked for `shell` to take `background: true`,
+return a job id, and gain tools that read a job's new output and stop it;
+the daemon owns the jobs, kills them when the session ends and lists them
+in the UI; a command that hits the foreground timeout can move to the
+background. Story sized 8 ("split before building"); approach recorded here
+per the owner's 2026-10-14 approval of the gap-audit stories.
+
+**Decision.**
+- **Split.** `tstd/shell_jobs.py` holds the jobs and their buffers and
+  imports no process code, so `Session` can own a `ShellJobs` without the
+  tools package. `tools/shell_background.py` starts and adopts jobs;
+  `tools/shell_job_tools.py` holds the two tools. `run_shell` keeps its
+  foreground path; its spawn became `spawn_shell` so both paths start a
+  command the same way (environment, memory cap, process group, the
+  mid-spawn cancel guard).
+- **Same `shell` call.** A job starts from the `shell` tool itself, so the
+  classifier, policy rules (`args` is the command), the read-only list and
+  plan mode judge it exactly as the foreground command. No new rule looks
+  at `background` or `on_timeout`.
+- **Tool names `shell_job_output` and `shell_job_stop`.** `shell_output`
+  is already a protocol event (the foreground stream), and plain `job_*`
+  is the scheduler's.
+- **Reading and stopping are Class A (`shell-job`).** Both reach only this
+  session's own jobs, which a classified `shell` call started; reading
+  touches only the daemon's buffer, stopping kills only that process
+  group. Builtin shape only (no provenance, no path or host), placed after
+  the C refusals and before the ask floor, like `task-list`. Plan mode
+  allows the read and refuses the stop (it ends a process; planning
+  changes nothing).
+- **Ownership.** Jobs live on the `Session`, which the daemon owns
+  (directive 5). `Session.cancel` (user cancel, delete via the runner,
+  daemon shutdown) and `SessionRegistry.remove` kill every running job and
+  close the session to new ones. A window closing does nothing to them.
+- **The UI list is an event, display only.** `shell_jobs` carries the
+  whole list on every change (start, exit, stop, revive), as `task_list`
+  does; the Plan pane lists the focused session's. No Stop button in this
+  story: the model stops a job, and ending the session stops all of them.
+- **Timeout handover.** `on_timeout: "kill" | "background"`, default
+  `kill`, so nothing changes for a call that does not ask. On a timeout
+  with `background` the output so far stays in the result (no exit code
+  yet) and later output goes to the job: the readers keep running, only
+  their destination changes.
+
+**Conservative choices where the story is silent (Class C questions).**
+- A delegated child and an unattended (autonomy) run cannot start a job,
+  and a timeout there still kills: a child is gone when its task returns,
+  so nothing would read or stop its job, and an autonomy command's
+  container lives for the call.
+- At most 8 running jobs per session, 16 finished ones kept in the list,
+  200,000 unread characters kept per job (older text is dropped and the
+  next read says how much), 20,000 characters per read, 30 s longest wait.
+  Constants, not config: limits, not slugs, prices or URLs (directive 7).
+- After a restart the old daemon's running jobs are logged `lost`, not
+  re-adopted: a clean shutdown already killed them, and after a crash this
+  daemon has no handle on them. No pid file is kept to hunt them down.
+- Background jobs do not stream `shell_output` events into the timeline:
+  a dev server's log would flood it. The model reads them on demand.
+
+**Alternatives rejected.** A daemon-wide job table (a job belongs to the
+session that started it, and ending the session must end it). A Stop
+button in the window (a new client message and control the story does not
+ask for). Re-adopting jobs after a restart (no handle survives the
+process).
+

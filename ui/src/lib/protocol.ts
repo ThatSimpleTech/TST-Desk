@@ -2551,6 +2551,28 @@ export interface TaskList extends DaemonEvent {
   items: TaskListItem[];
 }
 
+/** A background shell job's state (TD-5137). `lost`: the daemon restarted
+ *  while it ran. */
+export type ShellJobStatus = "running" | "exited" | "stopped" | "lost";
+
+export interface ShellJobInfo {
+  job_id: string;
+  command: string;
+  status: ShellJobStatus;
+  exit_code: number | null;
+  /** Unix seconds. */
+  started_at: number;
+  ended_at: number | null;
+}
+
+/** The session's background shell jobs after any of them changed
+ *  (TD-5137). The newest one is the list; the daemon owns the jobs. */
+export interface ShellJobs extends DaemonEvent {
+  type: "shell_jobs";
+  session_id: string;
+  jobs: ShellJobInfo[];
+}
+
 /** A session's worktree changed: made, set up, or closed (TD-5126). */
 export interface WorktreeState extends DaemonEvent {
   type: "worktree_state";
@@ -2945,6 +2967,7 @@ export type DaemonEventUnion =
   | ContextCompacted
   | ContextUsage
   | TaskList
+  | ShellJobs
   | WorktreeState
   | StopCheck
   | HookRun

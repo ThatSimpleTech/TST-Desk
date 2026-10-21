@@ -93,6 +93,7 @@ import type {
   TurnComplete,
   ContextCompacted,
   SteeringReloaded,
+  ShellJobs,
   TaskList,
   RuleActivated,
   TierSwitched,
@@ -1040,6 +1041,20 @@ describe("Daemon event fixtures match TypeScript types", () => {
     for (const item of m.items) expect(isString(item.content)).toBe(true);
   });
 
+  it("shell_jobs (TD-5137)", () => {
+    const m = fixtures.shell_jobs as ShellJobs;
+    expect(m.type).toBe("shell_jobs");
+    expect(isString(m.session_id)).toBe(true);
+    expect(m.jobs.map((j) => j.status)).toEqual(["running", "exited"]);
+    expect(m.jobs[0].exit_code).toBeNull();
+    expect(m.jobs[1].exit_code).toBe(1);
+    for (const job of m.jobs) {
+      expect(isString(job.job_id)).toBe(true);
+      expect(isString(job.command)).toBe(true);
+      expect(typeof job.started_at).toBe("number");
+    }
+  });
+
   it("steering_reloaded", () => {
     const m = fixtures.steering_reloaded as SteeringReloaded;
     expect(m.type).toBe("steering_reloaded");
@@ -1337,7 +1352,7 @@ describe("All fixtures have required shape", () => {
       "tool_result_truncated", "tool_result_diff", "tool_result_read_only", "tool_result_denied",
       "shell_output", "tool_progress", "approval_request", "approval_request_always_allow", "question_request", "question_answered", "plan_review", "plan_reviewed", "plan_reviewed_rejected", "plan_pinned", "decision_logged",
       "checkpoint_notice", "verify_result", "cost_update", "boundary_update", "boundary_update_config_trust", "turn_complete",
-      "tier_state", "tier_state_plan", "context_compacted", "context_compacted_manual", "context_compacted_inflight_trim", "context_compacted_clear_stale", "context_usage", "task_list", "stop_check", "session_goal", "worktree_state", "worktree_state_closed", "session_list_worktree", "steering_reloaded", "rule_activated", "tier_switched",
+      "tier_state", "tier_state_plan", "context_compacted", "context_compacted_manual", "context_compacted_inflight_trim", "context_compacted_clear_stale", "context_usage", "task_list", "shell_jobs", "stop_check", "session_goal", "worktree_state", "worktree_state_closed", "session_list_worktree", "steering_reloaded", "rule_activated", "tier_switched",
       "model_fallback", "context_usage_fallback", "tier_state_fallback",
       "instruction_stack", "instruction_files", "command_list", "context_pins", "session_search_results", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "steering_proposal", "steering_decision", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated",

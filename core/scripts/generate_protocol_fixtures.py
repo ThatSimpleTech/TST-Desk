@@ -240,6 +240,8 @@ from tstd.protocol import (
     SetupState,
     SetVoice,
     SetWorkspacePin,
+    ShellJobInfo,
+    ShellJobs,
     ShellOutput,
     Shutdown,
     SkillStackEntry,
@@ -1219,6 +1221,23 @@ FIXTURES = {
             TaskListItem(content="Read the failing test", status="done"),
             TaskListItem(content="Fix the date parser", status="in_progress"),
             TaskListItem(content="Run the suite", status="pending"),
+        ],
+        seq=19,
+    ),
+    "shell_jobs": ShellJobs(
+        session_id="sess-1",
+        jobs=[
+            ShellJobInfo(
+                job_id="job-1", command="npm run dev", status="running", started_at=1760000000.0
+            ),
+            ShellJobInfo(
+                job_id="job-2",
+                command="npm test -- --watch",
+                status="exited",
+                exit_code=1,
+                started_at=1760000010.0,
+                ended_at=1760000070.0,
+            ),
         ],
         seq=19,
     ),

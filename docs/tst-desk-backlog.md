@@ -11693,6 +11693,41 @@ after-write hook (TD-5134 keeps its hooks in the container; these have no
 container path). Tests: `test_an_autonomous_session_runs_no_hook_on_the_host`,
 core/tests/test_docs_config_reference.py.
 
+### TD-5137 — Background shell jobs
+**Size:** 8 · **Depends on:** TD-5101 · Gap audit 2026-10-14
+
+The shell tool was synchronous: it killed the process group at the
+timeout, so dev servers, watch builds and log tails could not run. Claude
+Code documents background commands and a tool that reads their output.
+
+**Acceptance criteria:**
+- [x] `shell` takes `background: true`. It returns a job id, and new tools
+      read new output and stop the job. Starting a job is classified like
+      any shell call (`shell_job_output` / `shell_job_stop`;
+      core/tests/test_shell_jobs.py, including
+      `test_starting_a_job_is_classified_like_any_shell_call` with plan mode
+      on and off and `test_a_background_start_still_asks`)
+- [x] The daemon owns the jobs (directive 5). It kills them when the
+      session ends and lists them in the UI (`Session.shell_jobs`, killed
+      by `Session.cancel` and `SessionRegistry.remove`; the `shell_jobs`
+      event and the Plan pane's "Background jobs" list;
+      `test_ending_the_session_kills_its_jobs`,
+      `test_removing_a_session_kills_its_jobs`, ui/src/lib/shell-jobs.test.ts)
+- [x] A command that hits the foreground timeout can be moved to the
+      background instead of being killed (`on_timeout: "background"`;
+      `test_a_timeout_can_move_the_command_to_the_background`; the default
+      still kills, `test_the_default_timeout_still_kills`)
+
+Done (2026-10-21): a job's output (stdout and stderr together) goes to a
+buffer on the session that keeps the last 200,000 unread characters;
+`shell_job_output` returns what is new since the last read (20,000 a call,
+`wait_secs` up to 30, no `job_id` lists the jobs) and `shell_job_stop`
+kills the whole process group. Both are Class A by the `shell-job` rule
+(builtin shape only); plan mode runs the read and refuses the stop. A
+session holds at most 8 running jobs. A delegated child and an unattended
+run cannot start one. A revived session logs the old daemon's running jobs
+as `lost`. Approach and limits in DECISIONS.md.
+
 ## Epic E53 — Connectors
 
 Owner-approved scope 2026-10-02. A connector is a local sign-in to a
