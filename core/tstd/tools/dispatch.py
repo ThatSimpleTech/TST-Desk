@@ -740,12 +740,17 @@ class ToolDispatcher:
 
         # 4.05 After-tool hooks (TD-5134): what they say goes back with the
         #     result. A block cannot undo the call; the model is told.
+        hook_notes = ""
         if hooks is not None:
-            output = await after_tool(hooks, tool_call_id, name, arguments, output, hook_context)
+            hook_notes = await after_tool(
+                hooks, tool_call_id, name, arguments, output, hook_context
+            )
 
         # 4. Truncate. fs_read's marker names offset/limit; other tools
-        #    keep the historical marker (TD-4839).
+        #    keep the historical marker (TD-4839). Hook notes go on after,
+        #    so a long result cannot cut them off.
         truncated_output, truncated = truncate_output(output, self.max_result_chars, tool_name=name)
+        truncated_output += hook_notes
 
         # 4.1 Decisions ledger (TD-704).  A Class A/B decision that
         #     executed appends to .tst/autonomy/DECISIONS.md and emits

@@ -17592,3 +17592,30 @@ Errors and timeouts fail open (the classifier is the safety net, not the
 hook). `get_hooks` is not added to the bridged or peer verbs. A hook's
 `allow` never loosens anything. Stop-hook retries are capped at 3 a turn. A
 workspace file with invalid hooks adds no hooks rather than some of them.
+
+**Review fixes (PR #60).** Four findings, all fixed:
+
+- **Autonomy runs hooks in the container.** §12.5 / TD-4301 require an
+  unattended run to execute in a rootless container with only the workspace
+  bound in. The agent writes the workspace unattended, so a hook that runs a
+  repo script (`./scripts/check.sh`, `make lint`) would have run its code on
+  the host. An autonomous session's hooks now run through the same
+  `autonomy_shell_argv` as its shell calls (`--interactive` for the stdin
+  payload, the hook variables passed with `--env`, the charter's network, the
+  session's memory cap); the payload's `workspace` and `TST_WORKSPACE` are
+  `/workspace`. User hooks go there too: the most conservative choice, at
+  the cost that a user hook naming a host path does not work unattended. If
+  the container argv cannot be built the hook is recorded as `error` and
+  never runs on the host (errors fail open as before; autonomy refuses to
+  start without a runtime anyway).
+- **Steers meet `user_prompt` hooks.** A message that joins a running turn
+  (TD-5112) runs the same hooks before it is appended. A block keeps it out
+  of the conversation; its `user_turn` is still logged and a note says why.
+  Hook context rides on the steer as on a turn's first message.
+- **Hook notes go after truncation.** `after_tool` now returns only the
+  `[hooks]` notes and the dispatcher adds them after `truncate_output`, so a
+  long result cannot cut a flag off. The notes are already clipped to
+  2,000 characters a hook.
+- **`tst run` counts hook blocks as refusals.** `hook_blocked` joins
+  `REFUSAL_CODES` (a `before_tool` block), and a turn that ends with
+  `hook_blocked` (a blocked prompt) is `refused` too: exit 3.

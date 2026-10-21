@@ -1430,16 +1430,16 @@ hooks run first, then the workspace's.
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `session_start` | list of hooks | `[]` | Runs when a session's loop starts (open, and again after a restart revives it). What it prints goes to the model with the next message. |
-| `user_prompt` | list of hooks | `[]` | Runs on each message you send, before the model sees it. It can add context, or block the message: the window shows why and the model never sees it. |
-| `before_tool` | list of hooks | `[]` | Runs for a tool call after the decision classifier and your policy have decided, and only when they would let it run or ask. It can block the call, or make a call that would run on its own wait for your approval. It cannot approve anything. In an unattended run nobody can approve, so its ask refuses the call. |
-| `after_tool` | list of hooks | `[]` | Runs after a tool call succeeds. What it says goes back to the model with the result. |
+| `user_prompt` | list of hooks | `[]` | Runs on each message you send, before the model sees it, including one sent while a turn runs (it joins that turn). It can add context, or block the message: the window shows why and the model never sees it. In `tst run`, a blocked message exits 3 (refused). |
+| `before_tool` | list of hooks | `[]` | Runs for a tool call after the decision classifier and your policy have decided, and only when they would let it run or ask. It can block the call (`hook_blocked`, which `tst run` counts as refused), or make a call that would run on its own wait for your approval. It cannot approve anything. In an unattended run nobody can approve, so its ask refuses the call. |
+| `after_tool` | list of hooks | `[]` | Runs after a tool call succeeds. What it says goes back to the model with the result, after it, so a long result cut to `max_result_chars` still carries it. |
 | `stop` | list of hooks | `[]` | Runs when the model ends a turn, before the done-check (§4.9). A block sends its reason back to the model and the turn goes on, up to 3 times a turn. |
 
 Each hook:
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `command` | string | required | A shell command, run in the session's folder with secret-shaped variables removed from its environment, plus `TST_HOOK_EVENT`, `TST_SESSION_ID` and `TST_WORKSPACE`. It gets the event as JSON on stdin. |
+| `command` | string | required | A shell command, run in the session's folder with secret-shaped variables removed from its environment, plus `TST_HOOK_EVENT`, `TST_SESSION_ID` and `TST_WORKSPACE`. It gets the event as JSON on stdin. In an unattended (autonomy) run it runs in that run's container, like its shell calls: the image's `/bin/sh` in `/workspace`, with only the workspace bound in, the charter's network and the memory cap, so a host path such as `~/bin/check.sh` is not there. If the container cannot start, the hook is recorded as an error and does not run on your computer. |
 | `timeout_seconds` | number, up to 600 | `30` | How long it may run before it and what it started are killed. A timeout changes nothing. |
 | `tools` | list of globs | `[]` | `before_tool` and `after_tool` only: the tool names it runs for (`shell`, `fs_*`). Empty is every tool. |
 | `name` | string | none | A label for the inspector. |

@@ -147,7 +147,7 @@ window. Exit codes:
 | 0 | `success` | The turn completed and no tool call was refused |
 | 1 | `error` | The turn failed, the daemon refused the message, or the run timed out or lost the daemon |
 | 2 | — | Usage error (argparse, or no message) |
-| 3 | `refused` | The turn completed, but a gate refused a tool call: `boundary_refusal`, `policy_denied` or `approval_denied` (a `--deny` rule, and a `--on-ask deny-and-continue` refusal, count here) |
+| 3 | `refused` | The turn completed, but a gate refused a tool call: `boundary_refusal`, `policy_denied`, `approval_denied`, `plan_mode` or `hook_blocked` (a `--deny` rule, a `--on-ask deny-and-continue` refusal, and a `before_tool` hook's block count here), or a `user_prompt` hook blocked the message (`hook_blocked` on `turn_complete`) |
 | 4 | `approval_needed` | A call is waiting for approval that this run could not give |
 
 **Per-run permissions (TD-5118).** `--allow RULE` and `--deny RULE` (each

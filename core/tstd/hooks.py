@@ -37,6 +37,7 @@ import signal
 import sys
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from .hooks_config import (
@@ -196,9 +197,18 @@ def _kill(proc: asyncio.subprocess.Process) -> None:
 
 
 async def run_command(
-    hook: ActiveHook, payload: dict[str, Any], cwd: str, env: dict[str, str]
+    hook: ActiveHook,
+    payload: dict[str, Any],
+    cwd: str,
+    env: dict[str, str],
+    *,
+    argv: list[str] | None = None,
 ) -> HookOutcome:
-    """Run *hook* once with *payload* on stdin and judge what it said."""
+    """Run *hook* once with *payload* on stdin and judge what it said.
+
+    *argv*, when given, is what runs instead of the host shell: an
+    autonomous session's container (:func:`sandboxed_argv`).
+    """
     started = time.monotonic()
 
     def elapsed() -> int:
@@ -208,16 +218,19 @@ async def run_command(
     if sys.platform != "win32":
         # Its own process group, so a timeout kills what it started too.
         extra["start_new_session"] = True
+    pipes: dict[str, Any] = {
+        "stdin": asyncio.subprocess.PIPE,
+        "stdout": asyncio.subprocess.PIPE,
+        "stderr": asyncio.subprocess.PIPE,
+        "cwd": cwd,
+        "env": env,
+        **extra,
+    }
     try:
-        proc = await asyncio.create_subprocess_shell(
-            hook.entry.command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=cwd,
-            env=env,
-            **extra,
-        )
+        if argv is not None:
+            proc = await asyncio.create_subprocess_exec(*argv, **pipes)
+        else:
+            proc = await asyncio.create_subprocess_shell(hook.entry.command, **pipes)
     except OSError as e:
         return HookOutcome("error", None, reason=f"could not start: {e}", duration_ms=elapsed())
 
@@ -342,25 +355,41 @@ class HookRunner:
         if not hooks:
             return verdict
         session = self.owner
+        # An autonomous session's hooks run in its container, as its shell
+        # calls do (§12.5, TD-4301): the agent can write the workspace
+        # unattended, so a hook that runs a repo script must not hand it
+        # the host. There the workspace is ``/workspace``.
+        from .autonomy.sandbox import WORKSPACE_DEST
+
+        sandboxed = bool(getattr(session, "autonomy", False))
+        workspace = WORKSPACE_DEST if sandboxed else session.workspace_path
         body = {
             "event": event,
             "session_id": session.id,
-            "workspace": session.workspace_path,
+            "workspace": workspace,
             **payload,
+        }
+        hook_env = {
+            "TST_HOOK_EVENT": event,
+            "TST_SESSION_ID": session.id,
+            "TST_WORKSPACE": workspace,
         }
         # Lazy: ``tools`` imports ``session``, which imports this module.
         from .tools.shell import sanitized_env
 
         env = sanitized_env()
-        env.update(
-            {
-                "TST_HOOK_EVENT": event,
-                "TST_SESSION_ID": session.id,
-                "TST_WORKSPACE": session.workspace_path,
-            }
-        )
+        if not sandboxed:
+            env.update(hook_env)
         for hook in hooks:
-            outcome = await run_command(hook, body, session.workspace_path, env)
+            argv: list[str] | None = None
+            if sandboxed:
+                try:
+                    argv = await sandboxed_argv(session, hook.entry.command, hook_env)
+                except ValueError as e:
+                    outcome = HookOutcome("error", None, reason=f"could not start: {e}")
+                    await self._record(hook, outcome, tool_name, tool_call_id)
+                    continue
+            outcome = await run_command(hook, body, session.workspace_path, env, argv=argv)
             await self._record(hook, outcome, tool_name, tool_call_id)
             if outcome.context:
                 verdict.contexts.append(outcome.context)
@@ -410,6 +439,39 @@ class HookRunner:
         )
 
 
+async def sandboxed_argv(session: Any, command: str, env: dict[str, str]) -> list[str]:
+    """The container argv an autonomous session's hook runs under.
+
+    The same container its shell calls get: only the workspace bound in,
+    the charter's network, and the session's memory cap, with stdin kept
+    open for the payload. Raises ``ValueError`` when it cannot be built.
+    """
+    from .autonomy.sandbox import SandboxError, autonomy_shell_argv
+    from .tools import shell_memory
+    from .tools.shell import sanitized_env
+
+    cfg = session.config
+    if cfg is None:
+        raise ValueError("an autonomous hook needs the session's model config")
+    network: str | list[str] = "deny"
+    if session.charter is not None:
+        network = session.charter.boundary.network
+    cap = await shell_memory.plan_cap(session, sanitized_env())
+    try:
+        return autonomy_shell_argv(
+            Path(session.workspace_path),
+            command,
+            runtime=cfg.autonomy.runtime,
+            image=cfg.autonomy.image,
+            network=network,
+            memory_mb=cap.mb if cap is not None else None,
+            interactive=True,
+            env=env,
+        )
+    except SandboxError as e:
+        raise ValueError(str(e)) from e
+
+
 def hook_runner(session: Any) -> HookRunner | None:
     """The runner a session's calls meet, or None (library use, tests)."""
     runner = getattr(session, "hooks", None)
@@ -454,7 +516,11 @@ async def after_tool(
     output: str,
     before_context: str,
 ) -> str:
-    """*output* with what ``before_tool`` and ``after_tool`` hooks said added."""
+    """What ``before_tool`` and ``after_tool`` hooks said, to add after *output*.
+
+    Empty when they said nothing. The caller adds it after truncating the
+    result, so a long result cannot cut the hooks' notes off.
+    """
     verdict = await runner.run(
         "after_tool",
         {
@@ -468,8 +534,8 @@ async def after_tool(
     if verdict.block is not None:
         notes.append(f"A hook flagged this result: {verdict.block}")
     if not notes:
-        return output
-    return output + "\n\n[hooks]\n" + "\n\n".join(notes)
+        return ""
+    return "\n\n[hooks]\n" + "\n\n".join(notes)
 
 
 def with_hook_context(content: Any, text: str) -> Any:

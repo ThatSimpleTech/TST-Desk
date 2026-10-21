@@ -10,6 +10,7 @@ hooks with their last results.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import time
@@ -295,6 +296,18 @@ class TestBeforeTool:
             await dispatcher.dispatch("c1", "fs_read", {"path": "a.txt"}, session)
         assert _runs(session) == []
 
+    async def test_hook_notes_survive_a_long_result(self, tmp_path: Path) -> None:
+        # Review finding: notes added before truncation were cut off with
+        # the tail of a long result.
+        (tmp_path / "big.txt").write_text("x" * 5000, encoding="utf-8")
+        command = _answer(tmp_path, "flag", {"decision": "block", "reason": "leaked a key"})
+        session = _hooked_session(tmp_path, after_tool=[HookEntry(command=command)])
+        dispatcher = _dispatcher(tmp_path, [])
+        dispatcher.max_result_chars = 500
+        result = await dispatcher.dispatch("c1", "fs_read", {"path": "big.txt"}, session)
+        assert result.output.endswith("A hook flagged this result: leaked a key")
+        assert "[hooks]" in result.output
+
     async def test_after_tool_context_reaches_the_model(self, tmp_path: Path) -> None:
         (tmp_path / "a.txt").write_text("body", encoding="utf-8")
         command = _answer(tmp_path, "lint", {"context": "lint: clean"})
@@ -476,6 +489,153 @@ class TestLoop:
             assert len([r for r in _runs(session) if r.event == "stop"]) == 4
         finally:
             await runner.cancel()
+
+
+class TestSteer:
+    """A message sent mid-turn meets user_prompt hooks too (review finding)."""
+
+    async def test_a_blocked_steer_never_reaches_the_model(self, tmp_path: Path) -> None:
+        from tests.test_steer_turn import _brain, _HeldTool, _start, _tool_then_text
+
+        gate = _script(
+            tmp_path,
+            "gate",
+            "import json, sys\n"
+            "prompt = json.load(sys.stdin)['prompt']\n"
+            "if 'hunter2' in prompt:\n"
+            "    print(json.dumps({'decision': 'block', 'reason': 'no secrets'}))\n"
+            "else:\n"
+            "    print(json.dumps({'context': 'checked: ' + prompt}))\n",
+        )
+        config = make_config()
+        config.hooks = HooksConfig(user_prompt=[HookEntry(command=gate)])
+        session = Session(str(tmp_path))
+        held = _HeldTool()
+        runner, mock = await _start(session, _tool_then_text(), held, config)
+        try:
+            await session.add_user_message("Build it")
+            await asyncio.wait_for(held.started.wait(), 10)
+            await session.add_user_message("the password is hunter2", steer=True)
+            await session.add_user_message("also lint", steer=True)
+            held.release.set()
+            await wait_for_turn(session, 1, 15)
+            sent = [content_as_text(m.content) for m in _brain(mock)[-1].messages]
+            assert not any("hunter2" in text for text in sent)
+            assert any(t.startswith("also lint") and "checked: also lint" in t for t in sent)
+            prompts = [r for r in _runs(session) if r.event == "user_prompt"]
+            assert [r.result for r in prompts] == ["context", "block", "context"]
+            # The window still shows what was sent, and why it went nowhere.
+            shown = [e.content for e in session.event_log.all_events if isinstance(e, UserTurn)]
+            assert "the password is hunter2" in shown
+            notes = [e.delta for e in session.event_log.all_events if isinstance(e, AssistantDelta)]
+            assert any("no secrets" in n for n in notes)
+            assert not any("hunter2" in content_as_text(m.content) for m in session.conversation)
+        finally:
+            await runner.cancel()
+
+
+# ── Autonomy: hooks run in the container ────────────────────────────────
+
+
+_FAKE_RUNTIME = """\
+import json, os, subprocess, sys
+args = sys.argv[1:]
+with open({log!r}, "w") as fh:
+    json.dump(args, fh)
+env = dict(os.environ)
+for i, a in enumerate(args):
+    if a == "--env":
+        key, _, value = args[i + 1].partition("=")
+        env[key] = value
+inner = args[args.index("/bin/sh"):]
+sys.exit(subprocess.run(inner, env=env).returncode)
+"""
+
+
+def _real(path: Path) -> Path:
+    return path.resolve()
+
+
+def _autonomous(tmp_path: Path, runtime: str, **events: list[HookEntry]) -> Session:
+    session = _hooked_session(tmp_path, **events)
+    session.autonomy = True
+    session.config = make_config()
+    session.config.autonomy.runtime = runtime
+    return session
+
+
+class TestAutonomy:
+    async def test_hooks_run_in_the_sandbox(self, tmp_path: Path) -> None:
+        log = tmp_path / "runtime-argv.json"
+        runtime = tmp_path / "podman"
+        runtime.write_text(
+            f"#!{sys.executable}\n" + _FAKE_RUNTIME.format(log=str(log)), encoding="utf-8"
+        )
+        runtime.chmod(0o755)
+        command = _script(
+            tmp_path,
+            "sandboxed",
+            "import json, os, sys\n"
+            "data = json.load(sys.stdin)\n"
+            "print(json.dumps({'decision': 'block', 'reason': data['workspace'] + ' '"
+            " + os.environ['TST_HOOK_EVENT']}))\n",
+        )
+        session = _autonomous(tmp_path, str(runtime), before_tool=[HookEntry(command=command)])
+        verdict = await session.hooks.run("before_tool", {}, tool_name="shell")
+        # It ran through the runtime, which saw stdin and the hook's env.
+        assert verdict.block == "/workspace before_tool"
+        argv = json.loads(log.read_text(encoding="utf-8"))
+        assert argv[:2] == ["run", "--rm"]
+        assert "--interactive" in argv and "--network=none" in argv
+        assert f"type=bind,src={_real(tmp_path)},dst=/workspace" in argv
+        assert argv[argv.index("/bin/sh") :] == ["/bin/sh", "-c", command]
+
+    async def test_no_runtime_means_the_hook_never_runs_on_the_host(self, tmp_path: Path) -> None:
+        command = _answer(tmp_path, "host", {"decision": "block", "reason": "ran"})
+        session = _autonomous(
+            tmp_path, str(tmp_path / "no-such-podman"), before_tool=[HookEntry(command=command)]
+        )
+        verdict = await session.hooks.run("before_tool", {}, tool_name="shell")
+        assert verdict.block is None
+        assert not (tmp_path / "hooks-src" / "host.stdin.json").exists()
+        [run] = _runs(session)
+        assert run.result == "error" and "could not start" in run.reason
+
+
+class TestTstRun:
+    """``tst run`` counts a hook's block as a refusal (exit 3)."""
+
+    async def test_a_before_tool_block_is_a_refusal(self) -> None:
+        from tstd.cli_turn import _TurnReader
+
+        reader = _TurnReader(session_id="s", output="text", ours=True, content=None)
+        call = {"type": "tool_call", "session_id": "s", "tool_call_id": "c1", "name": "shell"}
+        result = {
+            "type": "tool_result",
+            "session_id": "s",
+            "tool_call_id": "c1",
+            "status": "error",
+            "error_code": "hook_blocked",
+        }
+        done = {"type": "turn_complete", "session_id": "s", "failed": False}
+        for event in (call, result):
+            assert await reader.feed(None, event) is None
+        outcome = await reader.feed(None, done)
+        assert outcome is not None and outcome.status == "refused"
+        assert outcome.error_code == "hook_blocked"
+
+    async def test_a_blocked_prompt_is_a_refusal(self) -> None:
+        from tstd.cli_turn import _TurnReader
+
+        reader = _TurnReader(session_id="s", output="text", ours=True, content=None)
+        done = {
+            "type": "turn_complete",
+            "session_id": "s",
+            "failed": False,
+            "error_code": "hook_blocked",
+        }
+        outcome = await reader.feed(None, done)
+        assert outcome is not None and outcome.status == "refused"
 
 
 async def test_hook_runner_survives_without_hooks(tmp_path: Path) -> None:

@@ -11529,6 +11529,13 @@ active hooks, their source and their last result. Tests:
 core/tests/test_hooks.py (config, protocol, runner, dispatcher, trust,
 audit, loop), ui/src/lib/hooks-store.test.ts, and the app walk.
 
+Review fixes (PR #60): an autonomous session's hooks run in its container
+(§12.5), never on the host; a message that steers a running turn meets
+`user_prompt` hooks; `[hooks]` notes are added after truncation; and
+`tst run` exits 3 on `hook_blocked`. Tests: `TestAutonomy`, `TestSteer`,
+`TestTstRun` and `test_hook_notes_survive_a_long_result` in
+core/tests/test_hooks.py.
+
 ## Epic E53 — Connectors
 
 Owner-approved scope 2026-10-02. A connector is a local sign-in to a
