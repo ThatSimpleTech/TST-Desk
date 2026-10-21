@@ -9,10 +9,10 @@ a few tools.
 
 The count is TST Desk's own estimate, and, with ``--tokenize-url``, the
 exact count from a vLLM-style ``/tokenize`` endpoint that takes chat
-``messages`` and ``tools`` (no generation runs). On EZER:
+``messages`` and ``tools`` (no generation runs). On the GPU server:
 
     uv run python scripts/measure_mcp_tool_search.py \\
-        --tokenize-url http://172.17.0.1:8002/tokenize --model ezer \\
+        --tokenize-url http://127.0.0.1:8002/tokenize --model local \\
         --context-window 32768
 """
 

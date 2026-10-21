@@ -61,6 +61,8 @@ async def inject_steers(
                 turn_id=queued.id,
                 content=queued.display,
                 steer=point,
+                # Line comments sent mid-turn keep their anchors (TD-5132).
+                line_comments=queued.line_comments,
                 seq=1,
             )
         )

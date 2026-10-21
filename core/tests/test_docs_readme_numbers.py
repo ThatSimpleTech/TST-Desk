@@ -366,7 +366,7 @@ def test_not_built_does_not_repeat_the_false_m7_m8_gap() -> None:
         assert "remote attach" not in lowered
     if state.get("M8"):
         assert "vllm" not in lowered
-        assert "ezer" not in lowered
+        assert "tower" not in lowered
         assert "ui-tars" not in lowered
 
 

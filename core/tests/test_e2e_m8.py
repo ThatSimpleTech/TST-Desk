@@ -1,4 +1,4 @@
-"""M8 exit test: live vLLM/EZER fixture or heading-match skip (TD-3904).
+"""M8 exit test: live vLLM/llama.cpp fixture or heading-match skip (TD-3904).
 
 The harness lives in ``tstd.e2e_m8``. CI green is the skip path — an
 absent loopback server is a fact about the machine. The live turn is

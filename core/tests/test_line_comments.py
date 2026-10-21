@@ -279,4 +279,61 @@ async def test_a_refused_submission_names_the_verb_and_queues_nothing(
         error = await ask(ws, frame, "error")
         assert error["code"] == "line_comment_outside_workspace"
         assert error["in_reply_to"] == "submit_line_comments"
+        assert error["comment_ids"] == ["c1"]
+        # A frame that does not parse is still answered for its comments,
+        # so the window does not leave them waiting.
+        frame["comments"][0].update(path=str(work / "src" / "app.py"), start_line=3)
+        error = await ask(ws, frame, "error")
+        assert error["in_reply_to"] == "submit_line_comments"
+        assert error["comment_ids"] == ["c1"]
     assert mock.calls == []
+
+
+async def test_a_session_that_ends_during_the_file_read_refuses_the_comments(
+    tmp_path: Path, work: Path, fleet: Fleet, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Liveness is checked again after the read, so nothing is queued to a dead session."""
+    import tstd.daemon as daemon_module
+
+    mock = MockProvider(default=Script(kind="stream", content="done"))
+    daemon = await fleet.start(tmp_path / "d", provider=mock)
+    real = daemon_module.build_comments_turn
+    ending: list[Any] = []
+
+    def read_then_end(*args: Any) -> Any:
+        turn = real(*args)
+        ending[0]._state = "cancelled"  # the session ends while the files are read
+        return turn
+
+    monkeypatch.setattr(daemon_module, "build_comments_turn", read_then_end)
+    async with window(daemon) as ws:
+        opened = await ask(ws, {"type": "open_workspace", "path": str(work)}, "session_state")
+        sid = str(opened["session_id"])
+        ending.append(daemon.session_registry.get(sid))
+        frame = {
+            "type": "submit_line_comments",
+            "session_id": sid,
+            "comments": [
+                {
+                    "id": "c1",
+                    "path": str(work / "src" / "app.py"),
+                    "start_line": 1,
+                    "end_line": 1,
+                    "body": "b",
+                    "lines": ["line 1"],
+                }
+            ],
+        }
+        error = await ask(ws, frame, "error")
+        assert error["code"] == "session_not_running"
+        assert error["comment_ids"] == ["c1"]
+
+
+def test_a_comment_on_a_fifo_does_not_hang(work: Path) -> None:
+    """Reading a FIFO blocks until a writer comes; the excerpt never opens one."""
+    import os
+
+    pipe = work / "src" / "pipe"
+    os.mkfifo(pipe)
+    turn = build_comments_turn([_comment(pipe, 1, 1, lines=["x"])], work, PolicyConfig())
+    assert "pipe, line 1" in turn.text

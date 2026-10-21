@@ -175,7 +175,7 @@ def test_every_session_scoped_frame_is_forwarded_with_every_id_bridged() -> None
     for name, frame in events.items():
         if not isinstance(frame.get("session_id"), str) or not frame["session_id"]:
             continue
-        out = rewrite_from_remote(frame, MCH, "ezer")
+        out = rewrite_from_remote(frame, MCH, "tower")
         assert out is not None, name
         for value in _session_values(out):
             assert split_bridged(value) is not None and value.endswith(MCH), (name, value)
@@ -189,7 +189,7 @@ def test_machine_wide_frames_are_dropped() -> None:
     for name, frame in _event_fixtures().items():
         if frame.get("session_id") or frame["type"] in kept:
             continue
-        assert rewrite_from_remote(frame, MCH, "ezer") is None, name
+        assert rewrite_from_remote(frame, MCH, "tower") is None, name
 
 
 def test_nested_ids_and_list_items_are_rewritten() -> None:
@@ -200,7 +200,7 @@ def test_nested_ids_and_list_items_are_rewritten() -> None:
         "runs": [{"session_id": "s1"}, {"session_id": None}, {"parent_session_id": "s2"}],
     }
     # Not a valid job_runs, but session-scoped: passed on whole, every id rewritten.
-    assert rewrite_from_remote(frame, MCH, "ezer") == _rewrite_ids(frame, MCH)
+    assert rewrite_from_remote(frame, MCH, "tower") == _rewrite_ids(frame, MCH)
     rewritten = _rewrite_ids(frame, MCH)
     assert rewritten["session_id"] == bridged_id("s0", MCH)
     assert rewritten["runs"][0]["session_id"] == bridged_id("s1", MCH)
@@ -210,10 +210,12 @@ def test_nested_ids_and_list_items_are_rewritten() -> None:
 
 
 def test_an_id_less_error_names_the_computer_and_a_session_error_keeps_its_text() -> None:
-    plain = rewrite_from_remote({"type": "error", "code": "x", "message": "Disk full"}, MCH, "ezer")
-    assert plain == {"type": "error", "code": "x", "message": "On ezer: Disk full", "machine": MCH}
+    plain = rewrite_from_remote(
+        {"type": "error", "code": "x", "message": "Disk full"}, MCH, "tower"
+    )
+    assert plain == {"type": "error", "code": "x", "message": "On tower: Disk full", "machine": MCH}
     scoped = rewrite_from_remote(
-        {"type": "error", "code": "x", "message": "No such tool", "session_id": "s1"}, MCH, "ezer"
+        {"type": "error", "code": "x", "message": "No such tool", "session_id": "s1"}, MCH, "tower"
     )
     assert scoped is not None
     assert scoped["message"] == "No such tool" and scoped["session_id"] == bridged_id("s1", MCH)
@@ -222,17 +224,17 @@ def test_an_id_less_error_names_the_computer_and_a_session_error_keeps_its_text(
 
 def test_a_second_hop_frame_is_dropped() -> None:
     hop = {"type": "assistant_delta", "session_id": bridged_id("s1", OTHER), "text": "x", "seq": 3}
-    assert rewrite_from_remote(hop, MCH, "ezer") is None
+    assert rewrite_from_remote(hop, MCH, "tower") is None
 
 
 def test_an_unknown_type_with_a_session_id_passes_and_without_one_drops() -> None:
     newer = {"type": "from_the_future", "session_id": "s1", "seq": 9}
-    assert rewrite_from_remote(newer, MCH, "ezer") == {
+    assert rewrite_from_remote(newer, MCH, "tower") == {
         "type": "from_the_future",
         "session_id": bridged_id("s1", MCH),
         "seq": 9,
     }
-    assert rewrite_from_remote({"type": "from_the_future"}, MCH, "ezer") is None
+    assert rewrite_from_remote({"type": "from_the_future"}, MCH, "tower") is None
     assert validate_downstream(newer) is None
 
 
@@ -240,18 +242,18 @@ def test_a_malformed_known_frame_with_a_session_id_still_passes() -> None:
     """Version skew: a newer computer's state value must not open a seq gap."""
     newer = {"type": "session_state", "session_id": "s1", "seq": 7, "state": "hibernating"}
     assert validate_downstream(newer) is False
-    assert rewrite_from_remote(newer, MCH, "ezer") == {
+    assert rewrite_from_remote(newer, MCH, "tower") == {
         **newer,
         "session_id": bridged_id("s1", MCH),
     }
     error = {"type": "error", "session_id": "s1", "code": 3, "message": "x"}
-    out = rewrite_from_remote(error, MCH, "ezer")
+    out = rewrite_from_remote(error, MCH, "tower")
     assert out is not None and out["session_id"] == bridged_id("s1", MCH)
     assert out["machine"] == MCH and out["message"] == "x"
 
 
 def test_a_malformed_frame_without_a_session_id_is_dropped() -> None:
-    assert rewrite_from_remote({"type": "error", "code": 3, "message": "x"}, MCH, "ezer") is None
+    assert rewrite_from_remote({"type": "error", "code": 3, "message": "x"}, MCH, "tower") is None
 
 
 def _row(sid: str, **extra: Any) -> dict[str, Any]:
@@ -276,7 +278,7 @@ def test_a_session_list_comes_back_bridged_one_hop_and_tagged() -> None:
             _row("s3", machine="mch_ffffffffffff"),
         ],
     }
-    out = rewrite_from_remote(frame, MCH, "ezer")
+    out = rewrite_from_remote(frame, MCH, "tower")
     assert out is not None
     ids = [row["session_id"] for row in out["sessions"]]
     assert ids == [bridged_id("s1", MCH), bridged_id("s3", MCH)]
@@ -288,13 +290,13 @@ def test_a_skewed_session_list_loses_only_its_bad_rows() -> None:
         "type": "session_list",
         "sessions": [_row("s1"), "junk", _row("s2", state="hibernating"), _row("s3")],
     }
-    out = rewrite_from_remote(frame, MCH, "ezer")
+    out = rewrite_from_remote(frame, MCH, "tower")
     assert out is not None
     assert [r["session_id"] for r in out["sessions"]] == [
         bridged_id("s1", MCH),
         bridged_id("s3", MCH),
     ]
-    junk = rewrite_from_remote({"type": "session_list", "sessions": "junk"}, MCH, "ezer")
+    junk = rewrite_from_remote({"type": "session_list", "sessions": "junk"}, MCH, "tower")
     assert junk is not None and junk["sessions"] == []
 
 
@@ -330,7 +332,7 @@ def test_artifact_chunk_passes_with_bridged_id() -> None:
     down = {"type": "artifact_chunk", "seq": 1, "session_id": "s1", "artifact_id": aid}
     down |= {"offset": 0, "size": 2, "sha256": "a" * 64, "data_b64": data, "eof": True}
     down |= {"error_code": None}
-    out = rewrite_from_remote(down, MCH, "ezer")
+    out = rewrite_from_remote(down, MCH, "tower")
     assert out is not None
     assert out["session_id"] == bridged_id("s1", MCH)
     assert out["artifact_id"] == aid

@@ -68,6 +68,15 @@ jobs:
         env:
           PYTHONUTF8: "1"
 
+      # TD-5163: tracked files carry no maintainer-private strings. The list
+      # is a repository secret; fork PRs don't get it and skip. Everywhere
+      # else a missing secret fails the step instead of passing it green.
+      - name: Release scan (tracked files)
+        run: uv run python scripts/release_scan.py --git $REQUIRE
+        env:
+          TST_RELEASE_DENYLIST_TEXT: ${{ secrets.RELEASE_DENYLIST }}
+          REQUIRE: ${{ github.event.pull_request.head.repo.fork != true && '--require' || '' }}
+
   # ── Rust ────────────────────────────────────────────────────────────
 
   rust:

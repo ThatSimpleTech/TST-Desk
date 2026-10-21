@@ -77,7 +77,7 @@ private class MemoryStore : BlobStore {
 
 private class FakePairing : PairingHost {
     var scans = 0
-    var link: String? = "tstdesk://pair?h=100.64.7.7&p=39079&c=ABCD2345&n=ezer"
+    var link: String? = "tstdesk://pair?h=100.64.7.7&p=39079&c=ABCD2345&n=tower"
     override fun deviceName() = "Pixel 11 Pro Fold"
     override fun startScan(): Boolean {
         scans++
@@ -149,11 +149,11 @@ class AttachVaultTest {
     fun pairedAndKeptAddressShapesSave() {
         val vault = AttachVault(JvmSealer(), MemoryStore())
         val paired = """{"host":"100.64.7.7","port":39079,"token":"${"cd".repeat(32)}",""" +
-            """"deviceId":"dev_0123456789ab","desktopName":"ezer"}"""
+            """"deviceId":"dev_0123456789ab","desktopName":"tower"}"""
         assertTrue(vault.save(paired))
         assertEquals(paired, vault.load())
         // A refused key keeps the address and the desktop's name, not the token.
-        val kept = """{"host":"100.64.7.7","port":39079,"desktopName":"ezer"}"""
+        val kept = """{"host":"100.64.7.7","port":39079,"desktopName":"tower"}"""
         assertTrue(vault.save(kept))
         assertEquals(kept, vault.load())
     }
@@ -282,7 +282,7 @@ class AttachVaultTest {
         assertEquals("Pixel 11 Pro Fold", bridge.deviceName())
         assertTrue(bridge.scanPairing())
         assertEquals(1, pairing.scans)
-        assertEquals("tstdesk://pair?h=100.64.7.7&p=39079&c=ABCD2345&n=ezer", bridge.takePairLink())
+        assertEquals("tstdesk://pair?h=100.64.7.7&p=39079&c=ABCD2345&n=tower", bridge.takePairLink())
         assertNull("taking the link clears it", bridge.takePairLink())
     }
 }

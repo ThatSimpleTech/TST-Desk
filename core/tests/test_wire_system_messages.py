@@ -1,7 +1,7 @@
 """TD-5142: a compacted session still goes over the wire with one system message.
 
 Compaction stores its summary as a second system message. Qwen's chat
-template on ezer-forge (llama.cpp) raises "System message must be at the
+template on gateway-model (llama.cpp) raises "System message must be at the
 beginning." for that, the server answers 500, and every later request in
 the session failed the same way after eight retries. The wire now merges
 or folds stray system messages, and a template refusal is never retried.
@@ -39,7 +39,7 @@ from tstd.session import Session
 
 COUNTER = HeuristicTokenCounter()
 
-# What LiteLLM relayed from llama.cpp on 2026-10-14 (ezer-forge, Qwen3.8).
+# What LiteLLM relayed from llama.cpp on 2026-10-14 (gateway-model, Qwen3.8).
 LITELLM_TEMPLATE_500 = {
     "error": {
         "message": (
@@ -49,7 +49,7 @@ LITELLM_TEMPLATE_500 = {
             "'System message must be at the beginnin...\\n"
             "                                           ^\\nError: Jinja Exception: System "
             'message must be at the beginning.","type":"server_error"}}. '
-            "Received Model Group=ezer-forge"
+            "Received Model Group=gateway-model"
         ),
         "type": None,
         "param": None,
@@ -342,7 +342,7 @@ def _template_500(request: httpx.Request) -> httpx.Response:
 
 async def test_template_refusal_is_not_retried() -> None:
     client, hits = _client(_template_500)
-    request = ChatCompletionRequest(model="ezer-forge", messages=_turns(1))
+    request = ChatCompletionRequest(model="gateway-model", messages=_turns(1))
     result = await client.chat_completion(request)
     assert isinstance(result, ProviderError)
     assert result.code == "template_error"
@@ -355,7 +355,7 @@ async def test_template_refusal_is_not_retried() -> None:
 
 async def test_template_refusal_on_a_stream_is_not_retried() -> None:
     client, hits = _client(_template_500)
-    request = ChatCompletionRequest(model="ezer-forge", messages=_turns(1), stream=True)
+    request = ChatCompletionRequest(model="gateway-model", messages=_turns(1), stream=True)
     items = [item async for item in client.chat_completion_stream(request)]
     errors = [i for i in items if isinstance(i, ProviderError)]
     assert len(errors) == 1
@@ -394,7 +394,7 @@ def test_transcript_shows_the_reason_not_provider_rejected() -> None:
         "System message must be at the beginning. Resending won't help."
     )
     text = transcript_failure_text(
-        "template_error", message, model="ezer-forge", context_window=65536
+        "template_error", message, model="gateway-model", context_window=65536
     )
     assert "provider rejected" not in text
     assert "System message must be at the beginning" in text

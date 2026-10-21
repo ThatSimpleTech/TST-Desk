@@ -193,6 +193,37 @@ describe("CommentableDiff + ReviewBar", () => {
     expect(target.textContent).toContain("This session is done.");
   });
 
+  it("a refusal hands back only the comments it names, not an earlier send's", () => {
+    comment(1, null, "first");
+    byText("Send comments to agent").click();
+    flushSync();
+    comment(3, null, "second");
+    byText("Send comments to agent").click();
+    flushSync();
+    const [first, second] = review.waiting;
+    emit({
+      type: "error",
+      code: "message_not_saved",
+      message: "Couldn't save the comments.",
+      session_id: "s1",
+      in_reply_to: "submit_line_comments",
+      comment_ids: [second.id],
+      seq: 0,
+    });
+    expect(review.waiting.map((d) => d.id)).toEqual([first.id]);
+    expect(review.drafts.map((d) => d.id)).toEqual([second.id]);
+  });
+
+  it("a draft made on an earlier write's diff is listed, not pinned to moved lines", () => {
+    comment(2, null, "old lines");
+    while (mounted.length > 0) unmount(mounted.pop()!);
+    mounted.push(mount(CommentableDiff, { target, props: { path: PATH, diff: DIFF, seq: 9 } }));
+    flushSync();
+    expect(target.querySelector(".line--drafted")).toBeNull();
+    expect(target.textContent).toContain("on an earlier version");
+    expect(target.textContent).toContain("old lines");
+  });
+
   it("a comment with no text is not added", () => {
     byLabel("Comment on line 1").click();
     flushSync();

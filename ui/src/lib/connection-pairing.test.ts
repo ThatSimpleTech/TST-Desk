@@ -63,18 +63,18 @@ vi.mock("./pairing", async (original) => ({
 
 const KEY = "b".repeat(64);
 const NEW_KEY = "c".repeat(64);
-const LINK = "tstdesk://pair?h=100.64.7.7&p=39079&c=ABCD2345&n=ezer";
+const LINK = "tstdesk://pair?h=100.64.7.7&p=39079&c=ABCD2345&n=tower";
 const SAVED = JSON.stringify({
   host: "100.64.7.7",
   port: 39079,
   token: KEY,
   deviceId: "dev_0123456789ab",
-  desktopName: "ezer",
+  desktopName: "tower",
 });
 const LEGACY = JSON.stringify({ host: "100.64.7.7", port: 39079, token: "legacy-remote-token" });
 const PAIRED: RedeemResult = {
   ok: true,
-  target: { host: "100.64.7.7", port: 39079, token: NEW_KEY, deviceId: "dev_ba9876543210", desktopName: "ezer" },
+  target: { host: "100.64.7.7", port: 39079, token: NEW_KEY, deviceId: "dev_ba9876543210", desktopName: "tower" },
 };
 
 function shell(saved: string | null, extra: Record<string, unknown> = {}) {
@@ -142,7 +142,7 @@ describe("a saved key the daemon refuses (TD-5014)", () => {
     vi.stubGlobal("TstDeskNative", phone.bridge);
     const conn = await load();
     await conn.connect();
-    expect(conn.remoteAttach.desktopName).toBe("ezer");
+    expect(conn.remoteAttach.desktopName).toBe("tower");
 
     const client = mocks.clients[0];
     client.sink.onStateChange?.("connecting");
@@ -152,24 +152,24 @@ describe("a saved key the daemon refuses (TD-5014)", () => {
       host: "100.64.7.7",
       port: 39079,
       token: "",
-      desktopName: "ezer",
+      desktopName: "tower",
     });
     expect(conn.remoteAttach.needed).toBe(true);
     expect(conn.remoteAttach.lastUrl).toBe("ws://100.64.7.7:39079");
     expect(conn.remoteAttach.error).toBe(
-      "This phone isn't paired with ezer anymore. Scan the code on the computer again.",
+      "This phone isn't paired with tower anymore. Scan the code on the computer again.",
     );
   });
 
   it("asks to pair again on the next launch, with the address still filled in", async () => {
-    const phone = shell(JSON.stringify({ host: "100.64.7.7", port: 39079, token: "", desktopName: "ezer" }));
+    const phone = shell(JSON.stringify({ host: "100.64.7.7", port: 39079, token: "", desktopName: "tower" }));
     vi.stubGlobal("TstDeskNative", phone.bridge);
     const conn = await load();
     await conn.connect();
     expect(mocks.clients).toHaveLength(0);
     expect(conn.remoteAttach.needed).toBe(true);
     expect(conn.remoteAttach.lastUrl).toBe("ws://100.64.7.7:39079");
-    expect(conn.remoteAttach.error).toContain("isn't paired with ezer");
+    expect(conn.remoteAttach.error).toContain("isn't paired with tower");
     expect(phone.state.saved).not.toBeNull();
   });
 });
@@ -204,7 +204,7 @@ describe("a pairing link from the shell (TD-5014)", () => {
     expect(phone.state.saved).toBe(SAVED);
     expect(conn.remoteAttach.needed).toBe(true);
     expect(conn.remoteAttach.offer).toMatchObject({ host: "100.64.7.7", port: 39079, code: "ABCD2345" });
-    expect(conn.remoteAttach.offerSaved).toBe("ezer");
+    expect(conn.remoteAttach.offerSaved).toBe("tower");
   });
 
   it("pairs only on Pair, replacing the saved key on the same computer", async () => {
@@ -252,7 +252,7 @@ describe("a pairing link from the shell (TD-5014)", () => {
 
     expect(phone.state.saved).toBe(SAVED);
     expect(conn.remoteAttach.error).toMatch(/didn't work/);
-    expect(conn.remoteAttach.fallback).toBe("ezer");
+    expect(conn.remoteAttach.fallback).toBe("tower");
 
     conn.useSavedTarget();
     expect(conn.remoteAttach.needed).toBe(false);
@@ -307,7 +307,7 @@ describe("the in-app scanner (TD-5014)", () => {
     await flush();
     expect(mocks.redeemCalls).toHaveLength(1);
     expect(JSON.parse(phone.state.saved!)).toMatchObject({ token: NEW_KEY });
-    expect(conn.remoteAttach.desktopName).toBe("ezer");
+    expect(conn.remoteAttach.desktopName).toBe("tower");
     conn.disconnect();
   });
 });
@@ -429,7 +429,7 @@ describe("a saved computer that stops answering (TD-5014)", () => {
 
     conn.pairAgain();
     expect(conn.remoteAttach.needed).toBe(true);
-    expect(conn.remoteAttach.fallback).toBe("ezer");
+    expect(conn.remoteAttach.fallback).toBe("tower");
     expect(phone.state.saved).toBe(SAVED);
     expect(client.stopped).toBe(0);
 
@@ -472,7 +472,7 @@ describe("a saved connection the shell could not open (TD-5014)", () => {
     expect(conn.remoteAttach.needed).toBe(false);
     expect(conn.remoteAttach.opening).toBe(false);
     expect(conn.remoteAttach.storeNote).toBeNull();
-    expect(conn.remoteAttach.desktopName).toBe("ezer");
+    expect(conn.remoteAttach.desktopName).toBe("tower");
     expect(mocks.clients[0].started).toBe(1);
   });
 

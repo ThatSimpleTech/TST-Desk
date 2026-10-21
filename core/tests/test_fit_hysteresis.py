@@ -175,7 +175,7 @@ def _second_turn(history_chars: int, bodies: list[str]) -> list[ChatMessage]:
 
 
 def test_history_over_seventy_percent_cuts_only_the_excess() -> None:
-    """EZER's shape: what elision cannot touch is already 80% of the budget."""
+    """TOWER's shape: what elision cannot touch is already 80% of the budget."""
     tier = _tier(context_window=32768, max_output_tokens=2048)
     budget = budget_threshold(tier)
     bodies = ["a" * 9_000, "b" * 6_000, "c" * 5_000]
@@ -222,7 +222,7 @@ def _three_rounds(workspace: Path) -> MockProvider:
     (workspace / "small.md").write_text("s" * 2_000, encoding="utf-8")
     return MockProvider(
         sequences={
-            "ezer-forge": [
+            "gateway-model": [
                 Script(kind="tool_call", tool_batch=_write_reads(workspace)),
                 Script(
                     kind="tool_call",
@@ -285,7 +285,7 @@ async def test_without_the_margin_the_loop_rewrites_the_prefix(
 async def test_overflow_retry_still_recovers(tmp_path: Path) -> None:
     mock = MockProvider(
         sequences={
-            "ezer-forge": [
+            "gateway-model": [
                 Script(kind="tool_call", tool_batch=_write_reads(tmp_path)),
                 _overflow_script(),
                 Script(kind="stream", content="Recovered."),

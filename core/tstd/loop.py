@@ -1914,6 +1914,8 @@ async def agent_loop(
             runtime = session.delegate_runtime
             if runtime is not None:
                 runtime.config = config
+            if session.compaction_summarizer is not None:
+                session.compaction_summarizer.rebind(config.compaction, config.tier("worker"))
 
         # Turn observability (TD-1713): mark the dequeue itself. The
         # existing "turn start" log lands after prompt assembly, so a
@@ -2672,10 +2674,24 @@ async def agent_loop(
                         prefix_tokens,
                         effective_chars_per_token(counter),
                     )
-                    # The results go back to the model just called, so
-                    # its tier says whether fs_read may return an image
-                    # (TD-5130). After a backup switch that is the backup.
-                    session.tool_vision = tier_cfg.vision
+                    # The results go to the next request, and the router
+                    # may send that to another tier: the lead turns run
+                    # out mid-turn, an escalation ends. That tier (on its
+                    # backup, if it moved to one) says whether fs_read may
+                    # return an image (TD-5130); a model without vision
+                    # sent one fails the request.
+                    next_tier = router.active_tier
+                    next_cfg = (
+                        tier_cfg
+                        if next_tier == tier
+                        else backups.peek(
+                            next_tier,
+                            effective_tier(
+                                config, next_tier, cu_heavy=session_is_cu_heavy(session)
+                            ),
+                        )
+                    )
+                    session.tool_vision = next_cfg.vision
                     session.tool_max_images = config.computer_use.max_prompt_images
                     # Yield control so the event loop can process cancellation
                     # between the ToolCall event emission and the dispatch.

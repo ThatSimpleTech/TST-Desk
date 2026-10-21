@@ -15,9 +15,12 @@ Blocking: call from a worker thread.
 
 from __future__ import annotations
 
+import codecs
 import io
+import lzma
 import re
 import zipfile
+import zlib
 from collections.abc import Iterator
 from xml.etree import ElementTree
 
@@ -70,7 +73,7 @@ class _Budget:
 def _open_zip(name: str, raw: bytes, what: str) -> zipfile.ZipFile:
     try:
         zf = zipfile.ZipFile(io.BytesIO(raw))
-    except (zipfile.BadZipFile, ValueError, OSError) as e:
+    except (zipfile.BadZipFile, NotImplementedError, ValueError, OSError) as e:
         raise unreadable(name, what) from e
     if len(zf.infolist()) > MAX_ZIP_MEMBERS:
         zf.close()
@@ -89,8 +92,17 @@ def _read_member(
     try:
         with zf.open(info) as fh:
             data = fh.read(MAX_XML_BYTES + 1)
-    except (zipfile.BadZipFile, NotImplementedError, RuntimeError, OSError, EOFError) as e:
-        # RuntimeError: encrypted member; NotImplementedError: odd compression.
+    except (
+        zipfile.BadZipFile,
+        NotImplementedError,
+        RuntimeError,
+        OSError,
+        EOFError,
+        zlib.error,
+        lzma.LZMAError,
+    ) as e:
+        # RuntimeError: encrypted member; NotImplementedError: odd compression;
+        # zlib.error / LZMAError: a damaged stream inside the member.
         raise unreadable(name, what) from e
     if len(data) > MAX_XML_BYTES:
         raise DocumentError(
@@ -113,7 +125,7 @@ def _events(
     namespace URIs for the same parts and neither changes the text.
     """
     # Office never writes a DTD; one here is an entity-expansion attempt.
-    if b"<!DOCTYPE" in data or b"<!ENTITY" in data:
+    if _declares_dtd(data):
         raise unreadable(name, what)
     stack: list[ElementTree.Element] = []
     try:
@@ -131,6 +143,53 @@ def _events(
                 stack[-1].remove(el)
     except ElementTree.ParseError as e:
         raise unreadable(name, what) from e
+
+
+# The encoding an XML declaration names.
+_DECLARED_ENCODING = re.compile(r"""<\?xml[^>]*?encoding\s*=\s*["']([^"']*)["']""")
+_UTF16_NAMES = frozenset({"utf-16", "utf16", "utf-16le", "utf-16be"})
+
+
+def _declares_dtd(data: bytes) -> bool:
+    """Whether *data* has a DTD, or might have one this test cannot see.
+
+    A byte search for ``<!DOCTYPE`` only sees parts whose encoding writes it
+    in ASCII, and the parser also reads UTF-16 and whatever 8-bit encoding a
+    declaration names. So UTF-16 is decoded as the parser would decode it,
+    and a part declaring an encoding that spells the markers some other way
+    (EBCDIC, UTF-32) counts as having one: OOXML parts are UTF-8 or UTF-16
+    (ECMA-376 Part 2), and nothing here could read what it declares.
+    """
+    utf16 = _utf16_codec(data)
+    if utf16 is not None:
+        try:
+            text = data.decode(utf16)
+        except UnicodeDecodeError:
+            return True
+        declared = _DECLARED_ENCODING.match(text.lstrip("\ufeff"))
+        if declared is not None and declared.group(1).lower() not in _UTF16_NAMES:
+            return True
+        return "<!DOCTYPE" in text or "<!ENTITY" in text
+    head = data[:512].decode("latin-1").removeprefix("\xef\xbb\xbf")
+    declared = _DECLARED_ENCODING.match(head)
+    if declared is not None:
+        try:
+            spelled = "<!DOCTYPE<!ENTITY".encode(declared.group(1))
+        except (LookupError, UnicodeError):
+            return True
+        if spelled != b"<!DOCTYPE<!ENTITY":
+            return True
+    return b"<!DOCTYPE" in data or b"<!ENTITY" in data
+
+
+def _utf16_codec(data: bytes) -> str | None:
+    if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        return "utf-16"
+    if data.startswith(b"<\x00"):
+        return "utf-16-le"
+    if data.startswith(b"\x00<"):
+        return "utf-16-be"
+    return None
 
 
 def _local(name: str) -> str:
@@ -221,9 +280,13 @@ def _sheet(data: bytes, name: str, shared: list[str], sink: Sink, budget: _Budge
                 cell = _Cell(_attr(el, "r"), _attr(el, "t"))
             elif tag == "is" and cell is not None:
                 cell.inline_depth += 1
+            elif tag == "rPh" and cell is not None:
+                cell.phonetic_depth += 1
             continue
         if cell is not None:
-            if tag == "t" and cell.inline_depth:
+            if tag == "rPh":
+                cell.phonetic_depth -= 1
+            elif tag == "t" and cell.inline_depth and not cell.phonetic_depth:
                 cell.inline.append(el.text or "")
             elif tag == "v":
                 cell.value = el.text or ""
@@ -280,6 +343,7 @@ class _Cell:
         self.value = ""
         self.inline: list[str] = []
         self.inline_depth = 0
+        self.phonetic_depth = 0
 
     def text(self, shared: list[str]) -> str:
         if self.kind == "inlineStr":
@@ -301,13 +365,19 @@ def _shared_strings(zf: zipfile.ZipFile, name: str, budget: _Budget) -> list[str
         return []
     out: list[str] = []
     current: list[str] | None = None
+    # A phonetic run (<rPh>, furigana) carries its own <t>: a reading aid,
+    # not part of the cell's text.
+    phonetic = 0
     for event, tag, el in _events(data, name, "spreadsheet", budget):
+        if tag == "rPh":
+            phonetic += 1 if event == "start" else -1
+            continue
         if tag != "si" and tag != "t":
             continue
         if event == "start":
             if tag == "si":
                 current = []
-        elif tag == "t" and current is not None:
+        elif tag == "t" and current is not None and not phonetic:
             current.append(el.text or "")
         elif tag == "si" and current is not None:
             out.append("".join(current))

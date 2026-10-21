@@ -13,16 +13,33 @@
 		spanLabel,
 		type DraftComment
 	} from '../review-comments';
+	import { untrack } from 'svelte';
 	import { addDraft, removeDraft, review } from '../review-comments.svelte.js';
 
 	let { path, diff, seq = null }: { path: string; diff: string; seq?: number | null } = $props();
 
 	let rows = $derived(numberDiffRows(diff));
-	let drafts = $derived(review.drafts.filter((d) => d.path === path));
+	// A draft made on an earlier write's diff counts lines of that version,
+	// so it is listed above this diff, not pinned to lines that moved. It
+	// still sends: the daemon marks reviewed lines that have changed.
+	let mine = $derived(review.drafts.filter((d) => d.path === path));
+	let drafts = $derived(mine.filter((d) => (d.base_seq ?? null) === seq));
+	let earlier = $derived(mine.filter((d) => (d.base_seq ?? null) !== seq));
 	let anchor = $state<number | null>(null);
 	let selection = $state<{ start: number; end: number } | null>(null);
 	let body = $state('');
 	let problem = $state<string | null>(null);
+
+	// A later write replaces the diff: lines picked on the old one may now
+	// be other lines, so the pick goes. The text typed so far stays.
+	let pickedOn: number | null = untrack(() => seq);
+	$effect(() => {
+		if (seq === pickedOn) return;
+		pickedOn = seq;
+		anchor = null;
+		selection = null;
+		problem = null;
+	});
 
 	function pick(line: number, extend: boolean): void {
 		problem = null;
@@ -70,6 +87,20 @@
 </script>
 
 <div class="diff" role="group" aria-label={`Diff with line comments for ${path}`}>
+	{#each earlier as draft (draft.id)}
+		<div class="draft">
+			<span class="draft-span"
+				>{spanLabel(draft.start_line, draft.end_line)} · on an earlier version</span
+			>
+			<span class="draft-body">{draft.body}</span>
+			<button
+				type="button"
+				class="btn btn--quiet"
+				aria-label="Remove comment"
+				onclick={() => removeDraft(draft.id)}>Remove</button
+			>
+		</div>
+	{/each}
 	{#each rows as row, i (i)}
 		<div
 			class="line line--{row.kind}"
