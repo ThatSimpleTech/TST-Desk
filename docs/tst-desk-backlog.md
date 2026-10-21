@@ -9530,11 +9530,13 @@ after the fact.
 - [x] The title bar shows used against budget for the active tier's
       `context_window`, using the daemon's calibrated estimate (TD-5013),
       from the `context_usage` event
-- [ ] It also shows on the phone. Not checked on a device: the code
-      supports it (the APK is the same UI; TitleBar renders ContextGauge,
-      and AppShell's narrow layout keeps the title bar below 640px), but
-      no device or narrow-width test has shown it yet. (Split out and
-      unticked by TD-5158: it had been ticked unverified.)
+- [x] It also shows on the phone. The APK is this UI in a WebView, so the
+      app walk checks it at a phone's width (375px): the gauge sits whole
+      on screen and its popover opens inside it. That check found the
+      header ran off the right edge and the popover off the left; below
+      640px the header now puts the session's bar on its own wrapping row
+      and the popover opens rightwards. (Split out and unticked by
+      TD-5158: it had been ticked unverified.)
 - [x] `/compact [guidance]` and a button compact now. Guidance is passed
       to the summary (it heads it and keeps more of what it names; no
       model call, DECISIONS.md)
