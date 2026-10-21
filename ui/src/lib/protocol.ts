@@ -572,6 +572,16 @@ export interface ListSessions extends ClientMessage {
   type: "list_sessions";
 }
 
+/** Search what this computer's sessions said (TD-5129). Answer:
+ *  session_search_results, from the daemon's local full-text index. */
+export interface SearchSessions extends ClientMessage {
+  type: "search_sessions";
+  /** Up to 500 characters. */
+  query: string;
+  /** 1..200, default 50. */
+  limit?: number;
+}
+
 /** Create a fresh session in an existing session's workspace (TD-1701).
  *  `session_id` is the anchor — the daemon replies with the new session's
  *  first event (session_state), exactly like open_workspace. */
@@ -1106,6 +1116,7 @@ export type ClientMessageUnion =
   | SaveCharter
   | StartAutonomy
   | ListPins
+  | SearchSessions
   | AddPin
   | RemovePin
   | MemoryAccept
@@ -1910,6 +1921,26 @@ export interface SessionList extends DaemonEvent {
   type: "session_list";
   seq: number;
   sessions: SessionSummary[];
+}
+
+/** The best message of one session for a search (TD-5129). */
+export interface SessionSearchHit {
+  session_id: string;
+  /** 1-based user turn the message belongs to. */
+  turn: number;
+  role: "user" | "assistant";
+  /** A few words around the match, from the redacted session text. */
+  snippet: string;
+}
+
+/** Reply to search_sessions (TD-5129): one hit per session, best first.
+ *  `query` echoes the request; `available` is false when the index is off. */
+export interface SessionSearchResults extends DaemonEvent {
+  type: "session_search_results";
+  seq: number;
+  query: string;
+  hits: SessionSearchHit[];
+  available: boolean;
 }
 
 export interface PolicyRules extends DaemonEvent {
@@ -2820,6 +2851,7 @@ export type DaemonEventUnion =
   | InstructionFiles
   | CommandList
   | ContextPins
+  | SessionSearchResults
   | MemoryFiles
   | CharterDocument
   | AutonomyStart

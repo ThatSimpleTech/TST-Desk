@@ -199,10 +199,13 @@ from tstd.protocol import (
     SaveJobTemplate,
     SaveMemory,
     ScreenFrame,
+    SearchSessions,
     SendQueued,
     SessionGoal,
     SessionJobSource,
     SessionList,
+    SessionSearchHit,
+    SessionSearchResults,
     SessionState,
     SessionWorktreeInfo,
     SetApiKey,
@@ -464,6 +467,7 @@ FIXTURES = {
         notes="Human context.",
     ),
     "list_pins": ListPins(workspace_path="/home/user/project"),
+    "search_sessions": SearchSessions(query="date parser", limit=50),
     "add_pin": AddPin(workspace_path="/home/user/project", path="src/app.ts"),
     "remove_pin": RemovePin(workspace_path="/home/user/project", path="src/app.ts"),
     "memory_accept": MemoryAccept(session_id="sess-1", proposal_id="mp-1"),
@@ -1086,6 +1090,18 @@ FIXTURES = {
                 description="Review the current diff",
                 source="workspace",
                 body="Please review the staged changes.\n",
+            )
+        ],
+    ),
+    "session_search_results": SessionSearchResults(
+        seq=1,
+        query="date parser",
+        hits=[
+            SessionSearchHit(
+                session_id="11111111-2222-3333-4444-555555555555",
+                turn=3,
+                role="assistant",
+                snippet="…the date parser now reads ISO weeks…",
             )
         ],
     ),

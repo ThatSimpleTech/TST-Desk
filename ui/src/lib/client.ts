@@ -84,6 +84,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "instruction_files",
   "command_list",
   "context_pins",
+  "session_search_results", // TD-5129
   "memory_files",
   "charter",
   "autonomy_start",

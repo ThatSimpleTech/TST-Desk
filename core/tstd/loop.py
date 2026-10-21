@@ -52,7 +52,10 @@ from .autonomy.verify import (
 )
 from .autonomy.wakeup import deliver_wakeup
 from .autonomy.worker import JudgmentAudit
-from .compaction import ContextMeter, budget_threshold, estimate_tokens, maybe_compact
+from .compaction import ContextMeter, budget_threshold, estimate_tokens
+from .compaction_files import FileAccess
+from .compaction_model import compact_auto
+from .compaction_wire import attach_summarizer
 from .config import (
     ClearToolResultsConfig,
     ConfigError,
@@ -1094,19 +1097,28 @@ async def _build_assistant_tool_call(
     return provider_tool_calls
 
 
+def _image_part(mime: str, data: bytes) -> dict[str, Any]:
+    """One ``image_url`` part carrying *data* as a data URL (TD-4705)."""
+    url = f"data:{mime};base64," + base64.b64encode(data).decode("ascii")
+    return {"type": "image_url", "image_url": {"url": url}}
+
+
 def _tool_message_content(result: Any) -> Any:
-    """Tool output for the provider. Screenshots are a vision part, not text."""
+    """Tool output for the provider. Images are vision parts, not text.
+
+    A screenshot (TD-1729) and a file ``fs_read`` opened (TD-5130) both
+    follow the text, in that order.
+    """
     text = result.output
+    parts: list[dict[str, Any]] = []
     png = getattr(result, "image_png", None)
-    if not png:
+    if png:
+        parts.append(_image_part("image/png", png))
+    for image in getattr(result, "images", ()):
+        parts.append(_image_part(image.mime, image.data))
+    if not parts:
         return text
-    return [
-        {"type": "text", "text": text},
-        {
-            "type": "image_url",
-            "image_url": {"url": "data:image/png;base64," + base64.b64encode(png).decode("ascii")},
-        },
-    ]
+    return [{"type": "text", "text": text}, *parts]
 
 
 async def _dispatch_and_append_results(
@@ -1370,8 +1382,16 @@ async def _fit_prompt(
     )
     # The task list (TD-5122) and the pinned plan (TD-5123) ride into the
     # summary: the calls that made them may be among the turns this drops.
-    compacted, compaction = maybe_compact(
-        messages, tier_cfg, counter, tool_definitions, carry=carry_for(session)
+    # TD-5128: the worker writes the summary when it can, and the files
+    # the folded turns read or changed ride under it.
+    summarizer = session.compaction_summarizer
+    compacted, compaction = await compact_auto(
+        messages,
+        tier_cfg,
+        counter,
+        tool_definitions,
+        carry=carry_for(session),
+        summarizer=summarizer,
     )
     if compaction is not None:
         messages[:] = compacted
@@ -1398,6 +1418,11 @@ async def _fit_prompt(
                 }
             },
         )
+
+    # Near the budget, the next compaction's summary is written while
+    # this turn runs, so the turn that reaches it does not wait (TD-5128).
+    if summarizer is not None:
+        summarizer.prefetch(messages, tier_cfg, counter, tool_definitions)
 
     # In-flight tool results sit past the compaction cut (TD-4839).
     # Once the prompt is over the same budget, or half of it
@@ -1844,6 +1869,18 @@ async def agent_loop(
             )
             _token_counters[key] = counter
         return counter
+
+    # TD-5128: compaction summaries on the worker, here and for /compact.
+    attach_summarizer(
+        session,
+        config,
+        client_for,
+        tracker,
+        lambda: FileAccess(
+            PathGuard(session_boundary(session)),
+            read_guards(with_run_rules(session.policy, session.run_permissions)),
+        ),
+    )
 
     # ── Turn loop ───────────────────────────────────────────────────
     while not session.cancel_requested:
@@ -2621,6 +2658,11 @@ async def agent_loop(
                         prefix_tokens,
                         effective_chars_per_token(counter),
                     )
+                    # The results go back to the model just called, so
+                    # its tier says whether fs_read may return an image
+                    # (TD-5130). After a backup switch that is the backup.
+                    session.tool_vision = tier_cfg.vision
+                    session.tool_max_images = config.computer_use.max_prompt_images
                     # Yield control so the event loop can process cancellation
                     # between the ToolCall event emission and the dispatch.
                     # 0.05s is enough for the test to detect the event and cancel.

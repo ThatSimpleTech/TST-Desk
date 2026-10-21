@@ -326,6 +326,7 @@ from .protocol import (
     SaveJob,
     SaveJobTemplate,
     SaveMemory,
+    SearchSessions,
     SendQueued,
     SessionJobSource,
     SessionList,
@@ -466,6 +467,7 @@ from .session import (
     SessionRunner,
 )
 from .session_goal import keep_goal_visible, restore_goal
+from .session_index import SessionIndex
 from .session_lifecycle import (
     BUSY_CODE,
     apply_workspace_config,
@@ -479,6 +481,7 @@ from .session_lifecycle import (
     rename_session,
 )
 from .session_persist import LoadedSession, SessionPersist
+from .session_search_handler import search_sessions_reply
 from .session_stars import load_session_stars, save_session_stars
 from .session_store import SessionStore
 from .shutdown_budget import (
@@ -498,6 +501,7 @@ from .steering_proposals import expire_restored as expire_restored_steering
 from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 from .task_list import keep_task_list_visible, restore_task_list
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
+from .tools.session_search import SessionRecall
 from .turn_seal import (
     INTERRUPTED_BY_RESTART,
     REVIEW_CUT_BY_RESTART,
@@ -993,6 +997,9 @@ class Daemon:
         # (Windows CI). One asyncio lock per session keeps jsonl in seq
         # order.
         self._event_persist_locks: dict[str, asyncio.Lock] = {}
+        # TD-5129: the full-text index the rail and session_search read,
+        # fed from the same redacted events events.jsonl gets.
+        self._session_index = SessionIndex(self.data_dir)
         self._artifacts = ArtifactStore(
             self._session_persist,
             known_session=lambda sid: self.session_registry.get(sid) is not None,
@@ -2111,9 +2118,16 @@ class Daemon:
             await phases.run("audit", self._audit_writer.close())
             self._audit_writer = None
 
+        # TD-5129: write any reply text still buffered, then let go of the file.
+        await phases.run("session_index", asyncio.to_thread(self._close_session_index))
+
         await phases.run("desktop", self.desktop_driver.aclose())
         await phases.run("browser", self.browser_driver.aclose())
         await phases.run("mcp", self._mcp.aclose())
+
+    def _close_session_index(self) -> None:
+        self._session_index.flush()
+        self._session_index.close()
 
     async def _close_provider_clients(self) -> None:
         """Drop HTTP pools opened for this process. Never logs a secret."""
@@ -2245,6 +2259,12 @@ class Daemon:
             if record.preset != chosen:
                 await self._session_store.set_preset(record.session_id, chosen)
             loaded = await asyncio.to_thread(self._session_persist.load, record.session_id)
+            if loaded is not None and loaded.events:
+                # TD-5129: index what the last process logged but never
+                # indexed (a crash mid-reply, or a log older than the index).
+                await asyncio.to_thread(
+                    self._session_index.catch_up, record.session_id, loaded.events
+                )
             root, worktree = record_root(record.workspace_path, record.worktree)
             if loaded is not None and loaded.conversation is not None:
                 await self._revive_session(record.session_id, root, loaded)
@@ -2468,6 +2488,8 @@ class Daemon:
                 result = await asyncio.to_thread(
                     self._session_persist.append_event, session_id, event
                 )
+                # Under the same lock, so the index sees seq order too.
+                await asyncio.to_thread(self._session_index.observe, event)
             if result.trimmed:
                 await event_log.drop_before(result.earliest_seq)
                 await self._keep_task_list_on_disk(session_id, event_log)
@@ -3421,6 +3443,7 @@ class Daemon:
                 persist=self._session_persist,
             )
             if refusal is None:
+                await asyncio.to_thread(self._session_index.remove, msg.session_id)
                 self.session_stars = [i for i in self.session_stars if i != msg.session_id]
                 save_session_stars(self.data_dir, self.session_stars)
                 # TD-5126: an unchanged worktree goes with its session; one
@@ -3478,6 +3501,9 @@ class Daemon:
 
         if isinstance(msg, ListPins):
             return await self._handle_list_pins(msg)
+
+        if isinstance(msg, SearchSessions):
+            return await search_sessions_reply(self._session_index, self._session_store, msg)
 
         if isinstance(msg, AddPin):
             return await self._handle_add_pin(msg)
@@ -4151,6 +4177,7 @@ class Daemon:
             browser_driver=self.browser_driver,
             grounding_client=GroundingClient.from_config(self.config.computer_use.grounding),
             sent_files=sent_files,
+            session_recall=SessionRecall(self._session_index, self._session_store.records),
         )
         from .tools.plugins import bind_plugin_handlers
 
