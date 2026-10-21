@@ -4,7 +4,8 @@ Text comes out page by page through PDFium (``pypdfium2``), which also
 renders a page to pixels when a vision tier asks for page images. PDFium
 is not thread-safe and ``fs_read`` runs in worker threads, several at once
 when the model reads files in parallel, so every call into it holds
-``_PDFIUM_LOCK``.
+``PDFIUM_LOCK`` — the one in ``tstd.pdfium_lock``, shared with attachment
+extraction, which calls into the same library from its own threads.
 
 Page images are PNG, encoded here with zlib: the daemon has no imaging
 library (Pillow ships only with the computer-use sidecar).
@@ -14,12 +15,12 @@ from __future__ import annotations
 
 import re
 import struct
-import threading
 import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..pdfium_lock import PDFIUM_LOCK
 from .results import ToolImage
 
 #: Pages read when the call names none.
@@ -34,7 +35,6 @@ PAGE_IMAGE_LONG_SIDE = 1568
 #: Highest render scale (2 = 144 dpi), so a small page is not blown up.
 _MAX_SCALE = 2.0
 
-_PDFIUM_LOCK = threading.Lock()
 _RANGE = re.compile(r"^\s*(\d+)\s*(?:-\s*(\d+)\s*)?$")
 
 
@@ -155,7 +155,7 @@ def read_pdf(
     except ImportError as e:  # a build without the wheel
         raise OSError("PDF support is not installed in this build (pypdfium2)") from e
 
-    with _PDFIUM_LOCK:
+    with PDFIUM_LOCK:
         try:
             pdf = pdfium.PdfDocument(str(target))
         except pdfium.PdfiumError as e:
