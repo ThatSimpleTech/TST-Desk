@@ -11,7 +11,9 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import signal
 import subprocess
+import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -183,11 +185,60 @@ def test_seed_repo_commits_the_seed_files(measure: ModuleType, tmp_path: Path) -
 
 
 def test_stop_daemon_leaves_another_data_dirs_daemon_alone(
-    measure: ModuleType, tmp_path: Path
+    measure: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A port file naming a process that is not this data dir's daemon is not signalled."""
     (tmp_path / "port.json").write_text(json.dumps({"pid": os.getpid(), "port": 1, "token": "t"}))
+    signalled: list[int] = []
+    monkeypatch.setattr(measure.os, "kill", lambda pid, sig: signalled.append(pid))
 
     measure.stop_daemon(tmp_path)
 
-    assert os.getpid() > 0
+    assert signalled == []
+
+
+def test_stop_daemon_stops_its_own_data_dirs_daemon(measure: ModuleType, tmp_path: Path) -> None:
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", str(tmp_path)])
+    try:
+        (tmp_path / "port.json").write_text(json.dumps({"pid": child.pid, "port": 1}))
+        measure.stop_daemon(tmp_path)
+        assert child.wait(timeout=10) == -signal.SIGTERM
+    finally:
+        child.kill()
+
+
+def test_a_turn_with_no_clean_turn_complete_counts_as_failed(
+    measure: ModuleType, tmp_path: Path
+) -> None:
+    """A turn the timeout cut off never sends turn_complete; one with an error_code failed."""
+    errored = {**_done(4), "error_code": "provider_error"}
+    _write_turns(tmp_path / "turns", [[_usage(1, 10)], [_done(2)], [_usage(3, 10), errored]])
+
+    result = measure.summarize_turns(measure.read_turn_events(tmp_path / "turns"), [])
+
+    assert [r["failed"] for r in result["rows"]] == [True, False, True]
+    assert result["failed_turns"] == 2
+
+
+def test_peaks_pair_with_the_turns_that_completed(measure: ModuleType, tmp_path: Path) -> None:
+    """A turn with no audit row (cut off) does not shift the later turns' peaks."""
+    _write_turns(tmp_path / "turns", [[_done(1)], [_usage(2, 10)], [_done(3)]])
+
+    result = measure.summarize_turns(measure.read_turn_events(tmp_path / "turns"), [100, 300])
+
+    assert [r["peak_prompt"] for r in result["rows"]] == [100, None, 300]
+    assert result["peak_prompt_max"] == 300
+
+
+def test_a_turn_with_no_model_call_keeps_its_place(measure: ModuleType, tmp_path: Path) -> None:
+    db = tmp_path / "audit.db"
+    store = AuditStore(db)
+    store.append_session("s1", "/w", 1.0)
+    first = store.append_turn("s1", 0, "brain", 0, 0.0, 1.0, ts=10.0)
+    store.append_turn("s1", 1, "brain", 0, 0.0, 1.0, ts=20.0)
+    third = store.append_turn("s1", 2, "brain", 0, 0.0, 1.0, ts=30.0)
+    store.append_model_call("s1", first, "brain", "m", 1_000, 0, 5, 0.0, ts=5.0)
+    store.append_model_call("s1", third, "brain", "m", 3_000, 0, 5, 0.0, ts=25.0)
+    store.close()
+
+    assert measure.peak_prompt_tokens(db) == [1_000, None, 3_000]
