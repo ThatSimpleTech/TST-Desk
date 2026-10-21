@@ -3219,11 +3219,22 @@ Inside the sandbox:
 
 - **Writes reach only the workspace and a private `/tmp`.** The rest of the filesystem is
   read-only, and `/tmp` is a fresh empty tmpfs that is gone when the command ends.
-  `AGENTS.md`, `CLAUDE.md`, `.tst/`, `.git/config` and `.git/hooks` are read-only too, so a
-  command cannot edit steering, rewrite this file's policy, or plant a git hook that later runs
-  outside the sandbox. A *new* steering file in a subfolder can still be written.
-- **There is no network.** Every namespace is unshared, loopback included. A command that needs
-  the network (`npm install`, `git push`) goes on `exclude`.
+  `AGENTS.md`, `CLAUDE.md`, `.tst/` and the whole `.git` are read-only too, so a command
+  cannot edit steering, rewrite this file's policy, or plant a git hook or `core.fsmonitor`
+  that your next `git status` on the host runs. Each is a mount point inside, so it cannot be
+  renamed away either. A guarded name that is missing, or is a symlink, is checked after the
+  command: whatever the command put there is moved aside to `<name>.sandbox-blocked-<time>`
+  (never deleted), a replaced symlink is put back, and the result says `blocked:`. Because
+  `.git` is read-only, git commands that write (`git add`, `git commit`, `git checkout`) fail
+  inside; put them on `exclude` to run them on the host through the gate. A *new* steering
+  file in a subfolder can still be written.
+- **There is no network and no host socket.** Every namespace is unshared (TCP/IP, loopback
+  and abstract sockets are gone), and a seccomp filter refuses `socket(AF_UNIX)` and io_uring,
+  so a command cannot reach a host daemon through a socket file either: `/run/docker.sock`,
+  tailscaled, the system D-Bus. `socketpair` still works. A command that needs the network or
+  a local daemon (`npm install`, `git push`, `docker`, Python's `multiprocessing` with the
+  `forkserver` start method) goes on `exclude`. x86_64 and aarch64 only; elsewhere a command
+  that would be sandboxed is refused.
 - **Keys are unreadable.** `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.local/share/keyrings`,
   `~/.password-store`, `~/.netrc`, `~/.git-credentials`, `~/.config/gh`, `~/.config/gcloud`,
   `~/.azure`, `~/.docker`, `~/.kube`, TST Desk's data dir and your runtime dir

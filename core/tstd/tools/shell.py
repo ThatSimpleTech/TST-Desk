@@ -648,6 +648,9 @@ async def run_shell(
     # AC2; the TestCancel flake family).  On cancellation, wait for the
     # spawn to settle, kill the group, and let cancellation propagate.
     sandboxed = _sandbox_for(session, command, tool_call_id)
+    # Guarded names a bind cannot pin (missing, symlinked) are checked after.
+    guard = shell_sandbox.guard_snapshot(session.workspace_path) if sandboxed else None
+    guard_notes: list[str] = []
     cap = await shell_memory.plan_cap(session, sanitized_env())
     spawn = asyncio.ensure_future(_open_shell_process(session, command, cap, sandboxed))
     try:
@@ -665,6 +668,9 @@ async def run_shell(
             # must not fall through into ``proc.kill()``.
             if not kill_left_leader_running(spawned, kill_note):
                 await reap_subprocess(spawned, timeout=_KILL_GRACE_SECS)
+        if guard is not None:
+            for note in shell_sandbox.guard_restore(session.workspace_path, guard):
+                _log.warning("%s", note)
         # The outer ``finally`` does not cover this raise. Same close
         # rule: a dead transport is closed, a live leader is watched.
         retain_subprocess_transport(spawned)
@@ -740,6 +746,11 @@ async def run_shell(
         # next ``await`` would raise before a dead transport was closed
         # (TD-4851). A live refused leader is not closed here.
         retain_subprocess_transport(proc)
+        # Before any await: a cancelled run is checked too.
+        if guard is not None:
+            guard_notes = shell_sandbox.guard_restore(session.workspace_path, guard)
+            for note in guard_notes:
+                _log.warning("%s", note)
         for task in (work_task, cancel_task):
             if task is not None and not task.done():
                 task.cancel()
@@ -757,5 +768,7 @@ async def run_shell(
     # A command this tool killed (timeout, cancel, stop) already says why.
     memory = "" if header else await shell_memory.cap_note(cap, exit_code, err.tail)
     sandbox = shell_sandbox.SANDBOX_NOTE if sandboxed else ""
-    notes = "\n".join(n for n in (sandbox, memory, SHELL_WRITE_NOTE if wrote else "") if n)
+    notes = "\n".join(
+        n for n in (sandbox, *guard_notes, memory, SHELL_WRITE_NOTE if wrote else "") if n
+    )
     return _format_result(header, exit_code, out, err, notes)

@@ -121,6 +121,37 @@ class TestPlan:
             target = ws.resolve() / rel
             assert f"--ro-bind {target} {target}" in joined
 
+    def test_whole_git_dir_pinned_and_seccomp_on_fd_9(self, tmp_path: Path) -> None:
+        # Pinning only .git/config and .git/hooks let a command rename .git away.
+        ws = tmp_path / "ws"
+        (ws / ".git" / "hooks").mkdir(parents=True)
+        (ws / ".git" / "config").write_text("[core]\n")
+        plan = build_plan(str(ws), "true", ON, home=tmp_path / "nohome")
+        joined = " ".join(plan.argv)
+        git = ws.resolve() / ".git"
+        assert f"--ro-bind {git} {git}" in joined
+        assert f"--ro-bind {git / 'config'}" not in joined
+        assert plan.argv[plan.argv.index("--seccomp") + 1] == "9"
+        assert plan.seccomp is not None
+        assert plan.shell_text().endswith(f" 9< {plan.seccomp}")
+
+    def test_linked_worktree_git_dir_inside_workspace_pinned(self, tmp_path: Path) -> None:
+        ws = tmp_path / "ws"
+        (ws / "inner-gitdir").mkdir(parents=True)
+        (ws / ".git").write_text("gitdir: inner-gitdir\n")
+        joined = " ".join(build_plan(str(ws), "true", ON, home=tmp_path / "nohome").argv)
+        inner = ws.resolve() / "inner-gitdir"
+        assert f"--ro-bind {inner} {inner}" in joined
+
+    def test_seccomp_program_shape(self) -> None:
+        prog = shell_sandbox.seccomp_program(0xC000003E, 41)
+        assert len(prog) % 8 == 0 and len(prog) // 8 == 14
+        native = shell_sandbox._seccomp_arch()
+        assert native is not None
+        path = shell_sandbox.seccomp_file()
+        assert path.read_bytes() == shell_sandbox.seccomp_program(*native)
+        assert path.stat().st_mode & 0o777 == 0o400
+
     def test_extra_hidden_paths(self, tmp_path: Path) -> None:
         secret = tmp_path / "vault"
         secret.mkdir()
@@ -139,6 +170,37 @@ class TestPlan:
 
 
 # ── The gate ───────────────────────────────────────────────────────────
+
+
+class TestGuard:
+    """Guarded names a bind cannot pin are checked after the run."""
+
+    def test_created_name_moved_aside(self, tmp_path: Path) -> None:
+        before = shell_sandbox.guard_snapshot(str(tmp_path))
+        (tmp_path / "AGENTS.md").write_text("evil\n")
+        (tmp_path / ".git").mkdir()
+        notes = shell_sandbox.guard_restore(str(tmp_path), before)
+        assert not (tmp_path / "AGENTS.md").exists() and not (tmp_path / ".git").exists()
+        assert len(notes) == 2 and all(n.startswith("blocked:") for n in notes)
+        moved = sorted(p.name for p in tmp_path.iterdir())
+        assert any(n.startswith("AGENTS.md.sandbox-blocked-") for n in moved)
+        assert any(n.startswith(".git.sandbox-blocked-") for n in moved)
+
+    def test_replaced_symlink_restored(self, tmp_path: Path) -> None:
+        (tmp_path / "CLAUDE.md").write_text("rules\n")
+        (tmp_path / "AGENTS.md").symlink_to("CLAUDE.md")
+        before = shell_sandbox.guard_snapshot(str(tmp_path))
+        (tmp_path / "AGENTS.md").unlink()
+        (tmp_path / "AGENTS.md").write_text("evil\n")
+        notes = shell_sandbox.guard_restore(str(tmp_path), before)
+        assert (tmp_path / "AGENTS.md").is_symlink()
+        assert (tmp_path / "AGENTS.md").read_text() == "rules\n"
+        assert "restored the AGENTS.md symlink" in notes[0]
+
+    def test_unchanged_says_nothing(self, tmp_path: Path) -> None:
+        (tmp_path / "AGENTS.md").write_text("rules\n")
+        before = shell_sandbox.guard_snapshot(str(tmp_path))
+        assert shell_sandbox.guard_restore(str(tmp_path), before) == []
 
 
 class TestPromote:
@@ -268,6 +330,65 @@ class TestRealSandbox:
         finally:
             server.close()
         assert "NO-NET" in out and "REACHED" not in out
+
+    async def test_no_host_unix_sockets(self, tmp_path: Path) -> None:
+        # A read-only mount does not stop connect() on a socket file
+        # (docker.sock, tailscaled); the seccomp filter does. The listener
+        # sits in the workspace, which the sandbox can see.
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        path = ws / "h.sock"
+        server = socket.socket(socket.AF_UNIX)
+        server.bind(str(path))
+        server.listen(1)
+        try:
+            probe = (
+                f'{sys.executable} -c "import socket; s = socket.socket(socket.AF_UNIX); '
+                f"s.settimeout(3); s.connect('{path}'); print('REACHED')\" || echo NO-SOCK; "
+                f'{sys.executable} -c "import socket; a, b = socket.socketpair(); '
+                f"a.send(b'ok'); print('PAIR', b.recv(2))\"; "
+                f'{sys.executable} -c "import ctypes; libc = ctypes.CDLL(None, use_errno=True); '
+                f"r = libc.syscall(425, 1, ctypes.create_string_buffer(120)); "
+                f"print('URING', r, ctypes.get_errno())\""
+            )
+            out = await run_shell(_session(ws, ON), probe)
+        finally:
+            server.close()
+        assert "NO-SOCK" in out and "REACHED" not in out
+        assert "PAIR b'ok'" in out
+        assert "URING -1 1" in out
+
+    @pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+    async def test_git_dir_cannot_be_swapped_for_a_planted_config(self, tmp_path: Path) -> None:
+        # The review's escape: rename .git, write a fresh one whose
+        # core.fsmonitor the host's next git status runs.
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        await asyncio.to_thread(subprocess.run, ["git", "init", "-q", str(ws)], check=True)
+        pwned = tmp_path / "PWNED"
+        attack = (
+            "mv .git .git-old && mkdir .git && cp -r .git-old/objects .git-old/refs "
+            ".git-old/HEAD .git/ && printf '[core]\\n\\trepositoryformatversion = 0\\n"
+            f"\\tfsmonitor = touch {pwned}\\n' > .git/config && echo SWAPPED; "
+            f"printf '[core]\\n\\tfsmonitor = touch {pwned}\\n' >> .git/config "
+            "&& echo PLANTED; echo x > .git/hooks/pre-commit && echo HOOKED; true"
+        )
+        out = await run_shell(_session(ws, ON), attack)
+        assert "SWAPPED" not in out and "PLANTED" not in out and "HOOKED" not in out
+        await asyncio.to_thread(
+            subprocess.run, ["git", "status"], cwd=ws, capture_output=True, check=False
+        )
+        assert not pwned.exists(), "the host git ran a planted fsmonitor"
+
+    async def test_missing_steering_file_created_inside_is_moved_aside(
+        self, tmp_path: Path
+    ) -> None:
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        out = await run_shell(_session(ws, ON), "echo evil > AGENTS.md; mkdir .git")
+        assert not (ws / "AGENTS.md").exists() and not (ws / ".git").exists()
+        assert "blocked: the sandboxed command changed AGENTS.md" in out
+        assert "blocked: the sandboxed command changed .git" in out
 
     async def test_keys_unreadable(self, tmp_path: Path, fake_home: Path) -> None:
         ws = tmp_path / "ws"

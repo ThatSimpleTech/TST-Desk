@@ -17840,9 +17840,9 @@ Sized 8; approach recorded here per the 2026-10-14 approval.
   unknown keys refused). Per workspace, as the story says. Off by default.
 - **Walls.** `bwrap --die-with-parent --new-session --unshare-all`,
   `--ro-bind / /`, fresh `--dev`/`--proc`, `--tmpfs /tmp`, the workspace
-  `--bind` read-write, then `AGENTS.md`, `CLAUDE.md`, `.tst/`,
-  `.git/config` and `.git/hooks` bound back read-only (steering is
-  directive 4; `.tst/config.yaml` holds the policy; git config and hooks
+  `--bind` read-write, then `AGENTS.md`, `CLAUDE.md`, `.tst/` and the
+  whole `.git` bound back read-only (steering is directive 4;
+  `.tst/config.yaml` holds the policy; git config, hooks and fsmonitor
   would run code later outside the sandbox), then the masks last so they
   win even when the workspace is the home directory. The masks are a
   mode-000 tmpfs over each existing folder and `/dev/null` over each file:
@@ -17850,6 +17850,31 @@ Sized 8; approach recorded here per the 2026-10-14 approval.
   registry credentials, TST Desk's data dir and `$XDG_RUNTIME_DIR` (the
   D-Bus socket the Secret Service keychain answers on, ssh-agent,
   gpg-agent). The socket variables are unset inside.
+- **Guarded names (review of #63).** Pinning only `.git/config` and
+  `.git/hooks` left `.git` itself writable: a command could rename it and
+  write a new one with `core.fsmonitor`, which the host's next `git status`
+  ran. The whole `.git` is now bound read-only at its own path; a mount
+  point cannot be renamed or removed (EBUSY). Binding writable holes for
+  objects/refs/index was rejected: git writes `index.lock`, `HEAD.lock`
+  and the like in `.git` itself, and `commondir`, `config.worktree` and
+  `modules/*/config` are more config git reads. Read-only is the most
+  conservative choice that meets the story; git writes go on `exclude`.
+  A guarded name that is missing or a symlink cannot be pinned without
+  creating a file on the host, so `guard_snapshot` records it before the
+  run and `guard_restore` moves aside (never deletes) whatever the command
+  left there and restores a replaced symlink. The pid namespace dies with
+  the command, so nothing races the check.
+- **Host sockets (review of #63).** `--unshare-all` removes TCP/IP and
+  abstract sockets, but `connect()` on a socket file works through a
+  read-only mount, so `/run/docker.sock` (root on the host for the docker
+  group), tailscaled and the system bus answered. A seccomp filter
+  (`--seccomp 9`, hand-built classic BPF) refuses `socket(AF_UNIX)` with
+  EPERM, io_uring (its `IORING_OP_SOCKET` skips the syscall) and any
+  foreign-arch or x32 call. Hiding `/run` with a tmpfs was considered and
+  not used alone: sockets also live in `/var/snap`, `/var/lib` and home
+  directories, and the filter covers every path. `socketpair` still works;
+  `multiprocessing` forkserver and docker need `exclude`. x86_64 and
+  aarch64 only; other machines refuse rather than run unfiltered.
 - **Network: off only.** bubblewrap has no host filter; an allow-list would
   need a proxy in the daemon. The most conservative option that meets "off
   or allow-listed" is off. A command that needs the network goes on
