@@ -17541,7 +17541,7 @@ already had, through the same guard the read tool uses.
 
 **Context.** The gap audit asked for workers with their own prompt, tool
 allow list, tier or preset and tightening policy, picked by name from
-`delegate` or by `@name` in the composer. Adam's 2026-10-14 decisions do
+`delegate` or by `@name` in the composer. The 2026-10-14 decisions do
 not cover it beyond directive 4.
 
 **Decision.**
