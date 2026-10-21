@@ -4044,6 +4044,8 @@ class Daemon:
         restore_pinned_plan(sess, loaded.events)
         # TD-5140: open steering proposals lived in the old process's memory.
         await expire_restored_steering(sess, loaded.events)
+        # TD-5137: so did its background shell jobs.
+        await sess.shell_jobs.expire_restored(loaded.events)
         await self._seal_cut_review(sess, loaded.events)
         await self._emit_working_context(sess, config_source(sess))
         log.info(

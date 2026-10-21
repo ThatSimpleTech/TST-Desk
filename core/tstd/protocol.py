@@ -2623,6 +2623,39 @@ class TaskList(DaemonEvent):
     items: list[TaskListItem] = Field(default_factory=list, max_length=30)
 
 
+ShellJobStatus = Literal["running", "exited", "stopped", "lost"]
+
+
+class ShellJobInfo(BaseModel):
+    """One background shell job, as the window lists it (TD-5137).
+
+    ``status`` is ``running``, ``exited`` (the command finished by itself;
+    ``exit_code`` says how), ``stopped`` (``shell_stop``, or the session
+    ended and the daemon killed it) or ``lost`` (the daemon restarted while
+    it ran, so nothing reads it any more). ``started_at`` and ``ended_at``
+    are Unix seconds.
+    """
+
+    job_id: str = Field(min_length=1, max_length=32)
+    command: str = Field(max_length=500)
+    status: ShellJobStatus = "running"
+    exit_code: int | None = None
+    started_at: float
+    ended_at: float | None = None
+
+
+class ShellJobs(DaemonEvent):
+    """The session's background shell jobs, after any of them changed (TD-5137).
+
+    Each event carries the whole list, so the newest one is the truth.
+    The daemon owns the jobs; the window only lists them.
+    """
+
+    type: Literal["shell_jobs"] = "shell_jobs"
+    session_id: str
+    jobs: list[ShellJobInfo] = Field(default_factory=list, max_length=64)
+
+
 class WorktreeState(DaemonEvent):
     """A session's worktree changed (TD-5126): made, set up, or closed.
 
@@ -4439,6 +4472,7 @@ DaemonEventT = Annotated[
     | ContextCompacted
     | ContextUsage
     | TaskList
+    | ShellJobs
     | WorktreeState
     | StopCheck
     | HookRun
@@ -4674,6 +4708,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "context_compacted",
         "context_usage",
         "task_list",
+        "shell_jobs",
         "worktree_state",
         "stop_check",
         "hook_run",

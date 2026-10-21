@@ -36,12 +36,15 @@ from .protocol import (
     DaemonEvent,
     LineCommentAnchor,
     RunPermissions,
+    ShellJobInfo,
     TaskListItem,
     ToolResult,
 )
 from .protocol import SessionState as SessionStateEvent
+from .protocol import ShellJobs as ShellJobsEvent
 from .provider import ChatMessage
 from .questions import PendingQuestion, resolve_all
+from .shell_jobs import ShellJobs
 from .workspace_trust import TrustStore, WorkspaceConfigView
 from .worktree import SessionWorktree
 
@@ -342,6 +345,9 @@ class Session:
         # TD-5122: the model's task list (``task_list`` tool). Carried into
         # every compaction summary; rebuilt from the log on revive.
         self.task_list: list[TaskListItem] = []
+        # TD-5137: background shell jobs. The session owns them, so ending
+        # it (``cancel``) kills them; each change logs ``shell_jobs``.
+        self.shell_jobs = ShellJobs(self._log_shell_jobs)
         # TD-5124: the goal ``/goal`` set, checked when the model ends a
         # turn until a check passes; rebuilt from the log on revive. And
         # how many checks have judged it, for ``/goal`` on its own.
@@ -478,6 +484,11 @@ class Session:
         # TD-4101: unattended runs iterate without a user message.
         # Interactive sessions leave this false and wait on the queue.
         self.autonomy = False
+        # TD-5137: True while a scheduled job's turn runs in this session
+        # (scheduler ``run_turn_on_daemon``). Nobody watches that turn, so
+        # it cannot start background shell jobs. Cleared when the run
+        # returns, so a person who carries on in the window is not refused.
+        self.scheduled_run = False
         self.charter: Charter | None = None
         self.autonomy_turns = 0
         self.autonomy_class_c = False
@@ -679,8 +690,13 @@ class Session:
         if self._state in ("running", "awaiting_approval", "paused"):
             await self.set_state("cancelled", reason=reason)
         await self.close_cu_session()
+        # The session ended, so its background jobs end with it (TD-5137).
+        await self.shell_jobs.stop_all()
         # Wake a loop parked in wait_for_resume so it observes cancellation.
         self._resume_event.set()
+
+    async def _log_shell_jobs(self, jobs: list[ShellJobInfo]) -> None:
+        await self.event_log.add(ShellJobsEvent(session_id=self.id, jobs=jobs, seq=1))
 
     async def stop_turn(self) -> None:
         """Abort the in-flight turn. The session and its transcript stay.
@@ -1685,8 +1701,11 @@ class SessionRegistry:
     async def remove(self, session_id: str) -> None:
         """Remove a session and its runner from the registry."""
         async with self._lock:
-            self._sessions.pop(session_id, None)
+            session = self._sessions.pop(session_id, None)
             self._runners.pop(session_id, None)
+        # A session with no runner was never cancelled; its jobs still end.
+        if session is not None:
+            await session.shell_jobs.stop_all()
 
     async def list_sessions(self) -> list[Session]:
         """Return all registered sessions."""

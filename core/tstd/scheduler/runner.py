@@ -584,6 +584,19 @@ async def run_turn_on_daemon(host: SessionHost, workspace: Path, message: str) -
         return TurnResult(
             f"session {session_id} was not registered", ok=False, session_id=session_id
         )
+    # TD-5137: nobody watches this turn, so it cannot start background
+    # shell jobs that would outlive the run. Cleared on return.
+    session.scheduled_run = True
+    try:
+        return await _await_scheduled_turn(host, session_id, session, message)
+    finally:
+        session.scheduled_run = False
+
+
+async def _await_scheduled_turn(
+    host: SessionHost, session_id: str, session: Session, message: str
+) -> TurnResult:
+    """Send the job's message and wait for the turn, a park or the limit."""
     await session.add_user_message(message)
     # The job's own limit wins. Otherwise the config. An approval returns
     # before the budget; hitting it cancels the turn instead of leaving
