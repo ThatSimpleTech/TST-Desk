@@ -241,6 +241,20 @@ describe("streaming assistant output", () => {
     });
   });
 
+  it("a replayed user_turn with no turn_complete yet is a turn in flight", () => {
+    // 2026-10-22: the phone reattached while the provider was still being
+    // retried, before any token. The replay is session_state running, then
+    // the user_turn; nothing ends it, so the pane must say Working.
+    const { store, state } = boundStore();
+    store.applyEvent(sessionState("s1", "running"));
+    store.applyEvent(userTurn("s1", "t1", "build the page"));
+    expect(state.turnState).toBe("running");
+    expect(state.awaitingFirstToken).toBe(true);
+    store.applyEvent(turnComplete("s1"));
+    expect(state.turnState).toBeNull();
+    expect(state.awaitingFirstToken).toBe(false);
+  });
+
   it("does not invent a user row from a different session's user_turn", () => {
     const { store, state } = boundStore();
     store.applyEvent(userTurn("elsewhere", "t9", "nope"));
