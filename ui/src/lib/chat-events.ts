@@ -191,6 +191,13 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       if (event.session_id !== state.sessionId) return;
       // A turn starts only once the loop is free: no review is running.
       state.reviewRunning = false;
+      // The daemon writes user_turn when the turn starts, and turn_complete
+      // when it ends, so this is turn evidence (TD-1714) on the terms a delta
+      // is. Without it a pane that attached before the first token (a phone
+      // back from the background while the provider retried) read the
+      // replay as "no turn": Finished, and a Send button (2026-10-22).
+      if (state.turnState !== "awaiting_approval") state.turnState = "running";
+      wait.begin();
       // The daemon took one of our sends: the composer it emptied is saved
       // now, not after the debounce (TD-5019).
       const sentText = takeSentText(ctx.sending, event.content);
