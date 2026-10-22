@@ -1941,6 +1941,9 @@ async def agent_loop(
                 preset=config.active_preset,
                 hosts=hosts,
                 plan=router.plan_mode,
+                # Without this the field's default (medium) overwrote the picked level
+                # in the chip and on the session row at every turn's report.
+                effort=router.effort,
                 vision=tier_cfg.vision,
                 fallbacks=positions,
                 seq=1,

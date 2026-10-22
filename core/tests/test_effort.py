@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from tests.test_plan_mode import make_run  # noqa: F401  (fixture)
 from tests.test_set_tier import (
     _connect_and_handshake,
     _open_workspace,
@@ -184,3 +185,18 @@ async def test_set_effort_over_the_wire_acks_with_tier_state(tmp_path: Path) -> 
         await ws.close()
         daemon._shutdown_event.set()
         await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_the_first_turn_keeps_the_picked_effort(make_run: Any) -> None:  # noqa: F811
+    """Picked before the first message, the level survives the turn (chip, row and wire)."""
+    run = await make_run([])
+    assert await run.send({"type": "set_effort", "effort": "ultracode"}) is None
+    await run.message("hi")
+    await run.finished()
+    states = run.events(TierState)
+    picked = next(i for i, e in enumerate(states) if e.effort == "ultracode")  # the ack
+    assert picked < len(states) - 1, "the turn reported no tier_state of its own"
+    assert [e.effort for e in states[picked:]] == ["ultracode"] * (len(states) - picked)
+    record = next(r for r in run.daemon._session_store.records() if r.session_id == run.sid)
+    assert record.effort == "ultracode"
+    assert run.router.effort == "ultracode"
