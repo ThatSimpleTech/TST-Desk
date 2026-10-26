@@ -21,6 +21,7 @@ byte-identical.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from fnmatch import fnmatchcase
 
 from ..compaction import estimate_tokens
 from ..config import McpToolSearchConfig, TierConfig
@@ -59,6 +60,31 @@ def catalog_text(tools: Sequence[Tool], budget: int = CATALOG_BUDGET_CHARS) -> s
     return "\n".join(lines)
 
 
+def builtin_catalog_text(names: Sequence[str]) -> str:
+    """Deferred builtin tools (TD-5173), names only."""
+    return "Other tools you can load: " + ", ".join(sorted(names))
+
+
+def deferred_builtins(
+    definitions: Sequence[ToolDefinition], patterns: Sequence[str], exclude: frozenset[str]
+) -> frozenset[str]:
+    """Names in *definitions* a tier defers by pattern (TD-5173).
+
+    ``tool_search`` itself and MCP tools (*exclude*) never match: the first
+    is how the rest are found, the second have their own rule.
+    """
+    if not patterns:
+        return frozenset()
+    out = set()
+    for definition in definitions:
+        name = _name(definition)
+        if name is None or name == TOOL_SEARCH_NAME or name in exclude:
+            continue
+        if any(fnmatchcase(name, pattern) for pattern in patterns):
+            out.add(name)
+    return frozenset(out)
+
+
 def called_tools(messages: Iterable[ChatMessage], names: frozenset[str]) -> list[str]:
     """Names in *names* the assistant called in *messages*, first call first."""
     seen: list[str] = []
@@ -68,6 +94,12 @@ def called_tools(messages: Iterable[ChatMessage], names: frozenset[str]) -> list
             if name in names and name not in seen:
                 seen.append(name)
     return seen
+
+
+def _set_deferred_builtins(session: object, names: list[str]) -> None:
+    """Tell ``tool_search`` which builtins it may load this step (TD-5173)."""
+    if hasattr(session, "deferred_builtin_tools"):
+        session.deferred_builtin_tools[:] = names
 
 
 class McpToolDeferral:
@@ -99,26 +131,34 @@ class McpToolDeferral:
         if definitions is None:
             return None
         names = {_name(d) for d in definitions}
-        if TOOL_SEARCH_NAME not in names or not self._defers(tier, tier_cfg, counter, definitions):
+        builtin = deferred_builtins(definitions, tier_cfg.deferred_tools, self._mcp_names)
+        defer_mcp = TOOL_SEARCH_NAME in names and self._defers(tier, tier_cfg, counter, definitions)
+        if TOOL_SEARCH_NAME not in names or not (defer_mcp or builtin):
+            _set_deferred_builtins(session, [])
             return [d for d in definitions if _name(d) != TOOL_SEARCH_NAME]
+        _set_deferred_builtins(session, sorted(builtin))
+        deferred = (self._mcp_names if defer_mcp else frozenset()) | builtin
         # A tool the conversation already called is in use: keep it
         # offered, also after a restart rebuilt the session from disk.
-        load_tools(session, called_tools(messages, self._mcp_names))
+        load_tools(session, called_tools(messages, deferred))
         loaded = getattr(session, "loaded_mcp_tools", [])
         offered: list[ToolDefinition] = []
         by_name: dict[str, ToolDefinition] = {}
         for definition in definitions:
             name = _name(definition)
-            if name in self._mcp_names:
+            if name in deferred:
                 by_name[name] = definition
                 continue
             if name == TOOL_SEARCH_NAME:
-                definition = self._with_catalog(definition)
+                parts = [self._catalog] if defer_mcp and self._catalog else []
+                if builtin:
+                    parts.append(builtin_catalog_text(sorted(builtin)))
+                definition = self._with_catalog(definition, "\n".join(parts))
             offered.append(definition)
         offered.extend(by_name[n] for n in loaded if n in by_name)
         return offered
 
-    def _with_catalog(self, definition: ToolDefinition) -> ToolDefinition:
+    def _with_catalog(self, definition: ToolDefinition, catalog: str) -> ToolDefinition:
         function = definition.function
         if function is None:
             return definition
@@ -126,7 +166,7 @@ class McpToolDeferral:
             type=definition.type,
             function=FunctionDefinition(
                 name=function.name,
-                description=f"{function.description}\n\n{self._catalog}",
+                description=f"{function.description}\n\n{catalog}",
                 parameters=function.parameters,
             ),
         )

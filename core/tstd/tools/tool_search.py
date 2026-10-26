@@ -189,7 +189,9 @@ async def tool_search(
         raise HandlerRefusal(
             "tool_search_unavailable", "Tool search is not available in this session."
         )
-    candidates = [t for t in registry.list_tools() if is_mcp_tool(t)]
+    # Builtins a tier defers by pattern load the same way (TD-5173).
+    builtins = set(getattr(session, "deferred_builtin_tools", None) or ())
+    candidates = [t for t in registry.list_tools() if is_mcp_tool(t) or t.name in builtins]
     if not candidates:
         return "No MCP tools are configured, so there is nothing to load."
     picks = query.strip().lower().startswith(SELECT_PREFIX)

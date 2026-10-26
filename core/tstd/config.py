@@ -258,6 +258,19 @@ class TierConfig(BaseModel):
     # thinking, so this is where ``enable_thinking: false`` goes without
     # turning it off for the turn or a delegated worker.
     verdict_extra_body: dict[str, Any] | None = None
+    # Builtin tools this tier's model sees by name only, behind
+    # ``tool_search``, the way MCP tools are deferred (TD-5173). fnmatch
+    # patterns, e.g. ``github_*``. A small or heavily quantized model loses
+    # the tool-call format once the tool list passes its limit (the 1-bit
+    # DeepSeek forge: about 18k characters of definitions; the full builtin
+    # set is about 31k). Empty keeps every builtin in every request.
+    deferred_tools: list[str] = Field(default_factory=list)
+    # Send the model's plaintext thinking back as ``reasoning_content`` on
+    # the tool-call steps it led to (TD-5174). For interleaved-thinking
+    # models served by llama.cpp or vLLM (DeepSeek V4.1, Qwen3): without it
+    # every step sees an empty think block and plans again from scratch.
+    # OpenRouter's ``reasoning_details`` echo (TD-1903) is separate.
+    echo_reasoning: bool = False
     # Provider timeouts in seconds (TD-5106). The defaults are the values
     # every tier used before they were configurable. ``total_timeout``
     # caps one attempt including streaming; ``stream_idle_timeout`` aborts

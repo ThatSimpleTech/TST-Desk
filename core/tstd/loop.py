@@ -743,6 +743,7 @@ async def _stream_and_parse(
     began = False
     tool_calls: dict[int, dict[str, str | int]] = {}
     collected_details: list[dict[str, Any]] = []
+    collected_reasoning = ""
     failed = False
     retryable = False
     endpoint_failed = False
@@ -801,6 +802,8 @@ async def _stream_and_parse(
             if chunk.delta.reasoning_details:
                 merge_reasoning_details(collected_details, chunk.delta.reasoning_details)
             thinking = chunk.delta.reasoning
+            if thinking and not chunk.delta.reasoning_details:
+                collected_reasoning += thinking
             if thinking is None and chunk.delta.reasoning_details:
                 thinking = flatten_reasoning_details(chunk.delta.reasoning_details)
             if thinking and emit_events:
@@ -867,6 +870,7 @@ async def _stream_and_parse(
         retryable,
         response_id,
         endpoint_failed,
+        collected_reasoning,
     )
 
 
@@ -2753,6 +2757,11 @@ async def agent_loop(
                         content=None,
                         tool_calls=provider_tool_calls,
                         reasoning_details=reasoning_details,
+                        reasoning_content=(
+                            reply.reasoning or None
+                            if tier_cfg.echo_reasoning and not reasoning_details
+                            else None
+                        ),
                     )
                 )
                 # Answered now, so the model sees why and retries smaller.

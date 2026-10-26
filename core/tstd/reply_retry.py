@@ -70,6 +70,10 @@ class StreamResult(NamedTuple):
     # dropped connection, an in-band 429 or 5xx), which moves a turn to a
     # backup although it is not retried (TD-5120).
     endpoint_failed: bool = False
+    # The reply's plaintext thinking from a ``reasoning`` / ``reasoning_content``
+    # stream (TD-5174), kept so a tier with ``echo_reasoning`` can send it back
+    # on the tool-call step it led to. Empty when the stream carried none.
+    reasoning: str = ""
 
 
 def new_response_id() -> str:

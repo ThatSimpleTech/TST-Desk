@@ -185,6 +185,9 @@ class ChatMessage:
     tool_call_id: str | None = None
     # OpenRouter tool-loop echo (TD-1903). Opaque; pass back unmodified.
     reasoning_details: list[dict[str, Any]] | None = None
+    # Plaintext thinking echoed back to llama.cpp / vLLM (TD-5174). Set only
+    # for a tier with ``echo_reasoning``, on assistant tool-call steps.
+    reasoning_content: str | None = None
     # A user message sent mid-turn that joined the running turn (TD-5112).
     # It belongs to that turn: compaction never cuts at it and in-turn
     # elision reaches past it. Kept with the conversation, never sent.
@@ -332,6 +335,8 @@ class ChatCompletionRequest:
             d["tool_call_id"] = msg.tool_call_id
         if msg.reasoning_details:
             d["reasoning_details"] = msg.reasoning_details
+        if msg.reasoning_content:
+            d["reasoning_content"] = msg.reasoning_content
         return d
 
 
