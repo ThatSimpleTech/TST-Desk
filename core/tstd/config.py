@@ -216,6 +216,27 @@ class ModelDiscoveryError(Exception):
         self.fix = fix
 
 
+class ReplyGuardConfig(BaseModel):
+    """Cut a streamed reply that turned to junk and ask again (TD-5175, reply_guard.py)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Characters from a script nobody in the conversation writes, as a share of recent output.
+    junk: bool = True
+    junk_ratio: float = Field(default=0.06, gt=0, le=1)
+    # One pattern repeated back to back far past any real text.
+    repetition: bool = True
+    # Tool-call markup (DSML, think tags) in the visible text of a call that offered tools.
+    leaked_markup: bool = True
+    # Thinking longer than this many characters ends the call; 0 = no cap.
+    max_reasoning_chars: int = Field(default=0, ge=0)
+    # Withdraw-and-ask-again rounds per model call.
+    retries: int = Field(default=2, ge=0, le=5)
+    # Merged over the tier's extra_body on a retry after a thinking cap,
+    # e.g. ``{chat_template_kwargs: {enable_thinking: false}}``.
+    retry_extra_body: dict[str, Any] | None = None
+
+
 class TierConfig(BaseModel):
     """Configuration for one model tier.
 
@@ -271,6 +292,9 @@ class TierConfig(BaseModel):
     # every step sees an empty think block and plans again from scratch.
     # OpenRouter's ``reasoning_details`` echo (TD-1903) is separate.
     echo_reasoning: bool = False
+    # Watch the stream for junk, loops, leaked markup and runaway thinking;
+    # cut, withdraw and ask again (TD-5175). None = off.
+    reply_guard: ReplyGuardConfig | None = None
     # Provider timeouts in seconds (TD-5106). The defaults are the values
     # every tier used before they were configurable. ``total_timeout``
     # caps one attempt including streaming; ``stream_idle_timeout`` aborts

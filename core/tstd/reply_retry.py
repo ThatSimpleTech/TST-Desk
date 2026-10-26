@@ -40,6 +40,11 @@ log = get_logger("tstd.reply_retry")
 # error or gave up, and resending into it is the user's call (TD-5152).
 WITHDRAWN_CODES = frozenset({"stream_stalled"})
 
+# A reply the reply guard cut (TD-5175, reply_guard.py): junk, a loop,
+# leaked tool markup or runaway thinking. Withdrawn and asked again up to
+# the tier's ``reply_guard.retries``, apart from the stall allowance.
+GUARDED_CODE = "reply_guarded"
+
 # At most this many withdraw-and-retry rounds per model call, and never
 # more than ``provider_retry.max_retries`` (0 turns it off). Each round can
 # wait a whole ``stream_idle_timeout`` before it gives up.
@@ -86,9 +91,13 @@ def stall_retries(retry: ProviderRetryConfig) -> int:
     return min(STALL_RETRIES, retry.max_retries)
 
 
-def _withdrawable(result: StreamResult, session: Session, retried: int, allowed: int) -> bool:
+def _withdrawable(
+    result: StreamResult, session: Session, retried: int, allowed: int, guard_retries: int = 0
+) -> bool:
     if session.cancel_requested or session.stop_turn_requested:
         return False
+    if result.failed and result.error_code == GUARDED_CODE:
+        return retried < guard_retries
     return (
         result.failed
         and result.began
@@ -101,6 +110,8 @@ async def stream_reply(
     attempt: Callable[[str], Awaitable[StreamResult]],
     session: Session,
     retry: ProviderRetryConfig,
+    *,
+    guard_retries: int = 0,
 ) -> StreamResult:
     """Run *attempt* under a fresh response id; withdraw and redo a stall.
 
@@ -115,7 +126,7 @@ async def stream_reply(
     while True:
         response_id = new_response_id()
         result = await attempt(response_id)
-        if not _withdrawable(result, session, retried, allowed):
+        if not _withdrawable(result, session, retried, allowed, guard_retries):
             return result
         await session.event_log.add(
             AssistantRetract(
