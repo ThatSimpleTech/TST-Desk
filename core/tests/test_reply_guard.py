@@ -27,7 +27,7 @@ from tstd.tools import ToolDispatcher, ToolRegistry
 
 SALAD = "ٍٍ จ<br>ٍٍ führٍٍٍ amb</ ٍٍٍTwoSam ٍٍٍZeroɏٍٍٍ ाि ٍٍٍٍ т ынٍ ٍтовٍٍٍ "
 CODE = (
-    "```ts\nexport function answer(item: Item, by: 'adam' | 'yailin') {\n"
+    "```ts\nexport function answer(item: Item, by: 'alex' | 'sam') {\n"
     "  return { ...item, status: 'answered', answeredBy: by, at: Date.now() }\n}\n```\n"
     "| Campo | Descripción |\n|---|---|\n| estado | pendiente / respondido |\n"
     "Listo: la bandeja muestra cada mensaje — señal → acción ✓ 你好\n"
