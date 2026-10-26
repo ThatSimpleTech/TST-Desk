@@ -99,7 +99,7 @@ def called_tools(messages: Iterable[ChatMessage], names: frozenset[str]) -> list
 def _set_deferred_builtins(session: object, names: list[str]) -> None:
     """Tell ``tool_search`` which builtins it may load this step (TD-5173)."""
     if hasattr(session, "deferred_builtin_tools"):
-        session.deferred_builtin_tools[:] = names  # type: ignore[attr-defined]
+        session.deferred_builtin_tools[:] = names
 
 
 class McpToolDeferral:
