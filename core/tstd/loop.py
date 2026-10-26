@@ -63,6 +63,7 @@ from .config import (
     ModelConfig,
     ModelDiscoveryError,
     TierConfig,
+    merge_extra_body,
     resolve_base_url,
     resolve_credential_id,
 )
@@ -151,7 +152,8 @@ from .provider import (
 from .provider import (
     ToolDefinition as ProviderToolDefinition,
 )
-from .reply_retry import StreamResult, stream_reply
+from .reply_guard import ReplyGuard, user_blocks
+from .reply_retry import GUARDED_CODE, StreamResult, stream_reply
 from .router import TierName, TierRouter
 from .session import QueuedUserMessage, Session, SessionEventLog
 from .session_goal import (
@@ -708,6 +710,7 @@ async def _stream_and_parse(
     emit_events: bool = True,
     on_usage: Callable[[Usage], None] | None = None,
     response_id: str | None = None,
+    guard: ReplyGuard | None = None,
 ) -> StreamResult:
     """Call the provider, stream deltas, and accumulate tool calls.
 
@@ -830,6 +833,25 @@ async def _stream_and_parse(
                         )
                     )
 
+            # TD-5175: a reply that turned to junk ends here; the caller
+            # withdraws it and asks again (reply_retry.py).
+            if guard is not None:
+                tripped = guard.feed(reasoning=thinking or "", content=chunk.delta.content or "")
+                if tripped is not None:
+                    failed, error_code = True, GUARDED_CODE
+                    error_msg = f"reply cut by the reply guard: {tripped}"
+                    log.warning(
+                        "reply guard tripped",
+                        extra={
+                            "extra_fields": {
+                                "session_id": session.id,
+                                "reason": tripped,
+                                "tier": tier,
+                            }
+                        },
+                    )
+                    break
+
             # Accumulate tool call deltas
             _parse_tool_call_stream(tool_calls, chunk)
 
@@ -892,21 +914,60 @@ async def _stream_turn_reply(
     is made once more under ``provider_retry`` (TD-5159, reply_retry.py).
     """
 
-    def attempt(response_id: str) -> Awaitable[StreamResult]:
-        return _stream_and_parse(
-            provider,
-            model_slug,
-            messages,
-            session,
-            tool_definitions,
-            tracker,
-            tier,
-            tier_cfg,
-            on_usage=_calibration_observer(counter, messages, tool_definitions),
-            response_id=response_id,
+    guard_cfg = tier_cfg.reply_guard
+    allowed = (
+        user_blocks(
+            content_as_text(m.content)
+            for m in messages
+            if m.role == "user" and m.content is not None
         )
+        if guard_cfg is not None
+        else frozenset()
+    )
+    last_trip: list[str | None] = [None]
 
-    return await stream_reply(attempt, session, config.provider_retry)
+    def attempt(response_id: str) -> Awaitable[StreamResult]:
+        cfg = tier_cfg
+        guard = None
+        if guard_cfg is not None:
+            guard = ReplyGuard(guard_cfg, allowed_blocks=allowed, tools=bool(tool_definitions))
+            # After runaway thinking, the retry may answer with thinking off.
+            if last_trip[0] == "thinking_cap" and guard_cfg.retry_extra_body:
+                cfg = tier_cfg.model_copy(
+                    update={
+                        "extra_body": merge_extra_body(
+                            tier_cfg.extra_body or {}, guard_cfg.retry_extra_body
+                        )
+                    }
+                )
+
+        async def run() -> StreamResult:
+            result = await _stream_and_parse(
+                provider,
+                model_slug,
+                messages,
+                session,
+                tool_definitions,
+                tracker,
+                tier,
+                cfg,
+                on_usage=_calibration_observer(counter, messages, tool_definitions),
+                response_id=response_id,
+                guard=guard,
+            )
+            last_trip[0] = (
+                result.error_msg.rsplit(": ", 1)[-1] if result.error_code == GUARDED_CODE else None
+            )
+            return result
+
+        return run()
+
+    return await stream_reply(
+        attempt,
+        session,
+        config.provider_retry,
+        guard_retries=guard_cfg.retries if guard_cfg is not None else 0,
+    )
 
 
 @dataclass

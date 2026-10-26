@@ -18252,3 +18252,52 @@ walkthrough a new person can follow, and anything without both goes.
   and preset steps are replaced by the "Add a model" step.
 - **The walkthrough link** goes to docs/models.md on the public repository
   (`ui/src/lib/docs-links.ts`), opened in the system browser.
+
+## TD-5173 — A tier can defer builtin tools behind tool_search (Class B)
+
+Found 2026-10-25 driving TST Desk with the 1-bit DeepSeek V4.1 forge. A
+captured TST Desk request carries all 46 builtin tools, about 31k characters
+of JSON. Replayed to the forge: 46 tools gave 0 of 3 proper tool calls (the
+model wrote made-up XML; llama.cpp answered "does not match the expected
+format"); 18 tools (17k) gave 4 of 4; 24 tools (19k) 1 of 4. Past roughly
+18k characters the model loses the tool-call format, and everything after
+that in the turn decays.
+
+Decision: a per-tier `deferred_tools` list of fnmatch patterns. Matching
+builtins leave the request and are named in `tool_search`'s description,
+the mechanism TD-5127 already uses for MCP tools, so one model's limit
+costs no other model anything and no tool becomes unreachable. Patterns
+over a character budget: a budget would decide which tools a model loses
+by size, not by use. `tool_search` and MCP tools never match.
+
+## TD-5174 — A tier can echo plaintext reasoning as reasoning_content (Class B)
+
+TST Desk echoed OpenRouter `reasoning_details` (TD-1903) and dropped
+`reasoning_content`, the field llama.cpp and vLLM stream. An
+interleaved-thinking model (DeepSeek V4.1 renders "preserving reasoning")
+then sees an empty think block on every past step: measured 2-5k tokens of
+thinking per step without the echo against a few hundred with it.
+
+Decision: per-tier `echo_reasoning`, off by default; when on, the reply's
+plaintext thinking rides on the assistant tool-call step it led to, as
+`reasoning_content`. Not on final answers: the template drops those anyway
+and they would only cost tokens. Skipped when `reasoning_details` exist.
+
+## TD-5175 — Cut a reply that turned to junk and ask again (Class B)
+
+The same forge sessions produced long stretches of junk 10-45 minutes in:
+characters from scripts nobody wrote, one pattern repeated for thousands of
+tokens, DSML tool markup in the visible text, thinking that ran to the
+16k cap. The provider reported each as a normal finish, so the turn went on
+as if it had an answer, and the server generated junk for minutes. The
+cause is not found yet (controlled tests show the model's math is correct).
+
+Decision: per-tier `reply_guard`, off by default. It watches the stream and
+ends the call at the first sign; the partial reply is withdrawn exactly like
+a stall (TD-5159, `assistant_retract`, reason `reply_guarded`) and the same
+request is sent again, at most `retries` times, separately from the stall
+allowance. After a thinking-cap trip the retry merges `retry_extra_body`
+(for the forge: thinking off for that step). A script the user writes in
+never counts as junk. Replayed over 105 captured forge replies: all 11
+garbled ones tripped (within 700-6,300 characters), none of the 94 good
+ones did.
