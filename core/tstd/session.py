@@ -452,6 +452,8 @@ class Session:
         # TD-5127: deferred MCP tools loaded this session (tool_search, or
         # called by name), in load order. Offered on every later call.
         self.loaded_mcp_tools: list[str] = []
+        # Builtins this step's tier defers behind tool_search (TD-5173).
+        self.deferred_builtin_tools: list[str] = []
         # TD-5140: steering edits the agent proposed, by proposal id, until
         # the user decides on the card. In memory only; nothing accepts one
         # but a user message (not skip-all, not an autonomy run).
