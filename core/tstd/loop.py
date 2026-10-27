@@ -1599,7 +1599,7 @@ async def _fit_prompt(
         await session.event_log.add(
             ContextCompacted(
                 session_id=session.id,
-                dropped_messages=fit.elided_results,
+                dropped_messages=fit.elided_results + fit.trimmed_steps,
                 kept_messages=fit.kept_messages,
                 tokens_before=fit.tokens_before,
                 tokens_after=fit.tokens_after,
@@ -1617,6 +1617,7 @@ async def _fit_prompt(
                     "session_id": session.id,
                     "tier": tier,
                     "dropped_messages": fit.elided_results,
+                    "trimmed_steps": fit.trimmed_steps,
                     "tokens_before": fit.tokens_before,
                     "tokens_after": fit.tokens_after,
                     "counter_method": fit.counter_method,
