@@ -12,7 +12,7 @@ Routing rules (TD-303):
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from .effort import DEFAULT_EFFORT, EFFORT_LEVELS, EffortLevel, is_effort_level
 
@@ -180,6 +180,21 @@ class TierRouter:
         if not is_effort_level(effort):
             raise ValueError(f"Invalid effort: {effort!r}. Must be one of {EFFORT_LEVELS}")
         self._effort = effort
+
+    def set_fast(self, on: bool, extra_body: dict[str, Any] | None = None) -> None:
+        """Fast mode on or off (TD-5176); *extra_body* rides on requests while it is on."""
+        self._fast = on
+        self._fast_extra_body = dict(extra_body) if on and extra_body else None
+
+    @property
+    def fast(self) -> bool:
+        """Whether Fast is on for this session."""
+        return getattr(self, "_fast", False)
+
+    @property
+    def fast_extra_body(self) -> dict[str, Any] | None:
+        """Request fields Fast adds (an API model's priority flag), or None."""
+        return getattr(self, "_fast_extra_body", None)
 
     @property
     def effort(self) -> EffortLevel:

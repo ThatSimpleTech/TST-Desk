@@ -21,7 +21,7 @@
 	} from "../../effort";
 	import { MODELS_DOC_URL, openDoc } from "../../docs-links";
 	import { openAddModel } from "../../onboarding.svelte.js";
-	import { session, setEffort, setSessionPreset } from "../../session-status.svelte.js";
+	import { session, setEffort, setFast, setSessionPreset } from "../../session-status.svelte.js";
 	import { settings } from "../../settings.svelte.js";
 
 	type View = "main" | "effort" | "more" | "teams";
@@ -101,7 +101,7 @@
 		aria-expanded={open}
 		onclick={toggle}
 	>
-		{settings.hasModel ? chipLabel(current, session.effort, settings.presetLabels) : "Add a model"}
+		{settings.hasModel ? chipLabel(current, session.effort, settings.presetLabels) : "Add a model"}{#if settings.hasModel && session.fast}<span class="fast-tag">{" · Fast"}</span>{/if}
 		<span class="caret" aria-hidden="true"></span>
 	</button>
 
@@ -133,6 +133,23 @@
 					<span class="value">{effortLabel(session.effort)}</span>
 					<span class="more" aria-hidden="true">›</span>
 				</button>
+				{#if session.fastAvailable}
+					<button
+						class="item"
+						type="button"
+						role="menuitemcheckbox"
+						aria-checked={session.fast}
+						onclick={() => setFast(!session.fast)}
+					>
+						<span class="text">
+							<span class="label">Fast</span>
+							{#if session.fastNote}
+								<span class="sub">{session.fastNote}</span>
+							{/if}
+						</span>
+						<span class="value">{session.fast ? "On" : "Off"}</span>
+					</button>
+				{/if}
 				{#if groups.more.length > 0}
 					<button class="item" type="button" role="menuitem" onclick={() => (view = "more")}>
 						<span class="label">More models</span>
@@ -239,6 +256,12 @@
 	.chip:hover {
 		background: var(--color-sunken);
 		color: var(--color-ink);
+	}
+
+	/* Fast on (TD-5176): the chip says so, in the accent the effort menu uses for Ultracode. */
+	.fast-tag {
+		color: var(--color-accent);
+		font-weight: var(--weight-medium);
 	}
 
 	.caret {

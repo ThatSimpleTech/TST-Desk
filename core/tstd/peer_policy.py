@@ -80,6 +80,7 @@ MACHINE_PEER_VERBS: frozenset[str] = frozenset(
         "set_tier",
         "set_plan",
         "set_effort",
+        "set_fast",
         "set_session_preset",
         "rename_session",
         "set_session_star",

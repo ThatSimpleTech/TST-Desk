@@ -535,6 +535,15 @@ def _cap_violation(
     return None
 
 
+def with_fast(
+    extra_body: dict[str, Any] | None, fast: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    """*extra_body* with Fast's request fields merged over it (TD-5176)."""
+    if not fast:
+        return extra_body
+    return merge_extra_body(extra_body or {}, fast)
+
+
 def _stream_turn(
     provider: ProviderLike,
     model: str,
@@ -773,10 +782,13 @@ async def _stream_and_parse(
         messages,
         tool_definitions,
         max_tokens=tier_cfg.max_output_tokens,
-        extra_body=with_effort(
-            tier_cfg.extra_body,
-            session.router.effort if session.router is not None else DEFAULT_EFFORT,
-            tier_supports=tier_cfg.reasoning_effort,
+        extra_body=with_fast(
+            with_effort(
+                tier_cfg.extra_body,
+                session.router.effort if session.router is not None else DEFAULT_EFFORT,
+                tier_supports=tier_cfg.reasoning_effort,
+            ),
+            session.router.fast_extra_body if session.router is not None else None,
         ),
     )
     try:

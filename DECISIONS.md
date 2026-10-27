@@ -18301,3 +18301,25 @@ allowance. After a thinking-cap trip the retry merges `retry_extra_body`
 never counts as junk. Replayed over 105 captured forge replies: all 11
 garbled ones tripped (within 700-6,300 characters), none of the 94 good
 ones did.
+
+## TD-5176 — A model's Fast mode, separate from effort (Class B)
+
+Effort is how hard a model thinks; Fast is how much it is given to run on.
+Kept as two controls so "fast + low" and "normal + max" both exist, the way
+API providers offer a priority tier next to reasoning effort.
+
+Decision: a preset-level `fast` block, off unless set, with two backends:
+- `hook_url` (+ `hook_model`): a loopback switch for a local model that gets
+  faster by borrowing hardware. Measured on a home server running DeepSeek V4.1
+  (1-bit): 2 GPUs ~23 tok/s warm, 4 GPUs ~29 tok/s; the switch pauses other
+  services and relaunches the model, ~2 min each way. The daemon POSTs
+  `{model, on, by}`; a 409 with `error` (family chat mid-reply, media busy)
+  leaves Fast off and shows the reason. Loopback only: it moves this
+  machine's hardware and is never a remote call.
+- `extra_body`: fields merged into every request while Fast is on, for an
+  API model's priority or fast tier. No switch, no hardware.
+The switch can end Fast by itself (idle, a media job); the daemon asks it at
+the start of each turn and the toggle follows ("Fast ended (idle 20 min)").
+Not persisted across a daemon restart: a local switch owns the real state,
+and a stale "on" would be worse than asking again. `set_fast` is allowed
+from paired devices, like `set_effort`.
