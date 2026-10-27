@@ -18342,3 +18342,24 @@ the client side:
   finish and opened with a bare `</think>`, which the reply guard cut. The
   note is now followed by a short hidden steer, so a request never ends on
   it; the guard also ignores one bare `</think>` at the very start of a reply.
+
+## TD-5178 — A turn that runs for hours keeps room to answer (Class A)
+
+One request on a 64k-window local model ran as a single four-hour turn and
+ended with an empty reply: the prompt reached 63k and the model had no room
+left. Compaction keeps the running turn whole, and the in-turn trimmer only
+shortened tool results, but most of the prompt was the turn's own steps:
+the thinking echoed back for each step (TD-5177) and the full text of every
+file it had written, carried in the call arguments.
+- Over budget, the in-turn fit now trims the turn's older steps first,
+  oldest first: all but the last `KEEP_RECENT_STEPS` (4) lose their echoed
+  thinking, and long strings in their call arguments keep a 400-character
+  head and a note. The arguments stay valid JSON and every result keeps its
+  call. Tool results are elided only if that is not enough.
+- After such a turn ends, the next request kept it verbatim (the last two
+  turns always stay), so compaction folded nothing and the window stayed
+  full. An earlier turn of more than `LONG_TURN_STEPS` (8) steps is now
+  folded when keeping it puts the prompt over budget. Short chat turns keep
+  the old rule.
+- Replayed on two captured requests from the run: 87k → 31k and 69k → 16k
+  estimated tokens, against a 39k budget.

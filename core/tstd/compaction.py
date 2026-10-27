@@ -91,6 +91,9 @@ THRESHOLD_FRACTION = 0.8
 MESSAGE_OVERHEAD_TOKENS = 4
 # Whole user turns kept verbatim after compaction; older ones summarize.
 KEEP_USER_TURNS = 2
+# An earlier turn with more steps than this is a long task (TD-5178):
+# it may be folded to make room when the kept turns are over budget.
+LONG_TURN_STEPS = 8
 # Guidance longer than this is cut; it is a focus, not a second prompt.
 MAX_GUIDANCE_CHARS = 500
 
@@ -267,6 +270,34 @@ def _summary_message(
     return ChatMessage(role="system", content=compose(core, carry, files))
 
 
+def _auto_cut(
+    messages: list[ChatMessage],
+    tier: TierConfig,
+    counter: TokenCounter,
+    tools: Sequence[ToolDefinition] | None,
+) -> int:
+    """Where an automatic compaction cuts (TD-5178).
+
+    Normally the last ``KEEP_USER_TURNS`` turns stay verbatim. A request
+    that ran as a long task of many tool steps is one turn, though, and
+    keeping it whole beside the running turn can leave the budget full
+    with nothing to fold. When the earlier kept turn has more than
+    ``LONG_TURN_STEPS`` steps and the kept turns are over the budget,
+    only the running turn stays.
+    """
+    cut = find_compaction_point(messages)
+    running = find_compaction_point(messages, keep_user_turns=1)
+    if running <= max(cut, 1):
+        return cut
+    steps = sum(1 for m in messages[max(cut, 1) : running] if m.role == "assistant")
+    if steps <= LONG_TURN_STEPS:
+        return cut
+    kept = [messages[0], *messages[max(cut, 1) :]]
+    if estimate_tokens(kept, counter, tools)[0] <= budget_threshold(tier):
+        return cut
+    return running
+
+
 def auto_span(
     messages: list[ChatMessage],
     tier: TierConfig,
@@ -282,7 +313,7 @@ def auto_span(
         return None
     if estimate_tokens(messages, counter, tools)[0] <= budget_threshold(tier):
         return None
-    cut = find_compaction_point(messages)
+    cut = _auto_cut(messages, tier, counter, tools)
     return (1, cut) if cut > 1 else None
 
 
@@ -308,7 +339,7 @@ def maybe_compact(
     tokens_before, method = estimate_tokens(messages, counter, tools)
     if tokens_before <= budget_threshold(tier):
         return messages, None
-    cut = find_compaction_point(messages)
+    cut = _auto_cut(messages, tier, counter, tools)
     if cut <= 1:
         # Fewer than keep_user_turns + 1 user turns: the whole
         # conversation is recent. Nothing older exists to drop.
