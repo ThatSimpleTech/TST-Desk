@@ -257,3 +257,53 @@ async def test_the_toggle_follows_a_switch_that_ended_fast_on_its_own(
         await ws.close()
         daemon._shutdown_event.set()
         await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_a_turns_own_tier_state_keeps_effort_and_fast(
+    tmp_path: Path, switch: _Switch
+) -> None:
+    from tests.test_dispatch import attach_auto_approver, wait_for_turn
+    from tests.test_turn_stream_errors import _answer, _Gateway
+    from tstd.loop import agent_loop
+    from tstd.provider import ProviderClient
+    from tstd.session import Session, SessionRunner
+    from tstd.tools import ToolDispatcher, ToolRegistry
+
+    session = Session(str(tmp_path))
+    gateway = _Gateway(lambda attempt: _answer("ok"))
+    client = gateway.client(retries=0)
+    config = _fast_config(FastConfig(hook_url=switch.url, hook_model="forge"))
+    router = TierRouter()
+    router.set_effort("high")
+    router.set_fast(True)
+    session.fast_note = "Borrows all four GPUs"
+
+    async def factory(*_args: object) -> ProviderClient:
+        return client
+
+    runner = SessionRunner(
+        session,
+        loop_factory=lambda s: agent_loop(
+            s,
+            router,
+            factory,
+            config,
+            tool_dispatcher=attach_auto_approver(ToolDispatcher(ToolRegistry())),
+        ),
+    )
+    await runner.start()
+    try:
+        await session.add_user_message("hi")
+        await wait_for_turn(session, 1)
+    finally:
+        await runner.cancel()
+        await client.close()
+    states = [e for e in session.event_log.all_events if isinstance(e, TierState)]
+    assert states, "the loop reports its tier at turn start"
+    last = states[-1]
+    assert (last.effort, last.fast, last.fast_available, last.fast_note) == (
+        "high",
+        True,
+        True,
+        "Borrows all four GPUs",
+    )

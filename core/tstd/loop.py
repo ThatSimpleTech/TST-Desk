@@ -94,6 +94,7 @@ from .keychain import KeychainError
 from .local_worker import (
     effective_tier,
     mark_cu_tool,
+    preset_fast,
     session_is_cu_heavy,
     titlebar_hosts,
     titlebar_slugs,
@@ -2020,6 +2021,12 @@ async def agent_loop(
                 plan=router.plan_mode,
                 vision=tier_cfg.vision,
                 fallbacks=positions,
+                # The turn's own report carries the picker's state too, or the
+                # chip would drop to the defaults after every turn (TD-5176).
+                effort=router.effort,
+                fast=router.fast,
+                fast_available=preset_fast(config) is not None,
+                fast_note=session.fast_note,
                 seq=1,
             )
         )
