@@ -84,6 +84,10 @@ export const session = $state({
   planMode: false,
   /** Reasoning effort the session sends (the model picker). */
   effort: DEFAULT_EFFORT as EffortLevel,
+  /** Fast mode (TD-5176): on, offered by this model, and its status line. */
+  fast: false,
+  fastAvailable: false,
+  fastNote: "",
   /** Active tier accepts image attachments (TD-4705). False until tier_state. */
   vision: false,
   /** A turn is owed (TD-1721). The daemon refuses a preset switch then. */
@@ -121,6 +125,9 @@ export function resetSession(): void {
   session.fallbacks = {};
   session.planMode = false;
   session.effort = DEFAULT_EFFORT;
+  session.fast = false;
+  session.fastAvailable = false;
+  session.fastNote = "";
   session.vision = false;
   session.turnActive = false;
   session.context = null;
@@ -183,6 +190,9 @@ export function ingestEvent(event: DaemonEventUnion): void {
       session.fallbacks = event.fallbacks ?? {};
       session.planMode = event.plan ?? false;
       session.effort = event.effort ?? DEFAULT_EFFORT;
+      session.fast = event.fast ?? false;
+      session.fastAvailable = event.fast_available ?? false;
+      session.fastNote = event.fast_note ?? "";
       session.vision = event.vision ?? false;
       break;
     case "user_turn":
@@ -266,6 +276,9 @@ export function focusSession(
   session.fallbacks = {};
   session.planMode = false;
   session.effort = DEFAULT_EFFORT;
+  session.fast = false;
+  session.fastAvailable = false;
+  session.fastNote = "";
   session.vision = false;
   session.turnActive = false;
   session.context = null;
@@ -314,6 +327,13 @@ export function setEffort(effort: EffortLevel): void {
   if (session.sessionId === null) return;
   session.effort = effort;
   client?.setEffort(session.sessionId, effort);
+}
+
+/** Turn Fast on or off. The switch may move hardware: tier_state confirms, with a note. */
+export function setFast(on: boolean): void {
+  if (session.sessionId === null) return;
+  session.fastNote = on ? "Turning fast on…" : "Turning fast off…";
+  client?.setFast(session.sessionId, on);
 }
 
 /** Retarget this session at a catalog preset. The composer follows tier_state. */

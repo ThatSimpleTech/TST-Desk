@@ -283,7 +283,7 @@ class TierConfig(BaseModel):
     # ``tool_search``, the way MCP tools are deferred (TD-5173). fnmatch
     # patterns, e.g. ``github_*``. A small or heavily quantized model loses
     # the tool-call format once the tool list passes its limit (the 1-bit
-    # DeepSeek forge: about 18k characters of definitions; the full builtin
+    # DeepSeek V4.1 on a local server: about 18k characters of definitions; the full builtin
     # set is about 31k). Empty keeps every builtin in every request.
     deferred_tools: list[str] = Field(default_factory=list)
     # Send the model's plaintext thinking back as ``reasoning_content`` on
@@ -472,6 +472,35 @@ def merge_extra_body(base: dict[str, Any], override: dict[str, Any]) -> dict[str
     return merged
 
 
+class FastConfig(BaseModel):
+    """What the Fast toggle does for this model (TD-5176). Off unless set.
+
+    A local model gets faster by borrowing hardware: ``hook_url`` is a
+    loopback switch the daemon calls with ``{"model": hook_model, "on": ...}``
+    (e.g. a GPU lender that pauses other services and relaunches the model
+    on more cards). An API model gets faster by asking for it:
+    ``extra_body`` is merged into every request while Fast is on (e.g. a
+    provider's priority tier). Either or both. ``note`` is one line the
+    toggle shows, e.g. "Borrows all four GPUs; about 2 min to switch".
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    hook_url: str | None = None
+    hook_model: str | None = Field(default=None, min_length=1, max_length=64)
+    extra_body: dict[str, Any] | None = None
+    note: str | None = Field(default=None, max_length=120)
+
+    @model_validator(mode="after")
+    def _does_something(self) -> FastConfig:
+        if self.hook_url is None and not self.extra_body:
+            raise ValueError("fast needs hook_url, extra_body, or both")
+        if self.hook_url is not None and not is_loopback_url(self.hook_url):
+            # The switch borrows this machine's hardware: it is never a remote call.
+            raise ValueError("fast.hook_url must be a loopback URL (127.0.0.1, ::1 or localhost)")
+        return self
+
+
 class Preset(BaseModel):
     """A complete set of tier configurations."""
 
@@ -486,6 +515,8 @@ class Preset(BaseModel):
     label: str | None = Field(default=None, min_length=1, max_length=40)
     description: str | None = Field(default=None, max_length=120)
     picker: Literal["primary", "more", "team"] = "primary"
+    # The Fast toggle (TD-5176): None = this model has no fast mode.
+    fast: FastConfig | None = None
 
     @field_validator("description")
     @classmethod

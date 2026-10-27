@@ -323,6 +323,10 @@ export class ProtocolClient {
   }
 
   /** Pick the session's reasoning effort. Acked with tier_state. */
+  setFast(sessionId: string, on: boolean): void {
+    this.send({ type: "set_fast", session_id: sessionId, on });
+  }
+
   setEffort(sessionId: string, effort: EffortLevel): void {
     this.send({ type: "set_effort", session_id: sessionId, effort });
   }

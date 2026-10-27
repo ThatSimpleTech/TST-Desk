@@ -1431,7 +1431,10 @@
     "plan": false,
     "vision": false,
     "fallbacks": {},
-    "effort": "medium"
+    "effort": "medium",
+    "fast": false,
+    "fast_available": false,
+    "fast_note": ""
   },
   "tier_state_override": {
     "type": "tier_state",
@@ -1453,7 +1456,10 @@
     "plan": false,
     "vision": false,
     "fallbacks": {},
-    "effort": "medium"
+    "effort": "medium",
+    "fast": false,
+    "fast_available": false,
+    "fast_note": ""
   },
   "tier_state_plan": {
     "type": "tier_state",
@@ -1475,7 +1481,10 @@
     "plan": true,
     "vision": false,
     "fallbacks": {},
-    "effort": "medium"
+    "effort": "medium",
+    "fast": false,
+    "fast_available": false,
+    "fast_note": ""
   },
   "ping": {
     "type": "ping"
@@ -1956,7 +1965,10 @@
     "fallbacks": {
       "brain": 1
     },
-    "effort": "medium"
+    "effort": "medium",
+    "fast": false,
+    "fast_available": false,
+    "fast_note": ""
   },
   "session_list_worktree": {
     "type": "session_list",
@@ -3022,6 +3034,7 @@
     "send_queued",
     "set_branch",
     "set_effort",
+    "set_fast",
     "set_plan",
     "set_session_preset",
     "set_session_star",

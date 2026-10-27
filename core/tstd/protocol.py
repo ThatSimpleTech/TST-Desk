@@ -818,6 +818,18 @@ class SetEffort(ClientMessage):
     effort: EffortLevel
 
 
+class SetFast(ClientMessage):
+    """Turn the model's Fast mode on or off (TD-5176). Acked with ``tier_state``.
+
+    Only a preset with a ``fast`` block offers it. A local model's switch can
+    take minutes to move hardware; ``tier_state.fast_note`` says so.
+    """
+
+    type: Literal["set_fast"] = "set_fast"
+    session_id: str
+    on: bool
+
+
 class SetPlan(ClientMessage):
     """Turn plan mode (brain lock) on or off (TD-4603).
 
@@ -2536,6 +2548,11 @@ class TierState(DaemonEvent):
     fallbacks: dict[str, int] = Field(default_factory=dict)
     # Reasoning effort the session sends (the model picker). Additive.
     effort: EffortLevel = "medium"
+    # Fast mode (TD-5176): on, offered by this preset, and one line of status
+    # ("Switching to fast, about 2 min", "Fast ended after 20 min idle"). Additive.
+    fast: bool = False
+    fast_available: bool = False
+    fast_note: str = ""
 
 
 class LoosenedSetting(BaseModel):
@@ -4454,6 +4471,7 @@ ClientMessageT = Annotated[
     | Detach
     | SetTier
     | SetEffort
+    | SetFast
     | SetPlan
     | SetSessionPreset
     | GetInstructionStack
@@ -4696,6 +4714,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "detach",
         "set_tier",
         "set_effort",
+        "set_fast",
         "set_plan",
         "set_session_preset",
         "get_instruction_stack",

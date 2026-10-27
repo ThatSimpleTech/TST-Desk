@@ -417,6 +417,13 @@ export interface SetEffort extends ClientMessage {
   effort: EffortLevel;
 }
 
+/** Turn the model's Fast mode on or off (TD-5176). Acked with tier_state. */
+export interface SetFast extends ClientMessage {
+  type: "set_fast";
+  session_id: string;
+  on: boolean;
+}
+
 /** Turn plan mode (brain lock) on or off (TD-4603). */
 export interface SetPlan extends ClientMessage {
   type: "set_plan";
@@ -1183,6 +1190,7 @@ export type ClientMessageUnion =
   | Detach
   | SetTier
   | SetEffort
+  | SetFast
   | SetPlan
   | SetSessionPreset
   | GetInstructionStack
@@ -1704,6 +1712,12 @@ export interface TierState extends DaemonEvent {
   fallbacks?: Record<string, number>;
   /** Reasoning effort the session sends. Omitted by older daemons — treat as medium. */
   effort?: EffortLevel;
+  /** Fast mode on (TD-5176). Omitted by older daemons — treat as off. */
+  fast?: boolean;
+  /** This model has a Fast mode. Omitted by older daemons — treat as no. */
+  fast_available?: boolean;
+  /** One line of Fast status ("Switching to fast", "Fast ended (idle 20 min)"). */
+  fast_note?: string;
 }
 
 /** One setting a workspace config loosens (TD-5113). */

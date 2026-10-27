@@ -24,6 +24,7 @@ function fakeClient(): ProtocolClient {
 	return {
 		setEffort: (sessionId: string, effort: string) =>
 			sent.push({ type: "set_effort", session_id: sessionId, effort }),
+		setFast: (sessionId: string, on: boolean) => sent.push({ type: "set_fast", session_id: sessionId, on }),
 		setSessionPreset: (sessionId: string, name: string) =>
 			sent.push({ type: "set_session_preset", session_id: sessionId, name }),
 	} as unknown as ProtocolClient;
@@ -197,5 +198,56 @@ describe("model picker", () => {
 		} as never);
 		await tick();
 		expect(chip().textContent?.trim()).toBe("House Medium");
+	});
+
+	describe("fast (TD-5176)", () => {
+		function tierState(extra: Record<string, unknown>, seq = 1): void {
+			ingestEvent({
+				type: "tier_state",
+				seq,
+				session_id: "s1",
+				tier: "brain",
+				override: null,
+				model_slugs: {},
+				preset: "house",
+				...extra,
+			} as never);
+		}
+
+		it("shows no Fast row for a model without one", async () => {
+			await click(chip());
+			expect(texts(".item").some((t) => t.startsWith("Fast"))).toBe(false);
+		});
+
+		it("offers Fast under Effort when the model has it, and sends set_fast", async () => {
+			tierState({ fast_available: true });
+			await tick();
+			await click(chip());
+			const labels = texts(".item");
+			expect(labels.indexOf("Fast Off")).toBe(labels.indexOf("Effort Medium ›") + 1);
+			expect(item("Fast").getAttribute("aria-checked")).toBe("false");
+			await click(item("Fast"));
+			expect(sent.at(-1)).toEqual({ type: "set_fast", session_id: "s1", on: true });
+			expect(session.fastNote).toBe("Turning fast on…");
+		});
+
+		it("follows tier_state: on, the switch's note, and the chip tag", async () => {
+			tierState({ fast_available: true, fast: true, fast_note: "Borrows all four GPUs; about 2 min" });
+			await tick();
+			expect(chip().textContent?.replace(/\s+/g, " ").trim()).toBe("House Medium · Fast");
+			await click(chip());
+			expect(item("Fast").getAttribute("aria-checked")).toBe("true");
+			expect(item("Fast").textContent).toContain("Borrows all four GPUs; about 2 min");
+			await click(item("Fast"));
+			expect(sent.at(-1)).toEqual({ type: "set_fast", session_id: "s1", on: false });
+		});
+
+		it("drops the tag when the switch ended Fast on its own", async () => {
+			tierState({ fast_available: true, fast: true });
+			tierState({ fast_available: true, fast: false, fast_note: "Fast ended (idle 20 min)" }, 2);
+			await tick();
+			expect(chip().textContent?.trim()).toBe("House Medium");
+			expect(session.fastNote).toBe("Fast ended (idle 20 min)");
+		});
 	});
 });

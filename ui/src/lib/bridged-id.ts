@@ -63,6 +63,7 @@ export const BRIDGED_VERBS: ReadonlySet<string> = new Set([
   "restore_files",
   "set_tier",
   "set_effort",
+  "set_fast",
   "set_plan",
   "set_session_preset",
   "rename_session",

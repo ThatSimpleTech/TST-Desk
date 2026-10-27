@@ -251,6 +251,10 @@ _ASYNCIO_NETWORK_CALLS = frozenset(
 
 # Every module allowed to reach the network, and the reason it may.
 _OUTBOUND_CAPABLE = {
+    "fast_switch.py": (
+        "Fast toggle (TD-5176): POST/GET a preset's fast.hook_url, which FastConfig "
+        "refuses unless it is loopback; only on the person's set_fast or their next turn"
+    ),
     "provider.py": "the one chat client; base_url is a constructor argument from config",
     "discovery.py": "GET /v1/models, refused before sending unless the endpoint is loopback",
     "model_setup.py": (

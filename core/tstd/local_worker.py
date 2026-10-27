@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Literal
 from urllib.parse import urlparse
 
-from .config import ModelConfig, TierConfig, apply_credential_host
+from .config import FastConfig, ModelConfig, TierConfig, apply_credential_host
 from .protocol import TierState, ToolCall
 from .router import TIER_NAMES, TierName
 from .session import Session
@@ -162,5 +162,14 @@ def tier_state_event(session: Session, config: ModelConfig) -> TierState:
         vision=tier_cfg.vision,
         fallbacks=fallbacks,
         effort=session.router.effort,
+        fast=session.router.fast,
+        fast_available=preset_fast(config) is not None,
+        fast_note=session.fast_note,
         seq=1,  # overwritten by the event log
     )
+
+
+def preset_fast(config: ModelConfig) -> FastConfig | None:
+    """The active preset's Fast config, or None (TD-5176)."""
+    preset = config.presets.get(config.active_preset)
+    return preset.fast if preset is not None else None

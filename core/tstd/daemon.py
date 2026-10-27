@@ -27,7 +27,7 @@ from urllib.parse import urlsplit
 import websockets.exceptions
 from pydantic import ValidationError
 
-from . import keychain_mcp
+from . import fast_switch, keychain_mcp
 from .artifacts import ArtifactError, ArtifactRecord, ArtifactStore, artifact_ready_for, to_entry
 from .attachment_handlers import Extractions
 from .attachments import (
@@ -361,6 +361,7 @@ from .protocol import (
     SetEffort,
     SetEmailNotify,
     SetEngine,
+    SetFast,
     SetGrokMode,
     SetJudgments,
     SetLoadGlobalMemory,
@@ -2997,6 +2998,9 @@ class Daemon:
             # Title from the user's text, not the rendered body — an
             # attachment-only message must stay untitled (TD-3001).
             await self._session_store.maybe_set_title(msg.session_id, msg.content)
+            if found.router is not None and found.router.fast:
+                # The switch may have ended Fast on its own (idle, media); the toggle follows.
+                self._tasks.append(asyncio.create_task(self._sync_fast(found)))
             log.info(
                 "user message enqueued",
                 extra={
@@ -3187,6 +3191,8 @@ class Daemon:
 
         if isinstance(msg, SetEffort):
             return await self._handle_set_effort(msg)
+        if isinstance(msg, SetFast):
+            return await self._handle_set_fast(msg)
 
         if isinstance(msg, SetSessionPreset):
             return await self._handle_set_session_preset(msg)
@@ -4863,6 +4869,62 @@ class Daemon:
             extra={"extra_fields": {"session_id": found.id, "effort": msg.effort}},
         )
         return None
+
+    async def _handle_set_fast(self, msg: SetFast) -> str | None:
+        """Turn the model's Fast mode on or off and ack with ``tier_state`` (TD-5176).
+
+        A local model's switch moves hardware and may say no (another service
+        on the machine is busy): the toggle stays where it was and the note
+        says why. An API model's Fast is its request fields: nothing to call.
+        """
+        found = self.session_registry.get(msg.session_id)
+        if found is None:
+            return build_error("session_not_found", f"Session {msg.session_id!r} not found")
+        if found.router is None:
+            return build_error(
+                "session_not_live",
+                f"Session {msg.session_id!r} has no live agent loop; Fast cannot change",
+            )
+        config = _session_model_config(found, self.config)
+        preset = config.presets.get(config.active_preset)
+        cfg = preset.fast if preset is not None else None
+        if cfg is None:
+            return build_error("fast_unavailable", "This model has no Fast mode.")
+        note = ""
+        if cfg.hook_url is not None:
+            try:
+                await fast_switch.switch(cfg, msg.on)
+            except fast_switch.FastSwitchError as exc:
+                found.fast_note = str(exc)
+                await found.event_log.add(tier_state_event(found, config))
+                log.info(
+                    "fast refused",
+                    extra={"extra_fields": {"session_id": found.id, "error": str(exc)}},
+                )
+                return None
+            note = (cfg.note or "Switching to fast") if msg.on else "Fast is off"
+        found.router.set_fast(msg.on, cfg.extra_body)
+        found.fast_note = note
+        await found.event_log.add(tier_state_event(found, config))
+        log.info("fast set", extra={"extra_fields": {"session_id": found.id, "on": msg.on}})
+        return None
+
+    async def _sync_fast(self, found: Session) -> None:
+        """Turn the toggle off when the switch has already ended Fast."""
+        config = _session_model_config(found, self.config)
+        preset = config.presets.get(config.active_preset)
+        cfg = preset.fast if preset is not None else None
+        if cfg is None or cfg.hook_url is None or found.router is None or not found.router.fast:
+            return
+        state = await fast_switch.is_on(cfg)
+        if state is None or state[0]:
+            return
+        found.router.set_fast(False)
+        last = state[1]
+        # The switch's last change reads "01:46:57 off: idle 20 min": keep the reason.
+        why = last.rsplit(": ", 1)[-1].strip() if ": " in last else ""
+        found.fast_note = f"Fast ended ({why})" if why else "Fast ended"
+        await found.event_log.add(tier_state_event(found, config))
 
     async def _handle_set_plan(self, msg: SetPlan) -> str | None:
         """Turn plan mode on or off and ack with ``tier_state`` (TD-4603).
