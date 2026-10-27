@@ -1,6 +1,6 @@
 """Cut a reply that has turned to junk, and ask again (TD-5175).
 
-A small or heavily quantized local model (the 1-bit DeepSeek forge) can
+A small or heavily quantized local model (e.g. a 1-bit DeepSeek V4.1) can
 lose its footing partway through a long reply: random characters from
 scripts nobody in the conversation writes, one short pattern repeated
 for thousands of tokens, tool-call markup leaking into the text, or
@@ -13,7 +13,7 @@ The first sign ends the call at once (the hang-up also stops the
 server), the partial reply is withdrawn the way a stall is (TD-5159), and
 the same request is sent again, at most ``retries`` times. After a
 thinking cap trip the retry merges ``retry_extra_body`` into the request,
-so a forge tier can answer that step with thinking off.
+so a local tier can answer that step with thinking off.
 
 All checks look only at text the model wrote in this call. A script the
 user writes in (Spanish, Russian, Arabic) never counts as junk.

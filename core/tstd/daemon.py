@@ -4873,8 +4873,8 @@ class Daemon:
     async def _handle_set_fast(self, msg: SetFast) -> str | None:
         """Turn the model's Fast mode on or off and ack with ``tier_state`` (TD-5176).
 
-        A local model's switch moves hardware and may say no (family chat
-        mid-reply, media busy): the toggle stays where it was and the note
+        A local model's switch moves hardware and may say no (another service
+        on the machine is busy): the toggle stays where it was and the note
         says why. An API model's Fast is its request fields: nothing to call.
         """
         found = self.session_registry.get(msg.session_id)

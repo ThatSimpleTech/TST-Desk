@@ -283,7 +283,7 @@ class TierConfig(BaseModel):
     # ``tool_search``, the way MCP tools are deferred (TD-5173). fnmatch
     # patterns, e.g. ``github_*``. A small or heavily quantized model loses
     # the tool-call format once the tool list passes its limit (the 1-bit
-    # DeepSeek forge: about 18k characters of definitions; the full builtin
+    # DeepSeek V4.1 on a local server: about 18k characters of definitions; the full builtin
     # set is about 31k). Empty keeps every builtin in every request.
     deferred_tools: list[str] = Field(default_factory=list)
     # Send the model's plaintext thinking back as ``reasoning_content`` on

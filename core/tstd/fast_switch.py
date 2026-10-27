@@ -2,8 +2,9 @@
 
 A local model's ``fast.hook_url`` is a loopback switch that moves hardware
 (a GPU lender: ``POST /fast {"model", "on", "by"}`` → 200 with the new
-state, or 409 with ``error`` when it will not switch now, e.g. family chat is
-mid-reply). The switch can also end Fast on its own (idle, a media job), so
+state, or 409 with ``error`` when it will not switch now, e.g. another
+service is busy). The switch can also end Fast on its own (idle, or another
+service needs the hardware), so
 the daemon asks it again at the start of a turn and the toggle follows.
 
 An API model has no switch: its ``extra_body`` rides on requests while Fast

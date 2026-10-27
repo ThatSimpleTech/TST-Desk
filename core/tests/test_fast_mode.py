@@ -45,7 +45,9 @@ class _Switch:
                 self.wfile.write(data)
 
             def do_GET(self) -> None:
-                self._send(200, {"forge": {"on": outer.on, "last": "01:46:57 off: idle 20 min"}})
+                self._send(
+                    200, {"big-local": {"on": outer.on, "last": "01:46:57 off: idle 20 min"}}
+                )
 
             def do_POST(self) -> None:
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -54,7 +56,7 @@ class _Switch:
                     self._send(409, {"ok": False, "error": outer.refuse})
                     return
                 outer.on = bool(body["on"])
-                self._send(200, {"ok": True, "model": "forge", "on": outer.on})
+                self._send(200, {"ok": True, "model": "big-local", "on": outer.on})
 
             def log_message(self, *a: object) -> None:
                 pass
@@ -88,7 +90,8 @@ def test_the_switch_must_be_on_this_machine() -> None:
     with pytest.raises(ValidationError, match="loopback"):
         FastConfig(hook_url="http://10.0.0.5:8012/fast")
     assert (
-        FastConfig(hook_url="http://127.0.0.1:8012/fast", hook_model="forge").hook_model == "forge"
+        FastConfig(hook_url="http://127.0.0.1:8012/fast", hook_model="big-local").hook_model
+        == "big-local"
     )
 
 
@@ -138,9 +141,9 @@ def test_set_fast_message_round_trips() -> None:
 
 
 async def test_switch_on_and_off(switch: _Switch) -> None:
-    cfg = FastConfig(hook_url=switch.url, hook_model="forge")
+    cfg = FastConfig(hook_url=switch.url, hook_model="big-local")
     assert (await fast_switch.switch(cfg, True))["on"] is True
-    assert switch.posts[-1] == {"model": "forge", "on": True, "by": "tst-desk"}
+    assert switch.posts[-1] == {"model": "big-local", "on": True, "by": "tst-desk"}
     assert await fast_switch.is_on(cfg) == (True, "01:46:57 off: idle 20 min")
     assert (await fast_switch.switch(cfg, False))["on"] is False
 
@@ -149,13 +152,13 @@ async def test_a_refusal_carries_the_switchs_reason() -> None:
     s = _Switch(refuse="chat-model.service is answering someone; try again in a minute")
     try:
         with pytest.raises(fast_switch.FastSwitchError, match="answering someone"):
-            await fast_switch.switch(FastConfig(hook_url=s.url, hook_model="forge"), True)
+            await fast_switch.switch(FastConfig(hook_url=s.url, hook_model="big-local"), True)
     finally:
         s.close()
 
 
 async def test_an_unreachable_switch_is_a_clear_error() -> None:
-    cfg = FastConfig(hook_url="http://127.0.0.1:9/fast", hook_model="forge")
+    cfg = FastConfig(hook_url="http://127.0.0.1:9/fast", hook_model="big-local")
     with pytest.raises(fast_switch.FastSwitchError, match="did not answer"):
         await fast_switch.switch(cfg, True)
     assert await fast_switch.is_on(cfg) is None
@@ -165,9 +168,10 @@ async def test_an_unreachable_switch_is_a_clear_error() -> None:
 
 
 def _fast_config(fast: FastConfig | None) -> ModelConfig:
-    t = _tier("forge")
+    t = _tier("big-local")
     return ModelConfig(
-        presets={"forge": Preset(brain=t, worker=t, validator=t, fast=fast)}, active_preset="forge"
+        presets={"big-local": Preset(brain=t, worker=t, validator=t, fast=fast)},
+        active_preset="big-local",
     )
 
 
@@ -195,7 +199,7 @@ async def _wire(
 
 async def test_fast_on_and_off_over_the_wire(tmp_path: Path, switch: _Switch) -> None:
     fast = FastConfig(
-        hook_url=switch.url, hook_model="forge", note="Borrows all four GPUs; about 2 min"
+        hook_url=switch.url, hook_model="big-local", note="Borrows all four GPUs; about 2 min"
     )
     states = await _wire(
         tmp_path, fast, [{"type": "set_fast", "on": True}, {"type": "set_fast", "on": False}]
@@ -211,7 +215,7 @@ async def test_a_refused_switch_leaves_fast_off_and_says_why(tmp_path: Path) -> 
     try:
         states = await _wire(
             tmp_path,
-            FastConfig(hook_url=s.url, hook_model="forge"),
+            FastConfig(hook_url=s.url, hook_model="big-local"),
             [{"type": "set_fast", "on": True}],
         )
     finally:
@@ -244,7 +248,7 @@ async def test_the_toggle_follows_a_switch_that_ended_fast_on_its_own(
         sid = (await _open_workspace(ws, str(tmp_path)))["session_id"]
         sess = daemon.session_registry.get(sid)
         assert sess is not None and sess.router is not None
-        sess.config = _fast_config(FastConfig(hook_url=switch.url, hook_model="forge"))
+        sess.config = _fast_config(FastConfig(hook_url=switch.url, hook_model="big-local"))
         await ws.send(json.dumps({"type": "set_fast", "session_id": sid, "on": True}))
         await asyncio.sleep(0.4)
         assert sess.router.fast
@@ -272,7 +276,7 @@ async def test_a_turns_own_tier_state_keeps_effort_and_fast(
     session = Session(str(tmp_path))
     gateway = _Gateway(lambda attempt: _answer("ok"))
     client = gateway.client(retries=0)
-    config = _fast_config(FastConfig(hook_url=switch.url, hook_model="forge"))
+    config = _fast_config(FastConfig(hook_url=switch.url, hook_model="big-local"))
     router = TierRouter()
     router.set_effort("high")
     router.set_fast(True)

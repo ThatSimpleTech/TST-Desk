@@ -18255,9 +18255,9 @@ walkthrough a new person can follow, and anything without both goes.
 
 ## TD-5173 — A tier can defer builtin tools behind tool_search (Class B)
 
-Found 2026-10-25 driving TST Desk with the 1-bit DeepSeek V4.1 forge. A
+Found 2026-10-25 driving TST Desk with a 1-bit DeepSeek V4.1 build on a local server. A
 captured TST Desk request carries all 46 builtin tools, about 31k characters
-of JSON. Replayed to the forge: 46 tools gave 0 of 3 proper tool calls (the
+of JSON. Replayed to that server: 46 tools gave 0 of 3 proper tool calls (the
 model wrote made-up XML; llama.cpp answered "does not match the expected
 format"); 18 tools (17k) gave 4 of 4; 24 tools (19k) 1 of 4. Past roughly
 18k characters the model loses the tool-call format, and everything after
@@ -18285,7 +18285,7 @@ and they would only cost tokens. Skipped when `reasoning_details` exist.
 
 ## TD-5175 — Cut a reply that turned to junk and ask again (Class B)
 
-The same forge sessions produced long stretches of junk 10-45 minutes in:
+The same local sessions produced long stretches of junk 10-45 minutes in:
 characters from scripts nobody wrote, one pattern repeated for thousands of
 tokens, DSML tool markup in the visible text, thinking that ran to the
 16k cap. The provider reported each as a normal finish, so the turn went on
@@ -18297,8 +18297,8 @@ ends the call at the first sign; the partial reply is withdrawn exactly like
 a stall (TD-5159, `assistant_retract`, reason `reply_guarded`) and the same
 request is sent again, at most `retries` times, separately from the stall
 allowance. After a thinking-cap trip the retry merges `retry_extra_body`
-(for the forge: thinking off for that step). A script the user writes in
-never counts as junk. Replayed over 105 captured forge replies: all 11
+(e.g. thinking off for that step). A script the user writes in
+never counts as junk. Replayed over 105 captured replies: all 11
 garbled ones tripped (within 700-6,300 characters), none of the 94 good
 ones did.
 
@@ -18313,12 +18313,12 @@ Decision: a preset-level `fast` block, off unless set, with two backends:
   faster by borrowing hardware. Measured on a home server running DeepSeek V4.1
   (1-bit): 2 GPUs ~23 tok/s warm, 4 GPUs ~29 tok/s; the switch pauses other
   services and relaunches the model, ~2 min each way. The daemon POSTs
-  `{model, on, by}`; a 409 with `error` (family chat mid-reply, media busy)
+  `{model, on, by}`; a 409 with `error` (another service on the machine is busy)
   leaves Fast off and shows the reason. Loopback only: it moves this
   machine's hardware and is never a remote call.
 - `extra_body`: fields merged into every request while Fast is on, for an
   API model's priority or fast tier. No switch, no hardware.
-The switch can end Fast by itself (idle, a media job); the daemon asks it at
+The switch can end Fast by itself (idle, or another service needs the hardware); the daemon asks it at
 the start of each turn and the toggle follows ("Fast ended (idle 20 min)").
 Not persisted across a daemon restart: a local switch owns the real state,
 and a stale "on" would be worse than asking again. `set_fast` is allowed
