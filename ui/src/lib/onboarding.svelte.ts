@@ -21,7 +21,7 @@
 
 import { onEvent, onConnectionState, sendToDaemon } from "./connection-status.svelte.js";
 import { openWorkspace } from "./session-status.svelte.js";
-import type { DaemonEventUnion, EndpointModel } from "./protocol";
+import type { DaemonEventUnion, EndpointModel, LocalServer } from "./protocol";
 
 export type WizardStep = "welcome" | "model" | "workspace" | "done";
 export const WIZARD_STEPS: readonly WizardStep[] = ["welcome", "model", "workspace", "done"] as const;
@@ -39,6 +39,9 @@ function blankModelForm() {
 		listing: false,
 		models: [] as EndpointModel[],
 		listError: "",
+		/** "Find models on this computer" (TD-5180): in flight, then its answer. */
+		scanning: false,
+		scan: null as { servers: LocalServer[]; checked: string[] } | null,
 		slug: "",
 		label: "",
 		description: "",
@@ -159,6 +162,11 @@ function reduce(event: DaemonEventUnion): void {
 			onboarding.model.listError = event.error ?? "";
 			if (!event.error && event.models.length > 0) onboarding.model.sub = "pick";
 			break;
+		case "local_servers":
+			if (!onboarding.model.scanning) break;
+			onboarding.model.scanning = false;
+			onboarding.model.scan = { servers: event.servers, checked: event.checked };
+			break;
 		case "model_tested":
 			onboarding.model.testing = false;
 			onboarding.model.test = { ok: event.ok, reply: event.reply, detail: event.detail };
@@ -167,6 +175,10 @@ function reduce(event: DaemonEventUnion): void {
 			if (onboarding.model.adding) {
 				onboarding.model.adding = false;
 				onboarding.model.addError = event.message;
+			}
+			if (onboarding.model.scanning && event.in_reply_to === "scan_local_servers") {
+				onboarding.model.scanning = false;
+				onboarding.model.listError = event.message;
 			}
 			break;
 		case "api_key_validated":
@@ -220,6 +232,29 @@ export function setModelUrl(url: string): void {
 	} else {
 		form.sub = "key";
 	}
+}
+
+/** "Find models on this computer" (TD-5180): only ever on the user's click. */
+export function scanLocalServers(): void {
+	const form = onboarding.model;
+	if (form.scanning) return;
+	form.scanning = true;
+	form.scan = null;
+	form.listError = "";
+	if (!sendToDaemon({ type: "scan_local_servers" })) {
+		form.scanning = false;
+		form.listError = "TST Desk is not connected. Try again in a moment.";
+	}
+}
+
+/** Take a server the scan found: on this computer, so no key; pick next. */
+export function chooseLocalServer(server: LocalServer): void {
+	const form = onboarding.model;
+	form.baseUrl = server.base_url;
+	form.apiKey = "";
+	form.listError = "";
+	form.models = server.models;
+	form.sub = "pick";
 }
 
 /** Step 2: ask the server what it offers, with the typed key if any. */

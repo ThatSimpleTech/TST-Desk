@@ -134,6 +134,8 @@ import type {
   AddModel,
   EndpointModels,
   ListEndpointModels,
+  ScanLocalServers,
+  LocalServers,
   ModelTested,
   TestModel,
   RunDiagnostics,
@@ -1247,6 +1249,19 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(JSON.stringify(bad)).not.toContain("sk-");
   });
 
+  it("scan_local_servers / local_servers: what answered, and where it looked", () => {
+    const ask = fixtures.scan_local_servers as ScanLocalServers;
+    expect(ask).toEqual({ type: "scan_local_servers" });
+    const found = fixtures.local_servers as LocalServers;
+    expect(found.type).toBe("local_servers");
+    expect(found.servers.map((s) => s.name)).toEqual(["Ollama"]);
+    expect(found.servers[0].models.map((m) => m.id)).toEqual(["llama3.2:3b", "qwen3:8b"]);
+    expect(found.checked).toHaveLength(2);
+    const none = fixtures.local_servers_none as LocalServers;
+    expect(none.servers).toEqual([]);
+    expect(none.checked).toEqual(["http://127.0.0.1:11434/v1"]);
+  });
+
   it("model_tested", () => {
     const m = fixtures.model_tested as ModelTested;
     expect(m.type).toBe("model_tested");
@@ -1407,7 +1422,7 @@ describe("All fixtures have required shape", () => {
       "tier_state", "tier_state_plan", "context_compacted", "context_compacted_manual", "context_compacted_inflight_trim", "context_compacted_clear_stale", "context_usage", "task_list", "shell_jobs", "stop_check", "session_goal", "worktree_state", "worktree_state_closed", "session_list_worktree", "steering_reloaded", "rule_activated", "tier_switched",
       "model_fallback", "context_usage_fallback", "tier_state_fallback",
       "instruction_stack", "instruction_files", "command_list", "context_pins", "session_search_results", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "steering_proposal", "steering_decision", "session_list", "policy_rules", "error",
-      "error_with_session", "setup_state", "api_key_validated", "endpoint_models", "model_tested",
+      "error_with_session", "setup_state", "api_key_validated", "endpoint_models", "local_servers", "model_tested",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",
       "artifact_ready", "artifact_list", "artifact", "artifact_chunk",
       "screen_frame",

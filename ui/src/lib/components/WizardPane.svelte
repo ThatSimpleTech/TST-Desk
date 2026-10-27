@@ -21,6 +21,7 @@
 		finish,
 	} from '../onboarding.svelte.js';
 	import { MODELS_DOC_URL, openDoc } from '../docs-links';
+	import LocalServerScan from './LocalServerScan.svelte';
 
 	let urlInput = $state('');
 	let keyInput = $state('');
@@ -107,6 +108,7 @@
 					{:else if form.listError}
 						<p class="verdict verdict--bad">{form.listError}</p>
 					{/if}
+					<LocalServerScan />
 					<div class="actions">
 						<button class="btn btn--ghost" type="button" onclick={backModelStep}>Back</button>
 						<button

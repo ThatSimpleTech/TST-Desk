@@ -18363,3 +18363,32 @@ file it had written, carried in the call arguments.
   the old rule.
 - Replayed on two captured requests from the run: 87k → 31k and 69k → 16k
   estimated tokens, against a 39k budget.
+
+## TD-5180 — Find models on this computer (Class B)
+
+The "Add a model" walkthrough's URL step gets a **Find models on this
+computer** button. The daemon asks every `local_servers` entry for
+`GET /v1/models` at once (1.5 s each) and offers the ones that list at least
+one model; one click goes to the model pick with no key step.
+
+Decisions:
+- **A click, not on open.** The walkthrough opens by itself on the first run,
+  so scanning when it opens would be a network call the user did not start
+  (§2.3). The button is one click and says what it does.
+- **The list is config.** Each server's URL is a destination, so it lives in
+  `config.yaml` (§2.7), as a new top-level `local_servers` list. The loader
+  fills it into older copies; it is the first list among the filled sections,
+  so the fill now takes a list as well as a mapping. Ollama 11434, LM Studio 1234, vLLM 8000 and
+  llama.cpp 8080 ship. A user adds a port, or sets `[]` to switch it off.
+- **Loopback only, three times over.** The config refuses an off-box
+  `base_url`, the scan skips one built past the validator, and its client sets
+  `trust_env=False`, so an `HTTP(S)_PROXY` setting cannot carry the request to
+  another machine. httpx follows no redirects. No key is sent.
+- **Trust the answer, not the port.** A port answers for whatever is on it, so
+  a server is offered only when `/models` returns a model list with at least
+  one model. The name shown is the config's guess at what usually runs there.
+  The pick step shows every model, as it does for a typed URL; the user picks.
+- **This computer only.** `scan_local_servers` is in `LOOPBACK_VERBS`: a
+  phone, another computer or the remote token gets `loopback_only`, because
+  probing this computer's ports is a call the person at it starts. The
+  walkthrough clears its "Looking…" state and shows the refusal.

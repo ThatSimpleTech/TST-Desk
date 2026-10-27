@@ -124,6 +124,17 @@ def test_every_client_type_not_listed_is_refused_for_a_machine_peer() -> None:
     assert set(allowed) == MACHINE_PEER_VERBS
 
 
+def test_local_server_scan_is_loopback_only() -> None:
+    """TD-5180: only the person at this computer starts a probe of its ports."""
+    scan = _msg("scan_local_servers")
+    assert check(scan, LOOPBACK_PLAIN, bridged=False) is None
+    assert check(scan, VIEWER, bridged=False) is None
+    for peer in (PHONE_VIEWER, PLAIN_REMOTE, MACHINE):
+        refusal = check(scan, peer, bridged=False)
+        assert refusal is not None and json.loads(refusal)["code"] == "loopback_only", peer
+        assert json.loads(refusal)["in_reply_to"] == "scan_local_servers"
+
+
 def test_drain_is_loopback_only() -> None:
     """TD-5023: a phone or another computer never holds this computer's turns."""
     assert "drain" in protocol._KNOWN_CLIENT_TYPES

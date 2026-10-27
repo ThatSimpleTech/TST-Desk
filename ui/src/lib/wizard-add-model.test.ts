@@ -81,3 +81,46 @@ describe("Add a model step", () => {
 		expect(buttons()).toContain("Continue");
 	});
 });
+
+describe("Find models on this computer (TD-5180)", () => {
+	const ollama = {
+		name: "Ollama",
+		base_url: "http://127.0.0.1:11434/v1",
+		models: [{ id: "llama3.2:3b" }, { id: "qwen3:8b" }],
+	};
+
+	it("offers the button on the URL step", async () => {
+		await tick();
+		expect(buttons()).toContain("Find models on this computer");
+	});
+
+	it("lists what answered, and a click opens its model list", async () => {
+		onboarding.model.scan = { servers: [ollama], checked: [ollama.base_url] };
+		await tick();
+		const found = [...document.querySelectorAll<HTMLButtonElement>(".scan .preset")];
+		expect(found.map((b) => b.textContent?.replace(/\s+/g, " ").trim())).toEqual([
+			"Ollama 2 models · http://127.0.0.1:11434/v1",
+		]);
+		expect(buttons()).toContain("Look again");
+		found[0].click();
+		await tick();
+		expect(onboarding.model.sub).toBe("pick");
+		expect(document.body.textContent).toContain("2 models at");
+		expect(buttons()).toContain("qwen3:8b");
+	});
+
+	it("says which ports it checked when nothing answered", async () => {
+		onboarding.model.scan = {
+			servers: [],
+			checked: ["http://127.0.0.1:11434/v1", "http://127.0.0.1:1234/v1"],
+		};
+		await tick();
+		expect(document.body.textContent).toContain("Nothing answered on this computer (ports 11434, 1234)");
+	});
+
+	it("says the list is empty when config names no servers", async () => {
+		onboarding.model.scan = { servers: [], checked: [] };
+		await tick();
+		expect(document.body.textContent).toContain("local_servers in config.yaml is empty");
+	});
+});
