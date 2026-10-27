@@ -787,6 +787,12 @@ class TestErrorHandling:
             (400, "litellm.ContextWindowExceededError: boom", True),
             (400, "prompt is too long: 9000 > 8192", True),
             (400, "PROMPT IS TOO LONG", True),
+            (
+                400,
+                '{"error":{"type":"exceed_context_size_error","message":"request (66080 tokens) '
+                'exceeds the available context size (65536 tokens), try increasing it"}}',
+                True,
+            ),
             (400, "temperature must be between 0 and 2", False),
             (413, "maximum context length", False),
             (500, "ContextWindowExceededError", False),

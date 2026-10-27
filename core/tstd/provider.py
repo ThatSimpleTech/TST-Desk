@@ -209,6 +209,34 @@ def _prefix_content(prefix: str, content: MessageContent | None) -> MessageConte
     return [{"type": "text", "text": prefix}, *content]
 
 
+def turn_start_index(messages: Sequence[ChatMessage]) -> int:
+    """Index of the user message that started the running turn, or 0.
+
+    A message sent mid-turn (``steer``) joined that turn, so it does not
+    start one.
+    """
+    for i in range(len(messages) - 1, -1, -1):
+        message = messages[i]
+        if message.role == "user" and not message.steer:
+            return i
+    return 0
+
+
+def current_turn_reasoning(messages: Sequence[ChatMessage]) -> list[ChatMessage]:
+    """*messages* with echoed ``reasoning_content`` kept only in the running turn.
+
+    Interleaved-thinking models need their thinking back between the tool
+    steps of one turn, not from earlier turns; DeepSeek's own template drops
+    it there. Sending all of it grew every request by each step's thinking
+    for the life of the session (TD-5177).
+    """
+    start = turn_start_index(messages)
+    return [
+        replace(m, reasoning_content=None) if i < start and m.reasoning_content else m
+        for i, m in enumerate(messages)
+    ]
+
+
 def wire_messages(messages: Sequence[ChatMessage]) -> list[ChatMessage]:
     """The messages as the request body carries them (TD-5142).
 
@@ -286,7 +314,10 @@ class ChatCompletionRequest:
         """Serialize to the OpenAI-compatible JSON request body."""
         d: dict[str, Any] = {
             "model": self.model,
-            "messages": [self._message_to_dict(m) for m in wire_messages(self.messages)],
+            "messages": [
+                self._message_to_dict(m)
+                for m in wire_messages(current_turn_reasoning(self.messages))
+            ],
         }
         if self.tools:
             d["tools"] = [tool_definition_payload(t) for t in self.tools]
@@ -840,6 +871,9 @@ _OVERFLOW_PHRASES: tuple[str, ...] = (
     "context_length_exceeded",
     "contextwindowexceedederror",
     "prompt is too long",
+    # llama.cpp: "request (N tokens) exceeds the available context size" (TD-5177).
+    "exceeds the available context size",
+    "exceed_context_size_error",
 )
 
 

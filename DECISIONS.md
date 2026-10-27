@@ -18323,3 +18323,22 @@ the start of each turn and the toggle follows ("Fast ended (idle 20 min)").
 Not persisted across a daemon restart: a local switch owns the real state,
 and a stale "on" would be worse than asking again. `set_fast` is allowed
 from paired devices, like `set_effort`.
+
+## TD-5177 — Long agentic turns on a local interleaved-thinking model (Class A)
+
+A four-hour solo run against a 64k-window local model failed four turns, all on
+the client side:
+- Echoed thinking (TD-5174) went out for every past tool step, for the life
+  of the session, and the token estimate did not count it. A request reached
+  66k tokens while the estimate was under the compaction line. Now the
+  thinking goes back only for the running turn (from the user message that
+  started it; a steer joins the turn), which is what the model's own template
+  keeps, and the estimate counts what is sent.
+- llama.cpp words a window overflow "exceeds the available context size", so
+  the existing overflow retry (compact tighter, send again) never ran. Added
+  to the overflow phrases.
+- Auto-continue put its "Next: ..." note on the history as the last message.
+  A prefill-capable model reads a trailing assistant message as a reply to
+  finish and opened with a bare `</think>`, which the reply guard cut. The
+  note is now followed by a short hidden steer, so a request never ends on
+  it; the guard also ignores one bare `</think>` at the very start of a reply.

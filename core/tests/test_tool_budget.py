@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
+from tstd.compaction import estimate_tokens
 from tstd.config import McpToolSearchConfig, TierConfig
 from tstd.context.tokens import HeuristicTokenCounter
 from tstd.mcp.deferral import McpToolDeferral
-from tstd.provider import ChatMessage, FunctionCall, ToolCall, ToolDefinition
+from tstd.provider import ChatCompletionRequest, ChatMessage, FunctionCall, ToolCall, ToolDefinition
 from tstd.session import Session
 from tstd.tools import create_registry
 from tstd.tools.tool_search import TOOL_SEARCH_NAME, tool_search
@@ -116,3 +119,46 @@ def test_tier_settings_default_off() -> None:
         max_output_tokens=100,
     )
     assert tier.deferred_tools == [] and tier.echo_reasoning is False
+
+
+# ── echoed thinking stays in the running turn (TD-5177) ─────────────────
+
+
+def _step(thinking: str) -> ChatMessage:
+    call = ToolCall(id="c1", function=FunctionCall(name="fs_read", arguments="{}"))
+    return ChatMessage(role="assistant", content="", tool_calls=[call], reasoning_content=thinking)
+
+
+def _two_turns() -> list[ChatMessage]:
+    return [
+        ChatMessage(role="system", content="sys"),
+        ChatMessage(role="user", content="first"),
+        _step("old thinking " * 50),
+        ChatMessage(role="tool", content="ok", tool_call_id="c1"),
+        ChatMessage(role="assistant", content="done"),
+        ChatMessage(role="user", content="second"),
+        _step("new thinking"),
+        ChatMessage(role="tool", content="ok", tool_call_id="c1"),
+        ChatMessage(role="user", content="keep going", steer=True),
+        _step("more thinking"),
+    ]
+
+
+def test_only_the_running_turn_sends_its_thinking() -> None:
+    body = ChatCompletionRequest(model="m", messages=_two_turns()).to_dict()
+    sent = [m.get("reasoning_content") for m in body["messages"]]
+    assert "old thinking " * 50 not in sent
+    # A steer joins the turn, so thinking before it still goes out.
+    assert "new thinking" in sent
+    assert "more thinking" in sent
+
+
+def test_estimate_counts_the_thinking_that_is_sent() -> None:
+    counter = HeuristicTokenCounter()
+    messages = _two_turns()
+    with_thinking = estimate_tokens(messages, counter)[0]
+    bare = [replace(m, reasoning_content=None) for m in messages]
+    without = estimate_tokens(bare, counter)[0]
+    assert with_thinking > without
+    # The earlier turn's thinking is not sent, so it is not counted.
+    assert with_thinking - without < counter.count("old thinking " * 50).count

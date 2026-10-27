@@ -40,6 +40,9 @@ MAX_AUTO_CONTINUES = 3
 MODEL_CALL_BUDGET = 52
 IDENTICAL_ROUNDS = 3
 
+# Sent after the "Next: ..." note so the request ends on a user turn (TD-5177).
+CONTINUE_INSTRUCTION = "Carry on with that next step."
+
 PROGRESS_CHECK_INSTRUCTION = (
     "Progress check. Tools are off for this reply. "
     "Answer with exactly one line and no tool call:\n"

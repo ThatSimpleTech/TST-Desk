@@ -14,6 +14,7 @@ from tests.test_cap_enforcement import make_echo_session, wait_for_state
 from tests.test_dispatch import make_config, start_loop, wait_for_turn
 from tstd.mock import MockProvider, Script
 from tstd.progress_guard import (
+    CONTINUE_INSTRUCTION,
     IDENTICAL_ROUNDS,
     MAX_AUTO_CONTINUES,
     MODEL_CALL_BUDGET,
@@ -253,6 +254,10 @@ class TestLoop:
         follow = _request_text(brain[idx + 1])
         assert "Progress check" not in follow
         assert "Next: edit ChatPane" in follow
+        # The request ends on a user turn, never on the note (TD-5177).
+        last = brain[idx + 1].messages[-1]
+        assert last.role == "user"
+        assert last.content == CONTINUE_INSTRUCTION
         await runner.cancel()
 
     async def test_resume_continues_the_same_turn(self, tmp_path: Path) -> None:

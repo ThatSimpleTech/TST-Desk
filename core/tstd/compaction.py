@@ -55,7 +55,13 @@ from .compaction_text import (
 from .config import TierConfig
 from .context.calibration import scale_tokens
 from .context.tokens import TokenCounter
-from .provider import ChatMessage, ToolDefinition, content_as_text, tool_definition_payload
+from .provider import (
+    ChatMessage,
+    ToolDefinition,
+    content_as_text,
+    tool_definition_payload,
+    turn_start_index,
+)
 
 __all__ = [
     "KEEP_USER_TURNS",
@@ -154,8 +160,12 @@ def estimate_tokens(
             total += count.count
             methods.add(count.method)
 
-    for message in messages:
+    start = turn_start_index(messages)
+    for i, message in enumerate(messages):
         text = content_as_text(message.content)
+        if message.reasoning_content and i >= start:
+            # Echoed thinking (TD-5174) goes out for the running turn (TD-5177).
+            text += message.reasoning_content
         if message.tool_calls:
             text += "".join(
                 tc.function.arguments for tc in message.tool_calls if tc.function is not None
