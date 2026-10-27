@@ -103,7 +103,11 @@ class ReplyGuard:
         if content:
             self._content += content
             if self._cfg.leaked_markup and self._tools:
-                tail = self._content[-(len(content) + 16) :]
+                # One bare closing tag ahead of the reply is a harmless
+                # template echo, not leaked markup (TD-5177).
+                seen = self._content.lstrip()
+                seen = seen.removeprefix("</think>")
+                tail = seen[-(len(content) + 16) :]
                 if any(m in tail for m in LEAK_MARKERS):
                     return "leaked_markup"
         new = reasoning + content

@@ -113,6 +113,7 @@ from .plan_mode import with_plan_note
 from .plan_review import carry_for
 from .policy import read_guards, save_approved_imports, with_run_rules
 from .progress_guard import (
+    CONTINUE_INSTRUCTION,
     PROGRESS_CHECK_INSTRUCTION,
     ProgressGuard,
     interpret_check,
@@ -440,6 +441,13 @@ async def _progress_check_gate(
     if kind == "continue":
         guard.note_auto_continue(detail)
         await _show_progress_note(session, messages, f"Next: {detail}")
+        # The request must not end on that assistant line: models that take
+        # a trailing assistant message as a reply to finish would continue
+        # it instead of starting the next step (TD-5177).
+        messages.append(
+            ChatMessage(role="user", content=CONTINUE_INSTRUCTION, steer=True, check=True)
+        )
+        await session.conversation_changed()
         return "proceed"
     guard.pause_reason = pause_reason_for(detail)
     return "pause"

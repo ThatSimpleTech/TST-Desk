@@ -81,6 +81,16 @@ class TestReplyGuard:
         guard = ReplyGuard(ReplyGuardConfig())
         assert _feed(guard, "Title\n" + "-" * 400 + "\n" + "=" * 400 + "\n") is None
 
+    def test_one_leading_close_tag_is_not_a_leak(self) -> None:
+        # A prefill-capable model can open its reply with a bare </think> (TD-5177).
+        guard = ReplyGuard(ReplyGuardConfig(), tools=True)
+        assert guard.feed(content="</think>") is None
+        assert guard.feed(content="Reading the file now.") is None
+        assert _feed(ReplyGuard(ReplyGuardConfig(), tools=True), "\n</think>\nOk, next.") is None
+        # A second one, or one mid-reply, still counts.
+        for text in ("</think>ok </think>", "Done. </think>"):
+            assert _feed(ReplyGuard(ReplyGuardConfig(), tools=True), text) == "leaked_markup"
+
     def test_tool_markup_in_text_trips_only_when_tools_were_offered(self) -> None:
         leak = 'Let me read it. <\uff5cDSML\uff5c invoke name="fs_read">'
         assert _feed(ReplyGuard(ReplyGuardConfig(), tools=True), leak) == "leaked_markup"
