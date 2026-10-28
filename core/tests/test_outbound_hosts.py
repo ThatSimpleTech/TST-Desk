@@ -266,6 +266,11 @@ _OUTBOUND_CAPABLE = {
         "Add a model (TD-5172): GET /v1/models at the URL the user types in the "
         "walkthrough, with the key they typed or chose; user-initiated, never automatic"
     ),
+    "model_cards.py": (
+        "Model cards (TD-5185): GET /v1/models at the host a configured tier already "
+        "calls (resolve_base_url), with the key that tier sends; only on the user's "
+        "slug save or Refresh prices, never on a chat turn"
+    ),
     "local_servers.py": (
         "Find models on this computer (TD-5180): GET /v1/models at each "
         "local_servers base_url from config, loopback only, no key, proxies "

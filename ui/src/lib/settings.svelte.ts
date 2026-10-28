@@ -20,6 +20,7 @@ import type {
 	MicrosoftPhase,
 	PolicyRuleSummary,
 	RemoteDeviceSummary,
+	TierCard,
 } from "./protocol";
 
 export type SettingsSection =
@@ -107,6 +108,10 @@ export const settings = $state({
 	tierCredentials: {} as Record<string, string | null>,
 	/** Whether each active-preset tier is loopback (offers "no key"). */
 	tierLoopback: {} as Record<string, boolean>,
+	/** TD-5185: stored prices and limits per tier, and the last card refresh. */
+	tierCards: {} as Record<string, TierCard>,
+	/** A model-card refresh is in flight; cleared by setup_state or an error. */
+	refreshingCards: false,
 	/** Tier whose credential save is in flight. */
 	savingCredentialTier: null as string | null,
 	/** Policy section. Rules are per-workspace, so they need a session. */
@@ -230,6 +235,8 @@ export function resetSettings(): void {
 	settings.credentials = [];
 	settings.tierCredentials = {};
 	settings.tierLoopback = {};
+	settings.tierCards = {};
+	settings.refreshingCards = false;
 	settings.savingCredentialTier = null;
 	settings.rules = [];
 	settings.rulesSessionId = null;
@@ -385,6 +392,7 @@ function applyGoogle(google: {
 
 function reduce(event: DaemonEventUnion): void {
 	reducePairing(event);
+	if (event.type === "error") settings.refreshingCards = false;
 	if (event.type === "setup_state") {
 		settings.presets = event.presets;
 		settings.presetLabels = event.preset_labels ?? {};
@@ -401,7 +409,10 @@ function reduce(event: DaemonEventUnion): void {
 		settings.credentials = event.credentials ?? [];
 		settings.tierCredentials = event.tier_credentials ?? {};
 		settings.tierLoopback = event.tier_loopback ?? {};
-		// setup_state is the ack for set_tier_slug / set_tier_credential.
+		settings.tierCards = event.tier_cards ?? {};
+		// setup_state is the ack for set_tier_slug / set_tier_credential /
+		// refresh_model_cards.
+		settings.refreshingCards = false;
 		settings.savingTier = null;
 		settings.savingCredentialTier = null;
 		settings.skipAllApprovals = event.skip_all_approvals ?? false;
@@ -556,6 +567,15 @@ export function saveSlug(tier: string, slug: string): void {
 	settings.savingTier = tier;
 	const sent = sendToDaemon({ type: "set_tier_slug", preset, tier, slug: trimmed });
 	if (!sent) settings.savingTier = null;
+}
+
+/** TD-5185: re-read the active preset's prices and limits from each host. */
+export function refreshModelCards(): void {
+	const preset = settings.activePreset;
+	if (preset === null || settings.refreshingCards) return;
+	settings.refreshingCards = true;
+	const sent = sendToDaemon({ type: "refresh_model_cards", preset });
+	if (!sent) settings.refreshingCards = false;
 }
 
 /** Host the selected named key talks to, or null to keep the tier URL. */

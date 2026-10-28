@@ -1954,6 +1954,26 @@ putting a slug in your config, check it against the provider's own model list �
 `/api/v1/models`, or your endpoint's `/v1/models` — and copy the price from the same page. A
 slug that does not exist fails at the first turn that needs it, not at load.
 
+**Settings fills the numbers in for you (TD-5185).** Saving a tier's slug in Settings, or
+pressing **Refresh prices** there, asks the server that tier already calls for its model list,
+with the key the tier already sends, and finds the slug exactly. From that model's card it writes:
+
+| Card field | Config key | Rule |
+|---|---|---|
+| `pricing.prompt` | `input_price` | dollars per token, written per million |
+| `pricing.completion` | `output_price` | dollars per token, written per million |
+| `pricing.input_cache_read` | `cache_read_price` | left alone when the card has none |
+| `context_length` (vLLM: `max_model_len`) | `context_window` | only when the server is not on this computer |
+| `top_provider.max_completion_tokens` | `max_output_tokens` | only when smaller than the context length and the window |
+
+"The server" is where turns really go: a key saved with its own host (TD-1718) wins over the
+tier's `base_url`, so a tier whose `base_url` is `127.0.0.1` but whose key is OpenRouter's is
+priced from OpenRouter. Each backup under `fallbacks` is refreshed from its own slug at its own
+server. Nothing is written when the slug is not listed, when the server lists no prices (Ollama
+and local vLLM), or when the request fails: the stored value stays, and Settings says why under
+the tier. Only the value on each line changes; comments stay. New chats use the new numbers;
+open chats keep the ones they started with. Nothing is fetched on a chat turn.
+
 ### 3.2 Swap one tier
 
 Replace the tier's block — these keys sit under `brain:`, `worker:`, or `validator:` inside a

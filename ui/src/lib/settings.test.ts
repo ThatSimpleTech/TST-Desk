@@ -46,6 +46,7 @@ import {
 	setTheme,
 	isDiscovered,
 	saveSlug,
+	refreshModelCards,
 	loadRules,
 	revokeRule,
 	setSkipAllApprovals,
@@ -258,6 +259,58 @@ describe("model section", () => {
 		mocks.sendOk = false;
 		saveSlug("brain", "qwen3.8:27b");
 		expect(settings.savingTier).toBeNull();
+	});
+});
+
+describe("model cards (TD-5185)", () => {
+	const card = {
+		input_price: 2,
+		output_price: 10,
+		cache_read_price: 0.2,
+		context_window: 1048576,
+		max_output_tokens: 65536,
+		card: "ok" as const,
+		detail: null,
+	};
+
+	it("sends refresh_model_cards for the active preset, once while in flight", () => {
+		startSettings();
+		emit(setupState());
+		refreshModelCards();
+		refreshModelCards();
+		expect(mocks.sent).toEqual([{ type: "refresh_model_cards", preset: "local" }]);
+		expect(settings.refreshingCards).toBe(true);
+	});
+
+	it("takes the stored numbers from the acking setup_state", () => {
+		startSettings();
+		emit(setupState());
+		refreshModelCards();
+		emit(setupState({ tier_cards: { brain: card } }));
+		expect(settings.refreshingCards).toBe(false);
+		expect(settings.tierCards.brain).toEqual(card);
+	});
+
+	it("ends the refresh on an error reply", () => {
+		startSettings();
+		emit(setupState());
+		refreshModelCards();
+		emit({ type: "error", seq: 0, code: "bad_request", message: "no" } as DaemonEventUnion);
+		expect(settings.refreshingCards).toBe(false);
+	});
+
+	it("does not leave a refresh hanging when the socket is down", () => {
+		startSettings();
+		emit(setupState());
+		mocks.sendOk = false;
+		refreshModelCards();
+		expect(settings.refreshingCards).toBe(false);
+	});
+
+	it("invents no numbers when the daemon omits the field", () => {
+		startSettings();
+		emit(setupState());
+		expect(settings.tierCards).toEqual({});
 	});
 });
 

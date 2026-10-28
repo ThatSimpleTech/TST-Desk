@@ -50,6 +50,7 @@ from .boundary_config import (
     workspace_config_path,
 )
 from .browser import BrowserDriver, BrowserError, browser_driver_from_config, normalize_hit
+from .card_write import save_tier_values
 from .config import (
     DEFAULT_CREDENTIAL_ID,
     ConfigError,
@@ -178,6 +179,7 @@ from .memory_trigger import (
     completed_turn_count,
     distill_if_due,
 )
+from .model_cards import CardResult, changed_values, refresh_cards, targets
 from .model_setup import (
     TEST_MAX_TOKENS,
     TEST_PROMPT,
@@ -329,6 +331,7 @@ from .protocol import (
     PolicyRules,
     PreviewRestoreFiles,
     ReadArtifactChunk,
+    RefreshModelCards,
     RemoteDeviceSummary,
     RemovePin,
     RemoveQueued,
@@ -393,6 +396,7 @@ from .protocol import (
     SubmitLineComments,
     TestEmail,
     TestModel,
+    TierCard,
     TierState,
     Transcribe,
     Transcript,
@@ -1091,6 +1095,8 @@ class Daemon:
             known_session=lambda sid: self.session_registry.get(sid) is not None,
         )
         self._slug_snapshot = _snapshot_slugs(self.config)
+        # TD-5185: last model-card refresh per (preset, tier), this run only.
+        self._card_results: dict[tuple[str, str], CardResult] = {}
         self._provider = provider
         self._clients: dict[tuple[str, str, tuple[float | None, ...]], ProviderLike] = {}
         self._pending_memory: dict[str, DistillEmit] = {}
@@ -1349,6 +1355,7 @@ class Daemon:
             credentials=credentials,
             tier_credentials={name: tiers[name].credential for name in tiers},
             tier_loopback={name: is_loopback_url(tiers[name].base_url) for name in tiers},
+            tier_cards=self._tier_cards({str(name): tier for name, tier in tiers.items()}),
             engine=engine_kind,
             grok_available=grok_ok,
             grok_binary=str(grok_path) if grok_path is not None else None,
@@ -1521,6 +1528,69 @@ class Daemon:
         self.config = loaded.model_copy(update={"active_preset": keep})
         self._slug_snapshot = _snapshot_slugs(self.config)
         self._drop_provider_clients()
+
+    async def _refresh_model_cards(self, preset: str, tier: str | None) -> str | None:
+        """Write each target's card values to config, then reload (TD-5185).
+
+        Returns an error reply to send instead of ``setup_state``, or None.
+        A miss is not an error: it is recorded for ``tier_cards`` and the
+        stored value stays.
+        """
+        try:
+            wanted = targets(self.config, preset, tier)
+        except ConfigError as e:
+            return build_error("bad_request", str(e))
+        results = await refresh_cards(self.config, wanted, get_api_key)
+        wrote = False
+        for result in results:
+            changes = changed_values(result.target.config, result.values)
+            if changes:
+                try:
+                    save_tier_values(
+                        result.target.preset,
+                        result.target.tier,
+                        changes,
+                        fallback=result.target.fallback,
+                        path=self.config_path,
+                    )
+                    wrote = True
+                except (ConfigError, OSError) as e:
+                    result.status = "write_failed"
+                    result.detail = str(e)
+            if result.target.fallback is None:
+                self._card_results[(result.target.preset, result.target.tier)] = result
+            log.info(
+                "model card refreshed",
+                extra={
+                    "extra_fields": {
+                        "target": result.target.label,
+                        "status": result.status,
+                        "changed": sorted(changes),
+                    }
+                },
+            )
+        if wrote:
+            try:
+                self._reload_user_config()
+            except ConfigError as e:
+                return build_error("bad_request", f"Saved, but the config no longer loads: {e}")
+        return None
+
+    def _tier_cards(self, tiers: dict[str, TierConfig]) -> dict[str, TierCard]:
+        """The active preset's stored numbers and last refresh, per tier."""
+        cards: dict[str, TierCard] = {}
+        for name, tier in tiers.items():
+            last = self._card_results.get((self.config.active_preset, name))
+            cards[name] = TierCard(
+                input_price=tier.input_price,
+                output_price=tier.output_price,
+                cache_read_price=tier.cache_read_price,
+                context_window=tier.context_window,
+                max_output_tokens=tier.max_output_tokens,
+                card=last.status if last is not None else None,
+                detail=last.detail if last is not None else None,
+            )
+        return cards
 
     def _host_to_persist(
         self, cred_id: str, catalog_name: str, requested: str | None
@@ -4079,6 +4149,17 @@ class Daemon:
                 "tier slug changed",
                 extra={"extra_fields": {"preset": msg.preset, "tier": msg.tier}},
             )
+            # TD-5185: a new slug's prices come from its card, after the
+            # slug itself is safely written.
+            refused = await self._refresh_model_cards(msg.preset, msg.tier)
+            if refused is not None:
+                return refused
+            return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, RefreshModelCards):
+            refused = await self._refresh_model_cards(msg.preset, msg.tier)
+            if refused is not None:
+                return refused
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, SetMcpServer):

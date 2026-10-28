@@ -7,7 +7,9 @@
 		selectedCredential,
 		credentialHost,
 		closeSettings,
+		refreshModelCards,
 	} from "../settings.svelte.js";
+	import { cardLine, cardNote } from "../model-card";
 	import { modelLabel } from "../effort";
 	import { MODELS_DOC_URL, openDoc } from "../docs-links";
 	import { openAddModel } from "../onboarding.svelte.js";
@@ -108,7 +110,27 @@
 		{#if credentialHost(selectedCredential(tier))}
 			<p class="hint host">{credentialHost(selectedCredential(tier))}</p>
 		{/if}
+		{#if settings.tierCards[tier]}
+			<p class="hint role card">{cardLine(settings.tierCards[tier])}</p>
+			{#if cardNote(settings.tierCards[tier])}
+				<p class="hint role">{cardNote(settings.tierCards[tier])}</p>
+			{/if}
+		{/if}
 	{/each}
+	<div class="actions">
+		<button
+			class="btn"
+			type="button"
+			disabled={settings.refreshingCards}
+			onclick={refreshModelCards}
+		>
+			{settings.refreshingCards ? "Refreshing…" : "Refresh prices"}
+		</button>
+	</div>
+	<p class="hint">
+		Asks each role's server for its model card and saves the prices, context size and output
+		limit it lists. New chats use them; open chats keep theirs.
+	</p>
 	{#if TIERS.some((t) => isDiscovered(t))}
 		<p class="hint">
 			A role left blank asks the endpoint for its model each run. Naming one here pins it.
@@ -157,6 +179,15 @@
 
 	.input:disabled {
 		opacity: 0.6;
+	}
+
+	.card {
+		font-family: var(--font-mono);
+	}
+
+	.btn:disabled {
+		opacity: 0.6;
+		cursor: default;
 	}
 
 	.heading {

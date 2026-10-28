@@ -12382,3 +12382,29 @@ serve, so a good key could fail with "not a valid model".
       fail (`TestSignInRule`, `TestDaemon`).
 - [x] A passing test of an unused key names the host it went to
       (`TestDaemon`); docs/configuration.md updated.
+
+### TD-5185 — Prices and limits come from the model card
+
+**Size:** 3 · **Depends on:** TD-1703, TD-1718, TD-5120, TD-5182 · **Status:** Done
+
+A tier's prices and window were typed by hand and went stale, and a zero
+price left the cost meter at $0.00 on a paid model. OpenRouter's `/models`
+publishes both for every model.
+
+- [x] Saving a tier's slug, and Settings' Refresh prices, ask the host the
+      tier calls (`resolve_base_url`) for `/models` with the key the tier
+      sends, under the TD-5182 rule, and match the slug exactly; never on a
+      chat turn (`test_model_cards.py::TestRefresh`, `TestDaemon`).
+- [x] Prices are written per million; `input_cache_read` only when listed;
+      `context_length` only off loopback; the output cap only when smaller
+      than the context length and the window (`TestMapping`).
+- [x] A missing slug, a card with no prices, a loopback window and a failed
+      fetch leave the stored value; nothing is zeroed or guessed (`TestRefresh`).
+- [x] A tier whose own URL is loopback but whose key routes to OpenRouter is
+      priced from OpenRouter; each backup from its own card (`TestRefresh`).
+- [x] Writes are surgical and keep comments, including inside `fallbacks`
+      entries (`TestWrite`).
+- [x] `setup_state.tier_cards` carries the stored numbers and the last
+      outcome; Settings shows a read-only line per tier and computes nothing
+      (`settings.test.ts`, `model-card.test.ts`).
+- [x] The key never reaches a log or config.yaml (`TestDaemon`).

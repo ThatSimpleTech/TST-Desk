@@ -18480,3 +18480,26 @@ key failed with "not a valid model".
 - Not done: picking a model from the server's own `/models` list. Some
   servers (OpenRouter) list models without a key, so a listing proves
   nothing, and asking an arbitrary listed model costs money.
+
+## TD-5185 — Prices and limits come from the model card (Class B)
+
+- New client message `refresh_model_cards {preset, tier?}`, acked with
+  `setup_state`, rather than a general "update tier" message: it carries no
+  values, so a client cannot write a price, only ask for the card.
+- The host is `resolve_base_url`, the one a turn calls, and so is the loopback
+  test. A tier whose `base_url` is loopback but whose key has a hosted host is
+  priced from that host and takes its context length: turns go there.
+- `context_window` is the compaction budget, so taking a hosted card's context
+  length raises when compaction fires. Intended: the stored 32k on a hosted
+  model was a stale hand value, not a choice.
+- The output cap is taken only when smaller than the context length and the
+  window the tier will have, so window minus output reservation stays positive
+  on a loopback tier that keeps a small hand-set window.
+- A card without `input_cache_read` leaves `cache_read_price` alone, even when
+  the provider charges full price for cached reads: a missing field is not a
+  statement that the rate is the input rate.
+- A negative price (OpenRouter's variable-price routers) counts as no price.
+- Outcomes are kept in memory for the daemon's run only. They describe the
+  last click, not the config, and a restart showing none is accurate.
+- Not done: refreshing on a schedule. A price change upstream is picked up on
+  the next slug save or Refresh, so the meter can drift until then.
