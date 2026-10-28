@@ -12316,6 +12316,29 @@ ones that answer; picking one goes straight to its models.
       docs/configuration.md, docs/models.md, docs/architecture.md and
       DECISIONS.md updated.
 
+### TD-5181 — Requests to this computer never use a proxy
+
+**Size:** 2 · **Depends on:** TD-5110 · **Status:** Done
+
+httpx sends `127.0.0.1` and `localhost` through `HTTP_PROXY`, `HTTPS_PROXY`
+or `ALL_PROXY` unless `NO_PROXY` lists them, and the proxy may be another
+machine. A chat turn to a local model, its audio or a screenshot could leave
+the computer that way. TD-5110 fixed this for MCP http servers only.
+
+- [x] `tstd/net.py` holds `is_loopback_url` (moved from `config`, which
+      re-exports it) and `direct_transport`, a proxy-free transport for a
+      loopback URL and `None` for anything else (`test_loopback_direct.py`).
+- [x] The chat client, model discovery, the Add a model list, embeddings,
+      voice, speech, screen grounding, the TypeSafe judge, the fast switch,
+      ntfy and `web_search` (one client per URL in its chain) reach a real local server directly while every proxy variable
+      names a recording fake proxy, which sees nothing
+      (`test_loopback_direct.py::test_loopback_call_skips_the_proxy`).
+- [x] A hosted address still goes through the proxy, for the model list and
+      the chat client (`test_hosted_url_still_uses_the_proxy`,
+      `test_hosted_chat_client_keeps_the_proxy`).
+- [x] The outbound-hosts test lists `net.py` with its reason;
+      docs/configuration.md says which requests skip a proxy.
+
 ### TD-5182 — A saved key goes only to its own server
 
 **Size:** 2 · **Depends on:** TD-1718, TD-5172 · **Status:** Done

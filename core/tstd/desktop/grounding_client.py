@@ -24,6 +24,7 @@ import httpx
 from ..config import ModelDiscoveryError, is_loopback_url
 from ..discovery import discover_model
 from ..logging import get_logger
+from ..net import direct_transport
 
 if TYPE_CHECKING:
     from ..config import GroundingConfig
@@ -261,7 +262,9 @@ class GroundingClient:
             response = await self._http.post(url, json=body)
             response.raise_for_status()
             return response.json()
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as http:
+        async with httpx.AsyncClient(
+            timeout=self.timeout_seconds, transport=direct_transport(url)
+        ) as http:
             response = await http.post(url, json=body)
             response.raise_for_status()
             return response.json()

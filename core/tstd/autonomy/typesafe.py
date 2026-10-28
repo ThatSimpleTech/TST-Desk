@@ -28,6 +28,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from ..logging import get_logger
+from ..net import direct_transport
 from .judgment import Judgment, JudgmentKind, JudgmentQuestion
 
 log = get_logger("tstd.judgment.typesafe")
@@ -105,7 +106,9 @@ class TypeSafeJudgmentBackend:
         if self._http is not None:
             response = await self._http.post(url, json=body, headers=headers)
         else:
-            async with httpx.AsyncClient(timeout=self._timeout) as http:
+            async with httpx.AsyncClient(
+                timeout=self._timeout, transport=direct_transport(url)
+            ) as http:
                 response = await http.post(url, json=body, headers=headers)
         response.raise_for_status()
         payload = response.json()

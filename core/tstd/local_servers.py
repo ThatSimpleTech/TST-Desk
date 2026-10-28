@@ -23,6 +23,7 @@ import httpx
 
 from .config import LocalServerConfig, is_loopback_url
 from .model_setup import list_endpoint_models
+from .net import direct_transport
 from .protocol import LocalServer, LocalServers
 
 SCAN_TIMEOUT = 1.5
@@ -53,9 +54,11 @@ async def scan_local_servers(
     if not wanted:
         return LocalServers()
     owned = client is None
-    # trust_env=False: an HTTP(S)_PROXY setting must not carry a loopback
-    # request to another machine.
-    http = client or httpx.AsyncClient(timeout=SCAN_TIMEOUT, trust_env=False)
+    # Every URL here is loopback, so the transport skips any proxy setting
+    # (TD-5181): a proxy must not carry a loopback request to another machine.
+    http = client or httpx.AsyncClient(
+        timeout=SCAN_TIMEOUT, transport=direct_transport(wanted[0][1])
+    )
     try:
         replies = await asyncio.gather(
             *(list_endpoint_models(url, None, client=http) for _name, url in wanted)

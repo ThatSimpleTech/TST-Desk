@@ -18419,6 +18419,28 @@ Decisions:
   probing this computer's ports is a call the person at it starts. The
   walkthrough clears its "Looking…" state and shows the refusal.
 
+## TD-5181 — Requests to this computer never use a proxy (Class A)
+
+httpx applies the proxy variables and the system proxy to every URL that
+`NO_PROXY` does not list, loopback included. With `HTTP_PROXY` set and no
+`NO_PROXY`, a turn to a model on `127.0.0.1` went to the proxy, which may be
+another machine, carrying the prompt. TD-5110 closed this for MCP http
+servers with an explicit transport; this applies the same rule to every
+client that can be pointed at this computer.
+- One helper, `net.direct_transport(url)`: an explicit `AsyncHTTPTransport`
+  for a loopback URL, `None` otherwise. Giving httpx a transport skips its
+  proxy lookup but, unlike `trust_env=False`, keeps `SSL_CERT_FILE`.
+- Per destination, not per process: hosted endpoints keep the person's proxy,
+  which a corporate network may require. Clearing the proxy variables at
+  start would break those.
+- `is_loopback_url` moved to `net.py` so the chat client can use it without
+  an import cycle (`config` imports `provider`). `config` re-exports it, so
+  callers are unchanged.
+- `web_search` made one client for its whole fallback chain; it now makes one
+  per URL so each gets the right transport.
+- Not covered: the dev-only live probes (`e2e_live.py`, `e2e_m8.py`), and
+  `web_fetch`, whose wall already refuses loopback.
+
 ## TD-5182 — A saved key goes only to its own server (Class A)
 
 TD-1718 made the host saved with a key win over a preset's URL, so a turn

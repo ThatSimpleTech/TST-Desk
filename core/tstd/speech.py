@@ -17,6 +17,7 @@ import httpx
 
 from .keychain import KeychainError, get_api_key
 from .logging import get_logger
+from .net import direct_transport
 from .protocol import Transcript
 
 if TYPE_CHECKING:
@@ -115,7 +116,9 @@ async def transcribe(
         form["model"] = speech.model
     files = {"file": (f"dictation.{ext}", audio, media)}
     try:
-        async with httpx.AsyncClient(timeout=speech.timeout_seconds, transport=transport) as client:
+        async with httpx.AsyncClient(
+            timeout=speech.timeout_seconds, transport=transport or direct_transport(url)
+        ) as client:
             response = await client.post(url, data=form, files=files, headers=headers)
             response.raise_for_status()
             payload = response.json()

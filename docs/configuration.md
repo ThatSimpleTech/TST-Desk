@@ -84,6 +84,18 @@ no effect.
 | `hooks` | mapping | no hooks | Commands TST Desk runs around the agent's work: at five points in a session (TD-5134, §2 `hooks`), and `after_write`, a formatter or linter run on the files each `fs_write` or `fs_edit` changed, its failures sent back to the model in that call's result (TD-5135, §2 `hooks.after_write`). Omitted in an older user copy is no hooks. |
 | `lsp` | mapping | no servers | Language servers by file pattern (TD-5139, §2 `lsp`): new errors and warnings in a file the agent writes come back in that write's result, and the `lsp_definition`, `lsp_references` and `lsp_symbols` tools find definitions, uses and declarations. Each server is a child process over stdio, never a socket. Omitted in an older user copy is no servers. |
 
+**Proxies (TD-5181).** Hosted endpoints use the proxy settings TST Desk
+inherits: `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY`, and the
+macOS or Windows system proxy. A request to a server on this computer
+(`127.0.0.0/8`, `::1` or `localhost`) never uses a proxy, even when
+`NO_PROXY` does not list it, so a prompt, a recording or a screenshot meant
+for a local server cannot leave through one. That covers chat turns, model
+discovery and the Add a model list, `embeddings`, `speech`, `voice`,
+`computer_use.grounding`, the `judgments` TypeSafe backend, a preset's
+`fast.hook_url`, a local search server (`search.base_url` and its
+fallbacks) and a self-hosted ntfy. MCP http servers never use a proxy
+(§2 `mcp`).
+
 ### `credentials`
 
 Named API keys (TD-1717). Each entry is an id (the keychain account suffix) and a

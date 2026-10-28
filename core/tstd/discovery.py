@@ -43,6 +43,7 @@ from .config import (
     is_loopback_url,
 )
 from .logging import get_logger
+from .net import direct_transport
 
 log = get_logger("tstd.discovery")
 
@@ -137,7 +138,9 @@ async def discover_model(
         )
 
     owned = client is None
-    http = client or httpx.AsyncClient(timeout=DISCOVERY_TIMEOUT)
+    http = client or httpx.AsyncClient(
+        timeout=DISCOVERY_TIMEOUT, transport=direct_transport(endpoint)
+    )
     try:
         try:
             # No Authorization header: the endpoint is on-box by
