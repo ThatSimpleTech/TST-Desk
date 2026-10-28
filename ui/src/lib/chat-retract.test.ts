@@ -148,6 +148,14 @@ describe("a reply withdrawn after a stall", () => {
     if (entry) expect(entryTone(entry)).toBe("warning");
   });
 
+  it("names a reply the endpoint cut off (TD-5183)", () => {
+    const entry = eventToEntry(
+      ev({ type: "assistant_retract", response_id: "r1", reason: "stream_interrupted" }),
+    );
+    expect(entry?.title).toBe("Reply cut off");
+    expect(entry?.kind).toBe("retry");
+  });
+
   it("is taken off both rows when a Send now split it (TD-5160)", () => {
     // Send now of files with no text, mid-stream, is echoed at once (the
     // `behind` mode), so the stalled response's later deltas open a second

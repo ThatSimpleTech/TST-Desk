@@ -18364,6 +18364,32 @@ file it had written, carried in the call arguments.
 - Replayed on two captured requests from the run: 87k → 31k and 69k → 16k
   estimated tokens, against a 39k budget.
 
+## TD-5183 — A long local run survives a server restart and a slow prompt read (Class A)
+
+After TD-5178 a multi-hour run on a 64k local model kept its room to
+answer, but two failures of the server still ended its turns:
+- The local server restarted mid-reply to lend a GPU to another job. The
+  stream ended inside a tool call, and the turn failed as
+  `stream_interrupted`: TD-5152 left resending a cut-off reply to the
+  user. A cut-off the endpoint caused (a dropped connection, a stream that
+  ends inside a tool call or without a finish, an in-band 429 or 5xx) now
+  carries the provider's `resendable` flag, and the turn withdraws it and
+  asks again, up to `CUT_OFF_RETRIES` (2) times, the way TD-5159 redoes a
+  stall. The second ask waits for the server under `provider_retry`
+  before its first chunk. An in-band 4xx is the request's fault and still
+  ends the turn; `max_retries: 0` turns the asks off. A tier with
+  `fallbacks` moves to its backup after those asks, as it does after a
+  stall's.
+- Back on one GPU, the server read a cold 42k-token prompt at about 70
+  tokens a second: ten minutes with no byte, past `stream_idle_timeout`,
+  and each retry read it again from the start. llama.cpp sends a
+  `prompt_progress` event per batch when a request carries
+  `return_progress: true`; a tier sets it in `extra_body`. The provider
+  counts those events as signs of life for the watchdog and drops them, so
+  they never reach the window or the held opening chunks.
+- The window names the reason for a withdrawn reply: "Reply cut off",
+  "Provider went quiet" or the reply guard's cut.
+
 ## TD-5181 — Requests to this computer never use a proxy (Class A)
 
 httpx applies the proxy variables and the system proxy to every URL that

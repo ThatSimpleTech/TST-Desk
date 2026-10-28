@@ -15,13 +15,15 @@ with (``backup_wanted``):
 - partway through the reply, the same failures of the endpoint: a
   dropped connection or an in-band 429 or 5xx (``stream_interrupted``
   with ``endpoint_failed``), and a stall (``stream_stalled``) once
-  TD-5159's one withdraw-and-ask-again has stalled too. What the failed
-  call showed is withdrawn first, so the window shows one reply. The
-  provider never resends these to the same endpoint (TD-5152); asking
-  another one is what the backup is for.
+  TD-5159's one withdraw-and-ask-again has stalled too. A cut-off reply
+  is first withdrawn and asked again on the same endpoint, up to twice
+  (TD-5183), since a local server that restarted is soon back; only when
+  those fail too does the backup get it. What a failed call showed is
+  withdrawn first, so the window shows one reply.
 
-A stream that merely ends partway (no finish, no ``[DONE]``), an in-band
-4xx and ``total_timeout`` stay on the tier and fail the turn as before.
+A stream that merely ends partway (no finish, no ``[DONE]``) is asked
+again on the tier the same way, and then fails the turn; an in-band 4xx
+and ``total_timeout`` stay on the tier and fail the turn as before.
 
 The backup in use lasts for the rest of the user's turn, so a dead
 endpoint costs the retry budget once per turn rather than once per model

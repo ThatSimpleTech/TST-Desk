@@ -35,10 +35,18 @@ if TYPE_CHECKING:
 
 log = get_logger("tstd.reply_retry")
 
-# The codes a turn withdraws and retries once output has begun. A cut-off
-# stream (``stream_interrupted``) is not here: the gateway reported an
-# error or gave up, and resending into it is the user's call (TD-5152).
+# The codes a turn withdraws and retries once output has begun.
 WITHDRAWN_CODES = frozenset({"stream_stalled"})
+
+# A reply the endpoint cut off partway (``stream_interrupted`` with the
+# provider's ``resendable`` flag): a dropped connection, a stream that ended
+# inside a tool call or without a finish, an in-band 429 or 5xx (TD-5183).
+# A local server that restarts mid-reply, say to lend a GPU, lands here; it
+# is back in a minute or two, and ``provider_retry`` waits for it before the
+# second ask streams. Before TD-5183 this failed a multi-hour turn outright
+# (TD-5152 left the resend to the user). An in-band 4xx is never resendable.
+CUT_OFF_CODE = "stream_interrupted"
+CUT_OFF_RETRIES = 2
 
 # A reply the reply guard cut (TD-5175, reply_guard.py): junk, a loop,
 # leaked tool markup or runaway thinking. Withdrawn and asked again up to
@@ -79,6 +87,9 @@ class StreamResult(NamedTuple):
     # stream (TD-5174), kept so a tier with ``echo_reasoning`` can send it back
     # on the tool-call step it led to. Empty when the stream carried none.
     reasoning: str = ""
+    # The provider's flag on a cut-off reply the same endpoint may answer if
+    # asked again (TD-5183). Withdrawn and asked again like a stall.
+    resendable: bool = False
 
 
 def new_response_id() -> str:
@@ -91,6 +102,15 @@ def stall_retries(retry: ProviderRetryConfig) -> int:
     return min(STALL_RETRIES, retry.max_retries)
 
 
+def cut_off_retries(stall_allowed: int) -> int:
+    """How many times a turn redoes a call the endpoint cut off (TD-5183).
+
+    ``provider_retry.max_retries`` 0 turns it off, as it does the stall
+    retry; *stall_allowed* is 0 exactly then.
+    """
+    return CUT_OFF_RETRIES if stall_allowed > 0 else 0
+
+
 def _withdrawable(
     result: StreamResult, session: Session, retried: int, allowed: int, guard_retries: int = 0
 ) -> bool:
@@ -98,6 +118,8 @@ def _withdrawable(
         return False
     if result.failed and result.error_code == GUARDED_CODE:
         return retried < guard_retries
+    if result.failed and result.error_code == CUT_OFF_CODE:
+        return result.began and result.resendable and retried < cut_off_retries(allowed)
     return (
         result.failed
         and result.began
@@ -146,7 +168,7 @@ async def stream_reply(
             ),
         )
         log.warning(
-            "reply withdrawn after a stall, asking again",
+            "reply withdrawn after a stall or cut-off, asking again",
             extra={
                 "extra_fields": {
                     "session_id": session.id,
