@@ -117,7 +117,11 @@ by id (the Add a model list, adding a model, testing a key in Settings,
 removing one), the id must be one of these entries, never another keychain
 item such as a webhook or a sign-in token, and the daemon refuses to send
 the key anywhere else. Test on a key that no model uses goes to its
-`base_url`; with no `base_url` there is nothing to test it against.
+`base_url`; with no `base_url` there is nothing to test it against. It asks
+for a model you already set up on that server, or else for the main model
+(TD-5184). If the server answers that it does not serve that model, and
+says nothing about the key, the key got past sign-in, and Test reports it
+as accepted.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|

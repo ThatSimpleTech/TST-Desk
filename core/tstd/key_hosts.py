@@ -16,6 +16,7 @@ reads a key a client named.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 from .config import (
@@ -24,11 +25,13 @@ from .config import (
     TIER_NAMES,
     ModelConfig,
     TierConfig,
+    apply_credential_host,
     credential_base_url,
     is_loopback_url,
     resolve_base_url,
     resolve_credential_id,
 )
+from .provider import ProviderError
 
 Origin = tuple[str, str, int]
 
@@ -105,3 +108,66 @@ def key_refusal(config: ModelConfig, credential_id: str, base_url: str) -> str |
         f"That saved key is for {where}, so it is not sent anywhere else. "
         "Type the key for this server instead."
     )
+
+
+# ── The Settings key test (TD-5182, TD-5184) ─────────────────────────────
+
+
+@dataclass(frozen=True)
+class KeyProbe:
+    """Where the Settings test of a saved key goes, and with which model.
+
+    ``tier`` is None when the key is unknown or has nowhere of its own to go;
+    ``refusal`` then says why. ``borrowed`` is True when no model on the
+    key's own server is set up, so the test asks for the main model's name,
+    which that server may not serve. ``host`` is the key's own host when the
+    test goes there because no model uses the key.
+    """
+
+    tier: TierConfig | None
+    refusal: str = ""
+    borrowed: bool = False
+    host: str = ""
+
+
+def key_probe(config: ModelConfig, credential_id: str) -> KeyProbe:
+    """The tier a saved key's test calls: a model that sends it, or its host.
+
+    Never the main model's server for a key that model does not use. For a
+    key no model uses, a model already set up on the key's own server is
+    asked first, so the test is a real request (TD-5184).
+    """
+    unknown = unknown_key(config, credential_id)
+    if unknown is not None:
+        return KeyProbe(None, unknown)
+    for candidate in [*config.tiers().values(), *every_tier(config)]:
+        if resolve_credential_id(candidate) == credential_id:
+            return KeyProbe(apply_credential_host(config, candidate))
+    own = credential_base_url(config, credential_id)
+    if own is None:
+        return KeyProbe(None, "No model uses this key yet, so there is nothing to test it against.")
+    target = origin(own)
+    for candidate in every_tier(config):
+        if candidate.slug and origin(resolve_base_url(config, candidate)) == target:
+            return KeyProbe(candidate.model_copy(update={"base_url": own}), host=own)
+    brain = config.tier("brain").model_copy(update={"base_url": own})
+    return KeyProbe(brain, borrowed=True, host=own)
+
+
+_MODEL_MISS_STATUS = frozenset({400, 404, 422})
+_KEY_WORDS = ("key", "auth", "token", "credential", "permission", "forbidden")
+
+
+def key_got_past_sign_in(err: ProviderError) -> bool:
+    """True when *err* says the model is unknown, not that the key is bad.
+
+    A test that borrows the main model's name sends a name the key's server
+    may not serve. Servers check the key before the model, so "no such
+    model" means the key was accepted. Anything that mentions the key or
+    sign-in is not taken as a pass: some servers answer a bad key with a 400
+    ("API key not valid").
+    """
+    if err.status_code not in _MODEL_MISS_STATUS or err.code == "auth_failed":
+        return False
+    text = f"{err.message} {err.detail}".lower()
+    return "model" in text and not any(word in text for word in _KEY_WORDS)
