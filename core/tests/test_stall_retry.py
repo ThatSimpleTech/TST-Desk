@@ -251,14 +251,15 @@ class TestTurn:
         # Nothing was shown, so there is nothing to withdraw.
         assert not _of(session, AssistantRetract)
 
-    async def test_a_cut_off_reply_is_not_retried(self, tmp_path: Path) -> None:
-        """Only a stall: a gateway that gave up mid-reply stays TD-5152's."""
+    async def test_a_cut_off_reply_is_asked_again_twice(self, tmp_path: Path) -> None:
+        """A gateway that gave up mid-reply is asked again, then fails (TD-5183)."""
         gateway = _Gateway(lambda attempt: _text("half"))
         session, turn = await _run(tmp_path, gateway)
 
         assert (turn.failed, turn.error_code) == (True, "stream_interrupted")
-        assert gateway.requests == 1
-        assert not _of(session, AssistantRetract)
+        assert gateway.requests == 3
+        # The first two are withdrawn; the last stays above the failure line.
+        assert len(_of(session, AssistantRetract)) == 2
 
     async def test_stop_during_the_wait_keeps_nothing(self, tmp_path: Path) -> None:
         gateway = _Gateway(lambda attempt: _stalls_after(_text("The fix is ")))

@@ -179,6 +179,13 @@ function trimEntry(event: ContextCompacted, trigger: keyof typeof TRIM_PREVIEWS)
 }
 
 /** Map one daemon event to a timeline entry, or null when it isn't shown. */
+/** Why the daemon took a half-written reply back (TD-5159, TD-5175, TD-5183). */
+function retractTitle(reason: string): string {
+  if (reason === "stream_interrupted") return "Reply cut off";
+  if (reason === "reply_guarded") return "Reply guard cut the reply";
+  return "Provider went quiet";
+}
+
 export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
   switch (event.type) {
     case "tool_call":
@@ -377,7 +384,7 @@ export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
         id: `retract:${event.seq}`,
         kind: "retry",
         seq: event.seq,
-        title: "Provider went quiet",
+        title: retractTitle(event.reason),
         preview: "The partial reply was withdrawn; asking again.",
         details: { reason: event.reason, response_id: event.response_id },
       };
