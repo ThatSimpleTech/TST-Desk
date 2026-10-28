@@ -136,7 +136,7 @@ from .grok_home import (
 )
 from .grok_loop import grok_loop
 from .hub import NOT_HANDLED, Hub
-from .key_hosts import every_tier, is_key_id, key_refusal, unknown_key
+from .key_hosts import KeyProbe, is_key_id, key_got_past_sign_in, key_probe, key_refusal
 from .keychain import (
     KeychainError,
     KeychainLockedError,
@@ -1679,7 +1679,11 @@ class Daemon:
                 await conn.send(payload)
 
     async def _provider_probe(
-        self, api_key: str | None = None, credential: str | None = None
+        self,
+        api_key: str | None = None,
+        credential: str | None = None,
+        *,
+        probe: KeyProbe | None = None,
     ) -> ProviderError | None:
         """One-token live call against a tier (TD-1101, TD-1717).
 
@@ -1691,15 +1695,16 @@ class Daemon:
         KeychainError only when the keychain is consulted and fails, and
         ModelDiscoveryError when a local tier names no model and the
         endpoint cannot supply one (TD-1805) — there is nothing to probe
-        with until that is settled.
+        with until that is settled. *probe* is the saved key's target when
+        the caller already chose it.
         """
         await resolve_tier_slugs(self.config)
         if credential and api_key is None:
             # TD-5182: a saved key is tested only where it is already sent.
-            saved_tier, refusal = self._saved_key_tier(credential)
-            if saved_tier is None:
-                return ProviderError(code="key_refused", message=refusal)
-            tier_cfg = saved_tier
+            target = probe or key_probe(self.config, credential)
+            if target.tier is None:
+                return ProviderError(code="key_refused", message=target.refusal)
+            tier_cfg = target.tier
         else:
             tier_cfg = self.config.tier("brain")
             if credential:
@@ -1739,37 +1744,30 @@ class Daemon:
         request that still proves the key authenticates.  The key value
         never appears in the response.
         """
+        probe: KeyProbe | None = None
         try:
-            err = await self._provider_probe(api_key, credential)
+            if credential and api_key is None:
+                await resolve_tier_slugs(self.config)
+                probe = key_probe(self.config, credential)
+            err = await self._provider_probe(api_key, credential, probe=probe)
         except KeychainError as e:
             return ApiKeyValidated(seq=1, ok=False, detail=str(e))
         except ModelDiscoveryError as e:
             return ApiKeyValidated(seq=1, ok=False, detail=str(e))
+        host = probe.host.rstrip("/") if probe is not None else ""
+        if err is not None and probe is not None and probe.borrowed and key_got_past_sign_in(err):
+            # TD-5184: the server took the key; it just lacks the borrowed model.
+            return ApiKeyValidated(
+                seq=1, ok=True, detail=f"Key accepted by {host}. No model uses it yet."
+            )
         if err is not None:
             detail = auth_failure_message() if err.code == "auth_failed" else err.message
             return ApiKeyValidated(seq=1, ok=False, detail=detail)
+        if host:
+            return ApiKeyValidated(seq=1, ok=True, detail=f"Key accepted by {host}.")
         return ApiKeyValidated(
             seq=1, ok=True, detail="Key accepted by the active preset's provider."
         )
-
-    def _saved_key_tier(self, credential: str) -> tuple[TierConfig | None, str]:
-        """Where a saved key's test goes: a model that sends it, or its own host.
-
-        Never the main model's server for a key that model does not use
-        (TD-5182). ``(None, why)`` when the key is unknown or has nowhere of
-        its own to go.
-        """
-        unknown = unknown_key(self.config, credential)
-        if unknown is not None:
-            return None, unknown
-        active = list(self.config.tiers().values())
-        for candidate in [*active, *every_tier(self.config)]:
-            if resolve_credential_id(candidate) == credential:
-                return apply_credential_host(self.config, candidate), ""
-        own = credential_base_url(self.config, credential)
-        if own is None:
-            return None, "No model uses this key yet, so there is nothing to test it against."
-        return self.config.tier("brain").model_copy(update={"base_url": own}), ""
 
     # ── Add a model (TD-5172) ─────────────────────────────────────────
 

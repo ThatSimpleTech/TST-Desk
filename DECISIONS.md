@@ -18463,3 +18463,20 @@ paired computer's item could be read and sent as a bearer token.
   A paired phone can already start turns and approve commands on this
   computer, so blocking addresses there would add no protection. Settings can
   still change a key's host on purpose (TD-1722).
+
+## TD-5184 — Settings Test on an unused key tells a good key from a bad one (Class A)
+
+TD-5182 sends Test on a key no model uses to that key's own host, with the
+main model's name. That server often does not serve that model, so a good
+key failed with "not a valid model".
+- First choice: a model already set up on the key's server, from any preset
+  or backup. Then the test is a real request.
+- Otherwise the borrowed name stays, and "no such model" counts as a pass.
+  OpenAI-compatible servers check the key before the model, so an unknown
+  model means the key got in. Only 400, 404 and 422 whose text names the
+  model qualify, and any mention of a key, sign-in, token, credential or
+  permission disqualifies: Gemini's OpenAI endpoint answers a bad key with a
+  400 "API key not valid".
+- Not done: picking a model from the server's own `/models` list. Some
+  servers (OpenRouter) list models without a key, so a listing proves
+  nothing, and asking an arbitrary listed model costs money.

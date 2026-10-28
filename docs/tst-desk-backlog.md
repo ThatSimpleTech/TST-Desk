@@ -12365,3 +12365,20 @@ webhook URL or a sign-in token, and have it sent as a bearer token.
 - [x] The packaged smoke probe binds its hosted model at the OpenRouter key's
       own host, read from `setup_state`; docs/configuration.md and
       docs/architecture.md updated.
+
+### TD-5184 — Settings Test on an unused key tells a good key from a bad one
+
+**Size:** 1 · **Depends on:** TD-5182 · **Status:** Done
+
+Since TD-5182, Test on a saved key that no model uses goes to the key's own
+host. It sent the main model's name, which that server often does not
+serve, so a good key could fail with "not a valid model".
+
+- [x] The test asks for a model already set up on the key's server first,
+      so it is a real request (`test_key_test_own_host.py::TestProbeTarget`).
+- [x] With none, a 400, 404 or 422 that says the model is unknown, and says
+      nothing about the key or sign-in, reports "Key accepted by <host>. No
+      model uses it yet."; 401, 403, a 400 about the key, 402 and 429 still
+      fail (`TestSignInRule`, `TestDaemon`).
+- [x] A passing test of an unused key names the host it went to
+      (`TestDaemon`); docs/configuration.md updated.
