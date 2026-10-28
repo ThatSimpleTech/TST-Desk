@@ -21,6 +21,7 @@ import yaml
 from .config import VoiceConfig, is_loopback_url
 from .keychain import KeychainError, get_api_key
 from .logging import get_logger
+from .net import direct_transport
 
 log = get_logger("tstd.voice")
 
@@ -126,7 +127,7 @@ async def transcribe_audio(
     safe_mime = mime.strip() or "application/octet-stream"
     files = {"file": ("speech.webm", audio, safe_mime)}
     owned = client is None
-    http = client or httpx.AsyncClient(timeout=timeout)
+    http = client or httpx.AsyncClient(timeout=timeout, transport=direct_transport(url))
     try:
         response = await http.post(url, headers=headers, files=files, timeout=timeout)
     except httpx.HTTPError as exc:

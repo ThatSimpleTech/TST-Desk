@@ -19,6 +19,7 @@ import httpx
 
 from .config import FastConfig
 from .logging import get_logger
+from .net import direct_transport
 
 log = get_logger("tstd.fast_switch")
 
@@ -43,7 +44,9 @@ async def switch(cfg: FastConfig, on: bool, *, by: str = "tst-desk") -> dict[str
     assert cfg.hook_url is not None
     payload = {"model": cfg.hook_model, "on": on, "by": by}
     try:
-        async with httpx.AsyncClient(timeout=SWITCH_TIMEOUT_S) as client:
+        async with httpx.AsyncClient(
+            timeout=SWITCH_TIMEOUT_S, transport=direct_transport(cfg.hook_url)
+        ) as client:
             resp = await client.post(cfg.hook_url, json=payload)
     except httpx.HTTPError as exc:
         raise FastSwitchError(f"The fast switch did not answer ({type(exc).__name__}).") from exc
@@ -61,7 +64,9 @@ async def is_on(cfg: FastConfig) -> tuple[bool, str] | None:
     """(on, last change) from the switch, or None when it cannot say."""
     assert cfg.hook_url is not None
     try:
-        async with httpx.AsyncClient(timeout=STATUS_TIMEOUT_S) as client:
+        async with httpx.AsyncClient(
+            timeout=STATUS_TIMEOUT_S, transport=direct_transport(cfg.hook_url)
+        ) as client:
             resp = await client.get(cfg.hook_url)
         state = _model_state(resp.json(), cfg.hook_model)
     except (httpx.HTTPError, ValueError) as exc:

@@ -19,7 +19,6 @@ import shutil
 from functools import lru_cache
 from importlib import resources
 from importlib.resources.abc import Traversable
-from ipaddress import ip_address
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
@@ -40,6 +39,7 @@ from .hooks_config import HooksConfig
 from .logging import get_logger, user_data_dir
 from .lsp_config import LspConfig
 from .mcp_values import coerce_map
+from .net import is_loopback_url as is_loopback_url
 from .provider import TimeoutConfig
 from .shell_read_only import READ_ONLY_ENTRIES
 
@@ -171,32 +171,6 @@ def apply_credential_host(config: ModelConfig, tier: TierConfig) -> TierConfig:
     if url == tier.base_url:
         return tier
     return tier.model_copy(update={"base_url": url})
-
-
-def is_loopback_url(url: str) -> bool:
-    """True when *url* points at this machine (127.0.0.0/8, ``::1``, ``localhost``).
-
-    A loopback endpoint is on-box by construction, so there is no third party
-    to authenticate against and no credential to send (TD-1801). Anything we
-    cannot confidently classify — no scheme, an unparseable host, a name that
-    merely looks local — is treated as remote, so an ambiguous URL keeps the
-    key requirement rather than silently dropping it.
-
-    Deliberately separate from ``ws.validate_interface``: that guards which
-    interface we *bind* (§2.1), this classifies an endpoint we *call*.
-    """
-    try:
-        host = urlsplit(url).hostname
-    except ValueError:
-        return False
-    if not host:
-        return False
-    if host == "localhost":
-        return True
-    try:
-        return ip_address(host).is_loopback
-    except ValueError:
-        return False
 
 
 class ModelDiscoveryError(Exception):

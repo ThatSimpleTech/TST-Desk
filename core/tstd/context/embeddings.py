@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from ..logging import get_logger
+from ..net import direct_transport
 from .memory_loader import (
     MemoryCandidate,
     MemoryFile,
@@ -90,7 +91,9 @@ class EmbeddingsClient:
             return []
         url = f"{self.base_url}/embeddings"
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with httpx.AsyncClient(
+                timeout=self.timeout_seconds, transport=direct_transport(url)
+            ) as client:
                 response = await client.post(
                     url,
                     json={"model": self.model, "input": texts},
