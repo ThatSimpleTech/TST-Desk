@@ -768,6 +768,7 @@ async def _stream_and_parse(
     failed = False
     retryable = False
     endpoint_failed = False
+    resendable = False
     error_msg = ""
     error_code: str | None = None
     raw_detail = ""
@@ -811,6 +812,7 @@ async def _stream_and_parse(
                 failed, error_msg, error_code = True, chunk.message, chunk.code
                 raw_detail = chunk.detail
                 retryable, endpoint_failed = chunk.retryable, chunk.endpoint_failed
+                resendable = chunk.resendable
                 break
             began = True
 
@@ -914,6 +916,7 @@ async def _stream_and_parse(
         response_id,
         endpoint_failed,
         collected_reasoning,
+        resendable,
     )
 
 

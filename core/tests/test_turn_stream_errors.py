@@ -19,6 +19,7 @@ import httpx
 import pytest
 
 from tests.test_dispatch import attach_auto_approver, make_config, wait_for_turn
+from tstd.config import ProviderRetryConfig
 from tstd.loop import agent_loop
 from tstd.protocol import AssistantDelta, TurnComplete
 from tstd.provider import (
@@ -31,6 +32,7 @@ from tstd.provider import (
     TimeoutConfig,
     complete_streamed,
 )
+from tstd.reply_retry import shown_deltas
 from tstd.router import TierRouter
 from tstd.session import Session, SessionRunner
 from tstd.tools import ToolDispatcher, ToolRegistry
@@ -618,13 +620,17 @@ async def _run_turns(
     dispatcher = attach_auto_approver(ToolDispatcher(ToolRegistry()))
     client = gateway.client()
 
+    config = make_config()
+    # A cut-off reply is asked again after this backoff (TD-5183).
+    config.provider_retry = ProviderRetryConfig(max_retries=2, initial_delay=0.001, max_delay=0.001)
+
     async def factory(*_args: object) -> ProviderClient:
         return client
 
     runner = SessionRunner(
         session,
         loop_factory=lambda s: agent_loop(
-            s, TierRouter(), factory, make_config(), tool_dispatcher=dispatcher
+            s, TierRouter(), factory, config, tool_dispatcher=dispatcher
         ),
     )
     await runner.start()
@@ -661,7 +667,8 @@ class TestTurn:
             e.delta for e in session.event_log.all_events if isinstance(e, AssistantDelta)
         )
         assert "I encountered an error" in shown
-        assert gateway.requests == 1
+        # Asked again twice first, each attempt withdrawn (TD-5183).
+        assert gateway.requests == 3
 
     async def test_an_openrouter_error_event_fails_the_turn(self, tmp_path: Path) -> None:
         gateway = _Gateway(
@@ -677,7 +684,7 @@ class TestTurn:
         assert turn.failed is True
         assert turn.error_code == "stream_interrupted"
         assert all("The fix is" not in m for m in _assistant_messages(session))
-        assert gateway.requests == 1
+        assert gateway.requests == 3
 
     async def test_a_body_that_just_ends_fails_the_turn(self, tmp_path: Path) -> None:
         gateway = _Gateway(lambda _: _text("The fix is to delete "))
@@ -687,12 +694,14 @@ class TestTurn:
         assert turn.error_code == "stream_interrupted"
         assert all("The fix is" not in m for m in _assistant_messages(session))
 
-    async def test_resending_after_a_cut_off_reply_works(self, tmp_path: Path) -> None:
+    async def test_a_cut_off_reply_is_asked_again(self, tmp_path: Path) -> None:
+        """A server that restarted mid-reply answers the second ask (TD-5183)."""
         gateway = _Gateway(
             lambda attempt: _text("half") if attempt == 1 else _answer("The whole answer.")
         )
-        session, (first, second) = await _run_turns(tmp_path, gateway, "fix it", "fix it")
+        session, (turn,) = await _run_turns(tmp_path, gateway, "fix it")
 
-        assert (first.failed, first.error_code) == (True, "stream_interrupted")
-        assert (second.failed, second.error_code) == (False, None)
-        assert _assistant_messages(session)[-1] == "The whole answer."
+        assert (turn.failed, turn.error_code) == (False, None)
+        assert gateway.requests == 2
+        assert _assistant_messages(session) == ["The whole answer."]
+        assert "".join(shown_deltas(session.event_log.all_events)) == "The whole answer."
