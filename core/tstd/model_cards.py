@@ -82,10 +82,14 @@ class CardResult:
 def card_values(tier: TierConfig, card: EndpointModel, *, loopback: bool) -> CardValues:
     """The config values *card* sets for *tier*. A field the card lacks is absent.
 
-    ``context_window`` comes from the card only off loopback. The output cap
-    is taken only when it is smaller than the context length, and smaller
-    than the window the tier will have afterwards, so the compaction budget
-    (window minus output reservation) never goes to zero or below.
+    ``context_window`` comes from the card only off loopback. The card's
+    output cap is a ceiling, not a setting: it only ever lowers
+    ``max_output_tokens``, never raises it. ``max_output_tokens`` goes out as
+    every request's ``max_tokens`` and is reserved out of the compaction
+    budget, and OpenRouter refuses a request whose ``max_tokens`` the balance
+    cannot cover, so copying a 900k ceiling would cost every turn. It is also
+    taken only when smaller than the context length and the window the tier
+    will have, so window minus output reservation stays positive.
     """
     values: CardValues = {}
     if card.input_price is not None:
@@ -104,6 +108,7 @@ def card_values(tier: TierConfig, card: EndpointModel, *, loopback: bool) -> Car
         and card.context_window is not None
         and cap < card.context_window
         and cap < window
+        and cap < tier.max_output_tokens
     ):
         values["max_output_tokens"] = cap
     return values

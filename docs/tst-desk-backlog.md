@@ -12396,8 +12396,8 @@ publishes both for every model.
       sends, under the TD-5182 rule, and match the slug exactly; never on a
       chat turn (`test_model_cards.py::TestRefresh`, `TestDaemon`).
 - [x] Prices are written per million; `input_cache_read` only when listed;
-      `context_length` only off loopback; the output cap only when smaller
-      than the context length and the window (`TestMapping`).
+      `context_length` only off loopback; the output cap only ever lowers
+      `max_output_tokens`, and only below the context and the window (`TestMapping`).
 - [x] A missing slug, a card with no prices, a loopback window and a failed
       fetch leave the stored value; nothing is zeroed or guessed (`TestRefresh`).
 - [x] A tier whose own URL is loopback but whose key routes to OpenRouter is

@@ -18492,9 +18492,13 @@ key failed with "not a valid model".
 - `context_window` is the compaction budget, so taking a hosted card's context
   length raises when compaction fires. Intended: the stored 32k on a hosted
   model was a stale hand value, not a choice.
-- The output cap is taken only when smaller than the context length and the
-  window the tier will have, so window minus output reservation stays positive
-  on a loopback tier that keeps a small hand-set window.
+- The card's output cap (`top_provider.max_completion_tokens`) only ever lowers
+  `max_output_tokens`. The first live refresh copied 943718 for Kimi K3.1 Pro:
+  that value is every request's `max_tokens`, it is held back from the
+  compaction budget, and OpenRouter refuses a request whose `max_tokens` the
+  balance cannot cover (about $9.44 at $10/M). The card says what the model
+  allows, not what a turn should ask for. Also only below the context length
+  and the window, so window minus output reservation stays positive.
 - A card without `input_cache_read` leaves `cache_read_price` alone, even when
   the provider charges full price for cached reads: a missing field is not a
   statement that the rate is the input rate.

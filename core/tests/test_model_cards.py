@@ -145,7 +145,6 @@ class TestMapping:
             "output_price": 10.0,
             "cache_read_price": 0.2,
             "context_window": 1048576,
-            "max_output_tokens": 65536,
         }
 
     def test_a_missing_cache_price_is_left_out_not_zeroed(self) -> None:
@@ -155,11 +154,19 @@ class TestMapping:
         assert "max_output_tokens" not in values
 
     def test_loopback_keeps_its_hand_set_window(self) -> None:
-        card = EndpointModel(id="m", context_window=131072, max_output_tokens=16384)
+        card = EndpointModel(id="m", context_window=131072, max_output_tokens=4096)
         values = card_values(_tier("m", LOCAL, None), card, loopback=True)
         assert "context_window" not in values
-        # 16384 fits the hand-set 32768, so the cap still applies.
-        assert values == {"max_output_tokens": 16384}
+        # 4096 is under the stored 8192, so the ceiling still applies.
+        assert values == {"max_output_tokens": 4096}
+
+    def test_the_output_cap_only_ever_lowers(self) -> None:
+        # A provider ceiling of 943718 must not become every request's
+        # max_tokens; a ceiling under the stored value is a real limit.
+        card = EndpointModel(id="m", context_window=1048576, max_output_tokens=943718)
+        assert "max_output_tokens" not in card_values(_tier("m"), card, loopback=False)
+        card = EndpointModel(id="m", context_window=1048576, max_output_tokens=4096)
+        assert card_values(_tier("m"), card, loopback=False)["max_output_tokens"] == 4096
 
     def test_an_output_cap_never_eats_the_window(self) -> None:
         card = EndpointModel(id="m", context_window=131072, max_output_tokens=65536)
@@ -400,7 +407,8 @@ class TestDaemon:
             assert (card["input_price"], card["output_price"]) == (2.0, 10.0)
             assert card["cache_read_price"] == 0.2
             assert card["context_window"] == 1048576
-            assert card["max_output_tokens"] == 65536
+            # The card's 65536 ceiling is above the stored 8192: kept.
+            assert card["max_output_tokens"] == 8192
             # Only the saved tier was asked about; the worker shows config.
             assert state["tier_cards"]["worker"]["card"] is None
             brain = load_config(tmp_path / "config.yaml").presets["tst-default"].brain
