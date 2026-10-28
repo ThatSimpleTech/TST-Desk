@@ -929,21 +929,33 @@ treated as the HTTP error its `code` names: a 429 or 5xx is retried as above, an
 counts as a 502. The exception is a window refusal named by a string code such as
 `context_length_exceeded`, or only in its message: it counts as the 400 it is, so it becomes
 `context_overflow` and gets the one retry with a tighter window instead of being resent
-(TD-5158). Once part of the reply has streamed, it ends the turn as
-`stream_interrupted` and is not retried, because a second attempt would
-repeat text the window already shows. A stream that ends with neither a
-`finish_reason` nor `[DONE]` is `stream_interrupted` too. The window
-shows "Response interrupted", the partial text is not kept as the
-model's answer, and Retry on the message resends it (TD-5152). The
-after-write review and memory distillation get the same errors.
+(TD-5158). Once part of the reply has streamed, it is
+`stream_interrupted`. A 429 or 5xx there is the endpoint's failure, so
+the turn withdraws what that response had shown and asks again, up to
+twice, the way it does after a stall (TD-5183, below); a 400, 401 or 404
+there ends the turn, since asking again would repeat it. A stream that
+ends with neither a `finish_reason` nor `[DONE]`, or ends inside a tool
+call, is `stream_interrupted` too and is asked again the same way. When
+the last ask is cut off as well, the turn ends: the window shows
+"Response interrupted", the partial text is not kept as the model's
+answer, and Retry on the message resends it (TD-5152). The after-write
+review and memory distillation get the same errors and never resend
+them.
 
 A connection that drops inside a `200` stream splits the same way
 (TD-5120). Before anything has streamed, it is retried like a refused
 connection and, once `max_retries` is spent, ends as `request_error`: a
 llama.cpp or vLLM server that restarts while it reads a long prompt has
 shown nothing yet, so there is nothing to repeat. Once part of the reply
-has streamed, it is `stream_interrupted` and is not retried. The
-after-write review and memory distillation retry it too.
+has streamed, it is `stream_interrupted`, and the turn withdraws the
+partial reply and asks again, up to twice (TD-5183). A local server that
+restarts mid-reply (to lend a GPU, say) is back within a minute or two,
+and the second ask waits for it under `max_retries` like any request
+before its first chunk; a tier with `fallbacks` moves to its backup only
+after those asks fail too. Tool calls that already ran are not run again,
+and a tool call the cut-off response was still streaming never ran.
+`max_retries: 0` turns the second asks off. The after-write review and
+memory distillation retry a drop before output only.
 
 A stall partway through a turn's reply is different (TD-5159): the
 provider went quiet, it did not report a failure. The daemon withdraws
@@ -1777,7 +1789,7 @@ for a session with the `set_tier` message.
 | `connect_timeout` | float > 0 | `30` | Seconds to open the connection to `base_url`. |
 | `read_timeout` | float > 0 | `120` | Longest wait for any bytes from the server, the response headers included. A local model reading a long prompt sends nothing until its first token, so this is the knob for slow prefill — see §3.5. |
 | `total_timeout` | float > 0 or `null` | `null` | Wall-clock cap on one attempt, streaming included. `null` means no cap. A stream cut by it after output began is not retried. Before TD-5106 the client had a field named "total" set to 180; it was only the wait for a free pooled connection and never bounded a request. That wait stays 180 s and is not a key. |
-| `stream_idle_timeout` | float > 0 or `null` | `300` | Aborts a stream that sends no usable chunk for this long. SSE keep-alive comments (`: ping`) do not count, so a server that only pings is caught; `read_timeout` alone never catches it. A stall before any output is retried under `provider_retry`. A stall partway through a turn's reply withdraws the partial reply from the window and asks once more (TD-5159, see `provider_retry`), a fresh request whose own stalls before output are retried too; a second stall after output began ends the turn as `stream_stalled`. Reading stops at `data: [DONE]`, so a server that holds the body open after a finished reply is not a stall (TD-5152). `null` turns the watchdog off. |
+| `stream_idle_timeout` | float > 0 or `null` | `300` | Aborts a stream that sends no usable chunk for this long. SSE keep-alive comments (`: ping`) do not count, so a server that only pings is caught; `read_timeout` alone never catches it. A stall before any output is retried under `provider_retry`. A stall partway through a turn's reply withdraws the partial reply from the window and asks once more (TD-5159, see `provider_retry`), a fresh request whose own stalls before output are retried too; a second stall after output began ends the turn as `stream_stalled`. Reading stops at `data: [DONE]`, so a server that holds the body open after a finished reply is not a stall (TD-5152). A llama.cpp `prompt_progress` event (sent when `extra_body` asks for `return_progress: true`) counts as a sign of life and is never shown (TD-5183, §3.5). `null` turns the watchdog off. |
 | `fallbacks` | list of tiers | `[]` | Backup endpoints, tried in order when this tier's own endpoint is down: a refused connection, a 5xx, a rate limit or a stall, once `provider_retry` is spent (TD-5120). Each entry is a whole tier with its own `slug` (required), `base_url`, `credential`, prices, `context_window`, `max_output_tokens` and timeouts; nothing is inherited. Config only — see §3.7. |
 
 **Prices are per million tokens, and they are yours to keep accurate.** They drive the live
@@ -2119,6 +2131,28 @@ before the first attempt's first chunk (TD-5160). The after-write review
 and memory distillation never resend a stall (TD-5146), so they wait once. A scheduled job
 whose turn ends as `stream_stalled` failed for a transient reason, like a timeout, so a job
 with `retries` tries again after its `retry_delay` (TD-5154).
+
+A llama.cpp server sends nothing while it reads the prompt, so on slow hardware a long cold
+prompt can pass `stream_idle_timeout` (one GPU reads about 70 tokens a second; a 40k-token
+session is ten minutes) and every retry reads it again from the start. Ask it for progress
+reports and each batch it reads counts as a sign of life; the reports never reach the window
+(TD-5183):
+
+<!-- verify: tier -->
+```yaml
+base_url: http://127.0.0.1:8000/v1
+input_price: 0.0
+output_price: 0.0
+cache_read_price: 0.0
+context_window: 65536
+max_output_tokens: 4096
+extra_body:
+  return_progress: true   # llama.cpp: a progress event per batch while it reads
+```
+
+Only a llama.cpp server knows this field; leave it out for any other provider. A gateway in
+between has to pass the events through: check by watching a long prompt, or the daemon log for
+`stream_stalled` before the first chunk.
 
 To ground computer-use clicks on the same loopback server, set
 `computer_use.grounding.base_url` to that `/v1` URL (or a dedicated
