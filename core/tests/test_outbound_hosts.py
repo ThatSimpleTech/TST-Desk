@@ -73,6 +73,7 @@ from tstd.daemon import Daemon
 from tstd.desktop.grounding_client import GroundingClient
 from tstd.desktop.protocol import TINY_PNG
 from tstd.discovery import resolve_tier_slugs
+from tstd.local_servers import scan_local_servers
 from tstd.notify.discord import send as discord_send
 from tstd.notify.ntfy import send as ntfy_send
 from tstd.notify.slack import send as slack_send
@@ -264,6 +265,11 @@ _OUTBOUND_CAPABLE = {
     "model_setup.py": (
         "Add a model (TD-5172): GET /v1/models at the URL the user types in the "
         "walkthrough, with the key they typed or chose; user-initiated, never automatic"
+    ),
+    "local_servers.py": (
+        "Find models on this computer (TD-5180): GET /v1/models at each "
+        "local_servers base_url from config, loopback only, no key, proxies "
+        "ignored; sent only when the user clicks the button"
     ),
     "ws.py": (
         "the loopback WebSocket server plus opt-in Tailscale bind "
@@ -558,6 +564,19 @@ async def test_voice_destination_traces_to_config(recorder: TransportRecorder) -
     assert text == "hello"
     assert recorder.origins() == {"http://127.0.0.1:64114"}
     assert {str(u) for u in recorder.urls} == {"http://127.0.0.1:64114/v1/audio/transcriptions"}
+
+
+async def test_local_server_scan_destination_traces_to_config(
+    recorder: TransportRecorder,
+) -> None:
+    """The local-server scan asks exactly the loopback URLs config lists."""
+    config = ModelConfig.model_validate(
+        {"local_servers": [{"name": "Sentinel", "base_url": "http://127.0.0.1:64115/v1"}]}
+    )
+    found = await scan_local_servers(config.local_servers)
+    assert [s.name for s in found.servers] == ["Sentinel"]
+    assert recorder.origins() == {"http://127.0.0.1:64115"}
+    assert {str(u) for u in recorder.urls} == {"http://127.0.0.1:64115/v1/models"}
 
 
 async def test_embeddings_destination_traces_to_config(

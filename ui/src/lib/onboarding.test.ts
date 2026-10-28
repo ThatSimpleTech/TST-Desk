@@ -66,6 +66,8 @@ import {
   backModelStep,
   isLocalUrl,
   labelFromSlug,
+  scanLocalServers,
+  chooseLocalServer,
 } from "./onboarding.svelte.js";
 
 function send(msg: ClientMessageUnion): ClientMessageUnion[] {
@@ -426,5 +428,84 @@ describe("Add a model (TD-5172)", () => {
     expect(isLocalUrl("not a url")).toBe(false);
     expect(labelFromSlug("vendor/model-a")).toBe("model-a");
     expect(labelFromSlug("plain")).toBe("plain");
+  });
+});
+
+describe("Find models on this computer (TD-5180)", () => {
+  const ollama = {
+    name: "Ollama",
+    base_url: "http://127.0.0.1:11434/v1",
+    models: [{ id: "llama3.2:3b" }, { id: "qwen3:8b" }],
+  };
+  const answered = (servers = [ollama], checked = [ollama.base_url]): DaemonEventUnion =>
+    ({ type: "local_servers", seq: 1, servers, checked }) as DaemonEventUnion;
+
+  beforeEach(() => {
+    start();
+    openAddModel();
+  });
+
+  it("asks the daemon only when clicked, once while a scan is in flight", () => {
+    expect(send({ type: "scan_local_servers" } as ClientMessageUnion)).toHaveLength(0);
+    scanLocalServers();
+    scanLocalServers();
+    expect(send({ type: "scan_local_servers" } as ClientMessageUnion)).toEqual([
+      { type: "scan_local_servers" },
+    ]);
+    expect(onboarding.model.scanning).toBe(true);
+  });
+
+  it("keeps what answered and where it looked", () => {
+    scanLocalServers();
+    emit(answered([ollama], [ollama.base_url, "http://127.0.0.1:1234/v1"]));
+    expect(onboarding.model.scanning).toBe(false);
+    expect(onboarding.model.scan?.servers.map((s) => s.name)).toEqual(["Ollama"]);
+    expect(onboarding.model.scan?.checked).toHaveLength(2);
+  });
+
+  it("ignores an answer nobody asked for", () => {
+    emit(answered());
+    expect(onboarding.model.scan).toBeNull();
+  });
+
+  it("a found server goes straight to the pick, with no key and no second request", () => {
+    scanLocalServers();
+    emit(answered());
+    chooseLocalServer(ollama);
+    expect(onboarding.model.sub).toBe("pick");
+    expect(onboarding.model.baseUrl).toBe(ollama.base_url);
+    expect(onboarding.model.apiKey).toBe("");
+    expect(onboarding.model.models.map((m) => m.id)).toEqual(["llama3.2:3b", "qwen3:8b"]);
+    expect(send({ type: "list_endpoint_models" } as ClientMessageUnion)).toHaveLength(0);
+    backModelStep();
+    expect(onboarding.model.sub).toBe("url");
+  });
+
+  it("says so when TST Desk is not connected", () => {
+    mocks.sendOk = false;
+    scanLocalServers();
+    expect(onboarding.model.scanning).toBe(false);
+    expect(onboarding.model.listError).toMatch(/not connected/);
+  });
+
+  it("a refused scan stops looking and says why", () => {
+    scanLocalServers();
+    emit({
+      type: "error",
+      seq: 1,
+      code: "loopback_only",
+      message: "Only the computer itself can do that.",
+      in_reply_to: "scan_local_servers",
+    } as DaemonEventUnion);
+    expect(onboarding.model.scanning).toBe(false);
+    expect(onboarding.model.listError).toBe("Only the computer itself can do that.");
+  });
+
+  it("a fresh Add a model starts with no scan result", () => {
+    scanLocalServers();
+    emit(answered());
+    openAddModel();
+    expect(onboarding.model.scan).toBeNull();
+    expect(onboarding.model.scanning).toBe(false);
   });
 });

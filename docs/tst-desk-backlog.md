@@ -12278,6 +12278,44 @@ does not go stale on the next release.
       repository, every in-page anchor exists, and every GitHub link names
       `ThatSimpleTech/TST-Desk`.
 
+### TD-5180 — Find models on this computer
+
+**Size:** 3 · **Depends on:** TD-5172 · **Status:** Done
+
+A new user who already runs a local model server should not have to know
+its URL. The "Add a model" URL step gets a **Find models on this computer**
+button that asks the usual local servers for their model list and offers the
+ones that answer; picking one goes straight to its models.
+
+- [x] The button sends `scan_local_servers`; the daemon asks every
+      `local_servers` entry for `GET /v1/models` in parallel, with a short
+      timeout, and replies `local_servers` with the servers that listed
+      models (config order) and every URL it asked
+      (`test_local_servers.py::TestScan`, `TestDaemon`).
+- [x] `local_servers` ships in `config.yaml` with Ollama, LM Studio, vLLM and
+      llama.cpp on their usual ports and is filled into an older config that
+      lacks it; an off-box or schemeless `base_url` fails the load;
+      `local_servers: []` turns it off (`test_local_servers.py::TestConfig`).
+- [x] Loopback only and no key: no `Authorization` header is sent, an
+      off-box entry is never asked, and a proxy setting does not reroute the
+      request (`TestScan`, `TestRealSockets`); the outbound-hosts test lists
+      the new module with its reason and traces its destination to config.
+- [x] A port that answers with something other than a model list, or an
+      empty one, is not offered; a server that accepts and never answers
+      cannot stall the rest (`TestScan`, `TestRealSockets`).
+- [x] Nothing is written until the user picks: a found server sets the URL
+      and models and goes to the pick step with no key and no second request;
+      Back returns to the URL step (`onboarding.test.ts`).
+- [x] The scan runs only on the click, never when the walkthrough opens. It
+      is this computer only: a phone, another computer or the remote token
+      gets `loopback_only`, and the walkthrough stops looking and shows why
+      (`test_peer_policy.py`, `onboarding.test.ts`).
+- [x] Nothing found says which ports were asked; an empty list says
+      `local_servers` is empty (`wizard-add-model.test.ts`).
+- [x] Protocol fixtures regenerated with the new message and event;
+      docs/configuration.md, docs/models.md, docs/architecture.md and
+      DECISIONS.md updated.
+
 ### TD-5181 — Requests to this computer never use a proxy
 
 **Size:** 2 · **Depends on:** TD-5110 · **Status:** Done

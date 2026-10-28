@@ -1245,6 +1245,17 @@ class ListEndpointModels(ClientMessage):
     credential: str | None = None
 
 
+class ScanLocalServers(ClientMessage):
+    """Ask the configured loopback servers for their models (TD-5180).
+
+    "Find models on this computer" in the walkthrough's URL step. Sent only
+    when the user clicks it; each ``local_servers`` entry from the config is
+    asked for ``/models`` with no key. Answered with ``local_servers``.
+    """
+
+    type: Literal["scan_local_servers"] = "scan_local_servers"
+
+
 class AddModel(ClientMessage):
     """Add a single-model entry to the picker and make it active (TD-5172).
 
@@ -3785,6 +3796,28 @@ class EndpointModels(DaemonEvent):
     error: str | None = None
 
 
+class LocalServer(BaseModel):
+    """A server on this computer that answered with a model list (TD-5180)."""
+
+    name: str
+    base_url: str
+    models: list[EndpointModel]
+
+
+class LocalServers(DaemonEvent):
+    """Reply to ``scan_local_servers`` (TD-5180).
+
+    ``servers`` holds the ones that answered with at least one model, in
+    config order; ``checked`` is every URL asked, so "nothing found" can say
+    where it looked. An empty ``checked`` means the config lists none.
+    """
+
+    type: Literal["local_servers"] = "local_servers"
+    seq: int = 1
+    servers: list[LocalServer] = Field(default_factory=list)
+    checked: list[str] = Field(default_factory=list)
+
+
 class ModelTested(DaemonEvent):
     """Reply to ``test_model`` (TD-5172): the model's answer, or why it failed."""
 
@@ -4509,6 +4542,7 @@ ClientMessageT = Annotated[
     | SetApiKey
     | ValidateApiKey
     | ListEndpointModels
+    | ScanLocalServers
     | AddModel
     | TestModel
     | SetPreset
@@ -4635,6 +4669,7 @@ DaemonEventT = Annotated[
     | DrainResult
     | ApiKeyValidated
     | EndpointModels
+    | LocalServers
     | ModelTested
     | DiagnosticsReport
     | UsageReport
@@ -4752,6 +4787,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_api_key",
         "validate_api_key",
         "list_endpoint_models",
+        "scan_local_servers",
         "add_model",
         "test_model",
         "delete_api_key",
@@ -4878,6 +4914,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "drain_result",
         "api_key_validated",
         "endpoint_models",
+        "local_servers",
         "model_tested",
         "diagnostics_report",
         "usage_report",

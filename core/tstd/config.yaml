@@ -98,6 +98,22 @@ credentials:
 # loopback tier may leave slug out to read the model from /v1/models.
 presets: {}
 
+# "Find models on this computer" in Add a model (TD-5180). When the user
+# clicks it, each of these is asked for its /models; the ones that answer
+# with a model list are offered. Each base_url must be on this computer
+# (loopback): the request never leaves the machine and carries no key.
+# These are the usual ports for each server; add your own, or set
+# `local_servers: []` to turn the button's search off.
+local_servers:
+  - name: Ollama
+    base_url: http://127.0.0.1:11434/v1
+  - name: LM Studio
+    base_url: http://127.0.0.1:1234/v1
+  - name: vLLM
+    base_url: http://127.0.0.1:8000/v1
+  - name: llama.cpp
+    base_url: http://127.0.0.1:8080/v1
+
 # Web search. The agent's web_search tool sends the query to base_url as
 # ?q=... — never a host written into Python. Empty base_url disables the
 # primary only. Each fallback is tried in order when the URLs before it
