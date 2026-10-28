@@ -613,6 +613,25 @@ class SearchConfig(BaseModel):
     fetch_cache_seconds: int = Field(default=900, ge=0, le=86_400)
 
 
+class LocalServerConfig(BaseModel):
+    """A model server "Find models on this computer" asks (TD-5180).
+
+    Loopback only: the button must never reach past this machine, so an
+    off-box ``base_url`` fails the config load instead of being skipped.
+    """
+
+    name: str = Field(min_length=1, max_length=40)
+    base_url: str = Field(min_length=1)
+
+    @field_validator("base_url")
+    @classmethod
+    def _loopback_only(cls, value: str) -> str:
+        url = value.strip().rstrip("/")
+        if not url.startswith(("http://", "https://")) or not is_loopback_url(url):
+            raise ValueError(f"local_servers base_url must be on this computer: {value!r}")
+        return url
+
+
 class ProjectContextConfig(BaseModel):
     """Pinned-file budget on the brain prompt (TD-2805)."""
 
@@ -1545,6 +1564,9 @@ class ModelConfig(BaseModel):
     active_preset: str = DEFAULT_PRESET
     credentials: dict[str, CredentialConfig] = Field(default_factory=dict)
     search: SearchConfig = Field(default_factory=SearchConfig)
+    # Servers "Find models on this computer" asks (TD-5180). The shipped
+    # list is in config.yaml; the loader fills it into older copies.
+    local_servers: list[LocalServerConfig] = Field(default_factory=list)
     embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
     project_context: ProjectContextConfig = Field(default_factory=ProjectContextConfig)
     steering: SteeringConfig = Field(default_factory=SteeringConfig)
@@ -1598,6 +1620,8 @@ class ModelConfig(BaseModel):
                 data = {**data, "presets": {}}
             if data.get("active_preset") is None and "active_preset" in data:
                 data = {**data, "active_preset": ""}
+            if data.get("local_servers") is None and "local_servers" in data:
+                data = {**data, "local_servers": []}
         return data
 
     @model_validator(mode="after")
@@ -1834,11 +1858,13 @@ def load_config(path: Path | None = None) -> ModelConfig:
         "voice",
         "mcp",
         "credentials",
+        "local_servers",
     ):
         if key in data:
             continue
         value = _shipped().get(key)
-        if isinstance(value, dict):
+        # local_servers (TD-5180) is the one list among the mappings.
+        if isinstance(value, dict | list):
             data[key] = value
 
     _merge_shipped_credential_hosts(data, _shipped())

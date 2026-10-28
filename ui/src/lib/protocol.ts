@@ -729,6 +729,12 @@ export interface ListEndpointModels extends ClientMessage {
   credential?: string | null;
 }
 
+// TD-5180 "Find models on this computer": ask the loopback servers listed
+// in config `local_servers` for their /models. Sent only on a click.
+export interface ScanLocalServers extends ClientMessage {
+  type: "scan_local_servers";
+}
+
 // TD-5172: write a single-model preset (all three roles on one model),
 // store a typed key in the keychain, and make it active. Acked with
 // setup_state.
@@ -1229,6 +1235,7 @@ export type ClientMessageUnion =
   | DeleteApiKey
   | ValidateApiKey
   | ListEndpointModels
+  | ScanLocalServers
   | AddModel
   | TestModel
   | SetPreset
@@ -2342,6 +2349,22 @@ export interface EndpointModels extends DaemonEvent {
   error?: string | null;
 }
 
+// TD-5180: a server on this computer that answered with a model list.
+export interface LocalServer {
+  name: string;
+  base_url: string;
+  models: EndpointModel[];
+}
+
+// TD-5180: reply to scan_local_servers. `servers` are the ones that listed
+// models, in config order; `checked` is every URL asked (empty: none listed).
+export interface LocalServers extends DaemonEvent {
+  type: "local_servers";
+  seq: number;
+  servers: LocalServer[];
+  checked: string[];
+}
+
 // TD-5172: reply to test_model.
 export interface ModelTested extends DaemonEvent {
   type: "model_tested";
@@ -3097,6 +3120,7 @@ export type DaemonEventUnion =
   | MachineList
   | ApiKeyValidated
   | EndpointModels
+  | LocalServers
   | ModelTested
   | DiagnosticsReport
   | UsageReport
