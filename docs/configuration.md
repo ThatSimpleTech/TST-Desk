@@ -110,6 +110,15 @@ printable ASCII (space through `~`). On macOS, `security -w` prints
 anything else as hex, so save refuses it. An empty or whitespace-only
 item is treated as missing.
 
+A saved key goes only to its own server (TD-5182): the `base_url` saved
+with it, or, for a key saved without one, the model URL of a tier or a
+backup (`fallbacks`) that names it, or a server on this computer. Where a message names a saved key
+by id (the Add a model list, adding a model, testing a key in Settings,
+removing one), the id must be one of these entries, never another keychain
+item such as a webhook or a sign-in token, and the daemon refuses to send
+the key anywhere else. Test on a key that no model uses goes to its
+`base_url`; with no `base_url` there is nothing to test it against.
+
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `name` | string, 1–40 chars | *required* | The local given name. Shown in Settings → Model. Never a secret. |

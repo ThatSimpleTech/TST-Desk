@@ -18440,3 +18440,26 @@ client that can be pointed at this computer.
   per URL so each gets the right transport.
 - Not covered: the dev-only live probes (`e2e_live.py`, `e2e_m8.py`), and
   `web_fetch`, whose wall already refuses loopback.
+
+## TD-5182 — A saved key goes only to its own server (Class A)
+
+TD-1718 made the host saved with a key win over a preset's URL, so a turn
+never sends a key anywhere config does not name. Messages that name a saved
+key by id did not apply that rule. `list_endpoint_models` sent the key to the
+URL in the message. The Settings key test sent a key no model uses to the
+main model's server. Neither checked the id against `credentials:`, and the
+keychain account is just `tst-<id>`, so `ntfy-topic`, `github-oauth` or a
+paired computer's item could be read and sent as a bearer token.
+- One rule, in `key_hosts.py`: the id must be a saved key, and the key goes
+  to its `base_url`, or, with none, to a URL a tier or backup already sends
+  it to, or to this computer. The same rule as a turn, applied before the key is read.
+- It applies to every client, including this computer: the walkthrough never
+  sends a saved key by id, so nothing in the app changes, and a typo cannot
+  send a saved key to the wrong server.
+- `add_model` with a saved key at another server used to save a model whose
+  turns went to the key's host instead. Now it is refused. The packaged smoke
+  probe relied on that and now uses the key's own host.
+- Not changed: a paired phone can still ask the model list for any address.
+  A paired phone can already start turns and approve commands on this
+  computer, so blocking addresses there would add no protection. Settings can
+  still change a key's host on purpose (TD-1722).

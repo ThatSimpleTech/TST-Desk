@@ -358,12 +358,25 @@ def probe_keychain(port_file: Path) -> None:
     try:
         _send(ws, {"type": "hello", "token": token, "version": 1})
         _recv_until(ws, "hello_ack", 10.0)
+        # A model bound to a saved key must be on that key's server (TD-5182),
+        # so use the host the shipped OpenRouter row names.
+        first = _send_and_wait_setup(ws, {"type": "get_setup_state"})
+        host = next(
+            (
+                row.get("base_url")
+                for row in first.get("credentials", [])
+                if row.get("id") == "openrouter"
+            ),
+            None,
+        )
+        if not host:
+            raise RuntimeError(f"the shipped OpenRouter key has no host: {first!r}")
         state = _send_and_wait_setup(
             ws,
             {
                 "type": "add_model",
                 "label": "Hosted",
-                "base_url": "https://api.example.com/v1",
+                "base_url": host,
                 "slug": "vendor/model",
                 "credential": "openrouter",
             },

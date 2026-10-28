@@ -604,12 +604,12 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `close_worktree` | yes | Close a session's git worktree (TD-5126). `action` is `keep` (folder and branch stay on disk), `merge` (commit its changes on the branch, merge the branch into the main checkout; refused with nothing changed on a conflict or a mid-merge checkout) or `remove`. An unchanged worktree is removed whatever `action` says; with no `action`, one with changes is refused with `worktree_has_changes` so the window can ask. The session then works in the folder it was opened on. Refused mid-turn (`session_busy`) and while setup runs (`worktree_busy`). Acked with `session_list`. Not a machine-peer verb. |
 | `get_setup_state` | — | Ask for the onboarding state: key presence, presets, active preset. |
 | `set_api_key` | — | Store an API key in the OS keychain. Optional `base_url` is the host that key talks to (TD-1722). |
-| `validate_api_key` | — | Probe a key with one cheap live call. |
-| `list_endpoint_models` | — | "Add a model": list a server's `/models`, with the typed key sent only to that URL (TD-5172). |
+| `validate_api_key` | — | Probe a key with one cheap live call. A saved key is probed only at a model that uses it or at its own host (TD-5182). |
+| `list_endpoint_models` | — | "Add a model": list a server's `/models`, with the typed key sent only to that URL (TD-5172). A saved `credential` must be a saved key, and is sent only to its own server (TD-5182). |
 | `scan_local_servers` | — | "Find models on this computer": ask each loopback `local_servers` entry for `/models`, no key, on the user's click only (TD-5180). |
 | `add_model` | — | "Add a model": store the key, write a single-model preset, make it active. Acked with `setup_state`. |
 | `test_model` | — | Send one short test message to a preset's model (default: the active one). |
-| `delete_api_key` | — | Remove an API key from the OS keychain. |
+| `delete_api_key` | — | Remove an API key from the OS keychain. Only an API key's id, never another keychain item (TD-5182). |
 | `set_preset` | — | Choose the active model preset. |
 | `set_engine` | — | Choose the agent engine for new sessions (`native` or `grok`). Acked with `setup_state`. |
 | `set_grok_mode` | yes | Switch the live Grok ACP session mode. |
