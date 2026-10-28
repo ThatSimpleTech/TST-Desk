@@ -29,7 +29,9 @@ inside a substitution, an unclosed quote, a heredoc whose end bash and dash
 place apart, a ``\\``-newline that joins two halves of an operator, bash's
 ``${ cmd; }``, ``[[``, a ``(`` glued to a word as in ``a=(…)`` or
 ``@(…)``, a ``name[…]`` subscript holding a space or an operator, a
-program name bash brace-expands, cmd's ``for /f``), the result is
+program name bash brace-expands, a ``}`` inside a ``$(…)`` within
+``${…}`` or a ``\\`` ending the text, both read otherwise by bash 3.2,
+the ``/bin/sh`` of macOS, cmd's ``for /f``), the result is
 incomplete: no ``auto`` rule applies, and ``ask`` and ``never`` rules still
 see everything read so far. A differential test
 (``tests/test_policy_shell_differential.py``) runs a corpus under bash, bash
