@@ -12240,6 +12240,44 @@ under their own submenu; and docs/models.md explains all of it.
       and `setup_state` fields; the app walk seeds two labelled models and a
       team and walks the picker; census drops "Model tier".
 
+### TD-5179 — README leads with what it is and the current release
+**Size:** 1 · **Depends on:** — · **Status:** Done
+
+A stranger who lands on the repository should get the pitch and the right
+download in the first screen. The README still pointed at the v0.1.0 tag and
+named v0.1.0 files, called every build "v0.1", and said there was no mobile
+app. It now opens with the one-line pitch, six short points that each match
+the code or the docs, a download link to the latest release, the screenshot,
+and a "Works with" table. Install names files by platform and type, so it
+does not go stale on the next release.
+
+- [x] Install links `releases/latest` and lists files by platform and type
+      (`.dmg`, `.AppImage`, `.deb`, `.msi`, `.apk`), checked against the
+      assets on `tstdesk-v0.4.2`; `SHA256SUMS.txt` is described as covering
+      the desktop files, since the hand-built `.apk` is added after it.
+- [x] Each point is backed by a source: Apache-2.0 (`LICENSE`), no account or
+      hosted backend (`AGENTS.md` §1), any OpenAI-compatible endpoint and keyless
+      loopback (`docs/models.md`, `config.py`), the classifier's auto and ask
+      rules (`autonomy/classifier.py`, `policy.py`), the keychain backends
+      (`keychain.py`), the title-bar meter and spend cap (`CostMeter.svelte`,
+      `caps.spend_usd`), Tauri with no Electron (`shell/Cargo.toml`,
+      `ui/package.json`), and QR pairing (`android/README.md`,
+      `docs/configuration.md`).
+- [x] "Works with" lists Ollama, vLLM, LM Studio and llama.cpp
+      (`docs/models.md`, `docs/configuration.md` §3.4), hosted APIs, gateways
+      and keyed servers on another machine (`docs/configuration.md`
+      `credentials`), and ends with any OpenAI-compatible endpoint.
+- [x] "Installing an unsigned build" still holds: `package.yml` and
+      `release.yml` have no notarization or Authenticode step. The v0.1 wording
+      is gone, and the macOS steps cover the System Settings "Open Anyway"
+      path on macOS 15 and later.
+- [x] Stale lines fixed: the Status release text, the comparison table's
+      Polish and Mobile rows, the Rust minimum (1.89, from `notify-rust`
+      4.18 in `Cargo.lock`), and the `.deb` install command.
+- [x] Every relative link and image in README.md resolves to a file in the
+      repository, every in-page anchor exists, and every GitHub link names
+      `ThatSimpleTech/TST-Desk`.
+
 ### TD-5182 — A saved key goes only to its own server
 
 **Size:** 2 · **Depends on:** TD-1718, TD-5172 · **Status:** Done

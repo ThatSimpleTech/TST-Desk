@@ -2,45 +2,84 @@
 
 **An open-source, bring-your-own-model desktop agent workspace.**
 
-TST Desk is a desktop application that gives you an AI coworker in a window: you point it at a
-folder, type what you want, and watch it work — reading files, running commands, and asking
-before it does anything consequential. It looks and feels like Claude Desktop with a Cowork-style
-workspace, but it runs on models *you* choose through any OpenAI-compatible endpoint, billed to
-*your* API key, with a live cost meter in the title bar. There is no server, no hosted backend,
-no account, and no subscription — and pointed at a local model server it needs no API key and no
-network at all.
+Point it at a folder, say what you want, and watch it work. It reads files, runs commands, and
+asks before it does anything consequential. It looks and feels like Claude Desktop, but it runs
+on the models you choose, billed to your own key.
+
+- **Open source, no account.** Apache-2.0. Nothing to sign up for, no hosted backend, no
+  subscription. You pay your model provider per token, and nobody else.
+- **Any OpenAI-compatible model.** Paste a server URL, pick a model, start working. A live
+  meter in the title bar shows what each turn and session costs, and a spend cap pauses the
+  session when it is reached.
+- **Works offline with a local model.** Pointed at a model server on your own computer, it
+  needs no API key and no network.
+- **Asks before it acts.** Every tool call goes through a classifier. Reads and edits inside
+  your folder run on their own. Other shell commands, anything outside the folder, and
+  anything it cannot classify wait for your approval.
+- **Keys stay in your OS keychain.** Keychain on macOS, Secret Service on Linux, Credential
+  Manager on Windows. Never in a config file or a log.
+- **A native app for macOS, Linux and Windows.** Built on Tauri: a Rust shell on the system
+  webview, with the agent daemon bundled in. No Electron. An Android app pairs with a QR code
+  and follows your sessions from your phone.
+
+**[Download the latest release](https://github.com/ThatSimpleTech/TST-Desk/releases/latest)**
+· [Install steps](#install) · [Quickstart](#quickstart) · [How models work](docs/models.md)
 
 ![TST Desk on macOS — session rail, greeting, composer, and activity pane](docs/images/window.png)
+
+## Works with
+
+TST Desk talks to any server that speaks the OpenAI chat API. No model ships with it; the
+first run walks you through adding one.
+
+| What | Examples | Key |
+|---|---|---|
+| A model server on your computer | Ollama, vLLM, LM Studio, llama.cpp's server | None. No key is asked for, and none is sent to `127.0.0.1` or `localhost`. |
+| A hosted model API | A provider's OpenAI-compatible `/v1` endpoint | Your key, stored in the OS keychain and sent only to that URL |
+| A gateway in front of many models | A router or proxy that speaks the OpenAI chat API | Your key for the gateway |
+| A server you run on another machine | Your own vLLM or llama.cpp behind a key | A named key for that server |
+| Anything else | Any endpoint that speaks the OpenAI chat API | Whatever that endpoint needs |
+
+You can also mix them: a team gives planning, doing and checking their own models, for
+example a hosted model that plans and a local one that does the work. See
+[docs/models.md](docs/models.md).
 
 ---
 
 ## Install
 
-[v0.1.0](https://github.com/ThatSimpleTech/TST-Desk/releases/tag/tstdesk-v0.1.0)
-is on the releases page. Each platform gets these artifacts, built by
-[`.github/workflows/package.yml`](.github/workflows/package.yml):
+Get the newest build from
+[the latest release](https://github.com/ThatSimpleTech/TST-Desk/releases/latest). Every release
+has these files:
 
-| Platform | Artifact |
+| Platform | File |
 |---|---|
-| macOS (Apple silicon) | `TST.Desk_0.1.0_aarch64.dmg` |
-| macOS (Intel) | `TST.Desk_0.1.0_x64.dmg` |
-| Linux (x86_64) | `TST.Desk_0.1.0_amd64.AppImage` and `TST.Desk_0.1.0_amd64.deb` |
-| Linux (ARM64) | `TST.Desk_0.1.0_aarch64.AppImage` and `TST.Desk_0.1.0_arm64.deb` |
-| Windows | `TST.Desk_0.1.0_x64_en-US.msi` |
+| macOS, Apple silicon | `.dmg` (`aarch64`) |
+| macOS, Intel | `.dmg` (`x64`) |
+| Linux, x86_64 | `.AppImage` or `.deb` (`amd64`) |
+| Linux, ARM64 | `.AppImage` (`aarch64`) or `.deb` (`arm64`) |
+| Windows, x64 | `.msi` |
+| Android phone (optional) | `.apk` |
 
-GitHub Releases rewrites spaces in Tauri's `TST Desk_…` names to dots;
-`SHA256SUMS.txt` uses the download names.
+`SHA256SUMS.txt` on the same release lists a checksum for each desktop file.
 
-1. Download the artifact for your platform from
-   [the releases page](https://github.com/ThatSimpleTech/TST-Desk/releases).
-2. Verify it against the published `SHA256SUMS.txt`.
+1. Download the file for your platform.
+2. Check it against `SHA256SUMS.txt`.
 3. Install it:
-   - **macOS** — open the `.dmg`, drag **TST Desk** to Applications.
-   - **Linux** — `chmod +x` the AppImage and run it, or `sudo dpkg -i` the `.deb`.
+   - **macOS** — open the `.dmg` and drag **TST Desk** to Applications.
+   - **Linux** — `chmod +x` the AppImage and run it, or install the `.deb` with
+     `sudo apt install ./<file>.deb`. To save API keys, install `libsecret-tools` and have
+     your desktop's keyring running ([docs/linux.md](docs/linux.md)).
    - **Windows** — run the `.msi`.
-4. First launch will warn you, because v0.1 builds are unsigned. See
-   [Installing an unsigned build](#installing-an-unsigned-build) below for the per-platform
+4. The first launch shows a warning on macOS and Windows, because release builds are not
+   notarized (macOS) or code-signed (Windows).
+   [Installing an unsigned build](#installing-an-unsigned-build) below has the one-time
    click-through.
+
+**The phone app** follows sessions on your computer from an Android phone. It is a viewer for
+your own computer, not a cloud service: both devices need Tailscale. Install the `.apk`, then
+pair it from **Settings → Phones and devices → Pair a phone** on the computer by scanning the QR code.
+[android/README.md](android/README.md) has the details.
 
 The app also runs from source — see [Development](#development).
 
@@ -186,11 +225,11 @@ built by large teams, and this table is only useful if it says so.
 | | TST Desk | Claude Desktop / Cowork / hosted workspaces |
 |---|---|---|
 | **Setup** | Get an API key, paste it, pick a folder | Sign in and go. Genuinely less work |
-| **Polish** | v0.1, in development, unsigned binaries that update from GitHub releases after a checksum check | Years of QA, signed, notarized, auto-updating |
+| **Polish** | Early 0.x releases, in active development. Builds are not notarized or code-signed, and update from GitHub releases after a checksum check | Years of QA, signed, notarized, auto-updating |
 | **Support** | GitHub issues and whoever shows up | A company, a support channel, an SLA |
 | **Infrastructure** | Yours to run; local models need local hardware | Managed. Nothing to provision, nothing to keep warm |
 | **Model quality out of the box** | Whatever you pick and pay for | Frontier models in a harness tuned for them |
-| **Mobile / sync** | None | Usually both |
+| **Mobile / sync** | An Android app that attaches to your own computer over Tailscale. No cloud sync | Usually both |
 | **Pricing** | Per token, metered live — no floor, and a spend cap that pauses you | Flat subscription — predictable, and cheaper if you are a heavy user |
 | **Model choice** | Any OpenAI-compatible endpoint; three tiers you pick, with routing pinnable mid-session | The vendor's models |
 | **Whose key** | Yours. You see the bill and the meter | The vendor's, folded into the subscription |
@@ -207,8 +246,12 @@ model choice, the audit trail, and the code.
 
 ## Status
 
-v0.1.0 is tagged (`tstdesk-v0.1.0`); installers are on
-[the releases page](https://github.com/ThatSimpleTech/TST-Desk/releases/tag/tstdesk-v0.1.0).
+TST Desk is in active development, with 0.x releases. Every release is on
+[the releases page](https://github.com/ThatSimpleTech/TST-Desk/releases), and the newest is
+always at [releases/latest](https://github.com/ThatSimpleTech/TST-Desk/releases/latest).
+Pushing a `tstdesk-v*` tag runs [`release.yml`](.github/workflows/release.yml), which builds
+the five desktop platforms with [`package.yml`](.github/workflows/package.yml) and publishes
+them with `SHA256SUMS.txt`. The Android `.apk` is built by hand and added to the release.
 GitHub Actions is budget-capped at **$20/month**. Default CI is three
 Linux jobs; five-platform Package runs only on demand or on a new
 `tstdesk-v*` tag — see [`docs/ci-actions-blocked.md`](docs/ci-actions-blocked.md).
@@ -276,7 +319,7 @@ tool — is in [`docs/architecture.md`](docs/architecture.md). Every configurati
 documented in [`docs/configuration.md`](docs/configuration.md), and writing `AGENTS.md` and
 path-scoped rules is covered in [`docs/steering.md`](docs/steering.md). Where Windows behaves
 differently — path forms, 8.3 short names, file permissions, killing a command — is in
-[`docs/windows.md`](docs/windows.md).
+[`docs/windows.md`](docs/windows.md), and where Linux does is in [`docs/linux.md`](docs/linux.md).
 
 ## Development
 
@@ -284,7 +327,7 @@ differently — path forms, 8.3 short names, file permissions, killing a command
 
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
-- Rust 1.77+ (for the Tauri host)
+- Rust 1.89+ (for the Tauri host; the locked dependencies need it)
 - Node.js 24+ (for the frontend)
 - Linux only — WebKit/GTK headers for the Tauri host, plus `secret-tool` for the
   keychain:
@@ -363,19 +406,22 @@ git commit --no-verify
 
 ## Installing an unsigned build
 
-v0.1 builds are not code-signed or notarized (see `DECISIONS.md`, 2026-08-14, and
-[`docs/signing.md`](docs/signing.md) for the v0.1 refusal, future CI wiring, and
-where release secrets would live).
-Each OS will warn on first launch; that is expected, not a defect.
+Release builds are not code-signed or notarized with a publisher certificate: the release
+workflow has no signing step yet. `DECISIONS.md` (2026-08-14) and
+[`docs/signing.md`](docs/signing.md) record why, what signing would cost, and how CI would
+wire it. Each OS warns on first launch. That is expected, not a defect.
 
-- **macOS** — Gatekeeper blocks the unsigned app. Right-click the app and
-  choose **Open**, then confirm in the dialog (once per install). If the file
-  was download-quarantined and the Open trick does not appear:
+- **macOS** — Gatekeeper blocks the app the first time you open it. On macOS 15 or later,
+  open **System Settings → Privacy & Security**, find the message about TST Desk, and click
+  **Open Anyway**. On earlier versions, right-click the app, choose **Open**, then confirm.
+  If neither works, clear the download quarantine:
   `xattr -d com.apple.quarantine "/Applications/TST Desk.app"`.
 - **Windows** — SmartScreen shows "Windows protected your PC". Click
   **More info → Run anyway**.
-- **Linux** — no signing warning. For the AppImage, `chmod +x` and run; the
-  `.deb` installs with `sudo dpkg -i`.
+- **Linux** — no signing warning. For the AppImage, `chmod +x` and run it; install the
+  `.deb` with `sudo apt install ./<file>.deb`.
+- **Android** — the `.apk` is a sideload build, not a store app. Android asks you to allow
+  installs from the app you open it with.
 
 ## Updates
 
