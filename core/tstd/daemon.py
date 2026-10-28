@@ -136,6 +136,7 @@ from .grok_home import (
 )
 from .grok_loop import grok_loop
 from .hub import NOT_HANDLED, Hub
+from .key_hosts import every_tier, is_key_id, key_refusal, unknown_key
 from .keychain import (
     KeychainError,
     KeychainLockedError,
@@ -1691,13 +1692,20 @@ class Daemon:
         with until that is settled.
         """
         await resolve_tier_slugs(self.config)
-        tier_cfg = self.config.tier("brain")
-        if credential:
-            for candidate in self.config.tiers().values():
-                if resolve_credential_id(candidate) == credential:
-                    tier_cfg = candidate
-                    break
-        tier_cfg = apply_credential_host(self.config, tier_cfg)
+        if credential and api_key is None:
+            # TD-5182: a saved key is tested only where it is already sent.
+            saved_tier, refusal = self._saved_key_tier(credential)
+            if saved_tier is None:
+                return ProviderError(code="key_refused", message=refusal)
+            tier_cfg = saved_tier
+        else:
+            tier_cfg = self.config.tier("brain")
+            if credential:
+                for candidate in self.config.tiers().values():
+                    if resolve_credential_id(candidate) == credential:
+                        tier_cfg = candidate
+                        break
+            tier_cfg = apply_credential_host(self.config, tier_cfg)
         if api_key is not None:
             client = ProviderClient(
                 base_url=tier_cfg.base_url, api_key=api_key, timeout=tier_cfg.timeouts()
@@ -1742,14 +1750,38 @@ class Daemon:
             seq=1, ok=True, detail="Key accepted by the active preset's provider."
         )
 
+    def _saved_key_tier(self, credential: str) -> tuple[TierConfig | None, str]:
+        """Where a saved key's test goes: a model that sends it, or its own host.
+
+        Never the main model's server for a key that model does not use
+        (TD-5182). ``(None, why)`` when the key is unknown or has nowhere of
+        its own to go.
+        """
+        unknown = unknown_key(self.config, credential)
+        if unknown is not None:
+            return None, unknown
+        active = list(self.config.tiers().values())
+        for candidate in [*active, *every_tier(self.config)]:
+            if resolve_credential_id(candidate) == credential:
+                return apply_credential_host(self.config, candidate), ""
+        own = credential_base_url(self.config, credential)
+        if own is None:
+            return None, "No model uses this key yet, so there is nothing to test it against."
+        return self.config.tier("brain").model_copy(update={"base_url": own}), ""
+
     # ── Add a model (TD-5172) ─────────────────────────────────────────
 
     async def _list_endpoint_models(self, msg: ListEndpointModels) -> EndpointModels:
         """The walkthrough's model list, with the typed or a stored key."""
         api_key = msg.api_key.strip() if msg.api_key and msg.api_key.strip() else None
-        if api_key is None and msg.credential:
+        credential = msg.credential.strip() if msg.credential else ""
+        if api_key is None and credential:
+            # TD-5182: a saved key goes only to its own server.
+            refusal = key_refusal(self.config, credential, msg.base_url)
+            if refusal is not None:
+                return EndpointModels(base_url=msg.base_url, error=refusal)
             try:
-                api_key = await get_api_key(msg.credential)
+                api_key = await get_api_key(credential)
             except (KeychainError, NotImplementedError) as e:
                 return EndpointModels(base_url=msg.base_url, error=str(e))
         return await list_endpoint_models(msg.base_url, api_key)
@@ -1759,6 +1791,11 @@ class Daemon:
         base_url = msg.base_url.strip().rstrip("/")
         credential = msg.credential.strip() if msg.credential else None
         api_key = msg.api_key.strip() if msg.api_key and msg.api_key.strip() else None
+        if api_key is None and credential:
+            # TD-5182: a model bound to a saved key must be on that key's server.
+            refusal = key_refusal(self.config, credential, base_url)
+            if refusal is not None:
+                return build_error("bad_request", refusal)
         try:
             name = preset_name_for(msg.label, set(self.config.presets))
             if api_key is not None:
@@ -3846,6 +3883,9 @@ class Daemon:
         if isinstance(msg, DeleteApiKey):
             # TD-1102: key removable from settings. Same ack pattern as
             # set_api_key — the fresh setup_state flips has_api_key.
+            # TD-5182: only an API key's id, never another keychain item.
+            if not is_key_id(msg.provider.strip()):
+                return build_error("bad_request", f"There is no saved key called {msg.provider!r}.")
             try:
                 await delete_api_key(msg.provider)
             except KeychainLockedError as e:

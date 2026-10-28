@@ -12239,3 +12239,30 @@ under their own submenu; and docs/models.md explains all of it.
 - [x] Protocol fixtures regenerated with the three new messages, two events
       and `setup_state` fields; the app walk seeds two labelled models and a
       team and walks the picker; census drops "Model tier".
+
+### TD-5182 — A saved key goes only to its own server
+
+**Size:** 2 · **Depends on:** TD-1718, TD-5172 · **Status:** Done
+
+A turn sends a key only where config says, but four messages let a client
+name a saved key by id, and they skipped that rule. `list_endpoint_models`
+sent the key to whatever URL came with it. The Settings key test sent a key
+no model uses to the main model's server. Neither checked the id, so a
+client could name another keychain item with the `tst-` prefix, such as a
+webhook URL or a sign-in token, and have it sent as a bearer token.
+`delete_api_key` could remove such an item.
+
+- [x] `tstd/key_hosts.py` states the rule once: the id must be a saved key
+      (`credentials:`), and it goes only to its `base_url`, or, with none, to
+      the URL of a tier or backup that names it, or a server on this computer
+      (`test_saved_key_host.py::TestRule`).
+- [x] `list_endpoint_models` and `add_model` refuse a saved key at any other
+      address, and read no key and send no request when they do
+      (`TestDaemon`).
+- [x] `validate_api_key` tests a saved key at a model that uses it or at its
+      own host, never the main model's server; with nowhere to go it says so
+      and sends nothing (`TestDaemon`).
+- [x] `delete_api_key` takes only an API key's id (`TestDaemon`).
+- [x] The packaged smoke probe binds its hosted model at the OpenRouter key's
+      own host, read from `setup_state`; docs/configuration.md and
+      docs/architecture.md updated.
