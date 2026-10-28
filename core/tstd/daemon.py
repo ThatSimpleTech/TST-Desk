@@ -146,6 +146,7 @@ from .keychain import (
     store_api_key,
 )
 from .line_comments import LineCommentError, build_comments_turn
+from .local_servers import scan_local_servers
 from .local_worker import (
     effective_tier,
     last_cu_surface,
@@ -347,6 +348,7 @@ from .protocol import (
     SaveJob,
     SaveJobTemplate,
     SaveMemory,
+    ScanLocalServers,
     SearchSessions,
     SendQueued,
     SessionJobSource,
@@ -3873,6 +3875,9 @@ class Daemon:
         # ── Add a model (TD-5172) ────────────────────────────────────
         if isinstance(msg, ListEndpointModels):
             return (await self._list_endpoint_models(msg)).model_dump_json()
+
+        if isinstance(msg, ScanLocalServers):
+            return (await scan_local_servers(self.config.local_servers)).model_dump_json()
 
         if isinstance(msg, AddModel):
             return await self._handle_add_model(msg)

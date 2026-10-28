@@ -571,6 +571,9 @@
     "api_key": "sk-test-key",
     "credential": null
   },
+  "scan_local_servers": {
+    "type": "scan_local_servers"
+  },
   "add_model": {
     "type": "add_model",
     "label": "My model",
@@ -2320,6 +2323,42 @@
     "ok": true,
     "reply": "I am working.",
     "detail": ""
+  },
+  "local_servers": {
+    "type": "local_servers",
+    "seq": 1,
+    "servers": [
+      {
+        "name": "Ollama",
+        "base_url": "http://127.0.0.1:11434/v1",
+        "models": [
+          {
+            "id": "llama3.2:3b",
+            "context_window": null,
+            "input_price": null,
+            "output_price": null
+          },
+          {
+            "id": "qwen3:8b",
+            "context_window": null,
+            "input_price": null,
+            "output_price": null
+          }
+        ]
+      }
+    ],
+    "checked": [
+      "http://127.0.0.1:11434/v1",
+      "http://127.0.0.1:1234/v1"
+    ]
+  },
+  "local_servers_none": {
+    "type": "local_servers",
+    "seq": 1,
+    "servers": [],
+    "checked": [
+      "http://127.0.0.1:11434/v1"
+    ]
   },
   "diagnostics_report": {
     "type": "diagnostics_report",

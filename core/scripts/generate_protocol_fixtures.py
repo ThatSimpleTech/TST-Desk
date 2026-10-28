@@ -144,6 +144,8 @@ from tstd.protocol import (
     ListPins,
     ListPolicyRules,
     ListSessions,
+    LocalServer,
+    LocalServers,
     LogTrimmed,
     LoosenedSetting,
     MachineList,
@@ -210,6 +212,7 @@ from tstd.protocol import (
     SaveJob,
     SaveJobTemplate,
     SaveMemory,
+    ScanLocalServers,
     ScreenFrame,
     SearchSessions,
     SendQueued,
@@ -544,6 +547,8 @@ FIXTURES = {
     "list_endpoint_models": ListEndpointModels(
         base_url="https://api.example.com/v1", api_key="sk-test-key"
     ),
+    # "Find models on this computer" (TD-5180)
+    "scan_local_servers": ScanLocalServers(),
     "add_model": AddModel(
         label="My model",
         description="General coding and chat",
@@ -1566,6 +1571,17 @@ FIXTURES = {
         error="The server refused the key. Check it and try again.",
     ),
     "model_tested": ModelTested(preset="tst-default", ok=True, reply="I am working."),
+    "local_servers": LocalServers(
+        servers=[
+            LocalServer(
+                name="Ollama",
+                base_url="http://127.0.0.1:11434/v1",
+                models=[EndpointModel(id="llama3.2:3b"), EndpointModel(id="qwen3:8b")],
+            )
+        ],
+        checked=["http://127.0.0.1:11434/v1", "http://127.0.0.1:1234/v1"],
+    ),
+    "local_servers_none": LocalServers(checked=["http://127.0.0.1:11434/v1"]),
     # Diagnostics (TD-1104): connection-scoped like setup_state. Mixed rows so
     # consumers see every status — the fail row carries the concrete fix.
     "diagnostics_report": DiagnosticsReport(

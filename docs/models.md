@@ -35,7 +35,11 @@ picker (**Add a model**) or from Settings → Models.
 
 1. **Server URL.** Paste the API URL of the server. It usually ends in
    `/v1`, for example `https://api.example.com/v1`, or
-   `http://127.0.0.1:8000/v1` for a server on this computer.
+   `http://127.0.0.1:8000/v1` for a server on this computer. If the server
+   runs on this computer, **Find models on this computer** looks for it
+   instead: it asks Ollama, LM Studio, vLLM and llama.cpp on their usual
+   ports and lists the ones that answer. Pick one to go straight to its
+   models. The ports it asks are `local_servers` in `config.yaml`.
 2. **API key.** Paste the key from your provider's account page. It is
    stored in your operating system's keychain, never in a file, and is only
    sent to the URL from step 1. A server on this computer needs no key, so
@@ -104,7 +108,8 @@ already using it. To move an entry under **More models**, add
 
 Any server that speaks the OpenAI chat API works, such as llama.cpp's
 server, vLLM, Ollama or LM Studio. Start it, then add it with the
-walkthrough using its local URL. Addresses on this computer
+walkthrough: **Find models on this computer** finds it on its usual port,
+or paste its local URL. Addresses on this computer
 (`127.0.0.1`, `localhost`) never get a key sent to them.
 
 By hand, a local entry may leave `slug` out: TST Desk then asks the server

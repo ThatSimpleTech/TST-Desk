@@ -129,8 +129,16 @@ VIEWER_MACHINE_VERBS: frozenset[str] = frozenset({"list_machines"})
 # Accepting an agent-proposed steering edit writes the instructions every
 # later turn follows (TD-5140), so it is decided there too; rejecting is
 # open to a phone, and neither is a machine-peer verb.
+# ``scan_local_servers`` (TD-5180) probes this computer's own model ports,
+# a network call the person at the computer starts.
 LOOPBACK_VERBS: frozenset[str] = frozenset(
-    {"drain", "trust_workspace_config", "steering_accept", "steering_edit"}
+    {
+        "drain",
+        "trust_workspace_config",
+        "steering_accept",
+        "steering_edit",
+        "scan_local_servers",
+    }
 )
 
 

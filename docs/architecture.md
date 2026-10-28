@@ -606,6 +606,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_api_key` | — | Store an API key in the OS keychain. Optional `base_url` is the host that key talks to (TD-1722). |
 | `validate_api_key` | — | Probe a key with one cheap live call. A saved key is probed only at a model that uses it or at its own host (TD-5182). |
 | `list_endpoint_models` | — | "Add a model": list a server's `/models`, with the typed key sent only to that URL (TD-5172). A saved `credential` must be a saved key, and is sent only to its own server (TD-5182). |
+| `scan_local_servers` | — | "Find models on this computer": ask each loopback `local_servers` entry for `/models`, no key, on the user's click only (TD-5180). |
 | `add_model` | — | "Add a model": store the key, write a single-model preset, make it active. Acked with `setup_state`. |
 | `test_model` | — | Send one short test message to a preset's model (default: the active one). |
 | `delete_api_key` | — | Remove an API key from the OS keychain. Only an API key's id, never another keychain item (TD-5182). |
@@ -729,6 +730,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `pairing_completed` | connection | A phone redeemed the code. Carries that device's summary (never its key). Sent to the computer's own loopback windows only (TD-5014). |
 | `api_key_validated` | connection | The result of a key probe. Never carries the key. |
 | `endpoint_models` | connection | A server's model list for "Add a model", or why it could not be read. Never carries the key. |
+| `local_servers` | connection | The servers on this computer that answered `scan_local_servers` with models, in config order, and every URL asked. |
 | `model_tested` | connection | The result of `test_model`: the reply, or what went wrong. |
 | `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. The `skills` row names each skill's ignored frontmatter keys (TD-5107). |
 | `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |
