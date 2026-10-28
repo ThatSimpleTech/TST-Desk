@@ -365,14 +365,15 @@ class TestTheBackupAnswers:
 
         # Before the review fix the turn failed here as stream_interrupted.
         assert not turn.failed
-        # A shown reply is never resent to the endpoint that cut it off
-        # (TD-5152), so its retry budget is not spent on it.
-        assert (endpoints.count(PRIMARY), endpoints.count(BACKUP)) == (1, 1)
-        (retract,) = run.of(AssistantRetract)
+        # The tier's own endpoint is asked again twice first (TD-5183), as a
+        # stall is once (TD-5159); then the backup answers.
+        assert (endpoints.count(PRIMARY), endpoints.count(BACKUP)) == (3, 1)
+        retracts = run.of(AssistantRetract)
+        assert len(retracts) == 3
         (moved,) = run.of(ModelFallback)
         assert moved.reason == "stream_interrupted"
         events = run.session.event_log.all_events
-        assert events.index(retract) < events.index(moved)
+        assert events.index(retracts[-1]) < events.index(moved)
         assert run.shown() == "The whole answer."
 
     async def test_a_second_key_on_the_same_host_gets_its_own_client(self, tmp_path: Path) -> None:

@@ -507,6 +507,13 @@ class ProviderError:
     It is not retried here, because the window shows part of the reply,
     but another endpoint can answer instead. Before output, ``retryable``
     says the same thing."""
+    resendable: bool = False
+    """A reply the endpoint cut off partway that the same endpoint may
+    answer if asked again (TD-5183): a dropped connection, a stream that
+    ended inside a tool call or without a finish, an in-band 429 or 5xx.
+    A llama.cpp server that restarts mid-reply lands here. The turn
+    withdraws what was shown and asks again (reply_retry.py). An in-band
+    4xx is the request's fault and never set."""
 
 
 # ── Retry configuration ────────────────────────────────────────────────
@@ -875,6 +882,23 @@ _OVERFLOW_PHRASES: tuple[str, ...] = (
     "exceeds the available context size",
     "exceed_context_size_error",
 )
+
+
+def _is_prompt_progress(raw: str) -> bool:
+    """True for a llama.cpp ``prompt_progress`` event (TD-5183).
+
+    A llama.cpp server asked for ``return_progress`` sends one per batch
+    while it reads the prompt. On one GPU a cold 40k-token prompt takes
+    ten minutes, longer than ``stream_idle_timeout``; these are what tell
+    the watchdog the server is working rather than stuck.
+    """
+    if '"prompt_progress"' not in raw:
+        return False
+    try:
+        data = __import__("json").loads(raw)
+    except ValueError:
+        return False
+    return isinstance(data, dict) and isinstance(data.get("prompt_progress"), dict)
 
 
 def _shows_nothing(chunk: StreamChunk) -> bool:
@@ -1331,7 +1355,11 @@ class ProviderClient:
                             if idle_deadline is not None and self.timeout.stream_idle:
                                 idle_deadline = loop.time() + self.timeout.stream_idle
                             if not yielded_any and _shows_nothing(chunk):
-                                held.append(chunk)
+                                # llama.cpp's ``prompt_progress`` while it reads
+                                # a long prompt (TD-5183): a sign of life for
+                                # the watchdog above, never part of the reply.
+                                if not _is_prompt_progress(event.data):
+                                    held.append(chunk)
                                 continue
                             if chunk.delta.tool_calls:
                                 in_tool_call = True
@@ -1364,6 +1392,7 @@ class ProviderClient:
                             message="Stream ended before the tool call "
                             "completed; the partial tool call was discarded.",
                             retryable=False,
+                            resendable=True,
                         )
                     elif not yielded_any:
                         # A 200 event-stream that carries no events at all.
@@ -1390,6 +1419,7 @@ class ProviderClient:
                             message="The provider's stream ended before the reply "
                             "finished; the partial reply was discarded. Resend to retry.",
                             retryable=False,
+                            resendable=True,
                         )
 
             except httpx.TimeoutException as e:
@@ -1463,6 +1493,7 @@ class ProviderClient:
             message=f"Stream interrupted mid-{word}: {error}. Any partial content was discarded.",
             retryable=False,
             endpoint_failed=True,
+            resendable=True,
         )
 
     def _stall_error(
@@ -1581,6 +1612,7 @@ class ProviderClient:
             retryable=False,
             detail=error.detail,
             endpoint_failed=error.retryable,
+            resendable=error.retryable,
         )
 
     def _headers(self) -> dict[str, str]:
