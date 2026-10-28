@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 
 from .config import ConfigError, allocate_credential_id, is_loopback_url
+from .net import direct_transport
 from .protocol import EndpointModel, EndpointModels
 
 LIST_TIMEOUT = 15.0
@@ -95,7 +96,7 @@ async def list_endpoint_models(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     owned = client is None
-    http = client or httpx.AsyncClient(timeout=LIST_TIMEOUT)
+    http = client or httpx.AsyncClient(timeout=LIST_TIMEOUT, transport=direct_transport(endpoint))
     try:
         response = await http.get(f"{endpoint}/models", headers=headers)
     except httpx.HTTPError as e:

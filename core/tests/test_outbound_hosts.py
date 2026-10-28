@@ -257,6 +257,10 @@ _OUTBOUND_CAPABLE = {
         "refuses unless it is loopback; only on the person's set_fast or their next turn"
     ),
     "provider.py": "the one chat client; base_url is a constructor argument from config",
+    "net.py": (
+        "TD-5181: builds a proxy-free transport for a caller's loopback URL; it sends "
+        "nothing itself and has no destination of its own"
+    ),
     "discovery.py": "GET /v1/models, refused before sending unless the endpoint is loopback",
     "model_setup.py": (
         "Add a model (TD-5172): GET /v1/models at the URL the user types in the "

@@ -15,6 +15,7 @@ import httpx
 
 from ..keychain import KeychainError, get_ntfy_topic_url
 from ..logging import get_logger
+from ..net import direct_transport
 from ..plan_review import plan_review_text
 from ..protocol import ApprovalRequest, DaemonEvent, PlanReview, QuestionRequest, TurnComplete
 from ..questions import question_text
@@ -87,7 +88,9 @@ async def send(
         return
     timeout = config.notify.ntfy.timeout_seconds
     try:
-        async with httpx.AsyncClient(timeout=timeout, transport=transport) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout, transport=transport or direct_transport(dest)
+        ) as client:
             response = await client.post(dest, content=message)
             response.raise_for_status()
     except httpx.HTTPError:

@@ -36,6 +36,7 @@ import httpx
 
 from ..config import SearchConfig, cached_config
 from ..logging import redact_secrets
+from ..net import direct_transport
 from .search_bind import bind_search, current_search, reset_search
 from .web_extract import extract_answer
 from .web_page import PAGE_CACHE, FetchedPage, render_page, strip_hidden, window_size
@@ -450,28 +451,32 @@ async def web_search(
     limit = max(1, min(limit, 20))
     failures: list[tuple[str, str]] = []
     transport_failed = False
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        for url in urls:
-            try:
+    for url in urls:
+        try:
+            # One client per URL: a search server on this computer is asked
+            # directly, never through a proxy (TD-5181).
+            async with httpx.AsyncClient(
+                timeout=timeout, follow_redirects=True, transport=direct_transport(url)
+            ) as client:
                 response = await client.get(url, params={"q": text})
                 response.raise_for_status()
                 body = response.text[:_MAX_BODY]
                 ctype = response.headers.get("content-type", "")
-            except httpx.HTTPError as exc:
-                transport_failed = True
-                failures.append((url, _describe_error(exc)))
-                continue
-            rows: list[tuple[str, str, str]] = []
-            if "json" in ctype or body.lstrip().startswith(("{", "[")):
-                try:
-                    rows = _from_json(json.loads(body), limit)
-                except json.JSONDecodeError:
-                    rows = []
-            if not rows:
-                rows = _from_html(body, str(response.url), limit)
-            if rows:
-                return _render(rows)
-            failures.append((url, "returned no parseable results"))
+        except httpx.HTTPError as exc:
+            transport_failed = True
+            failures.append((url, _describe_error(exc)))
+            continue
+        rows: list[tuple[str, str, str]] = []
+        if "json" in ctype or body.lstrip().startswith(("{", "[")):
+            try:
+                rows = _from_json(json.loads(body), limit)
+            except json.JSONDecodeError:
+                rows = []
+        if not rows:
+            rows = _from_html(body, str(response.url), limit)
+        if rows:
+            return _render(rows)
+        failures.append((url, "returned no parseable results"))
     if not transport_failed:
         return "No search results."
     if len(urls) == 1:
