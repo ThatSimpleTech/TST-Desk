@@ -198,6 +198,15 @@ def test_stop_daemon_leaves_another_data_dirs_daemon_alone(
     assert signalled == []
 
 
+def _wait_for_exec(measure: ModuleType, pid: int, arg: Path) -> None:
+    """Until the child has exec'd, its command line is still the parent's."""
+    for _ in range(500):
+        if measure.runs_with(pid, arg):
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"process {pid} never showed {arg} in its arguments")
+
+
 def test_stop_daemon_leaves_a_longer_data_dirs_daemon_alone(
     measure: ModuleType, tmp_path: Path
 ) -> None:
@@ -205,11 +214,7 @@ def test_stop_daemon_leaves_a_longer_data_dirs_daemon_alone(
     other = tmp_path / "data2"
     child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", str(other)])
     try:
-        cmdline = Path(f"/proc/{child.pid}/cmdline")
-        for _ in range(500):
-            if str(other) in cmdline.read_text(errors="replace"):
-                break
-            time.sleep(0.01)
+        _wait_for_exec(measure, child.pid, other)
         mine = tmp_path / "data"
         mine.mkdir()
         (mine / "port.json").write_text(json.dumps({"pid": child.pid, "port": 1}))
@@ -224,12 +229,7 @@ def test_stop_daemon_leaves_a_longer_data_dirs_daemon_alone(
 def test_stop_daemon_stops_its_own_data_dirs_daemon(measure: ModuleType, tmp_path: Path) -> None:
     child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", str(tmp_path)])
     try:
-        # Until the child has exec'd, /proc shows the parent's command line.
-        cmdline = Path(f"/proc/{child.pid}/cmdline")
-        for _ in range(500):
-            if str(tmp_path) in cmdline.read_text(errors="replace"):
-                break
-            time.sleep(0.01)
+        _wait_for_exec(measure, child.pid, tmp_path)
         (tmp_path / "port.json").write_text(json.dumps({"pid": child.pid, "port": 1}))
         measure.stop_daemon(tmp_path)
         assert child.wait(timeout=10) == -signal.SIGTERM

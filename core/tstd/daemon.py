@@ -921,10 +921,24 @@ def _relativize_paths(text: str, workspace: Path) -> str:
     workspace paths become relative and home paths become ``~/…`` — still
     enough to locate the file. The workspace prefix is replaced first (it
     usually sits under home, and the longer prefix must win).
+
+    Both spellings of each prefix are replaced: the one the caller holds and
+    the resolved one. On macOS ``/var`` and ``/tmp`` are symlinks into
+    ``/private``, so an error raised with the given path never contains the
+    resolved one (TD-5187).
     """
-    root = workspace.resolve()
-    home = Path.home().resolve()
-    return text.replace(f"{root}{os.sep}", "").replace(f"{home}{os.sep}", f"~{os.sep}")
+    for prefix, replacement in (
+        *((root, "") for root in _spellings(workspace)),
+        *((home, f"~{os.sep}") for home in _spellings(Path.home())),
+    ):
+        text = text.replace(f"{prefix}{os.sep}", replacement)
+    return text
+
+
+def _spellings(path: Path) -> list[str]:
+    """*path* as given and resolved, longest first so it wins a shared prefix."""
+    forms = {str(path), str(path.resolve())}
+    return sorted(forms, key=len, reverse=True)
 
 
 def _approved_import_allowlist(workspace: str | Path, trust: TrustStore) -> frozenset[Path]:

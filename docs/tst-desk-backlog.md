@@ -12426,3 +12426,24 @@ data; and it drops a `\` that ends the text.
       (`test_bash_3_2_safe_forms_stay_complete`).
 - [x] `test_policy_shell_differential.py` passes on macOS with bash 3.2 as
       `bash` and `/bin/sh`.
+
+### TD-5187 — The core suite passes on macOS
+
+**Size:** 1 · **Depends on:** TD-1104, TD-5157, TD-5161 · **Status:** Done
+
+CI runs on Linux, so four tests failed only on a Mac, and two of them hid
+small bugs.
+
+- [x] Diagnostics hides a workspace path in both its given and its resolved
+      spelling; on macOS `/var` and `/tmp` are symlinks into `/private`, so
+      an error carried the unresolved path (`test_diagnostics.py`, including a
+      symlink test that fails on Linux too).
+- [x] `measure_clear_stale.py` finds its own daemon on macOS, which has no
+      `/proc`, instead of silently leaving it running; still a whole-argument
+      match (`test_measure_clear_stale.py`).
+- [x] The core.ignorecase staging tests run on a case-insensitive disk,
+      where `Docs` is `docs` (`test_git_no_filters.py`).
+- [ ] `session_start_large_repo` stays over its August baseline on purpose:
+      TD-5126 made each session open its own git worktree, about 0.35 s for
+      the 2,000-file benchmark repo. Re-recording the baseline or changing
+      session start is a product call, left open.

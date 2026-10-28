@@ -138,14 +138,34 @@ def stop_daemon(data_dir: Path) -> None:
     if not port_file.exists():
         return
     pid = int(json.loads(port_file.read_text(encoding="utf-8")).get("pid", 0))
-    cmdline = Path(f"/proc/{pid}/cmdline")
-    if not (pid > 0 and cmdline.exists()):
-        return
-    # A whole argument, not a substring: /tmp/x/data must not match the
-    # daemon of /tmp/x/data2 (TD-5161).
-    args = cmdline.read_text(errors="replace").split("\0")
-    if str(data_dir) in args or f"--data-dir={data_dir}" in args:
+    if pid > 0 and runs_with(pid, data_dir):
         os.kill(pid, signal.SIGTERM)
+
+
+def runs_with(pid: int, data_dir: Path) -> bool:
+    """True when process *pid* has *data_dir* as one whole argument.
+
+    A whole argument, not a substring: /tmp/x/data must not match the
+    daemon of /tmp/x/data2 (TD-5161). Linux reads /proc. macOS has no
+    /proc (TD-5187), so ``ps`` prints the arguments joined by spaces and the
+    match is on a whole space-delimited word.
+    """
+    wanted = (str(data_dir), f"--data-dir={data_dir}")
+    cmdline = Path(f"/proc/{pid}/cmdline")
+    if cmdline.exists():
+        args = cmdline.read_text(errors="replace").split("\0")
+        return any(arg in args for arg in wanted)
+    try:
+        shown = subprocess.run(
+            ["ps", "-ww", "-o", "command=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout
+    except OSError:
+        return False
+    padded = f" {shown.strip()} "
+    return any(f" {arg} " in padded for arg in wanted)
 
 
 def run(args: argparse.Namespace) -> int:
