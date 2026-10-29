@@ -78,6 +78,7 @@ class Scanner:
         self._heredocs: list[Heredoc] = []
         self._subs = 0  # how many $( … ) we are inside
         self._nest = 0  # how many $( and ${ we are inside
+        self._braces = 0  # how many ${ we are inside
 
     def run(self) -> None:
         try:
@@ -132,6 +133,10 @@ class Scanner:
             elif posix and text.startswith("\\\n", i):
                 self._splice()
             elif (posix and c == "\\") or (not posix and c == "^"):
+                if posix and i == self.n - 1:
+                    # A `\` ending the text: bash 3.2 (macOS sh) drops it,
+                    # newer bash and dash keep it, so the last word differs.
+                    raise Incomplete
                 self._open_word(frame, i)
                 self.i += 2
             elif posix and c == "'":
@@ -240,10 +245,15 @@ class Scanner:
     def _sub(self) -> None:
         self._enter()
         self._subs += 1
+        start = self.i
         # A heredoc opened before the `$(` has its body after the line, not
         # after a newline inside the substitution.
         outside, self._heredocs = self._heredocs, []
         self._list(")")
+        if self._braces and "}" in self.text[start : self.i]:
+            # bash 3.2 (macOS sh) ends `${x:-$(… } …)}` at that `}` and runs
+            # the lines after it as commands; newer bash and dash do not.
+            raise Incomplete
         if self._heredocs:
             # A body still owed when `)` closes: bash reads it from the lines
             # after the substitution, dash leaves it empty and runs them.
@@ -293,6 +303,7 @@ class Scanner:
         """``${…}`` ends at the first ``}`` that is not inside a nested
         expansion: every shell does so, ``{`` inside does not nest."""
         self._enter()
+        self._braces += 1
         self.i += 2
         bash.parameter(self.text, self.i)  # `${ cmd; }`: bash 5.3 runs cmd
         while self.i < self.n:
@@ -309,6 +320,7 @@ class Scanner:
                 self.i += 1
                 if c == "}":
                     self._nest -= 1
+                    self._braces -= 1
                     return
         raise Incomplete
 
