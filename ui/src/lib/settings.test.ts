@@ -47,6 +47,7 @@ import {
 	isDiscovered,
 	saveSlug,
 	refreshModelCards,
+	saveContextWindow,
 	loadRules,
 	revokeRule,
 	setSkipAllApprovals,
@@ -289,6 +290,22 @@ describe("model cards (TD-5185)", () => {
 		emit(setupState({ tier_cards: { brain: card } }));
 		expect(settings.refreshingCards).toBe(false);
 		expect(settings.tierCards.brain).toEqual(card);
+	});
+
+	it("sends a hand-set context window, and only a changed whole number", () => {
+		startSettings();
+		emit(setupState({ tier_cards: { brain: card } }));
+		saveContextWindow("brain", card.context_window);
+		saveContextWindow("brain", Number.NaN);
+		saveContextWindow("brain", 512);
+		expect(mocks.sent).toEqual([]);
+		saveContextWindow("brain", 131072);
+		expect(mocks.sent).toEqual([
+			{ type: "set_tier_context_window", preset: "local", tier: "brain", context_window: 131072 },
+		]);
+		expect(settings.savingWindowTier).toBe("brain");
+		emit({ type: "error", seq: 0, code: "bad_request", message: "no" } as DaemonEventUnion);
+		expect(settings.savingWindowTier).toBeNull();
 	});
 
 	it("ends the refresh on an error reply", () => {

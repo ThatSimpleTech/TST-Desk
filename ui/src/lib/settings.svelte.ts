@@ -112,6 +112,8 @@ export const settings = $state({
 	tierCards: {} as Record<string, TierCard>,
 	/** A model-card refresh is in flight; cleared by setup_state or an error. */
 	refreshingCards: false,
+	// TD-5189: the tier whose context window is being saved.
+	savingWindowTier: null as string | null,
 	/** Tier whose credential save is in flight. */
 	savingCredentialTier: null as string | null,
 	/** Policy section. Rules are per-workspace, so they need a session. */
@@ -237,6 +239,7 @@ export function resetSettings(): void {
 	settings.tierLoopback = {};
 	settings.tierCards = {};
 	settings.refreshingCards = false;
+	settings.savingWindowTier = null;
 	settings.savingCredentialTier = null;
 	settings.rules = [];
 	settings.rulesSessionId = null;
@@ -392,7 +395,10 @@ function applyGoogle(google: {
 
 function reduce(event: DaemonEventUnion): void {
 	reducePairing(event);
-	if (event.type === "error") settings.refreshingCards = false;
+	if (event.type === "error") {
+		settings.refreshingCards = false;
+		settings.savingWindowTier = null;
+	}
 	if (event.type === "setup_state") {
 		settings.presets = event.presets;
 		settings.presetLabels = event.preset_labels ?? {};
@@ -413,6 +419,7 @@ function reduce(event: DaemonEventUnion): void {
 		// setup_state is the ack for set_tier_slug / set_tier_credential /
 		// refresh_model_cards.
 		settings.refreshingCards = false;
+		settings.savingWindowTier = null;
 		settings.savingTier = null;
 		settings.savingCredentialTier = null;
 		settings.skipAllApprovals = event.skip_all_approvals ?? false;
@@ -576,6 +583,17 @@ export function refreshModelCards(): void {
 	settings.refreshingCards = true;
 	const sent = sendToDaemon({ type: "refresh_model_cards", preset });
 	if (!sent) settings.refreshingCards = false;
+}
+
+/** TD-5189: set a tier's context window by hand. Ignores a non-number or
+ *  an unchanged value; the daemon refuses one too small for the reply. */
+export function saveContextWindow(tier: string, window: number): void {
+	const preset = settings.activePreset;
+	if (preset === null || !Number.isInteger(window) || window < 1024) return;
+	if (settings.tierCards[tier]?.context_window === window) return;
+	settings.savingWindowTier = tier;
+	const sent = sendToDaemon({ type: "set_tier_context_window", preset, tier, context_window: window });
+	if (!sent) settings.savingWindowTier = null;
 }
 
 /** Host the selected named key talks to, or null to keep the tier URL. */

@@ -16,8 +16,10 @@ What it will not do, each a way a guess would land in config:
 - pick a nearby model when the slug is not listed;
 - write zeros, or anything, for a field the card does not carry;
 - replace a loopback tier's ``context_window`` with the model's ceiling.
-  A local server serves what it was started with, often far less, and the
-  hand-set number is the truth;
+  A local server serves what it was started with, often far less. Only a
+  window the server says it serves (vLLM's ``max_model_len``, llama.cpp's
+  ``meta.n_ctx``, a gateway's ``max_input_tokens``) replaces it (TD-5189);
+  otherwise the hand-set number is the truth;
 - price a backup from its primary's card or the other way round. Each entry
   is refreshed from its own slug at its own host (TD-5120).
 """
@@ -99,9 +101,11 @@ def card_values(tier: TierConfig, card: EndpointModel, *, loopback: bool) -> Car
     if card.cache_read_price is not None:
         values["cache_read_price"] = card.cache_read_price
     window = tier.context_window
-    if not loopback and card.context_window is not None:
-        values["context_window"] = card.context_window
-        window = card.context_window
+    # TD-5189: a served window is taken on loopback too; a ceiling is not.
+    taken = card.served_window if loopback else card.context_window
+    if taken is not None:
+        values["context_window"] = taken
+        window = taken
     cap = card.max_output_tokens
     if (
         cap is not None

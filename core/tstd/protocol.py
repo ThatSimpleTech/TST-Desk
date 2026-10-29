@@ -1483,6 +1483,22 @@ class RefreshModelCards(ClientMessage):
     tier: str | None = None
 
 
+class SetTierContextWindow(ClientMessage):
+    """Set the context window one tier of one preset is given (TD-5189).
+
+    Settings' window field. Narrow like ``set_tier_slug``: a tier name and a
+    number cannot carry a secret. The window must leave room for the tier's
+    ``max_output_tokens`` reservation; the daemon refuses one that does not.
+    Written surgically to the user's ``config.yaml`` (backups keep their own)
+    and acked with ``setup_state``. Applied to new sessions.
+    """
+
+    type: Literal["set_tier_context_window"] = "set_tier_context_window"
+    preset: str = Field(min_length=1)
+    tier: str = Field(min_length=1)
+    context_window: int = Field(ge=1024, le=16_777_216)
+
+
 def _refuse_mcp_values(value: Any) -> Any:
     """Keep typed values off the server messages; they would land in config."""
     if isinstance(value, dict):
@@ -3859,10 +3875,16 @@ class EndpointModel(BaseModel):
     server reports them (``context_length``/``max_model_len``, ``pricing``).
     ``cache_read_price`` and ``max_output_tokens`` likewise (TD-5185), from
     ``pricing.input_cache_read`` and ``top_provider.max_completion_tokens``.
+
+    ``served_window`` is the window the server was started with, as opposed
+    to the model's ceiling (TD-5189): vLLM's ``max_model_len``, llama.cpp's
+    ``meta.n_ctx``, or a LiteLLM gateway's ``model_info.max_input_tokens``.
+    When set, ``context_window`` equals it.
     """
 
     id: str
     context_window: int | None = None
+    served_window: int | None = None
     input_price: float | None = None
     output_price: float | None = None
     cache_read_price: float | None = None
@@ -4641,6 +4663,7 @@ ClientMessageT = Annotated[
     | TrustWorkspaceConfig
     | SetTierSlug
     | RefreshModelCards
+    | SetTierContextWindow
     | SetCredential
     | DeleteCredential
     | SetTierCredential
@@ -4889,6 +4912,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "trust_workspace_config",
         "set_tier_slug",
         "refresh_model_cards",
+        "set_tier_context_window",
         "set_credential",
         "delete_credential",
         "set_tier_credential",

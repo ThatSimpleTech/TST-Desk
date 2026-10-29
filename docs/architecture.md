@@ -643,7 +643,8 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `approve_grok_plan` | yes | Tell Grok to approve the current plan and implement. Refused with `session_busy` while the session restores files or closes its worktree (TD-5161). |
 | `list_grok_extensions` | — | List MCP / skills / plugins discovered in `~/.grok` (no secrets). |
 | `set_tier_slug` | — | Set the model slug for one tier of one preset, then refresh that tier's prices and limits from its model card (TD-5185). |
-| `refresh_model_cards` | — | Settings' Refresh prices: re-read each tier's (and backup's) model card from the server it calls, with the key it sends, and write the matched prices and limits to config.yaml (TD-5185). Acked with `setup_state`. |
+| `refresh_model_cards` | — | Settings' Refresh from servers: re-read each tier's (and backup's) model card from the server it calls, with the key it sends, and write the matched prices and limits to config.yaml (TD-5185). A served window (vLLM `max_model_len`, llama.cpp `meta.n_ctx`, LiteLLM `/model/info` `max_input_tokens`) is taken on loopback too (TD-5189). Acked with `setup_state`. |
+| `set_tier_context_window` | — | Settings' Context field: write one tier's `context_window` (more than twice its `max_output_tokens`, else `bad_request`) to config.yaml (TD-5189). Acked with `setup_state`. |
 | `set_credential` | — | Create or rename a named API key without touching the secret (TD-1717). Optional `base_url` sets or clears the host that key talks to (TD-1722). |
 | `delete_credential` | — | Remove a named key, its secret, and tier bindings (TD-1717). |
 | `set_tier_credential` | — | Bind a named API key to one tier of one preset (TD-1717). That key's `base_url` is the host the tier calls when set (TD-1718). |

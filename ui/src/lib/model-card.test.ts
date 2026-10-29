@@ -43,4 +43,9 @@ describe("cardNote", () => {
 	it("marks values that came from the card", () => {
 		expect(cardNote({ ...base, card: "ok" })).toBe("From the model card.");
 	});
+
+	it("says a card with no price left only the prices alone", () => {
+		const note = cardNote({ ...base, card: "no_pricing", detail: "x publishes no price for y." });
+		expect(note).toBe("The server lists no price; prices are from config.yaml.");
+	});
 });

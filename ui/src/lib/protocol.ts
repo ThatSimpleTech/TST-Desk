@@ -867,6 +867,14 @@ export interface SetTierSlug extends ClientMessage {
   slug: string;
 }
 
+/** TD-5189: set one tier's context window by hand. Acked with setup_state. */
+export interface SetTierContextWindow extends ClientMessage {
+  type: "set_tier_context_window";
+  preset: string;
+  tier: string;
+  context_window: number;
+}
+
 /** TD-5185: re-read prices and limits from each tier's host and write them
  *  to config.yaml. `tier` omitted means every tier. Acked with setup_state. */
 export interface RefreshModelCards extends ClientMessage {
@@ -1272,6 +1280,7 @@ export type ClientMessageUnion =
   | TrustWorkspaceConfig
   | SetTierSlug
   | RefreshModelCards
+  | SetTierContextWindow
   | SetCredential
   | DeleteCredential
   | SetTierCredential
@@ -2383,6 +2392,8 @@ export interface CredentialSummary {
 export interface EndpointModel {
   id: string;
   context_window?: number | null;
+  // TD-5189: the window the server was started with, when it says so.
+  served_window?: number | null;
   input_price?: number | null;
   output_price?: number | null;
   // TD-5185: pricing.input_cache_read and top_provider.max_completion_tokens.
