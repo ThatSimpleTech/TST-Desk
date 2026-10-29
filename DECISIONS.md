@@ -18507,3 +18507,25 @@ key failed with "not a valid model".
   last click, not the config, and a restart showing none is accurate.
 - Not done: refreshing on a schedule. A price change upstream is picked up on
   the next slug save or Refresh, so the meter can drift until then.
+
+## TD-5188 — The shell splitter fails closed where bash 3.2 reads a line differently (Class B)
+
+On macOS the shell tool runs `/bin/sh -c`, and `/bin/sh` there is bash
+3.2.57. The TD-5156 differential test only runs on newer bash in CI, so two
+3.2 behaviours went unseen until it ran on a Mac:
+- **A `}` inside a `$(…)` within `${…}`** (`${x:-$({ : <<E; } … )}`): bash
+  3.2 ends the `${…}` at that `}`, fails the first line, and runs the lines
+  after it as commands. Newer bash and dash read them as heredoc data. This
+  was a real bypass on macOS: with `auto` on `**` and `never` on `curl *`,
+  a `curl` line hidden that way resolved to `auto`, and `/bin/sh` ran it.
+  Now any `}` in a substitution nested in `${…}` makes the line incomplete.
+  The rule is broader than 3.2's bug (a quoted `}` or a nested `${y}` is
+  safe there) because these forms are rare and over-reading only costs an
+  approval prompt.
+- **A `\` ending the text**: bash 3.2 drops it, newer bash and dash keep it as
+  a literal, so the last word differs (`curl x\` writes `x` in one, `x\` in
+  the other). Incomplete.
+
+`core/tests/test_policy_shell_fail_closed.py` writes both out with real
+rules, so Linux CI guards them too. Linux hosts (dash or bash 5) and the
+autonomy container (busybox ash) were not affected.

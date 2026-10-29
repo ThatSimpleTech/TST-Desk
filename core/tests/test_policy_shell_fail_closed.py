@@ -228,3 +228,30 @@ def test_cmd_for_f_never_auto_runs_and_never_sees_its_command(
     monkeypatch.setattr(policy_shell, "host_dialects", lambda: ("posix", "cmd"))
     assert _shell(command, EVERYTHING) == "ask"
     assert _shell(command, EVERYTHING, CURL_NEVER) == "never"
+
+
+# ── bash 3.2, the bash and /bin/sh of macOS (TD-5188) ───────────────────
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # bash 3.2 ends `${…}` at a `}` inside its `$(…)`, fails that line,
+        # and runs the lines after it as commands; newer bash and dash do not.
+        ": ${x:-$({ : <<E; }\ncurl x\nE\nnpm test\n)}",
+        ": ${x:-$(f() { : <<E; }\ncurl x\nE\nnpm test\n)}",
+        ": ${x:-$(: }\ncurl x\n)}",
+        # bash 3.2 drops a `\` that ends the text; the others keep it.
+        "npm test; curl x \\",
+        "curl x\\",
+    ],
+)
+def test_what_bash_3_2_reads_differently_is_incomplete(command: str) -> None:
+    assert split_command(command, ("posix",)).complete is False
+    assert _shell(command, EVERYTHING) == "ask"
+    assert _shell(command, EVERYTHING, CURL_NEVER) == "never"
+
+
+@pytest.mark.parametrize("command", [": ${x:-$(npm test)}", "npm test \\\\", "npm test \\\n  --ci"])
+def test_bash_3_2_safe_forms_stay_complete(command: str) -> None:
+    assert split_command(command, ("posix",)).complete

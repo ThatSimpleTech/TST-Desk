@@ -12408,3 +12408,21 @@ publishes both for every model.
       outcome; Settings shows a read-only line per tier and computes nothing
       (`settings.test.ts`, `model-card.test.ts`).
 - [x] The key never reaches a log or config.yaml (`TestDaemon`).
+
+### TD-5188 — Shell rules hold on macOS's bash 3.2
+
+**Size:** 1 · **Depends on:** TD-5156 · **Status:** Done
+
+The shell tool on macOS runs `/bin/sh -c`, which is bash 3.2.57. The
+TD-5156 differential test failed there (CI runs newer bash): bash 3.2 ends
+`${x:-$(… } …)}` at the inner `}` and runs the lines after it, so a
+`never` rule missed a command hidden in what the splitter read as heredoc
+data; and it drops a `\` that ends the text.
+
+- [x] A `}` inside a `$(…)` within `${…}`, and a `\` ending the text, make
+      the split incomplete: no `auto` rule applies and `never` rules see
+      every line (`test_policy_shell_fail_closed.py::test_what_bash_3_2_reads_differently_is_incomplete`).
+- [x] `${x:-$(cmd)}`, an escaped `\\` and `\`-newline stay complete
+      (`test_bash_3_2_safe_forms_stay_complete`).
+- [x] `test_policy_shell_differential.py` passes on macOS with bash 3.2 as
+      `bash` and `/bin/sh`.
