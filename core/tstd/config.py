@@ -697,6 +697,8 @@ class SessionConfig(BaseModel):
     Count of events, not bytes: attach is ``from_seq``, and a byte cap
     would drop a different prefix than the seq cursor. Zero and omitted
     must not mean unbounded — the default is ``DEFAULT_LOG_MAX_EVENTS``.
+    Past the cap the oldest tenth goes at once (TD-5193), so the window
+    holds 90-100% of it and a long streamed reply is not a rewrite per event.
 
     ``send_file_max_bytes`` and ``send_file_session_max_bytes`` cap the
     copies ``send_file`` keeps (TD-5143): per file, and per session in all.

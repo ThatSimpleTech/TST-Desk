@@ -158,6 +158,7 @@ steering:
 
 # On-disk session event log (TD-2901). Attach replays this file. The cap
 # is an event count so from_seq stays honest; 0 is invalid, not unbounded.
+# Past the cap the oldest tenth is dropped at once.
 session:
   log_max_events: 10000
   # Reasoning effort a session starts with until the composer's picker sets

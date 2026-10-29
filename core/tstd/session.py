@@ -7,11 +7,13 @@ The daemon owns sessions; the window is only a viewer (prime directive §2.5).
 from __future__ import annotations
 
 import asyncio
+import bisect
 import contextlib
 import uuid
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
+from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast
 
@@ -207,6 +209,10 @@ class SessionEventLog:
 
     def __init__(self) -> None:
         self._events: list[DaemonEvent] = []
+        # ``_events`` is in seq order, so a tail is a bisect (TD-5193).
+        # ``add`` stamps each event above every stored one; anything that
+        # ever breaks the order turns this off and reads go back to a sort.
+        self._ordered = True
         self._seq = 0
         self._lock = asyncio.Lock()
         self._new_event = asyncio.Event()
@@ -233,6 +239,9 @@ class SessionEventLog:
         event = _redact_event(event)
         async with self._lock:
             self._seq += 1
+            if self._ordered and self._holds(event):
+                # Already stored: the new seq moves it where it sits.
+                self._ordered = False
             # Pydantic v2 allows attribute assignment on non-frozen models
             event.seq = self._seq
             self._events.append(event)
@@ -248,10 +257,33 @@ class SessionEventLog:
         return event
 
     def events_from(self, seq: int) -> list[DaemonEvent]:
-        """Return all events with seq >= `seq`."""
+        """Return all events with seq >= `seq`, in seq order.
+
+        Every attached window asks for the newest few events on each new
+        one, so this is a bisect and a slice of the tail, not a scan and a
+        sort of the whole window (TD-5193). The tail is checked as it is
+        returned; a log found out of order falls back to the sort.
+        """
         if seq < 1:
             seq = 1
-        return sorted((e for e in self._events if e.seq >= seq), key=lambda event: event.seq)
+        events = self._events
+        if self._ordered:
+            start = bisect.bisect_left(events, seq, key=_seq_of)
+            tail = events[start:]
+            if all(a.seq <= b.seq for a, b in pairwise(tail)):
+                return tail
+            self._ordered = False
+        return sorted((e for e in events if e.seq >= seq), key=_seq_of)
+
+    def _holds(self, event: DaemonEvent) -> bool:
+        """Whether this very object is stored. A bisect: the log is in order."""
+        events = self._events
+        i = bisect.bisect_left(events, event.seq, key=_seq_of)
+        while i < len(events) and events[i].seq == event.seq:
+            if events[i] is event:
+                return True
+            i += 1
+        return False
 
     async def wait_for_new_event(self, seen_seq: int) -> int:
         """Wait until a new event beyond `seen_seq` is available.
@@ -280,15 +312,25 @@ class SessionEventLog:
         """Drop events older than the on-disk window. Does not rewind last_seq."""
         async with self._lock:
             self._events = [event for event in self._events if event.seq >= earliest_seq]
+            self._ordered = _in_seq_order(self._events)
 
     def replace(self, events: list[DaemonEvent]) -> None:
         """Install a persisted log. Does not notify subscribers or re-seq.
 
         Used on revive. Re-adding would mint new seqs and rewrite disk.
         """
-        ordered = sorted(events, key=lambda event: event.seq)
+        ordered = sorted(events, key=_seq_of)
         self._events = ordered
+        self._ordered = True
         self._seq = max(event.seq for event in ordered) if ordered else 0
+
+
+def _seq_of(event: DaemonEvent) -> int:
+    return event.seq
+
+
+def _in_seq_order(events: list[DaemonEvent]) -> bool:
+    return all(a.seq <= b.seq for a, b in pairwise(events))
 
 
 # ── Session ────────────────────────────────────────────────────────────
