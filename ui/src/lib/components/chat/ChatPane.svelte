@@ -1,9 +1,10 @@
 <script lang="ts">
 	// Chat pane (TD-1004, restyled TD-1604): conversation + composer held in
 	// one centered column (max ≈760px) on wide windows. An empty conversation
-	// shows the time-aware serif greeting with suggestion chips (TD-1605) —
-	// hidden the moment messages exist, including attach/replay with history,
-	// since both paths rebuild chat.messages through the same store. Cancel
+	// shows the mascot (TD-5190) and the time-aware serif greeting with
+	// suggestion chips (TD-1605) — hidden the moment messages exist,
+	// including attach/replay with history, since both paths rebuild
+	// chat.messages through the same store. Cancel
 	// lives in the composer's send→stop morph; Esc cancels too (TD-1609).
 	// Presentational composition only — protocol state lives in the stores:
 	// the composer's attachment caps (TD-1709) come from the session store,
@@ -50,6 +51,7 @@
 	import GoalStrip from "./GoalStrip.svelte";
 	import { goalFor } from "../../goal-store.svelte.js";
 	import WakeupCard from "../WakeupCard.svelte";
+	import Mascot from "../Mascot.svelte";
 	import { bindWakeup, startWakeup } from "../../wakeup.svelte.js";
 
 	onMount(() => {
@@ -170,6 +172,11 @@
 		{#if chat.messages.length === 0}
 			<div class="empty" aria-label="Getting started">
 				<div class="hello">
+					<!-- TD-5190: keyed on the session so every new chat gets the
+					     entrance; asleep while nothing is live to answer. -->
+					{#key chat.sessionId}
+						<Mascot asleep={chat.sessionId === null} />
+					{/key}
 					<p class="greeting">{greeting}.</p>
 					{#if chat.sessionId !== null && contextLine}
 						<!-- Where you are and what will answer: workspace, engine,
