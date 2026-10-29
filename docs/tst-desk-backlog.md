@@ -12409,6 +12409,35 @@ publishes both for every model.
       (`settings.test.ts`, `model-card.test.ts`).
 - [x] The key never reaches a log or config.yaml (`TestDaemon`).
 
+### TD-5191 — The mascot waddles in, and only its shackle spins
+
+**Size:** 2 · **Depends on:** TD-5190 · **Status:** Done
+
+TD-5190 dropped the mascot in from above and twirled it in the air. Now it
+waddles in from the right in short hops, rocking side to side and looking
+where it is going. At its spot it jumps, and the body stays upright while
+the shackle does what a real padlock's does. It unhooks on the left, spins a
+full turn about its right leg, and drops back in to snap shut as the body
+lands.
+
+- [x] It waddles in from the right of the space it sits in, at most 480px
+      and in hops of about a body's width, so a wide window means more
+      hops, not longer strides. It rocks one way and then the other on
+      alternate hops, and looks left until it arrives.
+- [x] The body never turns in the jump: it is drawn upright at its full
+      width at every instant.
+- [x] Halfway round, the shackle is drawn mirrored about its right leg and
+      reaches past the body's right edge. The right leg stays on its hinge
+      through the whole turn.
+- [x] The shackle lifts as it unhooks, and is back in place, shut, by the
+      landing.
+- [x] The same in WebKit and Chromium. The turn is drawn by scaling across,
+      not with a 3D transform, so both engines draw the same thing.
+
+`e2e/mascot.spec.ts` checks the first four in Chromium, through
+`Mascot.harness.ts`. Its tests fail against the TD-5190 twirl, and the walk
+test fails with the rocking or the hops taken out.
+
 ### TD-5190 — The mascot greets a new chat
 
 **Size:** 1 · **Depends on:** TD-1605 · **Status:** Done
