@@ -1696,6 +1696,8 @@ async def agent_loop(
     if session.router is None:
         session.router = router
     # TD-5134: session_start hooks, once per loop (a revive starts a new one).
+    # TD-5187: in a new worktree, once its files are checked out.
+    await session.wait_for_worktree_files()
     session.hooks.user = config.hooks
     started = await session.hooks.run(
         "session_start", {"source": "resume" if session.conversation else "start"}

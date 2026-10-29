@@ -12443,7 +12443,14 @@ small bugs.
       match (`test_measure_clear_stale.py`).
 - [x] The core.ignorecase staging tests run on a case-insensitive disk,
       where `Docs` is `docs` (`test_git_no_filters.py`).
-- [ ] `session_start_large_repo` stays over its August baseline on purpose:
-      TD-5126 made each session open its own git worktree, about 0.35 s for
-      the 2,000-file benchmark repo. Re-recording the baseline or changing
-      session start is a product call, left open.
+- [x] `session_start_large_repo` is back under its August baseline. TD-5126
+      checked out each session's git worktree before the session answered,
+      about 0.35 s for the 2,000-file benchmark repo. Now `git worktree add
+      --no-checkout` makes the folder, `.tst` is checked out at once (the wall
+      is built from it), and the rest is checked out in the background. The
+      `session_start` hooks wait for the files and the first turn waits for
+      them and any `worktree.setup`; close and delete wait the moment it
+      takes. The background checkout never overwrites a file already there,
+      so a setting saved in that moment stays. A failed checkout moves the
+      session back to its folder; one a restart cut off is finished on
+      restore (`test_worktree.py`, `test_worktree_daemon.py`).

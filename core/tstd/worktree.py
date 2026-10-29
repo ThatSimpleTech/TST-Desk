@@ -77,6 +77,14 @@ class SessionWorktree:
     # git tracks the workspace config here. When it does not, the worktree
     # holds a copy of the project's file and TST Desk saves to the project's.
     config_tracked: bool = False
+    # TD-5187: False until the files are checked out. ``git worktree add``
+    # makes the folder at once; the checkout runs after the session opens.
+    filled: bool = True
+
+    @property
+    def busy(self) -> bool:
+        """The checkout or the setup command is still running."""
+        return self.setup == "running" or not self.filled
 
     @property
     def root(self) -> Path:
@@ -212,8 +220,14 @@ async def main_dirty_count(top: Path, env: Mapping[str, str]) -> int:
     return len(await _status(top, env))
 
 
-async def add_worktree(spot: RepoSpot, path: Path, branch: str, env: Mapping[str, str]) -> None:
-    """``git worktree add -b <branch> <path> <HEAD>`` with filter drivers pinned off."""
+async def add_worktree(
+    spot: RepoSpot, path: Path, branch: str, env: Mapping[str, str], *, checkout: bool = True
+) -> None:
+    """``git worktree add -b <branch> <path> <HEAD>`` with filter drivers pinned off.
+
+    ``checkout=False`` adds ``--no-checkout``: the folder and branch only,
+    in milliseconds. :func:`check_out` fills it in later (TD-5187).
+    """
     if await asyncio.to_thread(path.exists):
         raise WorktreeError(f"{path} already exists")
     await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
@@ -224,6 +238,7 @@ async def add_worktree(spot: RepoSpot, path: Path, branch: str, env: Mapping[str
         "worktree",
         "add",
         "--quiet",
+        *(() if checkout else ("--no-checkout",)),
         "-b",
         branch,
         str(path),
@@ -236,6 +251,51 @@ async def add_worktree(spot: RepoSpot, path: Path, branch: str, env: Mapping[str
         raise WorktreeError(
             f"git worktree add failed: {detail}" if detail else "git worktree add failed"
         )
+
+
+async def check_out_part(wt_top: Path, rel: str, env: Mapping[str, str]) -> bool:
+    """Check out one folder of ``HEAD`` into a ``--no-checkout`` worktree.
+
+    False when ``HEAD`` has no such folder. The session's config lives in
+    ``.tst``, and the wall is built from it before the rest is checked out.
+    """
+    pins = await filter_pins(wt_top, env)
+    rc, _out, _err = await run_git(
+        wt_top, *pins, "checkout", "--quiet", "HEAD", "--", rel, env=env, timeout=_ADD_TIMEOUT
+    )
+    return rc == 0
+
+
+async def check_out(wt_top: Path, env: Mapping[str, str]) -> None:
+    """Check out every file of ``HEAD`` into a ``--no-checkout`` worktree.
+
+    The index becomes ``HEAD``'s, so the worktree reads as clean. A file
+    already there is left alone: the ``.tst`` folder checked out first, a
+    setting saved to it since, or an ignored file copied in. A tracked file
+    changed that way then shows as a change, which it is.
+    """
+    pins = await filter_pins(wt_top, env)
+    await checked_git(wt_top, *pins, "read-tree", "HEAD", env=env, timeout=_ADD_TIMEOUT)
+    listed = await checked_git(wt_top, "ls-files", "-z", env=env, timeout=_ADD_TIMEOUT)
+    names = [n for n in listed.split(b"\0") if n]
+    missing = await asyncio.to_thread(
+        lambda: [n for n in names if not os.path.lexists(wt_top / os.fsdecode(n))]
+    )
+    if not missing:
+        return
+    rc, _out, err = await run_git(
+        wt_top,
+        *pins,
+        "checkout-index",
+        "--stdin",
+        "-z",
+        env=env,
+        stdin=b"".join(n + b"\0" for n in missing),
+        timeout=_ADD_TIMEOUT,
+    )
+    if rc != 0:
+        detail = err.decode("utf-8", "replace").strip()
+        raise WorktreeError(f"git checkout failed: {detail}" if detail else "git checkout failed")
 
 
 async def copy_included(main_top: Path, include: Path, wt_top: Path, env: Mapping[str, str]) -> int:
@@ -419,6 +479,8 @@ __all__ = [
     "add_worktree",
     "branch_for",
     "changes",
+    "check_out",
+    "check_out_part",
     "commit_all",
     "copy_included",
     "find_repo",

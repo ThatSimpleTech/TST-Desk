@@ -561,6 +561,8 @@ from .worktree import SessionWorktree, WorktreeError
 from .worktree_config import config_home, refresh_config, same_config_folders
 from .worktree_session import (
     WorktreeHasChanges,
+    discard,
+    finish_checkout,
     open_worktree,
     record_root,
     settle,
@@ -2572,6 +2574,10 @@ class Daemon:
                     self._session_index.catch_up, record.session_id, loaded.events
                 )
             root, worktree = record_root(record.workspace_path, record.worktree)
+            if worktree is not None and not worktree.filled:
+                # TD-5187: a restart cut the checkout off. Finish it now.
+                await finish_checkout(worktree)
+                await self._session_store.set_worktree(record.session_id, worktree.to_record())
             if loaded is not None and loaded.conversation is not None:
                 await self._revive_session(record.session_id, root, loaded)
                 continue
@@ -3794,8 +3800,8 @@ class Daemon:
             return await self._handle_close_worktree(msg)
 
         if isinstance(msg, DeleteSession):
-            doomed = self._session_worktree(msg.session_id)
-            if doomed is not None and doomed.setup == "running":
+            doomed = await self._checked_out(msg.session_id, "being deleted")
+            if doomed is not None and doomed.busy:
                 # TD-5161: deleting now would orphan the worktree and its
                 # branch, with the setup still running for nobody.
                 return build_error(
@@ -4811,8 +4817,9 @@ class Daemon:
             preset=sess.preset,
             worktree=sess.worktree.to_record() if sess.worktree is not None else None,
         )
-        if opened is not None and opened.setup:
-            # Before the loop starts, so its first wait sees the gate.
+        if opened is not None and opened.worktree is not None and opened.worktree.busy:
+            # Before the loop starts, so its first wait sees the gate. The
+            # checkout runs here too (TD-5187): the reply does not wait.
             self._tasks.append(
                 start_setup(
                     sess,
@@ -5303,6 +5310,26 @@ class Daemon:
         record = self._session_store.get(session_id)
         return SessionWorktree.from_record(record.worktree) if record is not None else None
 
+    async def _checked_out(self, session_id: str, busy: str) -> SessionWorktree | None:
+        """The session's worktree, once its background checkout is done (TD-5187).
+
+        Closing or deleting a session just opened waits the moment the
+        checkout takes rather than refusing. Meanwhile the session is
+        *busy*, so a message sent then is refused as during the close
+        itself, not started in a folder about to go. A failed checkout has
+        moved the session back to its folder by then, so this returns None.
+        """
+        live = self.session_registry.get(session_id)
+        files = live.worktree_files if live is not None else None
+        if live is not None and files is not None and not files.is_set():
+            before = live.folder_busy
+            live.folder_busy = busy
+            try:
+                await files.wait()
+            finally:
+                live.folder_busy = before
+        return self._session_worktree(session_id)
+
     def _stored_worktrees(self) -> list[SessionWorktree]:
         """Every session's worktree, as the store keeps them (TD-5126)."""
         found = (SessionWorktree.from_record(r.worktree) for r in self._session_store.records())
@@ -5350,6 +5377,14 @@ class Daemon:
         wt = sess.worktree
         if wt is None:
             return
+        if not wt.filled:
+            # TD-5187: the checkout failed. Same as a worktree that could
+            # not be made: the session works in its folder.
+            await discard(wt)
+            await self._leave_worktree(
+                sess.id, f"No worktree for this session. {wt.setup_note} It works in {wt.project}."
+            )
+            return
         await self._session_store.set_worktree(sess.id, wt.to_record())
         await sess.event_log.add(state_event(sess, wt.setup_note if wt.setup == "failed" else ""))
 
@@ -5363,6 +5398,7 @@ class Daemon:
         if sess is not None:
             sess.worktree = None
             sess.worktree_ready = None
+            sess.worktree_files = None
         refusal = await move_session(
             self.session_registry, self._session_store, session_id, record.workspace_path
         )
@@ -5378,8 +5414,8 @@ class Daemon:
 
     async def _settle_worktree(self, session_id: str) -> None:
         """Remove an unchanged worktree and put the session back in its folder."""
-        wt = self._session_worktree(session_id)
-        if wt is None or wt.setup == "running":
+        wt = await self._checked_out(session_id, "tidying its worktree")
+        if wt is None or wt.busy:
             return
         if await settle(wt):
             await self._leave_worktree(
@@ -5393,7 +5429,7 @@ class Daemon:
         record = self._session_store.get(sid)
         if record is None:
             return build_error("session_not_found", f"Session {sid!r} not found", session_id=sid)
-        wt = self._session_worktree(sid)
+        wt = await self._checked_out(sid, "closing its worktree")
         if wt is None:
             return build_error(
                 "no_worktree", "This session works in its folder, not a worktree.", session_id=sid
@@ -5405,7 +5441,7 @@ class Daemon:
                 "Wait for it or stop it, then close the worktree.",
                 session_id=sid,
             )
-        if wt.setup == "running":
+        if wt.busy:
             return build_error(
                 "worktree_busy", "The worktree's setup is still running.", session_id=sid
             )

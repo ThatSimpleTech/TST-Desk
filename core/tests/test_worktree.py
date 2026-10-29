@@ -4,18 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
 
+from tstd import worktree_session
 from tstd.boundary_config import load_workspace_boundary
 from tstd.session import Session
 from tstd.tools.shell import sanitized_env
 from tstd.workspace_trust import TrustStore, find_loosened, read_view
-from tstd.worktree import SessionWorktree, WorktreeError, changes
+from tstd.worktree import SessionWorktree, WorktreeError, changes, check_out
 from tstd.worktree_session import (
     WorktreeHasChanges,
     close,
+    finish_checkout,
     open_worktree,
     start_setup,
     workspace_settings,
@@ -53,6 +56,7 @@ def write_config(root: Path, text: str) -> None:
 async def opened(repo: Path, tmp_path: Path, trust: TrustStore | None = None) -> SessionWorktree:
     made = await open_worktree(str(repo), "abcd1234", folder=tmp_path / "wts", trust=trust)
     assert made.worktree is not None, made.note
+    await finish_checkout(made.worktree)
     return made.worktree
 
 
@@ -87,6 +91,7 @@ async def test_a_subfolder_workspace_works_in_the_same_subfolder_of_the_worktree
 
     assert made.worktree is not None
     assert made.worktree.root == tmp_path / "wts" / "repo-sub1" / "app"
+    await finish_checkout(made.worktree)
     assert (made.worktree.root / "main.py").is_file()
 
 
@@ -364,3 +369,136 @@ def test_a_stored_worktree_round_trips_and_a_cut_setup_reads_failed() -> None:
     assert back.setup == "failed"
     assert SessionWorktree.from_record(None) is None
     assert SessionWorktree.from_record({"path": "/x"}) is None
+
+
+# ── TD-5187: the files are checked out after the session opens ──────────
+
+
+async def test_a_new_worktree_opens_before_its_files_are_checked_out(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path / "repo")
+    write_config(repo, "# shared settings\n")
+    git(repo, "add", ".tst/config.yaml")
+    git(repo, "commit", "-qm", "config")
+
+    made = await open_worktree(str(repo), "lazy1", folder=tmp_path / "wts", trust=None)
+
+    wt = made.worktree
+    assert wt is not None and not wt.filled and wt.busy
+    # The wall is built from .tst before anything else, so it is there.
+    assert wt.config_tracked
+    assert (wt.root / ".tst" / "config.yaml").read_text(encoding="utf-8") == "# shared settings\n"
+    assert not (wt.root / "README.md").exists()
+
+    sess = Session(str(wt.root))
+    sess.worktree = wt
+    done = asyncio.Event()
+
+    async def on_done(_s: Session) -> None:
+        done.set()
+
+    task = start_setup(sess, "", 30.0, on_done)
+    await asyncio.wait_for(sess.wait_for_worktree_files(), 10)
+    await asyncio.wait_for(done.wait(), 10)
+    await task
+
+    assert wt.filled and not wt.busy
+    assert (wt.root / "README.md").read_text(encoding="utf-8") == "hello\n"
+    assert not (await changes(wt, sanitized_env())).changed
+
+
+async def test_a_turn_waits_for_the_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = make_repo(tmp_path / "repo")
+    made = await open_worktree(str(repo), "wait1", folder=tmp_path / "wts", trust=None)
+    assert made.worktree is not None
+    sess = Session(str(made.worktree.root))
+    sess.worktree = made.worktree
+    gate = asyncio.Event()
+
+    async def slow(top: Path, env: Mapping[str, str]) -> None:
+        await gate.wait()
+        await check_out(top, env)
+
+    monkeypatch.setattr(worktree_session, "check_out", slow)
+
+    async def on_done(_s: Session) -> None:
+        return None
+
+    task = start_setup(sess, "", 30.0, on_done)
+    await sess.add_user_message("go")
+    waiting = asyncio.create_task(sess.wait_for_user_message())
+    files = asyncio.create_task(sess.wait_for_worktree_files())
+    await asyncio.sleep(0.15)
+    assert not waiting.done() and not files.done()
+
+    gate.set()
+    taken = await asyncio.wait_for(waiting, 5)
+    await asyncio.wait_for(files, 5)
+    await task
+    assert taken is not None
+    assert (made.worktree.root / "README.md").exists()
+
+
+async def test_a_setting_saved_before_the_checkout_is_not_overwritten(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path / "repo")
+    write_config(repo, "# shared settings\n")
+    git(repo, "add", ".tst/config.yaml")
+    git(repo, "commit", "-qm", "config")
+    made = await open_worktree(str(repo), "keep1", folder=tmp_path / "wts", trust=None)
+    assert made.worktree is not None
+    saved = made.worktree.root / ".tst" / "config.yaml"
+    saved.write_text("caps:\n  spend_usd: 60\n", encoding="utf-8")
+
+    await finish_checkout(made.worktree)
+
+    assert saved.read_text(encoding="utf-8") == "caps:\n  spend_usd: 60\n"
+    assert (made.worktree.root / "README.md").exists()
+    assert (await changes(made.worktree, sanitized_env())).files == 1
+
+
+async def test_a_failed_checkout_is_reported_and_lets_go(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = make_repo(tmp_path / "repo")
+    made = await open_worktree(str(repo), "fail1", folder=tmp_path / "wts", trust=None)
+    assert made.worktree is not None
+    sess = Session(str(made.worktree.root))
+    sess.worktree = made.worktree
+
+    async def broken(_top: Path, _env: Mapping[str, str]) -> None:
+        raise WorktreeError("disk full")
+
+    monkeypatch.setattr(worktree_session, "check_out", broken)
+    seen: list[str] = []
+
+    async def on_done(s: Session) -> None:
+        # Runs before anything waiting is let go, so the daemon can move it.
+        assert s.worktree_files is not None and not s.worktree_files.is_set()
+        assert s.worktree is not None
+        seen.append(s.worktree.setup_note)
+
+    await start_setup(sess, "echo never > ran.txt", 30.0, on_done)
+
+    assert not made.worktree.filled
+    assert seen == ["Its files could not be checked out: disk full"]
+    assert not (made.worktree.root / "ran.txt").exists()
+    await asyncio.wait_for(sess.wait_for_worktree_files(), 1)
+
+
+async def test_finishing_a_checkout_that_fails_leaves_a_worktree_the_user_can_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = make_repo(tmp_path / "repo")
+    made = await open_worktree(str(repo), "cut1", folder=tmp_path / "wts", trust=None)
+    assert made.worktree is not None
+
+    async def broken(_top: Path, _env: Mapping[str, str]) -> None:
+        raise WorktreeError("gone")
+
+    monkeypatch.setattr(worktree_session, "check_out", broken)
+    await finish_checkout(made.worktree)
+
+    assert made.worktree.filled and not made.worktree.busy
+    assert made.worktree.setup == "failed"
+    assert "gone" in made.worktree.setup_note
