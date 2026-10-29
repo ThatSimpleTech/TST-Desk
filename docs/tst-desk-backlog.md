@@ -12409,6 +12409,24 @@ publishes both for every model.
       (`settings.test.ts`, `model-card.test.ts`).
 - [x] The key never reaches a log or config.yaml (`TestDaemon`).
 
+### TD-5190 — The mascot greets a new chat
+
+**Size:** 1 · **Depends on:** TD-1605 · **Status:** Done
+
+The That Simple Tech padlock sits above the greeting on an empty chat. It
+drops in, and on the rebound its shackle pops open while it twirls once in
+the air; the shackle snaps shut as it lands. Then it idles: a blink, a
+glance each way, a double blink, on a 12-second loop. With no live session
+it sleeps with its eyes shut.
+
+- [x] The drawing matches the logo on a 24-pixel grid, and the eyes are
+      holes, so the background shows through them.
+- [x] The eyes move in whole pixels. Each eye position is its own frame,
+      and only one frame shows at a time.
+- [x] Each new chat plays the entrance. Hovering lifts the shackle a pixel.
+      Reduced motion gets the still picture.
+- [x] It leaves with the greeting once the chat has messages.
+
 ### TD-5189 — The Screen pane shows the frame in the macOS app
 
 **Size:** 1 · **Depends on:** TD-1710, TD-3402 · **Status:** Done
