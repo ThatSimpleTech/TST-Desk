@@ -854,6 +854,14 @@ export interface SetTierSlug extends ClientMessage {
   slug: string;
 }
 
+/** TD-5185: re-read prices and limits from each tier's host and write them
+ *  to config.yaml. `tier` omitted means every tier. Acked with setup_state. */
+export interface RefreshModelCards extends ClientMessage {
+  type: "refresh_model_cards";
+  preset: string;
+  tier?: string | null;
+}
+
 export interface SetPreset extends ClientMessage {
   type: "set_preset";
   name: string;
@@ -1249,6 +1257,7 @@ export type ClientMessageUnion =
   | SetSpendCap
   | TrustWorkspaceConfig
   | SetTierSlug
+  | RefreshModelCards
   | SetCredential
   | DeleteCredential
   | SetTierCredential
@@ -2125,6 +2134,7 @@ export interface SetupState extends DaemonEvent {
   credentials?: CredentialSummary[];
   tier_credentials?: Record<string, string | null>;
   tier_loopback?: Record<string, boolean>;
+  tier_cards?: Record<string, TierCard>;
   /** Agent engine for new sessions. Additive; older daemons omit it. */
   engine?: "native" | "grok";
   grok_available?: boolean;
@@ -2321,6 +2331,26 @@ export interface McpValueSummary {
   stored: boolean;
 }
 
+// TD-5185: a tier's stored prices (dollars per million) and limits, and the
+// outcome of the last model-card refresh (null = none this run). Display only.
+export type CardStatus =
+  | "ok"
+  | "not_listed"
+  | "no_pricing"
+  | "fetch_failed"
+  | "no_slug"
+  | "write_failed";
+
+export interface TierCard {
+  input_price: number;
+  output_price: number;
+  cache_read_price: number;
+  context_window: number;
+  max_output_tokens: number;
+  card?: CardStatus | null;
+  detail?: string | null;
+}
+
 export interface CredentialSummary {
   id: string;
   name: string;
@@ -2337,6 +2367,9 @@ export interface EndpointModel {
   context_window?: number | null;
   input_price?: number | null;
   output_price?: number | null;
+  // TD-5185: pricing.input_cache_read and top_provider.max_completion_tokens.
+  cache_read_price?: number | null;
+  max_output_tokens?: number | null;
 }
 
 // TD-5172: reply to list_endpoint_models. `error` is plain text for the

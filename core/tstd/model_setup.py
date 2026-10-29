@@ -54,7 +54,9 @@ def parse_model_list(payload: Any) -> list[EndpointModel] | None:
     """Rows from an OpenAI ``/models`` body, or ``None`` if it is not one.
 
     Picks up what servers commonly report beside the id: a context length
-    (``context_length``, or vLLM's ``max_model_len``) and per-token prices.
+    (``context_length``, or vLLM's ``max_model_len``), per-token prices
+    including the cache-read rate, and OpenRouter's output cap
+    (``top_provider.max_completion_tokens``, TD-5185).
     """
     if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
         return None
@@ -67,6 +69,8 @@ def parse_model_list(payload: Any) -> list[EndpointModel] | None:
             continue
         raw_pricing = entry.get("pricing")
         pricing: dict[str, Any] = raw_pricing if isinstance(raw_pricing, dict) else {}
+        raw_top = entry.get("top_provider")
+        top: dict[str, Any] = raw_top if isinstance(raw_top, dict) else {}
         rows.append(
             EndpointModel(
                 id=model_id,
@@ -74,6 +78,8 @@ def parse_model_list(payload: Any) -> list[EndpointModel] | None:
                 or _positive_int(entry.get("max_model_len")),
                 input_price=_per_million(pricing.get("prompt")),
                 output_price=_per_million(pricing.get("completion")),
+                cache_read_price=_per_million(pricing.get("input_cache_read")),
+                max_output_tokens=_positive_int(top.get("max_completion_tokens")),
             )
         )
     rows.sort(key=lambda row: row.id.lower())

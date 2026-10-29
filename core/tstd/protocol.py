@@ -1439,6 +1439,22 @@ class SetTierCredential(ClientMessage):
     credential: str = ""
 
 
+class RefreshModelCards(ClientMessage):
+    """Re-read prices and limits from each tier's host (TD-5185).
+
+    Settings' Refresh. ``GET /models`` at the host each tier (and each
+    backup) already calls, with the key it already sends, then the matched
+    card's prices, context window and output cap are written to the user's
+    ``config.yaml``. ``tier`` None means every tier of ``preset``. Sent only
+    on a click. Acked with ``setup_state``, whose ``tier_cards`` carries the
+    outcome.
+    """
+
+    type: Literal["refresh_model_cards"] = "refresh_model_cards"
+    preset: str = Field(min_length=1)
+    tier: str | None = None
+
+
 def _refuse_mcp_values(value: Any) -> Any:
     """Keep typed values off the server messages; they would land in config."""
     if isinstance(value, dict):
@@ -3353,6 +3369,26 @@ class PolicyRules(DaemonEvent):
     rules: list[PolicyRuleSummary] = Field(default_factory=list)
 
 
+class TierCard(BaseModel):
+    """A tier's stored prices and limits, and its last card refresh (TD-5185).
+
+    The numbers are what ``config.yaml`` holds now, read for display only:
+    the window never computes a price. ``card`` is the outcome of the last
+    refresh in this daemon's run, None when there was none. ``detail`` says
+    why a refresh left the values alone.
+    """
+
+    input_price: float
+    output_price: float
+    cache_read_price: float
+    context_window: int
+    max_output_tokens: int
+    card: (
+        Literal["ok", "not_listed", "no_pricing", "fetch_failed", "no_slug", "write_failed"] | None
+    ) = None
+    detail: str | None = None
+
+
 class CredentialSummary(BaseModel):
     """One named API key as the UI may see it (TD-1717). Never the secret.
 
@@ -3546,6 +3582,9 @@ class SetupState(DaemonEvent):
     credentials: list[CredentialSummary] = Field(default_factory=list)
     tier_credentials: dict[str, str | None] = Field(default_factory=dict)
     tier_loopback: dict[str, bool] = Field(default_factory=dict)
+    # TD-5185: the active preset's stored prices and limits per tier, and
+    # the last model-card refresh. Additive; an older client ignores it.
+    tier_cards: dict[str, TierCard] = Field(default_factory=dict)
     # Agent engine for new sessions. Additive; older clients ignore it.
     # grok_available is a PATH probe, never a credential.
     engine: Literal["native", "grok"] = "native"
@@ -3778,12 +3817,16 @@ class EndpointModel(BaseModel):
 
     ``context_window`` and the per-million prices are filled only when the
     server reports them (``context_length``/``max_model_len``, ``pricing``).
+    ``cache_read_price`` and ``max_output_tokens`` likewise (TD-5185), from
+    ``pricing.input_cache_read`` and ``top_provider.max_completion_tokens``.
     """
 
     id: str
     context_window: int | None = None
     input_price: float | None = None
     output_price: float | None = None
+    cache_read_price: float | None = None
+    max_output_tokens: int | None = None
 
 
 class EndpointModels(DaemonEvent):
@@ -4556,6 +4599,7 @@ ClientMessageT = Annotated[
     | SetSpendCap
     | TrustWorkspaceConfig
     | SetTierSlug
+    | RefreshModelCards
     | SetCredential
     | DeleteCredential
     | SetTierCredential
@@ -4802,6 +4846,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_spend_cap",
         "trust_workspace_config",
         "set_tier_slug",
+        "refresh_model_cards",
         "set_credential",
         "delete_credential",
         "set_tier_credential",

@@ -18481,6 +18481,33 @@ key failed with "not a valid model".
   servers (OpenRouter) list models without a key, so a listing proves
   nothing, and asking an arbitrary listed model costs money.
 
+## TD-5185 — Prices and limits come from the model card (Class B)
+
+- New client message `refresh_model_cards {preset, tier?}`, acked with
+  `setup_state`, rather than a general "update tier" message: it carries no
+  values, so a client cannot write a price, only ask for the card.
+- The host is `resolve_base_url`, the one a turn calls, and so is the loopback
+  test. A tier whose `base_url` is loopback but whose key has a hosted host is
+  priced from that host and takes its context length: turns go there.
+- `context_window` is the compaction budget, so taking a hosted card's context
+  length raises when compaction fires. Intended: the stored 32k on a hosted
+  model was a stale hand value, not a choice.
+- The card's output cap (`top_provider.max_completion_tokens`) only ever lowers
+  `max_output_tokens`. The first live refresh copied 943718 for Kimi K3.1 Pro:
+  that value is every request's `max_tokens`, it is held back from the
+  compaction budget, and OpenRouter refuses a request whose `max_tokens` the
+  balance cannot cover (about $9.44 at $10/M). The card says what the model
+  allows, not what a turn should ask for. Also only below the context length
+  and the window, so window minus output reservation stays positive.
+- A card without `input_cache_read` leaves `cache_read_price` alone, even when
+  the provider charges full price for cached reads: a missing field is not a
+  statement that the rate is the input rate.
+- A negative price (OpenRouter's variable-price routers) counts as no price.
+- Outcomes are kept in memory for the daemon's run only. They describe the
+  last click, not the config, and a restart showing none is accurate.
+- Not done: refreshing on a schedule. A price change upstream is picked up on
+  the next slug save or Refresh, so the meter can drift until then.
+
 ## TD-5188 — The shell splitter fails closed where bash 3.2 reads a line differently (Class B)
 
 On macOS the shell tool runs `/bin/sh -c`, and `/bin/sh` there is bash
