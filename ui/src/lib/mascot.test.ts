@@ -2,12 +2,13 @@
 //
 // The mascot (TD-5190): the drawing matches the logo pixel for pixel, the
 // eyes move in whole pixels without touching the outline, and the chat pane
-// shows it only on an empty chat, asleep while no session is live.
+// shows it only on an empty chat, asleep while no session is live. The eyes
+// can look all eight ways and pick the way toward a point (TD-5192).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
 import type { DaemonEventUnion } from "./protocol";
-import { MASCOT_HEIGHT, MASCOT_WIDTH, SHACKLE_PATH, bodyPath, bodyRows } from "./mascot";
+import { AHEAD, GAZES, MASCOT_HEIGHT, MASCOT_WIDTH, SHACKLE_PATH, bodyPath, bodyRows, gazeToward } from "./mascot";
 
 const LOGO = [
 	"........########........",
@@ -54,13 +55,13 @@ function paint(...paths: string[]): string[] {
 
 describe("the mascot drawing", () => {
 	it("draws the logo: shackle, gap, body, eyes looking ahead", () => {
-		expect(paint(SHACKLE_PATH, bodyPath({ gaze: "ahead", shut: false }))).toEqual(LOGO);
+		expect(paint(SHACKLE_PATH, bodyPath({ ...AHEAD, shut: false }))).toEqual(LOGO);
 	});
 
 	it("moves both eyes one whole pixel to glance, and nothing else", () => {
-		const ahead = bodyRows({ gaze: "ahead", shut: false });
-		const left = bodyRows({ gaze: "left", shut: false });
-		const right = bodyRows({ gaze: "right", shut: false });
+		const ahead = bodyRows({ ...AHEAD, shut: false });
+		const left = bodyRows({ dx: -1, dy: 0, shut: false });
+		const right = bodyRows({ dx: 1, dy: 0, shut: false });
 		expect(left[5]).toBe("####....######....######");
 		expect(right[5]).toBe("######....######....####");
 		expect(left[4]).toBe("#####..########..#######");
@@ -75,7 +76,7 @@ describe("the mascot drawing", () => {
 
 	it("blinks to a one-pixel slit per eye", () => {
 		const full = "########################";
-		expect(bodyRows({ gaze: "ahead", shut: true }).slice(4, 10)).toEqual([
+		expect(bodyRows({ ...AHEAD, shut: true }).slice(4, 10)).toEqual([
 			full,
 			full,
 			full,
@@ -83,6 +84,54 @@ describe("the mascot drawing", () => {
 			full,
 			full,
 		]);
+	});
+
+	it("looks all eight ways, each eye moved one pixel with a solid border kept", () => {
+		const holes = (rows: string[]) =>
+			rows.flatMap((row, y) => [...row].flatMap((cell, x) => (cell === "." && y > 1 && y < 13 ? [`${x},${y}`] : [])));
+		const ahead = holes(bodyRows({ ...AHEAD, shut: false }));
+		expect(GAZES).toHaveLength(9);
+		expect(new Set(GAZES.map((g) => `${g.dx},${g.dy}`)).size).toBe(9);
+		for (const gaze of GAZES) {
+			const rows = bodyRows({ ...gaze, shut: false });
+			const moved = ahead.map((cell) => {
+				const [x, y] = cell.split(",").map(Number);
+				return `${x + gaze.dx},${y + gaze.dy}`;
+			});
+			expect(holes(rows).sort(), `${gaze.dx},${gaze.dy}`).toEqual(moved.sort());
+			// Never at the edge: two solid pixels to each side, one above and below.
+			for (const cell of holes(rows)) {
+				const [x, y] = cell.split(",").map(Number);
+				expect(x).toBeGreaterThanOrEqual(2);
+				expect(x).toBeLessThanOrEqual(21);
+				expect(y).toBeGreaterThanOrEqual(3);
+				expect(y).toBeLessThanOrEqual(11);
+			}
+		}
+	});
+});
+
+describe("which way to look", () => {
+	const eyes = { x: 100, y: 100 };
+	it.each([
+		[200, 100, 1, 0],
+		[0, 100, -1, 0],
+		[100, 200, 0, 1],
+		[100, 0, 0, -1],
+		[200, 200, 1, 1],
+		[0, 0, -1, -1],
+		[200, 0, 1, -1],
+		[0, 200, -1, 1],
+		// Nearer a side than a diagonal: that side. Nearer a diagonal: it.
+		[300, 150, 1, 0],
+		[300, 200, 1, 1],
+	])("toward (%i, %i) is (%i, %i)", (x, y, dx, dy) => {
+		expect(gazeToward(eyes, { x, y }, 40)).toEqual({ dx, dy });
+	});
+
+	it("looks straight out when the point is on the mascot", () => {
+		expect(gazeToward(eyes, { x: 120, y: 110 }, 40)).toEqual(AHEAD);
+		expect(gazeToward(eyes, { x: 100, y: 100 }, 40)).toEqual({ dx: 0, dy: 0 });
 	});
 });
 

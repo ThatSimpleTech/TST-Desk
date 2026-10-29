@@ -7,6 +7,9 @@ import type { MascotReading } from "../src/lib/components/Mascot.harness";
 // back in as the body lands; the body never turns. jsdom has no layout or
 // animation clock, so this freezes the real animation in Chromium and
 // measures where things are drawn.
+//
+// TD-5192: once it has landed, its eyes follow a real cursor all eight ways
+// and glance at a field being typed into, then go back to idling.
 
 const PAGE = "/__td5191-mascot";
 
@@ -31,6 +34,7 @@ test.beforeEach(async ({ page }) => {
 			body:
 				'<!doctype html><html><head><meta charset="utf-8"></head><body>' +
 				'<div id="stage" style="padding: 80px"></div>' +
+				'<textarea id="field" style="position: absolute; left: 600px; top: 600px; width: 200px; height: 40px"></textarea>' +
 				'<script type="module" src="/src/lib/components/Mascot.harness.ts"></script>' +
 				"</body></html>",
 		}),
@@ -116,4 +120,48 @@ test("it unhooks and lifts before turning, and is back in place by the landing",
 	expect(lift(landed)).toBeCloseTo(lift(rest), 0);
 	expect(landed.shackle.left - landed.body.left).toBeCloseTo(rest.shackle.left - rest.body.left, 0);
 	expect(landed.shackle.width).toBeCloseTo(16 * PX, 0);
+});
+
+// A stage no wider than the mascot leaves no room to walk, so it lands
+// 1.22s in: the 120ms start and the 1.1s jump.
+const LANDS_AFTER = 1300;
+
+async function drawn(page: import("@playwright/test").Page): Promise<string> {
+	return page.evaluate(() => window.__mascotHarness!.eyesDrawn());
+}
+
+test("once landed, the eyes follow the cursor all eight ways, and look out when it's on them", async ({ page }) => {
+	await page.evaluate((width) => window.__mascotHarness!.live(width), BODY_WIDTH);
+	await page.waitForTimeout(LANDS_AFTER);
+	const eyes = await page.evaluate(() => window.__mascotHarness!.eyeCentre());
+	const ways: [number, number][] = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];
+	for (const [dx, dy] of ways) {
+		await page.mouse.move(eyes.x + dx * 60, eyes.y + dy * 60);
+		await expect.poll(() => drawn(page), { message: `toward ${dx},${dy}` }).toBe(`${dx},${dy}`);
+	}
+	await page.mouse.move(eyes.x + 5, eyes.y + 5);
+	await expect.poll(() => drawn(page)).toBe("0,0");
+});
+
+test("the eyes wait for the landing before following", async ({ page }) => {
+	await page.evaluate((width) => window.__mascotHarness!.live(width), BODY_WIDTH);
+	const eyes = await page.evaluate(() => window.__mascotHarness!.eyeCentre());
+	await page.mouse.move(eyes.x + 200, eyes.y);
+	await page.waitForTimeout(300);
+	expect(await drawn(page)).toMatch(/^idle:/);
+
+	await page.waitForTimeout(LANDS_AFTER);
+	await page.mouse.move(eyes.x + 220, eyes.y);
+	await expect.poll(() => drawn(page)).toBe("1,0");
+});
+
+test("while typing, it glances at the field, then goes back to idling", async ({ page }) => {
+	await page.evaluate((width) => window.__mascotHarness!.live(width), BODY_WIDTH);
+	await page.waitForTimeout(LANDS_AFTER);
+	// Focus without the mouse, so only the typing can move the eyes. The
+	// field is below and to the right, nearer the diagonal than either side.
+	await page.focus("#field");
+	await page.keyboard.type("hello");
+	await expect.poll(() => drawn(page)).toBe("1,1");
+	await expect.poll(() => drawn(page), { timeout: 4000 }).toMatch(/^idle:/);
 });
