@@ -43,7 +43,7 @@ from .config import (
 )
 from .key_hosts import key_refusal
 from .keychain import KeychainError
-from .model_setup import list_endpoint_models
+from .model_setup import default_max_output, list_endpoint_models
 from .protocol import EndpointModel, EndpointModels
 
 CardStatus = Literal["ok", "not_listed", "no_pricing", "fetch_failed", "no_slug", "write_failed"]
@@ -115,6 +115,11 @@ def card_values(tier: TierConfig, card: EndpointModel, *, loopback: bool) -> Car
         and cap < tier.max_output_tokens
     ):
         values["max_output_tokens"] = cap
+    # TD-5189: a small served window (llama.cpp started with a short -c) must
+    # still leave room past the reply reservation, as Settings requires.
+    reply = values.get("max_output_tokens", tier.max_output_tokens)
+    if reply * 2 >= window:
+        values["max_output_tokens"] = default_max_output(int(window))
     return values
 
 

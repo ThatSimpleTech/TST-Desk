@@ -201,7 +201,15 @@ class TestMapping:
 
     def test_an_output_cap_equal_to_the_context_is_ignored(self) -> None:
         card = EndpointModel(id="m", context_window=8192, max_output_tokens=8192)
-        assert "max_output_tokens" not in card_values(_tier("m"), card, loopback=False)
+        # The cap is not copied; the 8192 window then needs a smaller reply
+        # reservation than the stored 8192 (TD-5189).
+        assert card_values(_tier("m"), card, loopback=False)["max_output_tokens"] == 2048
+
+    def test_a_small_served_window_lowers_the_reply_reservation(self) -> None:
+        # TD-5189: llama.cpp started with -c 8192 next to a stored 8192 reply.
+        card = EndpointModel(id="m", context_window=8192, served_window=8192)
+        values = card_values(_tier("m", LOCAL, None), card, loopback=True)
+        assert values == {"context_window": 8192, "max_output_tokens": 2048}
 
     def test_a_negative_router_price_is_no_price(self) -> None:
         rows = parse_model_list({"data": [{"id": "openrouter/auto", "pricing": {"prompt": "-1"}}]})
