@@ -12409,6 +12409,34 @@ publishes both for every model.
       (`settings.test.ts`, `model-card.test.ts`).
 - [x] The key never reaches a log or config.yaml (`TestDaemon`).
 
+### TD-5192 — The mascot's eyes follow the cursor and glance at typing
+
+**Size:** 2 · **Depends on:** TD-5191 · **Status:** Done
+
+Once the mascot has landed, its eyes follow the cursor over the window and
+glance at whatever field is being typed into. Each eye moves one art pixel
+in any of eight directions, so it points toward the cursor rather than
+tracking it smoothly, which suits the pixel art. It still blinks while it
+looks. The idle loop takes the eyes back 2.5 seconds after the cursor stops,
+1.5 seconds after the typing stops, and at once when the cursor leaves the
+window.
+
+- [x] The eyes look all eight ways, each eye one pixel off centre and inside
+      a solid border, and straight out when the cursor is on the mascot.
+- [x] They follow only after the landing, and only events the window already
+      gets are used: nothing polls, and the cursor is not followed outside
+      the window.
+- [x] Typing into a field turns the eyes toward that field. When the typing
+      stops, the idle loop takes the eyes back.
+- [x] A held gaze blinks every 4 seconds. Coming back from one, the idle
+      loop runs without replaying the walk.
+- [x] The same in WebKit and Chromium.
+
+`mascot-gaze.test.ts` drives the watcher with real DOM events.
+`e2e/mascot.spec.ts` moves a real cursor all eight ways and types into a
+real field. With the cursor listener removed, 4 unit tests and both cursor
+browser tests fail.
+
 ### TD-5191 — The mascot waddles in, and only its shackle spins
 
 **Size:** 2 · **Depends on:** TD-5190 · **Status:** Done

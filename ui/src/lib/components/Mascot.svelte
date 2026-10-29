@@ -4,23 +4,17 @@
 	// (TD-5191). At its spot it jumps: the shackle unhooks on the left and
 	// spins a full turn about its right leg, the way a real padlock's
 	// shackle swivels, while the body stays upright. The shackle drops back
-	// in and snaps shut as the body lands. Then it idles quietly: a blink,
-	// a glance each way, a double blink, on a 12-second loop. Hovering
-	// lifts the shackle a pixel. With no live session it sleeps: eyes shut,
-	// no entrance, no idle. Reduced motion gets the still picture.
-	//
-	// The eye positions are separate sprite frames (see mascot.ts), swapped
-	// with step timing so the eyes move in whole pixels like the art.
-	import { MASCOT_HEIGHT, MASCOT_WIDTH, SHACKLE_PATH, bodyPath } from "../mascot";
+	// in and snaps shut as the body lands. Then it idles (MascotEyes), and
+	// its eyes follow the cursor over the window and glance at whatever is
+	// being typed into (TD-5192). Hovering lifts the shackle a pixel. With
+	// no live session it sleeps: eyes shut, no entrance, no idle. Reduced
+	// motion gets the still picture, though the eyes still follow: they move
+	// only when the cursor or typing does.
+	import { EYE_ROW, MASCOT_HEIGHT, MASCOT_WIDTH, SHACKLE_PATH, type Gaze } from "../mascot";
+	import { watchGaze } from "../mascot-gaze";
+	import MascotEyes from "./MascotEyes.svelte";
 
 	let { asleep = false }: { asleep?: boolean } = $props();
-
-	const FRAMES = {
-		ahead: bodyPath({ gaze: "ahead", shut: false }),
-		left: bodyPath({ gaze: "left", shut: false }),
-		right: bodyPath({ gaze: "right", shut: false }),
-		shut: bodyPath({ gaze: "ahead", shut: true }),
-	};
 
 	// Three screen pixels per art pixel keeps every edge on the pixel grid.
 	const SCALE = 3;
@@ -36,7 +30,12 @@
 	const MAX_WALK_PX = 480;
 
 	let el: HTMLSpanElement | undefined = $state();
+	let svg: SVGSVGElement | undefined = $state();
 	let walk = $state<{ px: number; hops: number } | null>(null);
+	let landed = $state(false);
+	// Where the eyes are held, or null while the idle loop has them.
+	let look = $state<Gaze | null>(null);
+	let arrived = $state(false);
 
 	// The walk starts at the right of whatever holds the mascot, so measure
 	// that once on arrival. Hops come in pairs: one rock each way.
@@ -54,6 +53,30 @@
 	});
 
 	const walkMs = $derived((walk?.hops ?? 0) * HOP_MS);
+
+	// The eyes are free once it has landed: straight away without motion.
+	$effect(() => {
+		if (walk === null || asleep) return;
+		const still = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+		const timer = setTimeout(() => (landed = true), still ? 0 : START_MS + walkMs + JUMP_MS);
+		return () => clearTimeout(timer);
+	});
+
+	$effect(() => {
+		if (!landed || asleep) return;
+		return watchGaze(window, {
+			eyes: () => {
+				if (svg === undefined) return null;
+				const box = svg.getBoundingClientRect();
+				const row = (EYE_ROW + HEADROOM) / (MASCOT_HEIGHT + HEADROOM);
+				return { x: box.left + box.width / 2, y: box.top + box.height * row };
+			},
+			onLook: (gaze) => {
+				if (gaze !== null) arrived = true;
+				look = gaze;
+			},
+		});
+	});
 </script>
 
 <span
@@ -76,20 +99,14 @@
 >
 	<span class="hop">
 		<svg
+			bind:this={svg}
 			viewBox="0 {-HEADROOM} {MASCOT_WIDTH} {MASCOT_HEIGHT + HEADROOM}"
 			width={MASCOT_WIDTH * SCALE}
 			height={(MASCOT_HEIGHT + HEADROOM) * SCALE}
 			shape-rendering="crispEdges"
 		>
 			<path class="shackle" d={SHACKLE_PATH} />
-			{#if asleep}
-				<path d={FRAMES.shut} />
-			{:else}
-				<path class="frame ahead" d={FRAMES.ahead} />
-				<path class="frame left" d={FRAMES.left} />
-				<path class="frame right" d={FRAMES.right} />
-				<path class="frame shut" d={FRAMES.shut} />
-			{/if}
+			<MascotEyes {asleep} ready={walk !== null} {arrived} {look} />
 		</svg>
 	</span>
 </span>
@@ -126,14 +143,6 @@
 		transform: translateY(-1px);
 	}
 
-	.frame {
-		opacity: 0;
-	}
-
-	.ahead {
-		opacity: 1;
-	}
-
 	/* Everything moves only once the walk is measured, and only one
 	   animation drives each property at a time: the walk ends where the
 	   jump begins, and the idle loop waits for the landing. */
@@ -155,32 +164,11 @@
 		animation: unlock var(--jump-ms) var(--jump-at);
 	}
 
-	.ready .ahead {
-		animation:
-			look-ahead 12s step-end var(--idle-at) infinite,
-			walk-eyes-ahead var(--walk-ms) step-end var(--start) backwards;
-	}
-
-	.ready .left {
-		animation:
-			look-left 12s step-end var(--idle-at) infinite,
-			walk-eyes-left var(--walk-ms) step-end var(--start) backwards;
-	}
-
-	.ready .right {
-		animation: look-right 12s step-end var(--idle-at) infinite;
-	}
-
-	.ready .shut {
-		animation: blink 12s step-end var(--idle-at) infinite;
-	}
-
 	@media (prefers-reduced-motion: reduce) {
 		.ready,
 		.ready .hop,
 		.ready svg,
-		.ready .shackle,
-		.ready .frame {
+		.ready .shackle {
 			animation: none;
 		}
 	}
@@ -292,57 +280,5 @@
 		100% {
 			transform: translateY(0) rotate(0deg) scaleX(1);
 		}
-	}
-
-	/* Eyes to the left while walking left, ahead on arrival. */
-	@keyframes walk-eyes-left {
-		0% { opacity: 1; }
-		100% { opacity: 1; }
-	}
-
-	@keyframes walk-eyes-ahead {
-		0% { opacity: 0; }
-		100% { opacity: 0; }
-	}
-
-	/* Idle loop. Frames swap at the same instants, so exactly one shows. */
-	@keyframes look-ahead {
-		0% { opacity: 1; }
-		22% { opacity: 0; }
-		23.2% { opacity: 1; }
-		45% { opacity: 0; }
-		58% { opacity: 1; }
-		62% { opacity: 0; }
-		74% { opacity: 1; }
-		88% { opacity: 0; }
-		89.2% { opacity: 1; }
-		90.4% { opacity: 0; }
-		91.6% { opacity: 1; }
-		100% { opacity: 1; }
-	}
-
-	@keyframes blink {
-		0% { opacity: 0; }
-		22% { opacity: 1; }
-		23.2% { opacity: 0; }
-		88% { opacity: 1; }
-		89.2% { opacity: 0; }
-		90.4% { opacity: 1; }
-		91.6% { opacity: 0; }
-		100% { opacity: 0; }
-	}
-
-	@keyframes look-left {
-		0% { opacity: 0; }
-		45% { opacity: 1; }
-		58% { opacity: 0; }
-		100% { opacity: 0; }
-	}
-
-	@keyframes look-right {
-		0% { opacity: 0; }
-		62% { opacity: 1; }
-		74% { opacity: 0; }
-		100% { opacity: 0; }
 	}
 </style>

@@ -1,12 +1,14 @@
-// Test-only mount surface for e2e/mascot.spec.ts (TD-5191). jsdom has no
-// layout or animation clock, so where the mascot and its shackle are along
-// the entrance is measured in a real browser: the spec serves a blank page
-// from the walk's dev server, loads this module and calls
-// `window.__mascotHarness.at`. Nothing in the app imports it.
+// Test-only mount surface for e2e/mascot.spec.ts (TD-5191, TD-5192). jsdom
+// has no layout, animation clock or real pointer, so the mascot is measured
+// in a real browser: the spec serves a blank page from the walk's dev
+// server, loads this module and calls `window.__mascotHarness`. `at` freezes
+// the entrance at one instant; `live` leaves it running so the eyes can
+// follow a real cursor. Nothing in the app imports it.
 
 import "../../app.css";
 import { flushSync, mount, unmount } from "svelte";
 import Mascot from "./Mascot.svelte";
+import { EYE_ROW, GAZES, MASCOT_HEIGHT, bodyPath } from "../mascot";
 
 export interface Box {
 	left: number;
@@ -30,6 +32,13 @@ export interface MascotReading {
 
 export interface MascotHarness {
 	at(ms: number): MascotReading;
+	/** Mount and let it run, in a stage this wide. */
+	live(stageWidth: number): void;
+	/** The point between the eyes, in viewport pixels. */
+	eyeCentre(): { x: number; y: number };
+	/** Which eyes are drawn: "dx,dy" for a held gaze, "shut", or
+	 *  "idle:<frame>" while the idle loop has them. */
+	eyesDrawn(): string;
 }
 
 declare global {
@@ -52,30 +61,61 @@ function tiltOf(el: Element | null): number {
 
 let current: ReturnType<typeof mount> | null = null;
 
+function stage(): HTMLElement {
+	const el = document.getElementById("stage");
+	if (el === null) throw new Error("no #stage");
+	return el;
+}
+
+function remount(): HTMLElement {
+	const target = stage();
+	if (current !== null) unmount(current);
+	current = mount(Mascot, { target });
+	// Mount, then the measuring effect, then its re-render.
+	flushSync();
+	flushSync();
+	return target;
+}
+
 window.__mascotHarness = {
 	at(ms) {
-		const stage = document.getElementById("stage");
-		if (stage === null) throw new Error("no #stage");
-		if (current !== null) unmount(current);
-		current = mount(Mascot, { target: stage });
-		// Mount, then the measuring effect, then its re-render.
-		flushSync();
-		flushSync();
+		const root = remount();
 		// Freeze every animation on the mascot at the same instant, delays
 		// included, so the reading is the frame a viewer sees at `ms`.
 		for (const animation of document.getAnimations()) {
-			if (animation.effect instanceof KeyframeEffect && stage.contains(animation.effect.target)) {
+			if (animation.effect instanceof KeyframeEffect && root.contains(animation.effect.target)) {
 				animation.pause();
 				animation.currentTime = ms;
 			}
 		}
-		const visible = [...stage.querySelectorAll(".frame")].filter((f) => getComputedStyle(f).opacity === "1");
+		const visible = [...root.querySelectorAll(".frame")].filter((f) => getComputedStyle(f).opacity === "1");
 		return {
-			walkMs: Number(stage.querySelector<HTMLElement>("[data-testid='mascot']")?.dataset.walkMs ?? 0),
-			body: box(stage.querySelector(".frame.ahead")),
-			shackle: box(stage.querySelector(".shackle")),
-			tilt: tiltOf(stage.querySelector("svg")),
+			walkMs: Number(root.querySelector<HTMLElement>("[data-testid='mascot']")?.dataset.walkMs ?? 0),
+			body: box(root.querySelector(".frame.ahead, .held")),
+			shackle: box(root.querySelector(".shackle")),
+			tilt: tiltOf(root.querySelector("svg")),
 			eyes: visible.map((f) => f.classList[1]).join(","),
 		};
+	},
+	live(stageWidth) {
+		stage().style.width = `${stageWidth}px`;
+		remount();
+	},
+	eyeCentre() {
+		const svg = stage().querySelector("svg");
+		if (svg === null) throw new Error("mascot part missing");
+		const r = svg.getBoundingClientRect();
+		return { x: r.left + r.width / 2, y: r.top + (r.height * (EYE_ROW + 1)) / (MASCOT_HEIGHT + 1) };
+	},
+	eyesDrawn() {
+		const held = stage().querySelector(".held");
+		if (held !== null) {
+			const d = held.getAttribute("d");
+			if (d === bodyPath({ dx: 0, dy: 0, shut: true })) return "shut";
+			const gaze = GAZES.find((g) => bodyPath({ ...g, shut: false }) === d);
+			return gaze === undefined ? "unknown" : `${gaze.dx},${gaze.dy}`;
+		}
+		const shown = [...stage().querySelectorAll(".frame")].filter((f) => getComputedStyle(f).opacity === "1");
+		return `idle:${shown.map((f) => f.classList[1]).join(",")}`;
 	},
 };
