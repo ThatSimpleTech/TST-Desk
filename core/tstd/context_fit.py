@@ -15,10 +15,17 @@ reaches it. Two guards live here instead:
   ``tool`` results, and the user's message stays.
 * A long turn also fills the window with its own steps: the thinking
   echoed back for every step and the full text of each file it wrote.
-  Before results are touched, steps older than ``KEEP_RECENT_STEPS``
-  lose their echoed thinking and the long text in their call
-  arguments (TD-5178). The calls themselves stay, so every ``tool``
-  result still has its call.
+  Before results are touched, steps lose their echoed thinking and the
+  long text in their call arguments, oldest first (TD-5178), until the
+  prompt is at ``ELIDE_TARGET_FRACTION`` of the budget. Only the latest
+  step is exempt (TD-5194): the four latest were, and their thinking
+  alone could hold the prompt at the budget, so every later call
+  trimmed again. The calls themselves stay, so every ``tool`` result
+  still has its call.
+
+Every rewrite of a message the server has already seen sends a local
+server with a prompt cache back to re-read the prompt from there. So a
+trimmed step is trimmed once: trimming it again changes nothing.
 
 The window and the output reservation come from the tier config. No
 context length is hardcoded here.
@@ -28,6 +35,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Any
@@ -58,10 +66,14 @@ _MAX_ELISION_PASSES = 64
 # (see ``elision_target``).
 ELIDE_TARGET_FRACTION = 0.7
 # The latest steps of a running turn keep their thinking and call
-# arguments whole (TD-5178); older ones are trimmed before any result.
-KEEP_RECENT_STEPS = 4
+# arguments whole: the model is acting on them. Older ones are trimmed,
+# oldest first, before any result (TD-5178, TD-5194).
+KEEP_LATEST_STEPS = 1
 # A call argument longer than this, in a trimmed step, keeps its head.
 _ARG_KEEP_CHARS = 400
+# The note a trimmed argument ends with. An argument that already carries
+# it after its head is left as it is (TD-5194).
+_TRIMMED_ARG = re.compile(r"\n\[\d+ chars elided from this call; it already ran\]\Z")
 
 
 @dataclass(frozen=True)
@@ -195,8 +207,17 @@ def _inflight_step_indexes(messages: list[ChatMessage]) -> list[int]:
     ]
 
 
+def _already_shortened(value: str) -> bool:
+    """True when *value* is a head this module cut, with its note."""
+    note = _TRIMMED_ARG.search(value)
+    return note is not None and note.start() <= _ARG_KEEP_CHARS
+
+
 def _shorten_value(value: Any) -> tuple[Any, bool]:
     if isinstance(value, str) and len(value) > _ARG_KEEP_CHARS:
+        if _already_shortened(value):
+            # Cutting it again would only rewrite the note's count.
+            return value, False
         removed = len(value) - _ARG_KEEP_CHARS
         note = f"\n[{removed} chars elided from this call; it already ran]"
         return value[:_ARG_KEEP_CHARS] + note, True
@@ -249,17 +270,23 @@ def trim_step(message: ChatMessage) -> ChatMessage:
     return replace(message, reasoning_content=None, tool_calls=calls)
 
 
-def _trim_older_steps(
+def _trim_steps(
     fitted: list[ChatMessage],
     target_tokens: int,
     counter: TokenCounter,
     tools: Sequence[ToolDefinition] | None,
 ) -> int:
-    """Trim the turn's older steps, oldest first, until *target_tokens*.
+    """Trim the turn's steps, oldest first, until *target_tokens*.
+
+    All but the latest ``KEEP_LATEST_STEPS`` may go (TD-5194). With the
+    latest four exempt, a reasoning model's thinking in those four could
+    keep the prompt at the budget after a trim, and every later call
+    then trimmed the step that had just left the four: one rewrite of an
+    already-sent message, and one re-read of the prompt from it, per call.
 
     Returns how many steps changed. Works in place on *fitted*.
     """
-    steps = _inflight_step_indexes(fitted)[:-KEEP_RECENT_STEPS]
+    steps = _inflight_step_indexes(fitted)[:-KEEP_LATEST_STEPS]
     trimmed = 0
     for index in steps:
         if estimate_tokens(fitted, counter, tools)[0] <= target_tokens:
@@ -382,8 +409,10 @@ def fit_inflight_turn(
     fitted = list(messages)
     # The turn's own older steps go first (TD-5178): their thinking and
     # written-file text are spent, the results are what the model reads.
+    # The recent ones but the latest follow if that is not enough
+    # (TD-5194), so the next calls fit without another rewrite.
     hysteresis = max(1, int(budget_tokens * ELIDE_TARGET_FRACTION))
-    trimmed = _trim_older_steps(fitted, hysteresis, counter, tools)
+    trimmed = _trim_steps(fitted, hysteresis, counter, tools)
     indexes = _inflight_tool_indexes(fitted)
     if not indexes or estimate_tokens(fitted, counter, tools)[0] <= hysteresis:
         return _fit_result(fitted, messages, 0, trimmed, tokens_before, method, counter, tools)

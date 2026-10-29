@@ -67,7 +67,7 @@ from .config import (
     resolve_base_url,
     resolve_credential_id,
 )
-from .context import PromptAssembler
+from .context import PromptAssembler, TurnPrompts
 from .context.calibration import (
     CalibratedTokenCounter,
     CalibrationStore,
@@ -2185,6 +2185,12 @@ async def agent_loop(
         # answered, so they stay out for this turn only; the next turn,
         # whoever sends it, asks again.
         run_refused_imports: set[Path] = set()
+        # TD-5194: each tier's system prompt, assembled at its first call
+        # of the turn and resent byte for byte after that. The workspace
+        # map is read afresh for it, so the files the last turn wrote are
+        # in it even if that turn ended inside the map's debounce.
+        turn_prompts = TurnPrompts()
+        assembler.invalidate_manifest()
 
         # TD-5124: ``/goal`` alone, ``/goal clear`` or a goal over the
         # limit is answered here, with no model call.
@@ -2302,9 +2308,22 @@ async def agent_loop(
             #     for approval before the turn proceeds.  The gate loops
             #     because approving one file can reveal nested external
             #     imports (bounded by TD-504's max depth 4).
-            while True:
-                memory_block: str | None = None
-                project_context: str | None = None
+            #
+            #     Once per turn for each tier (TD-5194): a later call of
+            #     the turn resends the same system message, so a local
+            #     server's prompt cache keeps the conversation behind it.
+            #     A file the turn writes reaches the workspace map, and an
+            #     edited steering or memory file the prompt, next turn.
+            kept = turn_prompts.reuse(
+                tier, touched_paths=session.touched_paths, loaded_skills=session.loaded_skills
+            )
+            memory_block: str | None = None
+            project_context: str | None = None
+            if kept is not None:
+                assembled = kept.assembled
+                memory_block = kept.memory
+                project_context = kept.project_context
+            while kept is None:
                 if tier == "brain":
                     loaded = await load_memory_for_turn(
                         session.workspace_path,
@@ -2377,6 +2396,15 @@ async def agent_loop(
                                 }
                             },
                         )
+
+            if kept is None:
+                turn_prompts.keep(
+                    tier,
+                    assembled,
+                    memory=memory_block,
+                    project_context=project_context,
+                    loaded_skills=session.loaded_skills,
+                )
 
             # 2b.2 Path-scoped rule activation (TD-503).  The assembler
             #     marks a scoped rule active once its globs match a file
@@ -2456,8 +2484,8 @@ async def agent_loop(
             #     started, so in-flight tool-call pairs are never split
             #     (TD-5112: a steer starts no turn).  Announced on the
             #     timeline, never silent.  The
-            #     steering block and manifest were just re-read from
-            #     disk at 2b, so instructions survive compaction.
+            #     system message set at 2b stays at index 0, so
+            #     instructions survive compaction.
             model_slug = tier_cfg.require_slug()
             counter = counter_for(tier_cfg)
             # TD-5161: a backup decides for itself too, from the same list.
@@ -2625,8 +2653,15 @@ async def agent_loop(
                         memory=memory_block,
                         project_context=project_context if tier == "brain" else None,
                         approved_imports=frozenset(approved_imports),
-                        denied_imports=frozenset(denied_imports),
+                        denied_imports=frozenset(denied_imports | run_refused_imports),
                         loaded_skills=list(session.loaded_skills),
+                    )
+                    turn_prompts.keep(
+                        tier,
+                        assembled,
+                        memory=memory_block,
+                        project_context=project_context,
+                        loaded_skills=session.loaded_skills,
                     )
                     system = ChatMessage(role="system", content=assembled.text)
                     if messages and messages[0].role == "system":

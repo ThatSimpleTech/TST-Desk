@@ -16,6 +16,14 @@ a SHA-256 of the
 prefix and its token count, so tests and logs can assert that the
 prefix stayed byte-identical across turns.
 
+Within a turn the whole system message has to hold, not only blocks
+1-2 (TD-5194).  A local OpenAI-compatible server with a prompt cache
+reuses the prompt up to the first byte that differs from its last
+request, and the system message comes first: a manifest that gained the
+file a tool just wrote made every later call of the turn re-read the
+whole conversation.  :class:`TurnPrompts` keeps each tier's assembled
+prompt for the rest of the turn; the next turn assembles afresh.
+
 Per-tier composition (spec §4.6, TD-508) is delegated to
 :func:`assemble_for_tier_sync`; this module adds the base prompt, the
 memory placeholder, and the prefix hash on top.
@@ -25,11 +33,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..router import TierName
-from .assembler import AssembledSteering
+from .assembler import AssembledSteering, newly_matched_rules
 from .manifest import ManifestConfig, WorkspaceManifest
 from .skills import list_workspace_skills, render_loaded_skills, render_skill_catalog
 from .tier import TierContextConfig, assemble_for_tier_sync
@@ -222,6 +231,15 @@ class PromptAssembler:
         twin._manifest = self._manifest
         return twin
 
+    def invalidate_manifest(self) -> None:
+        """Read the workspace map afresh at the next assembly (TD-5194).
+
+        The loop calls this as a turn starts: the map is then sent
+        unchanged for the whole turn, so it must not be one the debounce
+        kept from before the last turn's writes.
+        """
+        self._manifest.invalidate(self._workspace)
+
     async def assemble(
         self,
         tier: TierName,
@@ -358,3 +376,78 @@ class PromptAssembler:
         )
         self.last_assembled = assembled
         return assembled
+
+
+@dataclass(frozen=True)
+class TurnPrompt:
+    """One tier's system prompt, kept for the rest of a turn (TD-5194).
+
+    Attributes:
+        assembled: What the turn's first call of this tier was sent.
+        memory: The memory block it was assembled with, or ``None``.
+        project_context: The pinned project context it carried, or ``None``.
+        loaded_skills: The skills whose bodies it carries, in order.
+    """
+
+    assembled: AssembledPrompt
+    memory: str | None
+    project_context: str | None
+    loaded_skills: tuple[str, ...]
+
+
+class TurnPrompts:
+    """The system prompt each tier is sent for the rest of one turn (TD-5194).
+
+    Made fresh at every turn's start.  A tier's first call of the turn
+    assembles its prompt and keeps it here; every later call of that tier
+    resends the same text, so the request differs from the last one only
+    after the conversation it already sent.  Files the turn writes,
+    steering or memory edited mid-turn, and new skills on disk reach the
+    prompt at the next turn.
+
+    Two changes still rebuild it mid-turn, because the turn needs them on
+    its next call: a path-scoped rule whose globs match a file the turn
+    touched (TD-503), and a skill loaded mid-turn, by ``load_skill``
+    (TD-4502) or by a message sent mid-turn (TD-5160), whose body lives
+    in the prompt.  Each costs one re-read of the prompt, once.
+    """
+
+    def __init__(self) -> None:
+        self._by_tier: dict[TierName, TurnPrompt] = {}
+
+    def reuse(
+        self,
+        tier: TierName,
+        *,
+        touched_paths: set[str],
+        loaded_skills: Iterable[str],
+    ) -> TurnPrompt | None:
+        """The prompt *tier* keeps for this turn, or ``None`` to assemble.
+
+        ``None`` when this turn has not assembled one for *tier* yet, when
+        the loaded skills changed, or when a touched path now matches a
+        scoped rule the kept prompt left out.
+        """
+        kept = self._by_tier.get(tier)
+        if kept is None or kept.loaded_skills != tuple(loaded_skills):
+            return None
+        if newly_matched_rules(kept.assembled.steering, touched_paths):
+            return None
+        return kept
+
+    def keep(
+        self,
+        tier: TierName,
+        assembled: AssembledPrompt,
+        *,
+        memory: str | None,
+        project_context: str | None,
+        loaded_skills: Iterable[str],
+    ) -> None:
+        """Keep *assembled* as *tier*'s prompt for the rest of the turn."""
+        self._by_tier[tier] = TurnPrompt(
+            assembled=assembled,
+            memory=memory,
+            project_context=project_context,
+            loaded_skills=tuple(loaded_skills),
+        )

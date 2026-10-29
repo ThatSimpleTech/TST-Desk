@@ -474,6 +474,22 @@ def _any_path_matches(paths: set[str], patterns: tuple[str, ...]) -> bool:
     return False
 
 
+def newly_matched_rules(steering: AssembledSteering, matched_paths: set[str]) -> list[Path]:
+    """Path-scoped rules left out of *steering* that *matched_paths* now match.
+
+    Answers, without reading a file, whether assembling again with
+    *matched_paths* would bring a scoped rule into the block (TD-503): the
+    loop keeps a turn's system prompt until it would (TD-5194).
+    """
+    return [
+        source.path
+        for source in steering.sources
+        if source.applies_to is not None
+        and not source.active
+        and _any_path_matches(matched_paths, source.applies_to)
+    ]
+
+
 def _path_matches_glob(path: str, pattern: str) -> bool:
     """Check if a single *path* matches a single *pattern*.
 

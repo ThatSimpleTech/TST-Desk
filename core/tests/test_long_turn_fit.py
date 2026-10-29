@@ -8,11 +8,12 @@ filled the window while the trimmer only looked at tool results.
 from __future__ import annotations
 
 import json
+from itertools import pairwise
 
 from tstd.compaction import budget_threshold, estimate_tokens
 from tstd.config import TierConfig
 from tstd.context.tokens import HeuristicTokenCounter
-from tstd.context_fit import KEEP_RECENT_STEPS, fit_inflight_turn, shorten_call_arguments
+from tstd.context_fit import fit_inflight_turn, shorten_call_arguments
 from tstd.provider import ChatMessage, FunctionCall, ToolCall
 
 _COUNTER = HeuristicTokenCounter()
@@ -64,7 +65,8 @@ def test_older_steps_lose_thinking_and_file_text_first() -> None:
     assert fit is not None and fit.trimmed_steps > 0
     assert estimate_tokens(fitted, _COUNTER)[0] <= budget_threshold(tier)
     steps = [m for m in fitted if m.role == "assistant"]
-    for step in steps[-KEEP_RECENT_STEPS:]:
+    # Trimming stops at the target, oldest first, so the newest keep theirs.
+    for step in steps[-4:]:
         assert step.reasoning_content
         assert len(step.tool_calls[0].function.arguments) > 5000
     assert steps[0].reasoning_content is None
@@ -135,3 +137,110 @@ def test_two_short_turns_still_keep_both() -> None:
     compacted, stats = maybe_compact(messages, tier, _COUNTER)
     assert stats is not None
     assert compacted[2:] == messages[find_compaction_point(messages) :]
+
+
+# ── One trim, then calls that only append (TD-5194) ─────────────────────
+#
+# A local server with a prompt cache re-reads the prompt from the first
+# message that differs from its last request. A trim that rewrites a
+# message on every call costs that re-read on every call.
+
+
+def _step(n: int, thinking_chars: int, result_chars: int) -> list[ChatMessage]:
+    args = json.dumps({"path": f"src/f{n}.ts", "content": "const x = 1;\n" * 40})
+    return [
+        ChatMessage(
+            role="assistant",
+            content="",
+            reasoning_content=("t" * 99 + " ") * (thinking_chars // 100),
+            tool_calls=[
+                ToolCall(id=f"c{n}", function=FunctionCall(name="fs_write", arguments=args))
+            ],
+        ),
+        ChatMessage(role="tool", tool_call_id=f"c{n}", content="r" * result_chars),
+    ]
+
+
+def _first_rewrite(before: list[ChatMessage], after: list[ChatMessage]) -> int | None:
+    """Index of the first message *after* rewrote, or None if it only appended."""
+    for index, message in enumerate(before):
+        if index >= len(after) or after[index] != message:
+            return index
+    return None
+
+
+def _run_turn(calls: int, thinking_chars: int, result_chars: int) -> list[int | None]:
+    """Fit before each call as the loop does; the rewrite index of each call."""
+    tier = _tier()
+    messages = [
+        ChatMessage(role="system", content="You build apps."),
+        ChatMessage(role="user", content="Build the whole app."),
+    ]
+    sent: list[ChatMessage] = []
+    rewrites: list[int | None] = []
+    for n in range(calls):
+        messages.extend(_step(n, thinking_chars, result_chars))
+        fitted, _fit = fit_inflight_turn(messages, tier, _COUNTER)
+        messages[:] = fitted
+        assert estimate_tokens(messages, _COUNTER)[0] <= budget_threshold(tier)
+        rewrites.append(_first_rewrite(sent, messages))
+        sent = list(messages)
+    return rewrites
+
+
+def test_a_trimmed_step_is_trimmed_once() -> None:
+    tier = _tier()
+    fitted, fit = fit_inflight_turn(_long_turn(), tier, _COUNTER)
+    assert fit is not None and fit.trimmed_steps > 0
+    trimmed = [m for m in fitted if m.role == "assistant" and m.reasoning_content is None]
+    for step in trimmed:
+        arguments = step.tool_calls[0].function.arguments
+        assert shorten_call_arguments(arguments) == arguments
+
+    # Over the budget again: the steps already trimmed stay byte for byte.
+    again = [*fitted, *_step(99, 400_000, 100)]
+    refitted, _ = fit_inflight_turn(again, tier, _COUNTER)
+    for index, message in enumerate(fitted):
+        if message in trimmed:
+            assert refitted[index] == message
+
+
+def test_thinking_heavy_turn_trims_once_then_appends() -> None:
+    """Each step thinks ~6k tokens, as a reasoning model on a 64k window.
+
+    With only the steps before the latest four trimmable, the prompt sat
+    at the budget, went over it, and every call rewrote the step that had
+    just aged out. ``_run_turn`` also checks the budget holds on every call.
+    """
+    rewrites = _run_turn(calls=40, thinking_chars=24_000, result_chars=2_000)
+    trims = [n for n, at in enumerate(rewrites) if at is not None]
+    assert trims, "the turn outgrew the budget, so something was trimmed"
+    # Never two calls in a row: one trim makes room for the next steps.
+    assert all(later - earlier > 1 for earlier, later in pairwise(trims))
+
+
+def test_a_step_that_thinks_a_quarter_of_the_window_still_fits() -> None:
+    """~10k tokens of thinking a step: four such steps no longer fit.
+
+    The turn has to trim on most calls by the end, but the budget holds
+    (it went 25% over before) and the rewrite is the step before the
+    latest, so only that step is read again.
+    """
+    rewrites = _run_turn(calls=40, thinking_chars=40_000, result_chars=2_000)
+    assert rewrites[-1] is not None
+    assert rewrites[-1] == 2 + 2 * 38
+
+
+def test_the_latest_step_keeps_its_thinking() -> None:
+    tier = _tier()
+    messages = [
+        ChatMessage(role="system", content="s"),
+        ChatMessage(role="user", content="go"),
+    ]
+    for n in range(8):
+        messages.extend(_step(n, 24_000, 100))
+    fitted, fit = fit_inflight_turn(messages, tier, _COUNTER)
+    assert fit is not None
+    steps = [m for m in fitted if m.role == "assistant"]
+    assert steps[-1].reasoning_content
+    assert estimate_tokens(fitted, _COUNTER)[0] <= int(budget_threshold(tier) * 0.7)

@@ -12,6 +12,8 @@ from .prompt import (
     WORKSPACE_ROOT_LABEL,
     AssembledPrompt,
     PromptAssembler,
+    TurnPrompt,
+    TurnPrompts,
     workspace_root_block,
 )
 from .stack import build_instruction_stack
@@ -52,6 +54,8 @@ __all__ = [
     "TiktokenTokenCounter",
     "TokenCount",
     "TokenCounter",
+    "TurnPrompt",
+    "TurnPrompts",
     "WorkspaceManifest",
     "assemble_for_tier",
     "assemble_for_tier_sync",

@@ -226,6 +226,11 @@ Order the system prompt so the **stable prefix comes first**:
 Blocks 1–2 are the cache target. On the locked stack this is the difference between $2.80/M
 and $0.30/M on the brain tier — on a long session, that is most of the bill.
 
+Within a turn the whole system prompt is sent unchanged on every call (TD-5194). A local
+server's prompt cache reuses a request only up to its first changed token, so a manifest that
+gained a file mid-turn made every later call re-read the conversation. Blocks 2–4 are read at
+the turn's first call; a scoped rule that newly matches, or a skill loaded mid-turn, rebuilds it once.
+
 ### 4.6 Per-tier context routing
 
 Not every tier needs everything:
