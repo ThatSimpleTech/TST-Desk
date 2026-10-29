@@ -8,8 +8,8 @@ Primary method: ``git ls-files`` (tracks + untracked, respects gitignore
 natively).  Fallback: ``os.walk`` with ignore patterns for non-git repos.
 
 The result is cached with a debounce so it is not rebuilt on every turn
-(criterion 3).  The daemon invalidates the cache when the workspace
-changes (TD-305).
+(criterion 3).  The agent loop invalidates the cache as each turn starts
+and then keeps the turn's map unchanged until the next one (TD-5194).
 """
 
 from __future__ import annotations
@@ -123,8 +123,8 @@ class WorkspaceManifest:
         """Build or return a cached manifest for *workspace_path*.
 
         The result is cached for ``_DEBOUNCE_SECONDS`` (60) so it is
-        not rebuilt on every turn (criterion 3).  Callers in the daemon
-        invalidate the cache explicitly when the workspace changes.
+        not rebuilt on every turn (criterion 3).  The agent loop
+        invalidates it as each turn starts (TD-5194).
         """
         cache_key = str(Path(workspace_path).resolve())
         now = time.time()

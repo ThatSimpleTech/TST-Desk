@@ -18587,3 +18587,39 @@ Measured: per append at 10,000 events on disk, 56 ms before, 0.024 ms
 after; a 46,000-event session averages 0.075 ms per append including its
 trims; `events_from` of the newest event on a 10,000-event log, 0.25 ms
 before, 0.001 ms after.
+
+## TD-5194 — A turn sends the same system message on every call (Class A)
+
+A local OpenAI-compatible server with a prompt cache reuses a request up to
+its first token that differs from the one before. On a 64k-window local run
+it reported "0 reused" on most calls of a long turn and read the whole prompt
+again each time: 22k tokens in 17 s early on, about 90k in 54 s later. Two
+consecutive requests differed only inside the system message, where the
+workspace map had gained the file a tool had just written. The loop
+assembled the system prompt before every call, and the map is rebuilt once
+its 60 s debounce runs out, which a local model's call outlasts. Prompt
+assembly (TD-305) kept only blocks 1-2 stable, the provider prefix-cache
+target; a local server needs the whole system message stable.
+- Each tier's system prompt is assembled at its first call of a turn and
+  resent byte for byte on the turn's later calls (`TurnPrompts`). Memory and
+  pinned project context are read once a turn with it. The next turn
+  assembles afresh, and the map's cache is dropped at the turn's start, so
+  it always lists what the last turn wrote.
+- Two changes still rebuild the prompt mid-turn, once each, because the
+  next call needs them: a path-scoped rule a touched file now matches
+  (TD-503), and a skill loaded by `load_skill` or a mid-turn `/skill`
+  (TD-4502, TD-5160). Steering edited mid-turn waits for the next turn;
+  `SteeringReloaded` then fires at that turn's start, as the turn-boundary
+  comparison always intended.
+- In-turn trimming rewrote earlier messages on most calls as well. A trimmed
+  step's call arguments were cut again on every later trim, which only
+  changed the note's count ("31986 chars elided" became "52", then "49"), so
+  a trimmed step now stays as it is. And with the latest four steps exempt
+  (TD-5178), a reasoning model's thinking in those four kept the prompt at
+  the budget after a trim, or over it, so the next call trimmed the step that
+  had just aged out. All but the latest step may now be trimmed, oldest
+  first, down to the 70% target, so a trim is mostly followed by calls
+  that only append. A simulated 40-call turn on a 64k window with 6k
+  tokens of thinking a step: 31 rewrites → 14, and 987k → 185k tokens
+  re-read; with 10k a step the prompt peaked 29% over the budget before and
+  now stays under it.

@@ -12570,3 +12570,24 @@ small bugs.
       so a setting saved in that moment stays. A failed checkout moves the
       session back to its folder; one a restart cut off is finished on
       restore (`test_worktree.py`, `test_worktree_daemon.py`).
+
+### TD-5194 — A turn sends the same system message on every call
+
+**Size:** 2 · **Depends on:** TD-305, TD-503, TD-5160, TD-5178 · **Status:** Done
+
+A local server with a prompt cache re-read the whole prompt on most calls of
+a long turn: the system message changed whenever the workspace map gained a
+file the turn had written, and in-turn trimming rewrote an earlier message on
+most calls.
+
+- [x] Within a turn each call's system message is byte-identical to the
+      last one, and the request only appends: a file written mid-turn reaches
+      the map on the next turn (`test_loop_turn_prompt.py`), even inside the
+      map's debounce.
+- [x] Memory is read once a turn; each tier keeps its own prompt; a
+      `load_skill` mid-turn rebuilds it once and it holds again; a scoped
+      rule a touched file matches still joins on the next call
+      (`test_loop_turn_prompt.py`, `test_loop.py::TestPathScopedRuleActivation`).
+- [x] A trimmed step is never trimmed again, and a trim lands at the 70%
+      target with only the latest step's thinking kept, so the calls after it
+      append (`test_long_turn_fit.py`).

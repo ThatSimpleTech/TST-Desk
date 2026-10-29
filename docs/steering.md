@@ -165,7 +165,9 @@ still list or read anything the map leaves out; the map only saves it a first lo
 
 Steering is re-resolved at the top of every turn. Save the file and the next message picks it
 up; there is nothing to restart. The timeline announces the reload and the instruction
-inspector refreshes.
+inspector refreshes. A save while a turn is running waits for the next message: within a turn
+the system prompt goes out unchanged on every call, so a local server's prompt cache keeps the
+conversation behind it.
 
 The cost of that is a cache miss. Steering is the second block of the stable prompt prefix, so
 the turn after an edit cannot reuse the cached prefix and pays full input price for it. Editing
