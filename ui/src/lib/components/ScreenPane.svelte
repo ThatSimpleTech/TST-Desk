@@ -15,6 +15,14 @@
 	import DesignLayer from './DesignLayer.svelte';
 
 	let frameEl: HTMLImageElement | null = $state(null);
+	// Natural frame size, read on load. The wrap is sized from it so the
+	// overlay (glow, cursor, Design picks) covers exactly the drawn image.
+	let natural = $state({ width: 16, height: 10 });
+
+	function onFrameLoad(): void {
+		if (frameEl === null || frameEl.naturalWidth === 0 || frameEl.naturalHeight === 0) return;
+		natural = { width: frameEl.naturalWidth, height: frameEl.naturalHeight };
+	}
 
 	let visible = $derived(
 		screenTabVisible({
@@ -63,8 +71,18 @@
 				<p class="error">{screen.error}</p>
 			{/if}
 		{:else}
-			<div class="frame-wrap">
-				<img bind:this={frameEl} class="frame" src={frameSrc} alt="Computer-use screen" />
+			<div
+				class="frame-wrap"
+				style:--frame-ratio="{natural.width} / {natural.height}"
+				style:--frame-width="{natural.width}px"
+			>
+				<img
+					bind:this={frameEl}
+					class="frame"
+					src={frameSrc}
+					alt="Computer-use screen"
+					onload={onFrameLoad}
+				/>
 				<div class="overlay">
 					<DesignLayer image={frameEl} />
 					<GlowLayer />
@@ -140,6 +158,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		/* The frame sizes itself against this box (cqw/cqh). */
+		container-type: size;
 	}
 
 	.error {
@@ -148,27 +168,26 @@
 		font-size: var(--text-sm);
 	}
 
+	/* Fit the frame inside the stage at its own aspect ratio, never past its
+	   natural size. Sized from .stage (a size container), not from the
+	   image: WebKit (the macOS app's WKWebView) collapsed the earlier grid of
+	   percentage max-sizes to 0×0, so the pane showed only the cursor
+	   (TD-5189). */
 	.frame-wrap {
-		display: grid;
-		max-width: 100%;
-		max-height: 100%;
-		min-height: 0;
-	}
-
-	.frame,
-	.overlay {
-		grid-area: 1 / 1;
-		max-width: 100%;
-		max-height: 100%;
+		position: relative;
+		aspect-ratio: var(--frame-ratio);
+		width: min(100cqw, calc(100cqh * (var(--frame-ratio))), var(--frame-width));
 	}
 
 	.frame {
-		object-fit: contain;
 		display: block;
+		width: 100%;
+		height: 100%;
 	}
 
 	.overlay {
-		position: relative;
+		position: absolute;
+		inset: 0;
 		pointer-events: none;
 	}
 </style>

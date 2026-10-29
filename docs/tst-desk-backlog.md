@@ -12409,6 +12409,22 @@ publishes both for every model.
       (`settings.test.ts`, `model-card.test.ts`).
 - [x] The key never reaches a log or config.yaml (`TestDaemon`).
 
+### TD-5189 — The Screen pane shows the frame in the macOS app
+
+**Size:** 1 · **Depends on:** TD-1710, TD-3402 · **Status:** Done
+
+The macOS app's WKWebView laid the Screen pane's frame out at 0×0: a grid
+of percentage max-sizes inside a flex stage resolves to nothing in WebKit,
+though Chromium (where the UI tests run) draws it. Frames were captured and
+saved correctly; the pane showed only the agent cursor at its center.
+
+- [x] The frame fills the stage at its own aspect ratio, never past its
+      natural size, in WebKit and Chromium (checked at 785×1200, 785×330,
+      2000×1500 and 300×900 in both; the old layout gives 0×0 in WebKit).
+- [x] The overlay (glow, agent cursor, Design picks) covers exactly the
+      drawn image, so a short pane no longer letterboxes the picture inside
+      a stretched box.
+
 ### TD-5188 — Shell rules hold on macOS's bash 3.2
 
 **Size:** 1 · **Depends on:** TD-5156 · **Status:** Done
