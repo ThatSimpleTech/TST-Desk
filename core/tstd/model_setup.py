@@ -98,8 +98,13 @@ async def list_endpoint_models(
     api_key: str | None,
     *,
     client: httpx.AsyncClient | None = None,
+    ask_gateway: bool = True,
 ) -> EndpointModels:
-    """``GET {base_url}/models`` with *api_key* as the bearer token, if any."""
+    """``GET {base_url}/models`` with *api_key* as the bearer token, if any.
+
+    *ask_gateway* also asks ``/model/info`` when the list carries no
+    windows (TD-5189). The local-server scan turns it off: it wants names.
+    """
     endpoint = base_url.strip().rstrip("/")
     if not endpoint.startswith(("http://", "https://")):
         return EndpointModels(
@@ -148,7 +153,7 @@ async def list_endpoint_models(
         return EndpointModels(base_url=endpoint, error="The server lists no models.")
     # A gateway that lists bare ids (LiteLLM) may keep windows on /model/info.
     # A list that already carries windows (OpenRouter) is not asked twice.
-    if any(row.context_window is None for row in rows):
+    if ask_gateway and any(row.context_window is None for row in rows):
         rows = await _with_gateway_windows(endpoint, headers, rows, client)
     return EndpointModels(base_url=endpoint, models=rows)
 

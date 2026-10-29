@@ -1166,6 +1166,10 @@ def _field_placeholder(field: FieldInfo) -> Any:
         if pattern is not None:
             assert pattern in _PATTERN_SAMPLES, f"no sample for pattern {pattern!r}"
             return _PATTERN_SAMPLES[pattern]
+        # A number with a floor above 1, e.g. set_tier_context_window (TD-5189).
+        ge = getattr(meta, "ge", None)
+        if isinstance(ge, int) and field.annotation is int:
+            return ge
         # A list with a floor, e.g. ask_user's 1-4 questions of 2-4 options (TD-5121).
         floor = getattr(meta, "min_length", None)
         if floor and get_origin(field.annotation) is list:

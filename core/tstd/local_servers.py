@@ -61,7 +61,10 @@ async def scan_local_servers(
     )
     try:
         replies = await asyncio.gather(
-            *(list_endpoint_models(url, None, client=http) for _name, url in wanted)
+            *(
+                list_endpoint_models(url, None, client=http, ask_gateway=False)
+                for _name, url in wanted
+            )
         )
     finally:
         if owned:
