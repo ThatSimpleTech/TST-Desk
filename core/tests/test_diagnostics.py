@@ -450,3 +450,16 @@ class TestWithWorkspace:
                 await ws.close()
             finally:
                 await _stop_daemon(task)
+
+
+def test_both_spellings_of_a_symlinked_workspace_are_hidden(tmp_path: Path) -> None:
+    """TD-5187: macOS's /var is a symlink into /private/var; either spelling
+    of the workspace must come out relative."""
+    from tstd.daemon import _relativize_paths
+
+    real = tmp_path / "real"
+    (real / ".tst").mkdir(parents=True)
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    text = f"cannot read {link}/.tst/a.md and {real}/.tst/b.md"
+    assert _relativize_paths(text, link) == "cannot read .tst/a.md and .tst/b.md"

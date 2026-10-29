@@ -12426,3 +12426,31 @@ data; and it drops a `\` that ends the text.
       (`test_bash_3_2_safe_forms_stay_complete`).
 - [x] `test_policy_shell_differential.py` passes on macOS with bash 3.2 as
       `bash` and `/bin/sh`.
+
+### TD-5187 — The core suite passes on macOS
+
+**Size:** 1 · **Depends on:** TD-1104, TD-5157, TD-5161 · **Status:** Done
+
+CI runs on Linux, so four tests failed only on a Mac, and two of them hid
+small bugs.
+
+- [x] Diagnostics hides a workspace path in both its given and its resolved
+      spelling; on macOS `/var` and `/tmp` are symlinks into `/private`, so
+      an error carried the unresolved path (`test_diagnostics.py`, including a
+      symlink test that fails on Linux too).
+- [x] `measure_clear_stale.py` finds its own daemon on macOS, which has no
+      `/proc`, instead of silently leaving it running; still a whole-argument
+      match (`test_measure_clear_stale.py`).
+- [x] The core.ignorecase staging tests run on a case-insensitive disk,
+      where `Docs` is `docs` (`test_git_no_filters.py`).
+- [x] `session_start_large_repo` is back under its August baseline. TD-5126
+      checked out each session's git worktree before the session answered,
+      about 0.35 s for the 2,000-file benchmark repo. Now `git worktree add
+      --no-checkout` makes the folder, `.tst` is checked out at once (the wall
+      is built from it), and the rest is checked out in the background. The
+      `session_start` hooks wait for the files and the first turn waits for
+      them and any `worktree.setup`; close and delete wait the moment it
+      takes. The background checkout never overwrites a file already there,
+      so a setting saved in that moment stays. A failed checkout moves the
+      session back to its folder; one a restart cut off is finished on
+      restore (`test_worktree.py`, `test_worktree_daemon.py`).

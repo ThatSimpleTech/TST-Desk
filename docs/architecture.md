@@ -348,6 +348,13 @@ asks `worktree_session.open_worktree` for one before the loop starts: a new bran
 `tst/wt/<id>` from the main checkout's `HEAD`, in `worktree.folder` (the data dir's
 `worktrees/` by default). `Session.workspace_path` is then the worktree's copy of the folder,
 so every tool, the wall, the checkpointer and the prompt assembler work there unchanged.
+The session answers before the worktree's files are there (TD-5187): `git worktree add
+--no-checkout` makes the folder and branch, the project's `.tst` folder is checked out at
+once so the wall is built from the right config, and `start_setup` checks out the rest in
+the background without overwriting a file already there. `session_start` hooks wait for the
+files (`Session.worktree_files`), the first turn waits for them and any setup
+(`Session.worktree_ready`), and close and delete wait rather than refuse. A failed checkout
+moves the session back to its folder; restore finishes one a restart cut off.
 `Session.project_path` and the store row's `workspace_path` stay the folder the user opened:
 the rail groups by it, `new_session` anchors on it, and Schedule this chat names it.
 

@@ -492,6 +492,9 @@ class Session:
         self.worktree: SessionWorktree | None = None
         # Set while ``worktree.setup`` runs; a turn waits for it.
         self.worktree_ready: asyncio.Event | None = None
+        # TD-5187: set once the worktree's files are checked out. The
+        # ``session_start`` hooks wait for it; a turn waits for the above.
+        self.worktree_files: asyncio.Event | None = None
         # Where worktrees go (``worktree.folder``), stamped by the daemon so
         # a delegate child can have one too. None: no worktrees here.
         self.worktree_folder: Path | None = None
@@ -1298,6 +1301,13 @@ class Session:
             self._user_message_queue.put_nowait(queued)
         self._open_turns = max(0, self._open_turns - len(taken))
         return taken
+
+    async def wait_for_worktree_files(self) -> None:
+        """Return once the worktree's files are checked out, or on cancel (TD-5187)."""
+        while (files := self.worktree_files) is not None and not files.is_set():
+            if self._cancel_event.is_set():
+                return
+            await asyncio.sleep(0.05)
 
     async def wait_for_user_message(self) -> QueuedUserMessage | None:
         """Wait for the next user message.

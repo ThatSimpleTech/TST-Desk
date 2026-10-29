@@ -18529,3 +18529,23 @@ On macOS the shell tool runs `/bin/sh -c`, and `/bin/sh` there is bash
 `core/tests/test_policy_shell_fail_closed.py` writes both out with real
 rules, so Linux CI guards them too. Linux hosts (dash or bash 5) and the
 autonomy container (busybox ash) were not affected.
+
+## TD-5187 — A session answers before its worktree is checked out (Class B)
+
+TD-5126 checked out every file of a new session's worktree before the
+session answered. That is about 0.35 s on a 2,000-file repository, and it
+grows with the repository.
+- Now the folder and branch are made at once, and only the `.tst` folder is
+  checked out before the session starts, because the wall, the policy and
+  the shell rules are read from it. The rest is checked out in the
+  background.
+- Nothing that reads the project's files runs before they are there: the
+  first turn and the `session_start` hooks wait, and so do close and
+  delete. A message sent in that moment is held, not refused.
+- The background checkout skips files that already exist, so a setting
+  saved to a tracked `.tst/config.yaml` in that moment is kept and shows as
+  a change. `reset --hard` would have overwritten it silently.
+- Accepted: for that moment the Files pane can show the folder mostly empty.
+- A failed checkout is treated like a worktree that could not be made: the
+  session moves back to its folder, with a note. A restart that cut the
+  checkout off finishes it on restore.

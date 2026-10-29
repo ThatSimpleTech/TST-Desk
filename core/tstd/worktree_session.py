@@ -48,6 +48,8 @@ from .worktree import (
     add_worktree,
     branch_for,
     changes,
+    check_out,
+    check_out_part,
     commit_all,
     copy_included,
     find_repo,
@@ -186,7 +188,10 @@ async def open_worktree(
     path = folder_for(folder, spot.top, name)
     try:
         dirty = await main_dirty_count(spot.top, env)
-        await add_worktree(spot, path, branch_for(name), env)
+        # TD-5187: the folder now, its files after the session opens. Only
+        # the config folder comes first: the wall is built from it.
+        await add_worktree(spot, path, branch_for(name), env, checkout=False)
+        await check_out_part(path, f"{spot.prefix}/.tst" if spot.prefix else ".tst", env)
     except _FAILURES as e:
         log.warning(
             "worktree not made",
@@ -201,6 +206,7 @@ async def open_worktree(
         prefix=spot.prefix,
         base=spot.head,
         main_dirty=dirty,
+        filled=False,
     )
     notes = [f"Working in a new worktree on {wt.branch}."]
     try:
@@ -229,24 +235,77 @@ def start_setup(
     timeout: float,
     on_done: Callable[[Session], Awaitable[None]],
 ) -> asyncio.Task[None]:
-    """Run the setup command in the background; the session's first turn waits for it."""
+    """Check out the files, then run the setup command, in the background.
+
+    The session's first turn waits for both; its ``session_start`` hooks
+    wait for the files (TD-5187). A checkout that fails leaves ``filled``
+    False with the reason in ``setup_note``, and ``on_done`` runs before
+    anything waiting is let go, so the daemon can move the session back to
+    its folder first.
+    """
     ready = asyncio.Event()
+    files = asyncio.Event()
     sess.worktree_ready = ready
+    sess.worktree_files = files
     wt = sess.worktree
     assert wt is not None
 
     async def _run() -> None:
-        ok, note = False, "Setup was stopped."
         try:
-            ok, note = await run_setup(command, wt.root, sanitized_env(), timeout)
-        except OSError as e:
-            note = f"Setup did not run: {e}"
+            if not wt.filled:
+                try:
+                    await check_out(Path(wt.path), sanitized_env())
+                    wt.filled = True
+                except _FAILURES as e:
+                    wt.setup, wt.setup_note = "failed", f"Its files could not be checked out: {e}"
+                    await on_done(sess)
+                    return
+            files.set()
+            if command:
+                ok, note = False, "Setup was stopped."
+                try:
+                    ok, note = await run_setup(command, wt.root, sanitized_env(), timeout)
+                except OSError as e:
+                    note = f"Setup did not run: {e}"
+                finally:
+                    wt.setup, wt.setup_note = ("ok" if ok else "failed"), note
+            await on_done(sess)
         finally:
-            wt.setup, wt.setup_note = ("ok" if ok else "failed"), note
+            files.set()
             ready.set()
-        await on_done(sess)
 
     return asyncio.create_task(_run())
+
+
+async def finish_checkout(wt: SessionWorktree) -> None:
+    """Check out a ``--no-checkout`` worktree's files now (TD-5187).
+
+    For a restart that cut the background checkout off. When it fails the
+    worktree is left as it is, with a note, and no longer counts as busy,
+    so the user can still close or remove it.
+    """
+    if wt.filled:
+        return
+    try:
+        await check_out(Path(wt.path), sanitized_env())
+    except _FAILURES as e:
+        log.warning(
+            "worktree checkout not finished",
+            extra={"extra_fields": {"path": wt.path, "error": str(e)}},
+        )
+        wt.setup = "failed"
+        wt.setup_note = f"A restart cut its checkout off, and finishing it failed: {e}"
+    wt.filled = True
+
+
+async def discard(wt: SessionWorktree) -> None:
+    """Remove a worktree whose checkout failed, with its branch. Best effort."""
+    try:
+        await remove(wt, sanitized_env(), delete_branch=True)
+    except _FAILURES as e:
+        log.warning(
+            "worktree not removed", extra={"extra_fields": {"path": wt.path, "error": str(e)}}
+        )
 
 
 async def settle(wt: SessionWorktree) -> bool:
@@ -354,6 +413,7 @@ def rehome(sess: Session) -> SessionWorktree | None:
     wt = sess.worktree
     sess.worktree = None
     sess.worktree_ready = None
+    sess.worktree_files = None
     return wt
 
 
@@ -362,6 +422,8 @@ __all__ = [
     "WorkspaceWorktree",
     "WorktreeHasChanges",
     "close",
+    "discard",
+    "finish_checkout",
     "info",
     "open_child",
     "open_worktree",

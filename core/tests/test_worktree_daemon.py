@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from tests.machine_helpers import eventually
 from tests.test_artifacts import _open, _shutdown
 from tests.test_delegate import _bind_runtime, _parent_dispatcher
 from tests.test_two_daemons import _Steps
 from tests.test_worktree import git, make_repo, on_disk
+from tstd import worktree_session
 from tstd.config import WorktreeConfig
 from tstd.context.prompt import WORKSPACE_ROOT_LABEL
 from tstd.daemon import Daemon
@@ -20,6 +25,7 @@ from tstd.protocol import TurnComplete, WorktreeState
 from tstd.session import Session
 from tstd.tools.delegate import handle_delegate
 from tstd.tools.results import HandlerRefusal
+from tstd.worktree import WorktreeError, check_out
 
 
 async def _send(daemon: Daemon, payload: dict[str, Any]) -> dict[str, Any]:
@@ -369,5 +375,91 @@ async def test_a_worktree_session_moves_only_once_its_worktree_is_closed(tmp_pat
         assert moved["type"] == "session_list"
         sess = daemon.session_registry.get(sid)
         assert sess is not None and sess.workspace_path == str(other)
+    finally:
+        await _shutdown(daemon, sid)
+
+
+async def test_a_failed_checkout_moves_the_session_back_to_its_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TD-5187: as when the worktree could not be made at all."""
+    repo = make_repo(tmp_path / "repo")
+
+    async def broken(_top: Path, _env: Mapping[str, str]) -> None:
+        raise WorktreeError("disk full")
+
+    monkeypatch.setattr(worktree_session, "check_out", broken)
+    daemon = Daemon(data_dir=tmp_path / "data")
+    sid = await _open(daemon, repo)
+    try:
+        sess = daemon.session_registry.get(sid)
+        assert sess is not None
+        await eventually(lambda: sess.worktree is None, within=10)
+        assert sess.workspace_path == str(repo)
+        assert (await _rows(daemon))[sid]["worktree"] is None
+        assert git(repo, "branch", "--list", f"tst/wt/{sid[:8]}") == ""
+        notes = [e.note for e in sess.event_log.all_events if isinstance(e, WorktreeState)]
+        assert any("could not be checked out: disk full" in n for n in notes)
+    finally:
+        await _shutdown(daemon, sid)
+
+
+async def test_a_restart_finishes_a_checkout_it_cut_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = make_repo(tmp_path / "repo")
+
+    async def stuck(_top: Path, _env: Mapping[str, str]) -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(worktree_session, "check_out", stuck)
+    daemon = Daemon(data_dir=tmp_path / "data")
+    sid = await _open(daemon, repo)
+    sess = daemon.session_registry.get(sid)
+    assert sess is not None and sess.worktree is not None
+    root = Path(sess.workspace_path)
+    assert not (root / "README.md").exists()
+    await _shutdown(daemon, sid)
+    monkeypatch.undo()
+
+    again = Daemon(data_dir=tmp_path / "data")
+    await again._restore_sessions()
+    try:
+        back = again.session_registry.get(sid)
+        assert back is not None and back.worktree is not None
+        assert back.worktree.filled
+        assert (root / "README.md").read_text(encoding="utf-8") == "hello\n"
+        stored = again._session_store.get(sid)
+        assert stored is not None and stored.worktree is not None
+        assert stored.worktree["filled"] is True
+    finally:
+        await again._shutdown()
+
+
+async def test_a_message_while_close_waits_for_the_checkout_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TD-5187: close waits for the checkout; a turn must not start meanwhile."""
+    repo = make_repo(tmp_path / "repo")
+    gate = asyncio.Event()
+
+    async def slow(top: Path, env: Mapping[str, str]) -> None:
+        await gate.wait()
+        await check_out(top, env)
+
+    monkeypatch.setattr(worktree_session, "check_out", slow)
+    daemon = Daemon(data_dir=tmp_path / "data")
+    sid = await _open(daemon, repo)
+    try:
+        closing = asyncio.create_task(_send(daemon, {"type": "close_worktree", "session_id": sid}))
+        await asyncio.sleep(0.05)
+        assert not closing.done()  # waiting, not refused
+        message = {"type": "user_message", "session_id": sid, "content": "go"}
+        refused = json.loads(await daemon._handle_message(json.dumps(message), None) or "{}")
+        assert refused.get("code") == "session_busy"
+        gate.set()
+        assert (await asyncio.wait_for(closing, 10))["type"] == "session_list"
+        sess = daemon.session_registry.get(sid)
+        assert sess is not None and sess.folder_busy is None and sess.worktree is None
     finally:
         await _shutdown(daemon, sid)

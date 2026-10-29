@@ -819,7 +819,9 @@ async def test_ignorecase_stages_under_the_case_the_index_uses(tmp_path: Path) -
     """As ``git add`` does with core.ignorecase (APFS, NTFS): one entry, not two.
 
     On Linux two spellings are two files, standing in for one file reached
-    by two spellings on a case-insensitive disk.
+    by two spellings on a case-insensitive disk. On a case-insensitive disk
+    (macOS by default) ``Docs`` already exists as ``docs``, and the write
+    below lands in the tracked file: the real case (TD-5187).
     """
     repo = make_repo(tmp_path)
     (repo / "docs").mkdir()
@@ -827,7 +829,7 @@ async def test_ignorecase_stages_under_the_case_the_index_uses(tmp_path: Path) -
     _git(repo, "add", "docs/x.md")
     _git(repo, "commit", "-q", "-m", "docs")
     _git(repo, "config", "core.ignorecase", "true")
-    (repo / "Docs").mkdir()
+    (repo / "Docs").mkdir(exist_ok=True)
     (repo / "Docs" / "X.md").write_text("new\n")
 
     control = tmp_path / "control.index"
@@ -848,7 +850,7 @@ async def test_without_ignorecase_another_case_is_another_file(tmp_path: Path) -
     _git(repo, "add", "docs/x.md")
     _git(repo, "commit", "-q", "-m", "docs")
     _git(repo, "config", "core.ignorecase", "false")
-    (repo / "Docs").mkdir()
+    (repo / "Docs").mkdir(exist_ok=True)
     (repo / "Docs" / "X.md").write_text("new\n")
     ours = tmp_path / "ours.index"
     await _stage_into(repo, ours, repo / "Docs" / "X.md")
