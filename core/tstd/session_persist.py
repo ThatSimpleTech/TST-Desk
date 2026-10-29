@@ -16,6 +16,7 @@ import shutil
 import tempfile
 import threading
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 from typing import Any, cast
 
@@ -33,6 +34,10 @@ _QUEUED = "queued.json"
 # MCP tools ``tool_search`` loaded (TD-5127). The conversation alone loses
 # them: compaction folds the calls that used them into a summary.
 _MCP_TOOLS = "mcp_tools.json"
+# Over the cap, the window is trimmed this fraction below it (TD-5193), so
+# a long streamed reply rewrites the file once per that many events, not
+# on every one. Caps under ten trim to exactly the cap.
+_TRIM_SLACK_DIVISOR = 10
 
 
 def _write_all(fd: int, text: str) -> None:
@@ -71,6 +76,51 @@ class AppendResult:
 
     earliest_seq: int
     trimmed: bool
+
+
+@dataclass(frozen=True)
+class _OnDisk:
+    """What this writer last left in one session's events file (TD-5193).
+
+    An append trusts these counts only while the file still has the
+    ``stamp`` taken right after this writer's own last write; a file
+    someone else changed, or one never seen, is read once to rebuild them.
+    """
+
+    stamp: tuple[int, int, int]
+    count: int
+    earliest_seq: int
+    last_seq: int
+
+
+def _stamp(st: os.stat_result) -> tuple[int, int, int]:
+    """Which file, and how long: what an append or a rewrite by anyone changes.
+
+    Not the modification time: some file systems settle it only when the
+    handle closes, so it would look changed on every append there.
+    """
+    return (st.st_dev, st.st_ino, st.st_size)
+
+
+def _stamp_of(path: Path) -> tuple[int, int, int]:
+    """``_stamp`` through an open handle, as an append takes it (``fstat``, not ``stat``)."""
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        return _stamp(os.fstat(fd))
+    finally:
+        os.close(fd)
+
+
+def _ends_mid_line(path: Path) -> bool:
+    """True when the file's last byte is not a newline (a write cut short)."""
+    try:
+        with path.open("rb") as f:
+            if f.seek(0, os.SEEK_END) == 0:
+                return False
+            f.seek(-1, os.SEEK_END)
+            return f.read(1) != b"\n"
+    except OSError:
+        return False
 
 
 @dataclass(frozen=True)
@@ -196,7 +246,11 @@ class SessionPersist:
         if log_max_events is None or log_max_events < 1:
             log_max_events = DEFAULT_LOG_MAX_EVENTS
         self._log_max_events = log_max_events
+        self._trim_to = log_max_events - log_max_events // _TRIM_SLACK_DIVISOR
         self._write_lock = threading.Lock()
+        # Per session, what the last append left on disk (TD-5193). Guarded
+        # by the write lock; rebuilt from the file when missing or stale.
+        self._on_disk: dict[str, _OnDisk] = {}
 
     def dir_for(self, session_id: str) -> Path:
         return self._root / session_id
@@ -220,28 +274,75 @@ class SessionPersist:
         Sync: the caller is in ``to_thread``. The new line is written first
         so a seq that reached this call is on disk before rotation. Over
         cap, oldest lines drop and the file is rewritten atomically.
+
+        An append in seq order under the cap is only a write (TD-5193): the
+        counts kept from the last append say where the window stands. Every
+        streamed delta is an event, so re-reading the whole file here held
+        the GIL long enough to starve the loop reading the model's stream.
+        The file is read and parsed only when this writer has not seen it
+        as it is now (first append after a start, another writer), when an
+        append lands out of seq order, or when the window must be trimmed;
+        a trim goes a tenth below the cap so the next one is far off.
         """
         path = self.dir_for(session_id)
         path.mkdir(parents=True, exist_ok=True)
         events_path = path / _EVENTS
         line = event.model_dump_json() + "\n"
         with self._write_lock:
+            known = self._on_disk.pop(session_id, None)
             # Created 0600 in the same syscall: no world-readable instant.
             fd = os.open(events_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
             try:
+                if known is not None and _stamp(os.fstat(fd)) != known.stamp:
+                    known = None
+                if known is None and _ends_mid_line(events_path):
+                    # A write cut short (a crash) left half a line. It stays
+                    # a line of its own, dropped as malformed on read, and
+                    # does not swallow this event.
+                    line = "\n" + line
                 _write_all(fd, line)
+                stamp = _stamp(os.fstat(fd))
             finally:
                 os.close(fd)
             events_path.chmod(0o600)
-            loaded = self._load_events(events_path)
-            on_disk = [event.seq for event in loaded]
-            ordered_seqs = sorted(on_disk)
-            if on_disk != ordered_seqs:
-                loaded.sort(key=lambda event: event.seq)
-                self._rewrite_events(events_path, loaded)
-            kept = self._apply_window(events_path, loaded)
-            earliest = kept[0].seq if kept else event.seq
-            return AppendResult(earliest_seq=earliest, trimmed=len(kept) < len(loaded))
+            if (
+                known is not None
+                and event.seq > known.last_seq
+                and known.count < self._log_max_events
+            ):
+                earliest = known.earliest_seq if known.count else event.seq
+                self._on_disk[session_id] = _OnDisk(
+                    stamp=stamp, count=known.count + 1, earliest_seq=earliest, last_seq=event.seq
+                )
+                return AppendResult(earliest_seq=earliest, trimmed=False)
+            return self._settle_events(session_id, events_path, event.seq)
+
+    def _settle_events(self, session_id: str, events_path: Path, appended: int) -> AppendResult:
+        """Read the whole file, put it in seq order and inside the cap.
+
+        The slow path of ``append_event``; the caller holds the write lock.
+        The counts are kept for the next append only when the file is what
+        was read and rewritten here: a failed rewrite leaves them unknown.
+        """
+        read = self._read_events(events_path)
+        loaded = [] if read is None else read
+        out_of_order = any(a.seq > b.seq for a, b in pairwise(loaded))
+        if out_of_order:
+            loaded.sort(key=lambda event: event.seq)
+        kept = self._window(loaded)
+        written = True
+        if out_of_order or len(kept) < len(loaded):
+            written = self._rewrite_events(events_path, kept)
+        with contextlib.suppress(OSError):
+            if written and read is not None:
+                self._on_disk[session_id] = _OnDisk(
+                    stamp=_stamp_of(events_path),
+                    count=len(kept),
+                    earliest_seq=kept[0].seq if kept else 0,
+                    last_seq=kept[-1].seq if kept else 0,
+                )
+        earliest = kept[0].seq if kept else appended
+        return AppendResult(earliest_seq=earliest, trimmed=len(kept) < len(loaded))
 
     def save_conversation(self, session_id: str, messages: list[ChatMessage]) -> None:
         """Replace the snapshot. Under the write lock, like every other writer."""
@@ -335,29 +436,46 @@ class SessionPersist:
             return None
         events_path = path / _EVENTS
         with self._write_lock:
+            # The next append reads the file again rather than trust counts
+            # taken before this read could rewrite it.
+            self._on_disk.pop(session_id, None)
             loaded = self._load_events(events_path)
             loaded.sort(key=lambda event: event.seq)
-            events = self._apply_window(events_path, loaded)
+            events = self._window(loaded)
+            if len(events) < len(loaded):
+                self._rewrite_events(events_path, events)
         conversation = self._load_conversation(path / _CONVERSATION)
         return LoadedSession(events=events, conversation=conversation)
 
     def remove(self, session_id: str) -> None:
         path = self.dir_for(session_id)
+        with self._write_lock:
+            self._on_disk.pop(session_id, None)
         if path.is_dir():
             shutil.rmtree(path)
 
     def _load_events(self, path: Path) -> list[DaemonEvent]:
+        events = self._read_events(path)
+        return [] if events is None else events
+
+    @staticmethod
+    def _read_events(path: Path) -> list[DaemonEvent] | None:
+        """The events in the file, malformed lines dropped; None if it cannot be read.
+
+        Bytes that are not UTF-8 (a write cut short mid-character) spoil
+        only their own line, which is then dropped as malformed.
+        """
         if not path.is_file():
             return []
         events: list[DaemonEvent] = []
         try:
-            text = path.read_text(encoding="utf-8")
+            text = path.read_bytes().decode("utf-8", errors="replace")
         except OSError as e:
             log.warning(
                 "session events unreadable",
                 extra={"extra_fields": {"path": str(path), "error": str(e)}},
             )
-            return []
+            return None
         for i, line in enumerate(text.splitlines(), start=1):
             if not line.strip():
                 continue
@@ -370,13 +488,11 @@ class SessionPersist:
                 )
         return events
 
-    def _apply_window(self, path: Path, events: list[DaemonEvent]) -> list[DaemonEvent]:
-        """Keep the newest ``log_max_events``. Rewrites the file when over cap."""
+    def _window(self, events: list[DaemonEvent]) -> list[DaemonEvent]:
+        """The events to keep: all of them up to the cap, else the newest ``_trim_to``."""
         if len(events) <= self._log_max_events:
             return events
-        kept = events[-self._log_max_events :]
-        self._rewrite_events(path, kept)
-        return kept
+        return events[-self._trim_to :]
 
     def _load_conversation(self, path: Path) -> list[ChatMessage] | None:
         if not path.is_file():
@@ -402,8 +518,11 @@ class SessionPersist:
             return None
 
     @staticmethod
-    def _rewrite_events(path: Path, events: list[DaemonEvent]) -> None:
-        """Replace ``events.jsonl`` with ``events``. Unique temp + replace, 0o600."""
+    def _rewrite_events(path: Path, events: list[DaemonEvent]) -> bool:
+        """Replace ``events.jsonl`` with ``events``. Unique temp + replace, 0o600.
+
+        Returns False, after a warning, when the file could not be replaced.
+        """
         try:
             _replace_with(path, "".join(event.model_dump_json() + "\n" for event in events))
             path.chmod(0o600)
@@ -412,6 +531,8 @@ class SessionPersist:
                 "failed to rotate session events",
                 extra={"extra_fields": {"path": str(path), "error": str(e)}},
             )
+            return False
+        return True
 
     @staticmethod
     def _write_json(path: Path, payload: object) -> None:

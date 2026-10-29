@@ -18549,3 +18549,41 @@ grows with the repository.
 - A failed checkout is treated like a worktree that could not be made: the
   session moves back to its folder, with a note. A restart that cut the
   checkout off finishes it on restore.
+
+## TD-5193 — Logging an event is a write, not a re-read of the log (Class B)
+
+Every streamed delta (thinking or reply text) is a session event, and each
+one was written to `events.jsonl` by appending the line and then reading and
+parsing the whole file back to check seq order and the window. With the
+window full (10,000 events, about 1.5 MB) that was about 56 ms of CPU per
+event, so a reply streaming 35 deltas a second kept a core busy. The work
+ran in a thread but held the GIL, which starved the event loop reading the
+model's stream: on long streamed replies from a local OpenAI-compatible
+server, a reply the server had finished was still being read minutes later,
+hit the stream idle timeout and was withdrawn and asked again.
+- `SessionPersist` keeps, per session, what its last append left on disk:
+  the event count, the first and last seq, and the file's identity and
+  size. An append in seq order under the cap is only the write.
+- The file is read and parsed only when that state is missing or stale (the
+  first append after a start, `load`, another writer), when an append lands
+  out of seq order (it is then sorted and rewritten, as before), or when the
+  window must be trimmed.
+- Past the cap the window is trimmed a tenth below it, so the next rewrite is
+  a tenth of the cap away rather than on the next event. The cap is still
+  the most the file and the in-memory log hold; caps under ten trim to
+  exactly the cap. The daemon's in-memory drop and task-list check run on
+  a trim, so they follow it.
+- A line cut short by a crash no longer swallows the next event: the next
+  append starts on a new line, and bytes that are not UTF-8 spoil only their
+  own line instead of making the file unreadable.
+- `SessionEventLog.events_from` is a bisect and a slice of the tail. `add`
+  stamps each event above every stored one; adding an object the log
+  already holds is noticed and reads fall back to the old scan and sort.
+- Not done: merging streamed deltas into fewer events on disk. Seqs on disk
+  are one per event and replay depends on that, and once an append is a
+  write the merge would save little.
+
+Measured: per append at 10,000 events on disk, 56 ms before, 0.024 ms
+after; a 46,000-event session averages 0.075 ms per append including its
+trims; `events_from` of the newest event on a 10,000-event log, 0.25 ms
+before, 0.001 ms after.

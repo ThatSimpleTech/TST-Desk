@@ -543,7 +543,7 @@ drop a different prefix than `from_seq`. Zero is a load error, not
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `log_max_events` | int ≥ 1 | `10000` | Maximum events kept in `events.jsonl`. Oldest drop first. Attach from a rotated seq gets `log_trimmed` and replays from the earliest kept seq. |
+| `log_max_events` | int ≥ 1 | `10000` | Maximum events kept in `events.jsonl`. Oldest drop first: past the cap the oldest tenth goes at once, so the window holds 90-100% of it. Attach from a rotated seq gets `log_trimmed` and replays from the earliest kept seq. |
 | `send_file_max_bytes` | int 1..2147483648 | `536870912` | Largest file `send_file` copies into the chat (512 MiB). Bigger is refused with `file_too_large`; nothing is copied. |
 | `send_file_session_max_bytes` | int ≥ 1 | `4294967296` | Total of sent files one session may hold (4 GiB). Past it, `session_quota`. |
 | `default_effort` | `low` \| `medium` \| `high` \| `xhigh` \| `max` \| `ultracode` | `medium` | Reasoning effort a session starts with until the composer's model picker sets one. Sent as `reasoning_effort` to any tier with `reasoning_effort: true`. |

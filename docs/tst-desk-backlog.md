@@ -12409,6 +12409,31 @@ publishes both for every model.
       (`settings.test.ts`, `model-card.test.ts`).
 - [x] The key never reaches a log or config.yaml (`TestDaemon`).
 
+### TD-5193 — Logging a streamed event is a write, not a re-read of the log
+
+**Size:** 2 · **Depends on:** TD-2901 · **Status:** Done
+
+Each streamed delta is a session event, and logging one re-read and parsed
+the whole events file. On a full window that is tens of milliseconds per
+delta, which held the GIL and starved the loop reading the model's stream:
+long streamed replies from a local server were withdrawn as stalled after
+the server had finished them.
+
+- [x] An append in seq order under the cap only writes the line; the file
+      is read once to rebuild the counts after a start, a `load` or another
+      writer (`test_session_persist_cost.py::TestAppendIsAWrite`).
+- [x] Past the cap the window is trimmed a tenth below it; the file and the
+      in-memory log never hold more than the cap, and caps under ten trim to
+      exactly the cap (`test_trim_goes_below_the_cap…`,
+      `test_the_window_never_passes_the_cap`).
+- [x] Out-of-order appends are still sorted on disk; a failed rotation is
+      tried again on the next append; a line cut short by a crash does not
+      swallow the next event.
+- [x] 20,000 appends stay within budget and the per-append cost does not grow
+      with the file (`TestAppendCost`).
+- [x] `events_from` is a bisect of the tail, with the old sort as the
+      fallback when the log is out of order (`TestEventsFrom`).
+
 ### TD-5192 — The mascot's eyes follow the cursor and glance at typing
 
 **Size:** 2 · **Depends on:** TD-5191 · **Status:** Done
