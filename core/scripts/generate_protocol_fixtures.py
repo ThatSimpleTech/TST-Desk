@@ -1580,7 +1580,14 @@ FIXTURES = {
         awaiting_approval=["s2"],
         hold_until="2026-10-14T10:47:00+00:00",
     ),
-    "api_key_validated": ApiKeyValidated(ok=True, detail="Key accepted by provider."),
+    # A Settings row's test names its key (TD-5200); the first-run check of a
+    # typed key names none.
+    "api_key_validated": ApiKeyValidated(
+        ok=True, detail="Key accepted by provider.", credential="openrouter"
+    ),
+    "api_key_validated_first_run": ApiKeyValidated(
+        ok=False, detail="The key was rejected.", credential=None
+    ),
     "endpoint_models": EndpointModels(
         base_url="https://api.example.com/v1",
         models=[

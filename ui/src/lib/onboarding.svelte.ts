@@ -182,6 +182,9 @@ function reduce(event: DaemonEventUnion): void {
 			}
 			break;
 		case "api_key_validated":
+			// A verdict that names a key answers a Settings row (TD-5200), not
+			// this check: it must not settle an in-flight check or flip hasApiKey.
+			if ((event.credential ?? null) !== null) break;
 			onboarding.validating = false;
 			onboarding.validation = { ok: event.ok, detail: event.detail };
 			if (event.ok && !validateWasTyped) onboarding.hasApiKey = true;

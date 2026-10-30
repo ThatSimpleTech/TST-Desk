@@ -18787,3 +18787,35 @@ the guard's three counters. This supersedes TD-5002's rule that
 missing: it costs another call, and the answer was already right.
 Keeping `BLOCKED` as a pause: a question belongs in the chat, where the
 person can answer it, not behind Resume.
+
+## TD-5200 — A key test's reply names the key (Class B)
+
+2026-10-30. Settings → API keys showed every Test verdict on one line at the
+bottom of the page, shared with the first-run check, because
+`api_key_validated` did not say which key it answered.
+
+**Decision:** `ApiKeyValidated` gains `credential: str | None = None`: the
+request's `credential`, echoed on every verdict. The window keeps one result
+per credential id (`ui/src/lib/key-tests.svelte.ts`, fed by the settings
+reducer like the pairing dialog). A verdict with no credential belongs to the
+first-run check, and only the onboarding store reads it; a verdict that names
+a key is never the first-run check's. The field is additive with a default,
+so `PROTOCOL_VERSION` stays. The window and the daemon ship together; against
+an older daemon a row's test would end with the 30-second message.
+
+A settled result is dropped when setup_state reports a new name, host or
+stored state for that key (compared with the row as it stood when the result
+settled), and replaced when the row is tested again. A test still in flight
+is not dropped by setup_state: the daemon handles one connection's messages in
+order, so a host saved by the blur just before the click is acknowledged
+before the verdict, and the verdict is about the new host. A verdict for a key
+with no entry is ignored. After 30 seconds (`KEY_TEST_TIMEOUT_MS`) the row
+says TST Desk did not answer and Test works again; a verdict that arrives
+later still replaces that message.
+
+**Rejected:** A request id on `validate_api_key`: the credential already names
+the row, and two tests of one key a moment apart answer the same question.
+Giving an unlabelled verdict to the one row that is waiting: that is a guess,
+and a first-run check in flight would break it. Settling rows on an `error`
+whose `in_reply_to` is `validate_api_key`: it names no key, so it cannot say
+which row; the 30-second limit covers it.

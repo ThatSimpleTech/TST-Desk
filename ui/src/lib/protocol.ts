@@ -2386,8 +2386,6 @@ export interface CredentialSummary {
   base_url?: string | null;
 }
 
-// TD-1101: reply to validate_api_key — a one-token live probe of the
-// stored key. `detail` is actionable text; the key never appears.
 // TD-5172: one row of a server's /models list.
 export interface EndpointModel {
   id: string;
@@ -2437,11 +2435,16 @@ export interface ModelTested extends DaemonEvent {
   detail: string;
 }
 
+// TD-1101: reply to validate_api_key — a one-token live probe of the
+// stored key. `detail` is actionable text; the key never appears.
 export interface ApiKeyValidated extends DaemonEvent {
   type: "api_key_validated";
   seq: number;
   ok: boolean;
   detail: string;
+  // TD-5200: the request's credential, echoed so Settings shows the verdict
+  // on that key's row. Null when the request named none (first-run check).
+  credential?: string | null;
 }
 
 // TD-1104 doctor: one row per check. `skip` means not applicable (no key

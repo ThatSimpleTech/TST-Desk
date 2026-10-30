@@ -1,6 +1,7 @@
 <script lang="ts">
 	// Named API keys (TD-1717). Presence and given names only — the secret
-	// never enters the settings store.
+	// never enters the settings store. Test shows its verdict on the row it
+	// was pressed on (TD-5200).
 	import {
 		settings,
 		storeNamedKey,
@@ -8,9 +9,9 @@
 		renameCredential,
 		saveCredentialHost,
 		deleteNamedKey,
-		validateNamedKey,
 	} from "../settings.svelte.js";
-	import { onboarding } from "../onboarding.svelte.js";
+	import { keyTests, testKey } from "../key-tests.svelte.js";
+	import KeyTestResult from "./KeyTestResult.svelte";
 
 	let newName = $state("");
 	let newKey = $state("");
@@ -54,6 +55,10 @@
 		const next = (hostDrafts[id] ?? current).trim();
 		if (next === current) return;
 		saveCredentialHost(id, name, next);
+	}
+
+	function testing(id: string): boolean {
+		return keyTests[id]?.state === "testing";
 	}
 
 	/** What a stored key is for: bound tiers, plus the judgments connector.
@@ -130,12 +135,15 @@
 			<button
 				class="btn"
 				type="button"
-				disabled={onboarding.validating || !cred.stored}
-				onclick={() => validateNamedKey(cred.id)}>Test</button
+				disabled={!cred.stored || testing(cred.id)}
+				onclick={() => testKey(cred.id)}>{testing(cred.id) ? "Testing…" : "Test"}</button
 			>
 			<button class="btn btn--danger" type="button" onclick={() => deleteNamedKey(cred.id)}
 				>Remove</button
 			>
+			<!-- Beside the buttons, not under them: the sticky Add form below
+			     covers whatever sits under the last row's buttons. -->
+			<KeyTestResult test={keyTests[cred.id]} />
 		</div>
 	</div>
 {/each}
@@ -177,27 +185,12 @@
 		onclick={addSource}>Add source</button
 	>
 </div>
-{#if onboarding.validation}
-	<p
-		class={onboarding.validation.ok ? "hint" : "test-fail"}
-		aria-live="polite"
-	>
-		{onboarding.validation.detail ||
-			(onboarding.validation.ok ? "" : "The key was rejected.")}
-	</p>
-{/if}
 </div>
 
 <style>
 	.hint {
 		font-size: var(--text-sm);
 		color: var(--color-ink-secondary);
-		margin: var(--space-3) 0 0;
-	}
-
-	.test-fail {
-		font-size: var(--text-sm);
-		color: var(--color-err);
 		margin: var(--space-3) 0 0;
 	}
 
@@ -260,6 +253,8 @@
 
 	.actions {
 		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
 		gap: var(--space-2);
 		margin-top: var(--space-3);
 	}

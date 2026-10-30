@@ -1237,6 +1237,12 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isString(m.detail)).toBe(true);
     expect(m.seq).toBe(1);
     expect("session_id" in m).toBe(false);
+    // TD-5200: a Settings row's test names its key; the first-run check names none.
+    expect(m.credential).toBe("openrouter");
+    const firstRun = fixtures.api_key_validated_first_run as ApiKeyValidated;
+    expect(firstRun.type).toBe("api_key_validated");
+    expect(firstRun.ok).toBe(false);
+    expect(firstRun.credential).toBeNull();
   });
 
   // TD-5172 "Add a model" walkthrough.

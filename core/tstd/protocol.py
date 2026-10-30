@@ -3861,12 +3861,18 @@ class ApiKeyValidated(DaemonEvent):
     ``detail`` carries the actionable failure text on failure (already
     redacted at the provider boundary); on success it says which keychain
     account was checked, never the key.
+
+    ``credential`` echoes the request's ``credential`` (TD-5200), so
+    Settings shows the verdict on the row of the key that was tested and
+    never on another. None when the request named no key, as the first-run
+    check of a typed key does.
     """
 
     type: Literal["api_key_validated"] = "api_key_validated"
     seq: int = 1
     ok: bool
     detail: str
+    credential: str | None = None
 
 
 class EndpointModel(BaseModel):

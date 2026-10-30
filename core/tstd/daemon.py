@@ -1931,8 +1931,13 @@ class Daemon:
         independent of keychain state; otherwise the stored key is probed.
         A one-token completion against a matching tier: the cheapest
         request that still proves the key authenticates.  The key value
-        never appears in the response.
+        never appears in the response.  Every verdict names *credential*
+        (TD-5200), so the window shows it on that key's row.
         """
+
+        def verdict(ok: bool, detail: str) -> ApiKeyValidated:
+            return ApiKeyValidated(seq=1, ok=ok, detail=detail, credential=credential)
+
         probe: KeyProbe | None = None
         try:
             if credential and api_key is None:
@@ -1940,23 +1945,19 @@ class Daemon:
                 probe = key_probe(self.config, credential)
             err = await self._provider_probe(api_key, credential, probe=probe)
         except KeychainError as e:
-            return ApiKeyValidated(seq=1, ok=False, detail=str(e))
+            return verdict(False, str(e))
         except ModelDiscoveryError as e:
-            return ApiKeyValidated(seq=1, ok=False, detail=str(e))
+            return verdict(False, str(e))
         host = probe.host.rstrip("/") if probe is not None else ""
         if err is not None and probe is not None and probe.borrowed and key_got_past_sign_in(err):
             # TD-5184: the server took the key; it just lacks the borrowed model.
-            return ApiKeyValidated(
-                seq=1, ok=True, detail=f"Key accepted by {host}. No model uses it yet."
-            )
+            return verdict(True, f"Key accepted by {host}. No model uses it yet.")
         if err is not None:
             detail = auth_failure_message() if err.code == "auth_failed" else err.message
-            return ApiKeyValidated(seq=1, ok=False, detail=detail)
+            return verdict(False, detail)
         if host:
-            return ApiKeyValidated(seq=1, ok=True, detail=f"Key accepted by {host}.")
-        return ApiKeyValidated(
-            seq=1, ok=True, detail="Key accepted by the active preset's provider."
-        )
+            return verdict(True, f"Key accepted by {host}.")
+        return verdict(True, "Key accepted by the active preset's provider.")
 
     # ── Add a model (TD-5172) ─────────────────────────────────────────
 
