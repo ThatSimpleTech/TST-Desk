@@ -51,6 +51,7 @@ from .steering_edit import propose_steering_edit
 from .task_list import task_list
 from .tool_search import register_tool_search_handler
 from .web_search import web_fetch, web_search
+from .workflow import register_workflow_handler
 from .write import fs_edit, fs_write
 
 if TYPE_CHECKING:
@@ -602,6 +603,7 @@ def register_builtin_handlers(
     )
     register_skill_handlers(dispatcher)
     register_delegate_handlers(dispatcher)
+    register_workflow_handler(dispatcher)
     dispatcher.register_handler("consult", handle_consult)
     dispatcher.register_handler("send_file", partial(send_file, service=sent_files))
     dispatcher.register_handler("propose_steering_edit", propose_steering_edit)

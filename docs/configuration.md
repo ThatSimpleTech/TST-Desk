@@ -73,6 +73,7 @@ no effect.
 | `clear_tool_results` | mapping | see below | Clear stale tool results before whole turns are compacted (TD-5115). Omitted in an older user copy is filled from the shipped file at load, which turns it on. |
 | `compaction` | mapping | see below | How compaction writes its summary and what it brings back (TD-5128): a worker-written structured summary, written ahead in the background, and the recent files read again. Omitted in an older user copy is filled from the shipped file at load, which turns the worker summary on. A config with the block but no `summary` key is `extractive`. |
 | `consult` | mapping | see below | Which tiers get the `consult` tool, which asks the brain or the validator one question mid-task, and how many consults one turn may make (TD-5119). Omitted in an older user copy is filled from the shipped file at load: the worker only, two a turn. |
+| `workflow` | mapping | see below | Limits for the `workflow` tool, which runs workers side by side while a session's Ultracode switch is on (TD-5195). Omitted means the defaults: 3 at once, 8 a call. |
 | `shell` | mapping | see below | The read-only shell list (TD-5103): commands that run without asking. Omitted in an older user copy means the whole built-in list, on. Config can shrink it or switch it off, never add to it. |
 | `remote` | mapping | see below | Opt-in Tailscale bind. Omitted in an older user copy is filled from the shipped file at load. Empty `bind` is loopback only. |
 | `notify` | mapping | see below | Outbound notification channels. Omitted in an older user copy is filled from the shipped file at load. Slack and ntfy are off until their `enabled` flag is true and a destination URL is stored in the OS keychain. |
@@ -546,7 +547,8 @@ drop a different prefix than `from_seq`. Zero is a load error, not
 | `log_max_events` | int ≥ 1 | `10000` | Maximum events kept in `events.jsonl`. Oldest drop first: past the cap the oldest tenth goes at once, so the window holds 90-100% of it. Attach from a rotated seq gets `log_trimmed` and replays from the earliest kept seq. |
 | `send_file_max_bytes` | int 1..2147483648 | `536870912` | Largest file `send_file` copies into the chat (512 MiB). Bigger is refused with `file_too_large`; nothing is copied. |
 | `send_file_session_max_bytes` | int ≥ 1 | `4294967296` | Total of sent files one session may hold (4 GiB). Past it, `session_quota`. |
-| `default_effort` | `low` \| `medium` \| `high` \| `xhigh` \| `max` \| `ultracode` | `medium` | Reasoning effort a session starts with until the composer's model picker sets one. Sent as `reasoning_effort` to any tier with `reasoning_effort: true`. |
+| `default_effort` | `low` \| `medium` \| `high` \| `xhigh` \| `max` | `medium` | Reasoning effort a session starts with until the composer's model picker sets one. Sent as `reasoning_effort` to any tier with `reasoning_effort: true`. An older config's `ultracode` (a sixth level before TD-5195) still loads, as `max` with `default_ultracode: true` unless that key is set. |
+| `default_ultracode` | bool | `false` | Whether a new session starts with Ultracode on (TD-5195): the picker's switch, beside Fast, that lets the agent run several workers at once with the `workflow` tool (§2 `workflow`). Works with any effort. Once the picker sets it, a session keeps its own, a restart included. |
 
 **Search index (TD-5129).** Every user message and assistant reply the session
 logs carry is also written to `session_index.db` in the data dir, a SQLite FTS5
@@ -768,6 +770,52 @@ active_preset: local
 consult:
   tiers: [worker, brain]
   max_per_turn: 3
+```
+
+### `workflow`
+
+The `workflow` tool (TD-5195) runs several workers at once on independent
+pieces of one job. The model may call it only while the session's
+Ultracode switch is on (the model picker's Ultracode row, or
+`session.default_ultracode`); with the switch off the call is refused and
+nothing else changes. The tool is in the model's list either way, so
+flipping the switch never changes a request's tools or system message.
+
+- Each task is one `delegate` child (§4.2): `kind` `worker` (the default)
+  or `research`, an optional named worker (`agent`, §4.11) and an optional
+  `label` for the results. Workers see neither the conversation nor each
+  other, so each task must say everything it needs.
+- With two or more tasks, every `worker` task gets its own worktree branch,
+  so no two workers edit the same files. In a folder that is not a git
+  repository with a commit, those tasks are refused and `research` tasks
+  still run.
+- With `check` on (the default), each task that finishes is checked by a
+  separate read-only child on the validator tier, against the files and
+  the writer's branch, before its result comes back: `confirmed`,
+  `doubtful` or `wrong`, with up to five lines of reasons. A failed task is
+  not checked. The model gets every result, in task order, in one capped
+  reply.
+- Every worker and checker is a model call on its tier, priced at that
+  tier's rates and held to the session's caps (§4.2). The call asks for
+  approval like `delegate`. In plan mode a call with any `worker` task is
+  refused whole; a call of only `research` tasks runs.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `max_parallel` | int 1..16 | `3` | Workers running at once. Size it to what the worker model's server can serve side by side. |
+| `max_tasks` | int 1..32 | `8` | Tasks one call may hold; a call with more is refused. Tasks past `max_parallel` wait for a free slot. |
+
+<!-- verify: model -->
+```yaml
+presets:
+  local:
+    brain: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    worker: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+    validator: { base_url: "http://127.0.0.1:11434/v1", input_price: 0, output_price: 0, cache_read_price: 0, context_window: 32768, max_output_tokens: 4096 }
+active_preset: local
+workflow:
+  max_parallel: 2
+  max_tasks: 4
 ```
 
 ### `shell`
@@ -1786,7 +1834,7 @@ Every preset declares all three tiers. Omitting one is a load error naming it.
 | `label` | string | The name the composer's model picker, its chip and the account row show for this preset. A preset with no label is left out of the picker (unless it is the current one). Default: none. |
 | `description` | string, up to 120 characters | One line under the label in the picker: what this model is for. Default: none. |
 | `picker` | `primary` \| `more` \| `team` | `primary` puts the preset on the picker's main list; `more` puts it under "More models"; `team` (a preset whose tiers use different models) puts it under "Teams", a submenu shown only when one exists. Default `primary`. |
-| `fast` | map | none | The model's Fast mode: the picker shows a Fast switch under Effort only for a preset with this block. `hook_url` is a loopback switch for a local model that gets faster by borrowing hardware: the daemon POSTs `{"model": hook_model, "on": true\|false, "by": "tst-desk"}` and reads the reply (409 with `error` = it will not switch now, and the switch stays off); at the start of each turn it GETs the same URL and turns the toggle off if the switch already ended Fast. `hook_model` names this model at that switch. `extra_body` is merged into every request while Fast is on, for an API model with a priority or fast tier. Either or both. `note` is one line the switch shows while it turns on, e.g. "Borrows all four GPUs; about 2 min to switch". `hook_url` must be loopback. |
+| `fast` | map | The model's Fast mode: the picker shows a Fast switch under Effort only for a preset with this block. `hook_url` is a loopback switch for a local model that gets faster by borrowing hardware: the daemon POSTs `{"model": hook_model, "on": true\|false, "by": "tst-desk"}` and reads the reply (409 with `error` = it will not switch now, and the switch stays off); at the start of each turn it GETs the same URL and turns the toggle off if the switch already ended Fast. `hook_model` names this model at that switch. `extra_body` is merged into every request while Fast is on, for an API model with a priority or fast tier. Either or both. `note` is one line the switch shows while it turns on, e.g. "Borrows all four GPUs; about 2 min to switch". `hook_url` must be loopback. Default: none. The Ultracode switch after Fast is not a preset key: every model has it (§2 `session` `default_ultracode`, §2 `workflow`). |
 
 Routing is turn-count and failure driven; it does not read anything from this file beyond the
 three tier definitions. The composer has no tier chip (TD-5172); a client can still pin a tier
@@ -1805,7 +1853,7 @@ for a session with the `set_tier` message.
 | `context_window` | int > 0 | *required* | The compaction budget — see below. |
 | `max_output_tokens` | int > 0 | *required* | Sent as `max_tokens` on the tier's requests, and the answer reservation subtracted from `context_window` — see below. |
 | `vision` | bool | `false` | When `true`, PNG/JPEG/GIF/WebP attachments are accepted on user turns routed to this tier (TD-4705), and `fs_read` returns an image file, or PDF page images on request, as an image the model sees (TD-5130). Capability is config — never inferred from the slug in code. |
-| `reasoning_effort` | bool | `false` | When `true`, the picker's effort level (`low`, `medium`, `high`, `xhigh`, `max`, `ultracode`) goes out as `reasoning_effort` on this tier's turn requests. Turn it on only for a gateway or provider that supports the field. |
+| `reasoning_effort` | bool | `false` | When `true`, the picker's effort level (`low`, `medium`, `high`, `xhigh`, `max`) goes out as `reasoning_effort` on this tier's turn requests, and on the requests of delegate and workflow children that run on it (TD-5195). Ultracode is never sent: it is a switch, not a level. Turn it on only for a gateway or provider that supports the field. |
 | `extra_body` | map | none | Extra JSON fields added to every chat request the tier makes: the turn, the progress check, a delegated worker, the after-write review (validator tier), memory distillation (worker tier), and (on the worker tier) the tool-call classifier, DoD polls and judgment calls that run on the worker. They fill in only fields the request did not set itself. For provider-specific settings such as a llama.cpp server's `chat_template_kwargs` — see §3.6. It cannot set `model`, `messages`, `tools`, `tool_choice`, `stream`, `stream_options`, `max_tokens` or `max_completion_tokens`, and its values must be plain JSON; a load error names the problem. Sent as written: never put a key or token here. |
 | `verdict_extra_body` | map | none | Merged over `extra_body` on the worker tier's one-word verdict calls only: the tool-call classifier, DoD polls and judgment calls that run on the worker. Nested maps merge and this map wins a clash. The turn, a delegated worker and memory distillation never send it. Same rules as `extra_body`; it does nothing on the brain and validator tiers. Use it to turn a reasoning model's thinking off for an 8-token answer — see §3.6. |
 | `deferred_tools` | list of patterns | `[]` | Builtin tools this tier's model sees by name only, inside `tool_search`'s description, the way MCP tools are deferred. fnmatch patterns such as `github_*`. The model loads one with `tool_search` (`select:<name>`) and it stays in the request for the rest of the session; a tool the conversation already called stays offered. For small or heavily quantized models that lose the tool-call format when the tool list is long: a 1-bit DeepSeek V4.1 breaks past about 18k characters of definitions, and the full builtin set is about 31k. `tool_search` and MCP tools never match. |
@@ -2718,9 +2766,10 @@ window only. A file write resets the 52-call budget too. Unattended autonomy run
 charter breakers and do not take this check.
 
 **A delegated child runs inside these caps too.** The `delegate` tool starts a one-level child
-on the worker tier. It gets at most 8 model calls, fewer if the session has fewer
-`max_iterations` left, and spend and wall clock are checked before each of its calls the same
-way. There are two kinds (TD-5117). `worker`, the default, can read, write files and run shell.
+on the worker tier. It gets at most 8 model calls. Its calls count on the session's `max_iterations` together with
+the parent's, and the cap, spend and wall clock are checked before each of its calls the same
+way. When approvals are skipped in an interactive session the parent ignores the iteration and
+wall-clock caps, and so does the child (TD-5195); spend is always checked. There are two kinds (TD-5117). `worker`, the default, can read, write files and run shell.
 `research` is read-only: `fs_read`, `fs_list`, `fs_grep`, `web_search` and `web_fetch`, plus
 `consult` while `consult.tiers` lists `worker` (the default, TD-5119), and nothing else, no MCP
 or plugin tool included. Either kind's calls go through the same
@@ -2735,9 +2784,18 @@ result too (TD-5160).
 The child reads the session's own config, as the session's tools do: a research child's
 `web_search` goes to the session's `search.base_url` and fallbacks, the hosts `network` and the
 host allowlist judged, and a worker child's shell keeps the session's read-only list. In plan
-mode `delegate` with no `kind` runs `research`; `kind: worker` still runs when asked for, because
-plan mode today only locks the brain (TD-4603). There is no key for any of this, and `delegate`
-itself still asks for approval like any Class B call.
+mode `delegate` with no `kind` runs `research` and `kind: worker` is refused (TD-5123). There is
+no key for any of this, and `delegate` itself still asks for approval like any Class B call.
+A child sends the session's effort when its tier takes `reasoning_effort` (TD-5195).
+
+**A workflow runs several children at once (TD-5195).** While the session's Ultracode switch
+is on, the `workflow` tool runs up to `workflow.max_tasks` delegate children in one call,
+`workflow.max_parallel` at a time (§2 `workflow`), each with its own result and, with `check`
+on, a reviewer's verdict. Every child counts on the session's one iteration count, shared with
+the parent, so several children cannot make more calls than `max_iterations` allows; once the
+count reaches it the parent pauses at the cap like any other, and raising the cap lets workers
+run again. Spend and wall clock are checked before each call as above. Stop ends every child in flight, its shell and searches
+included. A child's approval cards park on the session like a single delegate's.
 
 ### 4.3 `attachments` — what a message may carry
 

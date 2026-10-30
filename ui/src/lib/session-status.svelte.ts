@@ -16,7 +16,7 @@ import { isBridged } from "./bridged-id";
 import type { ProtocolClient } from "./client";
 import type { ContextReading } from "./context-gauge";
 import { persistLastWorkspace } from "./last-workspace";
-import { DEFAULT_EFFORT } from "./effort";
+import { DEFAULT_EFFORT, LEGACY_ULTRACODE } from "./effort";
 import type {
   AttachmentLimits,
   BoundaryUpdate,
@@ -88,6 +88,9 @@ export const session = $state({
   fast: false,
   fastAvailable: false,
   fastNote: "",
+  /** Ultracode (TD-5195): the workflow switch, and whether this daemon has it. */
+  ultracode: false,
+  ultracodeAvailable: false,
   /** Active tier accepts image attachments (TD-4705). False until tier_state. */
   vision: false,
   /** A turn is owed (TD-1721). The daemon refuses a preset switch then. */
@@ -128,6 +131,8 @@ export function resetSession(): void {
   session.fast = false;
   session.fastAvailable = false;
   session.fastNote = "";
+  session.ultracode = false;
+  session.ultracodeAvailable = false;
   session.vision = false;
   session.turnActive = false;
   session.context = null;
@@ -193,6 +198,13 @@ export function ingestEvent(event: DaemonEventUnion): void {
       session.fast = event.fast ?? false;
       session.fastAvailable = event.fast_available ?? false;
       session.fastNote = event.fast_note ?? "";
+      session.ultracode = event.ultracode ?? false;
+      session.ultracodeAvailable = event.ultracode_available ?? false;
+      // An older peer (TD-5195) still reports the old sixth level: Max, switch on.
+      if ((event.effort as string | undefined) === LEGACY_ULTRACODE) {
+        session.effort = "max";
+        session.ultracode = true;
+      }
       session.vision = event.vision ?? false;
       break;
     case "user_turn":
@@ -279,6 +291,8 @@ export function focusSession(
   session.fast = false;
   session.fastAvailable = false;
   session.fastNote = "";
+  session.ultracode = false;
+  session.ultracodeAvailable = false;
   session.vision = false;
   session.turnActive = false;
   session.context = null;
@@ -334,6 +348,13 @@ export function setFast(on: boolean): void {
   if (session.sessionId === null) return;
   session.fastNote = on ? "Turning fast on…" : "Turning fast off…";
   client?.setFast(session.sessionId, on);
+}
+
+/** Turn Ultracode on or off. The row and chip follow at once; tier_state confirms. */
+export function setUltracode(on: boolean): void {
+  if (session.sessionId === null) return;
+  session.ultracode = on;
+  client?.setUltracode(session.sessionId, on);
 }
 
 /** Retarget this session at a catalog preset. The composer follows tier_state. */

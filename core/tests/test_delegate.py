@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -326,3 +327,151 @@ async def test_parent_loop_delegate_returns_capped_summary(tmp_path: Path) -> No
     for call in worker_calls:
         names = [t.function.name for t in (call.tools or []) if t.function is not None]
         assert "delegate" not in names
+
+
+# ── Side by side (TD-5195) ──────────────────────────────────────────────
+
+
+async def test_child_tool_call_ids_carry_the_delegate_call_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tstd.loop as loop_mod
+
+    ws = _workspace(tmp_path)
+    parent = Session(str(ws))
+    dispatcher = _parent_dispatcher(ws)
+    mock = MockProvider(
+        sequences={
+            "test-worker": [
+                Script(
+                    kind="tool_call", tool_name="fs_read", tool_arguments='{"path": "notes.md"}'
+                ),
+                Script(kind="text", content="Read it."),
+            ]
+        }
+    )
+    _bind_runtime(parent, dispatcher, mock)
+    seen: list[str] = []
+    real = loop_mod.dispatch_worker_child_tools
+
+    async def spy(d: ToolDispatcher, s: Session, items: list[tuple[str, str, dict[str, Any]]]):  # type: ignore[no-untyped-def]
+        seen.extend(i[0] for i in items)
+        return await real(d, s, items)
+
+    monkeypatch.setattr(loop_mod, "dispatch_worker_child_tools", spy)
+
+    out = await handle_delegate(parent, "Read notes.md", tool_call_id="call_parent")
+
+    assert out.text == "Read it."
+    assert seen == ["call_parent/call_mock_1"]
+    # The worker's own model is answered under the id it gave.
+    second = [c for c in mock.calls if c.model == "test-worker"][1]
+    assert [m.tool_call_id for m in second.messages if m.role == "tool"] == ["call_mock_1"]
+
+
+async def test_a_delegate_child_runs_at_the_sessions_effort(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    parent = Session(str(ws))
+    parent.router = TierRouter()
+    parent.router.set_effort("xhigh")
+    mock = MockProvider(default=Script(kind="text", content="ok"))
+    runtime = _bind_runtime(parent, _parent_dispatcher(ws), mock)
+
+    await run_worker_child(parent=parent, task="no opt-in")
+    runtime.config.presets["test"].worker.reasoning_effort = True
+    await run_worker_child(parent=parent, task="opted in")
+
+    assert [c.extra_body for c in mock.calls] == [None, {"reasoning_effort": "xhigh"}]
+
+
+async def test_children_count_on_one_iteration_counter(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    parent = Session(str(ws))
+    parent.boundary_config.caps = CapsSection(max_iterations=3)
+    read = Script(kind="tool_call", tool_name="fs_read", tool_arguments='{"path": "notes.md"}')
+    mock = MockProvider(
+        sequences={"test-worker": [read, Script(kind="text", content="first done"), read]}
+    )
+    runtime = _bind_runtime(parent, _parent_dispatcher(ws), mock)
+
+    first = await run_worker_child(parent=parent, task="one")
+    second = await run_worker_child(parent=parent, task="two")
+
+    assert first == "first done"
+    # The second child gets what the first left: one call, not eight.
+    assert "iteration cap exceeded: 3 >= 3" in second
+    assert runtime.child_calls == 3
+    assert len(mock.calls) == 3
+
+
+async def test_skip_all_lifts_the_iteration_cap_for_children(tmp_path: Path) -> None:
+    # The parent loop ignores the iteration cap when approvals are off
+    # (TD-806). A child used to check it anyway, so a long session's
+    # workers all stopped once it had made max_iterations calls.
+    ws = _workspace(tmp_path)
+    parent = Session(str(ws))
+    parent.boundary_config.caps = CapsSection(max_iterations=3)
+    dispatcher = _parent_dispatcher(ws)
+    dispatcher.skip_all_fn = lambda: True
+    mock = MockProvider(default=Script(kind="text", content="still working"))
+    runtime = _bind_runtime(parent, dispatcher, mock)
+    runtime.iterations = 50
+
+    assert await run_worker_child(parent=parent, task="go") == "still working"
+
+
+async def test_skip_all_still_stops_a_child_at_the_spend_cap(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    parent = Session(str(ws))
+    parent.boundary_config.caps = CapsSection(spend_usd=0.0)
+    dispatcher = _parent_dispatcher(ws)
+    dispatcher.skip_all_fn = lambda: True
+    mock = MockProvider(default=Script(kind="text", content="should not run"))
+    _bind_runtime(parent, dispatcher, mock)
+
+    summary = await run_worker_child(parent=parent, task="anything")
+
+    assert "spend cap" in summary.lower()
+    assert mock.calls == []
+
+
+async def test_autonomy_keeps_the_iteration_cap_for_children(tmp_path: Path) -> None:
+    # An unattended run stops on its signed caps even with skip-all.
+    ws = _workspace(tmp_path)
+    parent = Session(str(ws))
+    parent.autonomy = True
+    parent.boundary_config.caps = CapsSection(max_iterations=3)
+    dispatcher = _parent_dispatcher(ws)
+    dispatcher.skip_all_fn = lambda: True
+    mock = MockProvider(default=Script(kind="text", content="should not run"))
+    runtime = _bind_runtime(parent, dispatcher, mock)
+    runtime.iterations = 3
+
+    summary = await run_worker_child(parent=parent, task="go")
+
+    assert "iteration cap exceeded" in summary
+    assert mock.calls == []
+
+
+async def test_stop_ends_a_delegate_childs_model_call(tmp_path: Path) -> None:
+    import asyncio
+
+    ws = _workspace(tmp_path)
+    parent = Session(str(ws))
+    started = asyncio.Event()
+
+    class _Hangs(MockProvider):
+        async def chat_completion(self, request):  # type: ignore[no-untyped-def]
+            self.calls.append(request)
+            started.set()
+            await asyncio.Event().wait()
+
+    _bind_runtime(parent, _parent_dispatcher(ws), _Hangs())
+    await parent.set_state("running")
+    await parent.add_user_message("go")
+    child = asyncio.create_task(run_worker_child(parent=parent, task="slow"))
+    await asyncio.wait_for(started.wait(), 2)
+
+    await parent.stop_turn()
+
+    assert await asyncio.wait_for(child, 2) == "Worker stopped: parent stopped the turn."

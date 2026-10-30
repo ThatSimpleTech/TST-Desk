@@ -127,7 +127,7 @@ from .desktop.permissions import (
 )
 from .desktop.protocol import DesktopError
 from .discovery import resolve_tier_slugs
-from .effort import is_effort_level
+from .effort import effort_record, read_effort_record
 from .grok_acp import GrokEngineError, find_grok_binary
 from .grok_home import (
     grok_configured_model,
@@ -383,6 +383,7 @@ from .protocol import (
     SetTier,
     SetTierCredential,
     SetTierSlug,
+    SetUltracode,
     SetupState,
     SetVoice,
     SetWorkspacePin,
@@ -2816,7 +2817,10 @@ class Daemon:
             # Every plan-mode change logs tier_state, so this is the one place
             # the row learns it; a restart reads it back (TD-5123).
             await self._session_store.set_plan_mode(event.session_id, event.plan)
-            await self._session_store.set_effort(event.session_id, event.effort)
+            # The Ultracode switch rides in the same string (TD-5195).
+            await self._session_store.set_effort(
+                event.session_id, effort_record(event.effort, event.ultracode)
+            )
         announce = self._cu_permissions_session(event)
         if announce is not None:
             first_run = not load_shown(self.data_dir, driver_cu_platform(self.desktop_driver))
@@ -3320,6 +3324,8 @@ class Daemon:
             return await self._handle_set_effort(msg)
         if isinstance(msg, SetFast):
             return await self._handle_set_fast(msg)
+        if isinstance(msg, SetUltracode):
+            return await self._handle_set_ultracode(msg)
 
         if isinstance(msg, SetSessionPreset):
             return await self._handle_set_session_preset(msg)
@@ -4371,12 +4377,15 @@ class Daemon:
             sess.router.set_plan(True)
         # The picker's effort is kept the same way (a row without one, or
         # a level this build no longer knows, takes the configured default).
-        saved_effort = record.effort if record is not None else None
+        # The Ultracode switch rides in the same string (TD-5195), and a
+        # row that falls back to the default effort takes the default
+        # switch too.
+        level, ultracode = read_effort_record(record.effort if record is not None else None)
         if sess.router is None:
             sess.router = TierRouter()
-        sess.router.set_effort(
-            saved_effort if is_effort_level(saved_effort) else self.config.session.default_effort
-        )
+        session_cfg = self.config.session
+        sess.router.set_effort(level if level is not None else session_cfg.default_effort)
+        sess.router.set_ultracode(ultracode if level is not None else session_cfg.default_ultracode)
         sess.loaded_mcp_tools[:] = await asyncio.to_thread(
             self._session_persist.load_loaded_tools, session_id
         )
@@ -4641,6 +4650,7 @@ class Daemon:
         if router is None:
             router = TierRouter()
             router.set_effort(self.config.session.default_effort)
+            router.set_ultracode(self.config.session.default_ultracode)
         sess.router = router
 
         # TD-5113: every config load below goes through the trust gate.
@@ -5006,6 +5016,10 @@ class Daemon:
                 "(restored after restart); its effort cannot be changed",
             )
         found.router.set_effort(msg.effort)
+        # Only an older client's "ultracode" level sets this (TD-5195);
+        # every other set_effort leaves the switch where it was.
+        if msg.ultracode is not None:
+            found.router.set_ultracode(msg.ultracode)
         await found.event_log.add(
             tier_state_event(found, _session_model_config(found, self.config))
         )
@@ -5013,6 +5027,28 @@ class Daemon:
             "effort set",
             extra={"extra_fields": {"session_id": found.id, "effort": msg.effort}},
         )
+        return None
+
+    async def _handle_set_ultracode(self, msg: SetUltracode) -> str | None:
+        """Turn the session's Ultracode switch on or off and ack with ``tier_state`` (TD-5195).
+
+        Allowed mid-turn: the turn's note follows from the next turn, while
+        the ``workflow`` handler reads the switch on each call.
+        """
+        found = self.session_registry.get(msg.session_id)
+        if found is None:
+            return build_error("session_not_found", f"Session {msg.session_id!r} not found")
+        if found.router is None:
+            return build_error(
+                "session_not_live",
+                f"Session {msg.session_id!r} has no live agent loop "
+                "(restored after restart); Ultracode cannot change",
+            )
+        found.router.set_ultracode(msg.on)
+        await found.event_log.add(
+            tier_state_event(found, _session_model_config(found, self.config))
+        )
+        log.info("ultracode set", extra={"extra_fields": {"session_id": found.id, "on": msg.on}})
         return None
 
     async def _handle_set_fast(self, msg: SetFast) -> str | None:

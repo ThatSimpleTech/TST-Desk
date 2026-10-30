@@ -163,7 +163,7 @@ the workspace's (`with_run_rules`): deny first, so a workspace `ask` or
 `never` still wins over an allow, and a Class C call is demoted to
 `class_c_default` whatever the rule. The classifier has already run by
 then, and the read guards of the read-only shell list read the same
-merge. A delegate child's dispatcher reads its parent turn's permissions.
+merge. A delegate or workflow child's dispatcher reads its parent turn's permissions.
 With `deny_and_continue` the session answers an approval (a tool call, an
 external import, Grok's ACP request) before any `approval_request` is
 logged: an `approval_denied` tool result saying the run answers every
@@ -379,6 +379,21 @@ child dispatcher's `worker_rules`, merged after the workspace and run rules
 `delegate`'s definition lists the workers and their descriptions with an `agent` enum, and
 `@name` in the user's message appends a note naming the worker. No wire message changes.
 
+`workflow` (TD-5195) runs several of these children at once, while the session's Ultracode
+switch is on (`set_ultracode`, `TierRouter.ultracode`). It is registered wherever `delegate`
+is, at depth 0 only, so flipping the switch never changes the tool list or the system
+message; its handler refuses while the switch is off. Each task is one delegate child
+(`kind` worker or research, optional `agent`), at most `workflow.max_parallel` at a time and
+`workflow.max_tasks` a call. With two or more tasks every writer runs with `worktree: true`,
+opened and settled under one lock per repository. With `check` on (the default) each task
+that finishes is handed to a research child on the validator tier, which checks the claims
+against the files and the writer's branch and answers `confirmed`, `doubtful` or `wrong`.
+Results come back in task order. Children share the parent's iteration count, Stop reaches
+each one, their tool-call ids carry the parent call's id and task index so their approvals
+never collide, and every child (a plain `delegate`'s too) sends the session's effort when the
+worker tier takes `reasoning_effort`. While the switch is on, the loop adds a short note to
+each depth-0 turn's user message, never to the system message.
+
 ---
 
 ## 3. The wire protocol
@@ -464,7 +479,8 @@ exactly what it saw before.
 | Everyone else | The CLI, the legacy `remote-token`, an old client | Own rows only, no `machine_list`: unchanged. |
 
 `MACHINE_PEER_VERBS` is the session verbs a hub needs (list, attach, detach, send, stop, the
-approval answers, verify, new and fork, branch, tier, plan, preset, rename, star, archive,
+approval answers, verify, new and fork, branch, tier, plan, effort, Fast and Ultracode
+(`set_effort`, `set_fast`, `set_ultracode`), preset, rename, star, archive,
 delete, end, the instruction stack, the memory answers, `read_artifact_chunk` for a sent
 file's bytes, `compact_context`, `preview_restore_files`, `restore_files` and
 `extract_attachment`) plus the self
@@ -574,9 +590,10 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `attach` | yes | Subscribe to a session, replaying from `from_seq`. |
 | `detach` | yes | Unsubscribe from a session; the session is unaffected. |
 | `set_tier` | yes | Pin the active model tier for the session. |
-| `set_effort` | yes | Pick the session's reasoning effort (model picker): `low`, `medium`, `high`, `xhigh` (shown as Extra), `max` or `ultracode`. Sent as `reasoning_effort` on the turn's requests to any tier with `reasoning_effort: true`. Default `session.default_effort` (`medium`). Acked with `tier_state`; the session row's `effort` is read back on revive. |
+| `set_effort` | yes | Pick the session's reasoning effort (model picker): `low`, `medium`, `high`, `xhigh` (shown as Extra) or `max`. Sent as `reasoning_effort` on the turn's requests, and on its delegate and workflow children's, to any tier with `reasoning_effort: true`. Default `session.default_effort` (`medium`). Optional `ultracode` also sets the Ultracode switch; null leaves it alone. An older client's `ultracode` (it was a sixth level before TD-5195) is read as `max` with the switch on; its other levels leave the switch alone. Acked with `tier_state`; the session row's `effort` (`high`, or `high+ultracode` with the switch on) is read back on revive. |
 | `set_fast` | yes | Turn the model's Fast mode on or off (TD-5176). Only a preset with a `fast` block offers it. A local model's `fast.hook_url` (loopback) is called with `{model, on, by}` and may refuse (409 with `error`); an API model's `fast.extra_body` rides on requests while it is on. Acked with `tier_state` (`fast`, `fast_available`, `fast_note`); not kept across a restart. |
-| `set_plan` | yes | Turn plan mode on or off. Refused `set_tier` to worker/validator while on (TD-4603). Plan mode is read-only (TD-5123): the classifier refuses, with `error_code` `plan_mode`, every call that could change something (`fs_write`, `fs_edit`, `shell` outside the read-only list, MCP tools not in their server's `read_only_tools`, plugin tools, actuation, GitHub writes, `propose_steering_edit`, `delegate` with `kind: worker`, and any other builtin not on `PLAN_READ_ONLY_BUILTINS`, except a `shell` command on the read-only list, the screenshot tools and `delegate` without `kind: worker`, which `plan_mode_allows` lets through first; TD-5161), ahead of policy rules and skip-all, and again after an approval a call waited on; `delegate` with no `kind` runs the research worker (TD-5117). The model ends it with `exit_plan_mode`. A restart keeps it: the session row's `plan_mode` is read back on revive. |
+| `set_ultracode` | yes | Turn the session's Ultracode switch on or off (TD-5195). Works with any effort. While it is on, the model may call the `workflow` tool and each turn's user message carries a note saying so. Allowed mid-turn: the note follows from the next turn, while the `workflow` tool follows the switch at once (turned off, the next call is refused). Acked with `tier_state` (`ultracode`). Kept across a restart in the session row's `effort` string (`max+ultracode`), not a key of its own. Default `session.default_ultracode` (`false`). |
+| `set_plan` | yes | Turn plan mode on or off. Refused `set_tier` to worker/validator while on (TD-4603). Plan mode is read-only (TD-5123): the classifier refuses, with `error_code` `plan_mode`, every call that could change something (`fs_write`, `fs_edit`, `shell` outside the read-only list, MCP tools not in their server's `read_only_tools`, plugin tools, actuation, GitHub writes, `propose_steering_edit`, `delegate` with `kind: worker`, and any other builtin not on `PLAN_READ_ONLY_BUILTINS`, except a `shell` command on the read-only list, the screenshot tools and `delegate` without `kind: worker`, which `plan_mode_allows` lets through first; TD-5161), ahead of policy rules and skip-all, and again after an approval a call waited on; `delegate` with no `kind` runs the research worker (TD-5117). A `workflow` call with any `kind: worker` task is refused whole the same way; a call of only research tasks runs (TD-5195). The model ends it with `exit_plan_mode`. A restart keeps it: the session row's `plan_mode` is read back on revive. |
 | `set_session_preset` | yes | Retarget this session at a catalog preset. Refused mid-turn. Does not write Settings. Acked with `session_list` (TD-1721). |
 | `get_instruction_stack` | yes | Ask for the resolved steering stack, token counts, and skills (TD-4502). |
 | `get_hooks` | yes | Ask for the session's active hooks (user config, and the workspace's once trusted) with each one's last run (TD-5134). Answered with `hooks_state`. |
@@ -687,7 +704,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `assistant_reasoning` | session | A streamed chunk of a reasoning model's thinking. Separate from `assistant_delta` because it is not part of the answer: the window folds it behind a disclosure, and it is never replayed to the provider as assistant speech. OpenRouter `reasoning_details` flatten into this event for the UI; the raw array is echoed on the next assistant message after tools, not as speech. Carries the same `response_id` as the deltas (TD-5159). |
 | `assistant_retract` | session | Withdraw every `assistant_delta` and `assistant_reasoning` with this `response_id`: the provider went quiet partway through that response (`reason`: `stream_stalled`) and the loop asks again under a new id (TD-5159). Tool calls already run and earlier responses in the turn stay. An older client drops the event and keeps the withdrawn text above the retry. |
 | `tool_call` | session | A tool call about to execute, with its decision class. The class is judged on the same workspace-joined paths dispatch uses, so a relative path shows the class the call runs with; `arguments` stay as the model sent them (TD-5148). |
-| `tool_result` | session | The outcome of a tool call, with an error code and diff when applicable. `allowed_by` names the read-only shell list entries that let the call run without asking, and is empty when a policy rule, an approval or any other class default decided (TD-5103). `transcript` holds a `delegate` child's steps (task, replies, tool calls and results, notes), for display only: the model gets the capped summary in `output`. It is empty for every other tool (TD-5117). `hooks` lists the after-write hooks (a formatter or linter from `hooks.after_write`) that ran on an `fs_write` or `fs_edit`'s files: each `name`, `status` (`passed`, `failed`, `timed_out`, `error`), `exit_code`, `duration_ms` and whether it `changed` a file. The step timeline shows their time; a failure's output is already in `output`, for the model (TD-5135). |
+| `tool_result` | session | The outcome of a tool call, with an error code and diff when applicable. `allowed_by` names the read-only shell list entries that let the call run without asking, and is empty when a policy rule, an approval or any other class default decided (TD-5103). `transcript` holds a `delegate` child's steps (task, replies, tool calls and results, notes), for display only: the model gets the capped summary in `output`. A `workflow` call's holds each worker's and checker's steps under a header (TD-5195). It is empty for every other tool (TD-5117). `hooks` lists the after-write hooks (a formatter or linter from `hooks.after_write`) that ran on an `fs_write` or `fs_edit`'s files: each `name`, `status` (`passed`, `failed`, `timed_out`, `error`), `exit_code`, `duration_ms` and whether it `changed` a file. The step timeline shows their time; a failure's output is already in `output`, for the model (TD-5135). |
 | `shell_output` | session | A streamed chunk of a shell command's stdout or stderr. |
 | `tool_progress` | session | Progress an MCP server reported for a running tool call: count, optional total and message (TD-5105). Thinned to two a second. |
 | `approval_request` | session | A tool call parked for approval, with the summary, the reason, and the rule "always allow" would write (none for class C or a chained shell command, while the workspace config is not trusted, or when it would replace a saved `ask` or `never` rule for the same call, TD-5149). |
@@ -700,10 +717,10 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `checkpoint_notice` | session | A one-time notice that checkpointing is degraded. |
 | `verify_started` | session | An after-write review started running (TD-5158). It runs after `turn_complete` and holds the loop until its `verify_result`, so the window shows Stop in that span (Stop ends it, TD-5151). Not in the timeline. A review a restart cut off gets a `verify_result` (`error`, "Not reviewed: TST Desk restarted during the review.") on restore. |
 | `verify_result` | session | Interactive validator review of a write turn. Timeline only; not a chat bubble (TD-4204). |
-| `cost_update` | session | Accrued spend: this turn, this session, all time, by tier, and the classifier separately. A `consult` call (TD-5119) counts on the tier it asked, in the turn that made it; a delegate child's lands on its parent's session. |
+| `cost_update` | session | Accrued spend: this turn, this session, all time, by tier, and the classifier separately. A `consult` call (TD-5119) counts on the tier it asked, in the turn that made it; a delegate child's lands on its parent's session, and so does each `workflow` worker's and checker's (TD-5195). |
 | `boundary_update` | session | The resolved workspace boundary and caps, and where they came from. Additive `config_trust` (TD-5113) is set when the workspace config loosens anything: `state` (`pending`, `trusted` or `declined`), its `sha256`, and each loosened setting with its default. Pending and declined run on packaged defaults. |
 | `turn_complete` | session | A finished turn: tokens, cost, tier, duration, and any failure code. A turn a restart cut is sealed once at revive with `failed`, zeros and `error_code: interrupted_by_restart` (TD-5018). |
-| `tier_state` | session | The active tier, any pinned override, slugs, preset, hosts (TD-1720), plan-mode lock (TD-4603; read-only since TD-5123) and the picked `effort`. Native-engine sessions only. Additive `fallbacks` maps a tier that moved to a backup endpoint this turn to the backup's 1-based position in its list; `model_slugs` and `hosts` then name the backup (TD-5120), also in one the daemon sends mid-turn for `set_plan`, `set_tier` or `set_preset` (TD-5161). |
+| `tier_state` | session | The active tier, any pinned override, slugs, preset, hosts (TD-1720), plan-mode lock (TD-4603; read-only since TD-5123), the picked `effort`, Fast (`fast`, `fast_available`, `fast_note`; TD-5176) and Ultracode (`ultracode`, `ultracode_available`; TD-5195). An older daemon omits `ultracode_available`, so a window hides the switch; a logged or bridged `tier_state` with effort `ultracode` reads as `max` with `ultracode` on. Native-engine sessions only. Additive `fallbacks` maps a tier that moved to a backup endpoint this turn to the backup's 1-based position in its list; `model_slugs` and `hosts` then name the backup (TD-5120), also in one the daemon sends mid-turn for `set_plan`, `set_tier` or `set_preset` (TD-5161). |
 | `context_compacted` | session | Older turns were compacted to fit the context window. Never silent. Additive `trigger` (`auto` \| `manual` \| `from_here`) and `guidance` say who asked and what to keep (TD-5109). The trigger `inflight_trim` is not compaction: the loop trimmed the middles of this turn's tool results and no message left, so `dropped_messages` counts the results trimmed. The window shows it as a quieter "Trim" row that leads with the results trimmed and the tokens freed (TD-5150). The trigger `clear_stale` is not compaction either: before any turn is compacted, tool results from earlier turns were replaced with a one-line placeholder naming the tool, its target and the size that went (`clear_tool_results` in config.yaml), and no message left, so `dropped_messages` counts the results cleared. The window shows it as the same quiet "Trim" row, previewed "Cleared earlier tool results" (TD-5115). Whether the worker or the extractive fallback wrote the summary, and whether recent files came back under it, does not change the event (TD-5128). |
 | `context_usage` | session | The next request's estimated tokens against the tier's window and its compaction point, for the title-bar gauge. Sent before each model call and after a compaction (TD-5109). Additive `model` names the model the figures are for, and `fallback` its 1-based position in the tier's `fallbacks` (0 for the tier's own model): on a backup the window and the calibrated estimate are the backup's (TD-5120). |
 | `worktree_state` | session | The session's git worktree changed: made, set up, or closed (TD-5126). `worktree` is the state now (`branch`, `path`, `main_dirty`, `setup`, `setup_note`), null once the session works in the folder it was opened on; `note` says what happened in a sentence (a setup failure, a merge, or why no worktree could be made). The window refreshes the session list on it. |
@@ -785,6 +802,11 @@ Six places, in this order:
    `ui/src/lib/client.ts` for an event.
 6. A fixture in `core/scripts/generate_protocol_fixtures.py`, which regenerates
    `ui/src/lib/protocol-fixtures.json` for the UI's round-trip test.
+
+A session verb a paired computer may send (such as `set_ultracode`, TD-5195) also goes in
+`MACHINE_PEER_VERBS` in `core/tstd/peer_policy.py` and `BRIDGED_VERBS` in
+`ui/src/lib/bridged-id.ts`. A UI test holds `BRIDGED_VERBS` equal to the fixtures'
+`forwarded_verbs`.
 
 The doc test fails until step 4 is done, and steps 2 and 3 are checked against each other. The
 TypeScript types are a deliberate hand-mirror rather than generated code (`DECISIONS.md`, TD-204
@@ -883,7 +905,8 @@ In `core/tstd/tools/handlers.py`. Handlers are async and receive `session` and `
 plus the validated arguments, all as keyword arguments, and return a string. (A handler may
 instead return a `HandlerOutput` from `core/tstd/tools/results.py`: its `text` is the result,
 and its `transcript` goes on the `tool_result` event for the window and never to the model.
-`delegate` uses it for its child's steps, TD-5117. Its `images` go to the model as vision parts
+`delegate` uses it for its child's steps, TD-5117, and `workflow` for its workers' and
+checkers', TD-5195. Its `images` go to the model as vision parts
 after the text and never onto an event or into a log; `fs_read` uses them for an image file or
 PDF page images when the session's `tool_vision` says the reading tier takes images, TD-5130.)
 

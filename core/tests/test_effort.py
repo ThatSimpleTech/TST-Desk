@@ -1,4 +1,4 @@
-"""Reasoning effort: the model picker's Low..Max and Ultracode."""
+"""Reasoning effort: the model picker's Low..Max (Ultracode is a switch, test_ultracode.py)."""
 
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ async def _body_for(slug: str, tier_cfg: TierConfig, effort: str | None) -> dict
         [ChatMessage(role="user", content="hi")],
         session,
         None,
-        CostTracker(ModelConfig(presets={}, active_preset="")),  # type: ignore[arg-type]
+        CostTracker(ModelConfig(presets={}, active_preset="")),
         "brain",
         tier_cfg,
         emit_events=False,
@@ -79,20 +79,21 @@ async def _body_for(slug: str, tier_cfg: TierConfig, effort: str | None) -> dict
 
 
 def test_levels_are_the_wire_contract() -> None:
-    assert EFFORT_LEVELS == ("low", "medium", "high", "xhigh", "max", "ultracode")
+    assert EFFORT_LEVELS == ("low", "medium", "high", "xhigh", "max")
     assert DEFAULT_EFFORT == "medium"
     assert SessionConfig().default_effort == "medium"
 
 
 def test_router_defaults_to_medium_and_rejects_junk() -> None:
     router = TierRouter()
-    assert router.effort == "medium"
-    router.set_effort("ultracode")
-    assert router.effort == "ultracode"
-    with pytest.raises(ValueError):
-        router.set_effort("extra")
+    assert router.effort == DEFAULT_EFFORT
+    router.set_effort("max")
+    assert router.effort == "max"
+    for junk in ("extra", "ultracode"):
+        with pytest.raises(ValueError):
+            router.set_effort(junk)
     router.reset()
-    assert router.effort == "ultracode"  # a reset clears routing, not the picker
+    assert router.effort == "max"  # a reset clears routing, not the picker
 
 
 def test_effort_goes_only_to_tiers_that_opt_in() -> None:
@@ -111,10 +112,9 @@ async def test_request_body_carries_each_level_for_an_opted_in_tier(level: str) 
     assert body["reasoning_effort"] == level
 
 
-async def test_default_request_is_medium_and_ultracode_goes_out_as_is() -> None:
+async def test_default_request_is_medium() -> None:
     tier = _tier("house", reasoning_effort=True)
     assert (await _body_for("house", tier, None))["reasoning_effort"] == "medium"
-    assert (await _body_for("house", tier, "ultracode"))["reasoning_effort"] == "ultracode"
 
 
 async def test_a_tier_that_does_not_opt_in_gets_no_effort() -> None:
@@ -171,15 +171,15 @@ async def test_set_effort_over_the_wire_acks_with_tier_state(tmp_path: Path) -> 
         sid = state["session_id"]
         sess = daemon.session_registry.get(sid)
         assert sess is not None and sess.router is not None
-        assert sess.router.effort == "medium"
+        assert sess.router.effort == DEFAULT_EFFORT
 
-        await ws.send(json.dumps({"type": "set_effort", "session_id": sid, "effort": "ultracode"}))
+        await ws.send(json.dumps({"type": "set_effort", "session_id": sid, "effort": "xhigh"}))
         await asyncio.sleep(0.2)
-        assert sess.router.effort == "ultracode"
+        assert sess.router.effort == "xhigh"
         tier_states = [e for e in sess.event_log.all_events if isinstance(e, TierState)]
-        assert tier_states[-1].effort == "ultracode"
+        assert tier_states[-1].effort == "xhigh"
         record = next(r for r in daemon._session_store.records() if r.session_id == sid)
-        assert record.effort == "ultracode"
+        assert record.effort == "xhigh"
 
         await ws.close()
         daemon._shutdown_event.set()

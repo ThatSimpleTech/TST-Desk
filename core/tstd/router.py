@@ -67,6 +67,9 @@ class TierRouter:
         # The picker's reasoning effort. Persisted on the session row and
         # set again on revive, like plan mode.
         self._effort: EffortLevel = DEFAULT_EFFORT
+        # Ultracode (TD-5195): the workflow switch, separate from effort so it
+        # works with any level. Persisted with effort and set again on revive.
+        self._ultracode: bool = False
 
     # ── Public API ─────────────────────────────────────────────────────
 
@@ -186,6 +189,15 @@ class TierRouter:
         self._fast = on
         self._fast_extra_body = dict(extra_body) if on and extra_body else None
 
+    def set_ultracode(self, on: bool) -> None:
+        """Ultracode on or off (TD-5195): the session may run workflows of workers."""
+        self._ultracode = on
+
+    @property
+    def ultracode(self) -> bool:
+        """Whether Ultracode is on for this session."""
+        return getattr(self, "_ultracode", False)
+
     @property
     def fast(self) -> bool:
         """Whether Fast is on for this session."""
@@ -248,4 +260,5 @@ class TierRouter:
             "escalated": self._escalated,
             "plan_mode": self._plan_mode,
             "effort": self._effort,
+            "ultracode": self.ultracode,
         }

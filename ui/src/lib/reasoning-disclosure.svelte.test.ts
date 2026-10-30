@@ -161,4 +161,23 @@ describe("tool folds (TD-1902)", () => {
     expect(toolLabel(done)).toBe("fs_read");
     expect(toolLabel(failed)).toBe("fs_read failed");
   });
+
+  it("names a worker call's job: tasks for workflow, agent or task for delegate (TD-5195)", () => {
+    const fold = (name: string, args: Record<string, unknown>, status?: "error") => ({
+      toolCallId: "tc-9",
+      name,
+      arguments: args,
+      status,
+    });
+    expect(toolLabel(fold("workflow", { tasks: [{ task: "a" }, { task: "b" }, { task: "c" }] }))).toBe(
+      "workflow · 3 tasks",
+    );
+    expect(toolLabel(fold("workflow", { tasks: [{ task: "a" }] }))).toBe("workflow · 1 task");
+    expect(toolLabel(fold("workflow", {}))).toBe("workflow");
+    expect(toolLabel(fold("delegate", { task: "Fix the tests", agent: "reviewer" }))).toBe("delegate · reviewer");
+    expect(toolLabel(fold("delegate", { task: "Fix   the\nflaky tests" }))).toBe("delegate · Fix the flaky tests");
+    expect(toolLabel(fold("delegate", { task: "x".repeat(50) }))).toBe(`delegate · ${"x".repeat(40)}…`);
+    expect(toolLabel(fold("delegate", { task: "Fix the tests" }, "error"))).toBe("delegate failed · Fix the tests");
+    expect(toolLabel(fold("fs_read", { path: "a.txt" }))).toBe("fs_read");
+  });
 });

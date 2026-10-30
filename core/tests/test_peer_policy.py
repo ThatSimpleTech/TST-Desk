@@ -201,6 +201,17 @@ def test_read_artifact_chunk_forwarded() -> None:
     assert json.loads(second_hop)["in_reply_to"] == "read_artifact_chunk"
 
 
+def test_set_ultracode_works_from_a_paired_device_and_a_bridged_session() -> None:
+    """TD-5195: the Ultracode switch travels like set_effort and set_fast."""
+    own = _msg("set_ultracode", session_id="s1", on=True)
+    bridged = _msg("set_ultracode", session_id=BRIDGED, on=False)
+    assert {"set_effort", "set_fast", "set_ultracode"} <= FORWARDED_VERBS
+    assert check(own, MACHINE, bridged=False) is None
+    for viewer in (VIEWER, PHONE_VIEWER):
+        assert check(own, viewer, bridged=False) is None
+        assert check(bridged, viewer, bridged=True) is None
+
+
 # ── on a real daemon ─────────────────────────────────────────────────
 
 

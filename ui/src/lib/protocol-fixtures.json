@@ -310,7 +310,13 @@
   "set_effort": {
     "type": "set_effort",
     "session_id": "sess-1",
-    "effort": "ultracode"
+    "effort": "max",
+    "ultracode": null
+  },
+  "set_ultracode": {
+    "type": "set_ultracode",
+    "session_id": "sess-1",
+    "on": true
   },
   "set_plan": {
     "type": "set_plan",
@@ -1437,7 +1443,9 @@
     "effort": "medium",
     "fast": false,
     "fast_available": false,
-    "fast_note": ""
+    "fast_note": "",
+    "ultracode": false,
+    "ultracode_available": false
   },
   "tier_state_override": {
     "type": "tier_state",
@@ -1462,7 +1470,9 @@
     "effort": "medium",
     "fast": false,
     "fast_available": false,
-    "fast_note": ""
+    "fast_note": "",
+    "ultracode": false,
+    "ultracode_available": false
   },
   "tier_state_plan": {
     "type": "tier_state",
@@ -1487,7 +1497,36 @@
     "effort": "medium",
     "fast": false,
     "fast_available": false,
-    "fast_note": ""
+    "fast_note": "",
+    "ultracode": false,
+    "ultracode_available": false
+  },
+  "tier_state_ultracode": {
+    "type": "tier_state",
+    "seq": 23,
+    "session_id": "sess-1",
+    "tier": "brain",
+    "override": null,
+    "model_slugs": {
+      "brain": "test-brain-slug",
+      "worker": "test-worker-slug",
+      "validator": "test-validator-slug"
+    },
+    "preset": "test",
+    "hosts": {
+      "brain": "mock.local",
+      "worker": "mock.local",
+      "validator": "mock.local"
+    },
+    "plan": false,
+    "vision": false,
+    "fallbacks": {},
+    "effort": "high",
+    "fast": false,
+    "fast_available": false,
+    "fast_note": "",
+    "ultracode": true,
+    "ultracode_available": true
   },
   "ping": {
     "type": "ping"
@@ -1971,7 +2010,9 @@
     "effort": "medium",
     "fast": false,
     "fast_available": false,
-    "fast_note": ""
+    "fast_note": "",
+    "ultracode": false,
+    "ultracode_available": false
   },
   "session_list_worktree": {
     "type": "session_list",
@@ -2133,6 +2174,7 @@
       "worker": true,
       "validator": true
     },
+    "tier_cards": {},
     "engine": "native",
     "grok_available": false,
     "grok_binary": null,
@@ -2298,13 +2340,17 @@
         "id": "vendor/model-a",
         "context_window": 128000,
         "input_price": 3.0,
-        "output_price": 15.0
+        "output_price": 15.0,
+        "cache_read_price": null,
+        "max_output_tokens": null
       },
       {
         "id": "vendor/model-b",
         "context_window": null,
         "input_price": null,
-        "output_price": null
+        "output_price": null,
+        "cache_read_price": null,
+        "max_output_tokens": null
       }
     ],
     "error": null
@@ -2336,13 +2382,17 @@
             "id": "llama3.2:3b",
             "context_window": null,
             "input_price": null,
-            "output_price": null
+            "output_price": null,
+            "cache_read_price": null,
+            "max_output_tokens": null
           },
           {
             "id": "qwen3:8b",
             "context_window": null,
             "input_price": null,
-            "output_price": null
+            "output_price": null,
+            "cache_read_price": null,
+            "max_output_tokens": null
           }
         ]
       }
@@ -3078,6 +3128,7 @@
     "set_session_preset",
     "set_session_star",
     "set_tier",
+    "set_ultracode",
     "stop_turn",
     "user_message"
   ]

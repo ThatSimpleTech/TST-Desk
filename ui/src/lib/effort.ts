@@ -2,13 +2,18 @@
 //
 // The picker works like Claude's: a short model list, an Effort submenu,
 // "More models" for the raw routes, and "Teams" (a model per role) when the
-// config has one. Every listed entry has a label and, ideally, a one-line
+// config has one. Fast and Ultracode are switches beside Effort, not levels
+// (TD-5176, TD-5195). Every listed entry has a label and, ideally, a one-line
 // description (TD-5172). Pure functions here so vitest can drive
 // them; the popover is components/chat/ModelPicker.svelte.
 
 import type { EffortLevel } from "./protocol";
 
 export const DEFAULT_EFFORT: EffortLevel = "medium";
+
+/** The old sixth level (TD-5195). An older peer may still report it; it
+ *  means Max with the Ultracode switch on. Never sent. */
+export const LEGACY_ULTRACODE = "ultracode";
 
 /** The submenu's hint line. */
 export const EFFORT_HINT = "Higher effort means more thorough responses, but takes longer.";
@@ -22,8 +27,6 @@ export interface EffortOption {
 	badge?: string;
 	/** A warning badge beside the label. */
 	warning?: string;
-	/** Drawn in the accent colour, at the bottom. */
-	accent?: boolean;
 }
 
 export const EFFORT_OPTIONS: readonly EffortOption[] = [
@@ -32,7 +35,6 @@ export const EFFORT_OPTIONS: readonly EffortOption[] = [
 	{ id: "high", label: "High" },
 	{ id: "xhigh", label: "Extra" },
 	{ id: "max", label: "Max", warning: "slower, uses the big model" },
-	{ id: "ultracode", label: "Ultracode", accent: true },
 ];
 
 export function effortLabel(effort: EffortLevel): string {

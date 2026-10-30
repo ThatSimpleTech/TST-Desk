@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 //
-// The model picker: a short model list, an Effort submenu, More models,
-// Teams when one exists, and a chip that reads "<Model> <Effort>".
+// The model picker: a short model list, an Effort submenu, the Fast and
+// Ultracode switches, More models, Teams when one exists, and a chip that
+// reads "<Model> <Effort>".
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mount, tick, unmount } from "svelte";
@@ -25,6 +26,8 @@ function fakeClient(): ProtocolClient {
 		setEffort: (sessionId: string, effort: string) =>
 			sent.push({ type: "set_effort", session_id: sessionId, effort }),
 		setFast: (sessionId: string, on: boolean) => sent.push({ type: "set_fast", session_id: sessionId, on }),
+		setUltracode: (sessionId: string, on: boolean) =>
+			sent.push({ type: "set_ultracode", session_id: sessionId, on }),
 		setSessionPreset: (sessionId: string, name: string) =>
 			sent.push({ type: "set_session_preset", session_id: sessionId, name }),
 	} as unknown as ProtocolClient;
@@ -142,7 +145,7 @@ describe("model picker", () => {
 		expect(document.querySelector(".menu")).toBeNull();
 	});
 
-	it("shows the effort submenu with the hint, badges and Ultracode last", async () => {
+	it("shows the effort submenu with the hint and badges, Low to Max", async () => {
 		await click(chip());
 		await click(item("Effort"));
 		expect(document.querySelector(".hint")?.textContent).toBe(
@@ -154,9 +157,8 @@ describe("model picker", () => {
 			"High",
 			"Extra",
 			"Max slower, uses the big model",
-			"Ultracode",
 		]);
-		expect(document.querySelector(".item--accent")?.textContent).toContain("Ultracode");
+		expect(document.querySelector(".item--accent")).toBeNull();
 	});
 
 	it("sends set_effort with the wire value and updates the chip", async () => {
@@ -168,9 +170,9 @@ describe("model picker", () => {
 
 		await click(chip());
 		await click(item("Effort"));
-		await click(item("Ultracode"));
-		expect(sent.at(-1)).toEqual({ type: "set_effort", session_id: "s1", effort: "ultracode" });
-		expect(chip().textContent?.trim()).toBe("House Ultracode");
+		await click(item("Max"));
+		expect(sent.at(-1)).toEqual({ type: "set_effort", session_id: "s1", effort: "max" });
+		expect(chip().textContent?.trim()).toBe("House Max");
 	});
 
 	it("follows the effort a tier_state reports, so it persists across a reattach", async () => {
@@ -248,6 +250,95 @@ describe("model picker", () => {
 			await tick();
 			expect(chip().textContent?.trim()).toBe("House Medium");
 			expect(session.fastNote).toBe("Fast ended (idle 20 min)");
+		});
+	});
+
+	describe("ultracode (TD-5195)", () => {
+		function tierState(extra: Record<string, unknown>, seq = 1): void {
+			ingestEvent({
+				type: "tier_state",
+				seq,
+				session_id: "s1",
+				tier: "brain",
+				override: null,
+				model_slugs: {},
+				preset: "house",
+				...extra,
+			} as never);
+		}
+
+		function chipText(): string {
+			return chip().textContent?.replace(/\s+/g, " ").trim() ?? "";
+		}
+
+		it("hides the row on an older daemon that does not offer the switch", async () => {
+			tierState({});
+			await tick();
+			await click(chip());
+			expect(texts(".item").some((t) => t.startsWith("Ultracode"))).toBe(false);
+		});
+
+		it("puts the row right after Effort when Fast is not offered, in the accent style", async () => {
+			tierState({ ultracode_available: true });
+			await tick();
+			await click(chip());
+			const labels = texts(".item");
+			const row = labels.indexOf("Ultracode Splits big jobs across workers Off");
+			expect(row).toBe(labels.indexOf("Effort Medium ›") + 1);
+			expect(item("Ultracode").getAttribute("role")).toBe("menuitemcheckbox");
+			expect(item("Ultracode").getAttribute("aria-checked")).toBe("false");
+			expect(item("Ultracode").classList.contains("item--accent")).toBe(true);
+		});
+
+		it("puts the row right after Fast when both are offered", async () => {
+			tierState({ ultracode_available: true, fast_available: true });
+			await tick();
+			await click(chip());
+			const labels = texts(".item");
+			expect(labels.indexOf("Fast Off")).toBe(labels.indexOf("Effort Medium ›") + 1);
+			expect(labels.findIndex((t) => t.startsWith("Ultracode"))).toBe(labels.indexOf("Fast Off") + 1);
+		});
+
+		it("sends set_ultracode, flips at once and keeps the menu open", async () => {
+			tierState({ ultracode_available: true });
+			await tick();
+			await click(chip());
+			await click(item("Ultracode"));
+			expect(sent).toEqual([{ type: "set_ultracode", session_id: "s1", on: true }]);
+			expect(session.ultracode).toBe(true);
+			expect(document.querySelector(".menu")).not.toBeNull();
+			expect(item("Ultracode").getAttribute("aria-checked")).toBe("true");
+			expect(item("Ultracode").textContent).toContain("On");
+			expect(chipText()).toBe("House Medium · Ultracode");
+			await click(item("Ultracode"));
+			expect(sent.at(-1)).toEqual({ type: "set_ultracode", session_id: "s1", on: false });
+			expect(chipText()).toBe("House Medium");
+		});
+
+		it("survives an effort change, and the chip tags Fast then Ultracode", async () => {
+			tierState({ ultracode_available: true, ultracode: true, fast_available: true, fast: true });
+			await tick();
+			expect(chipText()).toBe("House Medium · Fast · Ultracode");
+			expect(document.querySelector(".ultracode-tag")?.textContent).toBe(" · Ultracode");
+			await click(chip());
+			await click(item("Effort"));
+			await click(item("High"));
+			expect(sent).toEqual([{ type: "set_effort", session_id: "s1", effort: "high" }]);
+			expect(session.ultracode).toBe(true);
+			expect(chipText()).toBe("House High · Fast · Ultracode");
+		});
+
+		it("follows tier_state off, and reads an older peer's effort ultracode as Max with the switch on", async () => {
+			tierState({ ultracode_available: true, ultracode: true });
+			tierState({ ultracode_available: true, ultracode: false }, 2);
+			await tick();
+			expect(chipText()).toBe("House Medium");
+			tierState({ effort: "ultracode" }, 3);
+			await tick();
+			expect(session.effort).toBe("max");
+			expect(session.ultracode).toBe(true);
+			expect(session.ultracodeAvailable).toBe(false);
+			expect(chipText()).toBe("House Max · Ultracode");
 		});
 	});
 });

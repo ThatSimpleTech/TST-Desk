@@ -8,12 +8,15 @@ how to go further by hand.
 ## The model picker
 
 The chip under the message box reads `<model> <effort>`, for example
-`My model Medium`. Click it to open the picker:
+`My model Medium`, followed by `· Fast` and `· Ultracode` when those are on.
+Click it to open the picker:
 
 | Item | What it does |
 |---|---|
 | A model (label, with a line under it) | Switches this chat to that model. The check mark is on the current one. The line under the name is the model's description. |
-| **Effort** | How hard the model thinks before it answers: Low, Medium (recommended), High, Extra, Max, Ultracode. Higher effort is more thorough and slower. It is only sent to a model whose entry sets `reasoning_effort: true`. |
+| **Effort** | How hard the model thinks before it answers: Low, Medium (recommended), High, Extra, Max. Higher effort is more thorough and slower. It is only sent to a model whose entry sets `reasoning_effort: true`. |
+| **Fast** | On or off. Runs this model faster: a local model may borrow more hardware, an API model may use its provider's priority tier. Shown only for a model whose entry has a `fast` block ([configuration.md](configuration.md), "A preset"). A line under it says what it is doing. A restart turns it off. |
+| **Ultracode** | On or off for this chat, with any effort. When it is on, the agent may split a big job into independent pieces, run several workers on them at once, have a separate reviewer check each result, and answer from the checked results. Small questions and one-line fixes are still answered directly. It makes more model calls, so it costs more and asks the worker model's server for several answers at once; the limits are `workflow` in [configuration.md](configuration.md). Workers use TST Desk's own file and shell tools, so the worker model must support tool calling: a hosted API model or a local server with tool calls works; a text-only route, or a gateway that runs its own tools instead of the ones TST Desk sends, does not. The chat keeps it, a restart included. |
 | **More models** | Models you keep around but do not want on the main list (`picker: more`). Shown only when there is one. |
 | **Teams** | Entries that give each role its own model (see [Teams](#teams)). Shown only when there is one. |
 | **Add a model** | Opens the walkthrough below. |

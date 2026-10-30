@@ -246,6 +246,7 @@ from tstd.protocol import (
     SetSkipAllApprovals,
     SetTier,
     SetTierCredential,
+    SetUltracode,
     SetupState,
     SetVoice,
     SetWorkspacePin,
@@ -448,7 +449,9 @@ FIXTURES = {
     "attach": Attach(session_id="sess-1", from_seq=5),
     "detach": Detach(session_id="sess-1"),
     "set_tier": SetTier(session_id="sess-1", tier="brain"),
-    "set_effort": SetEffort(session_id="sess-1", effort="ultracode"),
+    "set_effort": SetEffort(session_id="sess-1", effort="max"),
+    # TD-5195: the Ultracode switch, beside Fast.
+    "set_ultracode": SetUltracode(session_id="sess-1", on=True),
     "set_plan": SetPlan(session_id="sess-1", on=True),
     "set_session_preset": SetSessionPreset(session_id="sess-1", name="budget"),
     "get_instruction_stack": GetInstructionStack(session_id="sess-1"),
@@ -1033,6 +1036,27 @@ FIXTURES = {
         },
         plan=True,
         seq=20,
+    ),
+    # TD-5195: Ultracode on, on a daemon that has the switch.
+    "tier_state_ultracode": TierState(
+        session_id="sess-1",
+        tier="brain",
+        override=None,
+        model_slugs={
+            "brain": "test-brain-slug",
+            "worker": "test-worker-slug",
+            "validator": "test-validator-slug",
+        },
+        preset="test",
+        hosts={
+            "brain": "mock.local",
+            "worker": "mock.local",
+            "validator": "mock.local",
+        },
+        effort="high",
+        ultracode=True,
+        ultracode_available=True,
+        seq=23,
     ),
     # TD-1716 liveness frame: no session, no seq — deliberately unlike
     # every other daemon→client frame, which is the point of the fixture.

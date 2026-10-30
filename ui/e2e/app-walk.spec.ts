@@ -129,6 +129,28 @@ async function walkModelBar(): Promise<void> {
 	await menu.getByRole("menuitem", { name: /^Effort/ }).click();
 	await menu.getByRole("menuitemradio", { name: /^Medium/ }).click();
 	await expect(picker).toHaveText(/ Medium\s*$/);
+
+	// Ultracode (TD-5195): a switch on the main menu, not an effort level. It
+	// stays on across an effort change, and the chip says so.
+	await picker.click();
+	await menu.getByRole("menuitem", { name: /^Effort/ }).click();
+	await expect(menu.getByRole("menuitemradio", { name: /^Ultracode/ })).toHaveCount(0);
+	await page.keyboard.press("Escape"); // back to the main menu
+	const ultracode = menu.getByRole("menuitemcheckbox", { name: /^Ultracode/ });
+	await expect(ultracode).toHaveAttribute("aria-checked", "false");
+	await ultracode.click();
+	await expect(ultracode).toHaveAttribute("aria-checked", "true");
+	await menu.getByRole("menuitem", { name: /^Effort/ }).click();
+	await menu.getByRole("menuitemradio", { name: /^High/ }).click();
+	await expect(picker).toHaveText(/ High · Ultracode\s*$/);
+	await picker.click();
+	await menu.getByRole("menuitemcheckbox", { name: /^Ultracode/ }).click();
+	await page.keyboard.press("Escape");
+	await expect(picker).toHaveText(/ High\s*$/);
+	await picker.click();
+	await menu.getByRole("menuitem", { name: /^Effort/ }).click();
+	await menu.getByRole("menuitemradio", { name: /^Medium/ }).click();
+	await expect(picker).toHaveText(/ Medium\s*$/);
 }
 
 /** Copy, Retry, Edit, Summarize from here and Restore files to here on the first

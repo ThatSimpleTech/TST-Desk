@@ -64,6 +64,7 @@ export const BRIDGED_VERBS: ReadonlySet<string> = new Set([
   "set_tier",
   "set_effort",
   "set_fast",
+  "set_ultracode", // TD-5195: the Ultracode switch, beside Fast
   "set_plan",
   "set_session_preset",
   "rename_session",

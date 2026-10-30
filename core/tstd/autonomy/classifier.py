@@ -776,9 +776,10 @@ def plan_mode_allows(req: DecisionRequest, boundary: Boundary) -> bool:
     run: a builtin on :data:`PLAN_READ_ONLY_BUILTINS`, a shell command made
     only of the static read-only list (TD-5103), a capture-only desktop or
     browser tool, ``delegate`` unless it asks for the writing ``worker``
-    child, and an MCP tool the user listed in its server's
-    ``read_only_tools``. A plugin tool (or any other tool with provenance)
-    is never read-only here: nothing vouches for it.
+    child (``workflow`` unless one of its tasks does), and an MCP tool the
+    user listed in its server's ``read_only_tools``. A plugin tool (or any
+    other tool with provenance) is never read-only here: nothing vouches
+    for it.
     """
     if req.provenance is not None:
         return req.provenance.startswith("mcp:") and req.read_only
@@ -790,6 +791,12 @@ def plan_mode_allows(req: DecisionRequest, boundary: Boundary) -> bool:
         return req.actuates is False
     if req.tool_name == "delegate":
         return req.arguments.get("kind") != "worker"
+    if req.tool_name == "workflow":
+        # TD-5195: like delegate, research only; a task with no kind runs
+        # as research while planning.
+        tasks = req.arguments.get("tasks")
+        items = tasks if isinstance(tasks, list) else []
+        return not any(isinstance(t, dict) and t.get("kind") == "worker" for t in items)
     return req.tool_name in PLAN_READ_ONLY_BUILTINS
 
 

@@ -10,15 +10,8 @@ import {
 } from "./effort";
 
 describe("effort levels", () => {
-	it("lists Low, Medium, High, Extra, Max, then Ultracode", () => {
-		expect(EFFORT_OPTIONS.map((o) => o.label)).toEqual([
-			"Low",
-			"Medium",
-			"High",
-			"Extra",
-			"Max",
-			"Ultracode",
-		]);
+	it("lists Low, Medium, High, Extra and Max; Ultracode is a switch, not a level (TD-5195)", () => {
+		expect(EFFORT_OPTIONS.map((o) => o.label)).toEqual(["Low", "Medium", "High", "Extra", "Max"]);
 	});
 
 	it("sends the wire names, Extra being xhigh", () => {
@@ -28,15 +21,13 @@ describe("effort levels", () => {
 			"high",
 			"xhigh",
 			"max",
-			"ultracode",
 		]);
 	});
 
-	it("defaults to Medium, badged Recommended; Max warns; Ultracode is accent", () => {
+	it("defaults to Medium, badged Recommended; Max warns", () => {
 		expect(DEFAULT_EFFORT).toBe("medium");
 		expect(EFFORT_OPTIONS.find((o) => o.id === "medium")?.badge).toBe("Recommended");
 		expect(EFFORT_OPTIONS.find((o) => o.id === "max")?.warning).toBe("slower, uses the big model");
-		expect(EFFORT_OPTIONS.filter((o) => o.accent).map((o) => o.id)).toEqual(["ultracode"]);
 	});
 });
 
@@ -99,7 +90,7 @@ describe("chip label", () => {
 		expect(modelLabel("budget", labels)).toBe("budget");
 		expect(chipLabel("house", "medium", labels)).toBe("House Medium");
 		expect(chipLabel("house", "xhigh", labels)).toBe("House Extra");
-		expect(chipLabel("house", "ultracode", labels)).toBe("House Ultracode");
+		expect(chipLabel("house", "max", labels)).toBe("House Max");
 		expect(chipLabel("budget", "low")).toBe("budget Low");
 	});
 });

@@ -1945,7 +1945,8 @@ async def agent_loop(
         if tool_registry is None or tool_registry.version == tools_version:
             return
         tools_version = tool_registry.version
-        unusable = {"delegate"} if session.delegate_depth >= 1 else set()
+        # A child cannot delegate or run a workflow (TD-5195): one level only.
+        unusable = {"delegate", "workflow"} if session.delegate_depth >= 1 else set()
         if tool_dispatcher is None or not tool_dispatcher.has_handler(TOOL_SEARCH_NAME):
             unusable.add(TOOL_SEARCH_NAME)
         all_tool_definitions = [
@@ -2041,6 +2042,8 @@ async def agent_loop(
                 fast=router.fast,
                 fast_available=preset_fast(config) is not None,
                 fast_note=session.fast_note,
+                ultracode=router.ultracode,
+                ultracode_available=True,
                 seq=1,
             )
         )
@@ -2148,6 +2151,13 @@ async def agent_loop(
         # plan-mode note after it; the window shows it as typed.
         if router.plan_mode:
             provider_content = with_plan_note(provider_content)
+        # TD-5195: with Ultracode on, the message carries the workflow note.
+        # Read once here, so a switch flipped mid-turn applies from the next
+        # turn; the tool list and system prompt stay the same either way.
+        if router.ultracode and session.delegate_depth < 1:
+            from .tools.workflow import with_ultracode_note
+
+            provider_content = with_ultracode_note(provider_content)
         # TD-5134: session_start's context rides on the first turn after it.
         hook_context = "\n\n".join([*session.hooks.pending_context, prompt_hooks.context])
         session.hooks.pending_context = []
@@ -2573,8 +2583,15 @@ async def agent_loop(
             while True:
                 if session.cancel_requested or session.stop_turn_requested:
                     break
+                # Workers' calls count too (TD-5195): they share the cap, and
+                # the parent pausing here is how the person gets to raise it.
+                children = (
+                    session.delegate_runtime.child_calls
+                    if session.delegate_runtime is not None
+                    else 0
+                )
                 violation = _cap_violation(
-                    session, tracker, _session_start, _iterations, skip_all=skip_all
+                    session, tracker, _session_start, _iterations + children, skip_all=skip_all
                 )
                 if violation is None:
                     break

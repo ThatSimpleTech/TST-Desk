@@ -28,7 +28,7 @@ from pydantic import (
 
 from .attachments import AttachmentLimits
 from .autonomy.charter import Charter
-from .effort import EffortLevel
+from .effort import LEGACY_ULTRACODE, EffortLevel
 from .logging import redact_secrets, redact_structure
 from .router import TierName
 
@@ -811,11 +811,25 @@ class SetEffort(ClientMessage):
     Sent on the wire as ``reasoning_effort`` for tiers that opt in.
     Persists on the session row. Acked with ``tier_state``, whose ``effort``
     the composer chip follows.
+
+    ``ultracode`` also sets the Ultracode switch; null leaves it alone. A
+    current client sends ``set_ultracode`` instead. An older client's effort
+    ``"ultracode"`` (TD-5195) arrives as Max with the switch on.
     """
 
     type: Literal["set_effort"] = "set_effort"
     session_id: str
     effort: EffortLevel
+    ultracode: bool | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_ultracode(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("effort") == LEGACY_ULTRACODE:
+            data = {**data, "effort": "max"}
+            if data.get("ultracode") is None:
+                data["ultracode"] = True
+        return data
 
 
 class SetFast(ClientMessage):
@@ -826,6 +840,20 @@ class SetFast(ClientMessage):
     """
 
     type: Literal["set_fast"] = "set_fast"
+    session_id: str
+    on: bool
+
+
+class SetUltracode(ClientMessage):
+    """Turn the session's Ultracode switch on or off (TD-5195). Acked with ``tier_state``.
+
+    Works with any effort. While it is on, the agent may run a workflow of
+    workers side by side (the ``workflow`` tool). Persists with the
+    session's effort. The turn note follows from the next turn; the
+    ``workflow`` tool follows the switch at once.
+    """
+
+    type: Literal["set_ultracode"] = "set_ultracode"
     session_id: str
     on: bool
 
@@ -2580,6 +2608,18 @@ class TierState(DaemonEvent):
     fast: bool = False
     fast_available: bool = False
     fast_note: str = ""
+    # Ultracode (TD-5195): the workflow switch, and whether this daemon has
+    # it (an older one omits both, so a newer window hides the row). Additive.
+    ultracode: bool = False
+    ultracode_available: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_ultracode(cls, data: Any) -> Any:
+        # An older log line or peer says effort "ultracode": Max, switch on.
+        if isinstance(data, dict) and data.get("effort") == LEGACY_ULTRACODE:
+            data = {**data, "effort": "max", "ultracode": True}
+        return data
 
 
 class LoosenedSetting(BaseModel):
@@ -4548,6 +4588,7 @@ ClientMessageT = Annotated[
     | SetTier
     | SetEffort
     | SetFast
+    | SetUltracode
     | SetPlan
     | SetSessionPreset
     | GetInstructionStack
@@ -4794,6 +4835,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_tier",
         "set_effort",
         "set_fast",
+        "set_ultracode",
         "set_plan",
         "set_session_preset",
         "get_instruction_stack",

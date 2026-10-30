@@ -85,8 +85,13 @@ class SessionRecord:
     # row written before the field; revive then takes the newest
     # ``tier_state`` in the log.
     plan_mode: bool | None = None
-    # Reasoning effort the picker chose. None on a row written before the
-    # field (revive then uses the configured default).
+    # Reasoning effort the picker chose, with "+ultracode" when the Ultracode
+    # switch is on ("high+ultracode", TD-5195; effort.effort_record). The
+    # switch has no key of its own because _load drops a whole row with a key
+    # it does not know, so an older build would lose every session; it reads
+    # this string as an unknown level instead and keeps the row. A legacy
+    # "ultracode" means Max with the switch on. None on a row written before
+    # the field (revive then uses the configured defaults).
     effort: str | None = None
 
 

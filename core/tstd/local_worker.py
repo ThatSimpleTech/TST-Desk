@@ -165,6 +165,8 @@ def tier_state_event(session: Session, config: ModelConfig) -> TierState:
         fast=session.router.fast,
         fast_available=preset_fast(config) is not None,
         fast_note=session.fast_note,
+        ultracode=session.router.ultracode,
+        ultracode_available=True,
         seq=1,  # overwritten by the event log
     )
 

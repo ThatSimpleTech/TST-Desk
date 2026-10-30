@@ -323,11 +323,17 @@ export class ProtocolClient {
     this.send({ type: "set_plan", session_id: sessionId, on });
   }
 
-  /** Pick the session's reasoning effort. Acked with tier_state. */
+  /** Turn the model's Fast mode on or off (TD-5176). Acked with tier_state. */
   setFast(sessionId: string, on: boolean): void {
     this.send({ type: "set_fast", session_id: sessionId, on });
   }
 
+  /** Turn the session's Ultracode switch on or off (TD-5195). Acked with tier_state. */
+  setUltracode(sessionId: string, on: boolean): void {
+    this.send({ type: "set_ultracode", session_id: sessionId, on });
+  }
+
+  /** Pick the session's reasoning effort. Acked with tier_state. */
   setEffort(sessionId: string, effort: EffortLevel): void {
     this.send({ type: "set_effort", session_id: sessionId, effort });
   }

@@ -81,6 +81,12 @@ describe("BRIDGED_VERBS", () => {
     }
   });
 
+  it("forwards the model picker's switches, Ultracode included (TD-5195)", () => {
+    for (const verb of ["set_effort", "set_fast", "set_ultracode", "set_session_preset"]) {
+      expect(BRIDGED_VERBS.has(verb), verb).toBe(true);
+    }
+  });
+
   it("never includes a machine verb", () => {
     for (const verb of ["add_machine", "remove_machine", "list_machines", "reconnect_machine"]) {
       expect(BRIDGED_VERBS.has(verb), verb).toBe(false);

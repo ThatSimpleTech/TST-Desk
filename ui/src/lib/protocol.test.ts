@@ -34,6 +34,7 @@ import type {
   Detach,
   SetTier,
   SetEffort,
+  SetUltracode,
   SetPlan,
   SetSessionPreset,
   GetInstructionStack,
@@ -373,7 +374,16 @@ describe("Client message fixtures match TypeScript types", () => {
   it("set_effort", () => {
     const m = fixtures.set_effort as SetEffort;
     expect(m.type).toBe("set_effort");
-    expect(m.effort).toBe("ultracode");
+    expect(m.effort).toBe("max");
+    // Optional: null leaves the Ultracode switch alone (TD-5195).
+    expect(m.ultracode ?? null).toBeNull();
+    expect(isString(m.session_id)).toBe(true);
+  });
+
+  it("set_ultracode", () => {
+    const m = fixtures.set_ultracode as SetUltracode;
+    expect(m.type).toBe("set_ultracode");
+    expect(m.on).toBe(true);
     expect(isString(m.session_id)).toBe(true);
   });
 
@@ -909,6 +919,13 @@ describe("Daemon event fixtures match TypeScript types", () => {
     const plan = fixtures.tier_state_plan as TierState;
     expect(plan.plan).toBe(true);
     expect(plan.tier).toBe("brain");
+    // TD-5195: the Ultracode switch rides beside the effort, which stays a level.
+    expect(m.ultracode).toBe(false);
+    expect(m.ultracode_available).toBe(false);
+    const ultra = fixtures.tier_state_ultracode as TierState;
+    expect(ultra.effort).toBe("high");
+    expect(ultra.ultracode).toBe(true);
+    expect(ultra.ultracode_available).toBe(true);
   });
 
   it("boundary_update carries the attachment caps (TD-1709)", () => {
@@ -1367,7 +1384,7 @@ describe("All fixtures have required shape", () => {
       "set_workspace_pin",
       "set_session_star",
       "rename_session",
-      "cancel", "run_verify", "deny_verify", "attach", "detach", "set_tier", "set_plan", "set_effort",
+      "cancel", "run_verify", "deny_verify", "attach", "detach", "set_tier", "set_plan", "set_effort", "set_ultracode",
       "set_session_preset",
       "get_instruction_stack",
       "list_instructions", "list_commands", "list_memory", "save_memory", "create_rule",
@@ -1419,7 +1436,7 @@ describe("All fixtures have required shape", () => {
       "tool_result_truncated", "tool_result_diff", "tool_result_read_only", "tool_result_denied",
       "shell_output", "tool_progress", "approval_request", "approval_request_always_allow", "question_request", "question_answered", "plan_review", "plan_reviewed", "plan_reviewed_rejected", "plan_pinned", "decision_logged",
       "checkpoint_notice", "verify_result", "cost_update", "boundary_update", "boundary_update_config_trust", "turn_complete",
-      "tier_state", "tier_state_plan", "context_compacted", "context_compacted_manual", "context_compacted_inflight_trim", "context_compacted_clear_stale", "context_usage", "task_list", "shell_jobs", "stop_check", "session_goal", "worktree_state", "worktree_state_closed", "session_list_worktree", "steering_reloaded", "rule_activated", "tier_switched",
+      "tier_state", "tier_state_plan", "tier_state_ultracode", "context_compacted", "context_compacted_manual", "context_compacted_inflight_trim", "context_compacted_clear_stale", "context_usage", "task_list", "shell_jobs", "stop_check", "session_goal", "worktree_state", "worktree_state_closed", "session_list_worktree", "steering_reloaded", "rule_activated", "tier_switched",
       "model_fallback", "context_usage_fallback", "tier_state_fallback",
       "instruction_stack", "instruction_files", "command_list", "context_pins", "session_search_results", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "steering_proposal", "steering_decision", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated", "endpoint_models", "local_servers", "model_tested",

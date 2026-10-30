@@ -1,9 +1,11 @@
 <script lang="ts">
 	// The model picker, built like Claude's: a short model list with a check
-	// on the current one, an "Effort" row that opens a submenu (Low to Max,
-	// Ultracode last), a "More models" row for the raw routes, and "Teams"
-	// (a model per role) only when the config has one. The chip reads
-	// "<Model> <Effort>", e.g. "House Medium". A model is a catalog preset.
+	// on the current one, an "Effort" row that opens a submenu (Low to Max),
+	// the Fast and Ultracode switches when offered (TD-5176, TD-5195), a "More
+	// models" row for the raw routes, and "Teams" (a model per role) only when
+	// the config has one. The chip reads "<Model> <Effort>", e.g. "House
+	// Medium", then " · Fast" and " · Ultracode" when on. A model is a
+	// catalog preset.
 	//
 	// TD-5172: every row has one job a person can look up. Models show their
 	// label with the config's one-line description under it; unlabelled
@@ -21,7 +23,13 @@
 	} from "../../effort";
 	import { MODELS_DOC_URL, openDoc } from "../../docs-links";
 	import { openAddModel } from "../../onboarding.svelte.js";
-	import { session, setEffort, setFast, setSessionPreset } from "../../session-status.svelte.js";
+	import {
+		session,
+		setEffort,
+		setFast,
+		setSessionPreset,
+		setUltracode,
+	} from "../../session-status.svelte.js";
 	import { settings } from "../../settings.svelte.js";
 
 	type View = "main" | "effort" | "more" | "teams";
@@ -101,7 +109,7 @@
 		aria-expanded={open}
 		onclick={toggle}
 	>
-		{settings.hasModel ? chipLabel(current, session.effort, settings.presetLabels) : "Add a model"}{#if settings.hasModel && session.fast}<span class="fast-tag">{" · Fast"}</span>{/if}
+		{settings.hasModel ? chipLabel(current, session.effort, settings.presetLabels) : "Add a model"}{#if settings.hasModel && session.fast}<span class="fast-tag">{" · Fast"}</span>{/if}{#if settings.hasModel && session.ultracode}<span class="ultracode-tag">{" · Ultracode"}</span>{/if}
 		<span class="caret" aria-hidden="true"></span>
 	</button>
 
@@ -150,6 +158,23 @@
 						<span class="value">{session.fast ? "On" : "Off"}</span>
 					</button>
 				{/if}
+				{#if session.ultracodeAvailable}
+					<button
+						class="item item--accent"
+						type="button"
+						role="menuitemcheckbox"
+						aria-checked={session.ultracode}
+						title="Splits big jobs across several workers at once, then checks each result. Works with any effort."
+						onclick={() => setUltracode(!session.ultracode)}
+					>
+						<span class="text">
+							<span class="label">Ultracode</span>
+							<!-- Short, so the menu stays as narrow as before on a phone. -->
+							<span class="sub">Splits big jobs across workers</span>
+						</span>
+						<span class="value">{session.ultracode ? "On" : "Off"}</span>
+					</button>
+				{/if}
 				{#if groups.more.length > 0}
 					<button class="item" type="button" role="menuitem" onclick={() => (view = "more")}>
 						<span class="label">More models</span>
@@ -181,7 +206,6 @@
 				{#each EFFORT_OPTIONS as option (option.id)}
 					<button
 						class="item"
-						class:item--accent={option.accent}
 						type="button"
 						role="menuitemradio"
 						aria-checked={option.id === session.effort}
@@ -258,8 +282,10 @@
 		color: var(--color-ink);
 	}
 
-	/* Fast on (TD-5176): the chip says so, in the accent the effort menu uses for Ultracode. */
-	.fast-tag {
+	/* Fast on (TD-5176) and Ultracode on (TD-5195): the chip says so, in the
+	   accent the Ultracode row uses. Kept short: a phone-width chip clips. */
+	.fast-tag,
+	.ultracode-tag {
 		color: var(--color-accent);
 		font-weight: var(--weight-medium);
 	}
