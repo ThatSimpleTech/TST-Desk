@@ -2807,9 +2807,11 @@ not in this file. Skip-all still skips the three caps above. It does not skip th
 guard. An interactive turn pauses when the same tool call comes back three times, when 52
 model calls have passed since the last successful `fs_write` or `fs_edit`, or when 12 tool
 calls have passed with no reply and no file write. That twelfth stretch asks the model one
-question with the tools removed. `DONE` ends the turn with the answer. `CONTINUE` with a new
-next step allows another 12 calls, up to three times. Anything else pauses. Resume, on the
-banner, starts the counters over and continues the same turn. A reply resets the 12-call
+question with the tools removed. `CONTINUE` with a new next step allows another 12 calls, up to
+three times. Any other answer is the model's reply: `DONE`, `BLOCKED` (a question for you), or
+text with no label at all shows in full in the chat and ends the turn, the same as a reply made
+without tools (TD-5198). Only an empty answer, a tool call, or a repeated next step pauses there.
+Resume, on the banner, starts the counters over and continues the same turn. A reply resets the 12-call
 window only. A file write resets the 52-call budget too. Unattended autonomy runs keep the
 charter breakers and do not take this check.
 

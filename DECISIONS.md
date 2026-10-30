@@ -18763,3 +18763,27 @@ reason TD-5185 kept cards off the turn path); fuzzy or prefix matching (it
 would price one model from another's card); a dedicated push of
 `setup_state` after a background pass (the Models page reads it when it
 opens, and a broadcast would send settings to every paired viewer).
+
+## TD-5198 — The progress check's answer is the reply (Class B)
+
+2026-10-30. Most progress-guard pauses in the logs of two installs were
+TD-5002's "any other reply pauses" branch. The model had answered the
+tool-free check with the finished reply (a review, a search result) or
+with a question for the person, and left out the label. The pause
+banner cut that answer off at 360 characters and asked for Resume.
+
+**Decision:** Only `CONTINUE` keeps the turn working. Every other answer
+with text is the reply: `DONE`, `BLOCKED`, or no label at all. It goes
+to the chat in full and ends the turn through the same path as a reply
+made without tools, so the done-check (TD-5124) still runs and can send
+the model back to work. Labels are read leniently (case, Markdown
+emphasis, a dash or colon, a label alone on its line, a label after a
+preamble line, a dropped echo of the check's header). A pause remains
+for an empty answer, a tool call, an empty or repeated next step, and
+the guard's three counters. This supersedes TD-5002's rule that
+`BLOCKED` and unlabeled text pause.
+
+**Rejected:** Asking again with a stricter prompt when the label is
+missing: it costs another call, and the answer was already right.
+Keeping `BLOCKED` as a pause: a question belongs in the chat, where the
+person can answer it, not behind Resume.
