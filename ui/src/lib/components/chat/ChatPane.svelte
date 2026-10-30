@@ -41,7 +41,7 @@
 	import { workingVerb } from "../../working-flavor";
 	import Composer from "./Composer.svelte";
 	import MessageList from "./MessageList.svelte";
-	import PlayfulBackground from "../PlayfulBackground.svelte";
+	import BackgroundHost from "../backgrounds/BackgroundHost.svelte";
 	import HeldMessages from "./HeldMessages.svelte";
 	import QueuedMessages from "./QueuedMessages.svelte";
 	import TaskStrip from "./TaskStrip.svelte";
@@ -158,16 +158,9 @@
 </script>
 
 <div class="chat-pane">
-	<!-- Slow light under the header, the same idea as Claude Code's top
-	     gradient: two soft bands drift, the rest of the pane stays the
-	     ground colour. prefers-reduced-motion already stops this. -->
-	<div class="ambient" aria-hidden="true">
-		<span class="band"></span>
-		<span class="band band--warm"></span>
-	</div>
-	<!-- TD-1750: sparkle field under the content; every click sends a ring of
-	     light out from the pointer. Static under prefers-reduced-motion. -->
-	<PlayfulBackground />
+	<!-- The picked background's chat-pane layer (TD-5202): Classic's header
+	     light and dust (TD-1750), the veil behind the text, click ripples. -->
+	<BackgroundHost layer="chat" />
 	<div class="column">
 		{#if chat.messages.length === 0}
 			<div class="empty" aria-label="Getting started">
@@ -282,52 +275,10 @@
 		height: 100%;
 		min-height: 0;
 		overflow: hidden;
-		/* Transparent so BackgroundOrbit shows through. AppShell's .pane-chat
+		/* Transparent so the background shows through. AppShell's .pane-chat
 		   wraps this pane and has to stay transparent too, or it paints the
 		   page ground over the field. */
 		background: transparent;
-	}
-
-	.ambient {
-		position: absolute;
-		top: 0;
-		left: 0;
-		right: 0;
-		height: 280px;
-		pointer-events: none;
-		overflow: hidden;
-	}
-
-	.band {
-		position: absolute;
-		top: -80px;
-		left: 8%;
-		width: 46%;
-		height: 200px;
-		border-radius: 50%;
-		background: color-mix(in srgb, var(--color-accent) 72%, transparent);
-		filter: blur(48px);
-		opacity: 0.42;
-		animation: drift 18s var(--ease-out) infinite alternate;
-	}
-
-	.band--warm {
-		left: auto;
-		right: 4%;
-		width: 38%;
-		background: color-mix(in srgb, var(--color-warn) 70%, transparent);
-		opacity: 0.32;
-		animation-duration: 26s;
-		animation-direction: alternate-reverse;
-	}
-
-	@keyframes drift {
-		from {
-			transform: translate3d(0, 0, 0);
-		}
-		to {
-			transform: translate3d(10%, 12px, 0);
-		}
 	}
 
 	.column {

@@ -3,7 +3,8 @@
 	import { page } from '$app/state';
 	import '../app.css';
 	import favicon from '$lib/assets/favicon.svg';
-	import BackgroundOrbit from '$lib/BackgroundOrbit.svelte';
+	import BackgroundHost from '$lib/components/backgrounds/BackgroundHost.svelte';
+	import { startBackground } from '$lib/backgrounds/store.svelte.js';
 	import { connect, disconnect } from '$lib/connection-status.svelte.js';
 	import { startMachines } from '$lib/machines.svelte.js';
 
@@ -15,9 +16,13 @@
 		// The paired-computer list (TD-5015) follows the connection for the
 		// window's whole life: the rail, the composer and Settings all read it.
 		const offMachines = isQuickEntry ? () => {} : startMachines();
+		// The picked background (TD-5202) follows the OS reduced-motion
+		// setting and choices made in the app's other windows.
+		const offBackground = startBackground();
 		connect();
 		return () => {
 			offMachines();
+			offBackground();
 			disconnect();
 		};
 	});
@@ -27,11 +32,12 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
-<BackgroundOrbit />
-
 {#if isQuickEntry}
 	{@render children()}
 {:else}
+	<!-- The quick-entry card paints its own ground over the whole window,
+	     so it gets no background layer to hide. -->
+	<BackgroundHost layer="window" />
 	<main class="app-frame">
 		{@render children()}
 	</main>

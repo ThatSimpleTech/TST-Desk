@@ -1,6 +1,7 @@
 // Playful background core tests (TD-1750). The seeded randomness, the
-// twinkle envelope, the drift wrap, and the reduced-motion rule are the
-// contract the canvas component draws from.
+// twinkle envelope, the drift wrap and the ripples are the contract the
+// canvas components draw from. The reduced-motion rule moved to the shared
+// background preference in TD-5202 (backgrounds/prefs.test.ts).
 
 import { describe, it, expect } from "vitest";
 import {
@@ -13,8 +14,6 @@ import {
 	rippleAt,
 	rippleRadius,
 	RIPPLE,
-	staticAlpha,
-	shouldAnimate,
 	stepRipples,
 	twinkleAlpha,
 	type Ripple,
@@ -139,17 +138,5 @@ describe("ripples", () => {
 		// The three oldest clicks are gone; the newest survive in order.
 		expect(list[0].x).toBe(3);
 		expect(list[list.length - 1].x).toBe(RIPPLE.maxRipples + 2);
-	});
-});
-
-describe("motion rules", () => {
-	it("animates normally and stops under reduced motion", () => {
-		expect(shouldAnimate(false)).toBe(true);
-		expect(shouldAnimate(true)).toBe(false);
-	});
-
-	it("static alpha is the mid-envelope value used when frozen", () => {
-		// (0.12 + 0.88·0.5) × (0.25 + 0.75·bright); for bright=1 → 0.5.
-		expect(staticAlpha({ x: 0, y: 0, r: 1, phase: 0, cps: 0, bright: 1 })).toBeCloseTo(0.5, 10);
 	});
 });

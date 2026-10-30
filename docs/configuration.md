@@ -3200,6 +3200,16 @@ fires, not for eight seconds after the last click. Wayland has no real-display
 ring. Screenshots hide the ring for the grab so it cannot appear in the frame.
 This is not a second hardware pointer.
 
+**Background**, **Motion** and **Click ripples** (TD-5202) are not keys in this file either.
+Settings → Appearance keeps them per device, like the theme, in the window's local storage:
+a phone and a computer on one daemon each keep their own. Background is Off (the plain
+ground, nothing drawn), Classic (the default: the orbit halo, the header light and the
+dust), Galaxy, Deep space, Aurora, Constellations or Fireflies; the command palette's
+**Toggle background** switches it off and back. Motion off holds a still frame of the same
+background, and Click ripples turns the ring of light from a click in the chat off on its
+own. When the system asks for reduced motion, backgrounds hold still and clicks do not
+ripple, whatever the switches say.
+
 ### 4.5 `approved_external_imports`
 
 | Key | Type | Default | Effect |

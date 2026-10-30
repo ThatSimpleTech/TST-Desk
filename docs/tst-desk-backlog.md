@@ -12656,3 +12656,45 @@ thatsimpletech.com.
 - [x] Every file in `shell/icons` (macOS `.icns`, Windows `.ico` and Store
       logos, the PNGs) is generated from that master with `npx tauri icon`.
 - [ ] The Android launcher icon is unchanged (a separate vector drawable).
+
+### TD-5202 — Pick the background, or turn it off
+
+**Size:** 5 · **Depends on:** TD-1750, TD-1703 · **Status:** Done
+
+The window always painted the orbit halo, the drifting dust and the click
+ripples, with no way to quiet them. Settings → Appearance now has a
+Background choice with a live preview tile for each: Off (the plain ground,
+nothing drawn and no frame scheduled), Classic (the old look, still the
+default), Galaxy, Deep space, Aurora, Constellations and Fireflies. Motion
+holds a still frame of the same background, and Click ripples turns the
+ripples off on their own. The choice is per device, like the theme, and the
+command palette's Toggle background turns it off and back on. Every
+background is Canvas 2D (no WebGL), reads its colours from light and dark
+tokens, caps the pixel ratio at 2 and its frame rate at 30 or less, pauses
+while the window is hidden, and holds still when the system asks for
+reduced motion.
+
+- [x] Off renders no layer, schedules no animation frame and lights no
+      ripple, even when clicked; switching to it stops a running loop at once
+      (`backgrounds/host-component.test.ts`).
+- [x] The choice, Motion and Click ripples are kept per device: Classic,
+      moving, with ripples by default; a bad stored value falls back to the
+      default; storage that throws reads as the defaults and a refused write
+      still switches the window; another window's choice is picked up
+      (`backgrounds/prefs.test.ts`, `backgrounds/store.test.ts`).
+- [x] The tiles are one radio group: a click or the arrow keys switch and
+      save; Motion and Click ripples save, stand down under Off, and say why
+      nothing moves under reduced motion (`settings-background-component.test.ts`).
+- [x] The frame loop paints at most its cap on 60 Hz and 144 Hz displays,
+      schedules nothing while stopped or hidden, freezes its clock across a
+      pause and leaves no listener after it goes (`backgrounds/loop.test.ts`);
+      the pixel-ratio cap and token colour parsing (`backgrounds/paint.test.ts`).
+- [x] Each background's maths is seeded and pure, and no module in
+      `ui/src/lib/backgrounds` calls the unseeded random source
+      (`galaxy.test.ts`, `deep-space.test.ts`, `aurora.test.ts`,
+      `constellations.test.ts`, `fireflies.test.ts`, `random.test.ts`,
+      `paint.test.ts`).
+- [x] Toggle background in the command palette turns the background off and
+      back to the one it had (`palette-store.test.ts`, `palette.test.ts`).
+- [x] Classic is unchanged: the orbit halo, the header light, the dust and
+      the ripples draw as before, the dust now on the shared capped loop.

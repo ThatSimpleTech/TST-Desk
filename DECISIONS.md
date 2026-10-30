@@ -18787,3 +18787,55 @@ the guard's three counters. This supersedes TD-5002's rule that
 missing: it costs another call, and the answer was already right.
 Keeping `BLOCKED` as a pause: a question belongs in the chat, where the
 person can answer it, not behind Resume.
+
+## TD-5202 — Pick the background, or turn it off (Class B)
+
+2026-10-30. The window always drew the orbit halo, the dust and the click
+ripples. The background is now a choice in Settings → Appearance: Off,
+Classic (the default, unchanged), Galaxy, Deep space, Aurora,
+Constellations, Fireflies, plus Motion and Click ripples switches.
+
+**Decision:**
+- Per device, like the theme: three localStorage keys,
+  `tst-desk:background`, `tst-desk:background-motion` and
+  `tst-desk:background-ripples` ("on"/"off"), plus
+  `tst-desk:background-last` so the palette's Toggle background can bring
+  the last one back. Not the daemon's config: a phone and a laptop on one
+  daemon keep their own. Every read and write is in try/catch; a failure
+  reads as the defaults and a refused write still switches the window. The
+  store reads at import, so the first frame already shows the choice, and it
+  follows other windows through the `storage` event.
+- One host component, `BackgroundHost`, mounted where the two Classic
+  layers were: `layer="window"` in the root layout (fixed, under the app)
+  and `layer="chat"` in the chat pane (Classic's header light and dust, a
+  veil that quiets the other backgrounds behind the text, and the ripples).
+  The ripples moved out of the dust into their own `RippleLayer`, shared by
+  every background but Off, drawn exactly as before and scheduling frames
+  only while a ring is alive. The quick-entry window gets no background: it
+  paints its own ground over the whole window.
+- A background is a `Scene` (`resize`, `recolor`, `draw`) handed to one
+  canvas host, `AmbientCanvas`, which owns sizing (pixel ratio capped at 2),
+  the frame loop and theme switches. The loop (`backgrounds/loop.ts`)
+  paints at most its cap, schedules nothing while stopped or while the
+  document is hidden, and keeps its own clock that only advances while
+  frames run, so a pause freezes the scene instead of jumping it. Caps
+  follow how fast each one moves: Deep space and Classic's dust 30, Fireflies
+  24, Aurora and Constellations 20, Galaxy 15. Soft light that moves is drawn
+  at a fraction of the resolution (the galaxy's glow at half, the aurora at
+  0.3); soft light that never moves is a CSS gradient.
+- Theme: every colour is a `--bg-*` token with a light and a dark value.
+  `--bg-ambient-blend` is `lighter` in dark (light is added) and
+  `source-over` in light, where the space backgrounds are inked in warm
+  greys and rust like a printed star atlas, so the ground stays paper and
+  text keeps its contrast.
+- Motion off holds a still frame and schedules nothing; Click ripples is its
+  own switch. The OS reduced-motion setting forces both off. playful-bg.ts
+  lost `shouldAnimate` and `staticAlpha`: the rule lives in
+  `backgrounds/prefs.ts` now.
+
+**Rejected:** WebGL (some machines run without it); compositor-driven CSS
+animation for the galaxy (no frame cap, and the stars blur as the layer
+turns); keeping the choice in config.yaml (a display choice belongs to the
+screen showing it, as the theme does); turning the ripples off with Motion
+(a still background with ripples is a fair choice, and reduced motion
+already covers "nothing moves").

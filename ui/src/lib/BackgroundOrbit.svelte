@@ -7,6 +7,16 @@
 	// All colour comes from the --bg-orbit-* tokens in tokens.css, so light
 	// and dark themes swap the mood automatically: faint warm in light, the
 	// cyan glow-on-near-black in dark. Geometry is theme-independent.
+	//
+	// Since TD-5202 it is Classic's window layer: `animate` false holds it
+	// still, and `fill="parent"` shrinks it into a Settings preview tile,
+	// where the dots are drawn bigger so the rings still read at that size.
+	import type { BackgroundProps } from './backgrounds/scene';
+
+	let { animate, fill = 'window' }: BackgroundProps = $props();
+
+	/** At tile size the real dots would be specks under a pixel. */
+	const dotScale = $derived(fill === 'parent' ? 3.2 : 1);
 
 	const CX = 560;
 	const CY = 520;
@@ -39,17 +49,23 @@
 	);
 </script>
 
-<div class="orbit" role="presentation" aria-hidden="true">
+<div
+	class="orbit"
+	class:orbit--parent={fill === 'parent'}
+	class:orbit--still={!animate}
+	role="presentation"
+	aria-hidden="true"
+>
 	<div class="wash"></div>
 	<div class="field">
 		<svg viewBox="0 0 1200 1040" preserveAspectRatio="xMidYMid slice">
 			<g class="glow">
 				{#each dots as d}
-					<circle cx={d.x} cy={d.y} r={d.r} fill="var(--bg-orbit-dot)" opacity={d.a} />
+					<circle cx={d.x} cy={d.y} r={d.r * dotScale} fill="var(--bg-orbit-dot)" opacity={d.a} />
 				{/each}
 			</g>
 			<g class="anchor">
-				<circle cx={CX} cy={CY} r="2.6" fill="var(--bg-orbit-dot-hot)" />
+				<circle cx={CX} cy={CY} r={2.6 * dotScale} fill="var(--bg-orbit-dot-hot)" />
 			</g>
 		</svg>
 	</div>
@@ -64,6 +80,11 @@
 		pointer-events: none;
 		opacity: var(--bg-orbit-opacity);
 		overflow: hidden;
+	}
+
+	.orbit--parent {
+		position: absolute;
+		z-index: auto;
 	}
 
 	.wash,
@@ -136,6 +157,13 @@
 		50% {
 			opacity: 1;
 		}
+	}
+
+	.orbit--still .field,
+	.orbit--still .wash,
+	.orbit--still .glow,
+	.orbit--still .anchor {
+		animation: none;
 	}
 
 	@media (prefers-reduced-motion: reduce) {

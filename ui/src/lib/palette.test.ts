@@ -161,6 +161,7 @@ describe("icons", () => {
 			"show-stack",
 			"show-work",
 			"stop-computer-use",
+			"toggle-background",
 			"toggle-design",
 			"toggle-theme",
 		]);
