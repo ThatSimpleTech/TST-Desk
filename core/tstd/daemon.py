@@ -584,6 +584,12 @@ log = get_logger("tstd.daemon")
 CARD_REFRESH_FIRST_DELAY = 30.0
 #: Seconds in an hour, a name so a test can shrink ``every_hours``.
 CARD_REFRESH_HOUR = 3600.0
+#: Seconds one key test may take (TD-5200). The daemon answers a window's
+#: messages one at a time, so a probe left to the provider's own timeouts
+#: (connect 30 s, read 120 s, retried three times) held every later message
+#: from that window for minutes. Under the window's 30-second wait, so the
+#: test ends with the daemon's verdict rather than the window giving up.
+KEY_TEST_LIMIT_S = 20.0
 #: What Settings calls each value an automatic refresh can change.
 _CARD_FIELD_NAMES = {
     "slug": "model name",
@@ -1931,32 +1937,43 @@ class Daemon:
         independent of keychain state; otherwise the stored key is probed.
         A one-token completion against a matching tier: the cheapest
         request that still proves the key authenticates.  The key value
-        never appears in the response.
+        never appears in the response.  Every verdict names *credential*
+        (TD-5200), so the window shows it on that key's row, and comes
+        within ``KEY_TEST_LIMIT_S``.
         """
+
+        def verdict(ok: bool, detail: str) -> ApiKeyValidated:
+            return ApiKeyValidated(seq=1, ok=ok, detail=detail, credential=credential)
+
         probe: KeyProbe | None = None
         try:
-            if credential and api_key is None:
-                await resolve_tier_slugs(self.config)
-                probe = key_probe(self.config, credential)
-            err = await self._provider_probe(api_key, credential, probe=probe)
+            async with asyncio.timeout(KEY_TEST_LIMIT_S):
+                if credential and api_key is None:
+                    await resolve_tier_slugs(self.config)
+                    probe = key_probe(self.config, credential)
+                err = await self._provider_probe(api_key, credential, probe=probe)
+        except TimeoutError:
+            target = probe.tier if probe is not None else None
+            where = target.base_url.rstrip("/") if target is not None else "the provider"
+            log.warning(
+                "key test passed its time limit",
+                extra={"extra_fields": {"credential": credential, "limit_s": KEY_TEST_LIMIT_S}},
+            )
+            return verdict(False, f"No answer from {where} within {KEY_TEST_LIMIT_S:g} seconds.")
         except KeychainError as e:
-            return ApiKeyValidated(seq=1, ok=False, detail=str(e))
+            return verdict(False, str(e))
         except ModelDiscoveryError as e:
-            return ApiKeyValidated(seq=1, ok=False, detail=str(e))
+            return verdict(False, str(e))
         host = probe.host.rstrip("/") if probe is not None else ""
         if err is not None and probe is not None and probe.borrowed and key_got_past_sign_in(err):
             # TD-5184: the server took the key; it just lacks the borrowed model.
-            return ApiKeyValidated(
-                seq=1, ok=True, detail=f"Key accepted by {host}. No model uses it yet."
-            )
+            return verdict(True, f"Key accepted by {host}. No model uses it yet.")
         if err is not None:
             detail = auth_failure_message() if err.code == "auth_failed" else err.message
-            return ApiKeyValidated(seq=1, ok=False, detail=detail)
+            return verdict(False, detail)
         if host:
-            return ApiKeyValidated(seq=1, ok=True, detail=f"Key accepted by {host}.")
-        return ApiKeyValidated(
-            seq=1, ok=True, detail="Key accepted by the active preset's provider."
-        )
+            return verdict(True, f"Key accepted by {host}.")
+        return verdict(True, "Key accepted by the active preset's provider.")
 
     # ── Add a model (TD-5172) ─────────────────────────────────────────
 

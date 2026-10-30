@@ -12656,3 +12656,51 @@ thatsimpletech.com.
 - [x] Every file in `shell/icons` (macOS `.icns`, Windows `.ico` and Store
       logos, the PNGs) is generated from that master with `npx tauri icon`.
 - [ ] The Android launcher icon is unchanged (a separate vector drawable).
+
+### TD-5200 — Settings → API keys: Test shows the result on the row
+
+**Size:** 2 · **Depends on:** TD-1717, TD-4838, TD-5182 · **Status:** Done
+
+Pressing Test on a saved key seemed to do nothing on a success. The button
+did not change while the probe ran, and the verdict went to one line at the
+bottom of the page, under the sticky "Add a source" form, in the same grey as
+the help text above it. Every row and the first-run check shared that line,
+so the latest verdict of any kind replaced the one before. The daemon now
+echoes the tested key's id on `api_key_validated`, and each row shows its own
+result beside its buttons.
+
+- [x] Test on a row says "Testing…" with the button off, then shows a
+      "Connected" pill (success colour, check icon) with the daemon's detail,
+      or "Not connected" with the reason, on that row only
+      (`settings-keys.test.ts`, `key-tests.test.ts`).
+- [x] Each key keeps its own result: testing another row never replaces it
+      (`key-tests.test.ts::keeps each key's result to itself`,
+      `settings-keys.test.ts::keeps each row's result on its own row`).
+- [x] A result stays until setup_state changes what its test was about (the
+      key's name, host or stored state, the tiers that send it, or the active
+      preset), the window reaches a different computer, or the row is tested
+      again. A host saved by leaving the field just before pressing Test is
+      the host the verdict is about (`key-tests.test.ts`, "what drops a
+      result"; `key-test-replies.test.ts`, "another computer").
+- [x] Each verdict answers its own request. A row tested again while its
+      first test is still out shows the second test's verdict, also when the
+      host changed in between, and an older daemon's verdict, which names no
+      key, lands on the row that asked (`key-test-replies.test.ts`;
+      `settings-keys.test.ts::a fixed host tested again after no answer
+      shows the new host's verdict`).
+- [x] The daemon ends a test within 20 seconds ("No answer from <host> within
+      20 seconds"), so one test never holds the window's other messages
+      (`test_key_test_row_reply.py::test_a_server_that_never_answers_frees_the_window`).
+- [x] With no reply 30 seconds after the daemon takes the test up, the row
+      says nothing came back and Test works again; a verdict that arrives
+      later still replaces that. A test queued behind another row's gets its
+      own 30 seconds, and a dropped connection ends every test still waiting
+      (`key-tests.test.ts`, "no answer"; `key-test-replies.test.ts`;
+      `settings-keys.test.ts`).
+- [x] The result is an `aria-live` status region that is always in the row,
+      so a screen reader hears the verdict (`settings-keys.test.ts`).
+- [x] `api_key_validated.credential` echoes the request's credential on every
+      verdict and is null when the request names none; the first-run check
+      ignores verdicts that name a key and keeps working
+      (`test_key_test_row_reply.py`, `onboarding.test.ts`,
+      `protocol.test.ts`).

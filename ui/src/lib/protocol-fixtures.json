@@ -2329,7 +2329,15 @@
     "type": "api_key_validated",
     "seq": 1,
     "ok": true,
-    "detail": "Key accepted by provider."
+    "detail": "Key accepted by provider.",
+    "credential": "openrouter"
+  },
+  "api_key_validated_first_run": {
+    "type": "api_key_validated",
+    "seq": 1,
+    "ok": false,
+    "detail": "The key was rejected.",
+    "credential": null
   },
   "endpoint_models": {
     "type": "endpoint_models",

@@ -212,6 +212,32 @@ describe("key step", () => {
     expect(onboarding.hasApiKey).toBe(false);
   });
 
+  it("a verdict that names a key is a Settings row's, not this check's (TD-5200)", () => {
+    start();
+    validateKey("sk-typed-1");
+    emit({
+      type: "api_key_validated",
+      seq: 1,
+      ok: true,
+      detail: "Key accepted by https://api.example.com/v1.",
+      credential: "tower",
+    } as DaemonEventUnion);
+    // Still waiting for its own answer, and nothing a row heard leaks in.
+    expect(onboarding.validating).toBe(true);
+    expect(onboarding.validation).toBeNull();
+    expect(onboarding.hasApiKey).toBe(false);
+
+    emit({
+      type: "api_key_validated",
+      seq: 1,
+      ok: false,
+      detail: "The key was rejected.",
+      credential: null,
+    } as DaemonEventUnion);
+    expect(onboarding.validating).toBe(false);
+    expect(onboarding.validation).toEqual({ ok: false, detail: "The key was rejected." });
+  });
+
   it("bare validate with nothing stored is a no-op (TD-1106)", () => {
     start();
     validateKey();
