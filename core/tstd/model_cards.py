@@ -4,16 +4,21 @@ A tier's prices, context window and output cap are config, typed by hand.
 They go stale, and a wrong or zero price makes the cost meter lie. Most
 hosted endpoints publish them: OpenRouter's ``/models`` lists per-token
 prices, the context length and the output cap for every model. This module
-asks the host a tier already talks to for that list, finds the tier's exact
-slug, and works out which config values to replace.
+asks the host a tier already talks to for that list, finds the tier's
+slug in it, and works out which config values to replace. The slug matches
+whatever its capitals (TD-5197): a tier saved as ``Acme-large`` takes the
+card of a listed ``acme-large``, and the host's spelling is written back.
 
-Runs only on a user action: saving a tier's slug, or Refresh in Settings.
+Runs on a user action (saving a tier's slug, or Refresh in Settings) and,
+unless ``model_refresh.auto`` is off, in the background a little after the
+daemon starts and then every ``model_refresh.every_hours`` (TD-5197).
 Never on a chat turn, and the chat loop never reads a card: it keeps
 reading config, so a host that is down never stalls a turn.
 
 What it will not do, each a way a guess would land in config:
 
-- pick a nearby model when the slug is not listed;
+- pick a nearby model when the slug is not listed (only the capitals may
+  differ);
 - write zeros, or anything, for a field the card does not carry;
 - replace a loopback tier's ``context_window`` with the model's ceiling.
   A local server serves what it was started with, often far less. Only a
@@ -50,7 +55,7 @@ CardStatus = Literal["ok", "not_listed", "no_pricing", "fetch_failed", "no_slug"
 
 # Every field a card can set. Prices are dollars per million tokens, the
 # unit config stores.
-CardValues = dict[str, float | int]
+CardValues = dict[str, float | int | str]
 
 KeyReader = Callable[[str], Awaitable[str | None]]
 
@@ -107,6 +112,7 @@ def card_values(tier: TierConfig, card: EndpointModel, *, loopback: bool) -> Car
         values["context_window"] = taken
         window = taken
     cap = card.max_output_tokens
+    reply = tier.max_output_tokens
     if (
         cap is not None
         and card.context_window is not None
@@ -115,9 +121,9 @@ def card_values(tier: TierConfig, card: EndpointModel, *, loopback: bool) -> Car
         and cap < tier.max_output_tokens
     ):
         values["max_output_tokens"] = cap
+        reply = cap
     # TD-5189: a small served window (llama.cpp started with a short -c) must
     # still leave room past the reply reservation, as Settings requires.
-    reply = values.get("max_output_tokens", tier.max_output_tokens)
     if reply * 2 >= window:
         values["max_output_tokens"] = default_max_output(int(window))
     return values
@@ -156,15 +162,31 @@ def match(target: CardTarget, host: str, listing: EndpointModels) -> CardResult:
         return CardResult(target, "no_slug", host, "No model is named, so there is no card.")
     if listing.error is not None:
         return CardResult(target, "fetch_failed", host, listing.error)
-    card = next((row for row in listing.models if row.id == slug), None)
+    card = _listed(listing, slug)
     if card is None:
         return CardResult(target, "not_listed", host, f"{host} does not list {slug}.")
     values = card_values(target.config, card, loopback=is_loopback_url(host))
+    if card.id != slug:
+        # TD-5197: the same model typed with other capitals. The host's own
+        # spelling goes back into config, so the request names it exactly.
+        values["slug"] = card.id
     if card.input_price is None and card.output_price is None:
         return CardResult(
             target, "no_pricing", host, f"{host} publishes no price for {slug}.", values
         )
     return CardResult(target, "ok", host, None, values)
+
+
+def _listed(listing: EndpointModels, slug: str) -> EndpointModel | None:
+    """The row for *slug*: its exact spelling first, then any capitals (TD-5197).
+
+    Nothing looser: a prefix, a suffix or a near name is a different model.
+    """
+    exact = next((row for row in listing.models if row.id == slug), None)
+    if exact is not None:
+        return exact
+    wanted = slug.strip().casefold()
+    return next((row for row in listing.models if row.id.strip().casefold() == wanted), None)
 
 
 async def refresh_cards(

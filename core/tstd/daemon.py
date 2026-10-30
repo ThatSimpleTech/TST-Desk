@@ -579,6 +579,21 @@ from .ws import WebSocketServer
 
 log = get_logger("tstd.daemon")
 
+#: Seconds after start before the first background card refresh (TD-5197):
+#: revived sessions and the first turns go first.
+CARD_REFRESH_FIRST_DELAY = 30.0
+#: Seconds in an hour, a name so a test can shrink ``every_hours``.
+CARD_REFRESH_HOUR = 3600.0
+#: What Settings calls each value an automatic refresh can change.
+_CARD_FIELD_NAMES = {
+    "slug": "model name",
+    "input_price": "input price",
+    "output_price": "output price",
+    "cache_read_price": "cache price",
+    "context_window": "context",
+    "max_output_tokens": "reply limit",
+}
+
 # The doctor's api_key verdict when the active preset sends no key (TD-1801).
 _KEYLESS_KEY_ROW = DiagnosticCheck(
     name="api_key",
@@ -1115,6 +1130,8 @@ class Daemon:
         self._slug_snapshot = _snapshot_slugs(self.config)
         # TD-5185: last model-card refresh per (preset, tier), this run only.
         self._card_results: dict[tuple[str, str], CardResult] = {}
+        # A background refresh and a Settings one never write at once (TD-5197).
+        self._card_lock = asyncio.Lock()
         self._provider = provider
         self._clients: dict[tuple[str, str, tuple[float | None, ...]], ProviderLike] = {}
         self._pending_memory: dict[str, DistillEmit] = {}
@@ -1547,13 +1564,22 @@ class Daemon:
         self._slug_snapshot = _snapshot_slugs(self.config)
         self._drop_provider_clients()
 
-    async def _refresh_model_cards(self, preset: str, tier: str | None) -> str | None:
+    async def _refresh_model_cards(
+        self, preset: str, tier: str | None, *, auto: bool = False
+    ) -> str | None:
         """Write each target's card values to config, then reload (TD-5185).
 
         Returns an error reply to send instead of ``setup_state``, or None.
         A miss is not an error: it is recorded for ``tier_cards`` and the
-        stored value stays.
+        stored value stays. *auto* is the background refresh (TD-5197): what
+        it changed goes in the tier's ``detail``, for Settings to show.
         """
+        async with self._card_lock:
+            return await self._refresh_model_cards_locked(preset, tier, auto=auto)
+
+    async def _refresh_model_cards_locked(
+        self, preset: str, tier: str | None, *, auto: bool
+    ) -> str | None:
         try:
             wanted = targets(self.config, preset, tier)
         except ConfigError as e:
@@ -1572,6 +1598,9 @@ class Daemon:
                         path=self.config_path,
                     )
                     wrote = True
+                    if auto:
+                        names = ", ".join(_CARD_FIELD_NAMES.get(k, k) for k in sorted(changes))
+                        result.detail = f"Updated automatically: {names}."
                 except (ConfigError, OSError) as e:
                     result.status = "write_failed"
                     result.detail = str(e)
@@ -1584,6 +1613,7 @@ class Daemon:
                         "target": result.target.label,
                         "status": result.status,
                         "changed": sorted(changes),
+                        "auto": auto,
                     }
                 },
             )
@@ -1593,6 +1623,42 @@ class Daemon:
             except ConfigError as e:
                 return build_error("bad_request", f"Saved, but the config no longer loads: {e}")
         return None
+
+    async def _card_refresh_loop(self) -> None:
+        """Refresh every preset's model cards in the background (TD-5197).
+
+        Once a little after start, then every ``model_refresh.every_hours``,
+        re-read each time so a config change applies without a restart. It
+        runs in its own task: a turn never waits on it, and a host that is
+        down only leaves that host's tiers as they were.
+        """
+        delay = CARD_REFRESH_FIRST_DELAY
+        while not self._shutdown_event.is_set():
+            try:
+                await asyncio.wait_for(self._shutdown_event.wait(), timeout=delay)
+                return
+            except TimeoutError:
+                pass
+            if self.config.model_refresh.auto:
+                await self._auto_refresh_cards()
+            delay = self.config.model_refresh.every_hours * CARD_REFRESH_HOUR
+
+    async def _auto_refresh_cards(self) -> None:
+        """One background pass over every preset; a failure is logged, never raised."""
+        for preset in list(self.config.presets):
+            try:
+                error = await self._refresh_model_cards(preset, None, auto=True)
+            except Exception:
+                log.exception(
+                    "background card refresh failed",
+                    extra={"extra_fields": {"preset": preset}},
+                )
+                continue
+            if error is not None:
+                log.warning(
+                    "background card refresh refused",
+                    extra={"extra_fields": {"preset": preset, "reply": error[:200]}},
+                )
 
     def _set_tier_context_window(self, preset: str, tier: str, window: int) -> str | None:
         """Write one tier's window by hand, then reload (TD-5189).
@@ -2353,6 +2419,9 @@ class Daemon:
         # dead Google grant is only visible the next time Settings opens.
         self._google_coordinator()
         self._tasks.append(asyncio.create_task(self._scheduler_loop()))
+        self._tasks.append(
+            asyncio.create_task(self._card_refresh_loop(), name="model-card-refresh")
+        )
         await self._shutdown_event.wait()
 
     async def _shutdown(self) -> None:

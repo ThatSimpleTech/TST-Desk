@@ -21,7 +21,8 @@ export function cardNote(card: TierCard): string | null {
 		case undefined:
 			return null;
 		case "ok":
-			return "From the model card.";
+			// TD-5197: a background refresh says what it changed.
+			return card.detail ? `From the model card. ${card.detail}` : "From the model card.";
 		case "no_pricing":
 			return "The server lists no price; prices are from config.yaml.";
 		case "no_slug":

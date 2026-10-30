@@ -3431,7 +3431,8 @@ class TierCard(BaseModel):
     The numbers are what ``config.yaml`` holds now, read for display only:
     the window never computes a price. ``card`` is the outcome of the last
     refresh in this daemon's run, None when there was none. ``detail`` says
-    why a refresh left the values alone.
+    why a refresh left the values alone or, after a background refresh
+    (TD-5197), what it changed.
     """
 
     input_price: float

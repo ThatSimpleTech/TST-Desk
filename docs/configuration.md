@@ -74,6 +74,7 @@ no effect.
 | `compaction` | mapping | see below | How compaction writes its summary and what it brings back (TD-5128): a worker-written structured summary, written ahead in the background, and the recent files read again. Omitted in an older user copy is filled from the shipped file at load, which turns the worker summary on. A config with the block but no `summary` key is `extractive`. |
 | `consult` | mapping | see below | Which tiers get the `consult` tool, which asks the brain or the validator one question mid-task, and how many consults one turn may make (TD-5119). Omitted in an older user copy is filled from the shipped file at load: the worker only, two a turn. |
 | `workflow` | mapping | see below | Limits for the `workflow` tool, which runs workers side by side while a session's Ultracode switch is on (TD-5195). Omitted means the defaults: 3 at once, 8 a call. |
+| `model_refresh` | mapping | see below | Refresh every model's prices, windows and slug spelling in the background (TD-5197). Omitted means on, every 24 hours. |
 | `shell` | mapping | see below | The read-only shell list (TD-5103): commands that run without asking. Omitted in an older user copy means the whole built-in list, on. Config can shrink it or switch it off, never add to it. |
 | `remote` | mapping | see below | Opt-in Tailscale bind. Omitted in an older user copy is filled from the shipped file at load. Empty `bind` is loopback only. |
 | `notify` | mapping | see below | Outbound notification channels. Omitted in an older user copy is filled from the shipped file at load. Slack and ntfy are off until their `enabled` flag is true and a destination URL is stored in the OS keychain. |
@@ -816,6 +817,30 @@ active_preset: local
 workflow:
   max_parallel: 2
   max_tasks: 4
+```
+
+### `model_refresh`
+
+What **Refresh from servers** does in Settings (§3, TD-5185) also runs by
+itself (TD-5197): about 30 seconds after the daemon starts, then every
+`every_hours`, for every model in the catalog. It follows the same rules as
+the button, so it never guesses a model or writes a number the server does
+not publish. It runs beside the chat, never on a turn: a turn never waits
+for it, and a server that is down leaves that model's numbers as they were.
+When it changes something, Settings says so under the role ("Updated
+automatically: input price, output price.") and the log has a
+`model card refreshed` line with `auto: true`.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `auto` | bool | `true` | `false` leaves refreshing to Settings. |
+| `every_hours` | float 1..720 | `24` | Hours between background passes after the first. |
+
+<!-- verify: model -->
+```yaml
+model_refresh:
+  auto: true
+  every_hours: 12
 ```
 
 ### `shell`
@@ -2004,7 +2029,10 @@ slug that does not exist fails at the first turn that needs it, not at load.
 
 **Settings fills the numbers in for you (TD-5185).** Saving a tier's slug in Settings, or
 pressing **Refresh from servers** there, asks the server that tier already calls for its model list,
-with the key the tier already sends, and finds the slug exactly. From that model's card it writes:
+with the key the tier already sends, and finds the slug. The slug may differ only in its capitals
+(TD-5197): a tier saved as `Acme-Large` takes the card of a listed `acme-large`, and the server's
+own spelling is written back into `slug`. A prefix or a near name never matches. The same refresh
+also runs by itself at start and every day (`model_refresh`, §2). From that model's card it writes:
 
 | Card field | Config key | Rule |
 |---|---|---|
