@@ -18840,3 +18840,131 @@ with older daemons too. Settling a row on any verdict that names its key: a
 row tested again after its first test gave up took that test's late answer,
 then dropped its own. Keeping Test off while an earlier test is still out:
 after fixing the host, the row could not be tested until the old probe ended.
+
+## 2026-10-30 — TD-5203: every config.yaml key is editable in Settings → Configuration (Class B)
+
+**Context.** The owner asked for every `config.yaml` setting to be editable
+in Settings. About thirty sections and some 230 keys; a hand-built form per
+key would drift from the models the first time a key is added.
+
+**Decisions.**
+- **A schema read off the models.** `config_schema.py` walks every pydantic
+  model reachable from `ModelConfig` and sends one def per model (`ref` names
+  a nested one, so a tier's `fallbacks`, which are tiers, stay finite): kind,
+  literal choices, bounds, defaults, required. The words live in
+  `config_help.py` and `config_help_features.py`, keyed `Model.field`, not
+  as `Field(description=...)` on each field: `config.py` is edited by most
+  stories and this keeps 230 lines of prose out of its way. A test walks
+  every field and fails on one with no words, so a new key cannot ship
+  without them.
+- **Protocol.** `get_config_editor` answers with `config_editor`: the defs,
+  the effective values, every key path the file sets, each fixed key's reset
+  value by JSON-encoded path, and a fingerprint of the file. `set_config_value`
+  and `reset_config_value` change one key and are acked with a fresh
+  `config_editor` (values only: the defs and defaults are fixed for the
+  daemon's life and ride on the first reply), or refused with
+  `config_value_rejected` (code and message for the field, never the value).
+  A path that goes through a list position must carry the fingerprint it was
+  made against, since the item there may have moved; a key path needs none,
+  because the edit is spliced into the file as it is now. The window sends one
+  edit at a time. An answer to its own edit says what changed, so an edit
+  queued behind one that removed no list item takes the new fingerprint; one
+  queued behind a removal in its own list keeps the old one and is refused as
+  stale, rather than landing on the next item.
+- **No new dependency for round-trip writes.** ruamel.yaml would re-emit
+  the whole document. PyYAML's composer already gives every node's exact
+  start and end, so `config_yaml_edit.py` replaces, inserts or deletes only
+  the characters of the edited key; everything else is byte-identical. New
+  values are written as JSON (strings always quoted, floats always with a
+  decimal point, characters YAML would fold escaped); a block list stays
+  block, a flow list stays flow. A key behind a YAML anchor or alias is
+  refused with "edit it by hand".
+- **Validate, then write.** The would-be text is parsed, checked to read
+  back as written, and loaded through `config_from_data` (split out of
+  `load_config` so both use one path: the shipped-section fill, the
+  credential merge, every validator). The checks the dedicated writers make
+  beyond loading run too: an MCP server's off-box URL needs `allow_remote`
+  and https, `remote.bind` may not name a bind the listener refuses (never
+  0.0.0.0, `::` or a non-Tailscale address), a tier's window must exceed
+  twice its reply room, and `active_preset` must name a model. Then an
+  atomic write, then `_reload_user_config`; an MCP edit reloads the servers
+  and an `active_preset` edit becomes the live model. The read, check and
+  write run on the event loop with no await between them, as every
+  config.yaml writer now does, so none can interleave. The judgments and
+  email writers used to run in a worker thread, where either could drop an
+  edit made here between its read and its write; they run on the loop too
+  (each write is a few milliseconds).
+- **Reset.** A key at a fixed place goes back to what a fresh install has:
+  the packaged file's value is written when it has the key, otherwise the
+  key is removed for its built-in default. A key inside a list item or map
+  entry is removed; a path that ends at an item or entry removes it. When
+  the first key of a section the loader fills from the packaged file is
+  changed, the packaged block (comments included) is copied in first;
+  writing one key alone would end the fill and drop its neighbours to their
+  built-in defaults.
+- **Secrets (directive 2).** An MCP server's `env` and `headers` are a
+  `secrets` kind: the event carries each name and where its value lives
+  (`keychain` or `config`), never the value, and both are refused for
+  writing here, as is `credentials` (Settings → API keys keeps those keys in
+  the keychain). A password in any URL is masked, a value still holding the
+  mask is refused, and a malformed config edit's parse error gives reasons
+  without the input. Writes are per key, so a masked value is never part of
+  what is written back.
+- **The computer's own (directive 1).** All three verbs are in
+  `LOOPBACK_VERBS`, reading included: the editor reaches the commands this
+  computer runs (hooks, language and MCP servers, the engine binary), where
+  keys and tokens are sent, and the phone listener. The narrower pages a
+  phone may use are unchanged. Editing `remote.bind` or `remote.port` binds
+  nothing: the switch in Phones and devices stays the only path to a
+  listener, and its validators still run when it binds.
+- **What is not offered here.** Models are added through Add a model and
+  MCP servers on their own page (which also deletes a server's keychain
+  values on removal); those maps say so instead of an Add. No entry is
+  renamed: preset names and MCP server ids are referenced elsewhere (sessions,
+  jobs, keychain item names).
+
+- **Review fixes (same day).**
+  - *An MCP server keeps its address here when it holds a token.* A new
+    host, port or transport for a server with `env`, `headers` or
+    `allow_remote` is refused with a pointer to Settings → MCP servers, the
+    TD-5161 rule: that page drops what was for the old server and forgets
+    its keychain values. Rejected: applying that rule in the same write, a
+    one-key edit that silently clears three others.
+  - *No secret is written here (directive 2).* A value that `redact_secrets`
+    would change, or that holds URL user info, is refused (`secret`). A
+    URL's whole user info is masked on the wire (a token used as the user
+    name too), and every refusal's message is scrubbed the same way, whatever
+    raised it. `voice.credential` and `judgments.typesafe_credential` share
+    `speech.credential`'s rule in the models (a key slug, never a reserved
+    account), so a hand edit is caught at load; the editor also wants a key
+    Settings → API keys has, the packaged name excepted.
+  - *Whole sections and entry maps are never reset, nor entries created,
+    through one key.* Reset applies set's container rules, and every step
+    into a map entry or list item that is not there must be one this page
+    may add.
+  - *The would-be file must read back whole.* It is compared with what the
+    edit should leave, not only at the edited key; text the splicer made that
+    does not parse is refused with a fixed message (its YAML detail goes to
+    the log), never as the person's file being invalid.
+  - *What the splicer refuses:* a key behind a merge (`<<`), a key listed
+    twice (the loader keeps the last, an edit would find the first), and a
+    file holding U+0085, U+2028 or U+2029, which YAML reads as line breaks
+    the position helpers do not see. Inside a flow collection a value is
+    written in flow style; a multi-line value that replaces a `|` or `>`
+    block stays a block.
+  - *Keys written through an anchor are locked on the page* (`locked_paths`
+    on `config_editor`), not offered and then refused.
+  - *Limits.* `set_config_value.value` holds at most 64 KiB as JSON, and an
+    edit may not grow the file past 1 MiB: the edit and the reload run on the
+    loop. The file is read and written byte for byte, so its line endings
+    stay.
+  - *The window.* Controls build on what they last sent, not on the stored
+    value, so a second change before the first answer keeps the first; list
+    rows are keyed by position and never redrawn by another key's answer;
+    a select's keyboard steps are saved once the keys rest; Escape that drops
+    a draft does not close Settings.
+
+**Rejected.** ruamel.yaml (a new dependency and whole-document re-emission);
+reading through a phone with the remote section scrubbed (two views of one
+page for little gain); resetting to the built-in default everywhere (a reset
+`search.base_url` would have turned web search off).

@@ -1,0 +1,373 @@
+/* Settings → Configuration (TD-5203). One sheet for the editor's many small
+ * components, so a row looks the same at every depth. Everything sits under
+ * .cfg-root and uses design tokens only. */
+
+.cfg-root {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	font-size: var(--text-sm);
+	color: var(--color-ink);
+}
+
+.cfg-root .cfg-hint {
+	margin: var(--space-1) 0 0;
+	color: var(--color-ink-secondary);
+	font-size: var(--text-sm);
+	line-height: var(--leading-normal);
+}
+
+.cfg-root .cfg-muted {
+	color: var(--color-ink-muted);
+	font-size: var(--text-xs);
+}
+
+.cfg-root .cfg-key {
+	font-family: var(--font-mono);
+	font-size: var(--text-xs);
+	color: var(--color-ink-secondary);
+	word-break: break-all;
+}
+
+/* Stays in view while the sections scroll under it. */
+.cfg-root .cfg-searchbar {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	padding-bottom: var(--space-2);
+	background: var(--color-lifted);
+}
+
+.cfg-root .cfg-search {
+	width: 100%;
+	box-sizing: border-box;
+	font-size: var(--text-sm);
+	color: var(--color-ink);
+	background: var(--color-sunken);
+	border: 1px solid var(--color-hairline);
+	border-radius: var(--radius-md);
+	padding: var(--space-2) var(--space-3);
+}
+
+/* ── sections and groups ── */
+
+.cfg-root .cfg-section {
+	border: 1px solid var(--color-hairline);
+	border-radius: var(--radius-md);
+	background: var(--color-lifted);
+}
+
+.cfg-root .cfg-section-head {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	width: 100%;
+	padding: var(--space-2) var(--space-3);
+	background: transparent;
+	border: 0;
+	border-radius: var(--radius-md);
+	text-align: left;
+	color: var(--color-ink);
+	cursor: pointer;
+}
+
+.cfg-root .cfg-section-head:hover {
+	background: var(--color-sunken);
+}
+
+.cfg-root .cfg-section-title {
+	font-weight: var(--weight-medium);
+}
+
+.cfg-root .cfg-section-body {
+	padding: 0 var(--space-3) var(--space-3);
+}
+
+.cfg-root .cfg-links {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+	margin-top: var(--space-2);
+}
+
+.cfg-root .cfg-link {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-1);
+	padding: 0;
+	background: transparent;
+	border: 0;
+	font-size: var(--text-sm);
+	color: var(--color-accent);
+	cursor: pointer;
+}
+
+.cfg-root .cfg-link:hover {
+	color: var(--color-accent-hover);
+	text-decoration: underline;
+}
+
+.cfg-root .cfg-group {
+	margin-top: var(--space-3);
+	padding-left: var(--space-3);
+	border-left: 2px solid var(--color-hairline);
+}
+
+.cfg-root .cfg-group-head {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	padding: var(--space-1) 0;
+	background: transparent;
+	border: 0;
+	color: var(--color-ink);
+	font-weight: var(--weight-medium);
+	cursor: pointer;
+}
+
+.cfg-root .cfg-chevron {
+	display: inline-block;
+	width: var(--space-3);
+	color: var(--color-ink-muted);
+	transition: transform var(--transition-fast);
+}
+
+.cfg-root .cfg-chevron--open {
+	transform: rotate(90deg);
+}
+
+/* ── one key ── */
+
+.cfg-root .cfg-field {
+	padding: var(--space-3) 0;
+	border-top: 1px solid var(--color-hairline);
+}
+
+.cfg-root .cfg-field:first-child {
+	border-top: 0;
+}
+
+.cfg-root .cfg-field-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-2);
+}
+
+.cfg-root .cfg-label {
+	display: inline-flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--space-2);
+	font-family: var(--font-mono);
+	font-size: var(--text-sm);
+	color: var(--color-ink);
+}
+
+/* The key's own <label>, inside .cfg-label beside its Modified badge. */
+.cfg-root .cfg-label-text {
+	display: inline-flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: var(--space-2);
+}
+
+.cfg-root .cfg-unit {
+	font-family: var(--font-sans);
+	font-size: var(--text-xs);
+	color: var(--color-ink-muted);
+}
+
+.cfg-root .cfg-badge {
+	font-family: var(--font-sans);
+	font-size: var(--text-xs);
+	color: var(--color-accent);
+	border: 1px solid var(--color-accent);
+	border-radius: var(--radius-full);
+	padding: 0 var(--space-2);
+}
+
+.cfg-root .cfg-control {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-2);
+	margin-top: var(--space-2);
+}
+
+.cfg-root .cfg-status {
+	margin: var(--space-1) 0 0;
+	font-size: var(--text-xs);
+	color: var(--color-ink-muted);
+}
+
+.cfg-root .cfg-status--saved {
+	color: var(--color-ok);
+}
+
+.cfg-root .cfg-status--error,
+.cfg-root .cfg-error {
+	color: var(--color-err);
+}
+
+.cfg-root .cfg-error {
+	margin: var(--space-1) 0 0;
+	font-size: var(--text-xs);
+}
+
+/* ── inputs and buttons ── */
+
+.cfg-root .cfg-input {
+	min-width: 0;
+	flex: 1 1 14rem;
+	font-size: var(--text-sm);
+	color: var(--color-ink);
+	background: var(--color-sunken);
+	border: 1px solid var(--color-hairline);
+	border-radius: var(--radius-sm);
+	padding: var(--space-1) var(--space-2);
+}
+
+.cfg-root .cfg-input--number {
+	flex: 0 0 8rem;
+}
+
+.cfg-root select.cfg-input {
+	flex: 0 1 16rem;
+}
+
+.cfg-root textarea.cfg-input {
+	flex-basis: 100%;
+	min-height: 5rem;
+	font-family: var(--font-mono);
+	font-size: var(--text-xs);
+	resize: vertical;
+}
+
+.cfg-root .cfg-input:disabled,
+.cfg-root .cfg-button:disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+.cfg-root .cfg-input[aria-invalid="true"] {
+	border-color: var(--color-err);
+}
+
+.cfg-root .cfg-button {
+	font-size: var(--text-sm);
+	color: var(--color-ink-secondary);
+	background: transparent;
+	border: 1px solid var(--color-hairline);
+	border-radius: var(--radius-full);
+	padding: var(--space-1) var(--space-3);
+	cursor: pointer;
+}
+
+.cfg-root .cfg-button:hover:not(:disabled) {
+	color: var(--color-ink);
+	background: var(--color-sunken);
+}
+
+.cfg-root .cfg-button--on {
+	color: var(--color-on-accent);
+	background: var(--color-accent);
+	border-color: var(--color-accent);
+}
+
+.cfg-root .cfg-button--on:hover:not(:disabled) {
+	color: var(--color-on-accent);
+	background: var(--color-accent-hover);
+}
+
+.cfg-root .cfg-button--quiet {
+	border-color: transparent;
+	color: var(--color-ink-muted);
+	padding: var(--space-1) var(--space-2);
+}
+
+.cfg-root .cfg-button--danger {
+	color: var(--color-err);
+	border-color: var(--color-err);
+}
+
+.cfg-root .cfg-segments {
+	display: inline-flex;
+	flex-wrap: wrap;
+	gap: var(--space-1);
+}
+
+/* ── lists and entries ── */
+
+.cfg-root .cfg-rows {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+	width: 100%;
+	/* ConfigSecrets draws its names as a <ul>: no bullet beside "None." */
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+
+.cfg-root .cfg-row {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+}
+
+.cfg-root .cfg-entry {
+	margin-top: var(--space-2);
+	border: 1px solid var(--color-hairline);
+	border-radius: var(--radius-sm);
+	background: var(--color-ground);
+}
+
+.cfg-root .cfg-entry-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-2);
+	padding: var(--space-1) var(--space-2);
+}
+
+.cfg-root .cfg-entry-body {
+	padding: 0 var(--space-3) var(--space-2);
+}
+
+.cfg-root .cfg-form {
+	margin-top: var(--space-2);
+	padding: var(--space-3);
+	border: 1px dashed var(--color-hairline);
+	border-radius: var(--radius-sm);
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+.cfg-root .cfg-form-row {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+}
+
+/* In a column a flex basis is a height; the box takes its natural one. */
+.cfg-root .cfg-form-row .cfg-input {
+	flex: none;
+}
+
+.cfg-root .cfg-note {
+	margin: var(--space-2) 0 0;
+	padding: var(--space-2) var(--space-3);
+	border-radius: var(--radius-sm);
+	background: var(--color-sunken);
+	color: var(--color-ink-secondary);
+	font-size: var(--text-xs);
+}
+
+.cfg-root .cfg-secret {
+	display: flex;
+	gap: var(--space-2);
+	font-size: var(--text-xs);
+}

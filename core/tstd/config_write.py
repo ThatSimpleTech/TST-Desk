@@ -99,15 +99,16 @@ def save_engine_kind(kind: str, path: Path | None = None) -> Path:
     return config_path
 
 
-def _atomic_write(config_path: Path, text: str) -> None:
+def _atomic_write(config_path: Path, text: str, *, newline: str | None = None) -> None:
     """Replace *config_path*'s contents in one step.
 
     Same-directory temp file plus ``os.replace``, so a crash mid-write never
-    leaves a torn config behind.
+    leaves a torn config behind. *newline* is ``open``'s: ``""`` writes the
+    text's own line endings, for a caller that read the file byte for byte.
     """
     fd, tmp_name = tempfile.mkstemp(dir=config_path.parent, prefix=config_path.name, suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        with os.fdopen(fd, "w", encoding="utf-8", newline=newline) as f:
             f.write(text)
         os.replace(tmp_name, config_path)
     except BaseException:

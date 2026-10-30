@@ -58,6 +58,49 @@ no effect.
 
 ## 2. `config.yaml` — the model plane
 
+### Editing in Settings → Configuration
+
+Every key in this section can also be changed in **Settings → Configuration** (TD-5203),
+without opening the file. The page is drawn from the same models the daemon loads, so it
+lists every key with its type, bounds, default and a line on what it does, and its search
+finds a key by name or by words. A change saves as you make it: a switch or a choice at
+once, a box on Enter or when you leave it. The daemon builds the whole file as it would be,
+loads it the way it loads `config.yaml`, makes the checks the other Settings pages make,
+and only then writes it, in place, keeping every comment and the formatting of the keys you
+did not touch. A value that does not load is refused with the reason under its field, and
+the file stays as it was. New sessions use the change; a key that waits for the next start
+says so.
+
+**Reset** puts a key back to what TST Desk ships: the value in the packaged `config.yaml`,
+or the built-in default for a key that file leaves out. Inside a list item or map entry (a
+model's tier, a hook, a language server) Reset removes the key's line so the built-in
+default applies, and **Clear** does the same for a key with no default, such as a model's
+`label`. An entry goes with its own Remove. When you change a key of a section your file
+does not have yet, the packaged section, comments included, is copied in first, so the
+other keys in it keep the values they had.
+
+Some keys are only shown there. An MCP server's `env` and `headers` show their names and
+whether each value is in the keychain; Settings → MCP servers stores them. `credentials`
+are edited in Settings → API keys, which keeps each key in the OS keychain. Models are added
+with Settings → Model → Add a model, and MCP servers in Settings → MCP servers. The page
+belongs to the computer itself: a paired phone or another computer cannot read or change
+the configuration through it.
+
+No secret goes into the file from this page. A value that looks like an API key or token,
+or a URL with a user name or password in it, is refused, and a password in a URL the file
+already has shows masked. Keep keys in Settings → API keys and MCP tokens in Settings → MCP
+servers. For the same reason an MCP server that holds a token or the off-box opt-in
+(`allow_remote`) keeps its address and transport here: moving it to another host, port or
+transport is done in Settings → MCP servers, which drops what was for the old server and
+asks again, or in the file by hand. `voice.credential`, `speech.credential` and
+`judgments.typesafe_credential` must name a key Settings → API keys has.
+
+Keys written with a YAML anchor or alias (`&name`, `*name`, as [models.md](models.md) shows
+for a model's three tiers) or a merge (`<<:`) are shown, marked as edited in the file: a
+change at one would change every place that shares it. A file the page cannot change in
+place exactly (a key listed twice, a Unicode line separator in a comment) is left as it is,
+with the reason under the field. Line endings stay as the file has them.
+
 ### Top-level keys
 
 | Key | Type | Default | Effect |
@@ -296,7 +339,7 @@ answer falls back to the unjudged behavior, never to a block.
 | `backend` | `worker` or `typesafe` | `worker` | The connector. `worker` uses the configured worker tier. `typesafe` uses the hosted typed-judgment API — opt-in, and it falls back to `worker` when its key is not stored. |
 | `typesafe_base_url` | string | *empty in code; the shipped config sets `https://api.typesafe.ai`* | The TypeSafe API base URL. Empty means unconfigured — the `typesafe` backend falls back to `worker`. Destinations live here, never in source (§2.3). |
 | `typesafe_model` | string | `jev-latest` | The TypeSafe model alias for judgments. |
-| `typesafe_credential` | string | `typesafe` | The keychain credential id the TypeSafe connector reads. The key itself lives only in the OS keychain (prime §2.2) — add it under Settings → API keys with that name. |
+| `typesafe_credential` | string | `typesafe` | The keychain credential id the TypeSafe connector reads: a lowercase slug, never another keychain item's name (a webhook, a sign-in token). The key itself lives only in the OS keychain (prime §2.2) — add it under Settings → API keys with that name. |
 
 ### `notify`
 
@@ -470,7 +513,7 @@ server.
 | `base_url` | string | *empty* | OpenAI-compatible transcriptions root, including `/v1`. Empty disables even if `enabled` is true. No shipped cloud URL. |
 | `model` | string | *empty* | Transcriptions `model` field. Empty omits it (local servers often have a default). |
 | `timeout_seconds` | float > 0 | `30` | How long the POST may run. |
-| `credential` | string | *empty* | Named keychain id sent as `Authorization: Bearer`. Empty sends no key. |
+| `credential` | string | *empty* | Named keychain id sent as `Authorization: Bearer`: a lowercase slug, never another keychain item's name. Empty sends no key. |
 
 <!-- verify: model -->
 ```yaml
@@ -1844,7 +1887,7 @@ Hold-to-talk dictation (TD-4701). The Settings toggle is off by default and live
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `base_url` | string | *empty* | OpenAI-compatible `/v1` root. `tstd` POSTs `{base_url}/audio/transcriptions`. Empty disables the endpoint path. The host is configuration, never Python. |
-| `credential` | string | *empty* | Named key from the catalog. Required when `base_url` is off-box; omit on loopback. |
+| `credential` | string | *empty* | Named key from the catalog: a lowercase slug, never another keychain item's name. Required when `base_url` is off-box; omit on loopback. |
 | `timeout_seconds` | float > 0 | `30` | How long to wait for the transcription response. |
 
 ### A preset
@@ -2189,7 +2232,7 @@ max_output_tokens: 8192
 
 ```
 Invalid model configuration in .../config.yaml: presets.<preset>.<tier>: Value error,
-slug is required for the off-box endpoint https://openrouter.ai/api/v1;
+slug is required for the off-box endpoint at openrouter.ai;
 only a loopback endpoint discovers its model from /v1/models
 ```
 

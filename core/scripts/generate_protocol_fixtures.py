@@ -14,6 +14,7 @@ from pathlib import Path
 # Add core to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tstd.config_editor_wire import ConfigEdit, ConfigField, ConfigModelDef, ConfigNode
 from tstd.peer_policy import FORWARDED_VERBS
 from tstd.protocol import (
     CHUNK_MAX,
@@ -51,7 +52,9 @@ from tstd.protocol import (
     CloseWorktree,
     CommandEntry,
     CommandList,
+    ConfigEditor,
     ConfigTrust,
+    ConfigValueRejected,
     ContextCompacted,
     ContextPinEntry,
     ContextPins,
@@ -93,6 +96,7 @@ from tstd.protocol import (
     FocusWindow,
     ForkFrom,
     GetCharter,
+    GetConfigEditor,
     GetHooks,
     GetInstructionStack,
     GetSessionJobSource,
@@ -196,6 +200,7 @@ from tstd.protocol import (
     RemoveQueued,
     RemoveRemoteDevice,
     RenameSession,
+    ResetConfigValue,
     RestoreFileEntry,
     RestoreFiles,
     Resume,
@@ -225,6 +230,7 @@ from tstd.protocol import (
     SessionWorktreeInfo,
     SetApiKey,
     SetBranch,
+    SetConfigValue,
     SetCoworker,
     SetCredential,
     SetCuIndicators,
@@ -420,6 +426,17 @@ FIXTURES = {
         password=None,
     ),
     "test_email": TestEmail(to="owner@example.com"),
+    # TD-5203: Settings → Configuration.
+    "get_config_editor": GetConfigEditor(),
+    "set_config_value": SetConfigValue(
+        path=["workflow", "max_parallel"], value=4, version="0123456789abcdef"
+    ),
+    "set_config_value_item": SetConfigValue(
+        path=["hooks", "after_write", 0],
+        value={"command": ["ruff", "format"], "match": ["*.py"]},
+        version="0123456789abcdef",
+    ),
+    "reset_config_value": ResetConfigValue(path=["search", "max_results"]),
     "github_connect": GithubConnect(),
     "github_disconnect": GithubDisconnect(),
     "microsoft_connect": MicrosoftConnect(),
@@ -1602,6 +1619,67 @@ FIXTURES = {
         error="The server refused the key. Check it and try again.",
     ),
     "model_tested": ModelTested(preset="tst-default", ok=True, reply="I am working."),
+    # TD-5203: a two-model slice of the editor's schema, and an edit's ack.
+    "config_editor": ConfigEditor(
+        root="ModelConfig",
+        defs={
+            "ModelConfig": ConfigModelDef(
+                name="ModelConfig",
+                fields=[
+                    ConfigField(
+                        name="workflow",
+                        node=ConfigNode(
+                            kind="object",
+                            ref="WorkflowConfig",
+                            title="Workflow",
+                            description="Limits for the workflow tool.",
+                            has_default=True,
+                            default={"max_parallel": 3, "max_tasks": 8},
+                        ),
+                    ),
+                    ConfigField(
+                        name="mcp_env",
+                        node=ConfigNode(
+                            kind="secrets",
+                            editable=False,
+                            description="Extra environment for a stdio server.",
+                            note="Values are set in Settings → MCP servers.",
+                        ),
+                    ),
+                ],
+            ),
+            "WorkflowConfig": ConfigModelDef(
+                name="WorkflowConfig",
+                empty_ok=True,
+                fields=[
+                    ConfigField(
+                        name="max_parallel",
+                        node=ConfigNode(
+                            kind="int",
+                            description="Workers running at once.",
+                            minimum=1,
+                            maximum=16,
+                            default=3,
+                            has_default=True,
+                        ),
+                    )
+                ],
+            ),
+        },
+        values={"workflow": {"max_parallel": 4}, "mcp_env": {"TOKEN": "keychain"}},
+        set_paths=[["workflow"], ["workflow", "max_parallel"]],
+        locked_paths=[["presets", "team", "worker"]],
+        defaults={'["workflow","max_parallel"]': 3},
+        version="0123456789abcdef",
+        file="/home/user/.local/share/tst-desk/config.yaml",
+        edit=ConfigEdit(action="set", path=["workflow", "max_parallel"]),
+    ),
+    "config_value_rejected": ConfigValueRejected(
+        action="set",
+        path=["workflow", "max_parallel"],
+        code="invalid",
+        message="workflow.max_parallel: Input should be less than or equal to 16",
+    ),
     "local_servers": LocalServers(
         servers=[
             LocalServer(

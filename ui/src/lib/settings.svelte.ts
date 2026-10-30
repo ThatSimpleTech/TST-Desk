@@ -38,6 +38,7 @@ export type SettingsSection =
 	| "key"
 	| "email"
 	| "github"
+	| "config"
 	| "about";
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	"appearance",
@@ -52,6 +53,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	"key",
 	"email",
 	"github",
+	"config",
 	"about",
 ] as const;
 

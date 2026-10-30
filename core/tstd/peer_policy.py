@@ -133,6 +133,11 @@ VIEWER_MACHINE_VERBS: frozenset[str] = frozenset({"list_machines"})
 # open to a phone, and neither is a machine-peer verb.
 # ``scan_local_servers`` (TD-5180) probes this computer's own model ports,
 # a network call the person at the computer starts.
+# Settings → Configuration (TD-5203) reaches every key of config.yaml: the
+# commands this computer runs (hooks, language and MCP servers, the engine),
+# where keys and tokens are sent, and the phone listener. The narrower pages
+# a phone may use stay open to it; this one, reading included, is the
+# computer's own.
 LOOPBACK_VERBS: frozenset[str] = frozenset(
     {
         "drain",
@@ -140,6 +145,9 @@ LOOPBACK_VERBS: frozenset[str] = frozenset(
         "steering_accept",
         "steering_edit",
         "scan_local_servers",
+        "get_config_editor",
+        "set_config_value",
+        "reset_config_value",
     }
 )
 
