@@ -20,6 +20,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    JsonValue,
     TypeAdapter,
     ValidationError,
     field_validator,
@@ -28,6 +29,7 @@ from pydantic import (
 
 from .attachments import AttachmentLimits
 from .autonomy.charter import Charter
+from .config_editor_wire import ConfigEdit, ConfigModelDef
 from .effort import LEGACY_ULTRACODE, EffortLevel
 from .logging import redact_secrets, redact_structure
 from .router import TierName
@@ -1962,6 +1964,84 @@ class TestEmail(ClientMessage):
 
     type: Literal["test_email"] = "test_email"
     to: str = ""
+
+
+# A key path of config.yaml (TD-5203): mapping keys and list positions.
+_CONFIG_PATH_PART_MAX = 200
+_CONFIG_LIST_INDEX_MAX = 10_000
+
+
+def _check_config_path(value: Any) -> Any:
+    """Refuse a path the editor could never have sent, before any lookup."""
+    if not isinstance(value, list):
+        return value
+    for part in value:
+        if isinstance(part, bool) or not isinstance(part, str | int):
+            raise ValueError("a key path holds key names and list positions only")
+        if isinstance(part, str) and not 0 < len(part) <= _CONFIG_PATH_PART_MAX:
+            raise ValueError(f"a key name has 1 to {_CONFIG_PATH_PART_MAX} characters")
+        if isinstance(part, int) and not 0 <= part <= _CONFIG_LIST_INDEX_MAX:
+            raise ValueError("a list position is out of range")
+    return value
+
+
+class GetConfigEditor(ClientMessage):
+    """Settings → Configuration (TD-5203): every config.yaml key, as a schema and values.
+
+    Answered with ``config_editor``. Only the computer itself may ask: the
+    file names this computer's commands, hosts and listener (peer_policy).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["get_config_editor"] = "get_config_editor"
+
+
+class SetConfigValue(ClientMessage):
+    """Write one config.yaml value (TD-5203).
+
+    ``path`` names the key by mapping keys and list positions; a position
+    one past a list's end appends to it. The whole would-be file is loaded
+    as the daemon loads it before an atomic write that keeps every other
+    byte. Acked with ``config_editor``; refused with ``config_value_rejected``
+    and the file untouched. ``version`` is the ``config_editor`` version the
+    edit was made against: a path through a list position is refused once
+    the file has changed since. Only the computer itself may send it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["set_config_value"] = "set_config_value"
+    path: list[str | int] = Field(min_length=1, max_length=16)
+    value: JsonValue = Field(default=None, repr=False)
+    version: str = Field(default="", max_length=64)
+
+    @field_validator("path", mode="before")
+    @classmethod
+    def _path_parts(cls, value: Any) -> Any:
+        return _check_config_path(value)
+
+
+class ResetConfigValue(ClientMessage):
+    """Put one config.yaml key back to its default (TD-5203).
+
+    A key at a fixed place goes back to what TST Desk ships (the value in
+    the packaged config.yaml, else the built-in one). A key inside a list
+    item or map entry loses its line and takes the built-in default; a path
+    that ends at a list item or map entry removes it. Acked and refused like
+    ``set_config_value``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["reset_config_value"] = "reset_config_value"
+    path: list[str | int] = Field(min_length=1, max_length=16)
+    version: str = Field(default="", max_length=64)
+
+    @field_validator("path", mode="before")
+    @classmethod
+    def _path_parts(cls, value: Any) -> Any:
+        return _check_config_path(value)
 
 
 class GithubConnect(ClientMessage):
@@ -3935,6 +4015,50 @@ class ModelTested(DaemonEvent):
     detail: str = ""
 
 
+class ConfigEditor(DaemonEvent):
+    """Settings → Configuration's view of config.yaml (TD-5203).
+
+    ``defs`` describes every config model; ``root`` is the top one.
+    ``values`` is the effective config as the daemon would load the file
+    now, with every ``secrets`` map's values replaced by where each lives
+    (``keychain`` or ``config``), never the value. ``set_paths`` lists every
+    key path the file itself sets. ``defaults`` holds the reset value of each
+    key at a fixed place, by JSON-encoded path. ``version`` identifies the
+    file's bytes; ``edit`` names the edit this event acknowledges.
+    """
+
+    type: Literal["config_editor"] = "config_editor"
+    seq: int = 1
+    root: str
+    defs: dict[str, ConfigModelDef] = Field(default_factory=dict)
+    values: dict[str, JsonValue] = Field(default_factory=dict)
+    set_paths: list[list[str | int]] = Field(default_factory=list)
+    defaults: dict[str, JsonValue] = Field(default_factory=dict)
+    version: str = ""
+    file: str = ""
+    edit: ConfigEdit | None = None
+
+
+ConfigRejectCode = Literal[
+    "invalid", "not_editable", "secret", "stale", "not_found", "write_failed"
+]
+
+
+class ConfigValueRejected(DaemonEvent):
+    """A Settings → Configuration edit that was not written (TD-5203).
+
+    The file is untouched. ``message`` says why in words for the field it
+    names; it never echoes the value that was sent.
+    """
+
+    type: Literal["config_value_rejected"] = "config_value_rejected"
+    seq: int = 1
+    action: Literal["set", "reset"]
+    path: list[str | int] = Field(default_factory=list)
+    code: ConfigRejectCode
+    message: str
+
+
 class DiagnosticCheck(BaseModel):
     """One doctor check (TD-1104).
 
@@ -4705,6 +4829,9 @@ ClientMessageT = Annotated[
     | Transcribe
     | SetEmailNotify
     | TestEmail
+    | GetConfigEditor
+    | SetConfigValue
+    | ResetConfigValue
     | GithubConnect
     | GithubDisconnect
     | MicrosoftConnect
@@ -4780,6 +4907,8 @@ DaemonEventT = Annotated[
     | EndpointModels
     | LocalServers
     | ModelTested
+    | ConfigEditor
+    | ConfigValueRejected
     | DiagnosticsReport
     | UsageReport
     | UsageExported
@@ -4953,6 +5082,9 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "transcribe",
         "set_email_notify",
         "test_email",
+        "get_config_editor",
+        "set_config_value",
+        "reset_config_value",
         "github_connect",
         "github_disconnect",
         "microsoft_connect",
@@ -5028,6 +5160,8 @@ _KNOWN_EVENT_TYPES = frozenset(
         "endpoint_models",
         "local_servers",
         "model_tested",
+        "config_editor",
+        "config_value_rejected",
         "diagnostics_report",
         "usage_report",
         "usage_exported",
@@ -5081,9 +5215,18 @@ def _check_known_type(data: dict[str, Any], known_types: frozenset[str]) -> None
         raise UnknownMessageTypeError(msg_type)
 
 
-#: Messages whose input may hold an MCP server's token (TD-5110).
+#: Messages whose input may hold an MCP server's token (TD-5110), or a value
+#: typed into Settings → Configuration (TD-5203): their parse errors give
+#: the reasons and never the input.
 _MCP_VALUE_VERBS = frozenset(
-    {"set_mcp_server", "delete_mcp_server", "set_mcp_secret", "delete_mcp_secret"}
+    {
+        "set_mcp_server",
+        "delete_mcp_server",
+        "set_mcp_secret",
+        "delete_mcp_secret",
+        "set_config_value",
+        "reset_config_value",
+    }
 )
 
 

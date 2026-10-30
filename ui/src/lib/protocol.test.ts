@@ -139,6 +139,11 @@ import type {
   LocalServers,
   ModelTested,
   TestModel,
+  ConfigEditor,
+  ConfigValueRejected,
+  GetConfigEditor,
+  ResetConfigValue,
+  SetConfigValue,
   RunDiagnostics,
   DiagnosticsReport,
   GetUsage,
@@ -1279,6 +1284,51 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(none.checked).toEqual(["http://127.0.0.1:11434/v1"]);
   });
 
+  it("config editor: get, set, reset (TD-5203)", () => {
+    expect(fixtures.get_config_editor as GetConfigEditor).toEqual({ type: "get_config_editor" });
+    const set = fixtures.set_config_value as SetConfigValue;
+    expect(set.path).toEqual(["workflow", "max_parallel"]);
+    expect(set.value).toBe(4);
+    expect(set.version).toBe("0123456789abcdef");
+    const item = fixtures.set_config_value_item as SetConfigValue;
+    expect(item.path).toEqual(["hooks", "after_write", 0]);
+    expect(typeof item.path[2]).toBe("number");
+    const reset = fixtures.reset_config_value as ResetConfigValue;
+    expect(reset).toEqual({ type: "reset_config_value", path: ["search", "max_results"], version: "" });
+  });
+
+  it("config_editor carries defs, values, set paths and defaults (TD-5203)", () => {
+    const m = fixtures.config_editor as ConfigEditor;
+    expect(m.type).toBe("config_editor");
+    expect(m.seq).toBe(1);
+    expect(m.root).toBe("ModelConfig");
+    const root = m.defs[m.root];
+    expect(root.fields.map((f) => f.name)).toEqual(["workflow", "mcp_env"]);
+    const workflow = root.fields[0].node;
+    expect(workflow.kind).toBe("object");
+    expect(workflow.ref).toBe("WorkflowConfig");
+    const parallel = m.defs.WorkflowConfig.fields[0].node;
+    expect([parallel.kind, parallel.minimum, parallel.maximum, parallel.default]).toEqual(["int", 1, 16, 3]);
+    expect(parallel.items).toBeNull();
+    expect(Array.isArray(parallel.choices)).toBe(true);
+    expect(m.defs.WorkflowConfig.empty_ok).toBe(true);
+    expect(root.fields[1].node.kind).toBe("secrets");
+    expect(m.values.mcp_env).toEqual({ TOKEN: "keychain" });
+    expect(m.set_paths).toContainEqual(["workflow", "max_parallel"]);
+    expect(m.defaults[JSON.stringify(["workflow", "max_parallel"])]).toBe(3);
+    expect(m.edit).toEqual({ action: "set", path: ["workflow", "max_parallel"] });
+    expect(isString(m.version) && isString(m.file)).toBe(true);
+  });
+
+  it("config_value_rejected names the key and why, never the value (TD-5203)", () => {
+    const m = fixtures.config_value_rejected as ConfigValueRejected;
+    expect(m.type).toBe("config_value_rejected");
+    expect(m.code).toBe("invalid");
+    expect(m.action).toBe("set");
+    expect(m.path).toEqual(["workflow", "max_parallel"]);
+    expect(isString(m.message)).toBe(true);
+  });
+
   it("model_tested", () => {
     const m = fixtures.model_tested as ModelTested;
     expect(m.type).toBe("model_tested");
@@ -1415,6 +1465,9 @@ describe("All fixtures have required shape", () => {
       "transcribe",
       "set_email_notify",
       "test_email",
+      "get_config_editor",
+      "set_config_value",
+      "reset_config_value",
       "github_connect",
       "github_disconnect",
       "microsoft_connect",
@@ -1440,6 +1493,7 @@ describe("All fixtures have required shape", () => {
       "model_fallback", "context_usage_fallback", "tier_state_fallback",
       "instruction_stack", "instruction_files", "command_list", "context_pins", "session_search_results", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "steering_proposal", "steering_decision", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated", "endpoint_models", "local_servers", "model_tested",
+      "config_editor", "config_value_rejected",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",
       "artifact_ready", "artifact_list", "artifact", "artifact_chunk",
       "screen_frame",

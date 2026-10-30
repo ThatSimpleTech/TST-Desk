@@ -229,6 +229,44 @@
     "type": "test_email",
     "to": "owner@example.com"
   },
+  "get_config_editor": {
+    "type": "get_config_editor"
+  },
+  "set_config_value": {
+    "type": "set_config_value",
+    "path": [
+      "workflow",
+      "max_parallel"
+    ],
+    "value": 4,
+    "version": "0123456789abcdef"
+  },
+  "set_config_value_item": {
+    "type": "set_config_value",
+    "path": [
+      "hooks",
+      "after_write",
+      0
+    ],
+    "value": {
+      "command": [
+        "ruff",
+        "format"
+      ],
+      "match": [
+        "*.py"
+      ]
+    },
+    "version": "0123456789abcdef"
+  },
+  "reset_config_value": {
+    "type": "reset_config_value",
+    "path": [
+      "search",
+      "max_results"
+    ],
+    "version": ""
+  },
   "github_connect": {
     "type": "github_connect"
   },
@@ -2371,6 +2409,169 @@
     "ok": true,
     "reply": "I am working.",
     "detail": ""
+  },
+  "config_editor": {
+    "type": "config_editor",
+    "seq": 1,
+    "root": "ModelConfig",
+    "defs": {
+      "ModelConfig": {
+        "name": "ModelConfig",
+        "fields": [
+          {
+            "name": "workflow",
+            "required": false,
+            "node": {
+              "kind": "object",
+              "ref": "WorkflowConfig",
+              "nullable": false,
+              "title": "Workflow",
+              "description": "Limits for the workflow tool.",
+              "unit": "",
+              "default": {
+                "max_parallel": 3,
+                "max_tasks": 8
+              },
+              "has_default": true,
+              "editable": true,
+              "resettable": true,
+              "multiline": false,
+              "note": "",
+              "minimum": null,
+              "maximum": null,
+              "exclusive_minimum": null,
+              "exclusive_maximum": null,
+              "min_length": null,
+              "max_length": null,
+              "choices": [],
+              "choices_from": [],
+              "items": null,
+              "entries": null,
+              "variants": [],
+              "addable": true,
+              "removable": true,
+              "add_note": "",
+              "remove_note": ""
+            }
+          },
+          {
+            "name": "mcp_env",
+            "required": false,
+            "node": {
+              "kind": "secrets",
+              "ref": null,
+              "nullable": false,
+              "title": "",
+              "description": "Extra environment for a stdio server.",
+              "unit": "",
+              "default": null,
+              "has_default": false,
+              "editable": false,
+              "resettable": true,
+              "multiline": false,
+              "note": "Values are set in Settings \u2192 MCP servers.",
+              "minimum": null,
+              "maximum": null,
+              "exclusive_minimum": null,
+              "exclusive_maximum": null,
+              "min_length": null,
+              "max_length": null,
+              "choices": [],
+              "choices_from": [],
+              "items": null,
+              "entries": null,
+              "variants": [],
+              "addable": true,
+              "removable": true,
+              "add_note": "",
+              "remove_note": ""
+            }
+          }
+        ],
+        "add_fields": [],
+        "empty_ok": false
+      },
+      "WorkflowConfig": {
+        "name": "WorkflowConfig",
+        "fields": [
+          {
+            "name": "max_parallel",
+            "required": false,
+            "node": {
+              "kind": "int",
+              "ref": null,
+              "nullable": false,
+              "title": "",
+              "description": "Workers running at once.",
+              "unit": "",
+              "default": 3,
+              "has_default": true,
+              "editable": true,
+              "resettable": true,
+              "multiline": false,
+              "note": "",
+              "minimum": 1.0,
+              "maximum": 16.0,
+              "exclusive_minimum": null,
+              "exclusive_maximum": null,
+              "min_length": null,
+              "max_length": null,
+              "choices": [],
+              "choices_from": [],
+              "items": null,
+              "entries": null,
+              "variants": [],
+              "addable": true,
+              "removable": true,
+              "add_note": "",
+              "remove_note": ""
+            }
+          }
+        ],
+        "add_fields": [],
+        "empty_ok": true
+      }
+    },
+    "values": {
+      "workflow": {
+        "max_parallel": 4
+      },
+      "mcp_env": {
+        "TOKEN": "keychain"
+      }
+    },
+    "set_paths": [
+      [
+        "workflow"
+      ],
+      [
+        "workflow",
+        "max_parallel"
+      ]
+    ],
+    "defaults": {
+      "[\"workflow\",\"max_parallel\"]": 3
+    },
+    "version": "0123456789abcdef",
+    "file": "/home/user/.local/share/tst-desk/config.yaml",
+    "edit": {
+      "action": "set",
+      "path": [
+        "workflow",
+        "max_parallel"
+      ]
+    }
+  },
+  "config_value_rejected": {
+    "type": "config_value_rejected",
+    "seq": 1,
+    "action": "set",
+    "path": [
+      "workflow",
+      "max_parallel"
+    ],
+    "code": "invalid",
+    "message": "workflow.max_parallel: Input should be less than or equal to 16"
   },
   "local_servers": {
     "type": "local_servers",

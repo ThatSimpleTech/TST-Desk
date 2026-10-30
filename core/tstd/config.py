@@ -1847,10 +1847,46 @@ def load_config(path: Path | None = None) -> ModelConfig:
             validation. Messages name the offending key.
     """
     config_path = ensure_user_config(path)
-    data = _load_yaml(config_path)
-    # A user copy from before search / embeddings existed has no key.
-    # Fill from the shipped file so the destination exists without
-    # rewriting theirs.
+    return config_from_data(_load_yaml(config_path), config_path)
+
+
+# Top-level sections a user copy from before they existed is given from the
+# shipped file at load, without rewriting theirs. Settings → Configuration
+# (TD-5203) copies the same block into the file before editing one of its
+# keys, so the keys beside it keep the values they had.
+FILLED_FROM_SHIPPED: tuple[str, ...] = (
+    "search",
+    "embeddings",
+    "project_context",
+    "steering",
+    "session",
+    "clear_tool_results",
+    "compaction",
+    "consult",
+    "scheduler",
+    "computer_use",
+    "remote",
+    "notify",
+    "speech",
+    "autonomy",
+    "engine",
+    "voice",
+    "mcp",
+    "credentials",
+    "local_servers",
+)
+
+
+def config_from_data(data: dict[str, Any], source: Path) -> ModelConfig:
+    """Fill, merge and validate parsed config data exactly as ``load_config`` does.
+
+    Split out so a would-be file (TD-5203) is judged by the same rules as
+    the file the daemon loads, before anything is written. *data* is
+    filled in place; *source* only names the file in error messages.
+
+    Raises:
+        ConfigError: The data fails validation. The message names the key.
+    """
     shipped: dict[str, Any] | None = None
 
     def _shipped() -> dict[str, Any]:
@@ -1860,27 +1896,7 @@ def load_config(path: Path | None = None) -> ModelConfig:
             shipped = loaded if isinstance(loaded, dict) else {}
         return shipped
 
-    for key in (
-        "search",
-        "embeddings",
-        "project_context",
-        "steering",
-        "session",
-        "clear_tool_results",
-        "compaction",
-        "consult",
-        "scheduler",
-        "computer_use",
-        "remote",
-        "notify",
-        "speech",
-        "autonomy",
-        "engine",
-        "voice",
-        "mcp",
-        "credentials",
-        "local_servers",
-    ):
+    for key in FILLED_FROM_SHIPPED:
         if key in data:
             continue
         value = _shipped().get(key)
@@ -1897,7 +1913,7 @@ def load_config(path: Path | None = None) -> ModelConfig:
         details = "; ".join(
             f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}" for err in e.errors()
         )
-        raise ConfigError(f"Invalid model configuration in {config_path}: {details}") from e
+        raise ConfigError(f"Invalid model configuration in {source}: {details}") from e
 
     return config
 

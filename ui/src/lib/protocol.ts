@@ -930,6 +930,101 @@ export interface TestEmail extends ClientMessage {
   to?: string;
 }
 
+// ── Settings → Configuration (TD-5203) ────────────────────────────────
+
+export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+
+/** One step of a config.yaml key path: a mapping key, or a list position. */
+export type ConfigPathPart = string | number;
+
+export type ConfigKind =
+  | "bool"
+  | "int"
+  | "float"
+  | "str"
+  | "enum"
+  | "list"
+  | "map"
+  | "object"
+  | "json"
+  | "union"
+  | "secrets";
+
+/** What one config value is (config_editor_wire.ConfigNode). */
+export interface ConfigNode {
+  kind: ConfigKind;
+  /** object: the model it holds, a key of ConfigEditor.defs. */
+  ref: string | null;
+  nullable: boolean;
+  title: string;
+  description: string;
+  unit: string;
+  default: JsonValue;
+  has_default: boolean;
+  /** False: shown, never written here; `note` says where it is edited. */
+  editable: boolean;
+  resettable: boolean;
+  multiline: boolean;
+  note: string;
+  minimum: number | null;
+  maximum: number | null;
+  exclusive_minimum: number | null;
+  exclusive_maximum: number | null;
+  min_length: number | null;
+  max_length: number | null;
+  choices: JsonValue[];
+  /** The keys of the map at this path are the choices (a model, a key). */
+  choices_from: string[];
+  items: ConfigNode | null;
+  entries: ConfigNode | null;
+  variants: ConfigNode[];
+  addable: boolean;
+  removable: boolean;
+  add_note: string;
+  remove_note: string;
+}
+
+export interface ConfigField {
+  name: string;
+  required: boolean;
+  node: ConfigNode;
+}
+
+export interface ConfigModelDef {
+  name: string;
+  fields: ConfigField[];
+  /** What the add form asks for when this model is a new entry. */
+  add_fields: string[];
+  /** `{}` is a valid instance, so a new one needs no form. */
+  empty_ok: boolean;
+}
+
+export interface ConfigEdit {
+  action: "set" | "reset";
+  path: ConfigPathPart[];
+}
+
+/** Every config.yaml key, as schema and values. Loopback only. */
+export interface GetConfigEditor extends ClientMessage {
+  type: "get_config_editor";
+}
+
+/** Write one value. Acked with config_editor, refused with config_value_rejected. */
+export interface SetConfigValue extends ClientMessage {
+  type: "set_config_value";
+  path: ConfigPathPart[];
+  value: JsonValue;
+  /** The config_editor version the edit was made against. */
+  version?: string;
+}
+
+/** Put one key back to its default, or remove a list item or map entry. */
+export interface ResetConfigValue extends ClientMessage {
+  type: "reset_config_value";
+  path: ConfigPathPart[];
+  version?: string;
+}
+
 /** Start GitHub device flow (TD-4852). Acked with github_status. */
 export interface GithubConnect extends ClientMessage {
   type: "github_connect";
@@ -1320,6 +1415,9 @@ export type ClientMessageUnion =
   | Transcribe
   | SetEmailNotify
   | TestEmail
+  | GetConfigEditor
+  | SetConfigValue
+  | ResetConfigValue
   | GithubConnect
   | GithubDisconnect
   | MicrosoftConnect
@@ -2437,6 +2535,45 @@ export interface ModelTested extends DaemonEvent {
   detail: string;
 }
 
+/**
+ * TD-5203: config.yaml as Settings → Configuration shows it. `defs` and
+ * `defaults` come on the reply to get_config_editor only; an edit's ack
+ * leaves both empty and the window keeps what it has. A `secrets` map's
+ * values are where each lives ("keychain" or "config"), never the value.
+ */
+export interface ConfigEditor extends DaemonEvent {
+  type: "config_editor";
+  seq: number;
+  root: string;
+  defs: Record<string, ConfigModelDef>;
+  values: Record<string, JsonValue>;
+  /** Every key path the file itself sets. */
+  set_paths: ConfigPathPart[][];
+  /** Reset value of each key at a fixed place, by JSON.stringify(path). */
+  defaults: Record<string, JsonValue>;
+  version: string;
+  file: string;
+  edit: ConfigEdit | null;
+}
+
+export type ConfigRejectCode =
+  | "invalid"
+  | "not_editable"
+  | "secret"
+  | "stale"
+  | "not_found"
+  | "write_failed";
+
+/** TD-5203: an edit that was not written; the file is untouched. */
+export interface ConfigValueRejected extends DaemonEvent {
+  type: "config_value_rejected";
+  seq: number;
+  action: "set" | "reset";
+  path: ConfigPathPart[];
+  code: ConfigRejectCode;
+  message: string;
+}
+
 export interface ApiKeyValidated extends DaemonEvent {
   type: "api_key_validated";
   seq: number;
@@ -3184,6 +3321,8 @@ export type DaemonEventUnion =
   | EndpointModels
   | LocalServers
   | ModelTested
+  | ConfigEditor
+  | ConfigValueRejected
   | DiagnosticsReport
   | UsageReport
   | UsageExported

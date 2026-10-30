@@ -633,6 +633,9 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `scan_local_servers` | — | "Find models on this computer": ask each loopback `local_servers` entry for `/models`, no key, on the user's click only (TD-5180). |
 | `add_model` | — | "Add a model": store the key, write a single-model preset, make it active. Acked with `setup_state`. |
 | `test_model` | — | Send one short test message to a preset's model (default: the active one). |
+| `get_config_editor` | — | Settings → Configuration (TD-5203): ask for every `config.yaml` key — the schema read off the config models, the effective values, which keys the file sets, and each fixed key's reset value. Loopback only: a phone or another computer gets `loopback_only`. |
+| `set_config_value` | — | Write one `config.yaml` value at `path` (mapping keys and list positions; one past a list's end appends). The whole would-be file is loaded as the daemon loads it, and checked like the dedicated Settings writers check theirs, before an atomic write that keeps every other byte. Acked with `config_editor`, refused with `config_value_rejected` and the file untouched. A path through a list position must carry the `version` it was made against. A `secrets` map (an MCP server's `env` and `headers`) and `credentials` are refused: their own pages keep tokens in the keychain. Loopback only. |
+| `reset_config_value` | — | Put one key back: a key at a fixed place to what the packaged `config.yaml` has (else its built-in default), a key inside a list item or map entry to its built-in default by removing its line. A path that ends at a list item or map entry removes it. Acked and refused like `set_config_value`. Loopback only. |
 | `delete_api_key` | — | Remove an API key from the OS keychain. Only an API key's id, never another keychain item (TD-5182). |
 | `set_preset` | — | Choose the active model preset. |
 | `set_engine` | — | Choose the agent engine for new sessions (`native` or `grok`). Acked with `setup_state`. |
@@ -758,6 +761,8 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `endpoint_models` | connection | A server's model list for "Add a model", or why it could not be read. Never carries the key. |
 | `local_servers` | connection | The servers on this computer that answered `scan_local_servers` with models, in config order, and every URL asked. |
 | `model_tested` | connection | The result of `test_model`: the reply, or what went wrong. |
+| `config_editor` | connection | Reply to `get_config_editor`, and the ack of each config edit (TD-5203). `defs` (every config model and its fields: kind, bounds, choices, default, description, unit) and `defaults` (reset values by JSON-encoded path) come on the reply to `get_config_editor` only; an edit's ack leaves both empty. `values` is the effective config with each `secrets` map's values replaced by where they live (`keychain` or `config`), never the value, and a password in a URL masked. `set_paths` lists every key path the file sets; `version` identifies its bytes; `edit` names the edit acknowledged. |
+| `config_value_rejected` | connection | A config edit that was not written: `code` (`invalid`, `not_editable`, `secret`, `stale`, `not_found`, `write_failed`) and a message for the field at `path`, never echoing the value. The file is untouched (TD-5203). |
 | `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. The `skills` row names each skill's ignored frontmatter keys (TD-5107). |
 | `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |
 | `usage_exported` | connection | Where `export_usage` wrote, and how many rows (TD-1706). |

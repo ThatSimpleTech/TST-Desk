@@ -58,6 +58,34 @@ no effect.
 
 ## 2. `config.yaml` — the model plane
 
+### Editing in Settings → Configuration
+
+Every key in this section can also be changed in **Settings → Configuration** (TD-5203),
+without opening the file. The page is drawn from the same models the daemon loads, so it
+lists every key with its type, bounds, default and a line on what it does, and its search
+finds a key by name or by words. A change saves as you make it: a switch or a choice at
+once, a box on Enter or when you leave it. The daemon builds the whole file as it would be,
+loads it the way it loads `config.yaml`, makes the checks the other Settings pages make,
+and only then writes it, in place, keeping every comment and the formatting of the keys you
+did not touch. A value that does not load is refused with the reason under its field, and
+the file stays as it was. New sessions use the change; a key that waits for the next start
+says so.
+
+**Reset** puts a key back to what TST Desk ships: the value in the packaged `config.yaml`,
+or the built-in default for a key that file leaves out. Inside a list item or map entry (a
+model's tier, a hook, a language server) Reset removes the key's line so the built-in
+default applies, and **Clear** does the same for a key with no default, such as a model's
+`label`. An entry goes with its own Remove. When you change a key of a section your file
+does not have yet, the packaged section, comments included, is copied in first, so the
+other keys in it keep the values they had.
+
+Some keys are only shown there. An MCP server's `env` and `headers` show their names and
+whether each value is in the keychain; Settings → MCP servers stores them. `credentials`
+are edited in Settings → API keys, which keeps each key in the OS keychain. Models are added
+with Settings → Model → Add a model, and MCP servers in Settings → MCP servers. The page
+belongs to the computer itself: a paired phone or another computer cannot read or change
+the configuration through it.
+
 ### Top-level keys
 
 | Key | Type | Default | Effect |

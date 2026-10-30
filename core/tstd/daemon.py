@@ -72,6 +72,10 @@ from .config import (
     resolve_credential_id,
 )
 from .config_bind import call_config_loader
+from .config_editor import apply_edit, build_view, shipped_defaults
+from .config_editor_checks import ConfigEditRefused
+from .config_editor_wire import ConfigEdit
+from .config_schema import ROOT_MODEL, editor_defs
 from .config_write import (
     delete_credential_entry,
     delete_mcp_server_entry,
@@ -234,6 +238,8 @@ from .protocol import (
     CommandEntry,
     CommandList,
     CompactContext,
+    ConfigEditor,
+    ConfigValueRejected,
     ContextPinEntry,
     ContextPins,
     CreateRule,
@@ -267,6 +273,7 @@ from .protocol import (
     FocusWindow,
     ForkFrom,
     GetCharter,
+    GetConfigEditor,
     GetHooks,
     GetInstructionStack,
     GetSessionJobSource,
@@ -337,6 +344,7 @@ from .protocol import (
     RemoveQueued,
     RemoveRemoteDevice,
     RenameSession,
+    ResetConfigValue,
     ResetCuPermissions,
     RestoreFiles,
     Resume,
@@ -359,6 +367,7 @@ from .protocol import (
     SessionSummary,
     SetApiKey,
     SetBranch,
+    SetConfigValue,
     SetCoworker,
     SetCredential,
     SetCuIndicators,
@@ -3809,6 +3818,9 @@ class Daemon:
         if isinstance(msg, SetEmailNotify):
             return await self._handle_set_email_notify(msg)
 
+        if isinstance(msg, GetConfigEditor | SetConfigValue | ResetConfigValue):
+            return await self._handle_config_editor(msg)
+
         if isinstance(msg, TestEmail):
             return await self._handle_test_email(msg)
 
@@ -6118,6 +6130,75 @@ class Daemon:
         except EmailNotifyError as exc:
             return build_error("bad_request", f"{exc.error_class}: {exc.message}")
         return (await self._setup_state_event()).model_dump_json()
+
+    async def _handle_config_editor(
+        self, msg: GetConfigEditor | SetConfigValue | ResetConfigValue
+    ) -> str:
+        """Settings → Configuration (TD-5203): the view of config.yaml, or one edit.
+
+        Loopback only (peer_policy). The edit runs on the loop, as every
+        config writer here does, so its read, check and write cannot
+        interleave with another writer's. The reload is the one the other
+        Settings writers use; MCP and the active model get theirs too.
+        """
+        if isinstance(msg, GetConfigEditor):
+            return await self._config_editor_reply(msg.type, None)
+        action: Literal["set", "reset"] = "set" if isinstance(msg, SetConfigValue) else "reset"
+        value = msg.value if isinstance(msg, SetConfigValue) else None
+        path = list(msg.path)
+        try:
+            written = apply_edit(self.config_path, action, path, value, msg.version)
+        except ConfigEditRefused as e:
+            return ConfigValueRejected(
+                action=action, path=path, code=e.code, message=e.message
+            ).model_dump_json()
+        if written is not None:
+            try:
+                self._reload_user_config()
+            except ConfigError as e:
+                reason = f"Saved, but the config no longer loads: {e}"
+                return build_error("bad_request", reason, in_reply_to=msg.type)
+            if path == ["active_preset"]:
+                # The reload keeps the live preset; this edit is the person picking one.
+                picked = written.active_preset
+                self.config = self.config.model_copy(update={"active_preset": picked})
+                self._slug_snapshot = _snapshot_slugs(self.config)
+            if path[0] == "mcp":
+                self._invalidate_stored_probe()
+                await self._mcp.reload(self.config.mcp)
+        log.info(
+            "config value edited",
+            extra={
+                "extra_fields": {
+                    "action": action,
+                    "key": ".".join(str(part) for part in path),
+                    "changed": written is not None,
+                }
+            },
+        )
+        return await self._config_editor_reply(msg.type, ConfigEdit(action=action, path=path))
+
+    async def _config_editor_reply(self, in_reply_to: str, edit: ConfigEdit | None) -> str:
+        """A ``config_editor`` event. The schema and defaults ride on the first only.
+
+        Both are fixed for the life of the process, so an edit's ack carries
+        the values alone and the window keeps what it has.
+        """
+        try:
+            view = await asyncio.to_thread(build_view, self.config_path)
+        except ConfigEditRefused as e:
+            return build_error("config_invalid", e.message, in_reply_to=in_reply_to)
+        first = edit is None
+        return ConfigEditor(
+            root=ROOT_MODEL,
+            defs=editor_defs() if first else {},
+            values=view.values,
+            set_paths=view.set_paths,
+            defaults=shipped_defaults() if first else {},
+            version=view.version,
+            file=view.file,
+            edit=edit,
+        ).model_dump_json()
 
     async def _handle_test_email(self, msg: TestEmail) -> str:
         from .notify.email_settings import send_test_email

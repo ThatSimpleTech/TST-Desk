@@ -31,6 +31,7 @@
 	import SettingsBudget from './SettingsBudget.svelte';
 	import SettingsModels from './SettingsModels.svelte';
 	import SettingsAbout from './SettingsAbout.svelte';
+	import SettingsConfig from './SettingsConfig.svelte';
 	import CuIndicatorToggles from './CuIndicatorToggles.svelte';
 	import CuPolicyPane from './CuPolicyPane.svelte';
 	import SettingsJudgments from './SettingsJudgments.svelte';
@@ -58,6 +59,7 @@
 		key: 'API keys',
 		email: 'Email',
 		github: 'GitHub',
+		config: 'Configuration',
 		about: 'About',
 	};
 
@@ -258,6 +260,8 @@
 					<SettingsEmail />
 				{:else if settings.section === 'github'}
 					<SettingsGithub />
+				{:else if settings.section === 'config'}
+					<SettingsConfig />
 				{:else if settings.section === 'about'}
 					<SettingsAbout />
 				{:else}
