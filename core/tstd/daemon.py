@@ -584,6 +584,12 @@ log = get_logger("tstd.daemon")
 CARD_REFRESH_FIRST_DELAY = 30.0
 #: Seconds in an hour, a name so a test can shrink ``every_hours``.
 CARD_REFRESH_HOUR = 3600.0
+#: Seconds one key test may take (TD-5200). The daemon answers a window's
+#: messages one at a time, so a probe left to the provider's own timeouts
+#: (connect 30 s, read 120 s, retried three times) held every later message
+#: from that window for minutes. Under the window's 30-second wait, so the
+#: test ends with the daemon's verdict rather than the window giving up.
+KEY_TEST_LIMIT_S = 20.0
 #: What Settings calls each value an automatic refresh can change.
 _CARD_FIELD_NAMES = {
     "slug": "model name",
@@ -1932,7 +1938,8 @@ class Daemon:
         A one-token completion against a matching tier: the cheapest
         request that still proves the key authenticates.  The key value
         never appears in the response.  Every verdict names *credential*
-        (TD-5200), so the window shows it on that key's row.
+        (TD-5200), so the window shows it on that key's row, and comes
+        within ``KEY_TEST_LIMIT_S``.
         """
 
         def verdict(ok: bool, detail: str) -> ApiKeyValidated:
@@ -1940,10 +1947,19 @@ class Daemon:
 
         probe: KeyProbe | None = None
         try:
-            if credential and api_key is None:
-                await resolve_tier_slugs(self.config)
-                probe = key_probe(self.config, credential)
-            err = await self._provider_probe(api_key, credential, probe=probe)
+            async with asyncio.timeout(KEY_TEST_LIMIT_S):
+                if credential and api_key is None:
+                    await resolve_tier_slugs(self.config)
+                    probe = key_probe(self.config, credential)
+                err = await self._provider_probe(api_key, credential, probe=probe)
+        except TimeoutError:
+            target = probe.tier if probe is not None else None
+            where = target.base_url.rstrip("/") if target is not None else "the provider"
+            log.warning(
+                "key test passed its time limit",
+                extra={"extra_fields": {"credential": credential, "limit_s": KEY_TEST_LIMIT_S}},
+            )
+            return verdict(False, f"No answer from {where} within {KEY_TEST_LIMIT_S:g} seconds.")
         except KeychainError as e:
             return verdict(False, str(e))
         except ModelDiscoveryError as e:

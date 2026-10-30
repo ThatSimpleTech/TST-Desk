@@ -12676,13 +12676,27 @@ result beside its buttons.
 - [x] Each key keeps its own result: testing another row never replaces it
       (`key-tests.test.ts::keeps each key's result to itself`,
       `settings-keys.test.ts::keeps each row's result on its own row`).
-- [x] A result stays until setup_state reports a new name, host or stored
-      state for that key, or the row is tested again. A host saved by leaving
-      the field just before pressing Test is the host the verdict is about
-      (`key-tests.test.ts`, "what drops a result").
-- [x] With no reply in 30 seconds the row says TST Desk did not answer and
-      Test works again; a verdict that arrives later still replaces that
-      (`key-tests.test.ts`, "no answer"; `settings-keys.test.ts`).
+- [x] A result stays until setup_state changes what its test was about (the
+      key's name, host or stored state, the tiers that send it, or the active
+      preset), the window reaches a different computer, or the row is tested
+      again. A host saved by leaving the field just before pressing Test is
+      the host the verdict is about (`key-tests.test.ts`, "what drops a
+      result"; `key-test-replies.test.ts`, "another computer").
+- [x] Each verdict answers its own request. A row tested again while its
+      first test is still out shows the second test's verdict, also when the
+      host changed in between, and an older daemon's verdict, which names no
+      key, lands on the row that asked (`key-test-replies.test.ts`;
+      `settings-keys.test.ts::a fixed host tested again after no answer
+      shows the new host's verdict`).
+- [x] The daemon ends a test within 20 seconds ("No answer from <host> within
+      20 seconds"), so one test never holds the window's other messages
+      (`test_key_test_row_reply.py::test_a_server_that_never_answers_frees_the_window`).
+- [x] With no reply 30 seconds after the daemon takes the test up, the row
+      says nothing came back and Test works again; a verdict that arrives
+      later still replaces that. A test queued behind another row's gets its
+      own 30 seconds, and a dropped connection ends every test still waiting
+      (`key-tests.test.ts`, "no answer"; `key-test-replies.test.ts`;
+      `settings-keys.test.ts`).
 - [x] The result is an `aria-live` status region that is always in the row,
       so a screen reader hears the verdict (`settings-keys.test.ts`).
 - [x] `api_key_validated.credential` echoes the request's credential on every

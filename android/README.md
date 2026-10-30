@@ -45,6 +45,8 @@ The same holds for a send the daemon could not save to disk (TD-5158, `message_n
 
 Questions the agent asks with `ask_user` (TD-5121) show as a card of buttons to tap, in an APK built from a UI that has it. An older APK drops the question: the session still shows as waiting and a notification channel still says a question is waiting, so answer it on the computer or build a new APK.
 
+An APK built with TD-5200 also works with an older computer's Settings → API keys. That computer's Test verdict names no key, and the APK puts it on the row that asked by the order of the replies. An older computer puts no time limit on a test, so a server that never answers shows "Nothing came back within 30 seconds" on the phone, and the computer's answer replaces it when its probe ends, which can take minutes.
+
 Ultracode became an on/off switch beside Fast in TD-5195; before that it was the last effort level. An APK built before TD-5195 still offers Ultracode as an effort. Picking it sets Max with the switch on, and its chip then reads Max. That APK cannot turn the switch off: its other levels change the effort and leave the switch alone. Turn it off on the computer, or build a new APK, which shows Ultracode as its own row.
 
 0.1.10 (TD-5145) adds the "install unknown apps" permission and a private file provider, so a file the agent sends can be downloaded, opened, saved to Downloads, or (an APK) installed. It installs over 0.1.9 with the same debug keystore. The first 0.1.10 goes on with `adb install -r`, since 0.1.9 cannot receive files.

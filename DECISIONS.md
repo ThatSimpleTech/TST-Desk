@@ -18788,34 +18788,55 @@ missing: it costs another call, and the answer was already right.
 Keeping `BLOCKED` as a pause: a question belongs in the chat, where the
 person can answer it, not behind Resume.
 
-## TD-5200 — A key test's reply names the key (Class B)
+## TD-5200 — A key test's reply names the key and answers its own request (Class B)
 
 2026-10-30. Settings → API keys showed every Test verdict on one line at the
 bottom of the page, shared with the first-run check, because
 `api_key_validated` did not say which key it answered.
 
 **Decision:** `ApiKeyValidated` gains `credential: str | None = None`: the
-request's `credential`, echoed on every verdict. The window keeps one result
-per credential id (`ui/src/lib/key-tests.svelte.ts`, fed by the settings
-reducer like the pairing dialog). A verdict with no credential belongs to the
-first-run check, and only the onboarding store reads it; a verdict that names
-a key is never the first-run check's. The field is additive with a default,
-so `PROTOCOL_VERSION` stays. The window and the daemon ship together; against
-an older daemon a row's test would end with the 30-second message.
+request's `credential`, echoed on every verdict. The field is additive with a
+default, so `PROTOCOL_VERSION` stays. The window keeps one result per
+credential id (`ui/src/lib/key-tests.svelte.ts`, fed by the settings reducer
+like the pairing dialog).
 
-A settled result is dropped when setup_state reports a new name, host or
-stored state for that key (compared with the row as it stood when the result
-settled), and replaced when the row is tested again. A test still in flight
-is not dropped by setup_state: the daemon handles one connection's messages in
-order, so a host saved by the blur just before the click is acknowledged
-before the verdict, and the verdict is about the new host. A verdict for a key
-with no entry is ignored. After 30 seconds (`KEY_TEST_TIMEOUT_MS`) the row
-says TST Desk did not answer and Test works again; a verdict that arrives
-later still replaces that message.
+Each verdict answers its own request. The daemon handles one connection's
+messages in order, so the window lists the `validate_api_key` requests it has
+sent and not yet heard back on, oldest first: the rows' tests and the
+first-run check's. A verdict answers the oldest entry with its credential
+(null for the first-run check). An older daemon's verdict, which has no
+`credential` field, answers the oldest entry, and so does an `error` whose
+`in_reply_to` is `validate_api_key`. A row shows only the answer to its
+latest test; the answer to an earlier one, which the row has since asked
+again, is ignored. The list is emptied when the connection drops, and the
+rows still waiting say so. The onboarding store reads the same list, worked
+out once per frame, so neither store takes the other's verdict, whichever
+sees it first.
 
-**Rejected:** A request id on `validate_api_key`: the credential already names
-the row, and two tests of one key a moment apart answer the same question.
-Giving an unlabelled verdict to the one row that is waiting: that is a guess,
-and a first-run check in flight would break it. Settling rows on an `error`
-whose `in_reply_to` is `validate_api_key`: it names no key, so it cannot say
-which row; the 30-second limit covers it.
+The daemon ends a test after `KEY_TEST_LIMIT_S` (20 s) with "No answer from
+<host> within 20 seconds." It handles a connection's messages one at a time,
+and a probe left to the provider's timeouts (connect 30 s, read 120 s, three
+retries) held every later message from that window for minutes. The window's
+30-second clock (`KEY_TEST_TIMEOUT_MS`) runs only for the oldest request, the
+one the daemon is working on, so a test queued behind another is not blamed
+for the wait. When it runs out the row says nothing came back, without
+blaming TST Desk or asking for a retry that would only queue behind the
+first; a verdict that arrives later still replaces it, and Test works again.
+
+A settled result is dropped when setup_state changes what its test was about:
+the key's name, host or stored state, the active preset's tiers that send it
+(`tier_credentials`, plus `tier_loopback` for the default key), or the active
+preset, compared with the row as it stood when the result settled. It is
+replaced when the row is tested again. A test still in flight is not dropped
+by setup_state: a host saved by the blur just before the click is
+acknowledged before the verdict, and the verdict is about the new host. Every
+result is dropped when the window reconnects to a different computer
+(`hub.machineId`), as a phone does when it pairs with another one.
+
+**Rejected:** A request id on `validate_api_key`. Two tests of one key are not
+the same question when the row changed between them, but the order of the
+replies already ties each verdict to its request, with no protocol change and
+with older daemons too. Settling a row on any verdict that names its key: a
+row tested again after its first test gave up took that test's late answer,
+then dropped its own. Keeping Test off while an earlier test is still out:
+after fixing the host, the row could not be tested until the old probe ended.

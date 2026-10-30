@@ -57,15 +57,21 @@ function emit(event: DaemonEventUnion): void {
 	for (const handler of [...mocks.handlers]) handler(event);
 }
 
-function setupState(credentials: CredentialSummary[] = [TOWER, SPARE]): SetupState {
+function setupState(
+	credentials: CredentialSummary[] = [TOWER, SPARE],
+	over: Partial<SetupState> = {},
+): SetupState {
 	return {
 		type: "setup_state",
 		seq: 1,
 		has_api_key: true,
 		key_required: true,
-		presets: ["main"],
+		presets: ["main", "other"],
 		active_preset: "main",
 		credentials,
+		tier_credentials: { brain: "tower", worker: null, validator: null },
+		tier_loopback: { brain: false, worker: false, validator: true },
+		...over,
 	};
 }
 
@@ -211,6 +217,50 @@ describe("what drops a result", () => {
 		answered();
 		emit(setupState([SPARE]));
 		expect(keyTests.tower).toBeUndefined();
+	});
+
+	// The daemon tests a key against a tier that sends it (key_probe), so a
+	// result is also about which tiers send the key and the active preset.
+	it.each([
+		["a tier bound to the key", { tier_credentials: { brain: "tower", worker: "tower" } }],
+		["its tier bound to another key", { tier_credentials: { brain: "spare" } }],
+		["a preset switch", { active_preset: "other" }],
+	])("drops it on %s", (_why, over) => {
+		answered();
+		emit(setupState([TOWER, SPARE], over));
+		expect(keyTests.tower).toBeUndefined();
+	});
+
+	it("drops 'no model uses this key' once a tier is bound to it", () => {
+		testKey("spare");
+		const nowhere = "No model uses this key yet, so there is nothing to test it against.";
+		emit(verdict("spare", false, nowhere));
+		expect(keyTests.spare?.state).toBe("failed");
+		emit(setupState([TOWER, SPARE], { tier_credentials: { brain: "tower", worker: "spare" } }));
+		expect(keyTests.spare).toBeUndefined();
+	});
+
+	it("keeps it when only another key's tiers change", () => {
+		answered();
+		testKey("spare");
+		emit(verdict("spare", true, "Key accepted."));
+		emit(setupState([TOWER, SPARE], { tier_credentials: { brain: "tower", validator: "spare" } }));
+		expect(keyTests.tower).toEqual({ state: "ok", detail: "Key accepted." });
+		expect(keyTests.spare).toBeUndefined();
+	});
+
+	it("follows the default key to the unbound remote tiers that send it", () => {
+		const openrouter: CredentialSummary = { id: "openrouter", name: "OpenRouter", stored: true };
+		emit(setupState([openrouter, TOWER]));
+		testKey("openrouter");
+		emit(verdict("openrouter", true, "Key accepted by the active preset's provider."));
+		// The worker moves to a server on this computer: it sends no key now.
+		emit(
+			setupState([openrouter, TOWER], {
+				tier_loopback: { brain: false, worker: true, validator: true },
+			}),
+		);
+		expect(keyTests.openrouter).toBeUndefined();
 	});
 
 	it("drops a no-answer too, and a late verdict about the old host stays off the row", () => {

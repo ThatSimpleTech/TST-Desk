@@ -3,12 +3,16 @@
 Settings → API keys shows a Test verdict on the row of the key that was
 tested. Every reply to ``validate_api_key`` carries the request's
 ``credential``, so the window never has to guess which row asked. The
-first-run check of a typed key names no key and gets None back.
+first-run check of a typed key names no key and gets None back. A test
+ends within ``KEY_TEST_LIMIT_S``: the daemon answers a window's messages
+one at a time, so a server that never answers must not hold the rest.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +20,7 @@ import pytest
 
 from tests.test_add_model import _ask, _stop
 from tests.test_saved_key_host import _session
+from tstd import daemon as daemon_module
 from tstd.config import ModelDiscoveryError
 from tstd.daemon import Daemon
 from tstd.keychain import KeychainError
@@ -132,3 +137,31 @@ class TestDaemon:
         assert reply["type"] == "api_key_validated", reply
         assert reply["ok"] is True
         assert reply["credential"] is None
+
+    async def test_a_server_that_never_answers_frees_the_window(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        release = asyncio.Event()
+
+        async def silent(self: Daemon, *_: Any, **__: Any) -> ProviderError | None:
+            await release.wait()
+            return None
+
+        monkeypatch.setattr(daemon_module, "KEY_TEST_LIMIT_S", 0.2)
+        monkeypatch.setattr(Daemon, "_provider_probe", silent)
+        task, ws = await _session(tmp_path)
+        try:
+            started = time.monotonic()
+            await ws.send(json.dumps({"type": "validate_api_key", "credential": "spare"}))
+            # This get_setup_state waits behind the test until the test lets go.
+            reply = await _ask(ws, {"type": "get_setup_state"}, "api_key_validated")
+            assert reply["type"] == "api_key_validated", reply
+            assert reply["credential"] == "spare"
+            assert reply["ok"] is False
+            assert reply["detail"] == f"No answer from {SPARE} within 0.2 seconds."
+            state = await _ask(ws, {"type": "get_setup_state"}, "setup_state")
+            assert state["type"] == "setup_state"
+            assert time.monotonic() - started < 5
+        finally:
+            release.set()
+            await _stop(task, ws)

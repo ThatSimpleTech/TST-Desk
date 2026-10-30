@@ -96,6 +96,16 @@ function result(index: number): HTMLElement {
 	return found;
 }
 
+/** The row's Host field. */
+function hostInput(index: number): HTMLInputElement {
+	const label = [...row(index).querySelectorAll("label")].find(
+		(el) => el.querySelector(".field-name")?.textContent === "Host",
+	);
+	const input = label?.querySelector("input");
+	if (!(input instanceof HTMLInputElement)) throw new Error(`no Host field on row ${index}`);
+	return input;
+}
+
 function text(el: Element): string {
 	return (el.textContent ?? "").replace(/\s+/g, " ").trim();
 }
@@ -198,7 +208,7 @@ describe("Test shows its result on the row (TD-5200)", () => {
 		expect(text(result(1))).toBe("Connected Key accepted by http://127.0.0.1:8000/v1.");
 	});
 
-	it("says TST Desk did not answer after 30 seconds and turns Test back on", async () => {
+	it("says nothing came back after 30 seconds and turns Test back on", async () => {
 		vi.useFakeTimers();
 		await mountWith(setupState());
 		testButton(0).click();
@@ -208,6 +218,47 @@ describe("Test shows its result on the row (TD-5200)", () => {
 		expect(text(result(0))).toBe(`No answer ${KEY_TEST_COPY.noAnswer}`);
 		expect(text(testButton(0))).toBe("Test");
 		expect(testButton(0).disabled).toBe(false);
+	});
+
+	it("a fixed host tested again after no answer shows the new host's verdict", async () => {
+		vi.useFakeTimers();
+		await mountWith(TWO_STORED);
+		testButton(1).click();
+		await tick();
+		vi.advanceTimersByTime(KEY_TEST_TIMEOUT_MS);
+		await tick();
+		expect(text(result(1))).toBe(`No answer ${KEY_TEST_COPY.noAnswer}`);
+
+		const host = hostInput(1);
+		host.value = "http://127.0.0.1:9000/v1";
+		host.dispatchEvent(new Event("input", { bubbles: true }));
+		host.dispatchEvent(new Event("blur"));
+		testButton(1).click();
+		await tick();
+		expect(mocks.sent.map((m) => m.type)).toEqual([
+			"validate_api_key",
+			"set_credential",
+			"validate_api_key",
+		]);
+
+		// The daemon answers in order: the first test, the host's ack, the second.
+		emit(verdict("spare", false, "Failed to connect to http://127.0.0.1:8000/v1."));
+		await tick();
+		expect(text(testButton(1))).toBe("Testing…");
+		emit(
+			setupState({
+				credentials: [
+					{ id: "tower", name: "TOWER", stored: true },
+					{ id: "spare", name: "Spare", stored: true, base_url: "http://127.0.0.1:9000/v1" },
+				],
+			}),
+		);
+		await tick();
+		expect(text(testButton(1))).toBe("Testing…");
+		emit(verdict("spare", true, "Key accepted by http://127.0.0.1:9000/v1."));
+		await tick();
+		expect(text(result(1))).toBe("Connected Key accepted by http://127.0.0.1:9000/v1.");
+		expect(text(testButton(1))).toBe("Test");
 	});
 
 	it("drops the result when the key's host changes", async () => {
