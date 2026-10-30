@@ -162,6 +162,22 @@ class TestCheckReply:
             "Summary first.\ndetails",
         )
 
+    def test_a_hyphenated_word_is_not_a_label(self) -> None:
+        text = "Set this in the workflow:\ncontinue-on-error: true"
+        assert interpret_check(text, "") == ("reply", text)
+
+    def test_a_label_mid_answer_is_part_of_the_answer(self) -> None:
+        text = "Steps for you:\nContinue: press Save\nThen restart the app."
+        assert interpret_check(text, "") == ("reply", text)
+
+    def test_only_the_header_echo_is_dropped(self) -> None:
+        assert interpret_check("Progress check found three bugs.\nDONE: shipped", "") == (
+            "reply",
+            "Progress check found three bugs.\nshipped",
+        )
+        echo = "Progress check. Tools are off for this reply.\nDONE: shipped"
+        assert interpret_check(echo, "") == ("reply", "shipped")
+
     def test_a_sentence_that_starts_with_done_is_not_a_label(self) -> None:
         text = "Done reading the files; the bug is in the parser."
         assert interpret_check(text, "") == ("reply", text)
@@ -300,6 +316,19 @@ class TestLoop:
         assert isinstance(turn, TurnComplete)
         assert _deltas(session) == "which repo is it?"
         assert _pause_reason(session) == ""
+        await runner.cancel()
+
+    async def test_narration_with_a_tool_call_pauses(self, tmp_path: Path) -> None:
+        call = Script(
+            kind="tool_call",
+            narration="Let me read the next file.",
+            tool_name="echo",
+            tool_arguments='{"message": "more"}',
+        )
+        session, _mock, runner = await _run(tmp_path, _echoes(TOOL_WINDOW, call), skip_all=True)
+        await wait_for_state(session, "paused", 8.0)
+        assert "tried to call a tool" in _pause_reason(session)
+        assert "Let me read" not in _deltas(session)
         await runner.cancel()
 
     async def test_continue_opens_another_window(self, tmp_path: Path) -> None:

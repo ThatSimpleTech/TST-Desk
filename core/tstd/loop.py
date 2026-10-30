@@ -415,7 +415,9 @@ async def _progress_check_gate(
     if failed:
         guard.pause_reason = pause_reason_for(error_msg or "the progress check failed")
         return "pause"
-    if tool_calls and not (content or "").strip():
+    # Narration next to a tool call means the model meant to keep working;
+    # only a labelled answer is read past the call it was told not to make.
+    if tool_calls and not has_label(content or ""):
         guard.pause_reason = pause_reason_for("the progress check tried to call a tool")
         return "pause"
     kind, detail = interpret_check(content or "", guard.last_continue)

@@ -43,6 +43,7 @@ class Script:
         content: Text for ``text`` and ``stream`` kinds, or an error message.
         tool_name: Function name for the ``tool_call`` kind.
         tool_arguments: JSON string of arguments for the ``tool_call`` kind.
+        narration: Text streamed ahead of a ``tool_call`` kind's calls.
         status_code: HTTP status for ``error`` / ``rate_limit`` kinds.
         error_code: Typed error code for the ``error`` kind.
         fail_times: If > 0, the first N calls return an error (rate-limit by
@@ -91,6 +92,7 @@ class Script:
     cached_tokens: int | None = DEFAULT_CACHED_TOKENS
     tool_batch: tuple[tuple[str, str], ...] = ()
     finish_reason: str | None = None
+    narration: str = ""
 
     @property
     def usage(self) -> Usage:
@@ -328,6 +330,13 @@ class MockProvider:
             return
 
         if script.kind == "tool_call":
+            if script.narration:
+                await _maybe_delay()
+                yield StreamChunk(
+                    id=chunk_id,
+                    delta=Delta(content=script.narration),
+                    finish_reason=None,
+                )
             if script.reasoning_details:
                 # OpenRouter streams its thinking ahead of the calls; the
                 # loop must keep it for the echo on the next request (TD-1903).

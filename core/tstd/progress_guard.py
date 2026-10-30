@@ -56,11 +56,15 @@ PROGRESS_CHECK_INSTRUCTION = (
 )
 
 # One label line, as models really write it: "DONE: x", "**Done:** x",
-# "- CONTINUE - x", "BLOCKED" on a line of its own.
+# "- CONTINUE - x", "BLOCKED" on a line of its own. A dash needs a space
+# before it, so "continue-on-error: true" is not a label.
 _LABEL_LINE = re.compile(
-    r"^[\s>*_`#-]*(DONE|CONTINUE|BLOCKED)[*_`]*\s*(?:[:\u2013\u2014-][*_`]*\s*(.*))?$",
+    r"^[\s>*_`#-]*(DONE|CONTINUE|BLOCKED)[*_`]*"
+    r"(?:(?:\s*:|\s+[-\u2013\u2014]|[\u2013\u2014](?=\s))[*_`]*\s*(.*)|\s*)$",
     re.IGNORECASE,
 )
+# The check's own header repeated back, alone or with its first sentence.
+_ECHO_LINE = re.compile(r"^progress check(?:[\s:.!\u2013\u2014-]*$|\.\s*tools are off)")
 
 ToolNote = tuple[str, str, bool]
 
@@ -120,9 +124,14 @@ def has_label(text: str) -> bool:
 
 
 def _find_label(lines: Sequence[str]) -> tuple[int, str, str] | None:
-    """The first label line: its index, the label, and the rest of the line."""
-    for index, line in enumerate(lines):
-        match = _LABEL_LINE.match(line)
+    """The label line: its index, the label, and the rest of the line.
+
+    Only the first real line or the last line can carry it. A "Done:"
+    or "Continue:" line in the middle of an answer is part of the answer.
+    """
+    filled = [i for i, line in enumerate(lines) if line.strip() and not _is_echo(line)]
+    for index in dict.fromkeys(filled[:1] + filled[-1:]):
+        match = _LABEL_LINE.match(lines[index])
         if match:
             return index, match.group(1).upper(), (match.group(2) or "").strip()
     return None
@@ -212,7 +221,7 @@ class ProgressGuard:
 
 def _is_echo(line: str) -> bool:
     """A preamble line that only repeats the check's own header."""
-    return line.strip(" \t>*_`#-").casefold().startswith("progress check")
+    return _ECHO_LINE.match(line.strip(" \t>*_`#-").casefold()) is not None
 
 
 def _norm(text: str) -> str:
