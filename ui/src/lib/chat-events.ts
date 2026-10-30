@@ -6,6 +6,7 @@
 
 import type { BranchSnaps } from "./chat-fork";
 import { applyHeldList, clearHeldPending } from "./chat-held";
+import { applyHistory, nextUserIndex, noteTrimmed } from "./chat-history";
 import { markResponse, withdrawResponse } from "./chat-retract";
 import type { ChatMessage, ChatState, ToolBlock } from "./chat-store";
 import type { MessageQueue } from "./chat-queue";
@@ -47,9 +48,19 @@ export interface ChatEventContext {
 }
 
 /** Re-decide the pane's session from a list and apply the choice. */
-function rebindFrom(ctx: ChatEventContext, summaries: readonly SessionSummary[]): void {
+function rebindFrom(
+  ctx: ChatEventContext,
+  summaries: readonly SessionSummary[],
+  previous: readonly SessionSummary[],
+): void {
   const { state } = ctx;
-  const choice = chooseBoundSession(summaries, state.sessionId, windowBindSessionId(), ctx.hold.sessionId);
+  const choice = chooseBoundSession(
+    summaries,
+    state.sessionId,
+    windowBindSessionId(),
+    ctx.hold.sessionId,
+    previous,
+  );
   if (choice.action === "bind") {
     ctx.switchSession(choice.sessionId, choice.turnState);
   } else if (choice.action === "unbind") {
@@ -220,12 +231,13 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
         last !== undefined &&
         last.role === "user" &&
         last.turnId === undefined &&
+        last.restored !== true &&
         last.text === event.content
       ) {
         last.turnId = event.turn_id;
         return;
       }
-      const userIndex = state.messages.filter((m) => m.role === "user").length;
+      const userIndex = nextUserIndex(state);
       const chips = steered === undefined ? [] : toChips(steered.attachments);
       state.messages.push({
         id: ctx.allocateId(),
@@ -247,6 +259,14 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       for (const sent of applyHeldList(state, ctx.sending, event)) ctx.queue.settle(sent);
       return;
     }
+    case "log_trimmed":
+      // TD-5201: the replay starts past the chat's start. Never the New
+      // chat screen for a chat that had messages.
+      if (event.session_id === state.sessionId) noteTrimmed(state, ctx.allocateId);
+      return;
+    case "conversation_history":
+      if (event.session_id === state.sessionId) applyHistory(state, event, ctx.allocateId);
+      return;
     case "assistant_reasoning": {
       if (event.session_id !== state.sessionId) return;
       // Reasoning is a turn in flight on exactly the terms a content
@@ -377,11 +397,12 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
     }
     case "session_list": {
       const { hold } = ctx;
+      const previous = hold.lastList;
       hold.lastList = event.sessions;
       if (hold.sessionId !== null && event.sessions.some((s) => s.session_id === hold.sessionId)) {
         hold.sessionId = null;
       }
-      rebindFrom(ctx, event.sessions);
+      rebindFrom(ctx, event.sessions, previous);
       return;
     }
     case "machine_list": {
@@ -391,7 +412,7 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       const mch = machineOf(hold.sessionId);
       if (mch === null || event.machines.some((m) => m.id === mch)) return;
       hold.sessionId = null;
-      rebindFrom(ctx, hold.lastList);
+      rebindFrom(ctx, hold.lastList, hold.lastList);
       return;
     }
     case "error": {

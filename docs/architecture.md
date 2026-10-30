@@ -449,7 +449,13 @@ belong to no session's log and must never advance a client's bookkeeping.
 
 `attach` replays from a given `seq` and then follows live, which is what makes reopening a window
 lossless. If that `seq` is below the on-disk window (`session.log_max_events`), attach sends
-`log_trimmed` and replays from the earliest kept seq. `ping` is the odd one out: it is a
+`log_trimmed` and replays from the earliest kept seq. Every streamed chunk is an event, so an older
+chat's window can hold none of its questions: after `log_trimmed`, attach also sends
+`conversation_history`, the messages of the session's saved conversation that come before the
+window (TD-5201, `chat_history.py`). The two line up by tool-call id and by user-turn number from
+the session's start; when they cannot, nothing is sent and the window says the earlier messages
+are no longer stored. The window also drops what still arrives for a session it detached from,
+rather than resuming that session from those frames later (TD-5201). `ping` is the odd one out: it is a
 daemon→client frame with no `seq` at all, deliberately not a `DaemonEvent`, because a liveness
 frame that advanced the sequence would corrupt replay.
 
@@ -762,6 +768,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |
 | `usage_exported` | connection | Where `export_usage` wrote, and how many rows (TD-1706). |
 | `log_trimmed` | connection | Attach asked for a seq the on-disk window dropped. Replay continues from `earliest_seq` (TD-2901). |
+| `conversation_history` | connection | After `log_trimmed`: the saved conversation's messages from before the window (user, assistant with its tool calls, compaction summaries), each part capped, image bytes never sent; `user_turns` numbers the window's turns from the session's start (TD-5201). |
 | `artifact_ready` | session | An artifact was recorded for this session (TD-3201; `kind: "sent_file"` with name, size, sha256, caption and tool call id for a sent file, TD-5143). |
 | `artifact_list` | connection | The artifacts `list_artifacts` asked for. |
 | `artifact` | connection | Metadata and path for `open_artifact`. Bytes stay on disk. |

@@ -18787,3 +18787,65 @@ the guard's three counters. This supersedes TD-5002's rule that
 missing: it costs another call, and the answer was already right.
 Keeping `BLOCKED` as a pause: a question belongs in the chat, where the
 person can answer it, not behind Resume.
+
+## TD-5201 — An older chat's earlier messages come from its saved conversation (Class B)
+
+2026-10-30. The window rebuilds a chat only from the event log, and the
+log keeps its newest events. Every streamed chunk is an event, so one long
+reply can push all of a chat's questions out of the window, and restarts
+add state events on top. On one install's copy, 8 of 19 trimmed windows
+held no user turn at all; the saved conversation still had every message.
+
+**Decision:** After `log_trimmed`, attach sends a connection-scoped
+`conversation_history` (seq fixed at 1, never logged): the messages of the
+session's in-memory conversation that come before the window's first
+event, as user, assistant (text and tool calls with their results) and
+summary rows. The daemon lines the two up by what both name: the first
+tool call or result in the window by its id, or the first user turn by
+its number from the session's start, where a compaction summary counts
+the turns it stands for. Chunks streamed before that event stay with the
+window. When the two cannot be lined up (a fork the window shows both
+sides of, a conversation that no longer counts the window's turns),
+nothing is sent and the window says the earlier messages are no longer
+stored. `user_turns` lets the window number its own user turns from the
+session's start, so Edit, Retry and Summarize from here fork the right
+turn; the fork reset now finds its row by that number. Text, tool output
+and arguments are capped, the oldest rows go past 400 or about 1.5 MB
+(`truncated`), image bytes are counted and never sent, notes the daemon
+appended to a message (plan mode, Ultracode, hooks, worker mentions) are
+cut, and the frame passes the same redaction and peer scrub as the replay.
+The window shows these rows as ordinary messages marked `restored`, and a
+"notice" row (no one's message) for a trimmed start, a cut history, or a
+summary.
+
+**Rejected:** Coalescing streamed chunks on disk, or keeping user turns
+out of the trim: either leaves holes in the seq order, which the client
+reads as lost frames and reconnects for, forever. Rendering the whole
+conversation instead of the window: it drops the thinking, file cards and
+done-checks the window has, and an attach mid-reply loses what streamed
+so far. A separate history request: one more round trip on every open,
+and the daemon already knows on attach that the window was trimmed.
+
+## TD-5201 — A detached session's late frames are dropped; an archived chat opened stays open (Class B)
+
+2026-10-30. Two binding defects showed the New chat screen for a chat
+with a history.
+
+**Decision:** The client remembers the sessions it detached and has not
+attached again. Frames with a seq for those sessions (the rest of a
+replay or stream the daemon was already sending when it read the detach)
+are dropped: no cursor, no store, no reconnect. Before, they rebuilt the
+cursor, a `log_trimmed` included, and the next attach of that chat asked
+to start after them and got nothing. Frames without a seq (a refusal)
+and connection-scoped replies still reach the stores; a session never
+attached on this client (a new session's reply) is unchanged; a new
+socket clears the set. The auto-bind policy keeps a listed archived
+session unless it was unarchived in the list before (`previous`), so
+archiving the bound chat still moves the pane (TD-1715) while a chat
+opened from the archived shelf stays open.
+
+**Rejected:** Resetting the cursor on every attach: a resume or reconnect
+re-attach must continue from the cursor, losslessly (TD-1716). Asking the
+daemon to acknowledge a detach: a protocol change for something the
+client can decide alone. Keeping archived chats only while the rail shows
+the archived shelf: it ties the chat store to the rail's view state.

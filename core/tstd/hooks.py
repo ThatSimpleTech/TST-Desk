@@ -562,11 +562,15 @@ async def after_tool(
     return "\n\n[hooks]\n" + "\n\n".join(notes)
 
 
+# Opens the note below. Restored history cuts a user message there (TD-5201).
+HOOK_NOTE_HEADER = "[Context from hooks]"
+
+
 def with_hook_context(content: Any, text: str) -> Any:
     """A user message's *content* with hook context after the person's words."""
     if not text:
         return content
-    note = f"[Context from hooks]\n{text}"
+    note = f"{HOOK_NOTE_HEADER}\n{text}"
     if isinstance(content, str):
         return f"{content}\n\n{note}"
     return [*content, {"type": "text", "text": note}]

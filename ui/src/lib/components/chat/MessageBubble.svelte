@@ -24,6 +24,7 @@
 	import ReasoningBlock from "./ReasoningBlock.svelte";
 	import ToolFold from "./ToolFold.svelte";
 	import CheckFold from "./CheckFold.svelte";
+	import NoticeRow from "./NoticeRow.svelte";
 
 	let {
 		message,
@@ -130,7 +131,9 @@
 	class:user={message.role === "user"}
 	class:turn-start={message.role === "user" && !first}
 >
-	{#if message.role === "assistant"}
+	{#if message.role === "notice"}
+		<NoticeRow {message} />
+	{:else if message.role === "assistant"}
 		<div class="assistant-msg">
 			<!-- TD-1902: thinking above the answer, folded. -->
 			{#if hasReasoning(message)}<ReasoningBlock {message} />{/if}

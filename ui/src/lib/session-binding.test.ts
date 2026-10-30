@@ -70,6 +70,33 @@ describe("choosing a session to bind", () => {
     expect(choice).toEqual({ action: "bind", sessionId: "other", turnState: "idle" });
   });
 
+  it("keeps an archived session the pane was opened on from the archived shelf (TD-5201)", () => {
+    const list = summaries([
+      { id: "filed", updated: "2026-08-14T09:00:00Z", archived: true },
+      { id: "newer", updated: "2026-08-14T11:00:00Z" },
+    ]);
+    expect(chooseBoundSession(list, "filed", null, null, list)).toEqual({
+      action: "keep",
+      turnState: "idle",
+    });
+  });
+
+  it("still moves off the bound session in the list that archives it (TD-5201)", () => {
+    const before = summaries([
+      { id: "bound", updated: "2026-08-14T09:00:00Z" },
+      { id: "other", updated: "2026-08-14T08:00:00Z" },
+    ]);
+    const after = summaries([
+      { id: "bound", updated: "2026-08-14T11:00:00Z", archived: true },
+      { id: "other", updated: "2026-08-14T08:00:00Z" },
+    ]);
+    expect(chooseBoundSession(after, "bound", null, null, before)).toEqual({
+      action: "bind",
+      sessionId: "other",
+      turnState: "idle",
+    });
+  });
+
   it("unbinds rather than binding a corpse when every session is terminal (TD-1711)", () => {
     const choice = chooseBoundSession(
       summaries([

@@ -56,6 +56,7 @@ from tstd.protocol import (
     ContextPinEntry,
     ContextPins,
     ContextUsage,
+    ConversationHistory,
     ConversationReset,
     CostUpdate,
     CreateRule,
@@ -115,6 +116,8 @@ from tstd.protocol import (
     GrokSessionEntry,
     GrokSessionList,
     Hello,
+    HistoryMessage,
+    HistoryTool,
     HookInfo,
     HookRun,
     HooksState,
@@ -1716,6 +1719,28 @@ FIXTURES = {
         session_id="sess-1",
         requested_from_seq=1,
         earliest_seq=8,
+    ),
+    # TD-5201: what the saved conversation has from before that window.
+    "conversation_history": ConversationHistory(
+        session_id="sess-1",
+        messages=[
+            HistoryMessage(role="summary", text="Earlier turns, summarized.", folded_turns=2),
+            HistoryMessage(role="user", text="Read the notes", user_index=2),
+            HistoryMessage(
+                role="assistant",
+                text="Reading them.",
+                tools=[
+                    HistoryTool(
+                        tool_call_id="call-1",
+                        name="read_file",
+                        arguments={"path": "notes.md"},
+                        output="tomatoes, basil",
+                    )
+                ],
+            ),
+        ],
+        user_turns=3,
+        truncated=True,
     ),
     # TD-3201: session-scoped notice; list/open replies stay off the log.
     # TD-5143: the notice is a sent file, the kind with every optional field.

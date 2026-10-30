@@ -1052,6 +1052,34 @@ describe("archived sessions never win auto-bind (TD-1715)", () => {
     expect(attached).toEqual(["bound", "other"]);
   });
 
+  it("keeps an archived chat opened from the archived shelf through later lists (TD-5201)", () => {
+    // The replay's state changes ask for a list, and Star answers with one:
+    // each used to send the pane to the newest chat half a second after the
+    // click, or to the New chat screen when nothing else was live.
+    const { deps, detached } = fakeDeps();
+    const state = createChatState();
+    const store = createChatStore(deps, state);
+    const rows: Summary[] = [
+      { id: "live", updated: "2026-08-14T11:00:00Z", state: "idle" },
+      { id: "filed", updated: "2026-08-14T09:00:00Z", state: "idle", archived: true },
+    ];
+    store.applyEvent(sessionList(rows));
+    expect(state.sessionId).toBe("live");
+
+    store.selectSession("filed", "idle");
+    store.applyEvent(userTurn("filed", "t1", "Summarize the notes"));
+    store.applyEvent(delta("filed", "The notes cover the budget."));
+    store.applyEvent(sessionList(rows));
+    store.applyEvent(sessionList(rows));
+
+    expect(state.sessionId).toBe("filed");
+    expect(state.messages.map((m) => m.text)).toEqual([
+      "Summarize the notes",
+      "The notes cover the budget.",
+    ]);
+    expect(detached).toEqual(["live"]);
+  });
+
   it("empties the pane when the bound session is archived and nothing else is live", () => {
     const { deps } = fakeDeps();
     const state = createChatState();

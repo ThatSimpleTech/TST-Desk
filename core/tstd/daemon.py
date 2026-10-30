@@ -51,6 +51,7 @@ from .boundary_config import (
 )
 from .browser import BrowserDriver, BrowserError, browser_driver_from_config, normalize_hit
 from .card_write import save_tier_values
+from .chat_history import history_before_window
 from .config import (
     DEFAULT_CREDENTIAL_ID,
     ConfigError,
@@ -154,7 +155,7 @@ from .local_worker import (
     session_is_cu_heavy,
     tier_state_event,
 )
-from .logging import get_logger, log_directory, setup_logging, user_data_dir
+from .logging import get_logger, log_directory, redact_structure, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop, brain_manifest_config
 from .machine_pairing import DialPolicy
 from .mcp.loader import McpSupervisor
@@ -236,6 +237,7 @@ from .protocol import (
     CompactContext,
     ContextPinEntry,
     ContextPins,
+    ConversationHistory,
     CreateRule,
     CredentialSummary,
     CuKillState,
@@ -5404,6 +5406,9 @@ class Daemon:
         await keep_goal_visible(session)
         # TD-5123: and the pinned plan, which it shows too.
         await keep_pinned_plan_visible(session)
+        # TD-5169: another computer gets the events without service hosts.
+        peer = self.ws_server.peer_view(connection)
+        hosts = service_hosts(self.config.model_dump()) if peer.machine else frozenset()
         # Replay from from_seq. A rotated prefix is a typed notice, then
         # the same gap/dup rules over whatever is still in the window.
         earliest = session.event_log.earliest_seq
@@ -5415,10 +5420,16 @@ class Daemon:
                     earliest_seq=earliest,
                 ).model_dump_json()
             )
+            # TD-5201: and what the saved conversation still has of it.
+            history = history_before_window(
+                session_id, session.conversation, session.event_log.all_events
+            )
+            if history is not None:
+                redacted = ConversationHistory.model_validate(
+                    redact_structure(history.model_dump())
+                )
+                await connection.send(outbound_event(redacted, peer, hosts).model_dump_json())
         replay_from = max(msg.from_seq, earliest)
-        # TD-5169: another computer gets the events without service hosts.
-        peer = self.ws_server.peer_view(connection)
-        hosts = service_hosts(self.config.model_dump()) if peer.machine else frozenset()
         for event in session.event_log.events_from(replay_from):
             await connection.send(outbound_event(event, peer, hosts).model_dump_json())
 

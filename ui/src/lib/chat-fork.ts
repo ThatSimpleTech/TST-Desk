@@ -105,11 +105,14 @@ export function createBranchSnaps(): BranchSnaps {
         }));
         return true;
       }
+      // By the row's own number, not its position: a chat whose log no
+      // longer reaches its start numbers from the session's start (TD-5201).
       let seen = 0;
       let cut = -1;
       for (let i = 0; i < state.messages.length; i++) {
-        if (state.messages[i].role !== "user") continue;
-        if (seen === event.user_index) {
+        const row = state.messages[i];
+        if (row.role !== "user") continue;
+        if ((row.userIndex ?? seen) === event.user_index) {
           cut = i;
           break;
         }

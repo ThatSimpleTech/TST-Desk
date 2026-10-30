@@ -2503,6 +2503,40 @@ export interface LogTrimmed extends DaemonEvent {
   earliest_seq: number;
 }
 
+/** One tool call on a restored assistant message (TD-5201). `output` is
+ *  null when the result is in the replayed window, or never came. */
+export interface HistoryTool {
+  tool_call_id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+  output: string | null;
+}
+
+/** One message from before the replayed window, as the saved conversation
+ *  keeps it (TD-5201). A "summary" stands for `folded_turns` earlier user
+ *  turns whose own messages are gone. `user_index` numbers a user message
+ *  from the start of the session, as the window numbers its user turns. */
+export interface HistoryMessage {
+  role: "user" | "assistant" | "summary";
+  text: string;
+  tools: HistoryTool[];
+  user_index: number | null;
+  folded_turns: number;
+}
+
+/** The conversation from before the replayed window (TD-5201), sent after
+ *  `log_trimmed` when the saved conversation has it. Connection-scoped:
+ *  seq fixed at 1, never in the session log. `user_turns` is how many user
+ *  turns come before the window's first replayed one; `truncated` says
+ *  older messages were left out. */
+export interface ConversationHistory extends DaemonEvent {
+  type: "conversation_history";
+  session_id: string;
+  messages: HistoryMessage[];
+  user_turns: number;
+  truncated: boolean;
+}
+
 /** One artifact on artifact_list (TD-3201). Path, not bytes.
  *  kind "sent_file" (TD-5143) is a copy the agent sent: it always carries
  *  name, size, sha256 and tool_call_id, and its path is the folder
@@ -3188,6 +3222,7 @@ export type DaemonEventUnion =
   | UsageReport
   | UsageExported
   | LogTrimmed
+  | ConversationHistory
   | ArtifactReady
   | ArtifactList
   | Artifact

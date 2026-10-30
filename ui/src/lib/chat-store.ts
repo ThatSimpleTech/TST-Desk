@@ -15,6 +15,7 @@ import type { ChatMessage } from "./chat-message";
 import { applyChatEvent, type BindHold } from "./chat-events";
 import { createBranchSnaps } from "./chat-fork";
 import { clearHeldPending, type HeldMessage } from "./chat-held";
+import { nextUserIndex } from "./chat-history";
 import { createMessageQueue, type QueuedMessage, type SendMode } from "./chat-queue";
 import { createDraftStore, noteSent, type DraftStore } from "./draft-store";
 import { createFirstTokenWait } from "./first-token-wait";
@@ -71,6 +72,10 @@ export interface ChatState {
    *  `verify_result` yet. It runs after turn_complete, so the turn state
    *  says idle, but it holds the loop and Stop ends it (TD-5151). */
   reviewRunning: boolean;
+  /** User turns before the replay's first one, when the log no longer
+   *  reaches the chat's start (TD-5201): the daemon numbers turns from the
+   *  session's start, and Edit and Retry fork by that number. */
+  userTurnBase: number;
 }
 
 export interface ChatDeps {
@@ -150,6 +155,7 @@ export function createChatState(): ChatState {
     lastTurnError: null,
     draft: "",
     reviewRunning: false,
+    userTurnBase: 0,
   };
 }
 
@@ -226,7 +232,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     noteSent(sending, content);
     if (mode === "steer") return true;
     nextId += 1;
-    const userIndex = state.messages.filter((m) => m.role === "user").length;
+    const userIndex = nextUserIndex(state);
     state.messages.push({
       id: `m${nextId}`,
       role: "user",
@@ -446,6 +452,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       hold.sessionId = null;
       state.turnState = null;
       state.messages = [];
+      state.userTurnBase = 0;
       state.held = [];
       resetDisclosures();
       queue.clear();

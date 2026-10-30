@@ -12656,3 +12656,45 @@ thatsimpletech.com.
 - [x] Every file in `shell/icons` (macOS `.icns`, Windows `.ico` and Store
       logos, the PNGs) is generated from that master with `npx tauri icon`.
 - [ ] The Android launcher icon is unchanged (a separate vector drawable).
+
+### TD-5201 — An older finished chat opens with its history
+
+**Size:** 5 · **Depends on:** TD-2901, TD-1715, TD-1708, TD-5109 · **Status:** Done
+
+Reported: clicking an older finished chat showed the New chat screen. Three
+causes, each reproduced before it was fixed. The window kept a seq cursor
+for a chat it had just left: the daemon reads a socket in order, so a chat
+clicked and left before its replay landed still got that replay, which
+rebuilt the cursor (a `log_trimmed` included), and every later attach asked
+to start after it and got nothing. An archived chat opened from the
+archived shelf was sent back to the newest chat, or to the New chat screen,
+by the next session list. And an older chat's event window often held none
+of its questions: every streamed chunk is an event and the log keeps the
+newest ones, so on one install's copy 19 windows were trimmed and 8 had no
+user turn left, while the saved conversations still had every message.
+
+- [x] A chat opened, left for another before its replay landed, and opened
+      again shows its whole conversation: frames for a session the window
+      detached and has not attached again neither move its cursor, reach a
+      store, nor force a reconnect (`client-detach.test.ts`,
+      `chat-reopen.test.ts`, which fail before the fix).
+- [x] An archived chat opened from the archived shelf stays open through
+      later lists; archiving the bound chat still moves the pane
+      (`session-binding.test.ts`, `chat-store.test.ts` "keeps an archived
+      chat opened from the archived shelf…").
+- [x] Attach to a chat whose window was trimmed sends `conversation_history`
+      after `log_trimmed`: the saved conversation's messages from before the
+      window, lined up by tool-call id and by user-turn number from the
+      session's start, redacted, with tool output, arguments and text
+      capped and image bytes never sent; nothing is sent when the two cannot
+      be lined up (`test_chat_history.py`, `test_attach_history.py`).
+- [x] The pane shows those messages ahead of the replay and numbers the
+      replay's user turns after them, so Edit, Retry and Summarize from here
+      fork the right turn; a compaction summary is a line with the summary
+      folded under it (`chat-history.test.ts`).
+- [x] A chat whose earlier messages are gone says "Earlier messages in this
+      chat are no longer stored." instead of showing the New chat screen; a
+      chat that was never used still shows the greeting (`chat-history.test.ts`).
+- [ ] Each daemon start still logs a state change, the boundary and the tier
+      for every session and refreshes its rail time. With the history above
+      this hides nothing, and is left for its own story.
