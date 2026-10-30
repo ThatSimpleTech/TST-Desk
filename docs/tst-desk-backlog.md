@@ -12656,3 +12656,22 @@ thatsimpletech.com.
 - [x] Every file in `shell/icons` (macOS `.icns`, Windows `.ico` and Store
       logos, the PNGs) is generated from that master with `npx tauri icon`.
 - [ ] The Android launcher icon is unchanged (a separate vector drawable).
+
+### TD-5204 — An update download follows GitHub's asset redirect
+
+**Size:** 1 · **Depends on:** TD-4837 · **Status:** Done
+
+Every in-app update failed with "download failed: error following redirect"
+on the first file, `SHA256SUMS.txt`. GitHub answers a release download with
+a 302 to its asset store, which is now `release-assets.githubusercontent.com`;
+the updater's redirect list did not have that host, so it refused the hop.
+Installs from before this fix still carry the old list and need one manual
+download of the new release; updates after that run in the app again.
+
+- [x] The redirect list allows `release-assets.githubusercontent.com`, and a
+      redirect is followed only over HTTPS on the default port
+      (`plan_test.rs::github_asset_store_redirect_is_followed`).
+- [x] A refused redirect names the scheme and host it refused, so the next
+      change on GitHub's side is diagnosable from the message alone.
+- [x] Checked against the live 0.4.5 release: the updater's own client
+      downloads its `SHA256SUMS.txt` through the redirect.

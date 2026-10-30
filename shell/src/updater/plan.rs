@@ -292,15 +292,28 @@ pub fn release_page_allowed(url: &str) -> bool {
     parsed.path().starts_with(&prefix) && !parsed.path().contains("..")
 }
 
+/// Hosts a release download may be redirected to (TD-5204).
+///
+/// GitHub answers `releases/download/...` with a 302 to its asset store.
+/// Since 2025 that is `release-assets.githubusercontent.com`; a list
+/// without it refused every download with "error following redirect".
+/// Check the live answer with `curl -sI <asset URL>` before changing this.
 pub fn redirect_host_allowed(host: &str) -> bool {
     matches!(
         host,
         "github.com"
             | "api.github.com"
+            | "release-assets.githubusercontent.com"
             | "objects.githubusercontent.com"
-            | "release-assets.github.com"
             | "github-releases.githubusercontent.com"
     )
+}
+
+/// A redirect is followed only over HTTPS on the default port, to an
+/// allowed host: the checksum file travels the same way as the asset, so a
+/// downgraded hop would let one party supply both.
+pub fn redirect_allowed(url: &reqwest::Url) -> bool {
+    https_default_port(url) && url.host_str().is_some_and(redirect_host_allowed)
 }
 
 pub fn parse_sha256sums(text: &str) -> BTreeMap<String, String> {
