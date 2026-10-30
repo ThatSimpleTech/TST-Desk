@@ -5,7 +5,8 @@ decides what the text is. Every new value is JSON, which YAML reads back as
 the same value: a string is always double-quoted (so ``on``, ``1.0`` or
 ``2026-10-09`` stays a string), a float always has a decimal point (YAML 1.1
 reads ``1e-05`` as a string), and a character YAML would fold or refuse is
-escaped. Collections are written in block style, or flow style when asked.
+escaped. Collections are written in block style, or flow style when asked,
+and a multi-line string can be written as a literal ``|`` block.
 """
 
 from __future__ import annotations
@@ -118,6 +119,27 @@ def item_lines(items: list[Any], indent: int) -> list[str]:
         else:
             lines.append(f"{pad}- {flow_text(item)}")
     return lines
+
+
+def block_scalar(text: str, indent: int) -> list[str] | None:
+    """*text* as a literal block (``|`` or ``|-`` header, then its lines), or None.
+
+    Only text that reads back exactly: it holds a line break and ends in at
+    most one, needs no escape, has no line of spaces alone (YAML would read
+    one before the first text line as indentation), and its first text line
+    does not start with a space or tab, since the block's indent is read
+    from that line. Each line is indented by *indent*; an empty line stays
+    empty.
+    """
+    if "\n" not in text or "\r" in text or text.endswith("\n\n") or _UNSAFE_IN_QUOTES.search(text):
+        return None
+    body = text[:-1] if text.endswith("\n") else text
+    lines = body.split("\n")
+    first = next((line for line in lines if line), "")
+    if not first or first[0] in " \t" or any(line and not line.strip() for line in lines):
+        return None
+    pad = " " * indent
+    return ["|" if text.endswith("\n") else "|-", *(pad + line if line else "" for line in lines)]
 
 
 def nest(parts: Sequence[PathPart], value: Any) -> Any:

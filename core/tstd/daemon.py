@@ -22,10 +22,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
-from urllib.parse import urlsplit
 
 import websockets.exceptions
 from pydantic import ValidationError
+from pydantic_core import PydanticSerializationError
 
 from . import fast_switch, keychain_mcp
 from .artifacts import ArtifactError, ArtifactRecord, ArtifactStore, artifact_ready_for, to_entry
@@ -73,7 +73,7 @@ from .config import (
 )
 from .config_bind import call_config_loader
 from .config_editor import apply_edit, build_view, shipped_defaults
-from .config_editor_checks import ConfigEditRefused
+from .config_editor_checks import ConfigEditRefused, dotted
 from .config_editor_wire import ConfigEdit
 from .config_schema import ROOT_MODEL, editor_defs
 from .config_write import (
@@ -168,6 +168,7 @@ from .mcp_settings import (
     set_mcp_secret,
     value_summaries,
 )
+from .mcp_values import url_host
 from .memory_commit import MemoryCommitter
 from .memory_pref import load_global_memory, save_global_memory
 from .memory_store import (
@@ -662,17 +663,6 @@ def _folder_busy_refusal(session: Session, msg_type: str, **extra: Any) -> str |
         in_reply_to=msg_type,
         **extra,
     )
-
-
-def _url_host(url: str | None) -> str | None:
-    """An MCP url's host and port, lowercased; None for no url (stdio)."""
-    if not url:
-        return None
-    try:
-        parts = urlsplit(url)
-        return f"{(parts.hostname or '').lower()}:{parts.port}"
-    except ValueError:
-        return url
 
 
 def _comment_ids(msg: object) -> list[str] | None:
@@ -3871,7 +3861,10 @@ class Daemon:
                 typesafe_model=self.config.judgments.typesafe_model,
                 typesafe_credential=credential,
             )
-            await asyncio.to_thread(save_judgments, self.config.judgments, self.config_path)
+            # On the loop, with no await between its read and its write, like
+            # every config.yaml writer: in a worker thread it could interleave
+            # with a Settings → Configuration edit and drop it (TD-5203).
+            save_judgments(self.config.judgments, self.config_path)
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, SetWorkspacePin):
@@ -4320,7 +4313,7 @@ class Daemon:
                 kept = (
                     prior is not None
                     and prior.transport == msg.transport
-                    and _url_host(prior.url) == _url_host(msg.url)
+                    and url_host(prior.url) == url_host(msg.url)
                 )
                 spec = McpServerConfig(
                     transport=msg.transport,
@@ -6136,10 +6129,10 @@ class Daemon:
     ) -> str:
         """Settings → Configuration (TD-5203): the view of config.yaml, or one edit.
 
-        Loopback only (peer_policy). The edit runs on the loop, as every
-        config writer here does, so its read, check and write cannot
-        interleave with another writer's. The reload is the one the other
-        Settings writers use; MCP and the active model get theirs too.
+        Loopback only (peer_policy). The edit runs on the loop with no await
+        between its read and its write, as every config.yaml writer here
+        does, so none can interleave with another. The reload is the one the
+        other Settings writers use; MCP and the active model get theirs too.
         """
         if isinstance(msg, GetConfigEditor):
             return await self._config_editor_reply(msg.type, None)
@@ -6151,6 +6144,21 @@ class Daemon:
         except ConfigEditRefused as e:
             return ConfigValueRejected(
                 action=action, path=path, code=e.code, message=e.message
+            ).model_dump_json()
+        except Exception as e:
+            # A file shape the splicer did not foresee must not drop the
+            # socket: the window's other pages share this connection. The
+            # field gets an answer instead, and the file was not written
+            # (the write is apply_edit's last step).
+            log.warning(
+                "config edit failed unexpectedly",
+                extra={"extra_fields": {"key": dotted(path), "error": type(e).__name__}},
+            )
+            return ConfigValueRejected(
+                action=action,
+                path=path,
+                code="write_failed",
+                message="this key could not be written; edit config.yaml by hand",
             ).model_dump_json()
         if written is not None:
             try:
@@ -6189,16 +6197,28 @@ class Daemon:
         except ConfigEditRefused as e:
             return build_error("config_invalid", e.message, in_reply_to=in_reply_to)
         first = edit is None
-        return ConfigEditor(
-            root=ROOT_MODEL,
-            defs=editor_defs() if first else {},
-            values=view.values,
-            set_paths=view.set_paths,
-            defaults=shipped_defaults() if first else {},
-            version=view.version,
-            file=view.file,
-            edit=edit,
-        ).model_dump_json()
+        try:
+            return ConfigEditor(
+                root=ROOT_MODEL,
+                defs=editor_defs() if first else {},
+                values=view.values,
+                set_paths=view.set_paths,
+                locked_paths=view.locked_paths,
+                defaults=shipped_defaults() if first else {},
+                version=view.version,
+                file=view.file,
+                edit=edit,
+            ).model_dump_json()
+        except PydanticSerializationError:
+            # A hand-written escape such as "\ud800" loads as a lone surrogate,
+            # which JSON cannot carry. The page shows its error state, rather
+            # than this connection dropping on every reconnect.
+            return build_error(
+                "config_invalid",
+                "config.yaml holds a character that cannot be shown (a lone surrogate, "
+                "half of an emoji written as an escape); fix it by hand",
+                in_reply_to=in_reply_to,
+            )
 
     async def _handle_test_email(self, msg: TestEmail) -> str:
         from .notify.email_settings import send_test_email

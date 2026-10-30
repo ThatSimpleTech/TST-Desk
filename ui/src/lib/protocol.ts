@@ -2549,6 +2549,11 @@ export interface ConfigEditor extends DaemonEvent {
   values: Record<string, JsonValue>;
   /** Every key path the file itself sets. */
   set_paths: ConfigPathPart[][];
+  /**
+   * Paths written through a YAML anchor, alias or merge. They, and every key
+   * under them, are edited in the file by hand.
+   */
+  locked_paths: ConfigPathPart[][];
   /** Reset value of each key at a fixed place, by JSON.stringify(path). */
   defaults: Record<string, JsonValue>;
   version: string;

@@ -282,3 +282,105 @@ def test_flow_collections_grow_in_flow_style() -> None:
 def test_removing_a_key_keeps_the_comment_lines_after_it() -> None:
     text = "a:\n  b: 1\n  c:\n    - x\n  # about d\n  d: 2\n"
     assert remove_value(text, ["a", "c"]) == "a:\n  b: 1\n  # about d\n  d: 2\n"
+
+
+SHIPPED_HOOK = (
+    "hooks:\n"
+    "  after_write:\n"
+    '    - {name: ruff format, command: "ruff format {files}", match: ["*.py"]}\n'
+    "lsp:\n  servers: []\n"
+)
+FLOW_TIER = (
+    "presets:\n  local:\n"
+    '    worker: { base_url: "http://127.0.0.1:11434/v1", max_output_tokens: 4096 }\n'
+    "end: 1\n"
+)
+
+
+def test_a_key_inside_a_flow_map_is_written_in_flow_style() -> None:
+    """The shipped example hook line, uncommented, then its command made a list."""
+    words = ["ruff", "format", "--quiet", "{files}"]
+    out = _round_trip(SHIPPED_HOOK, ["hooks", "after_write", 0, "command"], words)
+    assert _changed(SHIPPED_HOOK, out) == [
+        '-     - {name: ruff format, command: "ruff format {files}", match: ["*.py"]}',
+        '+     - {name: ruff format, command: ["ruff", "format", "--quiet", "{files}"], '
+        'match: ["*.py"]}',
+    ]
+
+
+def test_a_flow_tier_empties_and_refills_its_lists_in_flow_style() -> None:
+    backup = {"base_url": "http://127.0.0.1:8000/v1", "slug": "vendor/spare"}
+    fallbacks = ["presets", "local", "worker", "fallbacks"]
+    out = _round_trip(FLOW_TIER, [*fallbacks, 0], backup)
+    out = remove_value(out, [*fallbacks, 0])
+    assert yaml.safe_load(out)["presets"]["local"]["worker"]["fallbacks"] == []
+    out = _round_trip(out, [*fallbacks, 0], backup)
+    tools = ["presets", "local", "worker", "deferred_tools"]
+    for value in (["x"], [], ["fs_read"]):
+        out = _round_trip(out, tools, value)
+    out = _round_trip(out, ["presets", "local", "worker", "extra_body"], {})
+    out = _round_trip(out, ["presets", "local", "worker", "extra_body", "seed"], 7)
+    out = _round_trip(out, ["presets", "local", "worker", "reply_guard"], None)
+    out = _round_trip(out, ["presets", "local", "worker", "reply_guard", "retries"], 3)
+    # Still one line: nothing was opened into block style inside the braces.
+    assert len(out.splitlines()) == len(FLOW_TIER.splitlines())
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "base: &tier {slug: a}\nother:\n  <<: *tier\n  label: x\n",
+        "other:\n  <<: {slug: a}\n  label: x\n",
+    ],
+)
+def test_a_key_in_a_mapping_with_a_merge_is_refused(text: str) -> None:
+    with pytest.raises(YamlEditError, match="merge"):
+        set_value(text, ["other", "label"], "y")
+    with pytest.raises(YamlEditError, match="merge"):
+        remove_value(text, ["other", "label"])
+
+
+def test_a_key_listed_twice_is_refused_rather_than_edited_in_the_wrong_copy() -> None:
+    text = "search:\n  max_results: 8\nsearch:\n  max_results: 3\n"
+    with pytest.raises(YamlEditError, match="lists search twice"):
+        set_value(text, ["search", "max_results"], 5)
+    with pytest.raises(YamlEditError, match="lists search twice"):
+        remove_value(text, ["search", "max_results"])
+
+
+def test_removing_the_first_key_of_an_item_keeps_the_comment_about_the_next() -> None:
+    text = (
+        "hooks:\n  after_write:\n"
+        "    - name: ruff format   # shown on the step\n"
+        "      # run the formatter before the linter\n"
+        '      command: ["ruff", "format", "{files}"]\n'
+    )
+    out = remove_value(text, ["hooks", "after_write", 0, "name"])
+    assert "      # run the formatter before the linter\n" in out
+    assert yaml.safe_load(out)["hooks"]["after_write"] == [
+        {"command": ["ruff", "format", "{files}"]}
+    ]
+    assert '    - command: ["ruff", "format", "{files}"]\n' in out
+
+
+def test_a_block_prompt_stays_a_block() -> None:
+    out = _round_trip(DOC, ["compaction", "summary_prompt"], "line one\nline three\n")
+    assert "  summary_prompt: |\n    line one\n    line three\n\n  summary: model\n" in out
+    out = _round_trip(DOC, ["compaction", "summary_prompt"], "no break at the end\nhere")
+    assert "  summary_prompt: |-\n    no break at the end\n    here\n" in out
+    text = "a:\n  p: |  # keep this note\n    old\n  q: 1\n"
+    out = _round_trip(text, ["a", "p"], "new\ntext\n")
+    assert out == "a:\n  p: |  # keep this note\n    new\n    text\n  q: 1\n"
+    # Text a block cannot hold exactly is written quoted instead.
+    for value in ("  indented first\nline\n", "trailing blanks\n\n", "tab\there\n\x07"):
+        out = _round_trip(DOC, ["compaction", "summary_prompt"], value)
+        assert "summary_prompt: |" not in out, value
+
+
+@pytest.mark.parametrize("mark", ["\u2028", "\u2029", "\x85"])
+def test_a_unicode_line_separator_is_refused_before_it_can_hide_a_key(mark: str) -> None:
+    text = f"search:\n  timeout_seconds: 15 # pasted note{mark}  max_results: 3\n  other: 1\n"
+    with pytest.raises(YamlEditError, match="line separator"):
+        remove_value(text, ["search", "timeout_seconds"])
+    with pytest.raises(YamlEditError, match="line separator"):
+        set_value(text, ["search", "other"], 2)

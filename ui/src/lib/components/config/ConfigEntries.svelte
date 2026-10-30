@@ -8,12 +8,13 @@
 	import type { ConfigNode, JsonValue } from '../../protocol';
 	import {
 		configEditor,
+		isLocked,
 		isOpen,
 		resetConfigValue,
 		saveConfigValue,
 		setOpen,
 	} from '../../config-editor.svelte.js';
-	import { entryLabel, getAt, pathKey, type ConfigPath } from '../../config-editor.js';
+	import { entryLabel, getAt, LOCKED_NOTE, pathKey, type ConfigPath } from '../../config-editor.js';
 	import Icon from '../Icon.svelte';
 	import ConfigAddForm from './ConfigAddForm.svelte';
 	import ConfigGroup from './ConfigGroup.svelte';
@@ -43,7 +44,10 @@
 			return Object.entries(held).map(([key, value]) => ({ key, value }));
 		return [];
 	});
-	const editable = $derived(!readonly && node.editable && configEditor.status === 'ready');
+	const locked = $derived(isLocked(path));
+	const editable = $derived(
+		!readonly && !locked && node.editable && configEditor.status === 'ready',
+	);
 	const idBase = $derived(
 		'cfg-entries-' + path.map((p) => String(p).replace(/[^A-Za-z0-9_-]/g, '_')).join('--'),
 	);
@@ -79,13 +83,21 @@
 	}
 </script>
 
-<div class:cfg-group={!flat}>
+<div
+	class:cfg-group={!flat}
+	role="group"
+	aria-labelledby={flat ? undefined : `${idBase}-label`}
+	aria-label={flat ? name : undefined}
+>
 	{#if !flat}
-		<span class="cfg-label">{name}</span>
+		<span id="{idBase}-label" class="cfg-label">{name}</span>
 		{#if node.description}<p class="cfg-hint">{node.description}</p>{/if}
 	{/if}
 	{#if !node.editable && node.note}
 		<p class="cfg-note">{node.note}</p>
+	{/if}
+	{#if configEditor.locked[pathKey(path)]}
+		<p class="cfg-note">{LOCKED_NOTE}</p>
 	{/if}
 	{#each entries as entry (String(entry.key))}
 		{@const entryPath = [...path, entry.key]}
@@ -144,7 +156,12 @@
 			/>
 		{:else}
 			<div class="cfg-control">
-				<button class="cfg-button" type="button" onclick={() => (adding = true)}>
+				<button
+					class="cfg-button"
+					type="button"
+					aria-label={`Add to ${name}`}
+					onclick={() => (adding = true)}
+				>
 					<Icon name="plus" size={12} /> Add
 				</button>
 			</div>

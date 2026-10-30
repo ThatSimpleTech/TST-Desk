@@ -144,9 +144,10 @@ describe("config fields", () => {
 		// The first edit is still out; the second waits its turn.
 		expect(mocks.sent).toHaveLength(1);
 		emit({ type: "config_editor", seq: 1, root: "ModelConfig", defs: {}, values: configEditor.values,
-			set_paths: [], defaults: {}, version: "v2", file: "", edit: { action: "set", path: ["consult", "exclude"] } });
+			set_paths: [], locked_paths: [], defaults: {}, version: "v2", file: "", edit: { action: "set", path: ["consult", "exclude"] } });
+		// The removal builds on the list as it was sent, so the added item stays.
 		expect(mocks.sent.at(-1)).toEqual({
-			type: "set_config_value", path: ["consult", "exclude"], value: [], version: "v2",
+			type: "set_config_value", path: ["consult", "exclude"], value: ["fs_read"], version: "v2",
 		});
 	});
 

@@ -1,10 +1,12 @@
 <script lang="ts">
 	// One config.yaml key (TD-5203): its name and unit, the control its kind
 	// gets, what it does, its default, whether it differs from that default,
-	// and how its last save went. Reset puts the default back.
+	// and how its last save went. Reset puts the default back. A key the file
+	// writes through a YAML anchor or merge is shown, and edited by hand.
 	import type { ConfigNode } from '../../protocol';
 	import {
 		configEditor,
+		isLocked,
 		resetConfigValue,
 		saveConfigValue,
 	} from '../../config-editor.svelte.js';
@@ -16,6 +18,7 @@
 		formatValue,
 		getAt,
 		isModified,
+		LOCKED_NOTE,
 		pathKey,
 		type ConfigPath,
 	} from '../../config-editor.js';
@@ -56,7 +59,10 @@
 	const save = $derived(configEditor.saves[key]);
 	const pending = $derived(save?.state === 'saving');
 	const control = $derived(controlFor(node));
-	const disabled = $derived(readonly || !node.editable || configEditor.status !== 'ready');
+	const locked = $derived(isLocked(path));
+	const disabled = $derived(
+		readonly || locked || !node.editable || configEditor.status !== 'ready',
+	);
 	const canReset = $derived((modified || clearable) && node.resettable && !disabled);
 	const bounds = $derived(boundsHint(node));
 	const choices = $derived(
@@ -77,11 +83,14 @@
 
 <div class="cfg-field" data-config-key={key}>
 	<div class="cfg-field-head">
-		<label id={labelId} for={id} class="cfg-label">
-			<span>{name}</span>
-			{#if node.unit}<span class="cfg-unit">{node.unit}</span>{/if}
+		<span class="cfg-label">
+			<!-- The badge sits outside the label, so the control's name stays the key's. -->
+			<label id={labelId} for={id} class="cfg-label-text">
+				<span>{name}</span>
+				{#if node.unit}<span class="cfg-unit">{node.unit}</span>{/if}
+			</label>
 			{#if modified}<span class="cfg-badge">Modified</span>{/if}
-		</label>
+		</span>
 		{#if canReset && clearable}
 			<button
 				class="cfg-button cfg-button--quiet"
@@ -111,26 +120,18 @@
 				{value}
 				{blank}
 				segmented={control === 'choice'}
+				{pending}
 				{disabled}
 				{onsave}
 			/>
 		{:else if control === 'number' || control === 'text' || control === 'textarea'}
 			<ConfigInput {id} {node} {value} {pending} {disabled} {onsave} />
 		{:else if control === 'chips'}
-			<ConfigChips {id} {labelId} {choices} {value} {disabled} {onsave} />
+			<ConfigChips {id} {labelId} {choices} {value} {pending} {disabled} {onsave} />
 		{:else if control === 'list'}
-			<ConfigList {id} {labelId} {node} {value} revision={configEditor.revision} {disabled} {onsave} />
+			<ConfigList {id} {labelId} {name} {node} {value} {pending} {disabled} {onsave} />
 		{:else if control === 'union'}
-			<ConfigUnion
-				{id}
-				{labelId}
-				{node}
-				{value}
-				{pending}
-				revision={configEditor.revision}
-				{disabled}
-				{onsave}
-			/>
+			<ConfigUnion {id} {labelId} {name} {node} {value} {pending} {disabled} {onsave} />
 		{:else if control === 'secrets'}
 			<ConfigSecrets {id} {value} />
 		{:else}
@@ -144,6 +145,9 @@
 	</p>
 	{#if node.note}
 		<p class="cfg-note">{node.note}</p>
+	{/if}
+	{#if configEditor.locked[key]}
+		<p class="cfg-note">{LOCKED_NOTE}</p>
 	{/if}
 	<p
 		class="cfg-status"

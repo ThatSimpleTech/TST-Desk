@@ -1661,6 +1661,7 @@ FIXTURES = {
         },
         values={"workflow": {"max_parallel": 4}, "mcp_env": {"TOKEN": "keychain"}},
         set_paths=[["workflow"], ["workflow", "max_parallel"]],
+        locked_paths=[["presets", "team", "worker"]],
         defaults={'["workflow","max_parallel"]': 3},
         version="0123456789abcdef",
         file="/home/user/.local/share/tst-desk/config.yaml",

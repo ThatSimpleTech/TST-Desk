@@ -6,12 +6,13 @@
 	import type { ConfigNode, JsonValue } from '../../protocol';
 	import {
 		configEditor,
+		isLocked,
 		isOpen,
 		resetConfigValue,
 		saveConfigValue,
 		setOpen,
 	} from '../../config-editor.svelte.js';
-	import { getAt, pathKey, type ConfigPath } from '../../config-editor.js';
+	import { getAt, LOCKED_NOTE, pathKey, type ConfigPath } from '../../config-editor.js';
 	import Icon from '../Icon.svelte';
 	import ConfigAddForm from './ConfigAddForm.svelte';
 	import ConfigNodeView from './ConfigNodeView.svelte';
@@ -36,7 +37,10 @@
 	const value = $derived(getAt(configEditor.values, path));
 	const off = $derived(node.nullable && (value === null || value === undefined));
 	const open = $derived(flat || visible !== null || isOpen(path));
-	const locked = $derived(readonly || !node.editable || configEditor.status !== 'ready');
+	const anchored = $derived(isLocked(path));
+	const locked = $derived(
+		readonly || anchored || !node.editable || configEditor.status !== 'ready',
+	);
 	const save = $derived(configEditor.saves[pathKey(path)]);
 	const headId = $derived(
 		'cfg-group-' + path.map((p) => String(p).replace(/[^A-Za-z0-9_-]/g, '_')).join('--'),
@@ -64,7 +68,9 @@
 			<div class="cfg-field-head">
 				<span class="cfg-label"><span>{name}</span><span class="cfg-unit">off</span></span>
 				{#if !locked && !adding}
-					<button class="cfg-button" type="button" onclick={turnOn}>Turn on</button>
+					<button class="cfg-button" type="button" aria-label={`Turn on ${name}`} onclick={turnOn}
+						>Turn on</button
+					>
 				{/if}
 			</div>
 			<p class="cfg-hint">{node.description}</p>
@@ -98,6 +104,9 @@
 				</div>
 				{#if node.description}<p class="cfg-hint">{node.description}</p>{/if}
 				{#if save?.state === 'error'}<p class="cfg-error" role="alert">{save.message}</p>{/if}
+			{/if}
+			{#if configEditor.locked[pathKey(path)]}
+				<p class="cfg-note">{LOCKED_NOTE}</p>
 			{/if}
 			{#if open}
 				{#each def.fields as field (field.name)}

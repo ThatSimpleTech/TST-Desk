@@ -1315,6 +1315,7 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(root.fields[1].node.kind).toBe("secrets");
     expect(m.values.mcp_env).toEqual({ TOKEN: "keychain" });
     expect(m.set_paths).toContainEqual(["workflow", "max_parallel"]);
+    expect(m.locked_paths).toEqual([["presets", "team", "worker"]]);
     expect(m.defaults[JSON.stringify(["workflow", "max_parallel"])]).toBe(3);
     expect(m.edit).toEqual({ action: "set", path: ["workflow", "max_parallel"] });
     expect(isString(m.version) && isString(m.file)).toBe(true);

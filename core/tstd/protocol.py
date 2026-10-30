@@ -1969,6 +1969,10 @@ class TestEmail(ClientMessage):
 # A key path of config.yaml (TD-5203): mapping keys and list positions.
 _CONFIG_PATH_PART_MAX = 200
 _CONFIG_LIST_INDEX_MAX = 10_000
+#: The longest value one edit writes, as JSON. A prompt or a command fits
+#: many times over; the edit, its checks and the reload run on the event
+#: loop, so a pasted blob of megabytes would stall every session.
+CONFIG_VALUE_MAX_CHARS = 64 * 1024
 
 
 def _check_config_path(value: Any) -> Any:
@@ -1980,6 +1984,11 @@ def _check_config_path(value: Any) -> Any:
             raise ValueError("a key path holds key names and list positions only")
         if isinstance(part, str) and not 0 < len(part) <= _CONFIG_PATH_PART_MAX:
             raise ValueError(f"a key name has 1 to {_CONFIG_PATH_PART_MAX} characters")
+        if isinstance(part, str):
+            try:
+                part.encode("utf-8")
+            except UnicodeEncodeError:
+                raise ValueError("a key name holds a character that cannot be saved") from None
         if isinstance(part, int) and not 0 <= part <= _CONFIG_LIST_INDEX_MAX:
             raise ValueError("a list position is out of range")
     return value
@@ -2020,6 +2029,13 @@ class SetConfigValue(ClientMessage):
     @classmethod
     def _path_parts(cls, value: Any) -> Any:
         return _check_config_path(value)
+
+    @field_validator("value")
+    @classmethod
+    def _value_size(cls, value: JsonValue) -> JsonValue:
+        if len(json.dumps(value, ensure_ascii=False)) > CONFIG_VALUE_MAX_CHARS:
+            raise ValueError(f"a value holds at most {CONFIG_VALUE_MAX_CHARS // 1024} KiB as JSON")
+        return value
 
 
 class ResetConfigValue(ClientMessage):
@@ -4022,9 +4038,11 @@ class ConfigEditor(DaemonEvent):
     ``values`` is the effective config as the daemon would load the file
     now, with every ``secrets`` map's values replaced by where each lives
     (``keychain`` or ``config``), never the value. ``set_paths`` lists every
-    key path the file itself sets. ``defaults`` holds the reset value of each
-    key at a fixed place, by JSON-encoded path. ``version`` identifies the
-    file's bytes; ``edit`` names the edit this event acknowledges.
+    key path the file itself sets, and ``locked_paths`` every one it writes
+    through a YAML anchor, alias or merge: those, and every key under them,
+    are edited in the file by hand. ``defaults`` holds the reset value of
+    each key at a fixed place, by JSON-encoded path. ``version`` identifies
+    the file's bytes; ``edit`` names the edit this event acknowledges.
     """
 
     type: Literal["config_editor"] = "config_editor"
@@ -4033,6 +4051,7 @@ class ConfigEditor(DaemonEvent):
     defs: dict[str, ConfigModelDef] = Field(default_factory=dict)
     values: dict[str, JsonValue] = Field(default_factory=dict)
     set_paths: list[list[str | int]] = Field(default_factory=list)
+    locked_paths: list[list[str | int]] = Field(default_factory=list)
     defaults: dict[str, JsonValue] = Field(default_factory=dict)
     version: str = ""
     file: str = ""

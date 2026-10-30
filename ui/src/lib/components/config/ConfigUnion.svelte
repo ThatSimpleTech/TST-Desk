@@ -11,19 +11,19 @@
 	let {
 		id,
 		labelId,
+		name,
 		node,
 		value,
 		pending,
-		revision,
 		disabled,
 		onsave,
 	}: {
 		id: string;
 		labelId: string;
+		name: string;
 		node: ConfigNode;
 		value: JsonValue | undefined;
 		pending: boolean;
-		revision: number;
 		disabled: boolean;
 		onsave: (value: JsonValue) => void;
 	} = $props();
@@ -59,7 +59,7 @@
 	>
 </div>
 {#if listMode && listNode}
-	<ConfigList {id} {labelId} node={listNode} value={shown} {revision} {disabled} {onsave} />
+	<ConfigList {id} {labelId} {name} node={listNode} value={shown} {pending} {disabled} {onsave} />
 {:else if textNode}
 	<ConfigInput {id} node={textNode} value={shown} {pending} {disabled} {onsave} />
 {/if}

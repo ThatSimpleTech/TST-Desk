@@ -12705,5 +12705,19 @@ The dedicated pages stay; a section they also edit links to them.
       `config-editor-store.test.ts`, `config-editor-component.test.ts`).
 - [x] Protocol fixtures on both sides and the architecture tables
       (`test_protocol.py`, `protocol.test.ts`, `test_docs_architecture_guide.py`).
+- [x] Review fixes: an MCP server that holds a token or `allow_remote` keeps
+      its address and transport here (TD-5161); no key, token or URL user
+      info is written or quoted back; a section or entry map is never reset
+      or created whole; the would-be file must read back whole, and a merge,
+      a key listed twice or a Unicode line separator is refused; flow
+      collections stay flow and block prompts stay blocks; anchored keys are
+      locked on the page; line endings stay; value and file size caps
+      (`test_config_editor_guards.py`, `test_config_editor_file.py`,
+      `test_config_yaml_edit.py`, `test_config_editor_daemon.py`).
+- [x] Controls keep what was typed while other saves are answered, build on
+      what they sent, put a refused select back, save a select's keyboard
+      steps once, keep Settings open on an Escape that drops a draft, and say
+      after a reconnect whether a dropped edit was saved
+      (`config-editor-controls.test.ts`, `config-editor-store.test.ts`).
 - [ ] The UI walk (`ui/e2e/app-walk.spec.ts`) does not visit the new page,
       and its census gains one nav button; left to the integration run.

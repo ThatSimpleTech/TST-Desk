@@ -1,12 +1,15 @@
 <script lang="ts">
 	// A number or text key (TD-5203). What is typed stays a draft until Enter
-	// or leaving the field; Escape drops it. A draft that does not parse stays
-	// on screen with the reason and is not sent. A sent draft stays until the
-	// daemon answers, then the box shows the stored value: the new one, or the
-	// old one again when the edit was refused. For a nullable key, an empty
-	// box means "not set". A multi-line box saves on leaving it, or Ctrl+Enter.
+	// or leaving the field; Escape drops it (and only then stays in Settings).
+	// A draft that does not parse stays on screen with the reason and is not
+	// sent, until the stored value changes under it, as a Reset does. A sent
+	// draft stays until the daemon answers, then the box shows the stored
+	// value: the new one, or the old one again when the edit was refused. For
+	// a nullable key, an empty box means "not set". A multi-line box saves on
+	// leaving it, or Ctrl+Enter.
+	import { untrack } from 'svelte';
 	import type { ConfigNode, JsonValue } from '../../protocol';
-	import { parseNumber, parseText } from '../../config-editor.js';
+	import { deepEqual, parseNumber, parseText } from '../../config-editor.js';
 
 	let {
 		id,
@@ -27,12 +30,24 @@
 	let draft = $state<string | null>(null);
 	let sent = $state(false);
 	let error = $state('');
+	let box = $state<HTMLInputElement | HTMLTextAreaElement | null>(null);
+	/** The stored value this box last saw; a change of it retires an unsent draft. */
+	let seen: { value: JsonValue | undefined } | null = null;
 
 	$effect(() => {
 		if (sent && !pending) {
 			draft = null;
 			sent = false;
 		}
+	});
+
+	$effect(() => {
+		const stored = value;
+		untrack(() => {
+			const changed = seen !== null && !deepEqual(seen.value, stored);
+			seen = { value: stored };
+			if (changed && draft !== null && !sent && document.activeElement !== box) cancel();
+		});
 	});
 
 	const numeric = $derived(node.kind === 'int' || node.kind === 'float');
@@ -64,8 +79,13 @@
 	}
 
 	function onkeydown(event: KeyboardEvent): void {
-		if (event.key === 'Escape') cancel();
-		else if (event.key === 'Enter' && (!node.multiline || event.ctrlKey || event.metaKey)) {
+		if (event.key === 'Escape') {
+			if (draft === null && !error) return;
+			// The draft goes; Settings closes on an Escape with nothing to drop.
+			event.stopPropagation();
+			event.preventDefault();
+			cancel();
+		} else if (event.key === 'Enter' && (!node.multiline || event.ctrlKey || event.metaKey)) {
 			event.preventDefault();
 			commit();
 		}
@@ -74,6 +94,7 @@
 
 {#if node.multiline}
 	<textarea
+		bind:this={box}
 		{id}
 		class="cfg-input"
 		{disabled}
@@ -87,6 +108,7 @@
 	></textarea>
 {:else}
 	<input
+		bind:this={box}
 		{id}
 		class="cfg-input"
 		class:cfg-input--number={numeric}

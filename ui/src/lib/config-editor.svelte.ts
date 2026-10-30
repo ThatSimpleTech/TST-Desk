@@ -1,16 +1,20 @@
 // Settings → Configuration store (TD-5203).
 //
 // Holds the daemon's last config_editor view and one save state per key.
-// Edits go out one at a time, in order: each carries the version of the
-// view it was made against, and the daemon refuses an edit through a list
-// position once the file changed, so a second edit sent before the first
-// answer could be refused for the first one's own write. A refused edit
-// leaves the store's values as the daemon last sent them, which is what
-// puts a control back. Sent only via connection-status, like the other
-// settings stores.
+// Edits go out one at a time, in order. Each carries the version of the
+// view it was made against: the daemon refuses an edit through a list
+// position once the file has changed since, because the item there may
+// have moved. An answer to this window's own edit says exactly what
+// changed, so an edit queued behind one that moved no list item takes the
+// new version; one queued behind a removal keeps its own, and is refused
+// rather than landing on the item after the one the person edited.
+// A refused edit leaves the store's values as the daemon last sent them,
+// which is what puts a control back. Sent only via connection-status, like
+// the other settings stores.
 
 import { onConnectionState, onEvent, sendToDaemon } from "./connection-status.svelte.js";
-import { pathKey, type ConfigPath } from "./config-editor.js";
+import { deepEqual, getAt, pathKey, type ConfigPath } from "./config-editor.js";
+import { claimInline } from "./inline-errors.js";
 import type { ConfigEditor, ConfigModelDef, DaemonEventUnion, JsonValue } from "./protocol";
 
 export type FieldSave = { state: "saving" | "saved" | "error"; message: string };
@@ -25,6 +29,8 @@ export const configEditor = $state({
 	values: {} as Record<string, JsonValue>,
 	/** Path keys the file itself sets. */
 	setPaths: {} as Record<string, true>,
+	/** Path keys written through a YAML anchor, alias or merge; their keys are hand-edited. */
+	locked: {} as Record<string, true>,
 	defaults: {} as Record<string, JsonValue>,
 	version: "",
 	file: "",
@@ -33,19 +39,23 @@ export const configEditor = $state({
 	query: "",
 	/** Expanded sections and groups, by path key. */
 	open: {} as Record<string, boolean>,
-	/** Moves on every answer, so a control showing a refused edit redraws. */
-	revision: 0,
 });
 
-type Edit = { kind: "set" | "reset"; path: ConfigPath; value: JsonValue };
+/** `made`: the version of the view the edit was made against. */
+type Edit = { kind: "set" | "reset"; path: ConfigPath; value: JsonValue; made: string };
 
 /** How long an edit may wait for its answer before the field says so. */
 export const EDIT_TIMEOUT_MS = 15_000;
 /** How long "Saved" stays under a field. */
 export const SAVED_SHOWN_MS = 2_500;
 
+const DROPPED = "The connection dropped before the daemon answered.";
+const NOT_SAVED = "Not saved: the connection dropped before the daemon answered.";
+
 let queue: Edit[] = [];
 let inFlight: Edit | null = null;
+/** Edits the connection dropped mid-answer; the next whole view says whether they landed. */
+let dropped: Edit[] = [];
 let timeout: ReturnType<typeof setTimeout> | null = null;
 let started = false;
 
@@ -56,7 +66,8 @@ export function startConfigEditor(): () => void {
 	const offEvents = onEvent(reduce);
 	const offState = onConnectionState((state) => {
 		if (state !== "connected") {
-			failInFlight("The connection dropped before the daemon answered.");
+			if (inFlight !== null) dropped.push(inFlight);
+			failInFlight(DROPPED);
 			return;
 		}
 		if (configEditor.status !== "idle") loadConfigEditor();
@@ -75,12 +86,12 @@ export function loadConfigEditor(): void {
 }
 
 export function saveConfigValue(path: ConfigPath, value: JsonValue): void {
-	enqueue({ kind: "set", path, value });
+	enqueue({ kind: "set", path, value, made: configEditor.version });
 }
 
 /** Back to the default; for a list item or map entry, remove it. */
 export function resetConfigValue(path: ConfigPath): void {
-	enqueue({ kind: "reset", path, value: null });
+	enqueue({ kind: "reset", path, value: null, made: configEditor.version });
 }
 
 export function isOpen(path: ConfigPath): boolean {
@@ -91,6 +102,14 @@ export function setOpen(path: ConfigPath, open: boolean): void {
 	configEditor.open[pathKey(path)] = open;
 }
 
+/** Whether *path* is, or is under, a key the file writes through an anchor or merge. */
+export function isLocked(path: ConfigPath): boolean {
+	for (let i = 1; i <= path.length; i++) {
+		if (configEditor.locked[pathKey(path.slice(0, i))]) return true;
+	}
+	return false;
+}
+
 /** Reset for tests. Does not touch the daemon. */
 export function resetConfigEditor(): void {
 	configEditor.status = "idle";
@@ -99,15 +118,16 @@ export function resetConfigEditor(): void {
 	configEditor.defs = {};
 	configEditor.values = {};
 	configEditor.setPaths = {};
+	configEditor.locked = {};
 	configEditor.defaults = {};
 	configEditor.version = "";
 	configEditor.file = "";
 	configEditor.saves = {};
 	configEditor.query = "";
 	configEditor.open = {};
-	configEditor.revision = 0;
 	queue = [];
 	inFlight = null;
+	dropped = [];
 	if (timeout !== null) clearTimeout(timeout);
 	timeout = null;
 }
@@ -123,7 +143,7 @@ function pump(): void {
 	const next = queue.shift();
 	if (next === undefined) return;
 	inFlight = next;
-	const version = configEditor.version;
+	const version = next.made;
 	const sent =
 		next.kind === "set"
 			? sendToDaemon({ type: "set_config_value", path: next.path, value: next.value, version })
@@ -135,19 +155,42 @@ function pump(): void {
 	timeout = setTimeout(() => failInFlight("The daemon did not answer."), EDIT_TIMEOUT_MS);
 }
 
+/** The list a removal shortened (every later item moved up one place), or null. */
+function movedList(edit: Edit): ConfigPath | null {
+	const last = edit.path[edit.path.length - 1];
+	return edit.kind === "reset" && typeof last === "number" ? edit.path.slice(0, -1) : null;
+}
+
+/**
+ * The daemon wrote *done*, made against `done.made`: an edit made against
+ * that same view still points where it did, so it takes the new version.
+ * One through a list *done* shortened keeps the old one, and is refused.
+ */
+function promote(done: Edit): void {
+	const moved = movedList(done);
+	for (const edit of queue) {
+		if (edit.made !== done.made) continue;
+		if (moved !== null && moved.every((part, i) => edit.path[i] === part)) continue;
+		edit.made = configEditor.version;
+	}
+}
+
+function showSaved(key: string): void {
+	configEditor.saves[key] = { state: "saved", message: "" };
+	setTimeout(() => {
+		if (configEditor.saves[key]?.state === "saved") delete configEditor.saves[key];
+	}, SAVED_SHOWN_MS);
+}
+
 function settle(state: FieldSave): void {
 	if (inFlight === null) return;
 	const key = pathKey(inFlight.path);
 	const done = inFlight;
 	// A later edit of the same key is still to go: the field is still saving.
 	const again = queue.some((edit) => samePath(edit.path, done.path));
-	configEditor.saves[key] = again && state.state === "saved" ? { state: "saving", message: "" } : state;
-	configEditor.revision += 1;
-	if (state.state === "saved") {
-		setTimeout(() => {
-			if (configEditor.saves[key]?.state === "saved") delete configEditor.saves[key];
-		}, SAVED_SHOWN_MS);
-	}
+	if (again && state.state === "saved") configEditor.saves[key] = { state: "saving", message: "" };
+	else if (state.state === "saved") showSaved(key);
+	else configEditor.saves[key] = state;
 	inFlight = null;
 	if (timeout !== null) clearTimeout(timeout);
 	timeout = null;
@@ -162,6 +205,20 @@ function samePath(a: ConfigPath, b: ConfigPath): boolean {
 	return pathKey(a) === pathKey(b);
 }
 
+/** After a reconnect, the whole view says whether each dropped edit landed. */
+function resolveDropped(): void {
+	for (const edit of dropped) {
+		const key = pathKey(edit.path);
+		if (configEditor.saves[key]?.message !== DROPPED) continue;
+		const now = getAt(configEditor.values, edit.path);
+		const wanted = edit.kind === "set" ? edit.value : configEditor.defaults[key];
+		if (wanted !== undefined && deepEqual(now, wanted)) showSaved(key);
+		else if (edit.kind === "set") configEditor.saves[key] = { state: "error", message: NOT_SAVED };
+		else delete configEditor.saves[key];
+	}
+	dropped = [];
+}
+
 function apply(event: ConfigEditor): void {
 	configEditor.root = event.root;
 	// The schema and defaults come with the first view only: they are fixed
@@ -170,11 +227,12 @@ function apply(event: ConfigEditor): void {
 	if (Object.keys(event.defaults).length > 0) configEditor.defaults = event.defaults;
 	configEditor.values = event.values;
 	configEditor.setPaths = Object.fromEntries(event.set_paths.map((p) => [pathKey(p), true as const]));
+	configEditor.locked = Object.fromEntries(event.locked_paths.map((p) => [pathKey(p), true as const]));
 	configEditor.version = event.version;
 	configEditor.file = event.file;
 	configEditor.status = "ready";
 	configEditor.error = "";
-	configEditor.revision += 1;
+	if (event.edit === null) resolveDropped();
 }
 
 function reduce(event: DaemonEventUnion): void {
@@ -185,6 +243,7 @@ function reduce(event: DaemonEventUnion): void {
 				// The pages that show some of these keys (Model, MCP servers…) read
 				// setup_state; ask before the next edit goes, so it is current first.
 				sendToDaemon({ type: "get_setup_state" });
+				promote(inFlight);
 				settle({ state: "saved", message: "" });
 			}
 			break;
@@ -195,13 +254,16 @@ function reduce(event: DaemonEventUnion): void {
 			if (event.code === "stale") loadConfigEditor();
 			break;
 		case "error":
+			// Shown on the page or under its field, so no second, generic notice.
 			if (event.in_reply_to === "get_config_editor") {
+				claimInline(event);
 				configEditor.status = event.code === "loopback_only" ? "computer_only" : "error";
 				configEditor.error = event.message;
 			} else if (
 				inFlight !== null &&
 				(event.in_reply_to === "set_config_value" || event.in_reply_to === "reset_config_value")
 			) {
+				claimInline(event);
 				failInFlight(event.message);
 			}
 			break;

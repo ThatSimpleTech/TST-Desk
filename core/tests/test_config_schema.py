@@ -129,6 +129,8 @@ def test_new_entry_forms_and_empty_models() -> None:
     defs = editor_defs()
     assert defs["LocalServerConfig"].add_fields == ["name", "base_url"]
     assert "slug" in defs["TierConfig"].add_fields
+    # Fast takes hook_url or extra_body; a priority tier is extra_body alone.
+    assert {"hook_url", "extra_body"} <= set(defs["FastConfig"].add_fields)
     assert defs["ReplyGuardConfig"].empty_ok
     assert not defs["FastConfig"].empty_ok  # needs hook_url or extra_body
 

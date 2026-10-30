@@ -71,6 +71,34 @@ RESERVED_CREDENTIAL_IDS = frozenset(
     }
 )
 CREDENTIAL_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+
+
+def _url_hostname(url: str) -> str:
+    """A URL's host for a message: never its user name or password."""
+    try:
+        return urlsplit(url).hostname or "an unnamed host"
+    except ValueError:
+        return "an unnamed host"
+
+
+def api_key_name(where: str, value: str) -> str:
+    """*value* stripped, when it can name an API key: empty, or a key's slug.
+
+    A feature reads ``tst-<value>`` from the keychain and sends it as a
+    bearer token, so the name may not reach another kind of item: a
+    reserved account (a webhook, a sign-in token), or one with a dot in
+    it (an MCP server's value, a paired computer's key).
+    """
+    cleaned = value.strip()
+    if not cleaned:
+        return ""
+    if cleaned in RESERVED_CREDENTIAL_IDS:
+        raise ValueError(f"{where} names a keychain item that is not an API key")
+    if not CREDENTIAL_ID_RE.match(cleaned):
+        raise ValueError(f"{where} must be a lowercase slug [a-z][a-z0-9-]{{0,31}}")
+    return cleaned
+
+
 # A second OpenRouter key slugifies to openrouter-2 (TD-1718). Same host.
 _OPENROUTER_FAMILY_RE = re.compile(r"^openrouter(?:-\d+)?$")
 
@@ -393,8 +421,9 @@ class TierConfig(BaseModel):
         than as a null ``model`` on the wire.
         """
         if self.slug is None and not is_loopback_url(self.base_url):
+            # The host only: the whole URL may carry a password (TD-5203).
             raise ValueError(
-                f"slug is required for the off-box endpoint {self.base_url}; "
+                f"slug is required for the off-box endpoint at {_url_hostname(self.base_url)}; "
                 "only a loopback endpoint discovers its model from /v1/models"
             )
         return self
@@ -528,7 +557,7 @@ class CredentialConfig(BaseModel):
         try:
             parts = urlsplit(self.base_url)
         except ValueError as e:
-            raise ValueError(f"credential base_url is not a URL: {e}") from e
+            raise ValueError("credential base_url is not a URL") from e
         if parts.scheme not in {"http", "https"} or not parts.netloc:
             raise ValueError("credential base_url must be an http(s) OpenAI-compatible endpoint")
         return self
@@ -602,7 +631,7 @@ class LocalServerConfig(BaseModel):
     def _loopback_only(cls, value: str) -> str:
         url = value.strip().rstrip("/")
         if not url.startswith(("http://", "https://")) or not is_loopback_url(url):
-            raise ValueError(f"local_servers base_url must be on this computer: {value!r}")
+            raise ValueError("local_servers base_url must be on this computer, as an http(s) URL")
         return url
 
 
@@ -1214,16 +1243,7 @@ class SpeechConfig(BaseModel):
     @field_validator("credential")
     @classmethod
     def _valid_credential(cls, value: str) -> str:
-        cleaned = value.strip()
-        if not cleaned:
-            return ""
-        if cleaned in RESERVED_CREDENTIAL_IDS:
-            raise ValueError(
-                f"speech.credential {cleaned!r} is reserved for another keychain account"
-            )
-        if not CREDENTIAL_ID_RE.match(cleaned):
-            raise ValueError("speech.credential must be a lowercase slug [a-z][a-z0-9-]{0,31}")
-        return cleaned
+        return api_key_name("speech.credential", value)
 
     @model_validator(mode="after")
     def _base_url_is_http_when_set(self) -> SpeechConfig:
@@ -1232,7 +1252,7 @@ class SpeechConfig(BaseModel):
         try:
             parts = urlsplit(self.base_url)
         except ValueError as e:
-            raise ValueError(f"speech.base_url is not a URL: {e}") from e
+            raise ValueError("speech.base_url is not a URL") from e
         if parts.scheme not in {"http", "https"} or not parts.netloc:
             raise ValueError("speech.base_url must be an http(s) OpenAI-compatible endpoint")
         return self
@@ -1260,8 +1280,8 @@ class GroundingConfig(BaseModel):
     def _loopback_only(self) -> GroundingConfig:
         if self.base_url and not is_loopback_url(self.base_url):
             raise ValueError(
-                f"computer_use.grounding.base_url must be a loopback endpoint "
-                f"(got {self.base_url}); off-box grounding is not allowed"
+                "computer_use.grounding.base_url must be a loopback endpoint; "
+                "off-box grounding is not allowed"
             )
         return self
 
@@ -1352,10 +1372,15 @@ class VoiceConfig(BaseModel):
     credential: str = ""
     timeout_seconds: float = Field(default=30.0, gt=0)
 
-    @field_validator("base_url", "credential")
+    @field_validator("base_url")
     @classmethod
     def _strip_voice(cls, value: str) -> str:
         return value.strip()
+
+    @field_validator("credential")
+    @classmethod
+    def _credential_is_a_key(cls, value: str) -> str:
+        return api_key_name("voice.credential", value)
 
 
 class EngineConfig(BaseModel):
@@ -1572,6 +1597,11 @@ class JudgmentsConfig(BaseModel):
     typesafe_base_url: str = ""
     typesafe_model: str = "jev-latest"
     typesafe_credential: str = "typesafe"
+
+    @field_validator("typesafe_credential")
+    @classmethod
+    def _credential_is_a_key(cls, value: str) -> str:
+        return api_key_name("judgments.typesafe_credential", value)
 
 
 class ModelConfig(BaseModel):

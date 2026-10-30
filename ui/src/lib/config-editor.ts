@@ -327,6 +327,14 @@ export function children(
 }
 
 /**
+ * Under a key config.yaml writes through a YAML anchor, alias or merge: a
+ * change here would also change every place that shares it, so the daemon
+ * refuses one, and the page says so before anyone tries.
+ */
+export const LOCKED_NOTE =
+	"config.yaml writes this with a YAML anchor, alias or merge (<<), so it is edited there by hand.";
+
+/**
  * The Settings pages that also edit some keys of a section, for its
  * "Also in" links. Which page shows what is the window's own knowledge;
  * what may be written here is the daemon's (`editable`, `note`).

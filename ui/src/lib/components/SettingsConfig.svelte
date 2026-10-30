@@ -50,6 +50,13 @@
 				placeholder="Search keys and descriptions"
 				aria-label="Search configuration"
 				bind:value={configEditor.query}
+				onkeydown={(e) => {
+					// Escape clears a search first; with none, it closes Settings as usual.
+					if (e.key !== 'Escape' || configEditor.query === '') return;
+					e.stopPropagation();
+					e.preventDefault();
+					configEditor.query = '';
+				}}
 			/>
 		</div>
 		{#if configEditor.file}

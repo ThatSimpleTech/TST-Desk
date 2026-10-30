@@ -240,7 +240,8 @@ ADD_FIELDS: dict[str, tuple[str, ...]] = {
         "context_window",
         "max_output_tokens",
     ),
-    "FastConfig": ("hook_url", "hook_model", "note"),
+    # Fast needs hook_url or extra_body; a provider's priority tier is extra_body alone.
+    "FastConfig": ("hook_url", "hook_model", "extra_body", "note"),
     "AfterWriteHook": ("name", "command", "match"),
     "HookEntry": ("command", "name"),
     "LspServerConfig": ("name", "command", "match", "language_id"),

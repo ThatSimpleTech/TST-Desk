@@ -40,6 +40,7 @@ async def test_get_then_set_reaches_the_file_and_the_live_config(daemon: Daemon)
         assert view["root"] == "ModelConfig" and "TierConfig" in view["defs"]
         assert view["defaults"]['["workflow","max_parallel"]'] == 3
         assert view["values"]["workflow"]["max_parallel"] == 3
+        assert view["locked_paths"] == []  # no anchor in the packaged file
         edit = {"type": "set_config_value", "path": ["workflow", "max_parallel"], "value": 6}
         ack = await ask(ws, edit, "config_editor")
     assert ack["edit"] == {"action": "set", "path": ["workflow", "max_parallel"]}
@@ -126,4 +127,78 @@ async def test_a_phone_may_not_read_or_write_the_config(daemon: Daemon) -> None:
             reply = await ask(phone, frame, "error")
             assert reply["code"] == "loopback_only", frame
             assert reply["in_reply_to"] == frame["type"]
+    assert daemon.config_path.read_bytes() == before
+
+
+VENDOR = (
+    "mcp:\n  servers:\n    vendor:\n      transport: http\n"
+    "      url: https://mcp.vendor-one.example/mcp\n      allow_remote: true\n"
+    '      headers:\n        Authorization: "keychain:vendor-auth"\n'
+)
+
+
+async def test_a_server_never_takes_its_keychain_token_to_a_new_host(
+    daemon: Daemon, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TD-5161: a new host gets no token; the MCP page asks for one again."""
+    text = daemon.config_path.read_text(encoding="utf-8")
+    daemon.config_path.write_text(text.replace("mcp:\n  servers: {}\n", VENDOR, 1))
+    reloaded: list[McpConfig] = []
+
+    async def record(config: McpConfig) -> None:
+        reloaded.append(config)
+
+    monkeypatch.setattr(daemon._mcp, "reload", record)
+    before = daemon.config_path.read_bytes()
+    async with window(daemon) as ws:
+        for path, value in (
+            (["mcp", "servers", "vendor", "url"], "https://collector.other-host.example/mcp"),
+            (["mcp", "servers", "vendor", "transport"], "stdio"),
+        ):
+            edit = {"type": "set_config_value", "path": path, "value": value}
+            refused = await ask(ws, edit, "config_value_rejected")
+            assert refused["code"] == "not_editable" and "MCP servers" in refused["message"]
+    assert daemon.config_path.read_bytes() == before
+    assert reloaded == []
+
+
+async def test_a_character_json_cannot_carry_is_an_error_not_a_dropped_socket(
+    daemon: Daemon,
+) -> None:
+    text = daemon.config_path.read_text(encoding="utf-8")
+    old = 'typesafe_model: "jev-latest"'
+    assert text.count(old) == 1
+    daemon.config_path.write_text(text.replace(old, 'typesafe_model: "jev\\ud800latest"'))
+    async with window(daemon) as ws:
+        for _ in range(2):  # a reload after a reconnect asks again: still an answer
+            reply = await ask(ws, {"type": "get_config_editor"}, "config_editor")
+            assert reply["type"] == "error" and reply["code"] == "config_invalid", reply
+            assert reply["in_reply_to"] == "get_config_editor"
+
+
+async def test_an_unforeseen_fault_answers_the_field_and_keeps_the_socket(
+    daemon: Daemon, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("a shape nobody foresaw")
+
+    monkeypatch.setattr("tstd.daemon.apply_edit", broken)
+    async with window(daemon) as ws:
+        edit = {"type": "set_config_value", "path": ["workflow", "max_parallel"], "value": 4}
+        refused = await ask(ws, edit, "config_value_rejected")
+        assert refused["code"] == "write_failed" and "foresaw" not in refused["message"]
+        assert (await _editor(ws))["type"] == "config_editor"
+
+
+async def test_a_value_too_long_to_write_is_refused_at_the_door(daemon: Daemon) -> None:
+    before = daemon.config_path.read_bytes()
+    async with window(daemon) as ws:
+        edit = {
+            "type": "set_config_value",
+            "path": ["compaction", "summary_prompt"],
+            "value": "x" * (64 * 1024 + 1),
+        }
+        reply = await ask(ws, edit, "error")
+    assert reply["code"] == "bad_request" and reply["in_reply_to"] == "set_config_value"
+    assert "64 KiB" in reply["message"]
     assert daemon.config_path.read_bytes() == before

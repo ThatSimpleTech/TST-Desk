@@ -8,7 +8,6 @@ renderer a scheduled job uses.
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -61,7 +60,10 @@ async def apply_email_notify(config: ModelConfig, msg: SetEmailNotify, path: Pat
     # the yaml (which has no secret field) ahead of a secret that did not land.
     if msg.google_client_secret:
         await _store_google_secret(msg.google_client_secret)
-    await asyncio.to_thread(save_email_notify, email, path)
+    # On the loop, with no await between its read and its write, like every
+    # config.yaml writer: in a worker thread it could interleave with a
+    # Settings → Configuration edit and drop it (TD-5203).
+    save_email_notify(email, path)
     config.notify.email = email
 
 

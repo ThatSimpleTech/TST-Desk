@@ -2549,6 +2549,13 @@
         "max_parallel"
       ]
     ],
+    "locked_paths": [
+      [
+        "presets",
+        "team",
+        "worker"
+      ]
+    ],
     "defaults": {
       "[\"workflow\",\"max_parallel\"]": 3
     },

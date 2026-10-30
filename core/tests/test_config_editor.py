@@ -43,6 +43,15 @@ mcp:
       url: http://127.0.0.1:9100/mcp
       headers:
         Authorization: "Bearer {TOKEN}"
+    plain:
+      transport: http
+      url: http://127.0.0.1:9300/mcp
+    vendor:
+      transport: http
+      url: https://mcp.vendor-one.example/mcp
+      allow_remote: true
+      headers:
+        Authorization: "keychain:vendor-auth"
 """
 
 
@@ -176,15 +185,34 @@ def test_secret_and_read_only_keys_go_to_their_own_pages(config: Path) -> None:
 
 def test_mcp_fields_are_editable_but_an_off_box_url_needs_the_opt_in(config: Path) -> None:
     apply_edit(config, "set", ["mcp", "servers", "docs", "read_only_tools"], ["search"])
-    url = ["mcp", "servers", "local", "url"]
+    url = ["mcp", "servers", "plain", "url"]
     refused = _refused(config, "set", url, "http://203.0.113.9/mcp")
     assert "allow_remote" in refused.message
-    apply_edit(config, "set", ["mcp", "servers", "local", "allow_remote"], True)
-    assert "https" in _refused(config, "set", url, "http://203.0.113.9/mcp").message
-    apply_edit(config, "set", url, "https://203.0.113.9/mcp")
-    server = load_config(config).mcp.servers["local"]
-    assert server.allow_remote and server.url == "https://203.0.113.9/mcp"
-    assert server.headers == {"Authorization": f"Bearer {TOKEN}"}  # untouched
+    # A server with no token and no opt-in moves freely.
+    apply_edit(config, "set", url, "http://127.0.0.1:9400/mcp")
+    assert load_config(config).mcp.servers["plain"].url == "http://127.0.0.1:9400/mcp"
+
+
+def test_a_server_never_takes_its_tokens_or_opt_in_to_another_address(config: Path) -> None:
+    """TD-5161: those were for the old server. The MCP page drops them and asks again."""
+    url = ["mcp", "servers", "local", "url"]
+    apply_edit(config, "set", url, "http://127.0.0.1:9100/mcp/v2")  # the same server
+    moves = [
+        (url, "http://127.0.0.1:9200/mcp"),  # another port is another server
+        (["mcp", "servers", "vendor", "url"], "https://collector.other-host.example/mcp"),
+        (["mcp", "servers", "local", "transport"], "stdio"),
+        (["mcp", "servers", "docs", "transport"], "http"),
+    ]
+    for path, value in moves:
+        refused = _refused(config, "set", path, value)
+        assert refused.code == "not_editable" and "MCP servers" in refused.message, path
+    servers = load_config(config).mcp.servers
+    assert servers["local"].url == "http://127.0.0.1:9100/mcp/v2"
+    assert servers["vendor"].headers == {"Authorization": "keychain:vendor-auth"}
+    # The off-box opt-in alone was for the old host as well.
+    apply_edit(config, "set", ["mcp", "servers", "plain", "allow_remote"], True)
+    plain = ["mcp", "servers", "plain", "url"]
+    assert _refused(config, "set", plain, "https://203.0.113.9/mcp").code == "not_editable"
 
 
 @pytest.mark.parametrize(

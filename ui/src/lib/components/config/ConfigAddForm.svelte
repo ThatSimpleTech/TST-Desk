@@ -1,11 +1,19 @@
 <script lang="ts">
 	// The form for a new list item or group (TD-5203): the fields its model
 	// asks for, typed as text. A command or pattern list is typed on one line
-	// and split the way a shell splits words. Nothing is sent until every
-	// field reads; the daemon still judges the whole file before writing.
+	// and split the way a shell splits words; a free-form value such as a
+	// model's extra_body is typed as JSON. Nothing is sent until every field
+	// reads; the daemon still judges the whole file before writing.
 	import type { ConfigField, ConfigModelDef, JsonValue } from '../../protocol';
 	import { configEditor } from '../../config-editor.svelte.js';
-	import { choicesFor, newEntry, parseNumber, parseText, splitWords } from '../../config-editor.js';
+	import {
+		choicesFor,
+		newEntry,
+		parseJsonText,
+		parseNumber,
+		parseText,
+		splitWords,
+	} from '../../config-editor.js';
 
 	let {
 		def,
@@ -41,6 +49,10 @@
 		if (node.kind === 'list') return { ok: true, value: splitWords(text) };
 		if (node.kind === 'int' || node.kind === 'float') {
 			const parsed = parseNumber(text, node);
+			return parsed.ok ? parsed : { ok: false, error: `${field.name}: ${parsed.error}` };
+		}
+		if (node.kind === 'json') {
+			const parsed = parseJsonText(text, node);
 			return parsed.ok ? parsed : { ok: false, error: `${field.name}: ${parsed.error}` };
 		}
 		const parsed = parseText(text, node);
@@ -81,6 +93,14 @@
 						<option value={String(choice)}>{String(choice)}</option>
 					{/each}
 				</select>
+			{:else if field.node.kind === 'json'}
+				<textarea
+					id={fid}
+					class="cfg-input"
+					spellcheck="false"
+					placeholder={'{}'}
+					bind:value={drafts[field.name]}
+				></textarea>
 			{:else}
 				<input
 					id={fid}

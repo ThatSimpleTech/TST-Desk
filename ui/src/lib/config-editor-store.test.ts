@@ -22,12 +22,14 @@ vi.mock("./connection-status.svelte.js", () => ({
 import {
 	configEditor,
 	EDIT_TIMEOUT_MS,
+	isLocked,
 	loadConfigEditor,
 	resetConfigEditor,
 	resetConfigValue,
 	saveConfigValue,
 	startConfigEditor,
 } from "./config-editor.svelte.js";
+import { claimedInline } from "./inline-errors.js";
 
 let stop: () => void = () => undefined;
 
@@ -43,6 +45,7 @@ function view(over: Partial<ConfigEditor> = {}): ConfigEditor {
 		defs: { ModelConfig: { name: "ModelConfig", fields: [], add_fields: [], empty_ok: true } },
 		values: { workflow: { max_parallel: 3 } },
 		set_paths: [["workflow"], ["workflow", "max_parallel"]],
+		locked_paths: [],
 		defaults: { '["workflow","max_parallel"]': 3 },
 		version: "v1",
 		file: "/data/config.yaml",
@@ -162,5 +165,82 @@ describe("config editor store", () => {
 		emit(view({ version: "v2", edit: { action: "set", path: PARALLEL } }));
 		expect(configEditor.saves[KEY]?.state).toBe("saving");
 		expect(mocks.sent.at(-1)).toEqual({ type: "set_config_value", path: PARALLEL, value: 5, version: "v2" });
+	});
+
+	it("sends an edit queued behind a removal with the version it was made against", () => {
+		emit(view());
+		resetConfigValue(["local_servers", 0]);
+		saveConfigValue(["local_servers", 1, "name"], "Renamed");
+		saveConfigValue(["hooks", "after_write", 0, "name"], "ruff");
+		emit(view({ version: "v2", edit: { action: "reset", path: ["local_servers", 0] } }));
+		// The item at position 1 has moved: the daemon refuses this one as stale.
+		expect(mocks.sent.at(-1)).toEqual({
+			type: "set_config_value", path: ["local_servers", 1, "name"], value: "Renamed", version: "v1",
+		});
+		emit({ type: "config_value_rejected", seq: 1, action: "set", path: ["local_servers", 1, "name"], code: "stale", message: "changed" });
+		// Another list did not move, so that edit takes the new version.
+		expect(mocks.sent).toContainEqual({
+			type: "set_config_value", path: ["hooks", "after_write", 0, "name"], value: "ruff", version: "v2",
+		});
+	});
+
+	it("gives a queued edit the new version after an answer that moved nothing", () => {
+		emit(view());
+		saveConfigValue(["hooks", "after_write", 0, "name"], "ruff");
+		saveConfigValue(["hooks", "after_write", 0, "timeout_seconds"], 9);
+		emit(view({ version: "v2", edit: { action: "set", path: ["hooks", "after_write", 0, "name"] } }));
+		expect(mocks.sent.at(-1)).toEqual({
+			type: "set_config_value", path: ["hooks", "after_write", 0, "timeout_seconds"], value: 9, version: "v2",
+		});
+	});
+
+	it("after a reconnect, says whether an edit the connection dropped was saved", () => {
+		emit(view());
+		saveConfigValue(PARALLEL, 9);
+		saveConfigValue(["search", "max_results"], 2);
+		mocks.connected = false;
+		for (const state of mocks.states) state("reconnecting");
+		expect(configEditor.saves[KEY]?.message).toBe("The connection dropped before the daemon answered.");
+		mocks.connected = true;
+		for (const state of mocks.states) state("connected");
+		expect(mocks.sent.at(-1)).toEqual({ type: "get_config_editor" });
+		emit(view({ values: { workflow: { max_parallel: 9 } }, version: "v2" }));
+		expect(configEditor.saves[KEY]).toEqual({ state: "saved", message: "" });
+		// Never sent at all: that field still says so.
+		expect(configEditor.saves['["search","max_results"]']?.state).toBe("error");
+	});
+
+	it("an edit the reconnect shows did not land says it was not saved", () => {
+		emit(view());
+		saveConfigValue(PARALLEL, 9);
+		mocks.connected = false;
+		for (const state of mocks.states) state("reconnecting");
+		mocks.connected = true;
+		for (const state of mocks.states) state("connected");
+		emit(view());
+		expect(configEditor.saves[KEY]?.message).toBe("Not saved: the connection dropped before the daemon answered.");
+	});
+
+	it("claims the errors it shows on the page, so no generic notice repeats them", () => {
+		loadConfigEditor();
+		const refused = { type: "error", code: "loopback_only", message: "Only the computer itself can do that.", in_reply_to: "get_config_editor" };
+		emit(refused);
+		expect(claimedInline(refused)).toBe(true);
+		emit(view());
+		saveConfigValue(PARALLEL, 4);
+		const failed = { type: "error", code: "bad_request", message: "Saved, but the config no longer loads", in_reply_to: "set_config_value" };
+		emit(failed);
+		expect(claimedInline(failed)).toBe(true);
+		const other = { type: "error", code: "bad_request", message: "x", in_reply_to: "set_preset" };
+		emit(other);
+		expect(claimedInline(other)).toBe(false);
+	});
+
+	it("marks keys under an anchored path as locked", () => {
+		emit(view({ locked_paths: [["presets", "team", "worker"]] }));
+		expect(isLocked(["presets", "team", "worker"])).toBe(true);
+		expect(isLocked(["presets", "team", "worker", "slug"])).toBe(true);
+		expect(isLocked(["presets", "team", "brain"])).toBe(false);
+		expect(isLocked(["presets", "team"])).toBe(false);
 	});
 });
