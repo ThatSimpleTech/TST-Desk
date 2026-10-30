@@ -9198,6 +9198,28 @@ skip-all skips the spend, wall-clock, and iteration caps.
       either
 - [x] The banner names the pause and offers Resume
 
+### TD-5198 — The progress check's answer reaches the chat
+**Size:** 2 · **Depends on:** TD-5002, TD-5124
+
+The check asks for `DONE:`, `CONTINUE:` or `BLOCKED:`. Models often
+answer it with the finished reply, or a question, and no label. TD-5002
+paused on any such answer, so a complete reply showed only as a
+cut-off pause banner and the person had to press Resume. In the logs
+of two installs this was most of the guard's pauses.
+
+**Acceptance criteria:**
+- [x] An answer with no label shows in full in the chat and ends the
+      turn like a reply made without tools; the done-check runs on it
+- [x] `BLOCKED` does the same, so a question is asked in the chat, not
+      in a pause banner
+- [x] `**DONE:**`, `Done -`, a label on a line of its own, and a label
+      after a preamble line all parse; "Done reading the files…" is not
+      a label
+- [x] An empty answer, a tool call, a repeated or empty next step, the
+      identical-call streak, the 52-call budget and three used-up checks
+      still pause
+- [x] Each check logs its outcome and whether a label was used
+
 ### TD-5003 — Stop ends the turn, not the session
 **Size:** 3 · **Depends on:** TD-404, TD-1714
 

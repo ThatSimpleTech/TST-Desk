@@ -116,6 +116,7 @@ from .progress_guard import (
     CONTINUE_INSTRUCTION,
     PROGRESS_CHECK_INSTRUCTION,
     ProgressGuard,
+    has_label,
     interpret_check,
     pause_reason_for,
     tool_note,
@@ -321,7 +322,7 @@ async def _clear_stale_results(
 
 
 async def _show_progress_note(session: Session, messages: list[ChatMessage], text: str) -> None:
-    """Put one short assistant line on the transcript and in the chat."""
+    """Put the check's text on the transcript and in the chat."""
     messages.append(ChatMessage(role="assistant", content=text))
     await session.conversation_changed()
     await session.event_log.add(AssistantDelta(session_id=session.id, delta=text, seq=1))
@@ -380,8 +381,10 @@ async def _progress_check_gate(
 ) -> Literal["proceed", "pause", "stop"]:
     """Ask the tool-free question. ``stop`` means the turn is over.
 
-    A DONE answer ends the turn, so the done-check runs on it (TD-5124):
-    a failure sends the model back to work instead.
+    Any answer but CONTINUE is the reply (TD-5198): DONE, BLOCKED, or
+    text with no label ends the turn like a normal tool-free reply, so
+    the done-check runs on it (TD-5124) and a failure sends the model
+    back to work instead.
     """
     check_messages = [
         *messages,
@@ -412,11 +415,23 @@ async def _progress_check_gate(
     if failed:
         guard.pause_reason = pause_reason_for(error_msg or "the progress check failed")
         return "pause"
-    if tool_calls and not (content or "").strip():
+    # Narration next to a tool call means the model meant to keep working;
+    # only a labelled answer is read past the call it was told not to make.
+    if tool_calls and not has_label(content or ""):
         guard.pause_reason = pause_reason_for("the progress check tried to call a tool")
         return "pause"
     kind, detail = interpret_check(content or "", guard.last_continue)
-    if kind == "done":
+    log.info(
+        "progress check answered",
+        extra={
+            "extra_fields": {
+                "session_id": session.id,
+                "kind": kind,
+                "labelled": has_label(content or ""),
+            }
+        },
+    )
+    if kind == "reply":
         await _show_progress_note(session, messages, detail)
         checked = "end" if stop_check is None else await stop_check.at_turn_end(messages)
         if checked == "retry":

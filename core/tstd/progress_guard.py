@@ -9,9 +9,11 @@ different: it can call tools forever, say nothing, and write nothing.
 Three stops, all of them a pause the user can resume:
 
 - 12 tool calls since the last user-visible reply or file write
-  ask one tool-free question. ``DONE`` finishes the turn with that
-  answer. ``CONTINUE`` with a new next step opens another window, at
-  most three times. Anything else pauses.
+  ask one tool-free question. ``CONTINUE`` with a new next step opens
+  another window, at most three times. Any other answer is the reply
+  to the user: ``DONE``, ``BLOCKED``, or text with no label at all
+  ends the turn like a normal tool-free reply (TD-5198). An empty
+  answer, a tool call, or a repeated next step pauses.
 - The same tool batch three times in a row pauses immediately.
 - 52 model calls since the last successful ``fs_write`` or ``fs_edit``
   pause even when the model keeps narrating. A reply resets the tool
@@ -24,12 +26,13 @@ budget, then the same turn continues.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
 GuardGate = Literal["proceed", "check", "pause"]
-CheckKind = Literal["continue", "done", "pause"]
+CheckKind = Literal["continue", "reply", "pause"]
 
 # A file write is the sign that the turn changed the workspace.
 # Shell output is not: the stuck sessions were successful shell calls.
@@ -45,12 +48,23 @@ CONTINUE_INSTRUCTION = "Carry on with that next step."
 
 PROGRESS_CHECK_INSTRUCTION = (
     "Progress check. Tools are off for this reply. "
-    "Answer with exactly one line and no tool call:\n"
-    "DONE: <the reply the user is waiting for>\n"
-    "CONTINUE: <the single next edit or command>\n"
+    "Start your reply with one of these labels and make no tool call:\n"
+    "DONE: <the full reply the user is waiting for>\n"
+    "CONTINUE: <the single next edit or command, on one line>\n"
     "BLOCKED: <what you need from the user>\n"
     "CONTINUE must name a different next step than the previous check."
 )
+
+# One label line, as models really write it: "DONE: x", "**Done:** x",
+# "- CONTINUE - x", "BLOCKED" on a line of its own. A dash needs a space
+# before it, so "continue-on-error: true" is not a label.
+_LABEL_LINE = re.compile(
+    r"^[\s>*_`#-]*(DONE|CONTINUE|BLOCKED)[*_`]*"
+    r"(?:(?:\s*:|\s+[-\u2013\u2014]|[\u2013\u2014](?=\s))[*_`]*\s*(.*)|\s*)$",
+    re.IGNORECASE,
+)
+# The check's own header repeated back, alone or with its first sentence.
+_ECHO_LINE = re.compile(r"^progress check(?:[\s:.!\u2013\u2014-]*$|\.\s*tools are off)")
 
 ToolNote = tuple[str, str, bool]
 
@@ -71,25 +85,56 @@ def pause_reason_for(detail: str) -> str:
 
 
 def interpret_check(text: str, previous_continue: str) -> tuple[CheckKind, str]:
-    """Read a tool-free check. Any other shape pauses (fail closed)."""
+    """Read a tool-free check.
+
+    ``continue`` carries the next step. ``reply`` carries the text the
+    user should see: a ``DONE`` or ``BLOCKED`` answer with its label
+    removed, or the whole answer when the model wrote no label. Models
+    often answer the check with the finished reply or a question and
+    skip the label; pausing on that hid a good answer in a banner.
+    """
     body = text.strip()
     if not body:
         return "pause", "The progress check returned no answer."
-    line, _, rest = body.partition("\n")
-    head, sep, tail = line.partition(":")
-    key = head.strip().upper()
-    detail = tail.strip()
-    if rest.strip():
-        detail = f"{detail}\n{rest.strip()}".strip() if detail else rest.strip()
-    if key == "DONE" and sep and detail:
-        return "done", detail
-    if key == "CONTINUE" and sep and detail:
-        if _same(detail, previous_continue):
+    lines = body.splitlines()
+    found = _find_label(lines)
+    if found is None:
+        return "reply", body
+    index, key, tail = found
+    after = "\n".join(lines[index + 1 :]).strip()
+    if key == "CONTINUE":
+        step = f"{tail}\n{after}".strip()
+        if not step:
+            return "pause", "The progress check named no next step."
+        if _same(step, previous_continue):
             return "pause", "The progress check repeated the same next step."
-        return "continue", detail
-    if key == "BLOCKED" and sep:
-        return "pause", detail or "The progress check says it is blocked."
-    return "pause", body
+        return "continue", step
+    before = "\n".join(line for line in lines[:index] if not _is_echo(line)).strip()
+    reply = "\n".join(part for part in (before, tail, after) if part).strip()
+    if not reply:
+        if key == "BLOCKED":
+            return "pause", "The progress check says it is blocked."
+        return "pause", "The progress check returned no answer."
+    return "reply", reply
+
+
+def has_label(text: str) -> bool:
+    """True when the check answer used one of the three labels."""
+    return _find_label(text.strip().splitlines()) is not None
+
+
+def _find_label(lines: Sequence[str]) -> tuple[int, str, str] | None:
+    """The label line: its index, the label, and the rest of the line.
+
+    Only the first real line or the last line can carry it. A "Done:"
+    or "Continue:" line in the middle of an answer is part of the answer.
+    """
+    filled = [i for i, line in enumerate(lines) if line.strip() and not _is_echo(line)]
+    for index in dict.fromkeys(filled[:1] + filled[-1:]):
+        match = _LABEL_LINE.match(lines[index])
+        if match:
+            return index, match.group(1).upper(), (match.group(2) or "").strip()
+    return None
 
 
 @dataclass
@@ -172,6 +217,11 @@ class ProgressGuard:
                 return "pause"
             return "check"
         return "proceed"
+
+
+def _is_echo(line: str) -> bool:
+    """A preamble line that only repeats the check's own header."""
+    return _ECHO_LINE.match(line.strip(" \t>*_`#-").casefold()) is not None
 
 
 def _norm(text: str) -> str:

@@ -20,6 +20,7 @@ from tstd.progress_guard import (
     MODEL_CALL_BUDGET,
     TOOL_WINDOW,
     ProgressGuard,
+    has_label,
     interpret_check,
     tool_note,
 )
@@ -122,21 +123,78 @@ class TestGuardRules:
 
 class TestCheckReply:
     def test_done_continue_and_blocked(self) -> None:
-        assert interpret_check("DONE: the arrow is in", "") == ("done", "the arrow is in")
-        kind, detail = interpret_check("CONTINUE: edit ChatPane", "")
-        assert kind == "continue" and detail == "edit ChatPane"
-        kind, detail = interpret_check("BLOCKED: icons.ts is missing", "")
-        assert kind == "pause" and "icons.ts" in detail
+        assert interpret_check("DONE: the arrow is in", "") == ("reply", "the arrow is in")
+        assert interpret_check("CONTINUE: edit ChatPane", "") == ("continue", "edit ChatPane")
+        kind, detail = interpret_check("BLOCKED: which repo is the app in?", "")
+        assert (kind, detail) == ("reply", "which repo is the app in?")
+
+    def test_an_answer_with_no_label_is_the_reply(self) -> None:
+        answer = (
+            "The pre-mortem's biggest holes are silent tool stalls with no time bound.\n\n"
+            "1. Stalls\n2. Lockouts"
+        )
+        assert interpret_check(answer, "") == ("reply", answer)
+        question = "I need the app itself (a link or a repo name) before I can review it."
+        assert interpret_check(question, "") == ("reply", question)
+
+    def test_label_variants_parse(self) -> None:
+        assert interpret_check("**DONE:** shipped", "") == ("reply", "shipped")
+        assert interpret_check("**Done**: shipped", "") == ("reply", "shipped")
+        assert interpret_check("done - shipped", "") == ("reply", "shipped")
+        assert interpret_check("`CONTINUE:` run the tests", "") == ("continue", "run the tests")
+        assert interpret_check("- Continue \u2014 run the tests", "") == (
+            "continue",
+            "run the tests",
+        )
+        assert interpret_check("DONE\nThe fix is in.\nTests pass.", "") == (
+            "reply",
+            "The fix is in.\nTests pass.",
+        )
+
+    def test_a_label_after_a_preamble(self) -> None:
+        assert interpret_check("Progress check:\nDONE: shipped", "") == ("reply", "shipped")
+        assert interpret_check("I read all four files.\nCONTINUE: edit loop.py", "") == (
+            "continue",
+            "edit loop.py",
+        )
+        assert interpret_check("Summary first.\nDONE: details", "") == (
+            "reply",
+            "Summary first.\ndetails",
+        )
+
+    def test_a_hyphenated_word_is_not_a_label(self) -> None:
+        text = "Set this in the workflow:\ncontinue-on-error: true"
+        assert interpret_check(text, "") == ("reply", text)
+
+    def test_a_label_mid_answer_is_part_of_the_answer(self) -> None:
+        text = "Steps for you:\nContinue: press Save\nThen restart the app."
+        assert interpret_check(text, "") == ("reply", text)
+
+    def test_only_the_header_echo_is_dropped(self) -> None:
+        assert interpret_check("Progress check found three bugs.\nDONE: shipped", "") == (
+            "reply",
+            "Progress check found three bugs.\nshipped",
+        )
+        echo = "Progress check. Tools are off for this reply.\nDONE: shipped"
+        assert interpret_check(echo, "") == ("reply", "shipped")
+
+    def test_a_sentence_that_starts_with_done_is_not_a_label(self) -> None:
+        text = "Done reading the files; the bug is in the parser."
+        assert interpret_check(text, "") == ("reply", text)
+        assert has_label(text) is False
+        assert has_label("**DONE:** x") is True
 
     def test_a_repeated_continue_pauses(self) -> None:
         kind, detail = interpret_check("CONTINUE: edit the pane", "edit the pane")
         assert kind == "pause"
         assert "same next step" in detail
 
-    def test_anything_else_pauses(self) -> None:
+    def test_only_an_empty_answer_pauses(self) -> None:
         assert interpret_check("", "")[0] == "pause"
-        assert interpret_check("I will keep reading", "")[0] == "pause"
         assert interpret_check("DONE:", "")[0] == "pause"
+        assert interpret_check("CONTINUE:", "")[0] == "pause"
+        kind, detail = interpret_check("BLOCKED:", "")
+        assert (kind, detail) == ("pause", "The progress check says it is blocked.")
 
 
 def _echoes(n: int, *tail: Script) -> dict[str, list[Script]]:
@@ -212,14 +270,13 @@ class TestLoop:
     async def test_a_silent_run_pauses_for_the_user(self, tmp_path: Path) -> None:
         session, mock, runner = await _run(
             tmp_path,
-            _echoes(TOOL_WINDOW, Script(kind="stream", content="BLOCKED: still reading")),
+            _echoes(TOOL_WINDOW, Script(kind="stream", content="")),
             skip_all=True,
         )
         await wait_for_state(session, "paused", 8.0)
         reason = _pause_reason(session)
         assert reason.startswith("progress guard:")
-        assert "still reading" in reason
-        assert "BLOCKED" not in _deltas(session)
+        assert "no answer" in reason
         assert any("Progress check" in _request_text(call) for call in _brain_calls(mock))
         assert not [e for e in session.event_log.all_events if isinstance(e, ApprovalRequest)]
         await runner.cancel()
@@ -234,6 +291,44 @@ class TestLoop:
         assert turn.failed is False
         assert _deltas(session) == "the arrow is in"
         assert session.state == "running"
+        await runner.cancel()
+
+    async def test_an_unlabelled_answer_finishes_the_turn(self, tmp_path: Path) -> None:
+        answer = "The biggest holes are stalls and lockouts.\n\n1. Stalls\n2. Lockouts"
+        session, _mock, runner = await _run(
+            tmp_path,
+            _echoes(TOOL_WINDOW, Script(kind="stream", content=answer)),
+        )
+        turn = await wait_for_turn(session, 1, 8.0)
+        assert isinstance(turn, TurnComplete)
+        assert turn.failed is False
+        assert _deltas(session) == answer
+        assert _pause_reason(session) == ""
+        assert session.state == "running"
+        await runner.cancel()
+
+    async def test_blocked_asks_the_user_in_the_chat(self, tmp_path: Path) -> None:
+        session, _mock, runner = await _run(
+            tmp_path,
+            _echoes(TOOL_WINDOW, Script(kind="stream", content="BLOCKED: which repo is it?")),
+        )
+        turn = await wait_for_turn(session, 1, 8.0)
+        assert isinstance(turn, TurnComplete)
+        assert _deltas(session) == "which repo is it?"
+        assert _pause_reason(session) == ""
+        await runner.cancel()
+
+    async def test_narration_with_a_tool_call_pauses(self, tmp_path: Path) -> None:
+        call = Script(
+            kind="tool_call",
+            narration="Let me read the next file.",
+            tool_name="echo",
+            tool_arguments='{"message": "more"}',
+        )
+        session, _mock, runner = await _run(tmp_path, _echoes(TOOL_WINDOW, call), skip_all=True)
+        await wait_for_state(session, "paused", 8.0)
+        assert "tried to call a tool" in _pause_reason(session)
+        assert "Let me read" not in _deltas(session)
         await runner.cancel()
 
     async def test_continue_opens_another_window(self, tmp_path: Path) -> None:
@@ -265,7 +360,7 @@ class TestLoop:
             tmp_path,
             _echoes(
                 TOOL_WINDOW,
-                Script(kind="stream", content="BLOCKED: circling"),
+                Script(kind="stream", content=""),
                 Script(kind="stream", content="Done after resume"),
             ),
         )
