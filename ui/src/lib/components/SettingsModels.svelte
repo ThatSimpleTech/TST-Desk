@@ -14,6 +14,13 @@
 	import { modelLabel } from "../effort";
 	import { MODELS_DOC_URL, openDoc } from "../docs-links";
 	import { openAddModel } from "../onboarding.svelte.js";
+	import { onMount } from "svelte";
+	import { sendToDaemon } from "../connection-status.svelte.js";
+
+	// TD-5197: the daemon refreshes model cards in the background, so the
+	// numbers may have changed since the window last asked. Read them fresh
+	// each time this page opens.
+	onMount(() => sendToDaemon({ type: "get_setup_state" }));
 
 	// TD-5172: the model section leads with the active model and the "Add a
 	// model" walkthrough. The per-role editor below it is framed as "Build a

@@ -236,6 +236,28 @@ class TestRefresh:
         assert result.status == "not_listed"
         assert result.values == {}
 
+    async def test_other_capitals_match_and_take_the_hosts_spelling(self) -> None:
+        # TD-5197: a tier typed "MoonshotAI/Kimi-K3" is the listed model.
+        hosts = Hosts({OPENROUTER: LISTING})
+        [result] = await _refresh(_config(_tier(" MoonshotAI/Kimi-K3")), hosts, "brain")
+        assert result.status == "ok"
+        assert result.values["slug"] == CARD["id"]
+        assert result.values["input_price"] == 2.0
+
+    async def test_the_exact_spelling_wins_over_other_capitals(self) -> None:
+        upper = {**NO_CACHE_PRICE, "id": "Moonshotai/Kimi-K3"}
+        hosts = Hosts({OPENROUTER: {"data": [upper, CARD]}})
+        [result] = await _refresh(_config(_tier(CARD["id"])), hosts, "brain")
+        assert result.status == "ok"
+        assert "slug" not in result.values
+        assert result.values["input_price"] == 2.0
+
+    async def test_a_near_name_with_other_capitals_still_misses(self) -> None:
+        hosts = Hosts({OPENROUTER: LISTING})
+        [result] = await _refresh(_config(_tier("MoonshotAI/Kimi-K3-Mini")), hosts, "brain")
+        assert result.status == "not_listed"
+        assert result.values == {}
+
     async def test_a_host_without_prices_leaves_the_prices(self) -> None:
         box = "http://10.0.0.5:8000/v1"
         config = _config(
@@ -442,6 +464,17 @@ class TestWrite:
     def test_numbers_read_back_as_numbers(self, value: float, text: str) -> None:
         assert format_value(value) == text
         assert yaml.safe_load(f"v: {text}")["v"] == value
+
+    @pytest.mark.parametrize("slug", ["acme-large", "moonshotai/kimi-k3", "1.5", "true", "a: b #c"])
+    def test_a_slug_reads_back_as_the_same_string(self, slug: str) -> None:
+        # TD-5197: a slug the host spells differently is written quoted.
+        assert yaml.safe_load(f"v: {format_value(slug)}")["v"] == slug
+
+    def test_a_slug_is_written_into_the_tier(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yaml"
+        path.write_text(catalog_config_yaml(), encoding="utf-8")
+        save_tier_values("tst-default", "brain", {"slug": "Acme-Large"}, path=path)
+        assert load_config(path).presets["tst-default"].brain.slug == "Acme-Large"
 
 
 # ── Through the daemon ────────────────────────────────────────────────────

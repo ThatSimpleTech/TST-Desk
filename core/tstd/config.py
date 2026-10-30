@@ -725,6 +725,22 @@ class SessionConfig(BaseModel):
         return data
 
 
+class ModelRefreshConfig(BaseModel):
+    """Refresh every model's card in the background (TD-5197).
+
+    A little after the daemon starts, and then every ``every_hours``, each
+    preset's tiers are refreshed from their hosts' model lists the way
+    Settings' Refresh does: prices, windows and the host's spelling of the
+    slug. Off the chat path; a host that is down leaves config as it was.
+    ``auto: false`` leaves refreshing to Settings.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    auto: bool = True
+    every_hours: float = Field(default=24.0, ge=1.0, le=720.0)
+
+
 class WorkflowConfig(BaseModel):
     """Limits for the ``workflow`` tool, which runs workers side by side (TD-5195).
 
@@ -1578,6 +1594,7 @@ class ModelConfig(BaseModel):
     compaction: CompactionConfig = Field(default_factory=CompactionConfig)
     consult: ConsultConfig = Field(default_factory=ConsultConfig)
     workflow: WorkflowConfig = Field(default_factory=WorkflowConfig)
+    model_refresh: ModelRefreshConfig = Field(default_factory=ModelRefreshConfig)
     shell: ShellConfig = Field(default_factory=ShellConfig)
     provider_retry: ProviderRetryConfig = Field(default_factory=ProviderRetryConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)

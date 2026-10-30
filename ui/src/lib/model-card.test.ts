@@ -42,6 +42,10 @@ describe("cardNote", () => {
 
 	it("marks values that came from the card", () => {
 		expect(cardNote({ ...base, card: "ok" })).toBe("From the model card.");
+		// TD-5197: a background refresh says what it changed.
+		expect(
+			cardNote({ ...base, card: "ok", detail: "Updated automatically: input price, model name." }),
+		).toBe("From the model card. Updated automatically: input price, model name.");
 	});
 
 	it("says a card with no price left only the prices alone", () => {

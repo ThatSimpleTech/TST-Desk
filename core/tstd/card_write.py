@@ -9,6 +9,7 @@ level down and are edited the same way, inside their own entry only.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -20,14 +21,18 @@ _VALUE_LINE = re.compile(
 )
 
 
-def format_value(value: float | int) -> str:
-    """A YAML number PyYAML reads back as the same value.
+def format_value(value: float | int | str) -> str:
+    """A YAML scalar PyYAML reads back as the same value.
 
-    Fixed point, never ``1e-06``: PyYAML's YAML 1.1 resolver reads that
-    spelling as a string.
+    Numbers are fixed point, never ``1e-06``: PyYAML's YAML 1.1 resolver reads
+    that spelling as a string. A string (a slug the host spells differently,
+    TD-5197) is written double-quoted, so no name can read back as a number,
+    a boolean or a comment.
     """
     if isinstance(value, bool):
         raise ConfigError("A card value cannot be a boolean")
+    if isinstance(value, str):
+        return json.dumps(value)
     if isinstance(value, int):
         return str(value)
     text = f"{value:.6f}".rstrip("0")
@@ -37,7 +42,7 @@ def format_value(value: float | int) -> str:
 def save_tier_values(
     preset: str,
     tier: str,
-    values: dict[str, float | int],
+    values: dict[str, float | int | str],
     *,
     fallback: int | None = None,
     path: Path | None = None,

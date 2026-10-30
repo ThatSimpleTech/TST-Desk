@@ -18721,3 +18721,45 @@ lock, no checks, and the id and Stop faults above would bite at once); a
 tool offered only while the switch is on (flipping it would change the tool
 list and break the prompt cache); a new `ultracode` key on the session row
 (a rollback would drop every row).
+
+## 2026-10-30 — TD-5197: model Refresh ignores capitals and runs by itself (Class B; revises TD-5185)
+
+A tier saved as `Acme-large` never matched a server that lists
+`acme-large`: Refresh compared slugs exactly, answered `not_listed`, and the
+tier kept whatever prices it was saved with. And Refresh ran only when a
+person saved a slug or pressed the button, so a stale or wrong price stayed
+until someone noticed. A wrong price is not cosmetic: the spend cap counts it.
+
+- Matching: the exact spelling first, then the same slug with any capitals
+  (`strip()` + `casefold()`). Nothing looser: a prefix, a suffix or a near
+  name is a different model and stays `not_listed`. When only the capitals
+  differ, the server's spelling is written back into `slug` with the other
+  card values, so later requests name the model exactly.
+- `card_write.format_value` writes a string value double-quoted (JSON
+  quoting is valid YAML), so a slug can never read back as a number, a
+  boolean or a comment.
+- Background refresh: the daemon starts a `model-card-refresh` task beside
+  its other loops. About 30 s after start, then every
+  `model_refresh.every_hours` (default 24, 1 to 720), it refreshes every
+  preset's tiers through the same path as the Settings button, with the
+  same rules (no guessing, no zeros for missing fields, a loopback ceiling
+  is not a window). `model_refresh.auto: false` turns it off. The settings
+  are re-read each pass, so a change applies without a restart.
+- Off the chat path: the pass runs in its own task, and a turn never waits
+  for it; a test holds a pass on a host that never answers while a whole
+  turn completes. A host that is down is `fetch_failed` and leaves config as
+  it was. A failure in one preset is logged and the next preset still runs.
+  One lock keeps a background pass and a Settings Refresh from writing at
+  the same time.
+- Visible: a background change sets the tier's `detail`, so Settings reads
+  "From the model card. Updated automatically: input price, model name.",
+  and the log line carries `auto: true`. No new protocol field: `TierCard`
+  already had `detail`. Settings → Model now asks for `setup_state` each
+  time it opens; before, the window read it only on connect, so a
+  background change would have stayed out of sight until a reconnect.
+
+Rejected: refreshing on every turn (a down host would stall the chat, the
+reason TD-5185 kept cards off the turn path); fuzzy or prefix matching (it
+would price one model from another's card); a dedicated push of
+`setup_state` after a background pass (the Models page reads it when it
+opens, and a broadcast would send settings to every paired viewer).

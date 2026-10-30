@@ -229,6 +229,14 @@ workflow:
   max_parallel: 3
   max_tasks: 8
 
+# Refresh every model's prices, context windows and slug spelling from its
+# server in the background (TD-5197): about 30 s after start, then every
+# every_hours (1-720). Same rules as Settings' "Refresh from servers"; a chat
+# turn never waits on it. auto: false leaves refreshing to Settings.
+model_refresh:
+  auto: true
+  every_hours: 24
+
 # Shell commands that run without asking (TD-5103). Only these built-in
 # read-only entries can be listed: delete lines to shrink the list, or set
 # enabled: false to have every shell command ask. A command qualifies only
