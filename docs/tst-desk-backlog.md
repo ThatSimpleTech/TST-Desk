@@ -12619,3 +12619,18 @@ most calls.
 - [x] A trimmed step is never trimmed again, and a trim lands at the 70%
       target with only the latest step's thinking kept, so the calls after it
       append (`test_long_turn_fit.py`).
+
+### TD-5196 — The app icon is the That Simple Tech padlock
+
+**Size:** 1 · **Depends on:** TD-5190 · **Status:** Done
+
+The desktop app still shipped Tauri's stock placeholder icon. It now uses
+the That Simple Tech logo: the padlock with two eyes, white on black, as on
+thatsimpletech.com.
+
+- [x] `shell/icons/source/render_icon.py` draws the master from the same
+      24-pixel grid as the in-app mascot (`ui/src/lib/mascot.ts`), on Apple's
+      824-in-1024 rounded-square grid, in whole pixels so every edge is sharp.
+- [x] Every file in `shell/icons` (macOS `.icns`, Windows `.ico` and Store
+      logos, the PNGs) is generated from that master with `npx tauri icon`.
+- [ ] The Android launcher icon is unchanged (a separate vector drawable).
