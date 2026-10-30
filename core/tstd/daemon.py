@@ -381,6 +381,7 @@ from .protocol import (
     SetSkipAllApprovals,
     SetSpendCap,
     SetTier,
+    SetTierContextWindow,
     SetTierCredential,
     SetTierSlug,
     SetUltracode,
@@ -1591,6 +1592,41 @@ class Daemon:
                 self._reload_user_config()
             except ConfigError as e:
                 return build_error("bad_request", f"Saved, but the config no longer loads: {e}")
+        return None
+
+    def _set_tier_context_window(self, preset: str, tier: str, window: int) -> str | None:
+        """Write one tier's window by hand, then reload (TD-5189).
+
+        Returns an error reply to send instead of ``setup_state``, or None.
+        A window that leaves no room past the output reservation is refused:
+        compaction would run on every turn.
+        """
+        try:
+            target = targets(self.config, preset, tier)[0]
+        except ConfigError as e:
+            return build_error("bad_request", str(e))
+        reserve = target.config.max_output_tokens
+        if window <= reserve * 2:
+            return build_error(
+                "bad_request",
+                f"A {window}-token window leaves too little room: this role keeps "
+                f"{reserve} tokens for its reply. Use more than {reserve * 2}.",
+            )
+        try:
+            save_tier_values(preset, tier, {"context_window": window}, path=self.config_path)
+        except (ConfigError, OSError) as e:
+            return build_error("bad_request", str(e))
+        try:
+            self._reload_user_config()
+        except ConfigError as e:
+            return build_error("bad_request", f"Saved, but the config no longer loads: {e}")
+        # The stored number is now the user's; an older card outcome no
+        # longer describes it.
+        self._card_results.pop((preset, tier), None)
+        log.info(
+            "tier context window set",
+            extra={"extra_fields": {"preset": preset, "tier": tier, "window": window}},
+        )
         return None
 
     def _tier_cards(self, tiers: dict[str, TierConfig]) -> dict[str, TierCard]:
@@ -4184,6 +4220,12 @@ class Daemon:
 
         if isinstance(msg, RefreshModelCards):
             refused = await self._refresh_model_cards(msg.preset, msg.tier)
+            if refused is not None:
+                return refused
+            return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, SetTierContextWindow):
+            refused = self._set_tier_context_window(msg.preset, msg.tier, msg.context_window)
             if refused is not None:
                 return refused
             return (await self._setup_state_event()).model_dump_json()

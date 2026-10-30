@@ -22,6 +22,8 @@ export function cardNote(card: TierCard): string | null {
 			return null;
 		case "ok":
 			return "From the model card.";
+		case "no_pricing":
+			return "The server lists no price; prices are from config.yaml.";
 		case "no_slug":
 			return "No model named, so no card. Values are from config.yaml.";
 		default:

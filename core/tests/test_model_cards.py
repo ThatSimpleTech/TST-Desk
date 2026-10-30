@@ -48,8 +48,23 @@ NO_CACHE_PRICE = {
     "pricing": {"prompt": "0.00000007", "completion": "0.00000017"},
 }
 LISTING = {"data": [CARD, NO_CACHE_PRICE]}
-# What a local server (vLLM, Ollama) answers: ids and a ceiling, no prices.
+# What vLLM answers: ids and the window it was started with, no prices.
 LOCAL_LISTING = {"data": [{"id": "qwen3.8:27b", "max_model_len": 131072}]}
+# llama.cpp: meta.n_ctx is the served window per slot; n_ctx_train the ceiling.
+LLAMA_LISTING = {
+    "object": "list",
+    "data": [{"id": "local", "object": "model", "meta": {"n_ctx": 49152, "n_ctx_train": 262144}}],
+}
+# A LiteLLM gateway: bare ids on /models, windows on /model/info.
+GATEWAY_LISTING = {"data": [{"id": "big"}, {"id": "small"}, {"id": "unset"}]}
+GATEWAY_INFO = {
+    "data": [
+        {"model_name": "big", "model_info": {"max_input_tokens": 1048576}},
+        {"model_name": "small", "model_info": {"max_input_tokens": 65536}},
+        {"model_name": "small", "model_info": {"max_input_tokens": 32768}},
+        {"model_name": "unset", "model_info": {"max_input_tokens": None}},
+    ]
+}
 
 
 def _tier(
@@ -89,14 +104,25 @@ def _config(
 class Hosts:
     """A MockTransport that answers ``/models`` per host and records requests."""
 
-    def __init__(self, bodies: dict[str, Any], fail: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        bodies: dict[str, Any],
+        fail: set[str] | None = None,
+        info: dict[str, Any] | None = None,
+    ) -> None:
         self.bodies = bodies
         self.fail = fail or set()
+        self.info = info or {}
         self.requests: list[tuple[str, str | None]] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         url = str(request.url)
         self.requests.append((url, request.headers.get("Authorization")))
+        if url.endswith("/model/info"):
+            base = url.removesuffix("/model/info")
+            if base not in self.info:
+                return httpx.Response(404)
+            return httpx.Response(200, json=self.info[base])
         base = url.removesuffix("/models")
         if base in self.fail:
             raise httpx.ConnectError("refused", request=request)
@@ -175,7 +201,15 @@ class TestMapping:
 
     def test_an_output_cap_equal_to_the_context_is_ignored(self) -> None:
         card = EndpointModel(id="m", context_window=8192, max_output_tokens=8192)
-        assert "max_output_tokens" not in card_values(_tier("m"), card, loopback=False)
+        # The cap is not copied; the 8192 window then needs a smaller reply
+        # reservation than the stored 8192 (TD-5189).
+        assert card_values(_tier("m"), card, loopback=False)["max_output_tokens"] == 2048
+
+    def test_a_small_served_window_lowers_the_reply_reservation(self) -> None:
+        # TD-5189: llama.cpp started with -c 8192 next to a stored 8192 reply.
+        card = EndpointModel(id="m", context_window=8192, served_window=8192)
+        values = card_values(_tier("m", LOCAL, None), card, loopback=True)
+        assert values == {"context_window": 8192, "max_output_tokens": 2048}
 
     def test_a_negative_router_price_is_no_price(self) -> None:
         rows = parse_model_list({"data": [{"id": "openrouter/auto", "pricing": {"prompt": "-1"}}]})
@@ -214,12 +248,62 @@ class TestRefresh:
         # Off loopback the served max_model_len is the real window.
         assert result.values == {"context_window": 131072}
 
-    async def test_a_loopback_host_keeps_its_window_and_sends_no_key(self) -> None:
+    async def test_a_loopback_host_gives_its_served_window_and_gets_no_key(self) -> None:
+        # TD-5189: max_model_len is what vLLM was started with, so it is
+        # taken on loopback too. A ceiling (context_length) still is not.
         hosts = Hosts({LOCAL: LOCAL_LISTING})
         [result] = await _refresh(_config(_tier("qwen3.8:27b", LOCAL, None)), hosts, "brain")
         assert result.status == "no_pricing"
-        assert result.values == {}
+        assert result.values == {"context_window": 131072}
         assert hosts.requests == [(f"{LOCAL}/models", None)]
+
+    async def test_a_loopback_ceiling_is_still_not_taken(self) -> None:
+        listing = {"data": [{"id": "qwen3.8:27b", "context_length": 262144}]}
+        hosts = Hosts({LOCAL: listing})
+        [result] = await _refresh(_config(_tier("qwen3.8:27b", LOCAL, None)), hosts, "brain")
+        assert result.values == {}
+
+    async def test_llama_cpp_gives_the_slot_window_not_the_training_one(self) -> None:
+        hosts = Hosts({LOCAL: LLAMA_LISTING})
+        [result] = await _refresh(_config(_tier("local", LOCAL, None)), hosts, "brain")
+        assert result.values == {"context_window": 49152}
+        # A list that carries its windows is not asked for /model/info.
+        assert [url for url, _ in hosts.requests] == [f"{LOCAL}/models"]
+
+    async def test_a_gateway_gives_windows_from_model_info(self) -> None:
+        brain = _tier("big", LOCAL, None)
+        worker = _tier("small", LOCAL, None)
+        hosts = Hosts({LOCAL: GATEWAY_LISTING}, info={LOCAL: GATEWAY_INFO})
+        results = await _refresh(_config(brain, worker), hosts)
+        by_tier = {r.target.tier: r.values for r in results}
+        assert by_tier["brain"] == {"context_window": 1048576}
+        # Two deployments behind one name: the smaller, since either may answer.
+        assert by_tier["worker"] == {"context_window": 32768}
+        assert [url for url, _ in hosts.requests] == [f"{LOCAL}/models", f"{LOCAL}/model/info"]
+
+    async def test_a_gateway_route_with_no_window_keeps_the_stored_one(self) -> None:
+        hosts = Hosts({LOCAL: GATEWAY_LISTING}, info={LOCAL: GATEWAY_INFO})
+        [result] = await _refresh(_config(_tier("unset", LOCAL, None)), hosts, "brain")
+        assert result.values == {}
+
+    async def test_a_server_without_model_info_is_not_an_error(self) -> None:
+        hosts = Hosts({LOCAL: GATEWAY_LISTING})
+        [result] = await _refresh(_config(_tier("big", LOCAL, None)), hosts, "brain")
+        assert result.status == "no_pricing"
+        assert result.values == {}
+
+    async def test_the_gateway_is_asked_with_the_tiers_key(self) -> None:
+        box = "http://10.0.0.5:4000/v1"
+        config = _config(
+            _tier("big", box, "box"), box=CredentialConfig(name="Gateway", base_url=box)
+        )
+        hosts = Hosts({box: GATEWAY_LISTING}, info={box: GATEWAY_INFO})
+        [result] = await _refresh(config, hosts, "brain")
+        assert result.values == {"context_window": 1048576}
+        assert hosts.requests == [
+            (f"{box}/models", f"Bearer {KEY}"),
+            (f"{box}/model/info", f"Bearer {KEY}"),
+        ]
 
     async def test_a_loopback_url_with_a_hosted_key_is_the_hosted_host(self) -> None:
         # The live `vllm` preset's shape: tier URL on this computer, key on
@@ -452,5 +536,71 @@ class TestDaemon:
             reply = await _ask(ws, {"type": "refresh_model_cards", "preset": "nope"}, "setup_state")
             assert reply["type"] == "error"
             assert card_host.requests == []
+        finally:
+            await _stop(task, ws)
+
+
+# ── Settings' window field (TD-5189) ──────────────────────────────────────
+
+
+class TestSetWindow:
+    async def test_a_window_is_written_and_shown(self, tmp_path: Path, card_host: Hosts) -> None:
+        _daemon, task, ws = await _start(
+            _data_dir(tmp_path), MockProvider(default=Script(kind="text"))
+        )
+        path = tmp_path / "config.yaml"
+        try:
+            msg = {
+                "type": "set_tier_context_window",
+                "preset": "tst-default",
+                "tier": "worker",
+                "context_window": 1048576,
+            }
+            state = await _ask(ws, msg, "setup_state")
+            assert state["type"] == "setup_state", state
+            assert state["tier_cards"]["worker"]["context_window"] == 1048576
+            preset = load_config(path).presets["tst-default"]
+            assert preset.worker.context_window == 1048576
+            # Only that tier changed, and no host was asked.
+            assert preset.brain.context_window != 1048576
+            assert card_host.requests == []
+        finally:
+            await _stop(task, ws)
+
+    async def test_a_window_with_no_room_past_the_reply_is_refused(
+        self, tmp_path: Path, card_host: Hosts
+    ) -> None:
+        _daemon, task, ws = await _start(
+            _data_dir(tmp_path), MockProvider(default=Script(kind="text"))
+        )
+        path = tmp_path / "config.yaml"
+        before = path.read_text(encoding="utf-8")
+        try:
+            msg = {
+                "type": "set_tier_context_window",
+                "preset": "tst-default",
+                "tier": "brain",
+                "context_window": 8192,
+            }
+            reply = await _ask(ws, msg, "setup_state")
+            assert reply["type"] == "error"
+            assert "too little room" in reply["message"]
+            assert path.read_text(encoding="utf-8") == before
+        finally:
+            await _stop(task, ws)
+
+    async def test_an_unknown_preset_is_an_error(self, tmp_path: Path, card_host: Hosts) -> None:
+        _daemon, task, ws = await _start(
+            _data_dir(tmp_path), MockProvider(default=Script(kind="text"))
+        )
+        try:
+            msg = {
+                "type": "set_tier_context_window",
+                "preset": "nope",
+                "tier": "brain",
+                "context_window": 65536,
+            }
+            reply = await _ask(ws, msg, "setup_state")
+            assert reply["type"] == "error"
         finally:
             await _stop(task, ws)

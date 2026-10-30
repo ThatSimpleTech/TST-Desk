@@ -12525,6 +12525,34 @@ saved correctly; the pane showed only the agent cursor at its center.
       drawn image, so a short pane no longer letterboxes the picture inside
       a stretched box.
 
+### TD-5189 — Each local model gets the window its server serves
+
+**Size:** 2 · **Depends on:** TD-5185 · **Status:** Done
+
+Every local model sat at a hand-typed 64k, so a model served with far more
+compacted dozens of times in one run. Servers do say what they serve:
+vLLM's `max_model_len`, llama.cpp's `meta.n_ctx` (per slot), and a LiteLLM
+gateway's `/model/info`. The loopback rule threw all of them away, and the
+gateway's was never asked for. Nothing in Settings could change a window.
+
+- [x] `parse_model_list` reads a served window (`max_model_len`,
+      `meta.n_ctx`; never `n_ctx_train`), which wins over `context_length`
+      (`TestRefresh::test_llama_cpp_gives_the_slot_window_not_the_training_one`).
+- [x] A list with no windows also asks the same host's `/model/info` once,
+      with the same key; the smallest window per name; a missing route is
+      not an error (`test_a_gateway_gives_windows_from_model_info`,
+      `test_a_server_without_model_info_is_not_an_error`,
+      `test_the_gateway_is_asked_with_the_tiers_key`).
+- [x] A served window is taken on loopback; a ceiling still is not
+      (`test_a_loopback_host_gives_its_served_window_and_gets_no_key`,
+      `test_a_loopback_ceiling_is_still_not_taken`).
+- [x] `set_tier_context_window` writes one tier's window; one not more than
+      twice the reply reservation is refused and nothing is written
+      (`TestSetWindow`).
+- [x] Settings has a Context field per role, saved on blur or Enter
+      (`settings.test.ts`); a card with no price says only the prices stayed
+      (`model-card.test.ts`).
+
 ### TD-5188 — Shell rules hold on macOS's bash 3.2
 
 **Size:** 1 · **Depends on:** TD-5156 · **Status:** Done

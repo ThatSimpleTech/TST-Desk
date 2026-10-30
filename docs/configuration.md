@@ -2003,7 +2003,7 @@ putting a slug in your config, check it against the provider's own model list â€
 slug that does not exist fails at the first turn that needs it, not at load.
 
 **Settings fills the numbers in for you (TD-5185).** Saving a tier's slug in Settings, or
-pressing **Refresh prices** there, asks the server that tier already calls for its model list,
+pressing **Refresh from servers** there, asks the server that tier already calls for its model list,
 with the key the tier already sends, and finds the slug exactly. From that model's card it writes:
 
 | Card field | Config key | Rule |
@@ -2011,7 +2011,8 @@ with the key the tier already sends, and finds the slug exactly. From that model
 | `pricing.prompt` | `input_price` | dollars per token, written per million |
 | `pricing.completion` | `output_price` | dollars per token, written per million |
 | `pricing.input_cache_read` | `cache_read_price` | left alone when the card has none |
-| `context_length` (vLLM: `max_model_len`) | `context_window` | only when the server is not on this computer |
+| `context_length` | `context_window` | the model's ceiling: only when the server is not on this computer |
+| served window: vLLM `max_model_len`, llama.cpp `meta.n_ctx`, a LiteLLM gateway's `/model/info` `max_input_tokens` | `context_window` | what the server was started with: taken wherever the server runs, and wins over `context_length` (TD-5189) |
 | `top_provider.max_completion_tokens` | `max_output_tokens` | a ceiling: only ever lowers the stored value, never raises it |
 
 "The server" is where turns really go: a key saved with its own host (TD-1718) wins over the
@@ -2021,6 +2022,25 @@ server. Nothing is written when the slug is not listed, when the server lists no
 and local vLLM), or when the request fails: the stored value stays, and Settings says why under
 the tier. Only the value on each line changes; comments stay. New chats use the new numbers;
 open chats keep the ones they started with. Nothing is fetched on a chat turn.
+
+**The context window is editable (TD-5189).** Each role in Settings has a **Context** field
+holding its `context_window`. Type a number and leave the field (or press Enter) to save it;
+new chats use it. A window must be more than twice the role's `max_output_tokens`, since that
+much is kept back for the reply, and compaction starts at 60% of what is left. llama.cpp
+reports its window per request slot (`-c` divided by `-np`), which is what a turn gets.
+
+A LiteLLM gateway lists only ids on `/models`. When a list carries no windows, TST Desk also
+asks the same server's `/model/info` once, with the same key, and reads each route's
+`model_info.max_input_tokens`. Set that in the gateway's config for every route that fronts a
+local engine, to the window the engine serves:
+
+```text
+model_list:
+  - model_name: local-coder
+    litellm_params: { model: hosted_vllm/coder, api_base: http://127.0.0.1:8002/v1 }
+    model_info:
+      max_input_tokens: 65536   # the engine's -c / -np
+```
 
 `max_output_tokens` goes out as every request's `max_tokens` and is held back from the
 compaction budget, and OpenRouter refuses a request whose `max_tokens` your balance cannot

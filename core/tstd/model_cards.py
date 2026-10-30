@@ -16,8 +16,10 @@ What it will not do, each a way a guess would land in config:
 - pick a nearby model when the slug is not listed;
 - write zeros, or anything, for a field the card does not carry;
 - replace a loopback tier's ``context_window`` with the model's ceiling.
-  A local server serves what it was started with, often far less, and the
-  hand-set number is the truth;
+  A local server serves what it was started with, often far less. Only a
+  window the server says it serves (vLLM's ``max_model_len``, llama.cpp's
+  ``meta.n_ctx``, a gateway's ``max_input_tokens``) replaces it (TD-5189);
+  otherwise the hand-set number is the truth;
 - price a backup from its primary's card or the other way round. Each entry
   is refreshed from its own slug at its own host (TD-5120).
 """
@@ -41,7 +43,7 @@ from .config import (
 )
 from .key_hosts import key_refusal
 from .keychain import KeychainError
-from .model_setup import list_endpoint_models
+from .model_setup import default_max_output, list_endpoint_models
 from .protocol import EndpointModel, EndpointModels
 
 CardStatus = Literal["ok", "not_listed", "no_pricing", "fetch_failed", "no_slug", "write_failed"]
@@ -99,9 +101,11 @@ def card_values(tier: TierConfig, card: EndpointModel, *, loopback: bool) -> Car
     if card.cache_read_price is not None:
         values["cache_read_price"] = card.cache_read_price
     window = tier.context_window
-    if not loopback and card.context_window is not None:
-        values["context_window"] = card.context_window
-        window = card.context_window
+    # TD-5189: a served window is taken on loopback too; a ceiling is not.
+    taken = card.served_window if loopback else card.context_window
+    if taken is not None:
+        values["context_window"] = taken
+        window = taken
     cap = card.max_output_tokens
     if (
         cap is not None
@@ -111,6 +115,11 @@ def card_values(tier: TierConfig, card: EndpointModel, *, loopback: bool) -> Car
         and cap < tier.max_output_tokens
     ):
         values["max_output_tokens"] = cap
+    # TD-5189: a small served window (llama.cpp started with a short -c) must
+    # still leave room past the reply reservation, as Settings requires.
+    reply = values.get("max_output_tokens", tier.max_output_tokens)
+    if reply * 2 >= window:
+        values["max_output_tokens"] = default_max_output(int(window))
     return values
 
 

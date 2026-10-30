@@ -8,6 +8,7 @@
 		credentialHost,
 		closeSettings,
 		refreshModelCards,
+		saveContextWindow,
 	} from "../settings.svelte.js";
 	import { cardLine, cardNote } from "../model-card";
 	import { modelLabel } from "../effort";
@@ -41,6 +42,21 @@
 		const next = slugValue(tier).trim();
 		if (next === "" || next === settings.tierSlugs[tier]) return;
 		saveSlug(tier, next);
+	}
+
+	// TD-5189: the context window, editable. Saved on blur or Enter.
+	let windowDrafts = $state<Record<string, string>>({});
+
+	function windowValue(tier: string): string {
+		return windowDrafts[tier] ?? String(settings.tierCards[tier]?.context_window ?? "");
+	}
+
+	function commitWindow(tier: string): void {
+		const raw = windowDrafts[tier];
+		delete windowDrafts[tier];
+		if (raw === undefined) return;
+		const next = Number(raw.replace(/[\s,_]/g, ""));
+		saveContextWindow(tier, next);
 	}
 
 	function credentialLabel(id: string): string {
@@ -111,6 +127,26 @@
 			<p class="hint host">{credentialHost(selectedCredential(tier))}</p>
 		{/if}
 		{#if settings.tierCards[tier]}
+			<label class="field">
+				<span class="field-name">Context</span>
+				<input
+					class="input"
+					type="text"
+					inputmode="numeric"
+					aria-label={`${ROLE[tier].name} context window`}
+					value={windowValue(tier)}
+					disabled={settings.savingWindowTier === tier}
+					oninput={(e) => (windowDrafts[tier] = e.currentTarget.value)}
+					onblur={() => commitWindow(tier)}
+					onkeydown={(e) => {
+						if (e.key === "Enter") e.currentTarget.blur();
+					}}
+				/>
+			</label>
+			<p class="hint role">
+				Tokens this role can hold before older turns are summarised. Refresh reads it from the
+				server when the server says what it serves.
+			</p>
 			<p class="hint role card">{cardLine(settings.tierCards[tier])}</p>
 			{#if cardNote(settings.tierCards[tier])}
 				<p class="hint role">{cardNote(settings.tierCards[tier])}</p>
@@ -124,12 +160,13 @@
 			disabled={settings.refreshingCards}
 			onclick={refreshModelCards}
 		>
-			{settings.refreshingCards ? "Refreshing…" : "Refresh prices"}
+			{settings.refreshingCards ? "Refreshing…" : "Refresh from servers"}
 		</button>
 	</div>
 	<p class="hint">
 		Asks each role's server for its model card and saves the prices, context size and output
-		limit it lists. New chats use them; open chats keep theirs.
+		limit it lists. A server on this computer only sets the context size when it says what it
+		serves. New chats use them; open chats keep theirs.
 	</p>
 	{#if TIERS.some((t) => isDiscovered(t))}
 		<p class="hint">

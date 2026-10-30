@@ -2339,6 +2339,7 @@
       {
         "id": "vendor/model-a",
         "context_window": 128000,
+        "served_window": null,
         "input_price": 3.0,
         "output_price": 15.0,
         "cache_read_price": null,
@@ -2347,6 +2348,7 @@
       {
         "id": "vendor/model-b",
         "context_window": null,
+        "served_window": null,
         "input_price": null,
         "output_price": null,
         "cache_read_price": null,
@@ -2381,6 +2383,7 @@
           {
             "id": "llama3.2:3b",
             "context_window": null,
+            "served_window": null,
             "input_price": null,
             "output_price": null,
             "cache_read_price": null,
@@ -2389,6 +2392,7 @@
           {
             "id": "qwen3:8b",
             "context_window": null,
+            "served_window": null,
             "input_price": null,
             "output_price": null,
             "cache_read_price": null,

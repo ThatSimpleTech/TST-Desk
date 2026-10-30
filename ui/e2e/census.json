@@ -209,11 +209,14 @@
 	],
 	"settings:Model": [
 		"Add a model",
+		"Brain context window",
 		"Brain model",
 		"How models work",
 		"None (no key) OpenRouter",
-		"Refresh prices",
+		"Refresh from servers",
+		"Validator context window",
 		"Validator model",
+		"Worker context window",
 		"Worker model"
 	],
 	"settings:Phones and devices": [
