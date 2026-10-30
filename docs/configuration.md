@@ -3208,7 +3208,9 @@ dust), Galaxy, Deep space, Aurora, Constellations or Fireflies; the command pale
 **Toggle background** switches it off and back. Motion off holds a still frame of the same
 background, and Click ripples turns the ring of light from a click in the chat off on its
 own. When the system asks for reduced motion, backgrounds hold still and clicks do not
-ripple, whatever the switches say.
+ripple, whatever the switches say. Behind the panes, every background but Classic lies under
+an even veil of the page colour so the text over it stays readable; the preview tiles show
+each one at full strength.
 
 ### 4.5 `approved_external_imports`
 

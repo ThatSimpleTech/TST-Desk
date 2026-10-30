@@ -63,9 +63,16 @@
 	   Every background reads only these. Light keeps paper paper: skies are
 	   inked in warm greys and rust, like a printed star atlas, and laid over
 	   the ground ("source-over"); dark adds light ("lighter").
-	   --bg-veil quiets whatever sits behind the chat column. */
+	   Each --bg-*-veil is the ground colour laid evenly over that
+	   background behind the panes: as strong as its brightest moment needs
+	   for muted text to keep 4.5:1 over 99% of each pane, or a light wash
+	   where it needs none. */
 	--bg-ambient-blend:   source-over;
-	--bg-veil:            rgb(248 246 241 / 0.55);
+	--bg-galaxy-veil:           rgb(248 246 241 / 0.8);
+	--bg-space-veil:            rgb(248 246 241 / 0.45);
+	--bg-aurora-veil:           rgb(248 246 241 / 0.88);
+	--bg-constellation-veil:    rgb(248 246 241 / 0.25);
+	--bg-firefly-veil:          rgb(248 246 241 / 0.2);
 	--bg-galaxy-core:     #8b6a4f;
 	--bg-galaxy-arm:      #6c6658;
 	--bg-galaxy-disc:     #9e9684;
@@ -226,7 +233,11 @@
 
 		/* Picked backgrounds — dark (TD-5202): luminous, added as light. */
 		--bg-ambient-blend:   lighter;
-		--bg-veil:            rgb(19 18 16 / 0.42);
+		--bg-galaxy-veil:           rgb(19 18 16 / 0.65);
+		--bg-space-veil:            rgb(19 18 16 / 0.25);
+		--bg-aurora-veil:           rgb(19 18 16 / 0.74);
+		--bg-constellation-veil:    rgb(19 18 16 / 0.2);
+		--bg-firefly-veil:          rgb(19 18 16 / 0.15);
 		--bg-galaxy-core:     #ffe4bd;
 		--bg-galaxy-arm:      #aac6ff;
 		--bg-galaxy-disc:     #b9b4c8;
@@ -302,7 +313,11 @@
 
 	/* Picked backgrounds — dark (TD-5202): luminous, added as light. */
 	--bg-ambient-blend:   lighter;
-	--bg-veil:            rgb(19 18 16 / 0.42);
+	--bg-galaxy-veil:           rgb(19 18 16 / 0.65);
+	--bg-space-veil:            rgb(19 18 16 / 0.25);
+	--bg-aurora-veil:           rgb(19 18 16 / 0.74);
+	--bg-constellation-veil:    rgb(19 18 16 / 0.2);
+	--bg-firefly-veil:          rgb(19 18 16 / 0.15);
 	--bg-galaxy-core:     #ffe4bd;
 	--bg-galaxy-arm:      #aac6ff;
 	--bg-galaxy-disc:     #b9b4c8;

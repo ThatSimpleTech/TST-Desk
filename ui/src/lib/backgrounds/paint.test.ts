@@ -1,12 +1,24 @@
-// Canvas plumbing for the backgrounds (TD-5202): the pixel-ratio cap, the
+// Canvas plumbing for the backgrounds (TD-5202): the pixel-ratio caps, the
 // backing-store fit, reading colours out of tokens in every syntax the
-// stylesheet uses, and the theme's blend mode. Also a guard that no
-// background's maths reaches for Math.random.
+// stylesheet uses, the theme's blend mode, and noticing a move to a screen
+// of another density. Also a guard that no background's maths reaches for
+// Math.random.
 
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { DPR_CAP, blendMode, canvasScale, cssColor, fitCanvas, parseColor, tokenColor, tokenNumber } from "./paint";
+import {
+	DPR_CAP,
+	WINDOW_DPR_CAP,
+	blendMode,
+	canvasScale,
+	cssColor,
+	fitCanvas,
+	parseColor,
+	tokenColor,
+	tokenNumber,
+	watchPixelRatio,
+} from "./paint";
 
 describe("canvasScale", () => {
 	it("caps the device pixel ratio at 2", () => {
@@ -22,6 +34,65 @@ describe("canvasScale", () => {
 		expect(canvasScale(0)).toBe(1);
 		expect(canvasScale(Number.NaN)).toBe(1);
 		expect(canvasScale(2, 0)).toBe(2);
+	});
+
+	it("caps a layer behind the whole window lower than a preview tile", () => {
+		expect(WINDOW_DPR_CAP).toBe(1.5);
+		expect(WINDOW_DPR_CAP).toBeLessThan(DPR_CAP);
+		expect(canvasScale(2, 1, WINDOW_DPR_CAP)).toBe(1.5);
+		expect(canvasScale(1.25, 1, WINDOW_DPR_CAP)).toBe(1.25);
+		expect(canvasScale(3, 0.5, WINDOW_DPR_CAP)).toBe(0.75);
+		expect(canvasScale(2, 1, Number.NaN)).toBe(DPR_CAP);
+	});
+});
+
+/** A window whose matchMedia hands out queries the test can fire. */
+function densityWindow(ratio: number) {
+	const queries: { media: string; listeners: Set<() => void> }[] = [];
+	const win = {
+		devicePixelRatio: ratio,
+		matchMedia(media: string) {
+			const entry = { media, listeners: new Set<() => void>() };
+			queries.push(entry);
+			return {
+				media,
+				matches: true,
+				addEventListener: (_type: string, run: () => void) => entry.listeners.add(run),
+				removeEventListener: (_type: string, run: () => void) => entry.listeners.delete(run),
+			};
+		},
+	};
+	const live = () => queries.filter((q) => q.listeners.size > 0);
+	const fire = () => {
+		for (const q of live()) for (const run of [...q.listeners]) run();
+	};
+	return { win: win as unknown as Window & { devicePixelRatio: number }, live, fire };
+}
+
+describe("watchPixelRatio", () => {
+	it("calls back when the ratio changes, then listens for the new one", () => {
+		const { win, live, fire } = densityWindow(1);
+		let calls = 0;
+		const stop = watchPixelRatio(win, () => calls++);
+		expect(live().map((q) => q.media)).toEqual(["(resolution: 1dppx)"]);
+		win.devicePixelRatio = 2;
+		fire();
+		expect(calls).toBe(1);
+		expect(live().map((q) => q.media)).toEqual(["(resolution: 2dppx)"]);
+		win.devicePixelRatio = 1.5;
+		fire();
+		expect(calls).toBe(2);
+		stop();
+		expect(live()).toEqual([]);
+		fire();
+		expect(calls).toBe(2);
+	});
+
+	it("does nothing where there is no matchMedia", () => {
+		const stop = watchPixelRatio({ devicePixelRatio: 2 } as unknown as Window, () => {
+			throw new Error("never");
+		});
+		expect(() => stop()).not.toThrow();
 	});
 });
 

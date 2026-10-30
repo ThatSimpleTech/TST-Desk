@@ -1,22 +1,31 @@
-// Canvas plumbing the backgrounds share (TD-5202): the pixel-ratio cap,
+// Canvas plumbing the backgrounds share (TD-5202): the pixel-ratio caps,
 // reading colours out of the design tokens, the theme's blend mode, and
-// watching for a theme switch so a scene can recolour without a reload.
+// watching for a theme switch or a new screen density so a scene can
+// recolour or resize without a reload.
 //
 // Colours are never written here. Every background reads its palette from
 // --bg-* tokens in tokens.css, which define a light and a dark value, so a
 // theme switch is a token change like any other (AGENTS §6).
 
 /** Past 2× the extra pixels cost fill rate and buy nothing a soft ambient
- *  layer can show. */
+ *  layer can show. Preview tiles are small, so they keep it. */
 export const DPR_CAP = 2;
 
-/** Backing-store pixels per CSS pixel: the device ratio, capped, times the
- *  scene's own resolution (soft scenes draw small and let the browser's
- *  smoothing blur them up). */
-export function canvasScale(devicePixelRatio: number | undefined, resolution = 1): number {
+/** A layer behind the whole window clears and redraws every pixel on every
+ *  paint. Where the canvas is drawn in software (a Linux webview with no
+ *  GPU canvas), a 2× backing store of a large window is four times the
+ *  fill of 1× and took a fifth of the UI thread; at 1.5× it is a little
+ *  over half of 2×, and a soft, veiled star field still reads sharp. */
+export const WINDOW_DPR_CAP = 1.5;
+
+/** Backing-store pixels per CSS pixel: the device ratio, capped at `cap`,
+ *  times the scene's own resolution (soft scenes draw small and let the
+ *  browser's smoothing blur them up). */
+export function canvasScale(devicePixelRatio: number | undefined, resolution = 1, cap = DPR_CAP): number {
 	const dpr = Number.isFinite(devicePixelRatio) && (devicePixelRatio ?? 0) > 0 ? (devicePixelRatio as number) : 1;
 	const res = Number.isFinite(resolution) && resolution > 0 ? resolution : 1;
-	return Math.max(Math.min(dpr, DPR_CAP) * res, 0.05);
+	const most = Number.isFinite(cap) && cap > 0 ? cap : DPR_CAP;
+	return Math.max(Math.min(dpr, most) * res, 0.05);
 }
 
 /** Size the backing store for `width`×`height` CSS px. Returns whether it
@@ -133,6 +142,39 @@ export function watchTheme(win: Window, run: () => void): () => void {
 	return () => {
 		observer?.disconnect();
 		scheme?.removeEventListener("change", run);
+	};
+}
+
+/** Call back when the device pixel ratio changes while the size does not
+ *  (the window dragged to a screen of another density): no ResizeObserver
+ *  reports that, and the canvas would stay at the old scale. A query
+ *  matches only the ratio it was made for, so it is made again for the new
+ *  one after each change. */
+export function watchPixelRatio(win: Window, run: () => void): () => void {
+	let query: MediaQueryList | null = null;
+	let stopped = false;
+	const onChange = (): void => {
+		disarm();
+		if (stopped) return;
+		run();
+		arm();
+	};
+	function arm(): void {
+		try {
+			query = typeof win.matchMedia === "function" ? win.matchMedia(`(resolution: ${win.devicePixelRatio}dppx)`) : null;
+		} catch {
+			query = null;
+		}
+		query?.addEventListener("change", onChange);
+	}
+	function disarm(): void {
+		query?.removeEventListener("change", onChange);
+		query = null;
+	}
+	arm();
+	return () => {
+		stopped = true;
+		disarm();
 	};
 }
 

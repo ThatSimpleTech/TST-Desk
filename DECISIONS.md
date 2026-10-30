@@ -18806,28 +18806,30 @@ Constellations, Fireflies, plus Motion and Click ripples switches.
   store reads at import, so the first frame already shows the choice, and it
   follows other windows through the `storage` event.
 - One host component, `BackgroundHost`, mounted where the two Classic
-  layers were: `layer="window"` in the root layout (fixed, under the app)
-  and `layer="chat"` in the chat pane (Classic's header light and dust, a
-  veil that quiets the other backgrounds behind the text, and the ripples).
+  layers were: `layer="window"` in the root layout (fixed, under the app,
+  with the veil that quiets the other backgrounds behind the text) and
+  `layer="chat"` in the chat pane (Classic's header light and dust, and the
+  ripples).
   The ripples moved out of the dust into their own `RippleLayer`, shared by
   every background but Off, drawn exactly as before and scheduling frames
   only while a ring is alive. The quick-entry window gets no background: it
   paints its own ground over the whole window.
 - A background is a `Scene` (`resize`, `recolor`, `draw`) handed to one
-  canvas host, `AmbientCanvas`, which owns sizing (pixel ratio capped at 2),
-  the frame loop and theme switches. The loop (`backgrounds/loop.ts`)
-  paints at most its cap, schedules nothing while stopped or while the
-  document is hidden, and keeps its own clock that only advances while
-  frames run, so a pause freezes the scene instead of jumping it. Caps
-  follow how fast each one moves: Deep space and Classic's dust 30, Fireflies
-  24, Aurora and Constellations 20, Galaxy 15. Soft light that moves is drawn
-  at a fraction of the resolution (the galaxy's glow at half, the aurora at
-  0.3); soft light that never moves is a CSS gradient.
+  canvas host, `AmbientCanvas`, which owns sizing (pixel ratio capped at
+  1.5 behind the window and 2 in a preview tile), the frame loop and theme
+  switches. The loop (`backgrounds/loop.ts`) paints at most its cap,
+  schedules nothing while stopped or while the document is hidden, and
+  keeps its own clock that only advances while frames run, so a pause
+  freezes the scene instead of jumping it. Caps follow how fast each one
+  moves: Deep space 30, Fireflies 24, Aurora and Constellations 20, Galaxy
+  15, Classic's dust 8. Soft light that moves is drawn at a fraction of the
+  resolution (the galaxy's glow at half, the aurora at 0.3); soft light
+  that never moves is a CSS gradient.
 - Theme: every colour is a `--bg-*` token with a light and a dark value.
   `--bg-ambient-blend` is `lighter` in dark (light is added) and
   `source-over` in light, where the space backgrounds are inked in warm
-  greys and rust like a printed star atlas, so the ground stays paper and
-  text keeps its contrast.
+  greys and rust like a printed star atlas, so the ground stays paper. The
+  inks alone do not keep text readable; the veil does (review fixes below).
 - Motion off holds a still frame and schedules nothing; Click ripples is its
   own switch. The OS reduced-motion setting forces both off. playful-bg.ts
   lost `shouldAnimate` and `staticAlpha`: the rule lives in
@@ -18839,3 +18841,43 @@ turns); keeping the choice in config.yaml (a display choice belongs to the
 screen showing it, as the theme does); turning the ripples off with Motion
 (a still background with ripples is a fair choice, and reduced motion
 already covers "nothing moves").
+
+**Review fixes (2026-10-30):**
+- The veil. It was a radial pool of ground colour inside the chat pane. The
+  Activity pane got none, so its muted text sat on the raw background
+  (under 3:1 over the aurora), and the pool stopped at the divider with a
+  visible step. Now `BackgroundHost` lays one even sheet of the ground
+  colour over the window layer, a token per background (`--bg-galaxy-veil`,
+  `--bg-space-veil`, `--bg-aurora-veil`, `--bg-constellation-veil`,
+  `--bg-firefly-veil`) and none for Classic or Off. Muted text has 4.93:1 on
+  bare paper, so wherever text can be, a background may darken the paper by
+  only about a tenth. Each strength is what that background's brightest
+  moment needs for muted text to keep 4.5:1 over 99% of the chat column and
+  the Activity pane, measured on a five-minute time-lapse of each one in
+  Chromium. In light, the galaxy (0.8) and the aurora (0.88) then read as a
+  faint print; the preview tiles still show them at full strength. The dark
+  galaxy's veil (0.65) also holds body text at 4.5:1 over its core, where
+  hundreds of stacked stars add up to pure white (`tokens.test.ts`), and the
+  core's glow peaks at 0.6 instead of 1. Still below 4.5:1 for muted text:
+  the spot right over the galaxy's core, single stars and shooting stars.
+- Window layers cap the backing store at 1.5×, tiles keep 2×. In software
+  canvas at 1920×1080 CSS px a 2× store cost 1.7–4.4 times the 1× one, all
+  fill rate. A `(resolution: Ndppx)` query, made again for each new ratio,
+  re-measures the canvas when the window moves to a screen of another
+  density, which no ResizeObserver reports.
+- Galaxy stars each draw from their own seeded stream and pick their kind by
+  hash; Deep space hashes a star's trips by a stable id, not its sorted
+  place. A resize that changes the count only adds or drops stars.
+- A preview tile comes alive on keyboard focus only (`:focus-visible`):
+  Chromium and WebKitGTK also focus a clicked button, which kept a second
+  copy of the background running while Settings stayed open.
+- Classic's dust paints 8 times a second, not 30: it drifts under 2 px a
+  second, and each paint repaints the whole chat pane in software.
+
+**Rejected in review:** moving the galaxy's core to the top-right corner (at
+common window sizes it lands on the Activity pane's text); a second veil in
+the Activity pane matched to the chat pane's (two shapes to keep in step);
+dimming the backgrounds' own tokens instead (the tiles would go faint too).
+Left for a follow-up story: Classic's orbit halo and header bands are CSS
+animations with no frame cap and keep a software-rendered WebKitGTK page
+near a whole core, as before this story (see the TD-5202 backlog entry).

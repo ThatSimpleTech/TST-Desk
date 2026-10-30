@@ -39,6 +39,8 @@
 	const FPS = 15;
 	/** Stars this big get a soft halo instead of a square. */
 	const HALO_FROM = 1.4;
+	/** Opacity at the very centre of the bulge's glow. */
+	const BULGE_PEAK = 0.6;
 	/** The dust lanes cut light away ("destination-out" reads only alpha),
 	 *  so their stamp is a mask, never a colour on screen. */
 	const LANE_MASK: ParsedColor = { rgb: [0, 0, 0], alpha: 1 };
@@ -97,11 +99,14 @@
 		g.fillStyle = disc;
 		g.fillRect(0, 0, GLOW_PX, GLOW_PX);
 		stamp(g, hazeDot, armGlow(SEED + 1, 420));
+		// The core sits behind the chat column at most window sizes, so it is
+		// a soft glow, not a white-hot spot: at full strength body text over
+		// it fell to under 3:1 in the dark theme.
 		const bulge = g.createRadialGradient(half, half, 0, half, half, half * 0.5);
-		bulge.addColorStop(0, cssColor(core, 1));
-		bulge.addColorStop(0.06, cssColor(core, 0.9));
-		bulge.addColorStop(0.22, cssColor(core, 0.38));
-		bulge.addColorStop(0.55, cssColor(core, 0.08));
+		bulge.addColorStop(0, cssColor(core, BULGE_PEAK));
+		bulge.addColorStop(0.06, cssColor(core, BULGE_PEAK * 0.9));
+		bulge.addColorStop(0.22, cssColor(core, BULGE_PEAK * 0.38));
+		bulge.addColorStop(0.55, cssColor(core, BULGE_PEAK * 0.08));
 		bulge.addColorStop(1, cssColor(core, 0));
 		g.globalAlpha = 1;
 		g.fillStyle = bulge;

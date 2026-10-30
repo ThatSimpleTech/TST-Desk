@@ -66,6 +66,7 @@
 		"Search sessions and actions",
 		"Stop computer use Halt all desktop actuation immediately. Capture still works.",
 		"Toggle Design mode Point at the Screen frame instead of describing it (⌘⇧D)",
+		"Toggle background Turn the background off, or back on",
 		"Toggle theme Switch between light and dark"
 	],
 	"plan-review": [
@@ -151,7 +152,13 @@
 		"toggle"
 	],
 	"settings:Appearance": [
+		"Aurora",
+		"Classic",
+		"Constellations",
 		"Dark",
+		"Deep space",
+		"Fireflies",
+		"Galaxy",
 		"Light",
 		"System",
 		"toggle"

@@ -10,7 +10,7 @@
 // along the leading edge of each arm. Everything is seeded; nothing here
 // touches a canvas.
 
-import { gaussian, mulberry32, smoothstep } from "./random";
+import { gaussian, hash01, mulberry32, smoothstep } from "./random";
 
 export const GALAXY = {
 	arms: 2,
@@ -24,7 +24,8 @@ export const GALAXY = {
 	positionAngleDeg: -21,
 	/** Seconds per full turn. */
 	turnSec: 600,
-	/** Shares of the stars in the bulge and the arms; the rest is even disc. */
+	/** Shares of the stars in the bulge and the arms (on average: each star
+	 *  picks its own kind); the rest is even disc. */
 	bulgeShare: 0.22,
 	armShare: 0.62,
 	/** Star count bounds; the count follows the disc's on-screen area. */
@@ -112,16 +113,24 @@ function discStar(rand: () => number): Draft {
 	};
 }
 
-/** The seeded star list, sorted by tone. Deterministic for a seed and count. */
+/** Star `i` on its own: its kind from a hash and its draws from its own
+ *  seeded stream, so it is the same star whatever the count. The count
+ *  follows the window, and with one stream for the lot a resize that added
+ *  a star re-dealt every star after it, so the sky churned as the edge
+ *  moved; now a resize only adds or drops stars at the end. */
+function galaxyStar(seed: number, i: number): Draft {
+	const rand = mulberry32(Math.floor(hash01(seed, i, 0x57a2) * 4294967296));
+	const kind = hash01(seed, i, 0x6b1d);
+	if (kind < GALAXY.bulgeShare) return bulgeStar(rand);
+	return kind < GALAXY.bulgeShare + GALAXY.armShare ? armStar(rand) : discStar(rand);
+}
+
+/** The seeded star list, sorted by tone. Deterministic for a seed and count,
+ *  and a longer list keeps every star of a shorter one unchanged. */
 export function galaxyStars(seed: number, count: number): GalaxyStars {
-	const rand = mulberry32(seed);
 	const n = Math.max(0, Math.floor(count));
 	const drafts: Draft[] = [];
-	const bulge = Math.round(n * GALAXY.bulgeShare);
-	const arms = Math.round(n * GALAXY.armShare);
-	for (let i = 0; i < n; i++) {
-		drafts.push(i < bulge ? bulgeStar(rand) : i < bulge + arms ? armStar(rand) : discStar(rand));
-	}
+	for (let i = 0; i < n; i++) drafts.push(galaxyStar(seed, i));
 	// Stable sort keeps the seeded order inside each tone.
 	drafts.sort((a, b) => a.tone - b.tone);
 	const stars: GalaxyStars = {
@@ -158,8 +167,9 @@ export interface GalaxyLayout {
 }
 
 /** Where the galaxy sits in a box: the core up and to the right of the
- *  middle, clear of the chat column, the disc wide enough that the arms
- *  sweep the whole window. */
+ *  middle, the disc wide enough that the arms sweep the whole window. At
+ *  most window sizes the core still lands behind the chat column, which is
+ *  why its glow is soft and the window veils it. */
 export function galaxyLayout(width: number, height: number): GalaxyLayout {
 	const pa = (GALAXY.positionAngleDeg * Math.PI) / 180;
 	return {

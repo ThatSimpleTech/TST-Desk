@@ -92,6 +92,48 @@ describe("text contrast", () => {
 	}
 });
 
+// ── Background veils (TD-5202) ────────────────────────────────────────────
+//
+// A picked background is quieted behind the panes by an even veil of the
+// ground colour, one per background. It has to be the ground, or it would
+// tint the page. The dark galaxy's also has to hold body text at AA over the
+// galaxy's core, where hundreds of stacked stars add up to pure white.
+
+const VEILS = ["--bg-galaxy-veil", "--bg-space-veil", "--bg-aurora-veil", "--bg-constellation-veil", "--bg-firefly-veil"];
+
+/** `rgb(r g b / a)` as its channels and alpha. */
+function rgba(value: string): { rgb: number[]; alpha: number } {
+	const m = /^rgb\((\d+) (\d+) (\d+) \/ ([\d.]+)\)$/.exec(value);
+	if (!m) throw new Error(`not rgb(r g b / a): ${value}`);
+	return { rgb: [m[1], m[2], m[3]].map(Number), alpha: Number(m[4]) };
+}
+
+function hex(rgb: number[]): string {
+	return `#${rgb.map((c) => Math.round(c).toString(16).padStart(2, "0")).join("")}`;
+}
+
+describe("background veils", () => {
+	const palettes = { light: tokensOf(":root {"), dark: tokensOf(':root[data-theme="dark"]') };
+
+	for (const [theme, palette] of Object.entries(palettes)) {
+		it(`${theme}: every veil is the ground colour, partly clear`, () => {
+			for (const name of VEILS) {
+				const veil = rgba(palette[name] ?? "");
+				expect(hex(veil.rgb), name).toBe(palette["--color-ground"]);
+				expect(veil.alpha, name).toBeGreaterThan(0);
+				expect(veil.alpha, name).toBeLessThan(1);
+			}
+		});
+	}
+
+	it("dark: the galaxy's veil keeps body text at AA over its core, where stars add up to white", () => {
+		const dark = palettes.dark;
+		const veil = rgba(dark["--bg-galaxy-veil"]);
+		const core = veil.rgb.map((ground) => 255 * (1 - veil.alpha) + ground * veil.alpha);
+		expect(contrast(dark["--color-ink"], hex(core))).toBeGreaterThanOrEqual(4.5);
+	});
+});
+
 // ── One vocabulary ────────────────────────────────────────────────────────
 //
 // The September 2026 design rounds retired the TD-1001–TD-1404 alias names

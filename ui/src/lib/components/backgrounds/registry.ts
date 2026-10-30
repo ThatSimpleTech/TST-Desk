@@ -21,3 +21,19 @@ export const WINDOW_LAYERS: Record<BackgroundId, Component<BackgroundProps> | nu
 	constellations: ConstellationsBackground,
 	fireflies: FirefliesBackground,
 };
+
+/** The token for the ground-coloured veil the host lays over each
+ *  background behind the panes. Text sits anywhere in the chat column and
+ *  the Activity pane, and both panes are clear, so the veil is one even
+ *  sheet over the whole window: no step where the panes meet. Each
+ *  background's is as strong as its brightest light needs; Classic keeps
+ *  its own look and Off has nothing to quiet. */
+export const WINDOW_VEILS: Record<BackgroundId, string | null> = {
+	off: null,
+	classic: null,
+	galaxy: "--bg-galaxy-veil",
+	"deep-space": "--bg-space-veil",
+	aurora: "--bg-aurora-veil",
+	constellations: "--bg-constellation-veil",
+	fireflies: "--bg-firefly-veil",
+};

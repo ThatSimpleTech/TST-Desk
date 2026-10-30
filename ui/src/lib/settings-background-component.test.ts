@@ -4,7 +4,9 @@
 // with a preview, Classic chosen on a fresh device, a click or the arrow
 // keys switch and save the choice for this device, and the Motion and
 // Click ripples switches save theirs — standing down under Off, and
-// explaining themselves when the OS asks for less motion.
+// explaining themselves when the OS asks for less motion. A preview moves
+// only under the pointer or keyboard focus: a click's focus does not keep
+// a second copy of the background running.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
@@ -24,6 +26,22 @@ function radio(name: string): HTMLButtonElement {
 	const found = radios().find((r) => r.getAttribute("aria-label") === name);
 	if (!found) throw new Error(`no tile ${name}`);
 	return found;
+}
+
+/** The Classic preview's orbit holds still unless its tile is live. */
+function classicStill(): boolean {
+	const orbit = radio("Classic").querySelector(".orbit");
+	if (!orbit) throw new Error("no Classic preview");
+	return orbit.classList.contains("orbit--still");
+}
+
+/** Answer :focus-visible for a tile the way the browser would: true for
+ *  keyboard focus, false for the focus a mouse click gives a button. */
+function focusVisible(tile: HTMLButtonElement, visible: boolean): void {
+	const matches = Element.prototype.matches;
+	vi.spyOn(tile, "matches").mockImplementation(function (this: Element, selector: string) {
+		return selector === ":focus-visible" ? visible : matches.call(this, selector);
+	});
 }
 
 function toggle(name: string): HTMLButtonElement {
@@ -97,7 +115,59 @@ describe("the tiles", () => {
 	});
 });
 
+describe("the previews", () => {
+	it("come alive under the pointer and hold still when it leaves", () => {
+		expect(classicStill()).toBe(true);
+		radio("Classic").dispatchEvent(new Event("pointerenter"));
+		flushSync();
+		expect(classicStill()).toBe(false);
+		radio("Classic").dispatchEvent(new Event("pointerleave"));
+		flushSync();
+		expect(classicStill()).toBe(true);
+	});
+
+	it("come alive under keyboard focus, until it moves on", () => {
+		const tile = radio("Classic");
+		focusVisible(tile, true);
+		tile.focus();
+		flushSync();
+		expect(classicStill()).toBe(false);
+		tile.blur();
+		flushSync();
+		expect(classicStill()).toBe(true);
+	});
+
+	it("hold still after a click once the pointer leaves, though the tile keeps focus", () => {
+		const tile = radio("Classic");
+		focusVisible(tile, false);
+		tile.dispatchEvent(new Event("pointerenter"));
+		tile.focus();
+		tile.click();
+		tile.dispatchEvent(new Event("pointerleave"));
+		flushSync();
+		expect(document.activeElement).toBe(tile);
+		expect(classicStill()).toBe(true);
+	});
+
+	it("bind their tiles without a dev-mode warning", () => {
+		if (component !== null) unmount(component);
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		component = mount(SettingsBackground, { target });
+		flushSync();
+		const binding = warn.mock.calls.filter((call) => String(call[0]).includes("binding_property_non_reactive"));
+		expect(binding).toEqual([]);
+	});
+});
+
 describe("the switches", () => {
+	it("are named by their row titles, with On and Off as the state", () => {
+		for (const name of ["Motion", "Click ripples"]) {
+			const id = toggle(name).getAttribute("aria-labelledby");
+			expect(id).not.toBeNull();
+			expect(document.getElementById(id ?? "")?.textContent).toBe(name);
+		}
+	});
+
 	it("save Motion and Click ripples for this device", () => {
 		toggle("Motion").click();
 		toggle("Click ripples").click();

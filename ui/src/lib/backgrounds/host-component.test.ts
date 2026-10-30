@@ -4,13 +4,18 @@
 // and schedules no animation frame, even when clicked; a moving background
 // runs frames; Motion off and the OS reduced-motion setting give one still
 // paint and no frames; switching tears the old loop down; ripples come and
-// go with their switch. Canvas calls go to a recording fake context — jsdom
-// has no 2D canvas — and animation frames to a queue the test drives.
+// go with their switch; the veil is one sheet over the window layer and
+// never in the chat pane; a window layer's backing store is capped at 1.5×
+// and follows a move to a screen of another density. Canvas calls go to a
+// recording fake context — jsdom has no 2D canvas — and animation frames
+// to a queue the test drives.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { flushSync, mount, unmount } from "svelte";
 import BackgroundHost from "../components/backgrounds/BackgroundHost.svelte";
-import { WINDOW_LAYERS } from "../components/backgrounds/registry";
+import { WINDOW_LAYERS, WINDOW_VEILS } from "../components/backgrounds/registry";
 import { BACKGROUND_IDS } from "./catalog";
 import { background, loadBackground, setBackground, setBackgroundMotion, setBackgroundRipples } from "./store.svelte.js";
 
@@ -83,6 +88,7 @@ afterEach(() => {
 	for (const component of mounted) unmount(component);
 	target.remove();
 	vi.restoreAllMocks();
+	vi.unstubAllGlobals();
 	localStorage.clear();
 });
 
@@ -134,6 +140,16 @@ describe("a moving background", () => {
 		expect(frames.size).toBe(1);
 	});
 
+	it("paints Classic's slow dust at most 8 times a second", () => {
+		setBackground("classic");
+		render("chat");
+		paints = [];
+		runFrames(60);
+		const clears = paints.filter((call) => call === "clearRect").length;
+		expect(clears).toBeGreaterThanOrEqual(6);
+		expect(clears).toBeLessThanOrEqual(9);
+	});
+
 	it("gives every background but Off a window layer", () => {
 		for (const id of BACKGROUND_IDS) expect(WINDOW_LAYERS[id] === null).toBe(id === "off");
 	});
@@ -169,6 +185,35 @@ describe("holding still", () => {
 	});
 });
 
+describe("the backing store", () => {
+	it("is capped at 1.5× behind the window, and follows a move to a screen of another density", () => {
+		let ratio = 2;
+		const listeners = new Map<string, Set<() => void>>();
+		vi.spyOn(window, "devicePixelRatio", "get").mockImplementation(() => ratio);
+		vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(400);
+		vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(300);
+		vi.stubGlobal("matchMedia", (media: string) => {
+			const set = listeners.get(media) ?? new Set<() => void>();
+			listeners.set(media, set);
+			return {
+				media,
+				matches: false,
+				addEventListener: (_type: string, run: () => void) => set.add(run),
+				removeEventListener: (_type: string, run: () => void) => set.delete(run),
+			};
+		});
+		setBackground("deep-space");
+		render("window");
+		const canvas = target.querySelector("canvas");
+		expect([canvas?.width, canvas?.height]).toEqual([600, 450]);
+		// Same size, new density: only the resolution query notices.
+		ratio = 1;
+		for (const run of [...(listeners.get("(resolution: 2dppx)") ?? [])]) run();
+		expect([canvas?.width, canvas?.height]).toEqual([400, 300]);
+		expect(listeners.get("(resolution: 1dppx)")?.size).toBe(1);
+	});
+});
+
 describe("click ripples", () => {
 	it("are drawn by their own layer, idle until a click, then run frames", () => {
 		setBackground("galaxy");
@@ -188,12 +233,43 @@ describe("click ripples", () => {
 		expect(target.querySelector(".ripples")).toBeNull();
 	});
 
-	it("sit over a veil on every background but Classic and Off", () => {
-		setBackground("deep-space");
+});
+
+describe("the veil", () => {
+	it("is one even sheet laid over the window layer, for every background but Classic and Off", () => {
+		render("window");
+		for (const id of BACKGROUND_IDS) {
+			setBackground(id);
+			flushSync();
+			const veils = [...target.querySelectorAll<HTMLElement>(".veil")];
+			const token = WINDOW_VEILS[id];
+			expect(veils.length, id).toBe(token === null ? 0 : 1);
+			if (token === null) continue;
+			expect(veils[0].style.background, id).toBe(`var(${token})`);
+			// Painted after the background's own layers, so it lies on top.
+			const layers = [...target.children].filter((el) => !el.classList.contains("veil"));
+			expect(layers.length, id).toBeGreaterThan(0);
+			for (const el of layers) {
+				expect(el.compareDocumentPosition(veils[0]) & Node.DOCUMENT_POSITION_FOLLOWING, id).toBeTruthy();
+			}
+		}
+	});
+
+	it("never sits in the chat pane, so nothing steps where the chat meets the Activity pane", () => {
 		render("chat");
-		expect(target.querySelector(".veil")).not.toBeNull();
-		setBackground("classic");
-		flushSync();
-		expect(target.querySelector(".veil")).toBeNull();
+		for (const id of BACKGROUND_IDS) {
+			setBackground(id);
+			flushSync();
+			expect(target.querySelector(".veil"), id).toBeNull();
+		}
+	});
+
+	it("reads a token every theme declares", () => {
+		const css = readFileSync(resolve(process.cwd(), "src/lib/tokens.css"), "utf-8");
+		for (const token of Object.values(WINDOW_VEILS)) {
+			if (token === null) continue;
+			// The light root, the dark media query and the forced dark theme.
+			expect(css.split(`${token}:`).length - 1, token).toBe(3);
+		}
 	});
 });

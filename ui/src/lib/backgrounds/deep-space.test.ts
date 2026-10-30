@@ -39,6 +39,23 @@ describe("spaceField", () => {
 		for (let i = 1; i < field.count; i++) expect(field.tone[i]).toBeGreaterThanOrEqual(field.tone[i - 1]);
 		expect(field.toneStart[SPACE_TONES]).toBe(field.count);
 	});
+
+	it("keeps every star on its path when a resize changes the count", () => {
+		const wider = spaceField(42, W + 10, H);
+		expect(wider.count).toBeGreaterThan(field.count);
+		const at = new Map(Array.from(wider.id, (id, i) => [id, i]));
+		const a = new Float32Array(3);
+		const b = new Float32Array(3);
+		for (let i = 0; i < field.count; i++) {
+			const j = at.get(field.id[i]);
+			expect(j, `star ${field.id[i]}`).toBeDefined();
+			for (const t of [0, 31, 400]) {
+				starInto(a, field, layout, i, t);
+				starInto(b, wider, layout, j ?? -1, t);
+				expect(Array.from(b)).toEqual(Array.from(a));
+			}
+		}
+	});
 });
 
 describe("starInto", () => {

@@ -79,6 +79,18 @@ describe("galaxyStars", () => {
 		expect(galaxyStars(1, 0).count).toBe(0);
 		expect(galaxyStars(1, -5).count).toBe(0);
 	});
+
+	it("keeps every star when a resize changes the count, so the sky does not churn", () => {
+		const key = (s: ReturnType<typeof galaxyStars>, i: number) =>
+			[s.r[i], s.angle[i], s.size[i], s.alpha[i], s.tone[i]].join(",");
+		const keys = (s: ReturnType<typeof galaxyStars>) => Array.from({ length: s.count }, (_, i) => key(s, i));
+		const small = keys(galaxyStars(13, 1699));
+		for (const more of [1700, 1701, 1760]) {
+			const big = new Set(keys(galaxyStars(13, more)));
+			expect(small.filter((k) => !big.has(k)), `${more} stars`).toEqual([]);
+			expect(big.size).toBe(more);
+		}
+	});
 });
 
 describe("arms", () => {

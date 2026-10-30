@@ -8,6 +8,10 @@
 	// the keyboard focus is on it, then it comes alive. Picking one swaps the
 	// window behind this dialog straight away. The tiles are one radio
 	// group: arrow keys move the choice, Tab leaves the group.
+	//
+	// Only keyboard focus counts: Chromium and WebKitGTK also focus a button
+	// that is clicked, and a clicked tile would otherwise keep a second copy
+	// of the window's background running until focus moved on.
 	import { BACKGROUNDS, backgroundInfo, type BackgroundId } from '../backgrounds/catalog';
 	import {
 		background,
@@ -20,13 +24,23 @@
 
 	let hovered: BackgroundId | null = $state(null);
 	let focused: BackgroundId | null = $state(null);
-	const tiles: HTMLButtonElement[] = [];
+	let tiles: HTMLButtonElement[] = $state([]);
 
 	const canMove = $derived(background.motion && !background.reducedMotion);
 	const isOff = $derived(background.id === 'off');
 
 	function live(id: BackgroundId): boolean {
 		return canMove && (hovered === id || focused === id);
+	}
+
+	/** Focus the browser would ring: from the keyboard, not a click. An
+	 *  engine without :focus-visible counts any focus, as before. */
+	function keyboardFocus(el: Element): boolean {
+		try {
+			return el.matches(':focus-visible');
+		} catch {
+			return true;
+		}
 	}
 
 	const STEPS: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
@@ -62,7 +76,7 @@
 				onkeydown={(event) => onKey(event, index)}
 				onpointerenter={() => (hovered = option.id)}
 				onpointerleave={() => (hovered = null)}
-				onfocus={() => (focused = option.id)}
+				onfocus={(event) => (focused = keyboardFocus(event.currentTarget) ? option.id : null)}
 				onblur={() => (focused = null)}
 			>
 				<span class="preview">
@@ -82,24 +96,26 @@
 	<p class="hint">{backgroundInfo(background.id).blurb}</p>
 
 	<div class="row">
-		<p class="title">Motion</p>
+		<p class="title" id="background-motion-title">Motion</p>
 		<button
 			class="choice"
 			class:choice--active={background.motion && !isOff}
 			type="button"
 			role="switch"
+			aria-labelledby="background-motion-title"
 			aria-checked={background.motion}
 			disabled={isOff}
 			onclick={() => setBackgroundMotion(!background.motion)}>{background.motion ? 'On' : 'Off'}</button
 		>
 	</div>
 	<div class="row">
-		<p class="title">Click ripples</p>
+		<p class="title" id="background-ripples-title">Click ripples</p>
 		<button
 			class="choice"
 			class:choice--active={background.ripples && !isOff}
 			type="button"
 			role="switch"
+			aria-labelledby="background-ripples-title"
 			aria-checked={background.ripples}
 			disabled={isOff}
 			onclick={() => setBackgroundRipples(!background.ripples)}>{background.ripples ? 'On' : 'Off'}</button

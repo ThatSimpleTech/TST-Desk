@@ -2,10 +2,10 @@
 // of a point up and to the right of the middle, growing and brightening as
 // they come, and now and then a shooting star crosses the sky.
 //
-// Every star's place is a pure function of its index and the time. Depth
+// Every star's place is a pure function of its id and the time. Depth
 // runs from 1 (far) down to `near`; a star that arrives starts again at the
-// far end, somewhere new, picked by hashing its index with how many trips
-// it has made. So a frame keeps no state, allocates nothing, and the same
+// far end, somewhere new, picked by hashing its id with how many trips it
+// has made. So a frame keeps no state, allocates nothing, and the same
 // moment always looks the same. Shooting stars work the same way: time is
 // cut into slots, and a hash of the slot number says whether one flies in
 // it, where, and which way.
@@ -45,6 +45,9 @@ export const SPACE_TONES = 3;
 export interface SpaceField {
 	seed: number;
 	count: number;
+	/** Each star's place in the seeded draw, before the tone sort: what its
+	 *  trips are hashed by, so a star keeps its path when the count changes. */
+	id: Uint32Array;
 	/** How far into its trip each star is at t = 0, in depth units. */
 	offset: Float32Array;
 	/** Size multiplier 0.6–1.4. */
@@ -60,26 +63,30 @@ export function starTotal(width: number, height: number): number {
 	return Math.round(Math.min(SPACE.maxStars, Math.max(SPACE.minStars, n)));
 }
 
-/** The seeded field for a box, stars sorted by tone. */
+/** The seeded field for a box, stars sorted by tone. Every star takes the
+ *  same three draws, so a bigger box keeps the smaller box's stars and adds
+ *  more after them. */
 export function spaceField(seed: number, width: number, height: number): SpaceField {
 	const count = starTotal(width, height);
 	const rand = mulberry32(seed);
 	const span = 1 - SPACE.near;
-	const drafts: { offset: number; size: number; tone: number }[] = [];
+	const drafts: { id: number; offset: number; size: number; tone: number }[] = [];
 	for (let i = 0; i < count; i++) {
 		const roll = rand();
-		drafts.push({ offset: rand() * span, size: 0.6 + rand() * 0.8, tone: roll < 0.7 ? 0 : roll < 0.9 ? 1 : 2 });
+		drafts.push({ id: i, offset: rand() * span, size: 0.6 + rand() * 0.8, tone: roll < 0.7 ? 0 : roll < 0.9 ? 1 : 2 });
 	}
 	drafts.sort((a, b) => a.tone - b.tone);
 	const field: SpaceField = {
 		seed,
 		count,
+		id: new Uint32Array(count),
 		offset: new Float32Array(count),
 		size: new Float32Array(count),
 		tone: new Uint8Array(count),
 		toneStart: new Int32Array(SPACE_TONES + 1),
 	};
 	drafts.forEach((d, i) => {
+		field.id[i] = d.id;
 		field.offset[i] = d.offset;
 		field.size[i] = d.size;
 		field.tone[i] = d.tone;
@@ -126,13 +133,16 @@ export function spaceLayout(width: number, height: number): SpaceLayout {
 }
 
 /** Star `i` at `tSec`: writes [x, y, z] — x and y in focal units at depth 1
- *  for this trip, z the depth (1 far → near). */
+ *  for this trip, z the depth (1 far → near). Trips hash the star's id, not
+ *  its sorted place, which one added star would shift for every star after
+ *  it. */
 export function starInto(out: Float32Array, field: SpaceField, layout: SpaceLayout, i: number, tSec: number): void {
 	const span = 1 - SPACE.near;
 	const travel = Math.max(0, tSec) * SPACE.speed + field.offset[i];
 	const trip = Math.floor(travel / span);
-	out[0] = (layout.left + hash01(field.seed + i, trip, 1) * (layout.right - layout.left)) * SPACE.landing;
-	out[1] = (layout.top + hash01(field.seed + i, trip, 2) * (layout.bottom - layout.top)) * SPACE.landing;
+	const star = field.seed + field.id[i];
+	out[0] = (layout.left + hash01(star, trip, 1) * (layout.right - layout.left)) * SPACE.landing;
+	out[1] = (layout.top + hash01(star, trip, 2) * (layout.bottom - layout.top)) * SPACE.landing;
 	out[2] = 1 - (travel - trip * span);
 }
 
