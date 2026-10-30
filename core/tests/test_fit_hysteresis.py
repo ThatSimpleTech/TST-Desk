@@ -261,8 +261,13 @@ async def test_the_next_round_keeps_the_sent_prefix(tmp_path: Path) -> None:
     assert len(mock.calls) == 3
     budget = budget_threshold(_forge_config().tier("brain"))
     elided = _messages(mock.calls[1])
-    tokens, _ = estimate_tokens(elided, _COUNTER, mock.calls[1].tools)
-    assert tokens <= _target(budget)
+    tools = mock.calls[1].tools
+    tokens, _ = estimate_tokens(elided, _COUNTER, tools)
+    # The aim rises with what cannot be cut (system prompt, tool list), so
+    # the check follows the fitter's own target, not a fixed 70%.
+    inflight = context_fit._inflight_tool_indexes(elided)
+    floor = context_fit._floor_tokens(elided, inflight, _COUNTER, tools)
+    assert tokens <= elision_target(budget, floor) <= budget
     assert any(_ELISION_NOTE in content_as_text(m.content) for m in elided if m.role == "tool")
     assert _messages(mock.calls[2])[: len(elided)] == elided
     assert len(_elisions(session)) == 1

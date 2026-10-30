@@ -162,9 +162,14 @@ steering:
 session:
   log_max_events: 10000
   # Reasoning effort a session starts with until the composer's picker sets
-  # one: low | medium | high | xhigh | max | ultracode. Sent as
-  # reasoning_effort to any tier with reasoning_effort: true.
+  # one: low | medium | high | xhigh | max. Sent as reasoning_effort to any
+  # tier with reasoning_effort: true. An older config's ultracode still loads,
+  # as max with default_ultracode: true.
   default_effort: medium
+  # Whether a new session starts with the picker's Ultracode switch on
+  # (TD-5195). While it is on, the agent may split a big job across several
+  # workers with the workflow tool and have each result checked.
+  default_ultracode: false
   # send_file (TD-5143): the largest file the agent may send (512 MiB; at most
   # 2 GiB), and the most this session may hold in sent files (4 GiB).
   send_file_max_bytes: 536870912
@@ -213,6 +218,16 @@ compaction:
 consult:
   tiers: [worker]
   max_per_turn: 2
+
+# The workflow tool (TD-5195), used only while a session's Ultracode switch
+# is on: it runs several workers at once on independent pieces of a job, and
+# each result can be checked before it comes back. max_parallel (1-16) is how
+# many workers run at the same time; size it to what the worker model's
+# server can serve together; tasks past it wait for a free slot. max_tasks
+# (1-32) is the most tasks one call may hold.
+workflow:
+  max_parallel: 3
+  max_tasks: 8
 
 # Shell commands that run without asking (TD-5103). Only these built-in
 # read-only entries can be listed: delete lines to shrink the list, or set

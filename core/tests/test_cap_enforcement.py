@@ -167,6 +167,38 @@ class TestOtherCaps:
 
         await runner.cancel()
 
+    async def test_workers_calls_count_toward_the_parents_cap(self, tmp_path: Path) -> None:
+        # TD-5195: workers share max_iterations with the parent. Once their
+        # calls use it up, the parent pauses at the cap (so the person can
+        # raise it) instead of running on while every worker is refused.
+        session, dispatcher = make_echo_session(
+            tmp_path,
+            BoundaryConfig(caps=CapsSection(max_iterations=5)),
+        )
+        mock = MockProvider(sequences=big_tool_call_sequence())
+        runner = await start_loop(
+            session, TierRouter(lead_turns=3), mock, make_config(), None, dispatcher
+        )
+        for _ in range(200):
+            if session.delegate_runtime is not None:
+                break
+            await asyncio.sleep(0.01)
+        assert session.delegate_runtime is not None
+        session.delegate_runtime.child_calls = 5
+
+        await session.add_user_message("say hi")
+        await wait_for_state(session, "paused")
+
+        state_events = [
+            e
+            for e in session.event_log.all_events
+            if isinstance(e, SessionStateEvent) and e.state == "paused"
+        ]
+        assert state_events and "iteration cap exceeded: 5 >= 5" in (state_events[0].reason or "")
+        assert mock.calls == []
+
+        await runner.cancel()
+
 
 # ── AC 4: resume without losing session state ───────────────────────────
 

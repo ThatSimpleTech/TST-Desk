@@ -139,10 +139,15 @@ def cap_tokens(
 
 
 class TranscriptRecorder:
-    """Appends capped :class:`WorkerStep` rows to *sink*; a ``None`` sink records nothing."""
+    """Appends capped :class:`WorkerStep` rows to *sink*; a ``None`` sink records nothing.
 
-    def __init__(self, sink: list[WorkerStep] | None) -> None:
+    *budget* is this run's share of characters: a workflow (TD-5195) splits
+    one call's budget between its workers and checkers.
+    """
+
+    def __init__(self, sink: list[WorkerStep] | None, budget: int = TRANSCRIPT_CHAR_BUDGET) -> None:
         self._sink = sink
+        self._budget = budget
         self._used = 0
         self._full = False
 
@@ -157,7 +162,7 @@ class TranscriptRecorder:
         """Record one step, or one closing note once the budget is spent."""
         if self._sink is None or self._full:
             return
-        if self._used >= TRANSCRIPT_CHAR_BUDGET:
+        if self._used >= self._budget:
             self._sink.append(WorkerStep(kind="note", text=CUT_NOTE))
             self._full = True
             return

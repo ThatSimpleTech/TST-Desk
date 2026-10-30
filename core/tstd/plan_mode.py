@@ -56,6 +56,8 @@ def _why(request: DecisionRequest) -> str:
         return "`shell` runs only commands on the read-only list while planning."
     if name == "delegate":
         return "`delegate` with kind worker writes; use kind research while planning."
+    if name == "workflow":
+        return "A `workflow` task with kind worker writes; use kind research while planning."
     if name == "propose_steering_edit":
         return "A steering edit is a change, even as a proposal."
     return f"`{name}` could change something."

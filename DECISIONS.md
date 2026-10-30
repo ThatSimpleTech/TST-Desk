@@ -18623,3 +18623,101 @@ target; a local server needs the whole system message stable.
   tokens of thinking a step: 31 rewrites → 14, and 987k → 185k tokens
   re-read; with 10k a step the prompt peaked 29% over the budget before and
   now stays under it.
+
+## 2026-10-30 — TD-5195: Ultracode is a per-session switch beside Fast, not an effort level (Class B; revises the Effort submenu entry and TD-5176)
+
+Ultracode was a sixth effort level. All it did was send `reasoning_effort:
+ultracode`, a value providers do not define (at best a gateway read it as
+Max), so it changed nothing about how the agent worked, and picking it meant giving up the other
+levels. It is now an on/off switch per session that works with any effort:
+a row on the picker's main menu after Fast (after Effort when Fast is not
+offered), and " · Ultracode" on the chip. While it is on, the agent may run
+several workers side by side with the `workflow` tool. While it is off,
+nothing changes from before.
+- Wire: `EffortLevel` is low | medium | high | xhigh | max, and `ultracode`
+  is never emitted or sent as `reasoning_effort`. New `set_ultracode
+  {session_id, on}`, acked with `tier_state`, which gains `ultracode` and
+  `ultracode_available` (additive, no protocol bump; an older daemon omits
+  them, so a newer window hides the row). It is a machine-peer and bridged
+  verb like `set_effort` and `set_fast`. Allowed mid-turn: the loop reads
+  the switch once at turn start for its note, so the note follows from the
+  next turn; the `workflow` handler reads it on each call, so turning it
+  off refuses the next call at once.
+- Legacy input: `ultracode` (0.4.1 to 0.4.3) still parses wherever it can
+  arrive, as Max with the switch on: `set_effort` from an older window or
+  phone app, an old `tier_state` replayed from `events.jsonl` or sent by an
+  older bridged peer, and `session.default_effort: ultracode` in an old
+  config (which becomes `default_ultracode: true` unless that is set).
+  `set_effort` gains an optional `ultracode` (null leaves the switch
+  alone); current UIs never send it.
+- Old clients cannot see the switch. Their Ultracode turns on Max and the
+  switch; their other levels leave the switch alone, so they cannot turn it
+  off. Documented in `android/README.md`, not engineered around.
+- Persistence: no new session-row key. The switch rides in the row's
+  `effort` string as a suffix (`high+ultracode`). `session_store._load`
+  drops a whole row on a key it does not know, so a new key would make a
+  rollback to 0.4.3 lose every session; an older build reads
+  `max+ultracode` as an unknown level and falls back to the default
+  effort, keeping the row. Unlike Fast, the switch survives a restart:
+  nothing outside the daemon owns its state.
+- Workers think at the session's effort: delegate and workflow children
+  send it when their tier takes `reasoning_effort`, plain `delegate` too.
+  This reverses the Effort submenu entry's "off-turn calls are not given
+  it" for workers only; verdicts, compaction and the other off-turn calls
+  still are not. Fast stays on the session's own model: TD-5176's
+  `extra_body` rides on the turn's requests, not on workers'.
+- `workflow` takes `tasks` (1 to `workflow.max_tasks`, default 8, at most
+  32), each `{task, kind?: worker | research, agent?, label?}`, and
+  `check` (default true). `workflow.max_parallel` (default 3, at most 16)
+  run at once, and results come back in task order. Each task is one
+  delegate child on the same machinery, refactored rather than copied.
+  With two or more tasks every writer runs with `worktree: true`, its
+  worktree opened and settled under one lock per repository. With `check`
+  on, each task that finishes goes to a research child on the validator
+  tier (the worker tier when there is none), which checks the claims
+  against the files and the writer's branch and answers `confirmed`,
+  `doubtful` or `wrong`; anything unreadable is `doubtful`, and a failed
+  task gets no check. The model gets one compact, capped result; the window
+  shows each worker's and checker's steps. Side effect class `ask` like
+  `delegate`; not parallel-safe, since it runs its own concurrency.
+- It is always registered wherever `delegate` is, at depth 0, so the tool
+  list and the frozen system message (TD-5194) stay the same when the
+  switch flips; the handler refuses while it is off ("Ultracode is off").
+  With it on, a short note on each depth-0 turn's user message says when
+  to use it. The system message never changes.
+- Engine fixes needed before children run side by side: child tool-call
+  ids carry the parent call's id and the task index (two children on one
+  model both said `call_0` and collided in the parent's pending
+  approvals); Stop reaches children (the in-flight call races the parent's
+  abort, and the child session's abort events fire with the parent's, so
+  its shell and web_search stop); one iteration count shared on
+  `DelegateRuntime` instead of a snapshot per child, so N children cannot
+  make N × 8 calls the parent's `max_iterations` never sees. Children now
+  follow the parent loop on caps: skip-all lifts the iteration and
+  wall-clock caps for an interactive session, as it does for the parent's
+  own calls (TD-806), and spend is always checked. Before, a child checked
+  all three even under skip-all, against counts that run for the whole
+  daemon life, so on a long session every worker stopped at once. The
+  parent's own cap check counts the children's calls too, so when they use
+  the cap up the session pauses at it (and raising it lets workers run
+  again) instead of the parent running on while every worker is refused.
+  A worktree child's boundary reads plan mode from the parent (it has no
+  router), so plan mode turned on mid-run stops a worktree writer. A
+  cancelled child (Stop, or an approval card cancelled under it) still
+  settles its worktree, and a workflow waits for every task before a
+  cancellation ends the call.
+- Plan mode: a call with any `kind: worker` task is refused whole, like
+  `delegate` with `kind: worker` (TD-5123), and the refusal says to use
+  research tasks; a call of only research tasks runs. Plan mode's note and the Ultracode note can both
+  apply.
+- Spec §8 holds: one level only (children get neither `delegate` nor
+  `workflow`), no recursion, no mailbox, no messages between workers, no
+  second window.
+
+Rejected: keeping Ultracode as an effort level (it cannot combine with Low
+to Max, and the value it sends means nothing); flipping `delegate` to
+parallel-safe and letting the model fan out (no shared limit, no worktree
+lock, no checks, and the id and Stop faults above would bite at once); a
+tool offered only while the switch is on (flipping it would change the tool
+list and break the prompt cache); a new `ultracode` key on the session row
+(a rollback would drop every row).

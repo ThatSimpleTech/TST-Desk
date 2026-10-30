@@ -92,6 +92,8 @@ export interface ToolFoldState {
   toolCallId: string;
   name: string;
   status?: "success" | "error";
+  /** The call's arguments; a delegate or workflow fold names its job from them. */
+  arguments?: Record<string, unknown>;
 }
 
 function toolKey(messageId: string, toolCallId: string): string {
@@ -120,7 +122,26 @@ export function toggleTool(messageId: string, block: ToolFoldState, rowComplete:
   return next;
 }
 
+/** How much of a delegate's task its fold shows when it names no agent. */
+const TASK_LABEL_CHARS = 40;
+
+/** What a worker call is doing, for its fold (TD-5195): "3 tasks", an
+ *  agent's name, or the start of the task. "" for any other tool. */
+function toolDetail(block: ToolFoldState): string {
+  const args = block.arguments ?? {};
+  if (block.name === "workflow" && Array.isArray(args.tasks)) {
+    const n = args.tasks.length;
+    return n === 1 ? "1 task" : `${n} tasks`;
+  }
+  if (block.name !== "delegate") return "";
+  if (typeof args.agent === "string" && args.agent.trim() !== "") return args.agent.trim();
+  if (typeof args.task !== "string") return "";
+  const task = args.task.replace(/\s+/g, " ").trim();
+  return task.length > TASK_LABEL_CHARS ? `${task.slice(0, TASK_LABEL_CHARS).trimEnd()}…` : task;
+}
+
 export function toolLabel(block: ToolFoldState): string {
-  if (block.status === "error") return `${block.name} failed`;
-  return block.name;
+  const name = block.status === "error" ? `${block.name} failed` : block.name;
+  const detail = toolDetail(block);
+  return detail === "" ? name : `${name} · ${detail}`;
 }

@@ -407,19 +407,32 @@ export interface SetTier extends ClientMessage {
   tier: "brain" | "worker" | "validator";
 }
 
-/** Reasoning effort, as sent on the wire (`xhigh` is the picker's "Extra"). */
-export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max" | "ultracode";
+/** Reasoning effort, as sent on the wire (`xhigh` is the picker's "Extra").
+ *  Ultracode is a switch of its own (TD-5195), not a level; an older peer's
+ *  effort "ultracode" means Max with the switch on. */
+export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
 
 /** Pick the session's reasoning effort. Acked with tier_state. */
 export interface SetEffort extends ClientMessage {
   type: "set_effort";
   session_id: string;
   effort: EffortLevel;
+  /** Also set the Ultracode switch; null or omitted leaves it alone. This
+   *  window sends set_ultracode instead and never sets it. */
+  ultracode?: boolean | null;
 }
 
 /** Turn the model's Fast mode on or off (TD-5176). Acked with tier_state. */
 export interface SetFast extends ClientMessage {
   type: "set_fast";
+  session_id: string;
+  on: boolean;
+}
+
+/** Turn the session's Ultracode switch on or off (TD-5195). Works with any
+ *  effort; applies from the next turn. Acked with tier_state. */
+export interface SetUltracode extends ClientMessage {
+  type: "set_ultracode";
   session_id: string;
   on: boolean;
 }
@@ -1205,6 +1218,7 @@ export type ClientMessageUnion =
   | SetTier
   | SetEffort
   | SetFast
+  | SetUltracode
   | SetPlan
   | SetSessionPreset
   | GetInstructionStack
@@ -1734,6 +1748,10 @@ export interface TierState extends DaemonEvent {
   fast_available?: boolean;
   /** One line of Fast status ("Switching to fast", "Fast ended (idle 20 min)"). */
   fast_note?: string;
+  /** Ultracode on (TD-5195). Omitted by older daemons — treat as off. */
+  ultracode?: boolean;
+  /** This daemon has the Ultracode switch. Omitted by older daemons — hide the row. */
+  ultracode_available?: boolean;
 }
 
 /** One setting a workspace config loosens (TD-5113). */

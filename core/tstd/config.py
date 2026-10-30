@@ -34,7 +34,7 @@ from pydantic import (
     model_validator,
 )
 
-from .effort import DEFAULT_EFFORT, EffortLevel
+from .effort import DEFAULT_EFFORT, LEGACY_ULTRACODE, EffortLevel
 from .hooks_config import HooksConfig
 from .logging import get_logger, user_data_dir
 from .lsp_config import LspConfig
@@ -710,6 +710,33 @@ class SessionConfig(BaseModel):
     send_file_session_max_bytes: int = Field(default=4_294_967_296, ge=1)
     # Reasoning effort a session starts with until the picker sets one.
     default_effort: EffortLevel = DEFAULT_EFFORT
+    # Whether a new session starts with Ultracode on (TD-5195).
+    default_ultracode: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_ultracode(cls, data: Any) -> Any:
+        # Ultracode was a sixth effort level before TD-5195. An old config's
+        # ``default_effort: ultracode`` still loads, as Max with the switch on.
+        if isinstance(data, dict) and data.get("default_effort") == LEGACY_ULTRACODE:
+            data = {**data, "default_effort": "max"}
+            if data.get("default_ultracode") is None:
+                data["default_ultracode"] = True
+        return data
+
+
+class WorkflowConfig(BaseModel):
+    """Limits for the ``workflow`` tool, which runs workers side by side (TD-5195).
+
+    ``max_parallel`` is how many workers run at once; size it to what the
+    worker model's server can serve together. ``max_tasks`` is how many
+    tasks one call may hold; the rest wait for a free slot.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_parallel: int = Field(default=3, ge=1, le=16)
+    max_tasks: int = Field(default=8, ge=1, le=32)
 
 
 class ClearToolResultsConfig(BaseModel):
@@ -1550,6 +1577,7 @@ class ModelConfig(BaseModel):
     clear_tool_results: ClearToolResultsConfig = Field(default_factory=ClearToolResultsConfig)
     compaction: CompactionConfig = Field(default_factory=CompactionConfig)
     consult: ConsultConfig = Field(default_factory=ConsultConfig)
+    workflow: WorkflowConfig = Field(default_factory=WorkflowConfig)
     shell: ShellConfig = Field(default_factory=ShellConfig)
     provider_retry: ProviderRetryConfig = Field(default_factory=ProviderRetryConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)

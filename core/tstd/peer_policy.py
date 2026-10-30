@@ -81,6 +81,8 @@ MACHINE_PEER_VERBS: frozenset[str] = frozenset(
         "set_plan",
         "set_effort",
         "set_fast",
+        # TD-5195: the Ultracode switch, a per-session setting like set_fast.
+        "set_ultracode",
         "set_session_preset",
         "rename_session",
         "set_session_star",

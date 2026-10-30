@@ -678,6 +678,7 @@ def create_registry(
     from .steering_edit import register_steering_edit_tool
     from .task_list import register_task_list_tool
     from .tool_search import register_tool_search_tool
+    from .workflow import register_workflow_tool
 
     registry = ToolRegistry()
     _register_builtins(registry, search=search)
@@ -685,6 +686,8 @@ def create_registry(
     register_browser_tools(registry, candidate_selection=candidate_selection)
     register_skill_tools(registry)
     register_delegate_tools(registry)
+    # TD-5195: always listed; it refuses while Ultracode is off.
+    register_workflow_tool(registry)
     register_consult_tool(registry)
     register_send_file_tool(registry)
     register_steering_edit_tool(registry)

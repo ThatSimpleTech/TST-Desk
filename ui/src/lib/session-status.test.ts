@@ -32,6 +32,7 @@ import {
   setPlan,
   setSessionPreset,
   setTier,
+  setUltracode,
   workspaceName,
 } from "./session-status.svelte.js";
 import type { DaemonEventUnion } from "./protocol";
@@ -45,6 +46,7 @@ const fakeClient = {
   setTier: (id: string, tier: string) => sent.push(`tier:${id}:${tier}`),
   setPlan: (id: string, on: boolean) => sent.push(`plan:${id}:${on}`),
   setSessionPreset: (id: string, name: string) => sent.push(`preset:${id}:${name}`),
+  setUltracode: (id: string, on: boolean) => sent.push(`ultracode:${id}:${on}`),
   attach: (id: string) => attached.push(id),
 } as unknown as ProtocolClient;
 
@@ -353,6 +355,63 @@ describe("tier state", () => {
     } as DaemonEventUnion);
     expect(session.preset).toBe("");
     expect(session.hosts).toEqual({});
+  });
+});
+
+describe("ultracode switch (TD-5195)", () => {
+  function tierState(extra: Record<string, unknown>, seq = 2): DaemonEventUnion {
+    return {
+      type: "tier_state",
+      session_id: "s1",
+      tier: "brain",
+      override: null,
+      model_slugs: { brain: "b-slug" },
+      seq,
+      ...extra,
+    } as DaemonEventUnion;
+  }
+
+  it("follows tier_state, and an older daemon's omission reads as off and unavailable", () => {
+    ingestEvent(sessionState("s1"));
+    ingestEvent(tierState({ effort: "high", ultracode: true, ultracode_available: true }));
+    expect(session.effort).toBe("high");
+    expect(session.ultracode).toBe(true);
+    expect(session.ultracodeAvailable).toBe(true);
+    ingestEvent(tierState({}, 3));
+    expect(session.ultracode).toBe(false);
+    expect(session.ultracodeAvailable).toBe(false);
+  });
+
+  it("reads an older peer's effort ultracode as Max with the switch on", () => {
+    ingestEvent(sessionState("s1"));
+    ingestEvent(tierState({ effort: "ultracode" }));
+    expect(session.effort).toBe("max");
+    expect(session.ultracode).toBe(true);
+  });
+
+  it("sets the switch at once and sends set_ultracode", () => {
+    ingestEvent(sessionState("s1"));
+    setUltracode(true);
+    expect(session.ultracode).toBe(true);
+    expect(sent).toEqual(["ultracode:s1:true"]);
+  });
+
+  it("sends nothing without a session", () => {
+    setUltracode(true);
+    expect(sent).toEqual([]);
+    expect(session.ultracode).toBe(false);
+  });
+
+  it("clears on reset and on focusing another session", () => {
+    ingestEvent(sessionState("s1"));
+    ingestEvent(tierState({ ultracode: true, ultracode_available: true }));
+    focusSession("s2", "running", "/tmp/other");
+    expect(session.ultracode).toBe(false);
+    expect(session.ultracodeAvailable).toBe(false);
+    ingestEvent(tierState({ session_id: "s2", ultracode: true, ultracode_available: true }));
+    resetSession();
+    expect(session.ultracode).toBe(false);
+    expect(session.ultracodeAvailable).toBe(false);
   });
 });
 

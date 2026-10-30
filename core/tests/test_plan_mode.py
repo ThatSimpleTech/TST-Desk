@@ -100,6 +100,16 @@ def _repo_config(monkeypatch: pytest.MonkeyPatch) -> None:
         ("shell", {"command": "ls && touch x"}),
         ("propose_steering_edit", {"path": "AGENTS.md", "content": "x", "reason": "y"}),
         ("delegate", {"task": "fix it", "kind": "worker"}),
+        # TD-5195: one writing task refuses the whole workflow.
+        (
+            "workflow",
+            {
+                "tasks": [
+                    {"task": "read it", "kind": "research"},
+                    {"task": "fix it", "kind": "worker"},
+                ]
+            },
+        ),
         ("desktop_click", {"x": 1, "y": 2}),
         ("browser_click", {"selector": "#go"}),
         # The GitHub write tools declare no ``mutates``: the allowlist catches them.
@@ -130,6 +140,7 @@ def test_planning_refuses_every_call_that_could_change_something(
         ("ask_user", {"questions": []}),
         ("delegate", {"task": "find the callers"}),
         ("delegate", {"task": "find the callers", "kind": "research"}),
+        ("workflow", {"tasks": [{"task": "find the callers"}, {"task": "x", "kind": "research"}]}),
         ("desktop_screenshot", {}),
         ("exit_plan_mode", {"plan": PLAN}),
         ("tool_search", {"query": "issue"}),
@@ -150,7 +161,7 @@ def test_every_builtin_is_decided_and_only_readers_run() -> None:
         tool.name
         for tool in registry.list_tools()
         if tool.provenance is None
-        and tool.name not in ("shell", "delegate")
+        and tool.name not in ("shell", "delegate", "workflow")
         and not _classify("", {}, tool=tool).refused
     )
     assert allowed == sorted(
