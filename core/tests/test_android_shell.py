@@ -121,8 +121,8 @@ def test_page_callbacks_include_file_and_key_callbacks() -> None:
 
 def test_version_0_2_5_code_16() -> None:
     gradle = (ANDROID / "app" / "build.gradle.kts").read_text(encoding="utf-8")
-    assert "versionCode = 21\n" in gradle
-    assert 'versionName = "0.4.3"' in gradle
+    assert "versionCode = 22\n" in gradle
+    assert 'versionName = "0.4.4"' in gradle
 
 
 def test_provider_opens_read_only() -> None:

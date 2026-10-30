@@ -83,7 +83,7 @@ class StdioMcpClient:
             {
                 "protocolVersion": _PROTOCOL_VERSION,
                 "capabilities": {},
-                "clientInfo": {"name": "tstd", "version": "0.4.3"},
+                "clientInfo": {"name": "tstd", "version": "0.4.4"},
             },
         )
         await self.notify("notifications/initialized")
