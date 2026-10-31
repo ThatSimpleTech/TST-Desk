@@ -157,12 +157,13 @@ export function createSharedLoop(host: () => FrameHost, options: Omit<LoopOption
 		if (loop === null) return;
 		// Every layer stopped: Motion off, reduced motion, or the background
 		// going. A rest (hidden, or another window focused) is not a stop: the
-		// loop sits that out itself and keeps its clock. Classic's orbit and
-		// bands drop to their resting pose on a stop, the old CSS's first
-		// frame, so the clock goes back to its start and the layers still
-		// joined (the dust, which keeps its canvas) repaint there. Motion on
-		// again then starts from the resting pose instead of jumping to where
-		// the clock stood.
+		// loop sits that out itself and keeps its clock. On a stop the clock
+		// goes back to its start and the layers still joined (the dust, which
+		// keeps its canvas) repaint there, so Motion on again starts from the
+		// old CSS's first frame instead of wherever the clock stood. That
+		// frame is close to, not equal to, Classic's resting pose: the glow,
+		// wash and anchor opacities step from 1 to about 0.7 and the warm
+		// band shifts a little when motion starts (as the old CSS did).
 		loop.dispose();
 		loop = null;
 		for (const member of members) member.paint(startMs);

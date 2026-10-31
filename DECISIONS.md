@@ -19355,10 +19355,10 @@ backgrounds behind a veil.
   with `tst-desk:background`, so the storage listener already follows it
   across windows. The palette gets no action for it.
 - Subtle is the veil as it was. Vivid lays each veil at 40% of its
-  strength (`--bg-veil-vivid`), and the dark aurora's at 60%
+  strength (`--bg-veil-vivid`), and the dark aurora's at 80%
   (`--bg-aurora-veil-vivid`). The galaxy and the aurora then show two to
   five times as much as at Subtle (the share of the background that shows:
-  dark galaxy 35% to 74%, dark aurora 26% to 56%, light galaxy 20% to 68%,
+  dark galaxy 35% to 74%, light galaxy 20% to 68%,
   light aurora 12% to 65%), the thinly veiled ones a little more (dark deep
   space 75% to 90%), and body text keeps 4.5:1 over every background's
   soft light at its brightest. Muted and secondary text drop below 4.5:1
@@ -19377,14 +19377,16 @@ backgrounds behind a veil.
   |---|---|---|
   | Galaxy | 5.2:1 (the core) | 12.0:1 |
   | Deep space | 13.8:1 | 14.6:1 |
-  | Aurora | 4.9:1 at 60% (3.5:1 at 40%, 4.1:1 at 50%) | 10.5:1 |
+  | Aurora | 4.9:1 at 80% (3.2:1 at 40%; see the correction below) | 10.5:1 |
   | Constellations | 14.4:1 | 15.1:1 |
   | Fireflies | 10.5:1 | 15.0:1 |
 
   Muted text over the same light falls to about 2.1–2.3:1 over the dark
   galaxy's core and the dark aurora's rays, and to 3.1–4.5:1 in light.
   Point lights (single stars, fireflies) put body text under 4.5:1 on 0.1%
-  of the panes or less; single stars already did at Subtle.
+  of the panes or less. Deep space, Constellations and Fireflies already
+  did at Subtle; for the dark galaxy it is new at Vivid (its stars and the
+  central cluster, at pixel scale), while its soft light stays at 5:1.
 - 40% in light too: 68% of the light galaxy shows at Vivid and it is still
   a pale print, because its inks are pale (the printed star atlas). At 25%
   it would show 80%, for muted text under 3:1 over the aurora.
@@ -19400,10 +19402,21 @@ backgrounds behind a veil.
   and Classic, which have no veil.
 
 **Rejected:** one share for every background (at 40% the dark aurora's rays
-take body text to 3.5:1; at 60% everywhere the dark galaxy would show 61%
-instead of 74%); a share per theme (the same trade, only to cover the dark
+take body text to 3.2:1; at 80% everywhere the dark galaxy would barely change
+from Subtle); a share per theme (the same trade, only to cover the dark
 aurora); an opacity on the veil (the transparency layer above); a second
 veil token per strength (two sources for one colour); a slider (each of two
 named strengths can be checked for readable text, a slider's every stop
 cannot); bolder light-theme inks (they would change Subtle and the preview
 tiles too).
+
+**Correction (review, 0.4.6):** the first aurora figure (4.9:1 at 60%)
+came from ten sampled frames. A frame-by-frame scan of 90 minutes of scene
+time found the dark theme's crossing curtains, whose light adds up, taking
+body text to 3.2:1 at glyph scale at 60%, under 4.5:1 in 1.6% of frames;
+80% gives 4.9:1 at that worst frame. Subtle does not keep muted text at
+4.5:1 everywhere either: over the dark aurora's crossings it falls to
+about 3.4:1, and to 4.0–4.5:1 over the dark galaxy's core, the light
+galaxy and the light fireflies; body and secondary text hold. Capping a
+crossing at one curtain's brightness (a `lighten` blend) would let the
+aurora use the default share again; it is a follow-up, not done here.

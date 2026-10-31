@@ -248,9 +248,11 @@
 		--bg-aurora-veil:           rgb(19 18 16 / 0.74);
 		--bg-constellation-veil:    rgb(19 18 16 / 0.2);
 		--bg-firefly-veil:          rgb(19 18 16 / 0.15);
-		/* The aurora's brightest rays need 60% for body text to keep 4.5:1
-		   at Vivid (4.1:1 at 50%); the other dark backgrounds take the default. */
-		--bg-aurora-veil-vivid:     60%;
+		/* Where two aurora curtains cross, their light adds up: body text
+		   keeps 4.5:1 there only at 80% (4.9:1 at the worst frame of a
+		   90-minute scan; 3.2:1 at 40%). The other dark backgrounds take the
+		   default. */
+		--bg-aurora-veil-vivid:     80%;
 		--bg-galaxy-core:     #ffe4bd;
 		--bg-galaxy-arm:      #aac6ff;
 		--bg-galaxy-disc:     #b9b4c8;
@@ -330,9 +332,11 @@
 	--bg-aurora-veil:           rgb(19 18 16 / 0.74);
 	--bg-constellation-veil:    rgb(19 18 16 / 0.2);
 	--bg-firefly-veil:          rgb(19 18 16 / 0.15);
-	/* The aurora's brightest rays need 60% for body text to keep 4.5:1
-	   at Vivid (4.1:1 at 50%); the other dark backgrounds take the default. */
-	--bg-aurora-veil-vivid:     60%;
+	/* Where two aurora curtains cross, their light adds up: body text
+	   keeps 4.5:1 there only at 80% (4.9:1 at the worst frame of a
+	   90-minute scan; 3.2:1 at 40%). The other dark backgrounds take the
+	   default. */
+	--bg-aurora-veil-vivid:     80%;
 	--bg-galaxy-core:     #ffe4bd;
 	--bg-galaxy-arm:      #aac6ff;
 	--bg-galaxy-disc:     #b9b4c8;
