@@ -3213,8 +3213,9 @@ preview inside the app does not count), the background holds its last frame and 
 a preview tile in Settings still moves under the pointer. Behind the panes, every background
 but Classic lies under an even veil of the page colour so the text over it stays readable;
 the preview tiles show each one at full strength. **Strength** picks that veil: Subtle (the
-default) is strong enough for small grey text to keep its contrast, and Vivid thins it so the background shows much
-more while body text stays readable (small grey text can be harder to read). Off and
+default) keeps body and secondary text clear of the background, and Vivid thins it so the background shows much
+more while body text stays readable. Small grey text can dip below the usual contrast over the brightest light
+at either strength, more so at Vivid. Off and
 Classic have no veil, so Strength stands down for them.
 
 ### 4.5 `approved_external_imports`

@@ -12749,7 +12749,7 @@ it steps on one tick capped at 12 a second (about 10 run in WebKitGTK).
       the window, and another window's choice is picked up
       (`backgrounds/prefs.test.ts`, `backgrounds/store.test.ts`).
 - [x] Vivid thins only a veil that is there: the same token at 40% of its
-      strength (the dark aurora's at 60%), laid as a fill with no opacity on
+      strength (the dark aurora's at 80%), laid as a fill with no opacity on
       the box; Off and Classic draw no veil at either strength
       (`backgrounds/host-component.test.ts`, `tokens.test.ts`).
 - [x] At Vivid, body text keeps 4.5:1 over every veiled background's soft
@@ -12792,4 +12792,4 @@ background; the host now tells the two apart. Turning Motion back on
 resumed Classic from where its shared clock stood instead of the resting
 pose; the clock now goes back to its start when every layer stops, though
 not when it rests. Settings → Appearance gained Strength: Subtle keeps
-today's veils, Vivid lays them at 40% (the dark aurora's at 60%).
+today's veils, Vivid lays them at 40% (the dark aurora's at 80%).
