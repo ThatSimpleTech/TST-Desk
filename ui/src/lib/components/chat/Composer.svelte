@@ -20,6 +20,7 @@
 	// holds. Deliberately no `accept` filter on the picker: a file the
 	// user cannot even select produces no copy explaining why, and the
 	// copy is the point.
+	import { onMount } from "svelte";
 	import {
 		acceptAttachment,
 		applyExtracted,
@@ -33,7 +34,7 @@
 	import { composing } from "../../ime";
 	import { capturePhoto, captureRoute, photoName } from "../../camera";
 	import { detectPlatform } from "../../sent-files";
-	import { COMPOSER_LINE_PADDING } from "../../composer-layout";
+	import { COMPOSER_LINE_PADDING, keyboardInsetPx } from "../../composer-layout";
 	import { commands, loadCommands } from "../../commands.svelte.js";
 	import { acceptPickDrafts } from "../../design";
 	import { clearPicks, design, removePick } from "../../design.svelte.js";
@@ -82,6 +83,7 @@
 
 	const MAX_ROWS = 8;
 
+	let composerElement: HTMLDivElement | null = $state(null);
 	let textarea: HTMLTextAreaElement | null = $state(null);
 	let picker: HTMLInputElement | null = $state(null);
 	let capturePicker: HTMLInputElement | null = $state(null);
@@ -91,6 +93,27 @@
 	let nextAttachmentId = 0;
 	let slashIndex = $state(0);
 	let slashDismissed = $state(false);
+
+	// The keyboard: the visual viewport shrinks while it is up, and the
+	// composer lifts by the difference. The CSS env() fallback covers the
+	// shells that report keyboard-inset-height instead; the script covers
+	// Android WebView, which reports neither. One listener, cleaned up.
+	onMount(() => {
+		const viewport = window.visualViewport;
+		if (viewport == null) return;
+		const sync = (): void => {
+			const inset = keyboardInsetPx(viewPortHeight(), viewport.height, viewport.scale);
+			composerElement?.style.setProperty("--kb-inset", `${inset}px`);
+		};
+		viewport.addEventListener("resize", sync);
+		sync();
+		return () => viewport.removeEventListener("resize", sync);
+	});
+
+	/** The layout viewport's height, which a WebView reports on innerHeight. */
+	function viewPortHeight(): number {
+		return window.innerHeight;
+	}
 
 	const query = $derived(slashQuery(value));
 	const paletteOpen = $derived(query !== null && !slashDismissed);
@@ -377,7 +400,7 @@
 	}
 </script>
 
-<div class="composer">
+<div class="composer" bind:this={composerElement}>
 	{#if slashHits.length > 0 && grok.commands.length > 0}
 		<ul class="slash" role="listbox" aria-label="Grok commands">
 			{#each slashHits as cmd (cmd.name)}
@@ -545,7 +568,14 @@
 
 <style>
 	.composer {
-		padding: var(--space-2) var(--space-4) var(--space-3);
+		/* The keyboard lifts the card and its toolbar by its own height:
+		   shells that report an IME inset supply it through env(), and the
+		   mounted script writes Android WebView's measured difference into
+		   the same property inline. Zero when the keyboard is down. */
+		--kb-inset: env(keyboard-inset-height, 0px);
+		padding:
+			var(--space-2) var(--space-4)
+			calc(var(--kb-inset) + var(--space-3));
 	}
 
 	.slash {
@@ -674,7 +704,8 @@
 	}
 
 	/* The two-item add menu: upload, or take a photo. Anchored above the
-	   toolbar because the composer sits at the bottom edge of the window,
+	   toolbar because the composer sits at the bottom edge of the window
+	   (or of the keyboard's top, once --kb-inset lifts it there),
 	   and anchored to the right so it opens leftward — the paperclip sits
 	   at the right edge of the toolbar, and a left-anchored menu hangs off
 	   the screen on narrow viewports. */
