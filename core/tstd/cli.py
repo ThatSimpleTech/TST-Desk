@@ -31,6 +31,7 @@ from typing import Any
 
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
+from websockets.frames import CloseCode
 
 from .cli_approvals import prompt_approval
 from .cli_questions import prompt_questions
@@ -351,6 +352,20 @@ def _is_fatal_attach_error(event: dict[str, Any], session_id: str) -> bool:
     return sid is None or sid != session_id
 
 
+def _closed_on_a_fault(closed: ConnectionClosed) -> str | None:
+    """Why this end closed the socket on a fault, or None for an ordinary end.
+
+    The daemon going away (a stop, a restart, the network) ends the stream
+    as it always has. This end closing it, say for a frame over the size
+    limit, is an error: it used to end ``tst attach`` with status 0 and
+    nothing printed (TD-5201).
+    """
+    sent = closed.sent
+    if sent is None or sent.code in (CloseCode.NORMAL_CLOSURE, CloseCode.GOING_AWAY):
+        return None
+    return f"{int(sent.code)} {sent.reason}".strip()
+
+
 async def _stream_attached(ws: Any, session_id: str) -> int:
     """Replay + live. Stays on the socket until detach or the daemon drops."""
     printed = False
@@ -392,9 +407,13 @@ async def _stream_attached(ws: Any, session_id: str) -> int:
             _finish_assistant_line(printed)
             printed = False
             print(line)
-    except ConnectionClosed:
+    except ConnectionClosed as closed:
         _finish_assistant_line(printed)
-        return 0
+        fault = _closed_on_a_fault(closed)
+        if fault is None:
+            return 0
+        print(f"the connection to the daemon failed: {fault}", file=sys.stderr)
+        return 1
 
 
 async def _follow_session(ws: Any, session_id: str, from_seq: int) -> int:

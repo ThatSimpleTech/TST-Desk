@@ -94,6 +94,14 @@ def _msg(kind: str, **fields: object) -> protocol.ClientMessage:
         (True, "machine", ["machines"], MACHINE),
         (True, "phone", ["machines", "bridge"], MACHINE),
         (False, None, ["bridge"], PeerView(remote=False, machine=True, viewer=False)),
+        # TD-5201: asking for restored history changes no kind.
+        (
+            False,
+            None,
+            ["machines", "history"],
+            PeerView(remote=False, machine=False, viewer=True, history=True),
+        ),
+        (True, "machine", ["bridge", "history"], PeerView(True, True, False, history=True)),
     ],
 )
 def test_classify(remote: bool, kind: object, features: list[str], expected: PeerView) -> None:

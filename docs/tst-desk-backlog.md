@@ -12788,3 +12788,59 @@ The dedicated pages stay; a section they also edit links to them.
       (`config-editor-controls.test.ts`, `config-editor-store.test.ts`).
 - [ ] The UI walk (`ui/e2e/app-walk.spec.ts`) does not visit the new page,
       and its census gains one nav button; left to the integration run.
+
+### TD-5201 — An older finished chat opens with its history
+
+**Size:** 5 · **Depends on:** TD-2901, TD-1715, TD-1708, TD-5109, TD-5111 · **Status:** Done
+
+Reported: clicking an older finished chat showed the New chat screen. Three
+causes, each reproduced before it was fixed. The window kept a seq cursor
+for a chat it had just left: the daemon reads a socket in order, so a chat
+clicked and left before its replay landed still got that replay, which
+rebuilt the cursor (a `log_trimmed` included), and every later attach asked
+to start after it and got nothing. An archived chat opened from the
+archived shelf was sent back to the newest chat, or to the New chat screen,
+by the next session list. And an older chat's event window often held none
+of its questions: every streamed chunk is an event and the log keeps the
+newest ones, so on one install's copy 19 windows were trimmed and 8 had no
+user turn left, while the saved conversations still had every message.
+Restarts wore those windows further and re-sorted the rail.
+
+- [x] A chat opened, left for another before its replay landed, and opened
+      again shows its whole conversation: frames for a session the window
+      detached and has not attached again neither move its cursor, reach a
+      store, nor force a reconnect, and a chat opened again waits out the
+      rest of its old replay for its new one (`client-detach.test.ts`,
+      `chat-reopen.test.ts`, which fail before the fix).
+- [x] An archived chat opened from the archived shelf, this computer's or
+      another's, stays open through later lists and a hub restart;
+      archiving the bound chat still moves the pane; a chat opened in its
+      own window stays there archived or ended (`session-binding.test.ts`,
+      `chat-rebind.test.ts`, `chat-store.test.ts`).
+- [x] Attach to a chat whose window was trimmed sends a window
+      `conversation_history` after `log_trimmed`: the saved conversation's
+      messages from before the window, lined up by a tool-call id that names
+      one message and by user-turn number and words, each string redacted
+      before it is capped, tool results and image bytes never sent; a fork
+      in the window, a blocked message, a withdrawn or redone reply and
+      repeated or missing ids are all lined up or refused, never guessed
+      (`test_chat_history.py`, `test_chat_history_align.py`,
+      `test_chat_history_redact.py`, `test_attach_history.py`). `tst attach`
+      does not ask for it, and exits non-zero when its own end closes the
+      socket on a fault (`test_tst_attach.py`).
+- [x] The pane shows those messages ahead of the replay and numbers the
+      replay's user turns after them, a summary's folded turns included, so
+      Edit, Retry and Summarize from here fork the right turn, a restored row
+      too; a compaction summary is a line with the summary folded under it
+      (`chat-history.test.ts`).
+- [x] A chat whose earlier messages cannot be lined up or are gone says
+      "Earlier messages in this chat can't be shown." instead of showing the
+      New chat screen, and numbers no turn, so nothing forks one by a guess;
+      a chat that was never used still shows the greeting
+      (`chat-history.test.ts`, `notice-row.test.ts`).
+- [x] A daemon start and a clean stop no longer mark any chat used or
+      re-sort the rail, and log an idle chat's wall and tier only when they
+      changed; the title bar follows the pane when it binds a chat by itself
+      (`test_restart_quiet.py`, `chat-rebind.test.ts`). Each cycle still logs
+      the loop's start and stop, which a replay needs to read the chat as
+      live (DECISIONS).

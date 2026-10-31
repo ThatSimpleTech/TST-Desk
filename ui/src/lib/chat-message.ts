@@ -9,10 +9,24 @@ import type { ResponseMark } from "./chat-retract";
 import type { SentFileRef } from "./sent-files";
 import type { StopCheck, StopCheckItem, WorkerStep } from "./protocol";
 
+/** What a "notice" row tells the reader about messages it cannot show
+ *  (TD-5201): gone from the log with nothing saved, left out to keep the
+ *  history small, or folded into a compaction summary. */
+export type NoticeKind = "trimmed" | "truncated" | "summarized";
+
 export interface ChatMessage {
   id: string;
-  role: "user" | "assistant";
+  /** "notice" is no one's message: a line about messages the pane cannot
+   *  show (TD-5201). Everything keyed on "user" or "assistant" passes it by. */
+  role: "user" | "assistant" | "notice";
   text: string;
+  /** On a notice row: which one. */
+  notice?: NoticeKind;
+  /** On a "summarized" notice: the user turns the summary stands for. */
+  foldedTurns?: number;
+  /** Rebuilt from the saved conversation, not replayed from the log
+   *  (TD-5201): no thinking, no file cards, and never a send's echo. */
+  restored?: boolean;
   /** A reasoning model's thinking for this message (TD-1901), kept apart
    *  from `text` because it is not the answer: TD-1902 folds it behind a
    *  disclosure, and nothing may ever concatenate the two. Absent for

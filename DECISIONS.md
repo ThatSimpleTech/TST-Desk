@@ -18968,3 +18968,157 @@ key would drift from the models the first time a key is added.
 reading through a phone with the remote section scrubbed (two views of one
 page for little gain); resetting to the built-in default everywhere (a reset
 `search.base_url` would have turned web search off).
+
+## TD-5201 — An older chat's earlier messages come from its saved conversation (Class B)
+
+2026-10-30, revised 2026-10-31 after review. The window rebuilds a chat
+only from the event log, and the log keeps its newest events. Every
+streamed chunk is an event, so one long reply can push all of a chat's
+questions out of the window, and restarts added state events on top. On
+one install's copy, 8 of 19 trimmed windows held no user turn at all; the
+saved conversation still had every message.
+
+**Decision:** After `log_trimmed`, attach sends a connection-scoped
+`conversation_history` (seq fixed at 1, never logged) to a connection
+whose hello asked for `"history"`. The window asks; `tst attach` and
+other text clients do not, so a megabyte frame they never read cannot
+close their socket at the 1 MiB default. A hub's lanes always ask, and
+the hub drops the frame for a viewer whose own hello did not. The frame
+holds the messages of the session's conversation that come before the
+window's first event, as user, assistant (text and tool calls) and
+summary rows, built off the event loop from copies and walked from the
+newest message, so a long conversation costs only the rows that fit.
+
+The daemon lines the two up by what both name. A tool call or result by
+its id, but only when the id names one message: some servers send none or
+repeat one, and the Grok engine keeps no tool calls; the history then
+stops at the question of the turn the window begins in. A user turn by its
+number from the session's start (a compaction summary counts the turns it
+stands for) and by its words: the turn the count points at must say what
+the window shows, notes the daemon appended and a named image aside. A
+message a user_prompt hook blocked is no turn: it is logged but never
+enters the conversation. Streamed text withdrawn by a retry (TD-5159,
+TD-5175) is no part of the reply it is matched against, a done-check or
+stop-hook retry ends a turn in more than one message, both sides are
+compared redacted, and a finished reply that matches nothing stops the
+history at its question. A window that holds a `conversation_reset` (a
+fork or a branch switch it shows both sides of), more user turns than the
+conversation has, or words that disagree, cannot be lined up: the frame
+then carries no messages and `user_turns: null`. The pane keeps its line,
+numbers no user turn, and so offers no Edit, branch switch or Summarize
+from here; Retry resends the last message as a new one, and Restore files
+to here, which goes by the turn's id, stays. A wrong number would have
+pointed those at another turn, and the daemon would have cut it. An edit of an ended session is refused (`session_not_running`): it
+cut the conversation for a turn that never ran, which is how a log and
+its saved conversation came to disagree.
+
+Every string is redacted before it is cut, then the whole frame passes
+the event log's redaction and the peer scrub: the patterns match whole
+secrets, and a secret a cap cut in half used to get past them. Tool
+results are not restored at all. The log's copy of a result was scrubbed
+when it went in, by the exact-text secrets the process knew then (an MCP
+server's token, TD-5110); a later process that never read that token
+cannot scrub it, so a restored result could show it whole. The replayed
+window keeps the results of its own calls. The window shows restored rows
+as ordinary messages marked `restored`, and a "notice" row (no one's
+message) for a start it cannot show, a cut history, or a summary; a fork of
+a restored row clears the mark, so the fork's own turn takes the row over.
+
+The message the window begins inside is left to the window: its reply
+shows only the tail the window kept, not the saved message whole. Sending
+it whole would mean dropping replayed chunks by guesswork.
+
+**Rejected:** Coalescing streamed chunks on disk, or keeping user turns
+out of the trim: either leaves holes in the seq order, which the client
+reads as lost frames and reconnects for, forever. Rendering the whole
+conversation instead of the window: it drops the thinking, file cards and
+done-checks the window has, and an attach mid-reply loses what streamed
+so far. A separate history request: one more round trip on every open,
+and the daemon already knows on attach that the window was trimmed.
+Sending it to every client and capping it by encoded size: a client
+that never reads it still pays for it. Keeping salted digests of every
+secret ever registered so restored results could be scrubbed: secret
+material on disk for a card nobody needs. Carrying a row's original words
+on `fork_from` so the daemon could refuse a mismatch: a protocol field for
+a check the pane no longer needs, since it offers no fork without a number
+the daemon gave it.
+
+## TD-5201 — A detached session's late frames are dropped; an archived chat opened stays open (Class B)
+
+2026-10-30, revised 2026-10-31. Two binding defects showed the New chat
+screen for a chat with a history.
+
+**Decision:** The client remembers the sessions it detached and has not
+attached again. Frames with a seq for those sessions (the rest of a
+replay or stream the daemon was already sending when it read the detach)
+are dropped: no cursor, no store, no reconnect. Before, they rebuilt the
+cursor, a `log_trimmed` included, and the next attach of that chat asked
+to start after them and got nothing. A session attached again before
+that rest has landed waits for its new replay: until a frame that can
+open it arrives (its `log_trimmed`, or its first event), its sequenced
+frames are dropped too, since they come past the cursor the detach reset
+and read as a gap that forced a reconnect and a second full replay. The
+old replay's own head, if it is what comes first, is the same log, so it
+is taken. Frames without a seq (a refusal) and connection-scoped replies
+still reach the stores; a session never attached on this client (a new
+session's reply) is unchanged; a new socket clears both sets.
+
+The auto-bind policy keeps a listed archived session that was archived
+already: the bound session's archived flag as a list last named it, or
+as its row was when the pane bound it. A list that does not name it (a
+hub just back, before its link reports) leaves the flag alone. Archiving
+the bound chat still moves the pane (TD-1715), and a chat opened from the
+archived shelf, this computer's or another's, stays open. A viewer window
+(`?bind_session=`) shows its chat whether it is archived or ended: it was
+opened for that chat, and the daemon refuses a send one cannot run. When
+the pane binds a listed session by itself (the newest live one, the next
+one after an archive), the title bar and task strip are focused on it as
+a click focuses them; before, they kept the chat the pane had left, and at
+startup they waited for its replay and then attached it a second time.
+
+**Rejected:** Resetting the cursor on every attach: a resume or reconnect
+re-attach must continue from the cursor, losslessly (TD-1716). Asking the
+daemon to acknowledge a detach, or to mark where each replay begins: a
+protocol change for something the client can decide alone. Keeping
+archived chats only while the rail shows the archived shelf: it ties the
+chat store to the rail's view state. Comparing with the previous list
+only: a list without the chat in it made the next one read as an archive.
+
+## TD-5201 — Restarts no longer mark a chat used, nor log its wall and tier again (Class B)
+
+2026-10-31. Every start revived each chat and logged `running`, its
+`boundary_update` and its `tier_state`; every clean stop logged
+`cancelled`. Each state event stamped `updated_at`, which the rail, quick
+entry, auto-bind, `doctor` and `tst run --continue` read as "used last"
+(TD-5111). An idle chat's window lost four events a restart, and after one
+restart every chat sorted by the order it was revived in, which is the
+order it was made in, not used.
+
+**Decision:** A `session_state` stamps `updated_at` unless it is
+`running` (liveness, TD-1714; a new session is stamped when made, and a
+turn stamps through `user_turn`) or the stop's cancel (reason `daemon
+shutdown`). A user's cancel, `complete`, `failed`, `awaiting_approval` and
+`paused` still do. The restore's own fix-ups, a tombstone's state and a
+row moved off a preset that is gone, do not. A revive logs the wall, the
+tier (or the Grok mode) only when the newest event of that kind in the
+window says something else: a changed config or model is still logged,
+and so is one that rotated out of the window, since a replay is the only
+way either reaches the title bar. A cycle now adds two events to an idle
+chat and leaves its time alone.
+
+Those two stay. A replay that ends on a terminal state reads as an ended
+chat, and the title bar adopts a session from its state events, so the
+revive's `running` has to follow the stop's `cancelled`; that cancel is
+TD-5018's record that the daemon, not the person, stopped the loop, and
+the row's state, a tombstone's and the audit read it. Stopping loops
+quietly and skipping a `running` the log already ends on would drop both,
+but changes TD-5018 and needs the window to stop reading its replay's last
+state as the truth about the chat: its own story. Rows a restart already
+stamped stay stamped until next used: events carry no time to recover the
+real one from.
+
+**Rejected:** Skipping a `session_state` identical to the last one logged:
+on a clean restart that is the stop's cancel, so it skips nothing, and
+dropping the revive's `running` alone would replay every chat as ended.
+Comparing the wall and tier with the newest ever logged: one that rotated
+out of the window would then never reach a window again.

@@ -51,6 +51,7 @@ from .boundary_config import (
 )
 from .browser import BrowserDriver, BrowserError, browser_driver_from_config, normalize_hit
 from .card_write import save_tier_values
+from .chat_history import restorable_history
 from .config import (
     DEFAULT_CREDENTIAL_ID,
     ConfigError,
@@ -158,7 +159,7 @@ from .local_worker import (
     session_is_cu_heavy,
     tier_state_event,
 )
-from .logging import get_logger, log_directory, setup_logging, user_data_dir
+from .logging import get_logger, log_directory, redact_structure, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop, brain_manifest_config
 from .machine_pairing import DialPolicy
 from .mcp.loader import McpSupervisor
@@ -632,6 +633,11 @@ _COMPACT_REFUSALS: dict[str, str] = {
     "compaction_failed": "Compaction failed. The conversation is unchanged; try again.",
 }
 
+# The reason a clean stop gives each loop it ends (TD-5018). Like a revive's
+# ``running``, it is the daemon's lifecycle, not use of the chat: neither
+# moves the row's ``updated_at`` (TD-5201).
+SHUTDOWN_REASON = "daemon shutdown"
+
 # Why an edit (``fork_from``) or a branch switch (``set_branch``) was refused
 # (TD-5147). A message folded into a summary is gone from the model's
 # context, so it can no longer be edited or switched to another version.
@@ -651,6 +657,19 @@ _BRANCH_REFUSALS: dict[str, str] = {
         "This session is restoring files or closing its worktree. Edit or switch when that is done."
     ),
 }
+
+
+def _window_says(window: Sequence[DaemonEvent], event: DaemonEvent) -> bool:
+    """Whether the newest *window* event of *event*'s type says what *event* says.
+
+    The window's copy was scrubbed when it was logged, so *event* is
+    compared scrubbed too.
+    """
+    for logged in reversed(window):
+        if logged.type == event.type:
+            fresh = redact_structure(event.model_dump(exclude={"seq"}))
+            return bool(logged.model_dump(exclude={"seq"}) == fresh)
+    return False
 
 
 def _folder_busy_refusal(session: Session, msg_type: str, **extra: Any) -> str | None:
@@ -2512,9 +2531,7 @@ class Daemon:
         for session in sessions:
             runner = self.session_registry.get_runner(session.id)
             if runner is not None:
-                await phases.run(
-                    f"cancel {session.id[:8]}", runner.cancel(reason="daemon shutdown")
-                )
+                await phases.run(f"cancel {session.id[:8]}", runner.cancel(reason=SHUTDOWN_REASON))
 
         await self._extractions.stop()
 
@@ -2687,7 +2704,7 @@ class Daemon:
         for record in self._session_store.records():
             chosen = self._resolved_preset(record.preset)
             if record.preset != chosen:
-                await self._session_store.set_preset(record.session_id, chosen)
+                await self._session_store.set_preset(record.session_id, chosen, touch=False)
             loaded = await asyncio.to_thread(self._session_persist.load, record.session_id)
             if loaded is not None and loaded.events:
                 # TD-5129: index what the last process logged but never
@@ -2722,7 +2739,7 @@ class Daemon:
                 await expire_restored_steering(sess, loaded.events)
                 await self._seal_cut_review(sess, loaded.events)
             if final_state != record.state:
-                await self._session_store.update_state(record.session_id, final_state)
+                await self._session_store.update_state(record.session_id, final_state, touch=False)
             log.info(
                 "restored session",
                 extra={
@@ -2928,7 +2945,11 @@ class Daemon:
                 await event_log.drop_before(result.earliest_seq)
                 await self._keep_task_list_on_disk(session_id, event_log)
         if isinstance(event, SessionStateEvent):
-            await self._session_store.update_state(event.session_id, event.state)
+            # ``running`` is liveness (TD-1714): a revive's loop logs it on
+            # every start, as the stop logs its cancel. Stamped as use, each
+            # restart re-sorted the rail by revive order (TD-5201).
+            used = event.state != "running" and event.reason != SHUTDOWN_REASON
+            await self._session_store.update_state(event.session_id, event.state, touch=used)
         elif isinstance(event, UserTurn):
             # A turn is use: the rail's newest-first order, quick entry and
             # `tst run --continue` all read updated_at as "used last", and a
@@ -3280,6 +3301,17 @@ class Daemon:
                 return build_error(
                     "session_not_found",
                     f"Session {msg.session_id!r} not found",
+                )
+            # An edit is a send (TD-1711): an ended session would cut its
+            # conversation for a turn that never comes, and leave its log and
+            # its saved conversation disagreeing (TD-5201).
+            if found.state in TERMINAL_STATES:
+                return build_error(
+                    "session_not_running",
+                    f"This session is {found.state} and can no longer run turns, so the "
+                    "message was not changed. Start a new session to carry on.",
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
                 )
             if (busy := _folder_busy_refusal(found, msg.type)) is not None:
                 return busy
@@ -4539,7 +4571,7 @@ class Daemon:
         # TD-5137: so did its background shell jobs.
         await sess.shell_jobs.expire_restored(loaded.events)
         await self._seal_cut_review(sess, loaded.events)
-        await self._emit_working_context(sess, config_source(sess))
+        await self._emit_working_context(sess, config_source(sess), unless_logged=True)
         log.info(
             "revived session",
             extra={
@@ -4886,18 +4918,24 @@ class Daemon:
         await self.session_registry.register_runner(sess.id, runner)
         self.state.active_sessions += 1
 
-    async def _emit_working_context(self, sess: Session, source: str) -> None:
+    async def _emit_working_context(
+        self, sess: Session, source: str, *, unless_logged: bool = False
+    ) -> None:
         """Log the wall and slugs this loop is actually using.
 
         Open and revive both call this so the title bar is not left
-        showing a previous life's boundary after a restart.
+        showing a previous life's boundary after a restart. A revive
+        (``unless_logged``) skips each one the window's newest of its kind
+        already says: logged on every start, they wore an idle chat's
+        window down (TD-5201). The window, not the newest ever logged, is
+        the test, because a replay is the only way either reaches a window.
         """
-        await sess.event_log.add(boundary_update_event(sess, source))
+        events: list[DaemonEvent] = [boundary_update_event(sess, source)]
         if sess.engine == "grok":
             # Native slugs are not what will answer. Name the Grok model
             # the CLI is configured to use so an empty chat can show it
             # before the first ACP prompt.
-            await sess.event_log.add(
+            events.append(
                 GrokMode(
                     session_id=sess.id,
                     mode="",
@@ -4906,9 +4944,13 @@ class Daemon:
                     seq=1,
                 )
             )
-            return
-        assert sess.router is not None
-        await sess.event_log.add(tier_state_event(sess, _session_model_config(sess, self.config)))
+        else:
+            assert sess.router is not None
+            events.append(tier_state_event(sess, _session_model_config(sess, self.config)))
+        window = sess.event_log.all_events if unless_logged else []
+        for event in events:
+            if not _window_says(window, event):
+                await sess.event_log.add(event)
 
     async def _start_session(
         self,
@@ -5426,6 +5468,9 @@ class Daemon:
         await keep_goal_visible(session)
         # TD-5123: and the pinned plan, which it shows too.
         await keep_pinned_plan_visible(session)
+        # TD-5169: another computer gets the events without service hosts.
+        peer = self.ws_server.peer_view(connection)
+        hosts = service_hosts(self.config.model_dump()) if peer.machine else frozenset()
         # Replay from from_seq. A rotated prefix is a typed notice, then
         # the same gap/dup rules over whatever is still in the window.
         earliest = session.event_log.earliest_seq
@@ -5437,10 +5482,18 @@ class Daemon:
                     earliest_seq=earliest,
                 ).model_dump_json()
             )
+            # TD-5201: and, for a window, what the saved conversation still
+            # has of it. Built off the loop from copies: a long conversation
+            # takes a while to walk and redact.
+            if peer.history:
+                history = await asyncio.to_thread(
+                    restorable_history,
+                    session_id,
+                    list(session.conversation),
+                    session.event_log.all_events,
+                )
+                await connection.send(outbound_event(history, peer, hosts).model_dump_json())
         replay_from = max(msg.from_seq, earliest)
-        # TD-5169: another computer gets the events without service hosts.
-        peer = self.ws_server.peer_view(connection)
-        hosts = service_hosts(self.config.model_dump()) if peer.machine else frozenset()
         for event in session.event_log.events_from(replay_from):
             await connection.send(outbound_event(event, peer, hosts).model_dump_json())
 

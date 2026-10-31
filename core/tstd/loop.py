@@ -89,7 +89,7 @@ from .cu_verify import ActuationVerifier
 from .discovery import discover_model, resolve_tier_slugs
 from .effort import DEFAULT_EFFORT, with_effort
 from .fallback import BackupChain, TurnBackups, announce_switch, backup_wanted
-from .hooks import with_hook_context
+from .hooks import HOOK_BLOCKED_NOTE, with_hook_context
 from .keychain import KeychainError
 from .local_worker import (
     effective_tier,
@@ -651,7 +651,7 @@ async def _refuse_prompt(
         )
     )
     await session.user_turn_logged(queued)
-    note = f"A hook blocked this message, so it was not sent: {reason}"
+    note = f"{HOOK_BLOCKED_NOTE}{reason}"
     await session.event_log.add(AssistantDelta(session_id=session.id, delta=note, seq=1))
     await _emit_turn_complete(session, tier, turn_start, tracker, error_code="hook_blocked")
 

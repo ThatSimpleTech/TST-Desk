@@ -393,12 +393,18 @@ def render_user_content(text: str, attachments: Sequence[DecodedAttachment]) -> 
     return body
 
 
+# Opens the line a message's display text ends with when images went with
+# it. The model's copy carries the images instead, so restored history
+# leaves the line out when it compares the two (TD-5201).
+IMAGE_NOTE_OPENING = "[Images attached: "
+
+
 def _image_summary(attachments: Sequence[DecodedAttachment]) -> str:
     images = [a for a in attachments if a.is_image]
     if not images:
         return ""
     names = ", ".join(f"{a.name} ({a.size} bytes)" for a in images)
-    return f"[Images attached: {names}]"
+    return f"{IMAGE_NOTE_OPENING}{names}]"
 
 
 def build_provider_user_content(

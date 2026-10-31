@@ -151,6 +151,7 @@ import type {
   UsageReport,
   UsageExported,
   LogTrimmed,
+  ConversationHistory,
   ListArtifacts,
   OpenArtifact,
   ReadArtifactChunk,
@@ -1403,6 +1404,29 @@ describe("Daemon event fixtures match TypeScript types", () => {
     expect(isNumber(m.earliest_seq)).toBe(true);
   });
 
+  it("conversation_history", () => {
+    // TD-5201: connection-scoped like log_trimmed, after which it comes.
+    const m = fixtures.conversation_history as ConversationHistory;
+    expect(m.type).toBe("conversation_history");
+    expect(m.seq).toBe(1);
+    expect(isString(m.session_id)).toBe(true);
+    expect(isNumber(m.user_turns)).toBe(true);
+    expect(typeof m.truncated).toBe("boolean");
+    expect(m.messages.map((row) => row.role)).toEqual(["summary", "user", "assistant"]);
+    expect(m.messages[0].folded_turns).toBe(2);
+    expect(m.messages[1].user_index).toBe(2);
+    const tool = m.messages[2].tools[0];
+    expect(isString(tool.tool_call_id) && isString(tool.name)).toBe(true);
+    expect(tool.arguments).toEqual({ path: "notes.md" });
+    // The call only, never what it returned.
+    expect("output" in tool).toBe(false);
+    // Not lined up: no rows, and no number for the window to count from.
+    const unaligned = fixtures.conversation_history_unaligned as ConversationHistory;
+    expect(unaligned.type).toBe("conversation_history");
+    expect(unaligned.user_turns).toBeNull();
+    expect(unaligned.messages).toEqual([]);
+  });
+
   it("ping", () => {
     // TD-1716: the liveness frame is the one daemon→client frame with no seq
     // and no session — a fact about the connection, not an event in any log.
@@ -1501,7 +1525,8 @@ describe("All fixtures have required shape", () => {
       "instruction_stack", "instruction_files", "command_list", "context_pins", "session_search_results", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "steering_proposal", "steering_decision", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated", "endpoint_models", "local_servers", "model_tested",
       "config_editor", "config_value_rejected",
-      "diagnostics_report", "usage_report", "usage_exported", "log_trimmed",
+      "diagnostics_report", "usage_report", "usage_exported", "log_trimmed", "conversation_history",
+      "conversation_history_unaligned",
       "artifact_ready", "artifact_list", "artifact", "artifact_chunk",
       "screen_frame",
       "cu_kill_state",

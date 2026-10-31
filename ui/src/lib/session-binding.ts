@@ -53,12 +53,16 @@ export interface BindContext {
  *  any list named it (TD-5015): the hub answers list_sessions from a cache
  *  that trails that computer's events, so a session made there a moment ago,
  *  or every remote row after the hub restarts, is missing for a while. Once a
- *  list has named it, its absence means it is gone, as for an own session. */
+ *  list has named it, its absence means it is gone, as for an own session.
+ *
+ *  `wasArchived` is the bound session's archived flag as last known: archiving
+ *  moves the pane only when the session was not archived already (TD-5201). */
 export function chooseBoundSession(
   summaries: readonly SessionSummary[],
   currentId: string | null,
   windowBind: string | null = null,
   held: string | null = null,
+  wasArchived = false,
 ): SessionBinding {
   if (windowBind !== null) {
     const bound = summaries.find((s) => s.session_id === windowBind);
@@ -68,27 +72,21 @@ export function chooseBoundSession(
       }
       return { action: "unbind" };
     }
-    if (bound.archived || isTerminal(bound.state)) {
-      return { action: "unbind" };
-    }
-    if (currentId === windowBind) {
-      return {
-        action: "keep",
-        turnState: bound.state === "running" ? null : bound.state,
-      };
-    }
-    return {
-      action: "bind",
-      sessionId: windowBind,
-      turnState: bound.state === "running" ? null : bound.state,
-    };
+    // A viewer window shows its own chat, archived or ended (TD-5201): it was
+    // opened for that chat, and the daemon refuses a send one cannot run.
+    const turnState = bound.state === "running" ? null : bound.state;
+    if (currentId === windowBind) return { action: "keep", turnState };
+    return { action: "bind", sessionId: windowBind, turnState };
   }
-  // Keep the current session while the daemon still lists it *and* still files
-  // it under the default view; else bind the most recently updated one.
-  // Archiving the bound session (TD-1715) is therefore a rebind, not a pane
-  // left pointing at a filed-away conversation the rail no longer shows.
+  // Keep the current session while the daemon still lists it; else bind the
+  // most recently updated one. Archiving the bound session (TD-1715) is a
+  // rebind, not a pane left pointing at a filed-away conversation the rail no
+  // longer shows. A chat opened from the archived shelf was archived already
+  // and stays open (TD-5201): every list used to send it back to the newest
+  // chat, or to the New chat screen, half a second after the click.
   const current = summaries.find((s) => s.session_id === currentId);
-  if (current !== undefined && !current.archived) {
+  const archivedNow = current !== undefined && current.archived && !wasArchived;
+  if (current !== undefined && !archivedNow) {
     // TD-1714: a summary's "running" is session-liveness, not turn evidence —
     // a refresh must never stamp it over the local state (neither raising a
     // phantom turn nor standing down a real one).
@@ -132,6 +130,7 @@ export function applyBind(
   // re-derives it through the store's reducer.
   state.turnState = turnState === "running" ? null : turnState;
   state.messages = [];
+  state.userTurnBase = 0;
   // Held rows (TD-5155) are the session's; its replay brings its own list.
   state.held = [];
   ctx.onUnbind?.();

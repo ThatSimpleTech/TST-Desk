@@ -135,11 +135,15 @@ def _listed(fn: FunctionDefinition, catalog: WorkerCatalog) -> FunctionDefinitio
     return replace(fn, description=description, parameters=parameters)
 
 
+# Opens the note below. Restored history cuts a user message there (TD-5201).
+WORKER_NOTE_PREFIX = "[The user addressed this message to "
+
+
 def worker_mention_note(names: tuple[str, ...]) -> str:
     """What the model is told when the user's message names workers as ``@name``."""
     listed = ", ".join(f"@{n}" for n in names)
     calls = " ".join(f'delegate with agent "{n}".' for n in names)
-    return f"[The user addressed this message to {listed}. Hand the task to it: call {calls}]"
+    return f"{WORKER_NOTE_PREFIX}{listed}. Hand the task to it: call {calls}]"
 
 
 def with_worker_mentions(content: MessageContent, names: tuple[str, ...]) -> MessageContent:

@@ -293,3 +293,24 @@ describe("Restore files to here", () => {
     expect(target.textContent).toContain("not a git repository");
   });
 });
+
+describe("a user row with no number (TD-5201)", () => {
+  it("offers Restore files to here, and nothing that names its turn by a number", () => {
+    // An older chat whose history could not be lined up numbers no row.
+    for (const m of mounted) unmount(m);
+    target.replaceChildren();
+    mounted = [
+      mount(MessageBubble, { target, props: { message: { ...ROW, userIndex: undefined } } }),
+      mount(RestoreFilesDialog, { target }),
+    ];
+    flushSync();
+    const labels = [...target.querySelectorAll("button")].map((b) => (b.textContent ?? "").trim());
+    expect(labels).toContain("Restore files to here");
+    expect(labels).not.toContain("Edit");
+    expect(labels).not.toContain("Summarize from here");
+    click("Restore files to here");
+    expect(sentOf("preview_restore_files")).toEqual([
+      { type: "preview_restore_files", session_id: "sess-1", turn_id: "turn-1" },
+    ]);
+  });
+});

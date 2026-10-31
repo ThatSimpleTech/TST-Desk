@@ -105,25 +105,24 @@ export function createBranchSnaps(): BranchSnaps {
         }));
         return true;
       }
-      let seen = 0;
-      let cut = -1;
-      for (let i = 0; i < state.messages.length; i++) {
-        if (state.messages[i].role !== "user") continue;
-        if (seen === event.user_index) {
-          cut = i;
-          break;
-        }
-        seen += 1;
-      }
+      // By the row's own number, not its position: a chat whose log no
+      // longer reaches its start numbers from the session's start, and one
+      // whose numbering is unknown numbers no row (TD-5201), so a reset
+      // there finds nothing to cut rather than a row picked by position.
+      const cut = state.messages.findIndex(
+        (row) => row.role === "user" && row.userIndex === event.user_index,
+      );
       if (cut === -1) return false;
       const row = state.messages[cut];
       row.text = event.content;
       row.siblingIndex = event.sibling_index;
       row.siblingCount = event.sibling_count;
       // The row now stands for the fork's turn, not the one it was stamped
-      // with. Unstamped, the fork's user_turn adopts it instead of adding
-      // a second copy of the same message.
+      // with, nor the saved message it was restored from. Unstamped, the
+      // fork's user_turn adopts it instead of adding a second copy of the
+      // same message (TD-5201: a restored row refused it).
       row.turnId = undefined;
+      row.restored = undefined;
       state.messages.splice(cut + 1);
       save(event.user_index, event.sibling_index, state.messages);
       return true;

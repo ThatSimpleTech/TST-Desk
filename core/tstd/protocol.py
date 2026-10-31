@@ -127,8 +127,10 @@ class Hello(ClientMessage):
     makes a loopback or phone connection a *viewer*: its session lists
     carry other computers' rows and it gets ``machine_list``.
     ``"bridge"`` is what a hub sends when it dials another computer; it
-    makes the connection a machine peer. Unknown names are ignored, so
-    an old daemon ignores the whole field.
+    makes the connection a machine peer. ``"history"`` (TD-5201) asks
+    attach to send ``conversation_history`` after ``log_trimmed``: a
+    window rebuilds chats from it, a text stream has no use for it.
+    Unknown names are ignored, so an old daemon ignores the whole field.
     """
 
     type: Literal["hello"] = "hello"
@@ -4174,6 +4176,63 @@ class LogTrimmed(DaemonEvent):
     earliest_seq: int = Field(ge=1)
 
 
+class HistoryTool(BaseModel):
+    """One tool call on a restored assistant message (TD-5201).
+
+    The call only, never what it returned: a result can hold any text a
+    tool read, and the exact-text secrets that scrubbed it when it was
+    logged may be unknown to a later process. The replayed window still
+    carries the results of its own calls.
+    """
+
+    tool_call_id: str
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class HistoryMessage(BaseModel):
+    """One message from before the replayed window, as the conversation keeps it (TD-5201).
+
+    ``user`` and ``assistant`` are the chat's own messages. ``summary`` is
+    a compaction summary standing for ``folded_turns`` earlier user turns,
+    whose own messages are gone. ``user_index`` numbers a user message the
+    way the window numbers user turns, from the start of the session, so
+    Edit and Retry on it fork the right turn.
+    """
+
+    role: Literal["user", "assistant", "summary"]
+    text: str = ""
+    tools: list[HistoryTool] = Field(default_factory=list)
+    user_index: int | None = None
+    folded_turns: int = Field(default=0, ge=0)
+
+
+class ConversationHistory(DaemonEvent):
+    """The conversation from before the replayed window (TD-5201).
+
+    The log keeps its newest events only, and a long reply streams one
+    event per chunk, so an older chat's window can hold none of its
+    questions. Attach then sends this after ``log_trimmed``, to a client
+    whose hello asked for ``"history"``: the messages of the session's
+    saved conversation that come before the window's first event.
+    Connection-scoped like ``log_trimmed``: never logged, ``seq`` fixed
+    at 1.
+
+    ``user_turns`` is how many user turns come before the window's first
+    replayed one, so the window numbers its own from there. None, with no
+    messages, when the two could not be lined up: the window then numbers
+    no turn, and offers nothing that forks one by its number. ``truncated``
+    says older messages were left out to keep the message small.
+    """
+
+    type: Literal["conversation_history"] = "conversation_history"
+    seq: int = 1
+    session_id: str
+    messages: list[HistoryMessage] = Field(default_factory=list)
+    user_turns: int | None = Field(default=None, ge=0)
+    truncated: bool = False
+
+
 class ArtifactEntry(BaseModel):
     """One artifact on ``artifact_list`` (TD-3201). Path, not bytes.
 
@@ -4938,6 +4997,7 @@ DaemonEventT = Annotated[
     | UsageReport
     | UsageExported
     | LogTrimmed
+    | ConversationHistory
     | ArtifactReady
     | ArtifactList
     | Artifact
@@ -5191,6 +5251,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "usage_report",
         "usage_exported",
         "log_trimmed",
+        "conversation_history",
         "artifact_ready",
         "artifact_list",
         "artifact",

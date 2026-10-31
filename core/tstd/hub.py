@@ -101,6 +101,7 @@ class Hub:
             on_machines=self._on_machines,
             policy=policy if policy is not None else DEFAULT_POLICY,
             timings=timings,
+            wants_history=lambda connection: ws_server.peer_view(connection).history,
         )
 
     # ── connection lifecycle (ws callbacks) ───────────────────────────

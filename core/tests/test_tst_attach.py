@@ -14,6 +14,8 @@ from typing import Any
 
 import pytest
 from websockets.asyncio.client import connect
+from websockets.exceptions import ConnectionClosed, ConnectionClosedError, ConnectionClosedOK
+from websockets.frames import Close, CloseCode
 
 from tests.test_tst_run import _start_daemon, _stop_daemon, _workspace
 from tstd import cli
@@ -240,3 +242,29 @@ def test_main_dispatches_attach(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     code = cli.main(["attach", "sess-42", "--from-seq", "3", "--data-dir", str(data)])
     assert code == 0
     assert seen == [("sess-42", data.resolve(), 3)]
+
+
+class _ClosedWs:
+    """A socket whose next read finds it closed, as *closed* says."""
+
+    def __init__(self, closed: ConnectionClosed) -> None:
+        self._closed = closed
+
+    async def send(self, raw: str) -> None:
+        return None
+
+    async def recv(self) -> str:
+        raise self._closed
+
+
+async def test_a_frame_over_the_limit_is_an_error_not_a_quiet_end(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """TD-5201: this end closing the socket on a fault used to exit 0, silent."""
+    too_big = Close(CloseCode.MESSAGE_TOO_BIG, "frame exceeds limit of 1048576 bytes")
+    assert await cli._stream_attached(_ClosedWs(ConnectionClosedError(None, too_big)), "s") == 1
+    assert "frame exceeds limit" in capsys.readouterr().err
+    # The daemon going away still ends the stream as it always has.
+    going = Close(CloseCode.GOING_AWAY, "")
+    assert await cli._stream_attached(_ClosedWs(ConnectionClosedOK(going, going, True)), "s") == 0
+    assert await cli._stream_attached(_ClosedWs(ConnectionClosedError(None, None)), "s") == 0
