@@ -27,6 +27,10 @@ import { windowBindSessionId } from "./window-bind";
 export interface BindHold {
   sessionId: string | null;
   lastList: readonly SessionSummary[];
+  /** The bound session's archived flag as a list last named it, or as its
+   *  row was when the pane bound it (TD-5201). A list without it (a hub
+   *  just back, with no remote rows yet) leaves the flag as it was. */
+  boundArchived: boolean;
 }
 
 /** Collaborators the reducer may touch. The store keeps the rest. */
@@ -37,6 +41,8 @@ export interface ChatEventContext {
   forks: BranchSnaps;
   allocateId: () => string;
   switchSession: (sessionId: string | null, turnState: SessionState["state"] | null) => void;
+  /** The pane bound a listed session by itself (TD-5201, ChatDeps). */
+  onAutoBind: (session: SessionSummary) => void;
   hold: BindHold;
   /** Texts sent and not yet started or refused (TD-5023, draft-store.ts). */
   sending: string[];
@@ -48,21 +54,19 @@ export interface ChatEventContext {
 }
 
 /** Re-decide the pane's session from a list and apply the choice. */
-function rebindFrom(
-  ctx: ChatEventContext,
-  summaries: readonly SessionSummary[],
-  previous: readonly SessionSummary[],
-): void {
-  const { state } = ctx;
+function rebindFrom(ctx: ChatEventContext, summaries: readonly SessionSummary[]): void {
+  const { state, hold } = ctx;
   const choice = chooseBoundSession(
     summaries,
     state.sessionId,
     windowBindSessionId(),
-    ctx.hold.sessionId,
-    previous,
+    hold.sessionId,
+    hold.boundArchived,
   );
   if (choice.action === "bind") {
     ctx.switchSession(choice.sessionId, choice.turnState);
+    const bound = summaries.find((s) => s.session_id === choice.sessionId);
+    if (bound !== undefined) ctx.onAutoBind(bound);
   } else if (choice.action === "unbind") {
     ctx.switchSession(null, null);
   } else if (choice.turnState !== null) {
@@ -397,12 +401,13 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
     }
     case "session_list": {
       const { hold } = ctx;
-      const previous = hold.lastList;
       hold.lastList = event.sessions;
       if (hold.sessionId !== null && event.sessions.some((s) => s.session_id === hold.sessionId)) {
         hold.sessionId = null;
       }
-      rebindFrom(ctx, event.sessions, previous);
+      rebindFrom(ctx, event.sessions);
+      const bound = event.sessions.find((s) => s.session_id === state.sessionId);
+      if (bound !== undefined) hold.boundArchived = bound.archived;
       return;
     }
     case "machine_list": {
@@ -412,7 +417,7 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       const mch = machineOf(hold.sessionId);
       if (mch === null || event.machines.some((m) => m.id === mch)) return;
       hold.sessionId = null;
-      rebindFrom(ctx, hold.lastList, hold.lastList);
+      rebindFrom(ctx, hold.lastList);
       return;
     }
     case "error": {

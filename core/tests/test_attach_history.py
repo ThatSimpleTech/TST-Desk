@@ -63,14 +63,13 @@ async def _recv(ws: Any) -> dict[str, Any]:
     return dict(json.loads(await asyncio.wait_for(ws.recv(), timeout=5)))
 
 
-@pytest.mark.asyncio
-async def test_attach_sends_the_conversation_the_window_lost(tmp_path: Path) -> None:
+async def _attach(tmp_path: Path, from_seq: int, features: list[str], count: int) -> list[Any]:
+    """Seed, start a daemon, attach from *from_seq*, and take *count* frames."""
     data_dir = tmp_path / "data"
     workspace = tmp_path / "ws"
     data_dir.mkdir()
     workspace.mkdir()
     await _seed(data_dir, workspace)
-
     daemon = Daemon(data_dir=data_dir)
     task = asyncio.create_task(daemon.run())
     try:
@@ -79,20 +78,21 @@ async def test_attach_sends_the_conversation_the_window_lost(tmp_path: Path) -> 
                 break
             await asyncio.sleep(0.05)
         ws = await connect(f"ws://127.0.0.1:{daemon.ws_server.port}")
-        await ws.send(
-            json.dumps(
-                {"type": "hello", "token": daemon.ws_server.token, "version": PROTOCOL_VERSION}
-            )
-        )
+        hello = {"type": "hello", "token": daemon.ws_server.token, "version": PROTOCOL_VERSION}
+        await ws.send(json.dumps({**hello, "features": features}))
         assert (await _recv(ws))["type"] == "hello_ack"
-        await ws.send(json.dumps({"type": "attach", "session_id": SID, "from_seq": 1}))
-        frames = [await _recv(ws) for _ in range(4)]
+        await ws.send(json.dumps({"type": "attach", "session_id": SID, "from_seq": from_seq}))
+        frames = [await _recv(ws) for _ in range(count)]
         await ws.close()
     finally:
         daemon._shutdown_event.set()
         await asyncio.gather(task, return_exceptions=True)
+    return [f for f in frames if f["type"] != "ready"]
 
-    frames = [f for f in frames if f["type"] != "ready"]
+
+@pytest.mark.asyncio
+async def test_attach_sends_the_conversation_the_window_lost(tmp_path: Path) -> None:
+    frames = await _attach(tmp_path, 1, ["history"], 4)
     assert frames[0]["type"] == "log_trimmed"
     assert frames[0]["earliest_seq"] == 500
     history = frames[1]
@@ -110,33 +110,17 @@ async def test_attach_sends_the_conversation_the_window_lost(tmp_path: Path) -> 
 
 @pytest.mark.asyncio
 async def test_attach_from_inside_the_window_sends_no_history(tmp_path: Path) -> None:
-    data_dir = tmp_path / "data"
-    workspace = tmp_path / "ws"
-    data_dir.mkdir()
-    workspace.mkdir()
-    await _seed(data_dir, workspace)
-
-    daemon = Daemon(data_dir=data_dir)
-    task = asyncio.create_task(daemon.run())
-    try:
-        for _ in range(100):
-            if daemon.ws_server.port:
-                break
-            await asyncio.sleep(0.05)
-        ws = await connect(f"ws://127.0.0.1:{daemon.ws_server.port}")
-        await ws.send(
-            json.dumps(
-                {"type": "hello", "token": daemon.ws_server.token, "version": PROTOCOL_VERSION}
-            )
-        )
-        assert (await _recv(ws))["type"] == "hello_ack"
-        await ws.send(json.dumps({"type": "attach", "session_id": SID, "from_seq": 503}))
-        frames = [await _recv(ws) for _ in range(3)]
-        await ws.close()
-    finally:
-        daemon._shutdown_event.set()
-        await asyncio.gather(task, return_exceptions=True)
-
-    types = [f["type"] for f in frames if f["type"] != "ready"]
+    frames = await _attach(tmp_path, 503, ["history"], 3)
+    types = [f["type"] for f in frames]
     assert "log_trimmed" not in types
     assert "conversation_history" not in types
+
+
+@pytest.mark.asyncio
+async def test_a_client_that_did_not_ask_gets_only_the_replay(tmp_path: Path) -> None:
+    # `tst attach` prints a text stream: a megabyte of history it never
+    # reads could only push it past its frame limit.
+    frames = await _attach(tmp_path, 1, [], 3)
+    assert frames[0]["type"] == "log_trimmed"
+    assert frames[1]["seq"] == 500
+    assert all(f["type"] != "conversation_history" for f in frames)

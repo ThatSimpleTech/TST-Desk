@@ -38,7 +38,9 @@ OPEN_TIMEOUT_SECONDS = 10.0
 REDEEM_TIMEOUT_SECONDS = 10.0
 REMOVE_TIMEOUT_SECONDS = 3.0
 CLOSE_TIMEOUT_SECONDS = 2.0
-BRIDGE_FEATURES = ("bridge",)
+# A lane serves one viewer's window, so it asks for restored history as a
+# window does (TD-5201); the hub drops it for a viewer that did not ask.
+BRIDGE_FEATURES = ("bridge", "history")
 
 NOT_TAILSCALE_MESSAGE = (
     "That address isn't on Tailscale. Use the computer's Tailscale address or its .ts.net name."

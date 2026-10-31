@@ -1361,7 +1361,13 @@ describe("Daemon event fixtures match TypeScript types", () => {
     const tool = m.messages[2].tools[0];
     expect(isString(tool.tool_call_id) && isString(tool.name)).toBe(true);
     expect(tool.arguments).toEqual({ path: "notes.md" });
-    expect(isString(tool.output)).toBe(true);
+    // The call only, never what it returned.
+    expect("output" in tool).toBe(false);
+    // Not lined up: no rows, and no number for the window to count from.
+    const unaligned = fixtures.conversation_history_unaligned as ConversationHistory;
+    expect(unaligned.type).toBe("conversation_history");
+    expect(unaligned.user_turns).toBeNull();
+    expect(unaligned.messages).toEqual([]);
   });
 
   it("ping", () => {
@@ -1459,6 +1465,7 @@ describe("All fixtures have required shape", () => {
       "instruction_stack", "instruction_files", "command_list", "context_pins", "session_search_results", "memory_files", "charter", "autonomy_start", "autonomy_summary", "memory_proposal", "steering_proposal", "steering_decision", "session_list", "policy_rules", "error",
       "error_with_session", "setup_state", "api_key_validated", "endpoint_models", "local_servers", "model_tested",
       "diagnostics_report", "usage_report", "usage_exported", "log_trimmed", "conversation_history",
+      "conversation_history_unaligned",
       "artifact_ready", "artifact_list", "artifact", "artifact_chunk",
       "screen_frame",
       "cu_kill_state",

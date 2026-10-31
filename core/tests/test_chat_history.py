@@ -9,8 +9,13 @@ window can begin.
 from __future__ import annotations
 
 import json
+from typing import Any
 
-from tstd.chat_history import MAX_ROWS, OUTPUT_CAP, history_before_window
+import pytest
+
+from tstd import chat_history_rows
+from tstd.chat_history import history_before_window
+from tstd.chat_history_rows import MAX_ROWS
 from tstd.compaction_text import compose
 from tstd.hooks import with_hook_context
 from tstd.plan_mode import with_plan_note
@@ -79,8 +84,13 @@ def _noise() -> list[DaemonEvent]:
 
 def _history(conversation: list[ChatMessage], window: list[DaemonEvent]) -> ConversationHistory:
     found = history_before_window(SID, conversation, window)
-    assert found is not None
+    assert found.user_turns is not None
     return found
+
+
+def _unaligned(conversation: list[ChatMessage], window: list[DaemonEvent]) -> bool:
+    found = history_before_window(SID, conversation, window)
+    return found.user_turns is None and found.messages == []
 
 
 def _texts(history: ConversationHistory) -> list[str]:
@@ -114,7 +124,6 @@ class TestWhereTheWindowBegins:
             "read_file",
             {"path": "notes.md"},
         )
-        assert tool.output == "tomatoes, basil"
         assert not history.truncated
 
     def test_at_a_user_turn_stops_before_that_question(self) -> None:
@@ -138,7 +147,7 @@ class TestWhereTheWindowBegins:
         ]
         history = _history(_garden(), window)
         assert _texts(history)[-1] == "assistant: Checking."
-        assert history.messages[-1].tools[0].output == "tomatoes, basil"
+        assert history.messages[-1].tools[0].tool_call_id == "c2"
         assert history.user_turns == 2
 
     def test_restart_noise_alone_makes_the_whole_conversation_history(self) -> None:
@@ -149,7 +158,7 @@ class TestWhereTheWindowBegins:
     def test_the_tail_of_the_last_reply_stays_with_the_window(self) -> None:
         history = _history(_garden(), [_delta("and Friday."), _done(), *_noise()])
         assert _texts(history)[-2:] == ["user: When to water?", "assistant: "]
-        assert history.messages[-1].tools[0].output == "mon wed fri"
+        assert history.messages[-1].tools[0].tool_call_id == "c3"
         assert history.user_turns == 3
 
     def test_a_reply_still_streaming_is_in_no_message_yet(self) -> None:
@@ -174,16 +183,21 @@ class TestWhereTheWindowBegins:
 
 class TestWhenNothingCanBeSaid:
     def test_no_conversation(self) -> None:
-        assert history_before_window(SID, [], [_delta("the end"), _done()]) is None
+        assert _unaligned([], [_delta("the end"), _done()])
 
-    def test_a_tool_call_the_conversation_does_not_have(self) -> None:
+    def test_a_tool_call_in_no_turn(self) -> None:
+        conversation = [ChatMessage(role="system", content="You are helpful.")]
         window = [ToolCall(session_id=SID, tool_call_id="gone", name="x", arguments={}, seq=1)]
-        assert history_before_window(SID, _garden(), window) is None
+        assert _unaligned(conversation, window)
 
     def test_more_user_turns_in_the_window_than_the_session_has(self) -> None:
-        # A fork the window still shows both sides of.
-        window = [_turn("a", 0), _turn("b", 1), _turn("c", 2), _turn("b2", 1)]
-        assert history_before_window(SID, _garden(), window) is None
+        window = [_turn("a", 0), _turn("b", 1), _turn("c", 2), _turn("d", 3)]
+        assert _unaligned(_garden(), window)
+
+    def test_a_question_the_count_points_at_says_something_else(self) -> None:
+        # An older summary that miscounts its turns, say.
+        window = [_turn("Which plants?", 2), _done()]
+        assert _unaligned(_garden(), window)
 
 
 class TestCompactedConversations:
@@ -251,16 +265,16 @@ class TestWhatAMessageCarries:
         ]
         assert history.user_turns == 1
 
-    def test_long_tool_output_is_cut(self) -> None:
+    def test_a_call_comes_back_without_what_it_returned(self) -> None:
         conversation = [
             ChatMessage(role="user", content="Read it"),
             ChatMessage(role="assistant", content=None, tool_calls=[_call("c1", "big.txt")]),
-            ChatMessage(role="tool", content="x" * (OUTPUT_CAP * 3), tool_call_id="c1"),
+            ChatMessage(role="tool", content="file body " * 50, tool_call_id="c1"),
             ChatMessage(role="assistant", content="Read."),
         ]
-        output = _history(conversation, _noise()).messages[1].tools[0].output
-        assert output is not None
-        assert len(output) < OUTPUT_CAP + 10
+        history = _history(conversation, _noise())
+        assert [tool.name for tool in history.messages[1].tools] == ["read_file"]
+        assert "file body" not in history.model_dump_json()
 
     def test_the_oldest_rows_go_past_the_cap(self) -> None:
         conversation: list[ChatMessage] = []
@@ -272,3 +286,26 @@ class TestWhatAMessageCarries:
         assert len(history.messages) == MAX_ROWS
         assert history.messages[-1].text == f"answer {MAX_ROWS - 1}"
         assert history.user_turns == MAX_ROWS
+
+
+def test_a_long_conversation_is_walked_only_as_far_as_the_rows_that_fit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Attach builds this for every older chat it opens (TD-5201): shaping
+    tens of thousands of messages only to keep the newest few hundred
+    stalled every window for a moment on each click."""
+    shaped: list[int] = []
+    real = chat_history_rows._row
+
+    def counting(*args: Any) -> Any:
+        shaped.append(1)
+        return real(*args)
+
+    monkeypatch.setattr(chat_history_rows, "_row", counting)
+    conversation: list[ChatMessage] = []
+    for n in range(5 * MAX_ROWS):
+        conversation.append(ChatMessage(role="user", content=f"ask {n}"))
+        conversation.append(ChatMessage(role="assistant", content=f"answer {n}"))
+    history = _history(conversation, _noise())
+    assert len(history.messages) == MAX_ROWS
+    assert len(shaped) == MAX_ROWS + 1

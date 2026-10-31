@@ -26,6 +26,7 @@ import type {
   ClientMessageUnion,
   DaemonEventUnion,
   SessionState,
+  SessionSummary,
   UserMessage,
 } from "./protocol";
 
@@ -74,8 +75,9 @@ export interface ChatState {
   reviewRunning: boolean;
   /** User turns before the replay's first one, when the log no longer
    *  reaches the chat's start (TD-5201): the daemon numbers turns from the
-   *  session's start, and Edit and Retry fork by that number. */
-  userTurnBase: number;
+   *  session's start, and Edit and Retry fork by that number. Null when the
+   *  daemon could not line its history up: no row gets a number then. */
+  userTurnBase: number | null;
 }
 
 export interface ChatDeps {
@@ -86,6 +88,11 @@ export interface ChatDeps {
    *  to one session rebuild here, from the replay `attach` then fetches.
    *  Optional: a pane with no activity lane alongside it is still a pane. */
   onBind?(sessionId: string | null): void;
+  /** The pane bound this listed session by itself, not from a click
+   *  (TD-5201): the newest live one, a window's own, or the next one after
+   *  the bound chat was archived. What follows a click is the clicker's to
+   *  focus; this is how the title bar and task strip follow the rest. */
+  onAutoBind?(session: SessionSummary): void;
   /** Where drafts outlive the window (TD-5019). Defaults to localStorage. */
   drafts?: DraftStore;
 }
@@ -286,7 +293,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
   }
 
   const forks = createBranchSnaps();
-  const hold: BindHold = { sessionId: null, lastList: [] };
+  const hold: BindHold = { sessionId: null, lastList: [], boundArchived: false };
   // Sent files that arrived before their call (chat-events.ts). They belong
   // to the bound session, so a bind lets them go with its rows.
   const earlyFiles = new Map<string, SentFileRef[]>();
@@ -304,8 +311,10 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
     }
     // A session on another computer that the last list didn't name (a new
     // one made there just now) is held until a list does (TD-5015).
-    const listed = hold.lastList.some((s) => s.session_id === sessionId);
-    hold.sessionId = isBridged(sessionId) && !listed ? sessionId : null;
+    const row = hold.lastList.find((s) => s.session_id === sessionId);
+    hold.sessionId = isBridged(sessionId) && row === undefined ? sessionId : null;
+    // A chat opened from the archived shelf was archived already (TD-5201).
+    if (moving) hold.boundArchived = row?.archived === true;
   }
 
   // A plain function, not a method: the .svelte.ts wrapper exports the
@@ -339,6 +348,7 @@ export function createChatStore(deps: ChatDeps, state: ChatState = createChatSta
       return `m${nextId}`;
     },
     switchSession,
+    onAutoBind: (session: SessionSummary) => deps.onAutoBind?.(session),
     hold,
     sending,
     flushDraft,

@@ -55,6 +55,7 @@ class _Hub:
         timings: Timings,
         clock: Any,
         link_sleep: Sleep = _fast_sleep,
+        wants_history: Any = None,
     ) -> None:
         self.registry = MachineRegistry(tmp)
         self.registry.load()
@@ -80,6 +81,7 @@ class _Hub:
             clock=clock,
             link_sleep=link_sleep,
             timings=timings,
+            wants_history=wants_history,
         )
 
     async def _deliver(self, viewer: _Viewer, payload: str) -> None:
@@ -176,6 +178,28 @@ async def test_attach_replays_with_bridged_ids_and_seq_untouched(
     assert [(f["session_id"], f["seq"]) for f in got] == [(S1, 2), (S1, 3)]
     ((_, attach),) = remote.got("attach")
     assert attach == {"type": "attach", "session_id": "s1", "from_seq": 2}
+
+
+async def test_restored_history_reaches_only_a_viewer_that_asked(
+    tmp_path: Path, remote: FakeRemote
+) -> None:
+    """TD-5201: every lane asks for it, on behalf of whichever viewer it serves."""
+    await remote.emit("s1", type="conversation_history", messages=[], user_turns=0)
+    await remote.emit("s1")
+    asked, plain = _Viewer(), _Viewer()
+    made = _Hub(tmp_path, remote, FAST, time.monotonic, wants_history=lambda v: v is asked)
+    try:
+        for viewer in (asked, plain):
+            await _connected(made, viewer)
+            made.forward(viewer, type="attach", session_id=S1, from_seq=1)
+        assert [(await asked.next())["type"] for _ in range(2)] == [
+            "conversation_history",
+            "assistant_delta",
+        ]
+        assert (await plain.next())["type"] == "assistant_delta"
+        await plain.nothing()
+    finally:
+        await made.bridge.stop()
 
 
 async def test_seq_continues_across_an_upstream_drop_with_no_gap_or_repeat(

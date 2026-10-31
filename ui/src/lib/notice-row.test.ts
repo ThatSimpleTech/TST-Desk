@@ -43,10 +43,10 @@ afterEach(() => {
 });
 
 describe("a notice row (TD-5201)", () => {
-  it("says plainly that a trimmed chat's earlier messages are gone, and offers no actions", () => {
+  it("says plainly that a trimmed chat's earlier messages can't be shown, and offers no actions", () => {
     const target = render(notice({ notice: "trimmed" }));
     const line = target.querySelector('[role="note"]');
-    expect(line?.textContent?.trim()).toBe("Earlier messages in this chat are no longer stored.");
+    expect(line?.textContent?.trim()).toBe("Earlier messages in this chat can't be shown.");
     expect(target.querySelector("button")).toBeNull();
   });
 

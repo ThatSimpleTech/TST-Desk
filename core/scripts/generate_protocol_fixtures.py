@@ -1734,7 +1734,6 @@ FIXTURES = {
                         tool_call_id="call-1",
                         name="read_file",
                         arguments={"path": "notes.md"},
-                        output="tomatoes, basil",
                     )
                 ],
             ),
@@ -1742,6 +1741,8 @@ FIXTURES = {
         user_turns=3,
         truncated=True,
     ),
+    # TD-5201: the same when the two could not be lined up: no rows, no number.
+    "conversation_history_unaligned": ConversationHistory(session_id="sess-1", user_turns=None),
     # TD-3201: session-scoped notice; list/open replies stay off the log.
     # TD-5143: the notice is a sent file, the kind with every optional field.
     "artifact_ready": ArtifactReady(

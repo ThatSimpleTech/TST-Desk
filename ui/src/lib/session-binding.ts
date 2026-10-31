@@ -55,14 +55,14 @@ export interface BindContext {
  *  or every remote row after the hub restarts, is missing for a while. Once a
  *  list has named it, its absence means it is gone, as for an own session.
  *
- *  `previous` is the list before this one: archiving moves the pane only when
- *  the bound session was not archived there (TD-5201). */
+ *  `wasArchived` is the bound session's archived flag as last known: archiving
+ *  moves the pane only when the session was not archived already (TD-5201). */
 export function chooseBoundSession(
   summaries: readonly SessionSummary[],
   currentId: string | null,
   windowBind: string | null = null,
   held: string | null = null,
-  previous: readonly SessionSummary[] = [],
+  wasArchived = false,
 ): SessionBinding {
   if (windowBind !== null) {
     const bound = summaries.find((s) => s.session_id === windowBind);
@@ -72,20 +72,11 @@ export function chooseBoundSession(
       }
       return { action: "unbind" };
     }
-    if (bound.archived || isTerminal(bound.state)) {
-      return { action: "unbind" };
-    }
-    if (currentId === windowBind) {
-      return {
-        action: "keep",
-        turnState: bound.state === "running" ? null : bound.state,
-      };
-    }
-    return {
-      action: "bind",
-      sessionId: windowBind,
-      turnState: bound.state === "running" ? null : bound.state,
-    };
+    // A viewer window shows its own chat, archived or ended (TD-5201): it was
+    // opened for that chat, and the daemon refuses a send one cannot run.
+    const turnState = bound.state === "running" ? null : bound.state;
+    if (currentId === windowBind) return { action: "keep", turnState };
+    return { action: "bind", sessionId: windowBind, turnState };
   }
   // Keep the current session while the daemon still lists it; else bind the
   // most recently updated one. Archiving the bound session (TD-1715) is a
@@ -94,10 +85,7 @@ export function chooseBoundSession(
   // and stays open (TD-5201): every list used to send it back to the newest
   // chat, or to the New chat screen, half a second after the click.
   const current = summaries.find((s) => s.session_id === currentId);
-  const archivedNow =
-    current !== undefined &&
-    current.archived &&
-    previous.find((s) => s.session_id === currentId)?.archived !== true;
+  const archivedNow = current !== undefined && current.archived && !wasArchived;
   if (current !== undefined && !archivedNow) {
     // TD-1714: a summary's "running" is session-liveness, not turn evidence —
     // a refresh must never stamp it over the local state (neither raising a

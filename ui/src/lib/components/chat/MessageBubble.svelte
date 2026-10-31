@@ -226,50 +226,55 @@
 					<button class="action" type="button" onclick={() => (editing = false)}>Cancel</button>
 				</div>
 			{:else if message.text !== ""}<div class="user-md"><Markdown text={message.text} /></div>{/if}
-			{#if !editing && message.userIndex !== undefined}
+			<!-- A row with no number (a chat whose history could not be lined up,
+			     TD-5201) offers only what goes by its turn id: Edit, a branch switch
+			     and Summarize from here name the turn by its number. -->
+			{#if !editing && (message.userIndex !== undefined || message.turnId !== undefined)}
 				<div class="branch">
-					{#if (message.siblingCount ?? 1) > 1}
+					{#if message.userIndex !== undefined}
+						{#if (message.siblingCount ?? 1) > 1}
+							<button
+								class="action"
+								type="button"
+								disabled={turnLive || (message.siblingIndex ?? 0) <= 0}
+								aria-label="Previous branch"
+								onclick={() =>
+									setBranch(message.userIndex!, (message.siblingIndex ?? 0) - 1)}
+							>
+								<Icon name="chevron-left" size={14} />
+							</button>
+							<span class="stamp"
+								>{(message.siblingIndex ?? 0) + 1}/{message.siblingCount}</span
+							>
+							<button
+								class="action"
+								type="button"
+								disabled={turnLive ||
+									(message.siblingIndex ?? 0) + 1 >= (message.siblingCount ?? 1)}
+								aria-label="Next branch"
+								onclick={() =>
+									setBranch(message.userIndex!, (message.siblingIndex ?? 0) + 1)}
+							>
+								<Icon name="chevron-right" size={14} />
+							</button>
+						{/if}
 						<button
 							class="action"
 							type="button"
-							disabled={turnLive || (message.siblingIndex ?? 0) <= 0}
-							aria-label="Previous branch"
-							onclick={() =>
-								setBranch(message.userIndex!, (message.siblingIndex ?? 0) - 1)}
+							disabled={turnLive}
+							aria-label="Edit message"
+							onclick={startEdit}>Edit</button
 						>
-							<Icon name="chevron-left" size={14} />
-						</button>
-						<span class="stamp"
-							>{(message.siblingIndex ?? 0) + 1}/{message.siblingCount}</span
-						>
+						<!-- TD-5109: the model's copy shrinks; this window keeps
+						     showing every message. -->
 						<button
 							class="action"
 							type="button"
-							disabled={turnLive ||
-								(message.siblingIndex ?? 0) + 1 >= (message.siblingCount ?? 1)}
-							aria-label="Next branch"
-							onclick={() =>
-								setBranch(message.userIndex!, (message.siblingIndex ?? 0) + 1)}
+							disabled={turnLive}
+							title="Swap this message and everything after it for a short summary in the model's context. The chat here still shows them."
+							onclick={() => requestCompact("", message.userIndex)}>Summarize from here</button
 						>
-							<Icon name="chevron-right" size={14} />
-						</button>
 					{/if}
-					<button
-						class="action"
-						type="button"
-						disabled={turnLive}
-						aria-label="Edit message"
-						onclick={startEdit}>Edit</button
-					>
-					<!-- TD-5109: the model's copy shrinks; this window keeps
-					     showing every message. -->
-					<button
-						class="action"
-						type="button"
-						disabled={turnLive}
-						title="Swap this message and everything after it for a short summary in the model's context. The chat here still shows them."
-						onclick={() => requestCompact("", message.userIndex)}>Summarize from here</button
-					>
 					<!-- TD-5125: the files only; the conversation stays. The dialog
 					     shows what goes before anything is written. -->
 					{#if message.turnId !== undefined}

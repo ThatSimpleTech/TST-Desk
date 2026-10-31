@@ -107,7 +107,8 @@ def test_ws_url_brackets_ipv6() -> None:
 
 
 def test_the_hello_says_bridge() -> None:
-    assert '"features": ["bridge"]' in hello_frame("k")
+    # A lane serves a window, so it asks for restored history too (TD-5201).
+    assert '"features": ["bridge", "history"]' in hello_frame("k")
 
 
 # ── the two forms ────────────────────────────────────────────────────

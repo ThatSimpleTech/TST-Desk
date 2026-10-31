@@ -424,7 +424,9 @@ the event stream rather than joining it. After the token checks out it also carr
 `machine_id` (`mid_` + 16 hex, minted once into `{user_data_dir}/machine-id`; an identity, not
 a secret) and `desktop_name`, so a hub can tell "the same computer at a new address" and "this
 is me" (TD-5015). `hello.features` is what the client opts into: `"machines"` asks to be a
-viewer, `"bridge"` says this is another computer's hub. Unknown names are ignored.
+viewer, `"bridge"` says this is another computer's hub, and `"history"` asks attach for
+`conversation_history` (TD-5201: the window asks, `tst attach` does not; a hub's lanes ask and the
+hub passes it on only to a viewer that asked). Unknown names are ignored.
 
 A phone that is not paired yet sends `pair` instead of `hello` as its first frame (TD-5014).
 The daemon checks the one-time code, mints that device a key, answers with a bare `pair_ok`
@@ -451,13 +453,15 @@ belong to no session's log and must never advance a client's bookkeeping.
 lossless. If that `seq` is below the on-disk window (`session.log_max_events`), attach sends
 `log_trimmed` and replays from the earliest kept seq. Every streamed chunk is an event, so an older
 chat's window can hold none of its questions: after `log_trimmed`, attach also sends
-`conversation_history`, the messages of the session's saved conversation that come before the
-window (TD-5201, `chat_history.py`). The two line up by tool-call id and by user-turn number from
-the session's start; when they cannot, nothing is sent and the window says the earlier messages
-are no longer stored. The window also drops what still arrives for a session it detached from,
-rather than resuming that session from those frames later (TD-5201). `ping` is the odd one out: it is a
-daemon→client frame with no `seq` at all, deliberately not a `DaemonEvent`, because a liveness
-frame that advanced the sequence would corrupt replay.
+`conversation_history` to a client whose hello asked for `"history"`: the messages of the session's
+saved conversation that come before the window (TD-5201, `chat_history.py`,
+`chat_history_rows.py`). The two line up by a tool-call id that names one message, and by user-turn
+number from the session's start and the turn's words; when they cannot, the frame carries no
+messages and no number, and the window numbers no turn. The window also drops what still arrives for a session it detached from,
+and, for one it attached again, what arrives before the new replay begins (its `log_trimmed` or its
+first event), rather than resuming from those frames or reconnecting over them (TD-5201). `ping` is
+the odd one out: it is a daemon→client frame with no `seq` at all, deliberately not a
+`DaemonEvent`, because a liveness frame that advanced the sequence would corrupt replay.
 
 ### Unknown types
 
@@ -768,7 +772,7 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |
 | `usage_exported` | connection | Where `export_usage` wrote, and how many rows (TD-1706). |
 | `log_trimmed` | connection | Attach asked for a seq the on-disk window dropped. Replay continues from `earliest_seq` (TD-2901). |
-| `conversation_history` | connection | After `log_trimmed`: the saved conversation's messages from before the window (user, assistant with its tool calls, compaction summaries), each part capped, image bytes never sent; `user_turns` numbers the window's turns from the session's start (TD-5201). |
+| `conversation_history` | connection | After `log_trimmed`, to a hello with `"history"`: the saved conversation's messages from before the window (user, assistant with its tool calls but not their results, compaction summaries), each string redacted and then capped, image bytes never sent; `user_turns` numbers the window's turns from the session's start, `null` with no messages when the two could not be lined up (TD-5201). |
 | `artifact_ready` | session | An artifact was recorded for this session (TD-3201; `kind: "sent_file"` with name, size, sha256, caption and tool call id for a sent file, TD-5143). |
 | `artifact_list` | connection | The artifacts `list_artifacts` asked for. |
 | `artifact` | connection | Metadata and path for `open_artifact`. Bytes stay on disk. |

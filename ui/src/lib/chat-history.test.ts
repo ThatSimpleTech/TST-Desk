@@ -36,7 +36,7 @@ function trimmed(sessionId = SID): DaemonEventUnion {
 
 function history(
   messages: HistoryMessage[],
-  userTurns: number,
+  userTurns: number | null,
   truncated = false,
 ): ConversationHistory {
   return {
@@ -84,12 +84,12 @@ function rows(state: ReturnType<typeof boundStore>["state"]): string[] {
 }
 
 describe("a replay that starts past the chat's start (TD-5201)", () => {
-  it("never leaves the pane empty: it says the earlier messages are gone", () => {
+  it("never leaves the pane empty: it says the earlier messages can't be shown", () => {
     const { store, state } = boundStore();
     store.applyEvent(trimmed());
     expect(state.messages).toHaveLength(1);
     expect(state.messages[0]).toMatchObject({ role: "notice", notice: "trimmed" });
-    expect(noticeCopy(state.messages[0])).toBe("Earlier messages in this chat are no longer stored.");
+    expect(noticeCopy(state.messages[0])).toBe("Earlier messages in this chat can't be shown.");
   });
 
   it("puts the saved conversation ahead of the replay, in place of that line", () => {
@@ -99,9 +99,7 @@ describe("a replay that starts past the chat's start (TD-5201)", () => {
       history(
         [
           user("Sketch the beds", 0),
-          reply("Checking.", [
-            { tool_call_id: "c2", name: "read_file", arguments: { path: "notes.md" }, output: "basil" },
-          ]),
+          reply("Checking.", [{ tool_call_id: "c2", name: "read_file", arguments: { path: "notes.md" } }]),
           user("When to water?", 1),
         ],
         2,
@@ -116,7 +114,8 @@ describe("a replay that starts past the chat's start (TD-5201)", () => {
       "assistant: Monday.",
     ]);
     const tool = state.messages[1].tools?.[0];
-    expect(tool).toMatchObject({ toolCallId: "c2", name: "read_file", output: "basil" });
+    expect(tool).toMatchObject({ toolCallId: "c2", name: "read_file" });
+    expect(tool?.output).toBeUndefined();
     expect(tool?.status).toBeUndefined();
     expect(state.messages[1].parts?.map((p) => p.kind)).toEqual(["text", "tool"]);
     expect(state.messages.slice(0, 3).every((m) => m.restored === true && m.complete)).toBe(true);
@@ -240,5 +239,107 @@ describe("a replay that starts past the chat's start (TD-5201)", () => {
     expect(state.userTurnBase).toBe(0);
     store.sendUserMessage("Hi");
     expect(state.messages.at(-1)).toMatchObject({ userIndex: 0 });
+  });
+});
+
+describe("numbers a restored chat's turns the daemon's way (TD-5201)", () => {
+  function summary(folded: number): HistoryMessage {
+    return { role: "summary", text: "Folded.", tools: [], user_index: null, folded_turns: folded };
+  }
+
+  function reset(userIndex: number, content: string, seq: number): DaemonEventUnion {
+    return {
+      type: "conversation_reset",
+      session_id: SID,
+      seq,
+      user_index: userIndex,
+      sibling_index: 1,
+      sibling_count: 2,
+      content,
+    };
+  }
+
+  function numbers(state: ReturnType<typeof boundStore>["state"]): (number | undefined)[] {
+    return state.messages.filter((m) => m.role === "user").map((m) => m.userIndex);
+  }
+
+  it("counts the turns a summary after the last question stands for", () => {
+    // "Summarize from here" on turn 1 folded turns 1-4 in place.
+    const { store, state, sent } = boundStore();
+    store.applyEvent(trimmed());
+    store.applyEvent(history([user("Plan the beds", 0), reply("Three beds."), summary(4)], 5));
+    store.applyEvent(userTurn("Which plants?", "t5", 500));
+    store.applyEvent(done(501));
+    expect(numbers(state)).toEqual([0, 5]);
+    expect(store.retryLastUserMessage()).toBe(true);
+    expect(sent.at(-1)).toMatchObject({ type: "fork_from", user_index: 5 });
+  });
+
+  it("numbers from the cut once an edit below a summary drops it", () => {
+    const { store, state, sent } = boundStore();
+    store.applyEvent(trimmed());
+    store.applyEvent(
+      history([user("First", 0), reply("One."), user("Second", 1), reply("Two."), summary(3)], 5),
+    );
+    store.applyEvent(userTurn("Sixth", "t5", 500));
+    store.applyEvent(done(501));
+    expect(store.forkFrom(1, "Second, edited")).toBe(true);
+    store.applyEvent(reset(1, "Second, edited", 502));
+    store.applyEvent(userTurn("Second, edited", "t6", 503));
+    store.applyEvent(done(504));
+    store.sendUserMessage("Next");
+    expect(numbers(state)).toEqual([0, 1, 2]);
+    expect(sent.at(-1)).toMatchObject({ type: "user_message", content: "Next" });
+  });
+
+  it("forks a restored row in place: the fork's own turn adopts it, no second copy", () => {
+    const { store, state, sent } = boundStore();
+    store.applyEvent(trimmed());
+    store.applyEvent(history([user("Q0", 0), reply("A0"), user("Q1", 1), reply("A1")], 2));
+    expect(store.retryLastUserMessage()).toBe(true);
+    expect(sent.at(-1)).toMatchObject({ type: "fork_from", user_index: 1 });
+    store.applyEvent(reset(1, "Q1", 500));
+    store.applyEvent(userTurn("Q1", "t2", 501));
+    store.applyEvent(delta("A1, again.", 502));
+    store.applyEvent(done(503));
+    expect(rows(state)).toEqual(["user: Q0", "assistant: A0", "user: Q1", "assistant: A1, again."]);
+    expect(numbers(state)).toEqual([0, 1]);
+    // The row is live now: a second Retry forks the same turn again.
+    expect(store.retryLastUserMessage()).toBe(true);
+    expect(sent.at(-1)).toMatchObject({ type: "fork_from", user_index: 1 });
+  });
+
+  it("numbers no turn when the daemon could not line its history up", () => {
+    const { store, state, sent } = boundStore();
+    store.applyEvent(trimmed());
+    store.applyEvent(history([], null));
+    expect(state.messages[0]).toMatchObject({ role: "notice", notice: "trimmed" });
+    store.applyEvent(userTurn("V1", "t1", 500));
+    store.applyEvent(done(501));
+    store.applyEvent(userTurn("V2", "t2", 502));
+    store.applyEvent(done(503));
+    expect(numbers(state)).toEqual([undefined, undefined]);
+    // Retry resends as a new message: there is no number to fork by.
+    expect(store.retryLastUserMessage()).toBe(true);
+    expect(sent.at(-1)).toMatchObject({ type: "user_message", content: "V2" });
+    expect(sent.some((m) => (m as { type: string }).type === "fork_from")).toBe(false);
+    expect(numbers(state)).toEqual([undefined, undefined, undefined]);
+  });
+
+  it("leaves rows it cannot place alone when a replayed fork names a turn", () => {
+    const { store, state } = boundStore();
+    store.applyEvent(trimmed());
+    store.applyEvent(history([], null));
+    store.applyEvent(userTurn("T5", "t5", 500));
+    store.applyEvent(userTurn("T6", "t6", 501));
+    store.applyEvent(userTurn("T7", "t7", 502));
+    store.applyEvent(done(503));
+    store.applyEvent(reset(2, "fork text", 504));
+    expect(rows(state)).toEqual([
+      "notice:trimmed: ",
+      "user: T5",
+      "user: T6",
+      "user: T7",
+    ]);
   });
 });

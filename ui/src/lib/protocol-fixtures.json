@@ -2607,8 +2607,7 @@
             "name": "read_file",
             "arguments": {
               "path": "notes.md"
-            },
-            "output": "tomatoes, basil"
+            }
           }
         ],
         "user_index": null,
@@ -2617,6 +2616,14 @@
     ],
     "user_turns": 3,
     "truncated": true
+  },
+  "conversation_history_unaligned": {
+    "type": "conversation_history",
+    "seq": 1,
+    "session_id": "sess-1",
+    "messages": [],
+    "user_turns": null,
+    "truncated": false
   },
   "artifact_ready": {
     "type": "artifact_ready",

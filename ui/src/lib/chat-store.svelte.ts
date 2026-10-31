@@ -25,6 +25,7 @@ import { bindReviewComments } from "./review-comments.svelte.js";
 import { bindQuestions } from "./question-store.svelte.js";
 import { bindSteeringProposal } from "./steering-proposal-store.svelte.js";
 import { bindSession } from "./timeline-store.svelte.js";
+import { focusSession } from "./session-status.svelte.js";
 import type { SessionState } from "./protocol";
 
 export const chat: ChatState = $state(createChatState());
@@ -47,6 +48,10 @@ const store = createChatStore(
       bindMemoryProposal(sessionId);
       bindSteeringProposal(sessionId);
     },
+    // A bind nobody clicked (TD-5201): the title bar and the task strip follow
+    // the pane. Before, they kept the chat it had left, and at startup they
+    // waited for its replay, then attached it a second time.
+    onAutoBind: (summary) => focusSession(summary.session_id, summary.state, summary.workspace_path),
   },
   chat,
 );

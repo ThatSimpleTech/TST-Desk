@@ -736,12 +736,17 @@ describe("session control messages (TD-1006)", () => {
 // TD-5015: the window opts in as a viewer, learns its daemon's identity from
 // hello_ack, and a stop() that lands mid-open leaves no live socket behind.
 describe("machines (TD-5015)", () => {
-  it("sends hello.features with machines", async () => {
+  it("sends hello.features with machines, and history for older chats (TD-5201)", async () => {
     const h = buildClient();
     await h.client.start();
     h.sockets[0].onopen?.();
     const hello = JSON.parse(h.sockets[0].sent[0]);
-    expect(hello).toEqual({ type: "hello", token: "t", version: 1, features: ["machines"] });
+    expect(hello).toEqual({
+      type: "hello",
+      token: "t",
+      version: 1,
+      features: ["machines", "history"],
+    });
     h.client.stop();
   });
 

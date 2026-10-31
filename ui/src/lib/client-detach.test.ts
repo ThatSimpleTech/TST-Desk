@@ -120,7 +120,7 @@ describe("a replay that lands after its detach (TD-5201)", () => {
     client.stop();
   });
 
-  it("does not reconnect for the rest of a replay cut off mid-way", async () => {
+  it("does not reconnect for the rest of a replay cut off mid-way while another chat is open", async () => {
     const { client, sockets, onEvent } = await connected();
     client.attach("a");
     replay(sockets[0], "a", 1, 3);
@@ -148,6 +148,45 @@ describe("a replay that lands after its detach (TD-5201)", () => {
     client.detach("old");
     sockets[0].push({ type: "error", code: "session_not_running", message: "no", session_id: "old" });
     expect(onEvent).toHaveBeenCalledTimes(1);
+    client.stop();
+  });
+
+  it("does not reconnect when the chat is opened again before the rest of its replay lands", async () => {
+    // Open a, then b, then a again: the daemon still owes the first replay's
+    // tail, and it comes ahead of the new replay, past the cursor the detach
+    // reset. Read as a gap, it used to force a reconnect and a second replay.
+    const { client, sockets, onEvent } = await connected();
+    client.attach("a");
+    replay(sockets[0], "a", 1, 3);
+    client.detach("a");
+    client.attach("b");
+    client.detach("b");
+    client.attach("a");
+    onEvent.mockClear();
+    replay(sockets[0], "a", 4, 5);
+    replay(sockets[0], "a", 1, 5);
+    expect(sockets).toHaveLength(1);
+    expect(client.lastSeq("a")).toBe(5);
+    expect(onEvent.mock.calls.map((call) => call[0].seq)).toEqual([1, 2, 3, 4, 5]);
+    client.stop();
+  });
+
+  it("takes a trimmed log's notice as where the new replay begins", async () => {
+    const { client, sockets } = await connected();
+    client.attach("long");
+    client.detach("long");
+    client.attach("long");
+    replay(sockets[0], "long", 9001, 9003);
+    sockets[0].push({
+      type: "log_trimmed",
+      session_id: "long",
+      seq: 1,
+      requested_from_seq: 1,
+      earliest_seq: 9001,
+    });
+    replay(sockets[0], "long", 9001, 9004);
+    expect(sockets).toHaveLength(1);
+    expect(client.lastSeq("long")).toBe(9004);
     client.stop();
   });
 

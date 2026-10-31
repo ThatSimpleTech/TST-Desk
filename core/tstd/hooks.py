@@ -565,6 +565,11 @@ async def after_tool(
 # Opens the note below. Restored history cuts a user message there (TD-5201).
 HOOK_NOTE_HEADER = "[Context from hooks]"
 
+# Opens what the window shows in place of a message a user_prompt hook
+# blocked (TD-5134). The message never reaches the conversation, so restored
+# history counts no turn for it (TD-5201).
+HOOK_BLOCKED_NOTE = "A hook blocked this message, so it was not sent: "
+
 
 def with_hook_context(content: Any, text: str) -> Any:
     """A user message's *content* with hook context after the person's words."""

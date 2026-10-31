@@ -20,7 +20,9 @@ export interface Hello extends ClientMessage {
   version: number;
   /** Opt-ins (TD-5015, max 8). `"machines"` makes this connection a viewer:
    *  its session_list also carries other computers' rows and it gets
-   *  `machine_list`. An older daemon ignores the field. */
+   *  `machine_list`. `"history"` (TD-5201) asks attach for
+   *  `conversation_history` after `log_trimmed`. An older daemon ignores
+   *  the field. */
   features?: string[];
 }
 
@@ -2503,13 +2505,12 @@ export interface LogTrimmed extends DaemonEvent {
   earliest_seq: number;
 }
 
-/** One tool call on a restored assistant message (TD-5201). `output` is
- *  null when the result is in the replayed window, or never came. */
+/** One tool call on a restored assistant message (TD-5201): the call only,
+ *  never what it returned. The replayed window carries its own results. */
 export interface HistoryTool {
   tool_call_id: string;
   name: string;
   arguments: Record<string, unknown>;
-  output: string | null;
 }
 
 /** One message from before the replayed window, as the saved conversation
@@ -2525,15 +2526,16 @@ export interface HistoryMessage {
 }
 
 /** The conversation from before the replayed window (TD-5201), sent after
- *  `log_trimmed` when the saved conversation has it. Connection-scoped:
+ *  `log_trimmed` to a hello that asked for `"history"`. Connection-scoped:
  *  seq fixed at 1, never in the session log. `user_turns` is how many user
- *  turns come before the window's first replayed one; `truncated` says
- *  older messages were left out. */
+ *  turns come before the window's first replayed one; null, with no
+ *  messages, when the two could not be lined up, so no turn gets a number.
+ *  `truncated` says older messages were left out. */
 export interface ConversationHistory extends DaemonEvent {
   type: "conversation_history";
   session_id: string;
   messages: HistoryMessage[];
-  user_turns: number;
+  user_turns: number | null;
   truncated: boolean;
 }
 

@@ -63,10 +63,12 @@ class Bridge:
         jitter: Callable[[], float] = random.random,
         link_sleep: Sleep = asyncio.sleep,
         timings: Timings = DEFAULT_TIMINGS,
+        wants_history: Callable[[Any], bool] | None = None,
     ) -> None:
         self.registry = registry
         self._machine_id = machine_id
         self._deliver = deliver
+        self._wants_history = wants_history
         self._on_rows = on_rows
         self._on_machines = on_machines
         self.policy = policy
@@ -100,6 +102,10 @@ class Bridge:
     async def deliver(self, viewer: Any, payload: str) -> None:
         with contextlib.suppress(Exception):
             await self._deliver(viewer, payload)
+
+    def wants_history(self, viewer: Any) -> bool:
+        """Whether *viewer*'s hello asked for ``conversation_history`` (TD-5201)."""
+        return self._wants_history is not None and self._wants_history(viewer)
 
     def unreachable(
         self,
