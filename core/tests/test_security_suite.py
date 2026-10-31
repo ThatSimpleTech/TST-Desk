@@ -1209,11 +1209,18 @@ def _to_floor(field: Any, value: Any) -> Any:
     return value
 
 
+#: Models being filled right now, outermost first. A recursive model (a
+#: schema node that holds nodes, TD-5203) would otherwise be filled forever.
+_FILLING: set[type[BaseModel]] = set()
+
+
 def _canary_kwargs(cls: type[BaseModel]) -> dict[str, Any]:
     """Constructor kwargs with PLANTED in every string field that accepts it.
 
     A field that rejects the canary under validation is shape-constrained —
-    it cannot carry a secret — and excludes itself.
+    it cannot carry a secret — and excludes itself. A model met again inside
+    itself is built from its required fields only: its text fields already
+    carry PLANTED one level up, so every field is still probed once.
     """
     kwargs = {
         name: _to_floor(field, _synth(field.annotation, canary=False))
@@ -1221,15 +1228,21 @@ def _canary_kwargs(cls: type[BaseModel]) -> dict[str, Any]:
         if field.is_required()
     }
     cls(**kwargs)  # synthesizer sanity: a failure here is a bug in this test
-    for name, field in cls.model_fields.items():
-        if not _carries_text(field.annotation):
-            continue
-        probe = {**kwargs, name: _to_floor(field, _synth(field.annotation, canary=True))}
-        try:
-            cls(**probe)
-        except ValidationError:
-            continue
-        kwargs = probe
+    if cls in _FILLING:
+        return kwargs
+    _FILLING.add(cls)
+    try:
+        for name, field in cls.model_fields.items():
+            if not _carries_text(field.annotation):
+                continue
+            probe = {**kwargs, name: _to_floor(field, _synth(field.annotation, canary=True))}
+            try:
+                cls(**probe)
+            except ValidationError:
+                continue
+            kwargs = probe
+    finally:
+        _FILLING.discard(cls)
     return kwargs
 
 
