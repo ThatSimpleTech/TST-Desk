@@ -18818,13 +18818,15 @@ Constellations, Fireflies, plus Motion and Click ripples switches.
   canvas host, `AmbientCanvas`, which owns sizing (pixel ratio capped at
   1.5 behind the window and 2 in a preview tile), the frame loop and theme
   switches. The loop (`backgrounds/loop.ts`) paints at most its cap,
-  schedules nothing while stopped or while the document is hidden, and
-  keeps its own clock that only advances while frames run, so a pause
-  freezes the scene instead of jumping it. Caps follow how fast each one
-  moves: Deep space 30, Fireflies 24, Aurora and Constellations 20, Galaxy
-  15, Classic's dust 8. Soft light that moves is drawn at a fraction of the
-  resolution (the galaxy's glow at half, the aurora at 0.3); soft light
-  that never moves is a CSS gradient.
+  schedules nothing while stopped, while the document is hidden or (since
+  the follow-up below) while another window has the focus, and keeps its
+  own clock that only advances while frames run, so a pause freezes the
+  scene instead of jumping it. Caps follow how fast each one moves: Deep
+  space 30, Fireflies 24, Aurora and Constellations 20, Galaxy 15, Classic
+  12 (its orbit, header bands and dust on one tick since the follow-up;
+  before it, the dust alone at 8). Soft light that moves is drawn at a
+  fraction of the resolution (the galaxy's glow at half, the aurora at
+  0.3); soft light that never moves is a CSS gradient.
 - Theme: every colour is a `--bg-*` token with a light and a dark value.
   `--bg-ambient-blend` is `lighter` in dark (light is added) and
   `source-over` in light, where the space backgrounds are inked in warm
@@ -18872,12 +18874,101 @@ already covers "nothing moves").
   Chromium and WebKitGTK also focus a clicked button, which kept a second
   copy of the background running while Settings stayed open.
 - Classic's dust paints 8 times a second, not 30: it drifts under 2 px a
-  second, and each paint repaints the whole chat pane in software.
+  second, and each paint repaints the whole chat pane in software. (The
+  follow-up below moved it onto Classic's shared tick.)
 
 **Rejected in review:** moving the galaxy's core to the top-right corner (at
 common window sizes it lands on the Activity pane's text); a second veil in
 the Activity pane matched to the chat pane's (two shapes to keep in step);
 dimming the backgrounds' own tokens instead (the tiles would go faint too).
-Left for a follow-up story: Classic's orbit halo and header bands are CSS
-animations with no frame cap and keep a software-rendered WebKitGTK page
-near a whole core, as before this story (see the TD-5202 backlog entry).
+Classic's orbit halo and header bands stayed CSS animations with no frame
+cap, keeping a software-rendered WebKitGTK page near a whole core; the
+follow-up below put them on a capped tick.
+
+**Follow-up (2026-10-31): Classic on one capped tick; backgrounds rest while
+unfocused.** WebKitGTK paints in software (hardware acceleration policy
+"never") on machines without GL, a remote desktop for one. There every frame
+in which anything moves repaints the whole dirty area on the main thread,
+the app drawn over the background included, and Classic's six uncapped CSS
+animations (orbit turn, wash breathing, two pulses, two band drifts, each on
+frames of its own) kept the page process at about 96% of a core.
+
+**Decision:**
+- One shared loop drives all of Classic: `createSharedLoop` in
+  `backgrounds/loop.ts`, its instance `classicTick` in
+  `backgrounds/classic.ts`, at most 12 ticks a second. The orbit writes its
+  pose as inline styles (turn and scale on the field, opacity on the wash,
+  ring dots and anchor), each band a `--drift` custom property, and the dust
+  paints its canvas, all in the same frame, so the window repaints once a
+  tick. `orbitPose` and `bandDrift` are the old keyframes and timing
+  functions, so at any moment the pose is what the CSS drew then. Motion off
+  and reduced motion drop the styles and show the stylesheet's resting pose,
+  the old still look; a hidden or unfocused window keeps the current pose.
+- 12, not 10 or 8: the outermost ring travels about 48 px a second at
+  1200×800, so 12 ticks step a rim dot about 4 px, less than the dot itself
+  (its trail stays continuous); at 10 the steps start to show. WebKitGTK's
+  frame timer runs a little fast (about 62 Hz), so five frames come just
+  under the 12-a-second interval and the loop paints about 10 times a
+  second in practice.
+- The header bands are blurred once, not on every repaint: each band keeps
+  its box and drift and carries a canvas, 96 px (2σ) bigger on every side at
+  half the pixel ratio, into which `backgrounds/band-glow.ts` draws the
+  ellipse blurred by the SVG spec's three box passes. That is what WebKit
+  draws for CSS `blur()`: measured in WebKitGTK, within 0.7/255 of the old
+  band. The canvas is painted on mount, on a resize or a new pixel ratio,
+  and on a theme switch; the band's old colour mix and opacity are its
+  strength, so there is no transparency layer.
+- The wash is sized to its gradient (a 58.8vmin square at 48% 47%, the same
+  gradient), so a repaint fills that square instead of the window.
+- Light theme: the orbit's 0.55 is folded into the `--bg-orbit-*` alphas
+  instead of an opacity on the full-window layer, which cost a full-window
+  transparency layer per repaint. The glow keeps its alpha: a drop shadow
+  takes its strength from the dots it shadows. `--bg-orbit-opacity` is gone.
+- Out of focus: `windowFrameHost` rests while another window has the focus
+  as well as while the document is hidden (`restUnfocused`, on by default).
+  It follows the window's `blur` and `focus` events, starting from
+  `document.hasFocus()`, and the loop treats it like a hidden document:
+  nothing scheduled, the clock frozen, the last frame left on screen, so it
+  carries on from the same spot. The click ripples finish their ring (under
+  a second), and the Settings preview tiles follow only their pointer and
+  keyboard-focus rule: the tile grid marks its subtree with a Svelte context
+  (`backgrounds/preview.ts`) and those loops do not rest out of focus.
+- Measured in WebKitGTK 2.52 under a bare Xvfb (no window manager, so the
+  harness presents the window and records `document.hasFocus()` throughout),
+  production build, mock UI-walk daemon, CPU of the page process over 15 s:
+
+  | Run | Before | After |
+  |---|---|---|
+  | Classic dark, 1200×800 | 96.2% | 23.3% |
+  | Classic light, 1200×800 | 96.9% | 23.0% |
+  | Classic dark, 1920×1080 | 94.4% | 34.1% |
+  | Classic light, 1920×1080 | 94.8% | 32.4% |
+  | Classic, window not focused | 94.8% | 0.1% |
+  | Galaxy, 1200×800 (not focused) | 37.4% | 37.1% (0.1%) |
+  | Off | 0.1% | 0.1% |
+
+  The window changed 17–43 times a second before and 10 after; a
+  zero-delay timer ran after 22/38 ms (median/95th percentile) before and
+  8/27 after (8/8 with Off). At 10 ticks Classic measured about 20% at
+  1200×800. Still frames of the old CSS and the new tick at the same moment
+  differ by at most 4/255 at both sizes in both themes, header bands
+  included. In the 1920×1080 runs the bands (3–5 points) and the wash
+  (2–4) cost most of what is left beyond the repaint itself; the opacities
+  and the drop shadow cost nothing measurable.
+
+**Rejected:** stepped CSS keyframes started on one frame (the review's
+prototype): CSS time keeps running through a pause, so a resumed animation
+jumps, and the steps line up only if every animation starts on the same
+frame. A loop per layer at the same cap: the layers land on different
+frames and each repaints the window. Writing the pose as custom properties
+on the root: every element inherits them, so each tick would restyle the
+page. A pre-blurred radial gradient for the bands: it matched within 5/255
+in a 616 px chat pane but up to 25/255 at 1920×1080, where a band is three
+times wider than tall and its blur has a flat top with soft edges that a
+gradient's stretched falloff cannot draw (the bands came out rounder).
+Canvas `filter` (not in WebKitGTK 2.52) and canvas shadows (unusable there)
+for drawing the blur. Snapping to the resting pose when focus goes, as
+Motion off does: a visible jump every time focus moves. Resting the preview
+tiles too: a tile moves only under the pointer or keyboard focus, which is
+already someone looking at it. Freezing a ripple half-way: it would sit on
+the screen until focus came back.

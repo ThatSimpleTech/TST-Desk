@@ -2,8 +2,9 @@
 // canvas host, AmbientCanvas.svelte (TD-5202).
 
 export interface Scene {
-	/** Rebuild for a new size in CSS px. Allocate here, never in draw. */
-	resize(width: number, height: number): void;
+	/** Rebuild for a new size in CSS px; `scale` is backing-store pixels per
+	 *  CSS px. Allocate here, never in draw. */
+	resize(width: number, height: number, scale: number): void;
 	/** Re-read colours from the design tokens: on mount and on every theme switch. */
 	recolor(read: (token: string) => string, doc: Document): void;
 	/** Paint the frame at `clockMs`; the context is already in CSS px. */

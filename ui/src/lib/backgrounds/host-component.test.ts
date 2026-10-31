@@ -6,9 +6,10 @@
 // paint and no frames; switching tears the old loop down; ripples come and
 // go with their switch; the veil is one sheet over the window layer and
 // never in the chat pane; a window layer's backing store is capped at 1.5×
-// and follows a move to a screen of another density. Canvas calls go to a
-// recording fake context — jsdom has no 2D canvas — and animation frames
-// to a queue the test drives.
+// and follows a move to a screen of another density (Classic's one loop and
+// the rest out of focus are classic-component.test.ts). Canvas calls go to a
+// recording fake context — jsdom has no 2D canvas — and animation frames to
+// a queue the test drives, in a focused window.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
@@ -26,6 +27,8 @@ let cancelled: number;
 let paints: string[];
 let mounted: ReturnType<typeof mount>[];
 let target: HTMLElement;
+let now: number;
+let hasFocus: ReturnType<typeof vi.spyOn>;
 
 /** A 2D context that records what is drawn and does nothing. */
 function fakeContext(): CanvasRenderingContext2D {
@@ -35,6 +38,8 @@ function fakeContext(): CanvasRenderingContext2D {
 		get(store, prop) {
 			if (prop in store) return store[prop];
 			if (prop === "createRadialGradient" || prop === "createLinearGradient") return () => gradient;
+			if (prop === "createImageData")
+				return (w: number, h: number) => ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) });
 			return () => paints.push(String(prop));
 		},
 		set(store, prop, value) {
@@ -49,18 +54,23 @@ function render(layer: "window" | "chat"): void {
 	flushSync();
 }
 
-/** Run the queued animation frames `count` times, 1/60 s apart. */
+/** Run the queued animation frames `count` times, 1/60 s apart, on a clock
+ *  that only moves forward, then let Svelte write what they changed. */
 function runFrames(count: number): void {
 	for (let i = 0; i < count; i++) {
+		now += 1000 / 60;
 		const queued = [...frames.values()];
 		frames.clear();
-		for (const run of queued) run(performance.now() + i * 16.7);
+		for (const run of queued) run(now);
 	}
+	flushSync();
 }
 
 beforeEach(() => {
 	frames = new Map();
 	nextFrame = 1;
+	now = 1000;
+	hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
 	requested = 0;
 	cancelled = 0;
 	paints = [];
@@ -138,16 +148,6 @@ describe("a moving background", () => {
 		flushSync();
 		expect(cancelled).toBeGreaterThan(0);
 		expect(frames.size).toBe(1);
-	});
-
-	it("paints Classic's slow dust at most 8 times a second", () => {
-		setBackground("classic");
-		render("chat");
-		paints = [];
-		runFrames(60);
-		const clears = paints.filter((call) => call === "clearRect").length;
-		expect(clears).toBeGreaterThanOrEqual(6);
-		expect(clears).toBeLessThanOrEqual(9);
 	});
 
 	it("gives every background but Off a window layer", () => {

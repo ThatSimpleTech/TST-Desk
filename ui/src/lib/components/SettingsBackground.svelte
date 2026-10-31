@@ -11,8 +11,12 @@
 	//
 	// Only keyboard focus counts: Chromium and WebKitGTK also focus a button
 	// that is clicked, and a clicked tile would otherwise keep a second copy
-	// of the window's background running until focus moved on.
+	// of the window's background running until focus moved on. That rule is
+	// the whole rule for a tile: the window's own background also holds
+	// still while another window has the focus, and a tile does not
+	// (markPreviews).
 	import { BACKGROUNDS, backgroundInfo, type BackgroundId } from '../backgrounds/catalog';
+	import { markPreviews } from '../backgrounds/preview';
 	import {
 		background,
 		setBackground,
@@ -21,6 +25,8 @@
 	} from '../backgrounds/store.svelte.js';
 	import BackgroundOrbit from '../BackgroundOrbit.svelte';
 	import { WINDOW_LAYERS } from './backgrounds/registry';
+
+	markPreviews();
 
 	let hovered: BackgroundId | null = $state(null);
 	let focused: BackgroundId | null = $state(null);

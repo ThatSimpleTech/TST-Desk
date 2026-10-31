@@ -6,7 +6,8 @@
 // Click ripples switches save theirs — standing down under Off, and
 // explaining themselves when the OS asks for less motion. A preview moves
 // only under the pointer or keyboard focus: a click's focus does not keep
-// a second copy of the background running.
+// a second copy of the background running. That rule is the tile's whole
+// rule: it does not also rest when the window loses focus.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
@@ -28,11 +29,12 @@ function radio(name: string): HTMLButtonElement {
 	return found;
 }
 
-/** The Classic preview's orbit holds still unless its tile is live. */
+/** The Classic preview's orbit shows its resting pose (no turn written)
+ *  unless its tile is live. */
 function classicStill(): boolean {
-	const orbit = radio("Classic").querySelector(".orbit");
-	if (!orbit) throw new Error("no Classic preview");
-	return orbit.classList.contains("orbit--still");
+	const field = radio("Classic").querySelector<HTMLElement>(".orbit .field");
+	if (!field) throw new Error("no Classic preview");
+	return field.style.transform === "";
 }
 
 /** Answer :focus-visible for a tile the way the browser would: true for
@@ -147,6 +149,37 @@ describe("the previews", () => {
 		flushSync();
 		expect(document.activeElement).toBe(tile);
 		expect(classicStill()).toBe(true);
+	});
+
+	it("keep moving under the pointer when the window loses focus: the tile's rule is the whole rule", () => {
+		const queue = new Map<number, FrameRequestCallback>();
+		let next = 1;
+		vi.spyOn(window, "requestAnimationFrame").mockImplementation((run) => {
+			queue.set(next, run);
+			return next++;
+		});
+		vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => {
+			queue.delete(id);
+		});
+		const focused = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+		radio("Classic").dispatchEvent(new Event("pointerenter"));
+		flushSync();
+		expect(queue.size).toBe(1);
+		focused.mockReturnValue(false);
+		window.dispatchEvent(new Event("blur"));
+		flushSync();
+		expect(queue.size).toBe(1);
+		const field = radio("Classic").querySelector<HTMLElement>(".orbit .field");
+		const before = field?.style.transform;
+		let now = 0;
+		for (let i = 0; i < 12; i++) {
+			now += 1000 / 60;
+			const runs = [...queue.values()];
+			queue.clear();
+			for (const run of runs) run(now);
+		}
+		flushSync();
+		expect(field?.style.transform).not.toBe(before);
 	});
 
 	it("bind their tiles without a dev-mode warning", () => {

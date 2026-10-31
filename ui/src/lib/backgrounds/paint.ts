@@ -28,6 +28,11 @@ export function canvasScale(devicePixelRatio: number | undefined, resolution = 1
 	return Math.max(Math.min(dpr, most) * res, 0.05);
 }
 
+/** Backing-store pixels for a length in CSS px at `scale`, as fitCanvas sizes them. */
+export function backingPixels(cssPx: number, scale: number): number {
+	return Math.max(1, Math.round(cssPx * scale));
+}
+
 /** Size the backing store for `width`×`height` CSS px. Returns whether it
  *  changed: resizing a canvas clears it, so callers repaint after. */
 export function fitCanvas(
@@ -36,8 +41,8 @@ export function fitCanvas(
 	height: number,
 	scale: number,
 ): boolean {
-	const w = Math.max(1, Math.round(width * scale));
-	const h = Math.max(1, Math.round(height * scale));
+	const w = backingPixels(width, scale);
+	const h = backingPixels(height, scale);
 	if (canvas.width === w && canvas.height === h) return false;
 	canvas.width = w;
 	canvas.height = h;

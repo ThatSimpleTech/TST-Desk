@@ -1,16 +1,17 @@
 // The shared background frame loop (TD-5202), driven by a fake host so
-// frame timing is exact: nothing scheduled while stopped or hidden, a
+// frame timing is exact: nothing scheduled while stopped or resting, a
 // 30 fps cap on any display, a clock that freezes on a pause, and nothing
-// left behind after dispose.
+// left behind after dispose. One loop shared by several layers steps them
+// on the same frames (the window host is window-host.test.ts).
 
 import { describe, expect, it } from "vitest";
-import { createLoop, paintDue, type FrameHost } from "./loop";
+import { createLoop, createSharedLoop, paintDue, type FrameHost } from "./loop";
 
 class FakeHost implements FrameHost {
 	private next = 1;
 	private queue = new Map<number, (t: number) => void>();
-	private visibility = new Set<() => void>();
-	isHidden = false;
+	private watchers = new Set<() => void>();
+	isResting = false;
 	requested = 0;
 	cancelled = 0;
 
@@ -25,13 +26,13 @@ class FakeHost implements FrameHost {
 		if (this.queue.delete(id)) this.cancelled++;
 	}
 
-	hidden(): boolean {
-		return this.isHidden;
+	resting(): boolean {
+		return this.isResting;
 	}
 
-	onVisibility(run: () => void): () => void {
-		this.visibility.add(run);
-		return () => this.visibility.delete(run);
+	onRestChange(run: () => void): () => void {
+		this.watchers.add(run);
+		return () => this.watchers.delete(run);
 	}
 
 	/** Fire every queued frame at `time`. */
@@ -49,9 +50,9 @@ class FakeHost implements FrameHost {
 		return from + frames * step;
 	}
 
-	setHidden(hidden: boolean): void {
-		this.isHidden = hidden;
-		for (const run of this.visibility) run();
+	setResting(resting: boolean): void {
+		this.isResting = resting;
+		for (const run of this.watchers) run();
 	}
 
 	pending(): number {
@@ -59,7 +60,7 @@ class FakeHost implements FrameHost {
 	}
 
 	listeners(): number {
-		return this.visibility.size;
+		return this.watchers.size;
 	}
 }
 
@@ -143,27 +144,27 @@ describe("createLoop", () => {
 		expect(loop.clockMs() - frozen).toBeLessThan(200);
 	});
 
-	it("pauses while the document is hidden and resumes when it is shown", () => {
+	it("pauses while the host rests and resumes when it wakes", () => {
 		const host = new FakeHost();
 		const { loop, paints } = loopOn(host);
 		loop.run(true);
 		let t = host.play(60, 1);
-		host.setHidden(true);
+		host.setResting(true);
 		expect(host.pending()).toBe(0);
 		const painted = paints.length;
 		t = host.play(60, 3, t);
 		expect(paints.length).toBe(painted);
-		host.setHidden(false);
+		host.setResting(false);
 		expect(host.pending()).toBe(1);
 		host.play(60, 1, t);
 		expect(paints.length).toBeGreaterThan(painted + 25);
 	});
 
-	it("does not start frames when shown while stopped", () => {
+	it("does not start frames when woken while stopped", () => {
 		const host = new FakeHost();
 		loopOn(host);
-		host.setHidden(true);
-		host.setHidden(false);
+		host.setResting(true);
+		host.setResting(false);
 		expect(host.requested).toBe(0);
 	});
 
@@ -213,5 +214,107 @@ describe("createLoop", () => {
 		loop.paintNow();
 		host.play(60, 1);
 		expect(paints.length).toBe(painted);
+	});
+});
+
+describe("createSharedLoop", () => {
+	function shared(fps = 12) {
+		const host = new FakeHost();
+		return { host, tick: createSharedLoop(() => host, { fps }) };
+	}
+
+	function layer(tick: ReturnType<typeof createSharedLoop>) {
+		const paints: number[] = [];
+		const loop = tick.join((clock) => paints.push(clock));
+		return { loop, paints };
+	}
+
+	it("steps every running layer on the same frames, at the same clock", () => {
+		const { host, tick } = shared();
+		const a = layer(tick);
+		const b = layer(tick);
+		a.loop.run(true);
+		b.loop.run(true);
+		host.play(60, 2);
+		expect(a.paints).toEqual(b.paints);
+		expect(a.paints.length).toBeGreaterThanOrEqual(23);
+		expect(a.paints.length).toBeLessThanOrEqual(25);
+	});
+
+	it("keeps one frame in flight however many layers run", () => {
+		const { host, tick } = shared();
+		for (let i = 0; i < 3; i++) layer(tick).loop.run(true);
+		expect(host.pending()).toBe(1);
+		host.play(60, 1);
+		expect(host.pending()).toBe(1);
+		expect(host.requested).toBe(61);
+	});
+
+	it("runs while any layer runs, and paints only the running ones", () => {
+		const { host, tick } = shared();
+		const a = layer(tick);
+		const b = layer(tick);
+		a.loop.run(true);
+		b.loop.run(true);
+		let t = host.play(60, 1);
+		a.loop.run(false);
+		const aPainted = a.paints.length;
+		const bPainted = b.paints.length;
+		t = host.play(60, 1, t);
+		expect(a.paints.length).toBe(aPainted);
+		expect(b.paints.length).toBeGreaterThan(bPainted + 10);
+		expect(a.loop.running()).toBe(false);
+		expect(b.loop.running()).toBe(true);
+	});
+
+	it("schedules nothing once every layer stops, and carries on from the frozen clock", () => {
+		const { host, tick } = shared();
+		const a = layer(tick);
+		const b = layer(tick);
+		a.loop.run(true);
+		b.loop.run(true);
+		let t = host.play(60, 1);
+		a.loop.run(false);
+		b.loop.run(false);
+		expect(host.pending()).toBe(0);
+		const frozen = a.loop.clockMs();
+		t = host.play(60, 5, t);
+		a.loop.run(true);
+		host.play(60, 0.05, t);
+		expect(a.paints.at(-1)).toBe(frozen);
+	});
+
+	it("paints one layer on request, at the clock the others are at", () => {
+		const { host, tick } = shared();
+		const a = layer(tick);
+		a.loop.run(true);
+		host.play(60, 1);
+		// A layer mounted later (the chat pane after the window) joins in step.
+		const late = layer(tick);
+		late.loop.paintNow();
+		expect(late.paints).toEqual([a.loop.clockMs()]);
+		expect(a.paints.at(-1)).toBe(a.loop.clockMs());
+		expect(host.requested).toBe(61);
+	});
+
+	it("goes with its last layer, listeners and all, and starts a fresh clock on the next join", () => {
+		const { host, tick } = shared();
+		const a = layer(tick);
+		const b = layer(tick);
+		a.loop.run(true);
+		b.loop.run(true);
+		host.play(60, 1);
+		a.loop.dispose();
+		expect(host.pending()).toBe(1);
+		expect(host.listeners()).toBe(1);
+		b.loop.dispose();
+		expect(host.pending()).toBe(0);
+		expect(host.listeners()).toBe(0);
+		// A disposed layer stays dead.
+		a.loop.run(true);
+		a.loop.paintNow();
+		expect(host.pending()).toBe(0);
+		const next = layer(tick);
+		expect(next.loop.clockMs()).toBe(0);
 	});
 });

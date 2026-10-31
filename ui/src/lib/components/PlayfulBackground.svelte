@@ -4,13 +4,17 @@
 	// the Claude Code starfield look. Pure maths lives in playful-bg.ts.
 	//
 	// Since TD-5202 it is Classic's dust inside the chat pane, painted
-	// through the shared AmbientCanvas (frame cap, paused while hidden, a
-	// still frame when motion is off) instead of its own loop. The click
-	// ripples it used to draw are RippleLayer's now, shared by every
-	// background, and look the same. Specks read the ink tokens so they stay
-	// neutral on both grounds; the accent stays reserved for ripples.
+	// through the shared AmbientCanvas (a still frame when motion is off,
+	// resting while the window is hidden or out of focus) on Classic's one
+	// tick with the orbit and the header bands: it drifts under 2 px a
+	// second, so the tick is plenty, and painting on the frames the orbit
+	// already repaints costs no repaint of its own. The click ripples it used
+	// to draw are RippleLayer's now, shared by every background, and look the
+	// same. Specks read the ink tokens so they stay neutral on both grounds;
+	// the accent stays reserved for ripples.
 	import AmbientCanvas from "./backgrounds/AmbientCanvas.svelte";
 	import { driftY, dustField, twinkleAlpha, type Dust } from "../playful-bg";
+	import { classicTick } from "../backgrounds/classic";
 	import { cssColor, tokenColor } from "../backgrounds/paint";
 	import type { BackgroundProps, Scene } from "../backgrounds/scene";
 
@@ -19,11 +23,6 @@
 	/** The brightest specks read in ink (white on dark), the quiet majority
 	 *  in its secondary — the reference field is neutral, not accent. */
 	const isBright = (s: Dust): boolean => s.bright > 0.75;
-	/** The dust drifts under 2 px a second and twinkles over seconds, so 8
-	 *  paints a second move a speck a fifth of a pixel each. Every paint
-	 *  repaints the whole chat pane where the canvas is drawn in software,
-	 *  so the slowest layer gets the lowest cap. */
-	const FPS = 8;
 
 	let specks: Dust[] = [];
 	/** specks[0, split) are quiet, the rest bright: one colour switch a frame. */
@@ -65,4 +64,4 @@
 	};
 </script>
 
-<AmbientCanvas {scene} {animate} {fill} fps={FPS} />
+<AmbientCanvas {scene} {animate} {fill} tick={classicTick} />

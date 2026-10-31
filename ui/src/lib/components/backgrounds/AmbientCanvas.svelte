@@ -2,15 +2,16 @@
 	// The canvas every drawn background paints into (TD-5202). It owns what
 	// they would otherwise each repeat: sizing the backing store to the box
 	// at a capped pixel ratio (lower behind the whole window than in a
-	// preview tile), the shared frame loop (frame cap, paused while the
-	// document is hidden, nothing scheduled when still), repainting on a
-	// resize or a move to a screen of another density, and recolouring on a
-	// theme switch. A background hands it a Scene and decides nothing else
-	// about frames.
+	// preview tile), the shared frame loop (frame cap; resting while the
+	// document is hidden or, behind the window, while another window has the
+	// focus; nothing scheduled when still), repainting on a resize or a move
+	// to a screen of another density, and recolouring on a theme switch. A
+	// background hands it a Scene and decides nothing else about frames.
 	//
 	// Canvas 2D only: some machines this runs on have no WebGL.
 	import { untrack } from "svelte";
-	import { createLoop, windowFrameHost, type Loop } from "../../backgrounds/loop";
+	import { createLoop, windowFrameHost, type Loop, type SharedLoop } from "../../backgrounds/loop";
+	import { inPreview } from "../../backgrounds/preview";
 	import {
 		DPR_CAP,
 		WINDOW_DPR_CAP,
@@ -31,9 +32,17 @@
 		resolution?: number;
 		/** Most frames a second; null for the display's own rate. */
 		fps?: number | null;
+		/** Paint on this shared loop's frames instead of a loop of its own,
+		 *  so the canvas steps with the other layers on it (Classic's dust
+		 *  with its orbit and header bands); `fps` is then the loop's. */
+		tick?: SharedLoop;
 	}
 
-	let { scene, animate, fill = "window", resolution = 1, fps = 30 }: Props = $props();
+	let { scene, animate, fill = "window", resolution = 1, fps = 30, tick }: Props = $props();
+
+	/** A preview tile moves while the pointer or keyboard focus is on it, so
+	 *  its loop keeps going when the window loses focus. */
+	const preview = inPreview();
 
 	let host: HTMLDivElement | undefined = $state();
 	let canvas: HTMLCanvasElement | undefined = $state();
@@ -43,6 +52,7 @@
 		const current = scene;
 		const res = resolution;
 		const cap = fps;
+		const shared = tick;
 		const most = fill === "window" ? WINDOW_DPR_CAP : DPR_CAP;
 		if (!host || !canvas) return;
 		const box = host;
@@ -64,16 +74,17 @@
 			height = h;
 			scale = s;
 			fitCanvas(surface, w, h, s);
-			current.resize(w, h);
+			current.resize(w, h, s);
 		}
 
-		const frames = createLoop(windowFrameHost(window), {
-			fps: cap,
-			paint(clockMs) {
-				ctx.setTransform(scale, 0, 0, scale, 0, 0);
-				current.draw(ctx, clockMs);
-			},
-		});
+		const paint = (clockMs: number): void => {
+			ctx.setTransform(scale, 0, 0, scale, 0, 0);
+			current.draw(ctx, clockMs);
+		};
+
+		const frames = shared
+			? shared.join(paint)
+			: createLoop(windowFrameHost(window, { restUnfocused: !preview }), { fps: cap, paint });
 		loop = frames;
 		measure();
 		current.recolor(read, document);

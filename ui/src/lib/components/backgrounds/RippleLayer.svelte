@@ -7,9 +7,11 @@
 	// Frames run only while a ring is alive, at the display's own rate — a
 	// ring crosses 260 px in under a second, so the 30 fps ambient cap would
 	// show its steps — and stop when the last one fades. Idle, this layer
-	// schedules nothing. The canvas never takes pointer events: clicks are
-	// heard on window in the capture phase, so a ring lights under whatever
-	// was clicked, buttons and all.
+	// schedules nothing. A ring finishes even if the window loses focus on
+	// the way: frozen half-way it would sit there until focus came back, and
+	// it is gone in under a second. The canvas never takes pointer events:
+	// clicks are heard on window in the capture phase, so a ring lights under
+	// whatever was clicked, buttons and all.
 	import { pushRipple, rippleAlpha, rippleAt, rippleRadius, stepRipples, type Ripple } from "../../playful-bg";
 	import { createLoop, windowFrameHost } from "../../backgrounds/loop";
 	import { canvasScale, cssColor, fitCanvas, tokenColor, tokenReader } from "../../backgrounds/paint";
@@ -38,7 +40,7 @@
 			fitCanvas(surface, width, height, scale);
 		}
 
-		const frames = createLoop(windowFrameHost(window), {
+		const frames = createLoop(windowFrameHost(window, { restUnfocused: false }), {
 			fps: null,
 			paint(clockMs) {
 				ripples = stepRipples(ripples, Math.min((clockMs - lastClock) / 1000, 0.05));

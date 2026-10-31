@@ -50,14 +50,18 @@
 	/* ---- Ambient background — "Orbit Halo" (light) ----
 	   The orbit field layers over --color-ground; the base is not painted
 	   here so the existing page ground shows through. Light keeps it faint and
-	   warm — dot in warm taupe, the anchor dot in rust, glow barely there.
-	   --bg-orbit-opacity is the global multiplier the component reads. */
-	--bg-orbit-dot:       #c9a98f;
-	--bg-orbit-dot-hot:   #b4532a;
+	   warm — dot in warm taupe (#c9a98f), the anchor dot in rust (#b4532a),
+	   glow barely there — at 0.55 of full strength, folded into each alpha
+	   rather than set as one opacity on the layer: where WebKitGTK paints in
+	   software, an opacity on the full-window layer costs a full-window
+	   transparency layer on every repaint. The glow keeps its alpha: a drop
+	   shadow takes its strength from the dots it shadows, which carry the
+	   0.55 already. */
+	--bg-orbit-dot:       rgb(201 169 143 / 0.55);
+	--bg-orbit-dot-hot:   rgb(180 83 42 / 0.55);
 	--bg-orbit-glow:      rgb(180 83 42 / 0.10);
-	--bg-orbit-wash:      rgb(94 88 74 / 0.05);
-	--bg-orbit-vignette:  rgb(25 24 23 / 0.06);
-	--bg-orbit-opacity:   0.55;
+	--bg-orbit-wash:      rgb(94 88 74 / 0.0275);
+	--bg-orbit-vignette:  rgb(25 24 23 / 0.033);
 
 	/* ---- Picked backgrounds (TD-5202) ----
 	   Every background reads only these. Light keeps paper paper: skies are
@@ -229,7 +233,6 @@
 		--bg-orbit-glow:      rgb(95 224 255 / 0.35);
 		--bg-orbit-wash:      rgb(16 19 26 / 0.6);
 		--bg-orbit-vignette:  rgb(0 0 0 / 0.45);
-		--bg-orbit-opacity:   1;
 
 		/* Picked backgrounds — dark (TD-5202): luminous, added as light. */
 		--bg-ambient-blend:   lighter;
@@ -309,7 +312,6 @@
 	--bg-orbit-glow:      rgb(95 224 255 / 0.35);
 	--bg-orbit-wash:      rgb(16 19 26 / 0.6);
 	--bg-orbit-vignette:  rgb(0 0 0 / 0.45);
-	--bg-orbit-opacity:   1;
 
 	/* Picked backgrounds — dark (TD-5202): luminous, added as light. */
 	--bg-ambient-blend:   lighter;

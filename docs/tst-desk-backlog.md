@@ -12671,11 +12671,11 @@ ripples off on their own. The choice is per device, like the theme, and the
 command palette's Toggle background turns it off and back on. Every new
 background is Canvas 2D (no WebGL), reads its colours from light and dark
 tokens, caps the pixel ratio (1.5 behind the window, 2 in a preview tile)
-and its frame rate at 30 or less, pauses while the window is hidden, and
-holds still when the system asks for reduced motion. Behind the panes each
-one lies under an even veil of the page colour, so the text over it stays
-readable. Classic keeps its CSS-animated halo and header light; only its
-dust is on the capped loop.
+and its frame rate at 30 or less, pauses while the window is hidden, holds
+still while another window has the focus, and holds still when the system
+asks for reduced motion. Behind the panes each one lies under an even veil
+of the page colour, so the text over it stays readable. Classic looks as it
+always did, and all of it steps on one capped tick of at most 12 a second.
 
 - [x] Off renders no layer, schedules no animation frame and lights no
       ripple, even when clicked; switching to it stops a running loop at once
@@ -12696,6 +12696,13 @@ dust is on the capped loop.
       the pixel-ratio caps (1.5 behind the window, 2 in a tile), a canvas
       that follows a move to a screen of another density, and token colour
       parsing (`backgrounds/paint.test.ts`, `backgrounds/host-component.test.ts`).
+- [x] Every background holds still while the window is not focused: from
+      the window's blur until its focus nothing new is drawn and no frame is
+      scheduled, the last frame stays on screen, and it carries on from the
+      same spot when focus returns, with no jump. A ripple already lit
+      finishes; a preview tile follows only its own pointer and keyboard-focus
+      rule (`backgrounds/loop.test.ts`, `backgrounds/host-component.test.ts`,
+      `settings-background-component.test.ts`).
 - [x] Each background's maths is seeded and pure, and no module in
       `ui/src/lib/backgrounds` calls the unseeded random source; a resize
       that changes the Galaxy or Deep space star count leaves every other
@@ -12711,8 +12718,22 @@ dust is on the capped loop.
 - [x] Toggle background in the command palette turns the background off and
       back to the one it had (`palette-store.test.ts`, `palette.test.ts`).
 - [x] Classic is unchanged: the orbit halo, the header light, the dust and
-      the ripples draw as before, the dust now on the shared capped loop at
-      8 paints a second.
+      the ripples draw as before. Still frames in WebKitGTK, the old CSS and
+      the new tick at the same moment, differ by at most 4/255 at 1200×800
+      and 1920×1080 in both themes, header bands included; the curves are
+      the old keyframes (`backgrounds/classic.test.ts`) and the bands carry
+      WebKit's own blur (`backgrounds/band-glow.test.ts`).
+- [x] All of Classic's motion (the orbit's turn and breathing, the wash and
+      the two pulses, both band drifts, the dust) steps on one shared loop at
+      most 12 times a second, with no CSS animation, transition or blur
+      filter left; Motion off and reduced motion show the old resting pose
+      and schedule nothing (`backgrounds/classic.test.ts`,
+      `backgrounds/host-component.test.ts`).
+- [x] Where WebKitGTK paints in software, Classic costs well under 40% of a
+      core: about 23% at 1200×800 in either theme (it was about 96%), 32–34%
+      at 1920×1080, and about 0.1% while another window has the focus. A
+      zero-delay timer runs after 8/27 ms (median/95th percentile) instead
+      of 22/38, as against 8/8 with Off (measured; numbers in DECISIONS.md).
 
 Review fixes (2026-10-30): the UI walk's census lists the new Appearance
 controls and the palette's Toggle background; the veil moved from a
@@ -12723,15 +12744,18 @@ the galaxy's core is a softer glow; a clicked tile no longer keeps a second
 copy of the background running while Settings stays open; the two new
 switches are named; window layers draw at most 1.5× and follow a change of
 screen density; Galaxy and Deep space no longer re-deal stars as the window
-is resized; Classic's dust paints 8 times a second instead of 30.
+is resized; Classic's dust paints 8 times a second instead of 30 (since the
+follow-up below, on Classic's shared tick).
 
-**Follow-up (not in this story):** Classic's orbit halo (four CSS
-animations) and header bands (two drifts under a 48 px blur) run at the
-display's rate with no cap. Where WebKitGTK renders in software they keep
-the page process near a whole core, as they did before this story; Off and
-Motion off are the way out today. The plan: drive all of Classic's motion
-from one capped tick of about 10–12 a second that writes CSS custom
-properties and paints the dust in the same tick, size the wash to its
-gradient, replace the bands' blur with a pre-blurred gradient, and fold the
-light theme's group opacity into the tokens. The five older switches in
-Settings → Appearance still announce only "On" or "Off".
+**Follow-up (2026-10-31):** Classic's orbit halo (four CSS animations) and
+header bands (two drifts under a 48 px blur) ran at the display's rate with
+no cap and kept a software-rendered WebKitGTK page near a whole core. One
+shared loop of at most 12 ticks a second now drives all of Classic
+(`backgrounds/classic.ts`): the orbit's pose and the bands' drift are
+written as styles once a tick and the dust paints on the same tick, so the
+window repaints once a tick. Each band's blur is worked out once per size or
+theme, with WebKit's own blur, into a half-resolution canvas it carries
+(`backgrounds/band-glow.ts`); the wash is sized to its gradient, and the
+light theme's orbit opacity is folded into the `--bg-orbit-*` tokens. Every
+background also rests while another window has the focus. Still open: the
+five older switches in Settings → Appearance announce only "On" or "Off".
