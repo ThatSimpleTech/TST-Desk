@@ -12705,90 +12705,6 @@ result beside its buttons.
       (`test_key_test_row_reply.py`, `onboarding.test.ts`,
       `protocol.test.ts`).
 
-### TD-5204 — An update download follows GitHub's asset redirect
-
-**Size:** 1 · **Depends on:** TD-4837 · **Status:** Done
-
-Every in-app update failed with "download failed: error following redirect"
-on the first file, `SHA256SUMS.txt`. GitHub answers a release download with
-a 302 to its asset store, which is now `release-assets.githubusercontent.com`;
-the updater's redirect list did not have that host, so it refused the hop.
-Installs from before this fix still carry the old list and need one manual
-download of the new release; updates after that run in the app again.
-
-- [x] The redirect list allows `release-assets.githubusercontent.com`, and a
-      redirect is followed only over HTTPS on the default port
-      (`plan_test.rs::github_asset_store_redirect_is_followed`).
-- [x] A refused redirect names the scheme and host it refused, so the next
-      change on GitHub's side is diagnosable from the message alone.
-- [x] Checked against the live 0.4.5 release: the updater's own client
-      downloads its `SHA256SUMS.txt` through the redirect.
-
-### TD-5203 — Every config.yaml setting is editable in Settings
-
-**Size:** 8 · **Depends on:** TD-1101, TD-1703, TD-5014, TD-5015, TD-5110 · **Status:** Done
-
-Settings edited part of `config.yaml` through hand-built pages; every other
-key meant opening the file. Settings → Configuration now shows every key,
-drawn from the config models' own schema, and writes one key at a time: the
-daemon loads the whole would-be file before it writes, keeps the file's
-comments and formatting, and reloads the way the other Settings writers do.
-The dedicated pages stay; a section they also edit links to them.
-
-- [x] The daemon serves a schema read off the config models: kind, literal
-      choices, bounds, default, and a description and unit for every key. A
-      test walks every model field recursively and fails on one the schema
-      lacks, or one with no description (`test_config_schema.py`).
-- [x] `set_config_value` and `reset_config_value` change one key. The
-      would-be file is loaded as the daemon loads it and checked as the
-      dedicated writers check theirs (an MCP server's off-box URL, the phone
-      listener's bind, a tier's window, the active model) before an atomic
-      write; every other byte stays (`test_config_yaml_edit.py`,
-      `test_config_editor.py`).
-- [x] Set and reset round-trip for scalars, enums, word lists, nested JSON,
-      a group that may be absent, list items and map entries; an invalid value
-      is refused with the reason and the file byte-identical
-      (`test_config_editor.py`).
-- [x] Reset puts a key at a fixed place back to the packaged value, or the
-      built-in default when the packaged file leaves it out; inside an entry
-      it removes the key's line. A section the loader fills from the packaged
-      file is copied in before one of its keys changes, so the others keep
-      their values (`test_config_editor.py`).
-- [x] No secret reaches the window or the file through the editor: an MCP
-      server's `env` and `headers` show names and where each value lives,
-      `credentials` stay on API keys, a URL password is masked, a masked value
-      is never written back, and a malformed edit's error never echoes its
-      value (`test_config_editor.py`, `test_config_editor_daemon.py`).
-- [x] Only the computer itself may read or write through the editor; a
-      phone or another computer gets `loopback_only`, and the page says the
-      configuration is the computer's own (`test_peer_policy.py`,
-      `test_config_editor_daemon.py`, `config-editor-store.test.ts`).
-- [x] A write is followed by the daemon's reload; MCP servers reload and an
-      edited active model becomes the live one (`test_config_editor_daemon.py`).
-- [x] Settings → Configuration renders every section with the control each
-      kind calls for, a search, defaults, a Modified marker, Reset, per-field
-      saving, saved and error states, and "Also in" links; a refused edit
-      puts the control back (`config-editor.test.ts`,
-      `config-editor-store.test.ts`, `config-editor-component.test.ts`).
-- [x] Protocol fixtures on both sides and the architecture tables
-      (`test_protocol.py`, `protocol.test.ts`, `test_docs_architecture_guide.py`).
-- [x] Review fixes: an MCP server that holds a token or `allow_remote` keeps
-      its address and transport here (TD-5161); no key, token or URL user
-      info is written or quoted back; a section or entry map is never reset
-      or created whole; the would-be file must read back whole, and a merge,
-      a key listed twice or a Unicode line separator is refused; flow
-      collections stay flow and block prompts stay blocks; anchored keys are
-      locked on the page; line endings stay; value and file size caps
-      (`test_config_editor_guards.py`, `test_config_editor_file.py`,
-      `test_config_yaml_edit.py`, `test_config_editor_daemon.py`).
-- [x] Controls keep what was typed while other saves are answered, build on
-      what they sent, put a refused select back, save a select's keyboard
-      steps once, keep Settings open on an Escape that drops a draft, and say
-      after a reconnect whether a dropped edit was saved
-      (`config-editor-controls.test.ts`, `config-editor-store.test.ts`).
-- [ ] The UI walk (`ui/e2e/app-walk.spec.ts`) does not visit the new page,
-      and its census gains one nav button; left to the integration run.
-
 ### TD-5201 — An older finished chat opens with its history
 
 **Size:** 5 · **Depends on:** TD-2901, TD-1715, TD-1708, TD-5109, TD-5111 · **Status:** Done
@@ -12981,3 +12897,87 @@ resumed Classic from where its shared clock stood instead of the resting
 pose; the clock now goes back to its start when every layer stops, though
 not when it rests. Settings → Appearance gained Strength: Subtle keeps
 today's veils, Vivid lays them at 40% (the dark aurora's at 60%).
+
+### TD-5203 — Every config.yaml setting is editable in Settings
+
+**Size:** 8 · **Depends on:** TD-1101, TD-1703, TD-5014, TD-5015, TD-5110 · **Status:** Done
+
+Settings edited part of `config.yaml` through hand-built pages; every other
+key meant opening the file. Settings → Configuration now shows every key,
+drawn from the config models' own schema, and writes one key at a time: the
+daemon loads the whole would-be file before it writes, keeps the file's
+comments and formatting, and reloads the way the other Settings writers do.
+The dedicated pages stay; a section they also edit links to them.
+
+- [x] The daemon serves a schema read off the config models: kind, literal
+      choices, bounds, default, and a description and unit for every key. A
+      test walks every model field recursively and fails on one the schema
+      lacks, or one with no description (`test_config_schema.py`).
+- [x] `set_config_value` and `reset_config_value` change one key. The
+      would-be file is loaded as the daemon loads it and checked as the
+      dedicated writers check theirs (an MCP server's off-box URL, the phone
+      listener's bind, a tier's window, the active model) before an atomic
+      write; every other byte stays (`test_config_yaml_edit.py`,
+      `test_config_editor.py`).
+- [x] Set and reset round-trip for scalars, enums, word lists, nested JSON,
+      a group that may be absent, list items and map entries; an invalid value
+      is refused with the reason and the file byte-identical
+      (`test_config_editor.py`).
+- [x] Reset puts a key at a fixed place back to the packaged value, or the
+      built-in default when the packaged file leaves it out; inside an entry
+      it removes the key's line. A section the loader fills from the packaged
+      file is copied in before one of its keys changes, so the others keep
+      their values (`test_config_editor.py`).
+- [x] No secret reaches the window or the file through the editor: an MCP
+      server's `env` and `headers` show names and where each value lives,
+      `credentials` stay on API keys, a URL password is masked, a masked value
+      is never written back, and a malformed edit's error never echoes its
+      value (`test_config_editor.py`, `test_config_editor_daemon.py`).
+- [x] Only the computer itself may read or write through the editor; a
+      phone or another computer gets `loopback_only`, and the page says the
+      configuration is the computer's own (`test_peer_policy.py`,
+      `test_config_editor_daemon.py`, `config-editor-store.test.ts`).
+- [x] A write is followed by the daemon's reload; MCP servers reload and an
+      edited active model becomes the live one (`test_config_editor_daemon.py`).
+- [x] Settings → Configuration renders every section with the control each
+      kind calls for, a search, defaults, a Modified marker, Reset, per-field
+      saving, saved and error states, and "Also in" links; a refused edit
+      puts the control back (`config-editor.test.ts`,
+      `config-editor-store.test.ts`, `config-editor-component.test.ts`).
+- [x] Protocol fixtures on both sides and the architecture tables
+      (`test_protocol.py`, `protocol.test.ts`, `test_docs_architecture_guide.py`).
+- [x] Review fixes: an MCP server that holds a token or `allow_remote` keeps
+      its address and transport here (TD-5161); no key, token or URL user
+      info is written or quoted back; a section or entry map is never reset
+      or created whole; the would-be file must read back whole, and a merge,
+      a key listed twice or a Unicode line separator is refused; flow
+      collections stay flow and block prompts stay blocks; anchored keys are
+      locked on the page; line endings stay; value and file size caps
+      (`test_config_editor_guards.py`, `test_config_editor_file.py`,
+      `test_config_yaml_edit.py`, `test_config_editor_daemon.py`).
+- [x] Controls keep what was typed while other saves are answered, build on
+      what they sent, put a refused select back, save a select's keyboard
+      steps once, keep Settings open on an Escape that drops a draft, and say
+      after a reconnect whether a dropped edit was saved
+      (`config-editor-controls.test.ts`, `config-editor-store.test.ts`).
+- [ ] The UI walk (`ui/e2e/app-walk.spec.ts`) does not visit the new page,
+      and its census gains one nav button; left to the integration run.
+
+### TD-5204 — An update download follows GitHub's asset redirect
+
+**Size:** 1 · **Depends on:** TD-4837 · **Status:** Done
+
+Every in-app update failed with "download failed: error following redirect"
+on the first file, `SHA256SUMS.txt`. GitHub answers a release download with
+a 302 to its asset store, which is now `release-assets.githubusercontent.com`;
+the updater's redirect list did not have that host, so it refused the hop.
+Installs from before this fix still carry the old list and need one manual
+download of the new release; updates after that run in the app again.
+
+- [x] The redirect list allows `release-assets.githubusercontent.com`, and a
+      redirect is followed only over HTTPS on the default port
+      (`plan_test.rs::github_asset_store_redirect_is_followed`).
+- [x] A refused redirect names the scheme and host it refused, so the next
+      change on GitHub's side is diagnosable from the message alone.
+- [x] Checked against the live 0.4.5 release: the updater's own client
+      downloads its `SHA256SUMS.txt` through the redirect.
