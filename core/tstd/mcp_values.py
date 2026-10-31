@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 ValueKind = Literal["env", "header"]
 
@@ -144,3 +145,18 @@ def check_secret(value: str) -> str | None:
     if len(value.split()[-1]) < MIN_SECRET_CHARS:
         return f"must end in a part of at least {MIN_SECRET_CHARS} characters (the token)"
     return None
+
+
+def url_host(url: str | None) -> str | None:
+    """An MCP url's host and port, lowercased; None for no url (stdio).
+
+    Two urls with the same one reach the same server (TD-5161): its
+    off-box opt-in and its tokens carry over. Any other host does not.
+    """
+    if not url:
+        return None
+    try:
+        parts = urlsplit(url)
+        return f"{(parts.hostname or '').lower()}:{parts.port}"
+    except ValueError:
+        return url

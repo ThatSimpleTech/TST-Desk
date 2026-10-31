@@ -68,6 +68,8 @@ class LaneHost(Protocol):
 
     async def deliver(self, viewer: Any, payload: str) -> None: ...
 
+    def wants_history(self, viewer: Any) -> bool: ...
+
     def set_rows(
         self, machine: MachineState, rows: list[dict[str, Any]], requester: Any
     ) -> None: ...
@@ -171,6 +173,10 @@ class Lane:
             return
         self.touched = self._bridge.clock()
         kind = out.get("type")
+        # Asked for by the lane on every viewer's behalf (TD-5201); a viewer
+        # whose own hello did not ask never gets it.
+        if kind == "conversation_history" and not self._bridge.wants_history(self.viewer):
+            return
         if kind == "session_list":
             self._bridge.set_rows(self.machine, out.get("sessions") or [], self.viewer)
             return

@@ -229,6 +229,44 @@
     "type": "test_email",
     "to": "owner@example.com"
   },
+  "get_config_editor": {
+    "type": "get_config_editor"
+  },
+  "set_config_value": {
+    "type": "set_config_value",
+    "path": [
+      "workflow",
+      "max_parallel"
+    ],
+    "value": 4,
+    "version": "0123456789abcdef"
+  },
+  "set_config_value_item": {
+    "type": "set_config_value",
+    "path": [
+      "hooks",
+      "after_write",
+      0
+    ],
+    "value": {
+      "command": [
+        "ruff",
+        "format"
+      ],
+      "match": [
+        "*.py"
+      ]
+    },
+    "version": "0123456789abcdef"
+  },
+  "reset_config_value": {
+    "type": "reset_config_value",
+    "path": [
+      "search",
+      "max_results"
+    ],
+    "version": ""
+  },
   "github_connect": {
     "type": "github_connect"
   },
@@ -2329,7 +2367,15 @@
     "type": "api_key_validated",
     "seq": 1,
     "ok": true,
-    "detail": "Key accepted by provider."
+    "detail": "Key accepted by provider.",
+    "credential": "openrouter"
+  },
+  "api_key_validated_first_run": {
+    "type": "api_key_validated",
+    "seq": 1,
+    "ok": false,
+    "detail": "The key was rejected.",
+    "credential": null
   },
   "endpoint_models": {
     "type": "endpoint_models",
@@ -2371,6 +2417,176 @@
     "ok": true,
     "reply": "I am working.",
     "detail": ""
+  },
+  "config_editor": {
+    "type": "config_editor",
+    "seq": 1,
+    "root": "ModelConfig",
+    "defs": {
+      "ModelConfig": {
+        "name": "ModelConfig",
+        "fields": [
+          {
+            "name": "workflow",
+            "required": false,
+            "node": {
+              "kind": "object",
+              "ref": "WorkflowConfig",
+              "nullable": false,
+              "title": "Workflow",
+              "description": "Limits for the workflow tool.",
+              "unit": "",
+              "default": {
+                "max_parallel": 3,
+                "max_tasks": 8
+              },
+              "has_default": true,
+              "editable": true,
+              "resettable": true,
+              "multiline": false,
+              "note": "",
+              "minimum": null,
+              "maximum": null,
+              "exclusive_minimum": null,
+              "exclusive_maximum": null,
+              "min_length": null,
+              "max_length": null,
+              "choices": [],
+              "choices_from": [],
+              "items": null,
+              "entries": null,
+              "variants": [],
+              "addable": true,
+              "removable": true,
+              "add_note": "",
+              "remove_note": ""
+            }
+          },
+          {
+            "name": "mcp_env",
+            "required": false,
+            "node": {
+              "kind": "secrets",
+              "ref": null,
+              "nullable": false,
+              "title": "",
+              "description": "Extra environment for a stdio server.",
+              "unit": "",
+              "default": null,
+              "has_default": false,
+              "editable": false,
+              "resettable": true,
+              "multiline": false,
+              "note": "Values are set in Settings \u2192 MCP servers.",
+              "minimum": null,
+              "maximum": null,
+              "exclusive_minimum": null,
+              "exclusive_maximum": null,
+              "min_length": null,
+              "max_length": null,
+              "choices": [],
+              "choices_from": [],
+              "items": null,
+              "entries": null,
+              "variants": [],
+              "addable": true,
+              "removable": true,
+              "add_note": "",
+              "remove_note": ""
+            }
+          }
+        ],
+        "add_fields": [],
+        "empty_ok": false
+      },
+      "WorkflowConfig": {
+        "name": "WorkflowConfig",
+        "fields": [
+          {
+            "name": "max_parallel",
+            "required": false,
+            "node": {
+              "kind": "int",
+              "ref": null,
+              "nullable": false,
+              "title": "",
+              "description": "Workers running at once.",
+              "unit": "",
+              "default": 3,
+              "has_default": true,
+              "editable": true,
+              "resettable": true,
+              "multiline": false,
+              "note": "",
+              "minimum": 1.0,
+              "maximum": 16.0,
+              "exclusive_minimum": null,
+              "exclusive_maximum": null,
+              "min_length": null,
+              "max_length": null,
+              "choices": [],
+              "choices_from": [],
+              "items": null,
+              "entries": null,
+              "variants": [],
+              "addable": true,
+              "removable": true,
+              "add_note": "",
+              "remove_note": ""
+            }
+          }
+        ],
+        "add_fields": [],
+        "empty_ok": true
+      }
+    },
+    "values": {
+      "workflow": {
+        "max_parallel": 4
+      },
+      "mcp_env": {
+        "TOKEN": "keychain"
+      }
+    },
+    "set_paths": [
+      [
+        "workflow"
+      ],
+      [
+        "workflow",
+        "max_parallel"
+      ]
+    ],
+    "locked_paths": [
+      [
+        "presets",
+        "team",
+        "worker"
+      ]
+    ],
+    "defaults": {
+      "[\"workflow\",\"max_parallel\"]": 3
+    },
+    "version": "0123456789abcdef",
+    "file": "/home/user/.local/share/tst-desk/config.yaml",
+    "edit": {
+      "action": "set",
+      "path": [
+        "workflow",
+        "max_parallel"
+      ]
+    }
+  },
+  "config_value_rejected": {
+    "type": "config_value_rejected",
+    "seq": 1,
+    "action": "set",
+    "path": [
+      "workflow",
+      "max_parallel"
+    ],
+    "code": "invalid",
+    "message": "workflow.max_parallel: Input should be less than or equal to 16"
   },
   "local_servers": {
     "type": "local_servers",
@@ -2578,6 +2794,52 @@
     "session_id": "sess-1",
     "requested_from_seq": 1,
     "earliest_seq": 8
+  },
+  "conversation_history": {
+    "type": "conversation_history",
+    "seq": 1,
+    "session_id": "sess-1",
+    "messages": [
+      {
+        "role": "summary",
+        "text": "Earlier turns, summarized.",
+        "tools": [],
+        "user_index": null,
+        "folded_turns": 2
+      },
+      {
+        "role": "user",
+        "text": "Read the notes",
+        "tools": [],
+        "user_index": 2,
+        "folded_turns": 0
+      },
+      {
+        "role": "assistant",
+        "text": "Reading them.",
+        "tools": [
+          {
+            "tool_call_id": "call-1",
+            "name": "read_file",
+            "arguments": {
+              "path": "notes.md"
+            }
+          }
+        ],
+        "user_index": null,
+        "folded_turns": 0
+      }
+    ],
+    "user_turns": 3,
+    "truncated": true
+  },
+  "conversation_history_unaligned": {
+    "type": "conversation_history",
+    "seq": 1,
+    "session_id": "sess-1",
+    "messages": [],
+    "user_turns": null,
+    "truncated": false
   },
   "artifact_ready": {
     "type": "artifact_ready",

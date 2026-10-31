@@ -356,3 +356,23 @@ async def test_refusal_after_summarize_from_here_names_a_way_out_that_exists(
     message = json.loads(raw)["message"]
     assert "after the summary" not in message
     assert "Send a new message" in message
+
+
+async def test_daemon_refuses_to_edit_an_ended_session(tmp_path: Path) -> None:
+    """An edit is a send (TD-5201): an ended session would cut its
+    conversation for a turn that never runs, and its log would then show a
+    fork the saved conversation never took."""
+    daemon = Daemon(data_dir=tmp_path / "data")
+    session = await daemon.session_registry.create(str(tmp_path))
+    session.conversation.extend(_long_session(tmp_path, turns=2).conversation)
+    before = list(session.conversation)
+    await session.set_state("running")
+    await session.set_state("cancelled")
+
+    payload = {"type": "fork_from", "session_id": session.id, "user_index": 1, "content": "x"}
+    raw = await daemon._handle_message(json.dumps(payload), None)
+    assert raw is not None
+    reply = json.loads(raw)
+    assert (reply["code"], reply["in_reply_to"]) == ("session_not_running", "fork_from")
+    assert session.conversation == before
+    assert not any(e.type == "conversation_reset" for e in session.event_log.all_events)

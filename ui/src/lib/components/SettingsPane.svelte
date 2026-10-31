@@ -31,7 +31,9 @@
 	import SettingsBudget from './SettingsBudget.svelte';
 	import SettingsModels from './SettingsModels.svelte';
 	import SettingsAbout from './SettingsAbout.svelte';
+	import SettingsConfig from './SettingsConfig.svelte';
 	import CuIndicatorToggles from './CuIndicatorToggles.svelte';
+	import SettingsBackground from './SettingsBackground.svelte';
 	import CuPolicyPane from './CuPolicyPane.svelte';
 	import SettingsJudgments from './SettingsJudgments.svelte';
 	import PairedDevices from './PairedDevices.svelte';
@@ -58,6 +60,7 @@
 		key: 'API keys',
 		email: 'Email',
 		github: 'GitHub',
+		config: 'Configuration',
 		about: 'About',
 	};
 
@@ -125,6 +128,7 @@
 							Dark uses the warm-charcoal palette regardless of the OS.
 						{/if}
 					</p>
+					<SettingsBackground />
 					<div class="keep-running">
 						<p class="keep-title">Keep running when the window closes</p>
 						<button
@@ -258,6 +262,8 @@
 					<SettingsEmail />
 				{:else if settings.section === 'github'}
 					<SettingsGithub />
+				{:else if settings.section === 'config'}
+					<SettingsConfig />
 				{:else if settings.section === 'about'}
 					<SettingsAbout />
 				{:else}

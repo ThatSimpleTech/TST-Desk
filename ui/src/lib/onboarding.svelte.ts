@@ -20,6 +20,7 @@
 // no import cycle.
 
 import { onEvent, onConnectionState, sendToDaemon } from "./connection-status.svelte.js";
+import { sendKeyCheck, takeVerdict } from "./key-tests.svelte.js";
 import { openWorkspace } from "./session-status.svelte.js";
 import type { DaemonEventUnion, EndpointModel, LocalServer } from "./protocol";
 
@@ -182,6 +183,9 @@ function reduce(event: DaemonEventUnion): void {
 			}
 			break;
 		case "api_key_validated":
+			// A Settings row's verdict (TD-5200) must not settle this check or flip
+			// hasApiKey: one naming a key, or an older daemon's unnamed one a row asked first.
+			if (typeof takeVerdict(event) === "string" || (event.credential ?? null) !== null) break;
 			onboarding.validating = false;
 			onboarding.validation = { ok: event.ok, detail: event.detail };
 			if (event.ok && !validateWasTyped) onboarding.hasApiKey = true;
@@ -363,7 +367,8 @@ export function validateKey(apiKey?: string): void {
 	if (!typed && !onboarding.hasApiKey) return; // nothing to validate
 	onboarding.validating = true;
 	validateWasTyped = !!typed;
-	const sent = sendToDaemon(
+	// Through key-tests' list of asks, so a row's verdict is never taken for this one's.
+	const sent = sendKeyCheck(
 		typed ? { type: "validate_api_key", api_key: typed } : { type: "validate_api_key" }
 	);
 	if (!sent) onboarding.validating = false;

@@ -19,7 +19,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from .context.skills import apply_slash_skill
-from .hooks import with_hook_context
+from .hooks import HOOK_BLOCKED_NOTE, with_hook_context
 from .logging import get_logger
 from .protocol import AssistantDelta, SteerPoint, UserTurn
 from .provider import ChatMessage
@@ -104,7 +104,7 @@ async def inject_steers(
             )
         )
         if prompt_hooks.block is not None:
-            note = f"A hook blocked this message, so it was not sent: {prompt_hooks.block}\n\n"
+            note = f"{HOOK_BLOCKED_NOTE}{prompt_hooks.block}\n\n"
             await session.event_log.add(AssistantDelta(session_id=session.id, delta=note, seq=1))
     await session.conversation_changed()
     for queued in steers:

@@ -20,6 +20,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    JsonValue,
     TypeAdapter,
     ValidationError,
     field_validator,
@@ -28,6 +29,7 @@ from pydantic import (
 
 from .attachments import AttachmentLimits
 from .autonomy.charter import Charter
+from .config_editor_wire import ConfigEdit, ConfigModelDef
 from .effort import LEGACY_ULTRACODE, EffortLevel
 from .logging import redact_secrets, redact_structure
 from .router import TierName
@@ -125,8 +127,10 @@ class Hello(ClientMessage):
     makes a loopback or phone connection a *viewer*: its session lists
     carry other computers' rows and it gets ``machine_list``.
     ``"bridge"`` is what a hub sends when it dials another computer; it
-    makes the connection a machine peer. Unknown names are ignored, so
-    an old daemon ignores the whole field.
+    makes the connection a machine peer. ``"history"`` (TD-5201) asks
+    attach to send ``conversation_history`` after ``log_trimmed``: a
+    window rebuilds chats from it, a text stream has no use for it.
+    Unknown names are ignored, so an old daemon ignores the whole field.
     """
 
     type: Literal["hello"] = "hello"
@@ -1962,6 +1966,100 @@ class TestEmail(ClientMessage):
 
     type: Literal["test_email"] = "test_email"
     to: str = ""
+
+
+# A key path of config.yaml (TD-5203): mapping keys and list positions.
+_CONFIG_PATH_PART_MAX = 200
+_CONFIG_LIST_INDEX_MAX = 10_000
+#: The longest value one edit writes, as JSON. A prompt or a command fits
+#: many times over; the edit, its checks and the reload run on the event
+#: loop, so a pasted blob of megabytes would stall every session.
+CONFIG_VALUE_MAX_CHARS = 64 * 1024
+
+
+def _check_config_path(value: Any) -> Any:
+    """Refuse a path the editor could never have sent, before any lookup."""
+    if not isinstance(value, list):
+        return value
+    for part in value:
+        if isinstance(part, bool) or not isinstance(part, str | int):
+            raise ValueError("a key path holds key names and list positions only")
+        if isinstance(part, str) and not 0 < len(part) <= _CONFIG_PATH_PART_MAX:
+            raise ValueError(f"a key name has 1 to {_CONFIG_PATH_PART_MAX} characters")
+        if isinstance(part, str):
+            try:
+                part.encode("utf-8")
+            except UnicodeEncodeError:
+                raise ValueError("a key name holds a character that cannot be saved") from None
+        if isinstance(part, int) and not 0 <= part <= _CONFIG_LIST_INDEX_MAX:
+            raise ValueError("a list position is out of range")
+    return value
+
+
+class GetConfigEditor(ClientMessage):
+    """Settings → Configuration (TD-5203): every config.yaml key, as a schema and values.
+
+    Answered with ``config_editor``. Only the computer itself may ask: the
+    file names this computer's commands, hosts and listener (peer_policy).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["get_config_editor"] = "get_config_editor"
+
+
+class SetConfigValue(ClientMessage):
+    """Write one config.yaml value (TD-5203).
+
+    ``path`` names the key by mapping keys and list positions; a position
+    one past a list's end appends to it. The whole would-be file is loaded
+    as the daemon loads it before an atomic write that keeps every other
+    byte. Acked with ``config_editor``; refused with ``config_value_rejected``
+    and the file untouched. ``version`` is the ``config_editor`` version the
+    edit was made against: a path through a list position is refused once
+    the file has changed since. Only the computer itself may send it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["set_config_value"] = "set_config_value"
+    path: list[str | int] = Field(min_length=1, max_length=16)
+    value: JsonValue = Field(default=None, repr=False)
+    version: str = Field(default="", max_length=64)
+
+    @field_validator("path", mode="before")
+    @classmethod
+    def _path_parts(cls, value: Any) -> Any:
+        return _check_config_path(value)
+
+    @field_validator("value")
+    @classmethod
+    def _value_size(cls, value: JsonValue) -> JsonValue:
+        if len(json.dumps(value, ensure_ascii=False)) > CONFIG_VALUE_MAX_CHARS:
+            raise ValueError(f"a value holds at most {CONFIG_VALUE_MAX_CHARS // 1024} KiB as JSON")
+        return value
+
+
+class ResetConfigValue(ClientMessage):
+    """Put one config.yaml key back to its default (TD-5203).
+
+    A key at a fixed place goes back to what TST Desk ships (the value in
+    the packaged config.yaml, else the built-in one). A key inside a list
+    item or map entry loses its line and takes the built-in default; a path
+    that ends at a list item or map entry removes it. Acked and refused like
+    ``set_config_value``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["reset_config_value"] = "reset_config_value"
+    path: list[str | int] = Field(min_length=1, max_length=16)
+    version: str = Field(default="", max_length=64)
+
+    @field_validator("path", mode="before")
+    @classmethod
+    def _path_parts(cls, value: Any) -> Any:
+        return _check_config_path(value)
 
 
 class GithubConnect(ClientMessage):
@@ -3861,12 +3959,18 @@ class ApiKeyValidated(DaemonEvent):
     ``detail`` carries the actionable failure text on failure (already
     redacted at the provider boundary); on success it says which keychain
     account was checked, never the key.
+
+    ``credential`` echoes the request's ``credential`` (TD-5200), so
+    Settings shows the verdict on the row of the key that was tested and
+    never on another. None when the request named no key, as the first-run
+    check of a typed key does.
     """
 
     type: Literal["api_key_validated"] = "api_key_validated"
     seq: int = 1
     ok: bool
     detail: str
+    credential: str | None = None
 
 
 class EndpointModel(BaseModel):
@@ -3933,6 +4037,53 @@ class ModelTested(DaemonEvent):
     ok: bool
     reply: str = ""
     detail: str = ""
+
+
+class ConfigEditor(DaemonEvent):
+    """Settings → Configuration's view of config.yaml (TD-5203).
+
+    ``defs`` describes every config model; ``root`` is the top one.
+    ``values`` is the effective config as the daemon would load the file
+    now, with every ``secrets`` map's values replaced by where each lives
+    (``keychain`` or ``config``), never the value. ``set_paths`` lists every
+    key path the file itself sets, and ``locked_paths`` every one it writes
+    through a YAML anchor, alias or merge: those, and every key under them,
+    are edited in the file by hand. ``defaults`` holds the reset value of
+    each key at a fixed place, by JSON-encoded path. ``version`` identifies
+    the file's bytes; ``edit`` names the edit this event acknowledges.
+    """
+
+    type: Literal["config_editor"] = "config_editor"
+    seq: int = 1
+    root: str
+    defs: dict[str, ConfigModelDef] = Field(default_factory=dict)
+    values: dict[str, JsonValue] = Field(default_factory=dict)
+    set_paths: list[list[str | int]] = Field(default_factory=list)
+    locked_paths: list[list[str | int]] = Field(default_factory=list)
+    defaults: dict[str, JsonValue] = Field(default_factory=dict)
+    version: str = ""
+    file: str = ""
+    edit: ConfigEdit | None = None
+
+
+ConfigRejectCode = Literal[
+    "invalid", "not_editable", "secret", "stale", "not_found", "write_failed"
+]
+
+
+class ConfigValueRejected(DaemonEvent):
+    """A Settings → Configuration edit that was not written (TD-5203).
+
+    The file is untouched. ``message`` says why in words for the field it
+    names; it never echoes the value that was sent.
+    """
+
+    type: Literal["config_value_rejected"] = "config_value_rejected"
+    seq: int = 1
+    action: Literal["set", "reset"]
+    path: list[str | int] = Field(default_factory=list)
+    code: ConfigRejectCode
+    message: str
 
 
 class DiagnosticCheck(BaseModel):
@@ -4023,6 +4174,63 @@ class LogTrimmed(DaemonEvent):
     session_id: str
     requested_from_seq: int = Field(ge=1)
     earliest_seq: int = Field(ge=1)
+
+
+class HistoryTool(BaseModel):
+    """One tool call on a restored assistant message (TD-5201).
+
+    The call only, never what it returned: a result can hold any text a
+    tool read, and the exact-text secrets that scrubbed it when it was
+    logged may be unknown to a later process. The replayed window still
+    carries the results of its own calls.
+    """
+
+    tool_call_id: str
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class HistoryMessage(BaseModel):
+    """One message from before the replayed window, as the conversation keeps it (TD-5201).
+
+    ``user`` and ``assistant`` are the chat's own messages. ``summary`` is
+    a compaction summary standing for ``folded_turns`` earlier user turns,
+    whose own messages are gone. ``user_index`` numbers a user message the
+    way the window numbers user turns, from the start of the session, so
+    Edit and Retry on it fork the right turn.
+    """
+
+    role: Literal["user", "assistant", "summary"]
+    text: str = ""
+    tools: list[HistoryTool] = Field(default_factory=list)
+    user_index: int | None = None
+    folded_turns: int = Field(default=0, ge=0)
+
+
+class ConversationHistory(DaemonEvent):
+    """The conversation from before the replayed window (TD-5201).
+
+    The log keeps its newest events only, and a long reply streams one
+    event per chunk, so an older chat's window can hold none of its
+    questions. Attach then sends this after ``log_trimmed``, to a client
+    whose hello asked for ``"history"``: the messages of the session's
+    saved conversation that come before the window's first event.
+    Connection-scoped like ``log_trimmed``: never logged, ``seq`` fixed
+    at 1.
+
+    ``user_turns`` is how many user turns come before the window's first
+    replayed one, so the window numbers its own from there. None, with no
+    messages, when the two could not be lined up: the window then numbers
+    no turn, and offers nothing that forks one by its number. ``truncated``
+    says older messages were left out to keep the message small.
+    """
+
+    type: Literal["conversation_history"] = "conversation_history"
+    seq: int = 1
+    session_id: str
+    messages: list[HistoryMessage] = Field(default_factory=list)
+    user_turns: int | None = Field(default=None, ge=0)
+    truncated: bool = False
 
 
 class ArtifactEntry(BaseModel):
@@ -4705,6 +4913,9 @@ ClientMessageT = Annotated[
     | Transcribe
     | SetEmailNotify
     | TestEmail
+    | GetConfigEditor
+    | SetConfigValue
+    | ResetConfigValue
     | GithubConnect
     | GithubDisconnect
     | MicrosoftConnect
@@ -4780,10 +4991,13 @@ DaemonEventT = Annotated[
     | EndpointModels
     | LocalServers
     | ModelTested
+    | ConfigEditor
+    | ConfigValueRejected
     | DiagnosticsReport
     | UsageReport
     | UsageExported
     | LogTrimmed
+    | ConversationHistory
     | ArtifactReady
     | ArtifactList
     | Artifact
@@ -4953,6 +5167,9 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "transcribe",
         "set_email_notify",
         "test_email",
+        "get_config_editor",
+        "set_config_value",
+        "reset_config_value",
         "github_connect",
         "github_disconnect",
         "microsoft_connect",
@@ -5028,10 +5245,13 @@ _KNOWN_EVENT_TYPES = frozenset(
         "endpoint_models",
         "local_servers",
         "model_tested",
+        "config_editor",
+        "config_value_rejected",
         "diagnostics_report",
         "usage_report",
         "usage_exported",
         "log_trimmed",
+        "conversation_history",
         "artifact_ready",
         "artifact_list",
         "artifact",
@@ -5081,9 +5301,18 @@ def _check_known_type(data: dict[str, Any], known_types: frozenset[str]) -> None
         raise UnknownMessageTypeError(msg_type)
 
 
-#: Messages whose input may hold an MCP server's token (TD-5110).
+#: Messages whose input may hold an MCP server's token (TD-5110), or a value
+#: typed into Settings → Configuration (TD-5203): their parse errors give
+#: the reasons and never the input.
 _MCP_VALUE_VERBS = frozenset(
-    {"set_mcp_server", "delete_mcp_server", "set_mcp_secret", "delete_mcp_secret"}
+    {
+        "set_mcp_server",
+        "delete_mcp_server",
+        "set_mcp_secret",
+        "delete_mcp_secret",
+        "set_config_value",
+        "reset_config_value",
+    }
 )
 
 

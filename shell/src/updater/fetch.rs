@@ -9,8 +9,8 @@ use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
 
 use super::plan::{
-    initial_download_allowed, parse_releases, redirect_host_allowed, releases_api_allowed,
-    releases_url, sha256_hex, Release, MAX_DOWNLOAD_BYTES, MAX_SUMS_BYTES,
+    initial_download_allowed, parse_releases, redirect_allowed, releases_api_allowed, releases_url,
+    sha256_hex, Release, MAX_DOWNLOAD_BYTES, MAX_SUMS_BYTES,
 };
 
 pub fn client() -> Result<reqwest::Client, String> {
@@ -22,15 +22,35 @@ pub fn client() -> Result<reqwest::Client, String> {
             if attempt.previous().len() >= 5 {
                 return attempt.error("too many redirects");
             }
-            let host = attempt.url().host_str().unwrap_or("").to_string();
-            if redirect_host_allowed(&host) {
+            if redirect_allowed(attempt.url()) {
                 attempt.follow()
             } else {
-                attempt.error(format!("redirect host refused: {host}"))
+                let to = format!(
+                    "{}://{}",
+                    attempt.url().scheme(),
+                    attempt.url().host_str().unwrap_or("")
+                );
+                attempt.error(format!("redirect refused: {to}"))
             }
         }))
         .build()
         .map_err(|e| format!("client build failed: {e}"))
+}
+
+/// reqwest's Display stops at "error following redirect for url (...)";
+/// the reason (which host was refused) is in the source chain.
+fn with_causes(e: &reqwest::Error) -> String {
+    let mut text = e.to_string();
+    let mut source = std::error::Error::source(e);
+    while let Some(cause) = source {
+        let cause_text = cause.to_string();
+        if !text.contains(&cause_text) {
+            text.push_str(": ");
+            text.push_str(&cause_text);
+        }
+        source = cause.source();
+    }
+    text
 }
 
 pub async fn fetch_releases(http: &reqwest::Client) -> Result<Vec<Release>, String> {
@@ -142,8 +162,8 @@ async fn send_download(http: &reqwest::Client, url: &str) -> Result<reqwest::Res
         .get(url)
         .send()
         .await
-        .map_err(|e| format!("download failed: {e}"))?;
+        .map_err(|e| format!("download failed: {}", with_causes(&e)))?;
     response
         .error_for_status()
-        .map_err(|e| format!("download failed: {e}"))
+        .map_err(|e| format!("download failed: {}", with_causes(&e)))
 }

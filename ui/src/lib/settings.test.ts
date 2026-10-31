@@ -67,7 +67,6 @@ import {
 	saveTierCredential,
 	selectedCredential,
 	credentialHost,
-	validateNamedKey,
 	saveMcpServer,
 	setMcpServerEnabled,
 	deleteMcpServer,
@@ -825,11 +824,9 @@ describe("key section", () => {
 		startSettings();
 		renameCredential("local", "Home lab");
 		deleteNamedKey("local");
-		validateNamedKey("local");
 		expect(mocks.sent).toEqual([
 			{ type: "set_credential", credential: "local", name: "Home lab" },
 			{ type: "delete_credential", credential: "local" },
-			{ type: "validate_api_key", credential: "local" },
 		]);
 	});
 });

@@ -119,6 +119,9 @@ fn download_urls_stay_on_this_repo() {
     ));
     assert!(redirect_host_allowed("objects.githubusercontent.com"));
     assert!(!redirect_host_allowed("example.com"));
+    assert!(!redirect_host_allowed(
+        "release-assets.githubusercontent.com.example.com"
+    ));
     assert!(release_page_allowed(
         "https://github.com/ThatSimpleTech/TST-Desk/releases/tag/tstdesk-v0.2.0"
     ));
@@ -142,4 +145,24 @@ fn automatic_is_on_unless_the_file_says_false() {
     store_automatic(&dir, true).unwrap();
     assert!(load_automatic(&dir));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn github_asset_store_redirect_is_followed() {
+    // TD-5204: GitHub's 302 for a release download lands here today; with it
+    // missing, every update download failed with "error following redirect".
+    let store = |url: &str| redirect_allowed(&reqwest::Url::parse(url).unwrap());
+    assert!(store(
+        "https://release-assets.githubusercontent.com/github-production-release-asset/1/abc?sp=r"
+    ));
+    assert!(store(
+        "https://objects.githubusercontent.com/github-production-release-asset-2e65be/1"
+    ));
+    assert!(!store(
+        "http://release-assets.githubusercontent.com/github-production-release-asset/1"
+    ));
+    assert!(!store(
+        "https://release-assets.githubusercontent.com:8443/asset"
+    ));
+    assert!(!store("https://example.com/asset"));
 }

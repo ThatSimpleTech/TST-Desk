@@ -6,6 +6,7 @@
 
 import type { BranchSnaps } from "./chat-fork";
 import { applyHeldList, clearHeldPending } from "./chat-held";
+import { applyHistory, nextUserIndex, noteTrimmed } from "./chat-history";
 import { markResponse, withdrawResponse } from "./chat-retract";
 import type { ChatMessage, ChatState, ToolBlock } from "./chat-store";
 import type { MessageQueue } from "./chat-queue";
@@ -26,6 +27,10 @@ import { windowBindSessionId } from "./window-bind";
 export interface BindHold {
   sessionId: string | null;
   lastList: readonly SessionSummary[];
+  /** The bound session's archived flag as a list last named it, or as its
+   *  row was when the pane bound it (TD-5201). A list without it (a hub
+   *  just back, with no remote rows yet) leaves the flag as it was. */
+  boundArchived: boolean;
 }
 
 /** Collaborators the reducer may touch. The store keeps the rest. */
@@ -36,6 +41,8 @@ export interface ChatEventContext {
   forks: BranchSnaps;
   allocateId: () => string;
   switchSession: (sessionId: string | null, turnState: SessionState["state"] | null) => void;
+  /** The pane bound a listed session by itself (TD-5201, ChatDeps). */
+  onAutoBind: (session: SessionSummary) => void;
   hold: BindHold;
   /** Texts sent and not yet started or refused (TD-5023, draft-store.ts). */
   sending: string[];
@@ -48,10 +55,18 @@ export interface ChatEventContext {
 
 /** Re-decide the pane's session from a list and apply the choice. */
 function rebindFrom(ctx: ChatEventContext, summaries: readonly SessionSummary[]): void {
-  const { state } = ctx;
-  const choice = chooseBoundSession(summaries, state.sessionId, windowBindSessionId(), ctx.hold.sessionId);
+  const { state, hold } = ctx;
+  const choice = chooseBoundSession(
+    summaries,
+    state.sessionId,
+    windowBindSessionId(),
+    hold.sessionId,
+    hold.boundArchived,
+  );
   if (choice.action === "bind") {
     ctx.switchSession(choice.sessionId, choice.turnState);
+    const bound = summaries.find((s) => s.session_id === choice.sessionId);
+    if (bound !== undefined) ctx.onAutoBind(bound);
   } else if (choice.action === "unbind") {
     ctx.switchSession(null, null);
   } else if (choice.turnState !== null) {
@@ -220,12 +235,13 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
         last !== undefined &&
         last.role === "user" &&
         last.turnId === undefined &&
+        last.restored !== true &&
         last.text === event.content
       ) {
         last.turnId = event.turn_id;
         return;
       }
-      const userIndex = state.messages.filter((m) => m.role === "user").length;
+      const userIndex = nextUserIndex(state);
       const chips = steered === undefined ? [] : toChips(steered.attachments);
       state.messages.push({
         id: ctx.allocateId(),
@@ -247,6 +263,14 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
       for (const sent of applyHeldList(state, ctx.sending, event)) ctx.queue.settle(sent);
       return;
     }
+    case "log_trimmed":
+      // TD-5201: the replay starts past the chat's start. Never the New
+      // chat screen for a chat that had messages.
+      if (event.session_id === state.sessionId) noteTrimmed(state, ctx.allocateId);
+      return;
+    case "conversation_history":
+      if (event.session_id === state.sessionId) applyHistory(state, event, ctx.allocateId);
+      return;
     case "assistant_reasoning": {
       if (event.session_id !== state.sessionId) return;
       // Reasoning is a turn in flight on exactly the terms a content
@@ -382,6 +406,8 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
         hold.sessionId = null;
       }
       rebindFrom(ctx, event.sessions);
+      const bound = event.sessions.find((s) => s.session_id === state.sessionId);
+      if (bound !== undefined) hold.boundArchived = bound.archived;
       return;
     }
     case "machine_list": {

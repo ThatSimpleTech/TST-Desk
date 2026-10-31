@@ -12656,3 +12656,328 @@ thatsimpletech.com.
 - [x] Every file in `shell/icons` (macOS `.icns`, Windows `.ico` and Store
       logos, the PNGs) is generated from that master with `npx tauri icon`.
 - [ ] The Android launcher icon is unchanged (a separate vector drawable).
+
+### TD-5200 — Settings → API keys: Test shows the result on the row
+
+**Size:** 2 · **Depends on:** TD-1717, TD-4838, TD-5182 · **Status:** Done
+
+Pressing Test on a saved key seemed to do nothing on a success. The button
+did not change while the probe ran, and the verdict went to one line at the
+bottom of the page, under the sticky "Add a source" form, in the same grey as
+the help text above it. Every row and the first-run check shared that line,
+so the latest verdict of any kind replaced the one before. The daemon now
+echoes the tested key's id on `api_key_validated`, and each row shows its own
+result beside its buttons.
+
+- [x] Test on a row says "Testing…" with the button off, then shows a
+      "Connected" pill (success colour, check icon) with the daemon's detail,
+      or "Not connected" with the reason, on that row only
+      (`settings-keys.test.ts`, `key-tests.test.ts`).
+- [x] Each key keeps its own result: testing another row never replaces it
+      (`key-tests.test.ts::keeps each key's result to itself`,
+      `settings-keys.test.ts::keeps each row's result on its own row`).
+- [x] A result stays until setup_state changes what its test was about (the
+      key's name, host or stored state, the tiers that send it, or the active
+      preset), the window reaches a different computer, or the row is tested
+      again. A host saved by leaving the field just before pressing Test is
+      the host the verdict is about (`key-tests.test.ts`, "what drops a
+      result"; `key-test-replies.test.ts`, "another computer").
+- [x] Each verdict answers its own request. A row tested again while its
+      first test is still out shows the second test's verdict, also when the
+      host changed in between, and an older daemon's verdict, which names no
+      key, lands on the row that asked (`key-test-replies.test.ts`;
+      `settings-keys.test.ts::a fixed host tested again after no answer
+      shows the new host's verdict`).
+- [x] The daemon ends a test within 20 seconds ("No answer from <host> within
+      20 seconds"), so one test never holds the window's other messages
+      (`test_key_test_row_reply.py::test_a_server_that_never_answers_frees_the_window`).
+- [x] With no reply 30 seconds after the daemon takes the test up, the row
+      says nothing came back and Test works again; a verdict that arrives
+      later still replaces that. A test queued behind another row's gets its
+      own 30 seconds, and a dropped connection ends every test still waiting
+      (`key-tests.test.ts`, "no answer"; `key-test-replies.test.ts`;
+      `settings-keys.test.ts`).
+- [x] The result is an `aria-live` status region that is always in the row,
+      so a screen reader hears the verdict (`settings-keys.test.ts`).
+- [x] `api_key_validated.credential` echoes the request's credential on every
+      verdict and is null when the request names none; the first-run check
+      ignores verdicts that name a key and keeps working
+      (`test_key_test_row_reply.py`, `onboarding.test.ts`,
+      `protocol.test.ts`).
+
+### TD-5201 — An older finished chat opens with its history
+
+**Size:** 5 · **Depends on:** TD-2901, TD-1715, TD-1708, TD-5109, TD-5111 · **Status:** Done
+
+Reported: clicking an older finished chat showed the New chat screen. Three
+causes, each reproduced before it was fixed. The window kept a seq cursor
+for a chat it had just left: the daemon reads a socket in order, so a chat
+clicked and left before its replay landed still got that replay, which
+rebuilt the cursor (a `log_trimmed` included), and every later attach asked
+to start after it and got nothing. An archived chat opened from the
+archived shelf was sent back to the newest chat, or to the New chat screen,
+by the next session list. And an older chat's event window often held none
+of its questions: every streamed chunk is an event and the log keeps the
+newest ones, so on one install's copy 19 windows were trimmed and 8 had no
+user turn left, while the saved conversations still had every message.
+Restarts wore those windows further and re-sorted the rail.
+
+- [x] A chat opened, left for another before its replay landed, and opened
+      again shows its whole conversation: frames for a session the window
+      detached and has not attached again neither move its cursor, reach a
+      store, nor force a reconnect, and a chat opened again waits out the
+      rest of its old replay for its new one (`client-detach.test.ts`,
+      `chat-reopen.test.ts`, which fail before the fix).
+- [x] An archived chat opened from the archived shelf, this computer's or
+      another's, stays open through later lists and a hub restart;
+      archiving the bound chat still moves the pane; a chat opened in its
+      own window stays there archived or ended (`session-binding.test.ts`,
+      `chat-rebind.test.ts`, `chat-store.test.ts`).
+- [x] Attach to a chat whose window was trimmed sends a window
+      `conversation_history` after `log_trimmed`: the saved conversation's
+      messages from before the window, lined up by a tool-call id that names
+      one message and by user-turn number and words, each string redacted
+      before it is capped, tool results and image bytes never sent; a fork
+      in the window, a blocked message, a withdrawn or redone reply and
+      repeated or missing ids are all lined up or refused, never guessed
+      (`test_chat_history.py`, `test_chat_history_align.py`,
+      `test_chat_history_redact.py`, `test_attach_history.py`). `tst attach`
+      does not ask for it, and exits non-zero when its own end closes the
+      socket on a fault (`test_tst_attach.py`).
+- [x] The pane shows those messages ahead of the replay and numbers the
+      replay's user turns after them, a summary's folded turns included, so
+      Edit, Retry and Summarize from here fork the right turn, a restored row
+      too; a compaction summary is a line with the summary folded under it
+      (`chat-history.test.ts`).
+- [x] A chat whose earlier messages cannot be lined up or are gone says
+      "Earlier messages in this chat can't be shown." instead of showing the
+      New chat screen, and numbers no turn, so nothing forks one by a guess;
+      a chat that was never used still shows the greeting
+      (`chat-history.test.ts`, `notice-row.test.ts`).
+- [x] A daemon start and a clean stop no longer mark any chat used or
+      re-sort the rail, and log an idle chat's wall and tier only when they
+      changed; the title bar follows the pane when it binds a chat by itself
+      (`test_restart_quiet.py`, `chat-rebind.test.ts`). Each cycle still logs
+      the loop's start and stop, which a replay needs to read the chat as
+      live (DECISIONS).
+
+### TD-5202 — Pick the background, or turn it off
+
+**Size:** 5 · **Depends on:** TD-1750, TD-1703 · **Status:** Done
+
+The window always painted the orbit halo, the drifting dust and the click
+ripples, with no way to quiet them. Settings → Appearance now has a
+Background choice with a live preview tile for each: Off (the plain ground,
+nothing drawn and no frame scheduled), Classic (the old look, still the
+default), Galaxy, Deep space, Aurora, Constellations and Fireflies. Motion
+holds a still frame of the same background, and Click ripples turns the
+ripples off on their own. The choice is per device, like the theme, and the
+command palette's Toggle background turns it off and back on. Every new
+background is Canvas 2D (no WebGL), reads its colours from light and dark
+tokens, caps the pixel ratio (1.5 behind the window, 2 in a preview tile)
+and its frame rate at 30 or less, pauses while the window is hidden, holds
+still while another window has the focus, and holds still when the system
+asks for reduced motion. Behind the panes each one lies under an even veil
+of the page colour, so the text over it stays readable; Strength picks that
+veil (Subtle) or a thinner one (Vivid) that shows the background much more
+while body text stays readable. Classic looks as it always did, and all of
+it steps on one tick capped at 12 a second (about 10 run in WebKitGTK).
+
+- [x] Off renders no layer, schedules no animation frame and lights no
+      ripple, even when clicked; switching to it stops a running loop at once
+      (`backgrounds/host-component.test.ts`).
+- [x] The choice, Motion and Click ripples are kept per device: Classic,
+      moving, with ripples by default; a bad stored value falls back to the
+      default; storage that throws reads as the defaults and a refused write
+      still switches the window; another window's choice is picked up
+      (`backgrounds/prefs.test.ts`, `backgrounds/store.test.ts`).
+- [x] The tiles are one radio group: a click or the arrow keys switch and
+      save; a preview moves under the pointer or keyboard focus, and holds
+      still after a click once the pointer leaves; Motion and Click ripples
+      are named by their rows, save, stand down under Off, and say why
+      nothing moves under reduced motion (`settings-background-component.test.ts`).
+- [x] The frame loop paints at most its cap on 60 Hz and 144 Hz displays,
+      schedules nothing while stopped or hidden, freezes its clock across a
+      pause and leaves no listener after it goes (`backgrounds/loop.test.ts`);
+      the pixel-ratio caps (1.5 behind the window, 2 in a tile), a canvas
+      that follows a move to a screen of another density, and token colour
+      parsing (`backgrounds/paint.test.ts`, `backgrounds/host-component.test.ts`).
+- [x] Every background holds still while the window is not focused: from
+      the window's blur until its focus nothing new is drawn and no frame is
+      scheduled, the last frame stays on screen, and it carries on from the
+      same spot when focus returns, with no jump. A click into an iframe of
+      the app (an artifact's preview, the Preview pane) is not leaving the
+      window: the background keeps moving, and leaving the app from inside
+      the frame still rests it. A ripple already lit finishes; a preview tile
+      follows only its own pointer and keyboard-focus rule
+      (`backgrounds/loop.test.ts`, `backgrounds/window-host.test.ts`, the
+      "out of focus" block of `backgrounds/classic-component.test.ts`,
+      `settings-background-component.test.ts`).
+- [x] Each background's maths is seeded and pure, and no module in
+      `ui/src/lib/backgrounds` calls the unseeded random source; a resize
+      that changes the Galaxy or Deep space star count leaves every other
+      star where it was (`galaxy.test.ts`, `deep-space.test.ts`,
+      `aurora.test.ts`, `constellations.test.ts`, `fireflies.test.ts`,
+      `random.test.ts`, `paint.test.ts`).
+- [x] Muted and secondary text in the Activity pane keep 4.5:1 over every
+      background in both themes, and body text keeps it over the dark
+      galaxy's core: one even veil of the ground colour lies over the whole
+      window, so nothing steps where the chat meets the Activity pane
+      (`backgrounds/host-component.test.ts`, `tokens.test.ts`; still frames
+      and a five-minute time-lapse of each background measured in Chromium).
+- [x] Toggle background in the command palette turns the background off and
+      back to the one it had (`palette-store.test.ts`, `palette.test.ts`).
+- [x] Classic is unchanged: the orbit halo, the header light, the dust and
+      the ripples draw as before. Still frames in WebKitGTK, the old CSS and
+      the new tick at the same moment, differ by at most 4/255 at 1200×800
+      and 1920×1080 in both themes, header bands included; the curves are
+      the old keyframes (`backgrounds/classic.test.ts`) and the bands carry
+      WebKit's own blur (`backgrounds/band-glow.test.ts`).
+- [x] All of Classic's motion (the orbit's turn and breathing, the wash and
+      the two pulses, both band drifts, the dust) steps on one shared loop
+      capped at 12 ticks a second (about 10 run on WebKitGTK's 62 Hz frame
+      timer, still stepping a rim dot less than its own width at 1200×800,
+      so its trail stays continuous), with no CSS animation, transition or
+      blur filter left; Motion off and reduced
+      motion show the old resting pose and schedule nothing, and Motion on
+      again starts from that pose (`backgrounds/classic.test.ts`,
+      `backgrounds/classic-component.test.ts`, `backgrounds/loop.test.ts`,
+      `backgrounds/host-component.test.ts`).
+- [x] Where WebKitGTK paints in software, Classic costs well under 40% of a
+      core: about 23% at 1200×800 in either theme (it was about 96%), 32–34%
+      at 1920×1080, and about 0.1% while another window has the focus. A
+      zero-delay timer runs after 8/27 ms (median/95th percentile) instead
+      of 22/38, as against 8/8 with Off (measured; numbers in DECISIONS.md).
+- [x] Strength is kept per device: Subtle by default; a bad stored value or
+      storage that throws reads as Subtle, a refused write still switches
+      the window, and another window's choice is picked up
+      (`backgrounds/prefs.test.ts`, `backgrounds/store.test.ts`).
+- [x] Vivid thins only a veil that is there: the same token at 40% of its
+      strength (the dark aurora's at 80%), laid as a fill with no opacity on
+      the box; Off and Classic draw no veil at either strength
+      (`backgrounds/host-component.test.ts`, `tokens.test.ts`).
+- [x] At Vivid, body text keeps 4.5:1 over every veiled background's soft
+      light at its brightest, in both themes; muted text may dip, and the
+      hint says so (measured in Chromium, five minutes of each dark
+      background; numbers in DECISIONS.md).
+- [x] The Strength row is a radio group named by its row, Subtle and Vivid:
+      a click or the arrow keys switch and save, and it stands down with a
+      note for Off and Classic (`settings-background-component.test.ts`); the
+      UI walk's census lists both.
+
+Review fixes (2026-10-30): the UI walk's census lists the new Appearance
+controls and the palette's Toggle background; the veil moved from a
+radial pool in the chat pane to one sheet per background over the window
+(`--bg-*-veil`), strong enough that muted text keeps 4.5:1 over 99% of
+the chat column and the Activity pane at a background's brightest moment;
+the galaxy's core is a softer glow; a clicked tile no longer keeps a second
+copy of the background running while Settings stays open; the two new
+switches are named; window layers draw at most 1.5× and follow a change of
+screen density; Galaxy and Deep space no longer re-deal stars as the window
+is resized; Classic's dust paints 8 times a second instead of 30 (since the
+follow-up below, on Classic's shared tick).
+
+**Follow-up (2026-10-31):** Classic's orbit halo (four CSS animations) and
+header bands (two drifts under a 48 px blur) ran at the display's rate with
+no cap and kept a software-rendered WebKitGTK page near a whole core. One
+shared loop of at most 12 ticks a second now drives all of Classic
+(`backgrounds/classic.ts`): the orbit's pose and the bands' drift are
+written as styles once a tick and the dust paints on the same tick, so the
+window repaints once a tick. Each band's blur is worked out once per size or
+theme, with WebKit's own blur, into a half-resolution canvas it carries
+(`backgrounds/band-glow.ts`); the wash is sized to its gradient, and the
+light theme's orbit opacity is folded into the `--bg-orbit-*` tokens. Every
+background also rests while another window has the focus. Still open: the
+five older switches in Settings → Appearance announce only "On" or "Off".
+
+**Review fixes and Strength (2026-10-31):** a click into an in-app iframe
+blurred the window though the page kept the focus, and froze the
+background; the host now tells the two apart. Turning Motion back on
+resumed Classic from where its shared clock stood instead of the resting
+pose; the clock now goes back to its start when every layer stops, though
+not when it rests. Settings → Appearance gained Strength: Subtle keeps
+today's veils, Vivid lays them at 40% (the dark aurora's at 80%).
+
+### TD-5203 — Every config.yaml setting is editable in Settings
+
+**Size:** 8 · **Depends on:** TD-1101, TD-1703, TD-5014, TD-5015, TD-5110 · **Status:** Done
+
+Settings edited part of `config.yaml` through hand-built pages; every other
+key meant opening the file. Settings → Configuration now shows every key,
+drawn from the config models' own schema, and writes one key at a time: the
+daemon loads the whole would-be file before it writes, keeps the file's
+comments and formatting, and reloads the way the other Settings writers do.
+The dedicated pages stay; a section they also edit links to them.
+
+- [x] The daemon serves a schema read off the config models: kind, literal
+      choices, bounds, default, and a description and unit for every key. A
+      test walks every model field recursively and fails on one the schema
+      lacks, or one with no description (`test_config_schema.py`).
+- [x] `set_config_value` and `reset_config_value` change one key. The
+      would-be file is loaded as the daemon loads it and checked as the
+      dedicated writers check theirs (an MCP server's off-box URL, the phone
+      listener's bind, a tier's window, the active model) before an atomic
+      write; every other byte stays (`test_config_yaml_edit.py`,
+      `test_config_editor.py`).
+- [x] Set and reset round-trip for scalars, enums, word lists, nested JSON,
+      a group that may be absent, list items and map entries; an invalid value
+      is refused with the reason and the file byte-identical
+      (`test_config_editor.py`).
+- [x] Reset puts a key at a fixed place back to the packaged value, or the
+      built-in default when the packaged file leaves it out; inside an entry
+      it removes the key's line. A section the loader fills from the packaged
+      file is copied in before one of its keys changes, so the others keep
+      their values (`test_config_editor.py`).
+- [x] No secret reaches the window or the file through the editor: an MCP
+      server's `env` and `headers` show names and where each value lives,
+      `credentials` stay on API keys, a URL password is masked, a masked value
+      is never written back, and a malformed edit's error never echoes its
+      value (`test_config_editor.py`, `test_config_editor_daemon.py`).
+- [x] Only the computer itself may read or write through the editor; a
+      phone or another computer gets `loopback_only`, and the page says the
+      configuration is the computer's own (`test_peer_policy.py`,
+      `test_config_editor_daemon.py`, `config-editor-store.test.ts`).
+- [x] A write is followed by the daemon's reload; MCP servers reload and an
+      edited active model becomes the live one (`test_config_editor_daemon.py`).
+- [x] Settings → Configuration renders every section with the control each
+      kind calls for, a search, defaults, a Modified marker, Reset, per-field
+      saving, saved and error states, and "Also in" links; a refused edit
+      puts the control back (`config-editor.test.ts`,
+      `config-editor-store.test.ts`, `config-editor-component.test.ts`).
+- [x] Protocol fixtures on both sides and the architecture tables
+      (`test_protocol.py`, `protocol.test.ts`, `test_docs_architecture_guide.py`).
+- [x] Review fixes: an MCP server that holds a token or `allow_remote` keeps
+      its address and transport here (TD-5161); no key, token or URL user
+      info is written or quoted back; a section or entry map is never reset
+      or created whole; the would-be file must read back whole, and a merge,
+      a key listed twice or a Unicode line separator is refused; flow
+      collections stay flow and block prompts stay blocks; anchored keys are
+      locked on the page; line endings stay; value and file size caps
+      (`test_config_editor_guards.py`, `test_config_editor_file.py`,
+      `test_config_yaml_edit.py`, `test_config_editor_daemon.py`).
+- [x] Controls keep what was typed while other saves are answered, build on
+      what they sent, put a refused select back, save a select's keyboard
+      steps once, keep Settings open on an Escape that drops a draft, and say
+      after a reconnect whether a dropped edit was saved
+      (`config-editor-controls.test.ts`, `config-editor-store.test.ts`).
+- [ ] The UI walk (`ui/e2e/app-walk.spec.ts`) does not visit the new page,
+      and its census gains one nav button; left to the integration run.
+
+### TD-5204 — An update download follows GitHub's asset redirect
+
+**Size:** 1 · **Depends on:** TD-4837 · **Status:** Done
+
+Every in-app update failed with "download failed: error following redirect"
+on the first file, `SHA256SUMS.txt`. GitHub answers a release download with
+a 302 to its asset store, which is now `release-assets.githubusercontent.com`;
+the updater's redirect list did not have that host, so it refused the hop.
+Installs from before this fix still carry the old list and need one manual
+download of the new release; updates after that run in the app again.
+
+- [x] The redirect list allows `release-assets.githubusercontent.com`, and a
+      redirect is followed only over HTTPS on the default port
+      (`plan_test.rs::github_asset_store_redirect_is_followed`).
+- [x] A refused redirect names the scheme and host it refused, so the next
+      change on GitHub's side is diagnosable from the message alone.
+- [x] Checked against the live 0.4.5 release: the updater's own client
+      downloads its `SHA256SUMS.txt` through the redirect.

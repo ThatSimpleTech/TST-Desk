@@ -5,13 +5,15 @@
 // `policy_rules`; nothing is inferred locally (AGENTS §6).
 //
 // Named keys (TD-1717) live on this store as {id, name, stored} only.
-// The wizard's first key still uses the onboarding store.
+// The wizard's first key still uses the onboarding store; each named key's
+// Test result lives in key-tests.svelte.ts, fed from this reducer (TD-5200).
 //
 // Wiring mirrors doctor.svelte.ts: listens on the connection fan-out, sends
 // only via sendToDaemon — no client reference, no import cycle.
 
 import { isBridged } from "./bridged-id";
 import { onEvent, sendToDaemon } from "./connection-status.svelte.js";
+import { reduceKeyTests, resetKeyTests } from "./key-tests.svelte.js";
 import { reducePairing } from "./pair-device.svelte.js";
 import type {
 	DaemonEventUnion,
@@ -36,6 +38,7 @@ export type SettingsSection =
 	| "key"
 	| "email"
 	| "github"
+	| "config"
 	| "about";
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	"appearance",
@@ -50,6 +53,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	"key",
 	"email",
 	"github",
+	"config",
 	"about",
 ] as const;
 
@@ -303,6 +307,7 @@ export function resetSettings(): void {
 	settings.googleAccount = null;
 	settings.googleMessage = "";
 	settings.googleClientSecretStored = false;
+	resetKeyTests();
 	started = false;
 }
 
@@ -395,6 +400,7 @@ function applyGoogle(google: {
 
 function reduce(event: DaemonEventUnion): void {
 	reducePairing(event);
+	reduceKeyTests(event);
 	if (event.type === "error") {
 		settings.refreshingCards = false;
 		settings.savingWindowTier = null;
@@ -676,15 +682,6 @@ export function createNamedSource(name: string, baseUrl?: string): void {
 export function deleteNamedKey(credential: string): void {
 	if (credential.trim() === "") return;
 	sendToDaemon({ type: "delete_credential", credential });
-}
-
-export function validateNamedKey(credential: string, apiKey?: string): void {
-	const typed = apiKey?.trim();
-	sendToDaemon(
-		typed
-			? { type: "validate_api_key", credential, api_key: typed }
-			: { type: "validate_api_key", credential },
-	);
 }
 
 // ── Policy ────────────────────────────────────────────────────────────

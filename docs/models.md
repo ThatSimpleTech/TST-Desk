@@ -93,6 +93,9 @@ credentials:
 ```
 
 - `slug` is the model id exactly as the server lists it.
+- Settings → Configuration shows a model written with an anchor like this one
+  but leaves its tiers to the file: a change to one would change all three
+  ([configuration.md](configuration.md), §2).
 - `credential` names the key in the keychain. Settings → API keys lists
   your keys; a server on this computer needs none, so leave it out.
 - `context_window` is how much conversation TST Desk keeps before it

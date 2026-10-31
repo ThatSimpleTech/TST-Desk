@@ -22,10 +22,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
-from urllib.parse import urlsplit
 
 import websockets.exceptions
 from pydantic import ValidationError
+from pydantic_core import PydanticSerializationError
 
 from . import fast_switch, keychain_mcp
 from .artifacts import ArtifactError, ArtifactRecord, ArtifactStore, artifact_ready_for, to_entry
@@ -51,6 +51,7 @@ from .boundary_config import (
 )
 from .browser import BrowserDriver, BrowserError, browser_driver_from_config, normalize_hit
 from .card_write import save_tier_values
+from .chat_history import restorable_history
 from .config import (
     DEFAULT_CREDENTIAL_ID,
     ConfigError,
@@ -72,6 +73,10 @@ from .config import (
     resolve_credential_id,
 )
 from .config_bind import call_config_loader
+from .config_editor import apply_edit, build_view, shipped_defaults
+from .config_editor_checks import ConfigEditRefused, dotted
+from .config_editor_wire import ConfigEdit
+from .config_schema import ROOT_MODEL, editor_defs
 from .config_write import (
     delete_credential_entry,
     delete_mcp_server_entry,
@@ -154,7 +159,7 @@ from .local_worker import (
     session_is_cu_heavy,
     tier_state_event,
 )
-from .logging import get_logger, log_directory, setup_logging, user_data_dir
+from .logging import get_logger, log_directory, redact_structure, setup_logging, user_data_dir
 from .loop import ProviderLike, agent_loop, brain_manifest_config
 from .machine_pairing import DialPolicy
 from .mcp.loader import McpSupervisor
@@ -164,6 +169,7 @@ from .mcp_settings import (
     set_mcp_secret,
     value_summaries,
 )
+from .mcp_values import url_host
 from .memory_commit import MemoryCommitter
 from .memory_pref import load_global_memory, save_global_memory
 from .memory_store import (
@@ -234,6 +240,8 @@ from .protocol import (
     CommandEntry,
     CommandList,
     CompactContext,
+    ConfigEditor,
+    ConfigValueRejected,
     ContextPinEntry,
     ContextPins,
     CreateRule,
@@ -267,6 +275,7 @@ from .protocol import (
     FocusWindow,
     ForkFrom,
     GetCharter,
+    GetConfigEditor,
     GetHooks,
     GetInstructionStack,
     GetSessionJobSource,
@@ -337,6 +346,7 @@ from .protocol import (
     RemoveQueued,
     RemoveRemoteDevice,
     RenameSession,
+    ResetConfigValue,
     ResetCuPermissions,
     RestoreFiles,
     Resume,
@@ -359,6 +369,7 @@ from .protocol import (
     SessionSummary,
     SetApiKey,
     SetBranch,
+    SetConfigValue,
     SetCoworker,
     SetCredential,
     SetCuIndicators,
@@ -584,6 +595,12 @@ log = get_logger("tstd.daemon")
 CARD_REFRESH_FIRST_DELAY = 30.0
 #: Seconds in an hour, a name so a test can shrink ``every_hours``.
 CARD_REFRESH_HOUR = 3600.0
+#: Seconds one key test may take (TD-5200). The daemon answers a window's
+#: messages one at a time, so a probe left to the provider's own timeouts
+#: (connect 30 s, read 120 s, retried three times) held every later message
+#: from that window for minutes. Under the window's 30-second wait, so the
+#: test ends with the daemon's verdict rather than the window giving up.
+KEY_TEST_LIMIT_S = 20.0
 #: What Settings calls each value an automatic refresh can change.
 _CARD_FIELD_NAMES = {
     "slug": "model name",
@@ -616,6 +633,11 @@ _COMPACT_REFUSALS: dict[str, str] = {
     "compaction_failed": "Compaction failed. The conversation is unchanged; try again.",
 }
 
+# The reason a clean stop gives each loop it ends (TD-5018). Like a revive's
+# ``running``, it is the daemon's lifecycle, not use of the chat: neither
+# moves the row's ``updated_at`` (TD-5201).
+SHUTDOWN_REASON = "daemon shutdown"
+
 # Why an edit (``fork_from``) or a branch switch (``set_branch``) was refused
 # (TD-5147). A message folded into a summary is gone from the model's
 # context, so it can no longer be edited or switched to another version.
@@ -637,6 +659,19 @@ _BRANCH_REFUSALS: dict[str, str] = {
 }
 
 
+def _window_says(window: Sequence[DaemonEvent], event: DaemonEvent) -> bool:
+    """Whether the newest *window* event of *event*'s type says what *event* says.
+
+    The window's copy was scrubbed when it was logged, so *event* is
+    compared scrubbed too.
+    """
+    for logged in reversed(window):
+        if logged.type == event.type:
+            fresh = redact_structure(event.model_dump(exclude={"seq"}))
+            return bool(logged.model_dump(exclude={"seq"}) == fresh)
+    return False
+
+
 def _folder_busy_refusal(session: Session, msg_type: str, **extra: Any) -> str | None:
     """``session_busy`` while a restore or worktree close rewrites the folder (TD-5161).
 
@@ -653,17 +688,6 @@ def _folder_busy_refusal(session: Session, msg_type: str, **extra: Any) -> str |
         in_reply_to=msg_type,
         **extra,
     )
-
-
-def _url_host(url: str | None) -> str | None:
-    """An MCP url's host and port, lowercased; None for no url (stdio)."""
-    if not url:
-        return None
-    try:
-        parts = urlsplit(url)
-        return f"{(parts.hostname or '').lower()}:{parts.port}"
-    except ValueError:
-        return url
 
 
 def _comment_ids(msg: object) -> list[str] | None:
@@ -1931,32 +1955,43 @@ class Daemon:
         independent of keychain state; otherwise the stored key is probed.
         A one-token completion against a matching tier: the cheapest
         request that still proves the key authenticates.  The key value
-        never appears in the response.
+        never appears in the response.  Every verdict names *credential*
+        (TD-5200), so the window shows it on that key's row, and comes
+        within ``KEY_TEST_LIMIT_S``.
         """
+
+        def verdict(ok: bool, detail: str) -> ApiKeyValidated:
+            return ApiKeyValidated(seq=1, ok=ok, detail=detail, credential=credential)
+
         probe: KeyProbe | None = None
         try:
-            if credential and api_key is None:
-                await resolve_tier_slugs(self.config)
-                probe = key_probe(self.config, credential)
-            err = await self._provider_probe(api_key, credential, probe=probe)
+            async with asyncio.timeout(KEY_TEST_LIMIT_S):
+                if credential and api_key is None:
+                    await resolve_tier_slugs(self.config)
+                    probe = key_probe(self.config, credential)
+                err = await self._provider_probe(api_key, credential, probe=probe)
+        except TimeoutError:
+            target = probe.tier if probe is not None else None
+            where = target.base_url.rstrip("/") if target is not None else "the provider"
+            log.warning(
+                "key test passed its time limit",
+                extra={"extra_fields": {"credential": credential, "limit_s": KEY_TEST_LIMIT_S}},
+            )
+            return verdict(False, f"No answer from {where} within {KEY_TEST_LIMIT_S:g} seconds.")
         except KeychainError as e:
-            return ApiKeyValidated(seq=1, ok=False, detail=str(e))
+            return verdict(False, str(e))
         except ModelDiscoveryError as e:
-            return ApiKeyValidated(seq=1, ok=False, detail=str(e))
+            return verdict(False, str(e))
         host = probe.host.rstrip("/") if probe is not None else ""
         if err is not None and probe is not None and probe.borrowed and key_got_past_sign_in(err):
             # TD-5184: the server took the key; it just lacks the borrowed model.
-            return ApiKeyValidated(
-                seq=1, ok=True, detail=f"Key accepted by {host}. No model uses it yet."
-            )
+            return verdict(True, f"Key accepted by {host}. No model uses it yet.")
         if err is not None:
             detail = auth_failure_message() if err.code == "auth_failed" else err.message
-            return ApiKeyValidated(seq=1, ok=False, detail=detail)
+            return verdict(False, detail)
         if host:
-            return ApiKeyValidated(seq=1, ok=True, detail=f"Key accepted by {host}.")
-        return ApiKeyValidated(
-            seq=1, ok=True, detail="Key accepted by the active preset's provider."
-        )
+            return verdict(True, f"Key accepted by {host}.")
+        return verdict(True, "Key accepted by the active preset's provider.")
 
     # ── Add a model (TD-5172) ─────────────────────────────────────────
 
@@ -2496,9 +2531,7 @@ class Daemon:
         for session in sessions:
             runner = self.session_registry.get_runner(session.id)
             if runner is not None:
-                await phases.run(
-                    f"cancel {session.id[:8]}", runner.cancel(reason="daemon shutdown")
-                )
+                await phases.run(f"cancel {session.id[:8]}", runner.cancel(reason=SHUTDOWN_REASON))
 
         await self._extractions.stop()
 
@@ -2671,7 +2704,7 @@ class Daemon:
         for record in self._session_store.records():
             chosen = self._resolved_preset(record.preset)
             if record.preset != chosen:
-                await self._session_store.set_preset(record.session_id, chosen)
+                await self._session_store.set_preset(record.session_id, chosen, touch=False)
             loaded = await asyncio.to_thread(self._session_persist.load, record.session_id)
             if loaded is not None and loaded.events:
                 # TD-5129: index what the last process logged but never
@@ -2706,7 +2739,7 @@ class Daemon:
                 await expire_restored_steering(sess, loaded.events)
                 await self._seal_cut_review(sess, loaded.events)
             if final_state != record.state:
-                await self._session_store.update_state(record.session_id, final_state)
+                await self._session_store.update_state(record.session_id, final_state, touch=False)
             log.info(
                 "restored session",
                 extra={
@@ -2912,7 +2945,11 @@ class Daemon:
                 await event_log.drop_before(result.earliest_seq)
                 await self._keep_task_list_on_disk(session_id, event_log)
         if isinstance(event, SessionStateEvent):
-            await self._session_store.update_state(event.session_id, event.state)
+            # ``running`` is liveness (TD-1714): a revive's loop logs it on
+            # every start, as the stop logs its cancel. Stamped as use, each
+            # restart re-sorted the rail by revive order (TD-5201).
+            used = event.state != "running" and event.reason != SHUTDOWN_REASON
+            await self._session_store.update_state(event.session_id, event.state, touch=used)
         elif isinstance(event, UserTurn):
             # A turn is use: the rail's newest-first order, quick entry and
             # `tst run --continue` all read updated_at as "used last", and a
@@ -3264,6 +3301,17 @@ class Daemon:
                 return build_error(
                     "session_not_found",
                     f"Session {msg.session_id!r} not found",
+                )
+            # An edit is a send (TD-1711): an ended session would cut its
+            # conversation for a turn that never comes, and leave its log and
+            # its saved conversation disagreeing (TD-5201).
+            if found.state in TERMINAL_STATES:
+                return build_error(
+                    "session_not_running",
+                    f"This session is {found.state} and can no longer run turns, so the "
+                    "message was not changed. Start a new session to carry on.",
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
                 )
             if (busy := _folder_busy_refusal(found, msg.type)) is not None:
                 return busy
@@ -3809,6 +3857,9 @@ class Daemon:
         if isinstance(msg, SetEmailNotify):
             return await self._handle_set_email_notify(msg)
 
+        if isinstance(msg, GetConfigEditor | SetConfigValue | ResetConfigValue):
+            return await self._handle_config_editor(msg)
+
         if isinstance(msg, TestEmail):
             return await self._handle_test_email(msg)
 
@@ -3859,7 +3910,10 @@ class Daemon:
                 typesafe_model=self.config.judgments.typesafe_model,
                 typesafe_credential=credential,
             )
-            await asyncio.to_thread(save_judgments, self.config.judgments, self.config_path)
+            # On the loop, with no await between its read and its write, like
+            # every config.yaml writer: in a worker thread it could interleave
+            # with a Settings → Configuration edit and drop it (TD-5203).
+            save_judgments(self.config.judgments, self.config_path)
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, SetWorkspacePin):
@@ -4308,7 +4362,7 @@ class Daemon:
                 kept = (
                     prior is not None
                     and prior.transport == msg.transport
-                    and _url_host(prior.url) == _url_host(msg.url)
+                    and url_host(prior.url) == url_host(msg.url)
                 )
                 spec = McpServerConfig(
                     transport=msg.transport,
@@ -4517,7 +4571,7 @@ class Daemon:
         # TD-5137: so did its background shell jobs.
         await sess.shell_jobs.expire_restored(loaded.events)
         await self._seal_cut_review(sess, loaded.events)
-        await self._emit_working_context(sess, config_source(sess))
+        await self._emit_working_context(sess, config_source(sess), unless_logged=True)
         log.info(
             "revived session",
             extra={
@@ -4864,18 +4918,24 @@ class Daemon:
         await self.session_registry.register_runner(sess.id, runner)
         self.state.active_sessions += 1
 
-    async def _emit_working_context(self, sess: Session, source: str) -> None:
+    async def _emit_working_context(
+        self, sess: Session, source: str, *, unless_logged: bool = False
+    ) -> None:
         """Log the wall and slugs this loop is actually using.
 
         Open and revive both call this so the title bar is not left
-        showing a previous life's boundary after a restart.
+        showing a previous life's boundary after a restart. A revive
+        (``unless_logged``) skips each one the window's newest of its kind
+        already says: logged on every start, they wore an idle chat's
+        window down (TD-5201). The window, not the newest ever logged, is
+        the test, because a replay is the only way either reaches a window.
         """
-        await sess.event_log.add(boundary_update_event(sess, source))
+        events: list[DaemonEvent] = [boundary_update_event(sess, source)]
         if sess.engine == "grok":
             # Native slugs are not what will answer. Name the Grok model
             # the CLI is configured to use so an empty chat can show it
             # before the first ACP prompt.
-            await sess.event_log.add(
+            events.append(
                 GrokMode(
                     session_id=sess.id,
                     mode="",
@@ -4884,9 +4944,13 @@ class Daemon:
                     seq=1,
                 )
             )
-            return
-        assert sess.router is not None
-        await sess.event_log.add(tier_state_event(sess, _session_model_config(sess, self.config)))
+        else:
+            assert sess.router is not None
+            events.append(tier_state_event(sess, _session_model_config(sess, self.config)))
+        window = sess.event_log.all_events if unless_logged else []
+        for event in events:
+            if not _window_says(window, event):
+                await sess.event_log.add(event)
 
     async def _start_session(
         self,
@@ -5404,6 +5468,9 @@ class Daemon:
         await keep_goal_visible(session)
         # TD-5123: and the pinned plan, which it shows too.
         await keep_pinned_plan_visible(session)
+        # TD-5169: another computer gets the events without service hosts.
+        peer = self.ws_server.peer_view(connection)
+        hosts = service_hosts(self.config.model_dump()) if peer.machine else frozenset()
         # Replay from from_seq. A rotated prefix is a typed notice, then
         # the same gap/dup rules over whatever is still in the window.
         earliest = session.event_log.earliest_seq
@@ -5415,10 +5482,18 @@ class Daemon:
                     earliest_seq=earliest,
                 ).model_dump_json()
             )
+            # TD-5201: and, for a window, what the saved conversation still
+            # has of it. Built off the loop from copies: a long conversation
+            # takes a while to walk and redact.
+            if peer.history:
+                history = await asyncio.to_thread(
+                    restorable_history,
+                    session_id,
+                    list(session.conversation),
+                    session.event_log.all_events,
+                )
+                await connection.send(outbound_event(history, peer, hosts).model_dump_json())
         replay_from = max(msg.from_seq, earliest)
-        # TD-5169: another computer gets the events without service hosts.
-        peer = self.ws_server.peer_view(connection)
-        hosts = service_hosts(self.config.model_dump()) if peer.machine else frozenset()
         for event in session.event_log.events_from(replay_from):
             await connection.send(outbound_event(event, peer, hosts).model_dump_json())
 
@@ -6118,6 +6193,102 @@ class Daemon:
         except EmailNotifyError as exc:
             return build_error("bad_request", f"{exc.error_class}: {exc.message}")
         return (await self._setup_state_event()).model_dump_json()
+
+    async def _handle_config_editor(
+        self, msg: GetConfigEditor | SetConfigValue | ResetConfigValue
+    ) -> str:
+        """Settings → Configuration (TD-5203): the view of config.yaml, or one edit.
+
+        Loopback only (peer_policy). The edit runs on the loop with no await
+        between its read and its write, as every config.yaml writer here
+        does, so none can interleave with another. The reload is the one the
+        other Settings writers use; MCP and the active model get theirs too.
+        """
+        if isinstance(msg, GetConfigEditor):
+            return await self._config_editor_reply(msg.type, None)
+        action: Literal["set", "reset"] = "set" if isinstance(msg, SetConfigValue) else "reset"
+        value = msg.value if isinstance(msg, SetConfigValue) else None
+        path = list(msg.path)
+        try:
+            written = apply_edit(self.config_path, action, path, value, msg.version)
+        except ConfigEditRefused as e:
+            return ConfigValueRejected(
+                action=action, path=path, code=e.code, message=e.message
+            ).model_dump_json()
+        except Exception as e:
+            # A file shape the splicer did not foresee must not drop the
+            # socket: the window's other pages share this connection. The
+            # field gets an answer instead, and the file was not written
+            # (the write is apply_edit's last step).
+            log.warning(
+                "config edit failed unexpectedly",
+                extra={"extra_fields": {"key": dotted(path), "error": type(e).__name__}},
+            )
+            return ConfigValueRejected(
+                action=action,
+                path=path,
+                code="write_failed",
+                message="this key could not be written; edit config.yaml by hand",
+            ).model_dump_json()
+        if written is not None:
+            try:
+                self._reload_user_config()
+            except ConfigError as e:
+                reason = f"Saved, but the config no longer loads: {e}"
+                return build_error("bad_request", reason, in_reply_to=msg.type)
+            if path == ["active_preset"]:
+                # The reload keeps the live preset; this edit is the person picking one.
+                picked = written.active_preset
+                self.config = self.config.model_copy(update={"active_preset": picked})
+                self._slug_snapshot = _snapshot_slugs(self.config)
+            if path[0] == "mcp":
+                self._invalidate_stored_probe()
+                await self._mcp.reload(self.config.mcp)
+        log.info(
+            "config value edited",
+            extra={
+                "extra_fields": {
+                    "action": action,
+                    "key": ".".join(str(part) for part in path),
+                    "changed": written is not None,
+                }
+            },
+        )
+        return await self._config_editor_reply(msg.type, ConfigEdit(action=action, path=path))
+
+    async def _config_editor_reply(self, in_reply_to: str, edit: ConfigEdit | None) -> str:
+        """A ``config_editor`` event. The schema and defaults ride on the first only.
+
+        Both are fixed for the life of the process, so an edit's ack carries
+        the values alone and the window keeps what it has.
+        """
+        try:
+            view = await asyncio.to_thread(build_view, self.config_path)
+        except ConfigEditRefused as e:
+            return build_error("config_invalid", e.message, in_reply_to=in_reply_to)
+        first = edit is None
+        try:
+            return ConfigEditor(
+                root=ROOT_MODEL,
+                defs=editor_defs() if first else {},
+                values=view.values,
+                set_paths=view.set_paths,
+                locked_paths=view.locked_paths,
+                defaults=shipped_defaults() if first else {},
+                version=view.version,
+                file=view.file,
+                edit=edit,
+            ).model_dump_json()
+        except PydanticSerializationError:
+            # A hand-written escape such as "\ud800" loads as a lone surrogate,
+            # which JSON cannot carry. The page shows its error state, rather
+            # than this connection dropping on every reconnect.
+            return build_error(
+                "config_invalid",
+                "config.yaml holds a character that cannot be shown (a lone surrogate, "
+                "half of an emoji written as an escape); fix it by hand",
+                in_reply_to=in_reply_to,
+            )
 
     async def _handle_test_email(self, msg: TestEmail) -> str:
         from .notify.email_settings import send_test_email

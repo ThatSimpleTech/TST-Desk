@@ -424,7 +424,9 @@ the event stream rather than joining it. After the token checks out it also carr
 `machine_id` (`mid_` + 16 hex, minted once into `{user_data_dir}/machine-id`; an identity, not
 a secret) and `desktop_name`, so a hub can tell "the same computer at a new address" and "this
 is me" (TD-5015). `hello.features` is what the client opts into: `"machines"` asks to be a
-viewer, `"bridge"` says this is another computer's hub. Unknown names are ignored.
+viewer, `"bridge"` says this is another computer's hub, and `"history"` asks attach for
+`conversation_history` (TD-5201: the window asks, `tst attach` does not; a hub's lanes ask and the
+hub passes it on only to a viewer that asked). Unknown names are ignored.
 
 A phone that is not paired yet sends `pair` instead of `hello` as its first frame (TD-5014).
 The daemon checks the one-time code, mints that device a key, answers with a bare `pair_ok`
@@ -449,9 +451,17 @@ belong to no session's log and must never advance a client's bookkeeping.
 
 `attach` replays from a given `seq` and then follows live, which is what makes reopening a window
 lossless. If that `seq` is below the on-disk window (`session.log_max_events`), attach sends
-`log_trimmed` and replays from the earliest kept seq. `ping` is the odd one out: it is a
-daemon→client frame with no `seq` at all, deliberately not a `DaemonEvent`, because a liveness
-frame that advanced the sequence would corrupt replay.
+`log_trimmed` and replays from the earliest kept seq. Every streamed chunk is an event, so an older
+chat's window can hold none of its questions: after `log_trimmed`, attach also sends
+`conversation_history` to a client whose hello asked for `"history"`: the messages of the session's
+saved conversation that come before the window (TD-5201, `chat_history.py`,
+`chat_history_rows.py`). The two line up by a tool-call id that names one message, and by user-turn
+number from the session's start and the turn's words; when they cannot, the frame carries no
+messages and no number, and the window numbers no turn. The window also drops what still arrives for a session it detached from,
+and, for one it attached again, what arrives before the new replay begins (its `log_trimmed` or its
+first event), rather than resuming from those frames or reconnecting over them (TD-5201). `ping` is
+the odd one out: it is a daemon→client frame with no `seq` at all, deliberately not a
+`DaemonEvent`, because a liveness frame that advanced the sequence would corrupt replay.
 
 ### Unknown types
 
@@ -633,6 +643,9 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `scan_local_servers` | — | "Find models on this computer": ask each loopback `local_servers` entry for `/models`, no key, on the user's click only (TD-5180). |
 | `add_model` | — | "Add a model": store the key, write a single-model preset, make it active. Acked with `setup_state`. |
 | `test_model` | — | Send one short test message to a preset's model (default: the active one). |
+| `get_config_editor` | — | Settings → Configuration (TD-5203): ask for every `config.yaml` key — the schema read off the config models, the effective values, which keys the file sets, and each fixed key's reset value. Loopback only: a phone or another computer gets `loopback_only`. |
+| `set_config_value` | — | Write one `config.yaml` value at `path` (mapping keys and list positions; one past a list's end appends). The whole would-be file is loaded as the daemon loads it, and checked like the dedicated Settings writers check theirs, before an atomic write that keeps every other byte. Acked with `config_editor`, refused with `config_value_rejected` and the file untouched. A path through a list position must carry the `version` it was made against. A `secrets` map (an MCP server's `env` and `headers`) and `credentials` are refused: their own pages keep tokens in the keychain. So is a value that looks like a key or token or holds URL user info, a new address or transport for an MCP server that holds a token or `allow_remote`, and a key written through a YAML anchor, alias or merge. `value` holds at most 64 KiB as JSON. Loopback only. |
+| `reset_config_value` | — | Put one key back: a key at a fixed place to what the packaged `config.yaml` has (else its built-in default), a key inside a list item or map entry to its built-in default by removing its line. A path that ends at a list item or map entry removes it. Acked and refused like `set_config_value`. Loopback only. |
 | `delete_api_key` | — | Remove an API key from the OS keychain. Only an API key's id, never another keychain item (TD-5182). |
 | `set_preset` | — | Choose the active model preset. |
 | `set_engine` | — | Choose the agent engine for new sessions (`native` or `grok`). Acked with `setup_state`. |
@@ -754,14 +767,17 @@ are stamped by a session's event log, `connection` events fix it at 1, and `ping
 | `setup_state` | connection | Onboarding state, and the ack for `set_api_key` / `set_preset` / `set_engine` / `set_tier_slug` / `refresh_model_cards` / `set_skip_all_approvals` / `set_load_global_memory` / `set_coworker` / `set_voice` / `set_cu_indicators` / `set_workspace_pin` / `set_remote_attach` / `rotate_remote_token` / `cancel_pairing` / `remove_remote_device` / `set_mcp_server` / `delete_mcp_server` / `set_mcp_secret` / `delete_mcp_secret` / `set_judgments` / `set_email_notify`. `remote_bind` is the bound Tailscale address, never a token. `remote_devices` lists paired devices (id, name, paired_at, last_seen, connected), never a key or its hash (TD-5014). `tier_cards` is the active preset's stored prices and limits per tier with the last card refresh's outcome (TD-5185). Carries `engine`, `grok_available`, `grok_binary`, `voice_enabled`, and `voice_has_endpoint`. `mcp_servers` is the listed MCP servers (id, transport, command, url, enabled, and `env` / `headers` as name, source, entry and stored presence, TD-5110) — never a secret or a literal value. `speech_enabled` / `speech_ready` are hold-to-talk flags (TD-4701); the speech URL never appears. `judgments_*` echoes the judgment-seam toggles (TD-708 dev). A remote peer (a phone or another computer) gets it without `remote_devices`, `remote_bind` and `remote_port` (TD-5015). `email` is the mail form (enabled, method, host, port, security, username, from_address, password_stored) for TD-3820, TD-4853, and TD-4854; the password never appears. `github` is the connector snapshot (enabled, connected, phase, user code, verification URL, login, message) for TD-4852; tokens and the device code never appear. `microsoft` is the sign-in snapshot (enabled, connected, phase, account, message) for TD-4853; tokens and the authorization code never appear. `google` is the sign-in snapshot (enabled, connected, phase, account, message, client_secret_stored) for TD-4854; the secret, the tokens, and the authorization code never appear. |
 | `pairing_code` | connection | Reply to `start_pairing`: the code (and `ABCD-2345` display form), host, port, desktop name, the `tstdesk://pair` link, a QR of it as standalone SVG, and when it expires (TD-5014). |
 | `pairing_completed` | connection | A phone redeemed the code. Carries that device's summary (never its key). Sent to the computer's own loopback windows only (TD-5014). |
-| `api_key_validated` | connection | The result of a key probe. Never carries the key. |
+| `api_key_validated` | connection | The result of a key probe. `credential` echoes the request's, so Settings → API keys shows the verdict on that key's row; null when the request named none (TD-5200). Sent within 20 s (`KEY_TEST_LIMIT_S`): a server that has not answered by then is reported as no answer. Replies come in request order, and the window ties each verdict to its request by that order, which also places an older daemon's unnamed verdict. Never carries the key. |
 | `endpoint_models` | connection | A server's model list for "Add a model", or why it could not be read. Never carries the key. |
 | `local_servers` | connection | The servers on this computer that answered `scan_local_servers` with models, in config order, and every URL asked. |
 | `model_tested` | connection | The result of `test_model`: the reply, or what went wrong. |
+| `config_editor` | connection | Reply to `get_config_editor`, and the ack of each config edit (TD-5203). `defs` (every config model and its fields: kind, bounds, choices, default, description, unit) and `defaults` (reset values by JSON-encoded path) come on the reply to `get_config_editor` only; an edit's ack leaves both empty. `values` is the effective config with each `secrets` map's values replaced by where they live (`keychain` or `config`), never the value, and a password in a URL masked. `set_paths` lists every key path the file sets, and `locked_paths` each one it writes through a YAML anchor, alias or merge (those, and the keys under them, are edited in the file by hand); `version` identifies its bytes; `edit` names the edit acknowledged. |
+| `config_value_rejected` | connection | A config edit that was not written: `code` (`invalid`, `not_editable`, `secret`, `stale`, `not_found`, `write_failed`) and a message for the field at `path`, never echoing the value. The file is untouched (TD-5203). |
 | `diagnostics_report` | connection | Doctor results: one row per check, with a fix when it failed. The `skills` row names each skill's ignored frontmatter keys (TD-5107). |
 | `usage_report` | connection | The rollups `get_usage` asked for, bucketed and broken out by tier (TD-1706). |
 | `usage_exported` | connection | Where `export_usage` wrote, and how many rows (TD-1706). |
 | `log_trimmed` | connection | Attach asked for a seq the on-disk window dropped. Replay continues from `earliest_seq` (TD-2901). |
+| `conversation_history` | connection | After `log_trimmed`, to a hello with `"history"`: the saved conversation's messages from before the window (user, assistant with its tool calls but not their results, compaction summaries), each string redacted and then capped, image bytes never sent; `user_turns` numbers the window's turns from the session's start, `null` with no messages when the two could not be lined up (TD-5201). |
 | `artifact_ready` | session | An artifact was recorded for this session (TD-3201; `kind: "sent_file"` with name, size, sha256, caption and tool call id for a sent file, TD-5143). |
 | `artifact_list` | connection | The artifacts `list_artifacts` asked for. |
 | `artifact` | connection | Metadata and path for `open_artifact`. Bytes stay on disk. |

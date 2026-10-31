@@ -14,6 +14,7 @@ from pathlib import Path
 # Add core to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tstd.config_editor_wire import ConfigEdit, ConfigField, ConfigModelDef, ConfigNode
 from tstd.peer_policy import FORWARDED_VERBS
 from tstd.protocol import (
     CHUNK_MAX,
@@ -51,11 +52,14 @@ from tstd.protocol import (
     CloseWorktree,
     CommandEntry,
     CommandList,
+    ConfigEditor,
     ConfigTrust,
+    ConfigValueRejected,
     ContextCompacted,
     ContextPinEntry,
     ContextPins,
     ContextUsage,
+    ConversationHistory,
     ConversationReset,
     CostUpdate,
     CreateRule,
@@ -93,6 +97,7 @@ from tstd.protocol import (
     FocusWindow,
     ForkFrom,
     GetCharter,
+    GetConfigEditor,
     GetHooks,
     GetInstructionStack,
     GetSessionJobSource,
@@ -115,6 +120,8 @@ from tstd.protocol import (
     GrokSessionEntry,
     GrokSessionList,
     Hello,
+    HistoryMessage,
+    HistoryTool,
     HookInfo,
     HookRun,
     HooksState,
@@ -196,6 +203,7 @@ from tstd.protocol import (
     RemoveQueued,
     RemoveRemoteDevice,
     RenameSession,
+    ResetConfigValue,
     RestoreFileEntry,
     RestoreFiles,
     Resume,
@@ -225,6 +233,7 @@ from tstd.protocol import (
     SessionWorktreeInfo,
     SetApiKey,
     SetBranch,
+    SetConfigValue,
     SetCoworker,
     SetCredential,
     SetCuIndicators,
@@ -420,6 +429,17 @@ FIXTURES = {
         password=None,
     ),
     "test_email": TestEmail(to="owner@example.com"),
+    # TD-5203: Settings → Configuration.
+    "get_config_editor": GetConfigEditor(),
+    "set_config_value": SetConfigValue(
+        path=["workflow", "max_parallel"], value=4, version="0123456789abcdef"
+    ),
+    "set_config_value_item": SetConfigValue(
+        path=["hooks", "after_write", 0],
+        value={"command": ["ruff", "format"], "match": ["*.py"]},
+        version="0123456789abcdef",
+    ),
+    "reset_config_value": ResetConfigValue(path=["search", "max_results"]),
     "github_connect": GithubConnect(),
     "github_disconnect": GithubDisconnect(),
     "microsoft_connect": MicrosoftConnect(),
@@ -1580,7 +1600,14 @@ FIXTURES = {
         awaiting_approval=["s2"],
         hold_until="2026-10-14T10:47:00+00:00",
     ),
-    "api_key_validated": ApiKeyValidated(ok=True, detail="Key accepted by provider."),
+    # A Settings row's test names its key (TD-5200); the first-run check of a
+    # typed key names none.
+    "api_key_validated": ApiKeyValidated(
+        ok=True, detail="Key accepted by provider.", credential="openrouter"
+    ),
+    "api_key_validated_first_run": ApiKeyValidated(
+        ok=False, detail="The key was rejected.", credential=None
+    ),
     "endpoint_models": EndpointModels(
         base_url="https://api.example.com/v1",
         models=[
@@ -1595,6 +1622,67 @@ FIXTURES = {
         error="The server refused the key. Check it and try again.",
     ),
     "model_tested": ModelTested(preset="tst-default", ok=True, reply="I am working."),
+    # TD-5203: a two-model slice of the editor's schema, and an edit's ack.
+    "config_editor": ConfigEditor(
+        root="ModelConfig",
+        defs={
+            "ModelConfig": ConfigModelDef(
+                name="ModelConfig",
+                fields=[
+                    ConfigField(
+                        name="workflow",
+                        node=ConfigNode(
+                            kind="object",
+                            ref="WorkflowConfig",
+                            title="Workflow",
+                            description="Limits for the workflow tool.",
+                            has_default=True,
+                            default={"max_parallel": 3, "max_tasks": 8},
+                        ),
+                    ),
+                    ConfigField(
+                        name="mcp_env",
+                        node=ConfigNode(
+                            kind="secrets",
+                            editable=False,
+                            description="Extra environment for a stdio server.",
+                            note="Values are set in Settings → MCP servers.",
+                        ),
+                    ),
+                ],
+            ),
+            "WorkflowConfig": ConfigModelDef(
+                name="WorkflowConfig",
+                empty_ok=True,
+                fields=[
+                    ConfigField(
+                        name="max_parallel",
+                        node=ConfigNode(
+                            kind="int",
+                            description="Workers running at once.",
+                            minimum=1,
+                            maximum=16,
+                            default=3,
+                            has_default=True,
+                        ),
+                    )
+                ],
+            ),
+        },
+        values={"workflow": {"max_parallel": 4}, "mcp_env": {"TOKEN": "keychain"}},
+        set_paths=[["workflow"], ["workflow", "max_parallel"]],
+        locked_paths=[["presets", "team", "worker"]],
+        defaults={'["workflow","max_parallel"]': 3},
+        version="0123456789abcdef",
+        file="/home/user/.local/share/tst-desk/config.yaml",
+        edit=ConfigEdit(action="set", path=["workflow", "max_parallel"]),
+    ),
+    "config_value_rejected": ConfigValueRejected(
+        action="set",
+        path=["workflow", "max_parallel"],
+        code="invalid",
+        message="workflow.max_parallel: Input should be less than or equal to 16",
+    ),
     "local_servers": LocalServers(
         servers=[
             LocalServer(
@@ -1717,6 +1805,29 @@ FIXTURES = {
         requested_from_seq=1,
         earliest_seq=8,
     ),
+    # TD-5201: what the saved conversation has from before that window.
+    "conversation_history": ConversationHistory(
+        session_id="sess-1",
+        messages=[
+            HistoryMessage(role="summary", text="Earlier turns, summarized.", folded_turns=2),
+            HistoryMessage(role="user", text="Read the notes", user_index=2),
+            HistoryMessage(
+                role="assistant",
+                text="Reading them.",
+                tools=[
+                    HistoryTool(
+                        tool_call_id="call-1",
+                        name="read_file",
+                        arguments={"path": "notes.md"},
+                    )
+                ],
+            ),
+        ],
+        user_turns=3,
+        truncated=True,
+    ),
+    # TD-5201: the same when the two could not be lined up: no rows, no number.
+    "conversation_history_unaligned": ConversationHistory(session_id="sess-1", user_turns=None),
     # TD-3201: session-scoped notice; list/open replies stay off the log.
     # TD-5143: the notice is a sent file, the kind with every optional field.
     "artifact_ready": ArtifactReady(

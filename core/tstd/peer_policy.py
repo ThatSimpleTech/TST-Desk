@@ -33,6 +33,9 @@ DeviceKind = Literal["phone", "machine"]
 
 VIEWER_FEATURE = "machines"
 BRIDGE_FEATURE = "bridge"
+# A window that rebuilds chats: attach sends it ``conversation_history``
+# (TD-5201). Orthogonal to the peer kind; a hub's lanes ask for it too.
+HISTORY_FEATURE = "history"
 
 # What another computer's hub may ask of this one. Each was checked for a
 # way to turn approvals off (DECISIONS TD-5015): presets carry only tier
@@ -133,6 +136,11 @@ VIEWER_MACHINE_VERBS: frozenset[str] = frozenset({"list_machines"})
 # open to a phone, and neither is a machine-peer verb.
 # ``scan_local_servers`` (TD-5180) probes this computer's own model ports,
 # a network call the person at the computer starts.
+# Settings → Configuration (TD-5203) reaches every key of config.yaml: the
+# commands this computer runs (hooks, language and MCP servers, the engine),
+# where keys and tokens are sent, and the phone listener. The narrower pages
+# a phone may use stay open to it; this one, reading included, is the
+# computer's own.
 LOOPBACK_VERBS: frozenset[str] = frozenset(
     {
         "drain",
@@ -140,6 +148,9 @@ LOOPBACK_VERBS: frozenset[str] = frozenset(
         "steering_accept",
         "steering_edit",
         "scan_local_servers",
+        "get_config_editor",
+        "set_config_value",
+        "reset_config_value",
     }
 )
 
@@ -151,6 +162,7 @@ class PeerView:
     remote: bool
     machine: bool
     viewer: bool
+    history: bool = False
 
     @property
     def loopback(self) -> bool:
@@ -169,7 +181,8 @@ def classify(remote: bool, device_kind: DeviceKind | None, features: Iterable[st
     wanted = set(features)
     machine = device_kind == "machine" or BRIDGE_FEATURE in wanted
     viewer = not machine and VIEWER_FEATURE in wanted and (not remote or device_kind == "phone")
-    return PeerView(remote=remote, machine=machine, viewer=viewer)
+    history = HISTORY_FEATURE in wanted
+    return PeerView(remote=remote, machine=machine, viewer=viewer, history=history)
 
 
 # Loopback names say nothing about where a service lives.

@@ -70,6 +70,29 @@ describe("choosing a session to bind", () => {
     expect(choice).toEqual({ action: "bind", sessionId: "other", turnState: "idle" });
   });
 
+  it("keeps an archived session the pane was opened on from the archived shelf (TD-5201)", () => {
+    const list = summaries([
+      { id: "filed", updated: "2026-08-14T09:00:00Z", archived: true },
+      { id: "newer", updated: "2026-08-14T11:00:00Z" },
+    ]);
+    expect(chooseBoundSession(list, "filed", null, null, true)).toEqual({
+      action: "keep",
+      turnState: "idle",
+    });
+  });
+
+  it("still moves off the bound session in the list that archives it (TD-5201)", () => {
+    const after = summaries([
+      { id: "bound", updated: "2026-08-14T11:00:00Z", archived: true },
+      { id: "other", updated: "2026-08-14T08:00:00Z" },
+    ]);
+    expect(chooseBoundSession(after, "bound", null, null, false)).toEqual({
+      action: "bind",
+      sessionId: "other",
+      turnState: "idle",
+    });
+  });
+
   it("unbinds rather than binding a corpse when every session is terminal (TD-1711)", () => {
     const choice = chooseBoundSession(
       summaries([
@@ -124,6 +147,29 @@ describe("choosing a session to bind", () => {
     expect(chooseBoundSession(list, "bound", "other")).toEqual({
       action: "unbind",
     });
+  });
+
+  it("keeps a window-scoped viewer on its chat once archived or ended (TD-5201)", () => {
+    // "Open in new window" is on every row, the archived shelf's included.
+    for (const row of [
+      { archived: true },
+      { state: "complete" as const },
+      { state: "cancelled" as const },
+      { state: "interrupted" as const },
+      { state: "failed" as const },
+    ]) {
+      const list = summaries([
+        { id: "newest", updated: "2026-08-14T10:00:00Z" },
+        { id: "bound", updated: "2026-08-14T09:00:00Z", ...row },
+      ]);
+      const turnState = row.state ?? "idle";
+      expect(chooseBoundSession(list, null, "bound")).toEqual({
+        action: "bind",
+        sessionId: "bound",
+        turnState,
+      });
+      expect(chooseBoundSession(list, "bound", "bound")).toEqual({ action: "keep", turnState });
+    }
   });
 });
 

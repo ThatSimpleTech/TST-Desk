@@ -63,6 +63,9 @@ NEVER_FOR_MACHINES = frozenset(
         "run_job",
         "set_cu_kill",
         "set_cu_policy",
+        "get_config_editor",
+        "set_config_value",
+        "reset_config_value",
     }
 )
 
@@ -91,6 +94,14 @@ def _msg(kind: str, **fields: object) -> protocol.ClientMessage:
         (True, "machine", ["machines"], MACHINE),
         (True, "phone", ["machines", "bridge"], MACHINE),
         (False, None, ["bridge"], PeerView(remote=False, machine=True, viewer=False)),
+        # TD-5201: asking for restored history changes no kind.
+        (
+            False,
+            None,
+            ["machines", "history"],
+            PeerView(remote=False, machine=False, viewer=True, history=True),
+        ),
+        (True, "machine", ["bridge", "history"], PeerView(True, True, False, history=True)),
     ],
 )
 def test_classify(remote: bool, kind: object, features: list[str], expected: PeerView) -> None:
@@ -133,6 +144,22 @@ def test_local_server_scan_is_loopback_only() -> None:
         refusal = check(scan, peer, bridged=False)
         assert refusal is not None and json.loads(refusal)["code"] == "loopback_only", peer
         assert json.loads(refusal)["in_reply_to"] == "scan_local_servers"
+
+
+def test_the_config_editor_is_loopback_only() -> None:
+    """TD-5203: every config.yaml key, reading included, is the computer's own."""
+    frames = [
+        _msg("get_config_editor"),
+        _msg("set_config_value", path=["remote", "port"], value=40000),
+        _msg("reset_config_value", path=["hooks", "after_write", 0]),
+    ]
+    for frame in frames:
+        assert check(frame, LOOPBACK_PLAIN, bridged=False) is None
+        assert check(frame, VIEWER, bridged=False) is None
+        for peer in (PHONE_VIEWER, PLAIN_REMOTE, MACHINE):
+            refusal = check(frame, peer, bridged=False)
+            assert refusal is not None and json.loads(refusal)["code"] == "loopback_only"
+            assert json.loads(refusal)["in_reply_to"] == frame.type
 
 
 def test_drain_is_loopback_only() -> None:

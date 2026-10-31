@@ -670,8 +670,9 @@
 	.pane-activity {
 		height: 100%;
 		color: var(--color-ink);
-		/* BackgroundOrbit is fixed at z-index -1, under this shell and above
-		   the page ground. A solid fill on either column hides the field. */
+		/* The window background (TD-5202) is fixed at z-index -1, under this
+		   shell and above the page ground. A solid fill on either column
+		   hides it. */
 		background: transparent;
 	}
 

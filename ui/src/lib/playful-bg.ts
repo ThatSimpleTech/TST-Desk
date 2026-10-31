@@ -3,13 +3,13 @@
 // A field of fine dust that twinkles slowly and drifts upward, the same
 // idea as Claude Code's starfield: sparse specks on the ground colour,
 // a little brighter where the ambient band lights the top of the pane.
-// Pure and rune-free so the seeded randomness, the drift wrap, and the
-// reduced-motion rule are unit-testable in node; the Svelte component
-// owns the canvas, the animation loop, and reading the design tokens.
+// Pure and rune-free so the seeded randomness, the drift wrap and the
+// ripples are unit-testable in node; the Svelte components own the canvas
+// and reading the design tokens, and since TD-5202 the shared background
+// loop owns frames and the reduced-motion rule.
 //
-// Colours arrive as resolved hex strings from the caller — the module
-// never hardcodes a colour, so the tokens in tokens.css stay the only
-// palette in the tree (AGENTS §6).
+// The module never touches a colour, so the tokens in tokens.css stay the
+// only palette in the tree (AGENTS §6).
 
 /** Deterministic PRNG (mulberry32). Same seed, same field, every load. */
 export function mulberry32(seed: number): () => number {
@@ -88,8 +88,9 @@ export function dustField(opts: FieldOptions): Dust[] {
 /** Alpha 0–0.9 for one speck at time `tMs`. A slow sine with a soft floor,
  *  scaled by the speck's brightness weight (a quiet speck peaks at 0.5, a
  *  bright one at 0.9), so the field shimmers and never goes fully dark but
- *  stays quiet overall. */
-export function twinkleAlpha(speck: Dust, tMs: number): number {
+ *  stays quiet overall. Anything with a phase, speed and brightness can
+ *  twinkle this way, so the TD-5202 skies share it. */
+export function twinkleAlpha<S extends Pick<Dust, "phase" | "cps" | "bright">>(speck: S, tMs: number): number {
 	const wave = 0.5 + 0.5 * Math.sin(2 * Math.PI * (speck.phase + (tMs / 1000) * speck.cps));
 	return (0.1 + 0.8 * wave) * (0.5 + 0.5 * speck.bright);
 }
@@ -167,17 +168,4 @@ export function stepRipples(ripples: Ripple[], dtSec: number): Ripple[] {
 export function pushRipple(ripples: Ripple[], ripple: Ripple): Ripple[] {
 	const next = [...ripples, ripple];
 	return next.length > RIPPLE.maxRipples ? next.slice(next.length - RIPPLE.maxRipples) : next;
-}
-
-/** Reduced motion kills the animation loop: the field holds a fixed mid
- *  twinkle, no drift, and ripples are skipped entirely. Static is the
- *  rule, not the exception (same stance as the GlowLayer). */
-export function shouldAnimate(prefersReducedMotion: boolean): boolean {
-	return !prefersReducedMotion;
-}
-
-/** Fixed alpha used for every speck in static mode (wave mid-point at
- * t = 0 under the sine above, minus the motion). */
-export function staticAlpha(speck: Dust): number {
-	return twinkleAlpha({ ...speck, phase: 0, cps: 0 }, 0);
 }

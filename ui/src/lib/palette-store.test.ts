@@ -94,6 +94,7 @@ import { settings, resetSettings } from "./settings.svelte.js";
 import { rightPane, resetRightPane } from "./right-pane.svelte.js";
 import { sessions, startSessions, resetSessions } from "./sessions.svelte.js";
 import { resetDesign } from "./design.svelte.js";
+import { background, setBackground } from "./backgrounds/store.svelte.js";
 
 function sessionList(
 	entries: Array<[id: string, updatedAt: string, state?: SessionSummary["state"]]>,
@@ -170,6 +171,7 @@ describe("entries", () => {
 		expect(ids).toContain("action:show-work");
 		expect(ids).toContain("action:open-settings");
 		expect(ids).toContain("action:toggle-theme");
+		expect(ids).toContain("action:toggle-background");
 		expect(ids).toContain("action:end-session");
 		expect(ids).toContain("action:stop-computer-use");
 		expect(ids).toContain("action:resume-computer-use");
@@ -273,6 +275,15 @@ describe("commands", () => {
 		openPalette();
 		run("Toggle theme");
 		expect(settings.theme).toBe("light");
+	});
+
+	it("turns the background off, and back to the one it had", () => {
+		setBackground("deep-space");
+		run("Toggle background");
+		expect(background.id).toBe("off");
+		openPalette();
+		run("Toggle background");
+		expect(background.id).toBe("deep-space");
 	});
 
 	it("asks the daemon for a new session in the attached workspace", () => {

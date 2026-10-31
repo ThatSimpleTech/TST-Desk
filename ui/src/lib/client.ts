@@ -21,8 +21,8 @@ import { daemonWsUrl } from "./remote-connect";
  * Replies the daemon answers on one connection with seq fixed at 1. They are
  * not in any session's log, so they never touch the replay cursor:
  * design_hit (TD-3403), transcript (TD-4701), artifact_list and artifact
- * (TD-3201), artifact_chunk (TD-5143), files_restore_preview (TD-5125) and
- * attachment_extracted (TD-5131).
+ * (TD-3201), artifact_chunk (TD-5143), files_restore_preview (TD-5125),
+ * attachment_extracted (TD-5131) and conversation_history (TD-5201).
  */
 const CONNECTION_SCOPED: ReadonlySet<string> = new Set([
   "design_hit",
@@ -32,6 +32,7 @@ const CONNECTION_SCOPED: ReadonlySet<string> = new Set([
   "artifact_chunk",
   "files_restore_preview",
   "attachment_extracted",
+  "conversation_history",
 ]);
 
 /**
@@ -105,10 +106,13 @@ const KNOWN_EVENT_TYPES = new Set([
   "endpoint_models", // TD-5172
   "local_servers", // TD-5180
   "model_tested", // TD-5172
+  "config_editor", // TD-5203
+  "config_value_rejected", // TD-5203
   "diagnostics_report", // TD-1104 doctor
   "usage_report", // TD-1706: was missing; the usage panel never loaded
   "usage_exported", // TD-1706
   "log_trimmed", // TD-2901: attach from a rotated seq
+  "conversation_history", // TD-5201: what that rotated prefix held
   "artifact_ready", // TD-3201
   "artifact_list", // TD-3201
   "artifact", // TD-3201
@@ -198,8 +202,10 @@ export interface ClientOptions {
 
 /** What this UI opts into on hello (TD-5015): `"machines"` makes the
  *  connection a viewer, so the daemon merges its paired computers' rows into
- *  session_list and sends machine_list. An older daemon ignores it. */
-export const HELLO_FEATURES: readonly string[] = ["machines"];
+ *  session_list and sends machine_list. `"history"` (TD-5201) asks attach for
+ *  an older chat's earlier messages when its log no longer reaches them. An
+ *  older daemon ignores both. */
+export const HELLO_FEATURES: readonly string[] = ["machines", "history"];
 
 /** Sink for all events including connection-state transitions. */
 export interface ClientSink {
@@ -227,6 +233,14 @@ export class ProtocolClient {
   private readonly lastSeqBySession = new Map<string, number>();
   // session_id of every session this connection is (or should be) attached to.
   private readonly attachedSessions = new Set<string>();
+  // Sessions detached and not attached again (TD-5201). The daemon reads the
+  // socket in order, so a replay it was already sending keeps arriving after
+  // the detach; those frames must neither rebuild the cursor nor force a
+  // reconnect.
+  private readonly detachedSessions = new Set<string>();
+  // Sessions attached again after a detach whose new replay has not begun:
+  // the rest of the old one is still ahead of it on the socket (TD-5201).
+  private readonly awaitingReplay = new Set<string>();
   // True after the first handshake; distinguishes first connect from a reconnect.
   private hasConnectedOnce = false;
   // Frames dispatch() dropped because their type is not in KNOWN_EVENT_TYPES.
@@ -265,15 +279,18 @@ export class ProtocolClient {
    * reconnect the client re-attaches every registered session itself.
    */
   attach(sessionId: string): void {
+    if (this.detachedSessions.delete(sessionId)) this.awaitingReplay.add(sessionId);
     const fromSeq = this.lastSeq(sessionId) + 1;
     this.attachedSessions.add(sessionId);
     this.sendAttach(sessionId, fromSeq);
   }
 
-  /** Stop following a session. */
+  /** Stop following a session. Its next attach replays the whole log. */
   detach(sessionId: string): void {
     this.attachedSessions.delete(sessionId);
     this.lastSeqBySession.delete(sessionId);
+    this.awaitingReplay.delete(sessionId);
+    this.detachedSessions.add(sessionId);
     this.send({ type: "detach", session_id: sessionId });
   }
 
@@ -456,6 +473,8 @@ export class ProtocolClient {
     }
     this.handshake = "idle";
     this.lastSeqBySession.clear();
+    this.detachedSessions.clear();
+    this.awaitingReplay.clear();
     this.socket?.close();
     this.socket = null;
     this.setState("stopped");
@@ -559,6 +578,9 @@ export class ProtocolClient {
       const reconnecting = this.hasConnectedOnce;
       this.hasConnectedOnce = true;
       this.reconnectAttempt = 0;
+      // A new socket streams only what is attached on it.
+      this.detachedSessions.clear();
+      this.awaitingReplay.clear();
       this.sink.onHandshake?.(msg as HelloAck);
       // Mark connected before re-attaching: `send` guards on the connected
       // state, and the re-attach below must pass that guard (see send()).
@@ -603,6 +625,23 @@ export class ProtocolClient {
     if (CONNECTION_SCOPED.has(type)) {
       this.dispatch(msg as DaemonEventUnion);
       return;
+    }
+
+    // TD-5201: the rest of a replay or stream the window already let go.
+    // Counted, it rebuilt the cursor (log_trimmed included), and the next
+    // attach then started after it: the daemon had nothing newer, so the
+    // chat opened empty. A frame without a seq, like a refusal, is no replay.
+    if (sessionId !== undefined && seq !== undefined && this.detachedSessions.has(sessionId)) {
+      return;
+    }
+    // Attached again before that replay was through: its rest still comes
+    // first, past a cursor the detach reset, and read as a gap it forced a
+    // reconnect and a second full replay. Only a frame that can open the new
+    // replay ends the wait: its log_trimmed, or its first event. The old
+    // replay's head, should it come first, is the same log, so it may.
+    if (sessionId !== undefined && seq !== undefined && this.awaitingReplay.has(sessionId)) {
+      if (type !== "log_trimmed" && seq !== this.lastSeq(sessionId) + 1) return;
+      this.awaitingReplay.delete(sessionId);
     }
 
     // TD-2901: the durable window dropped seqs before earliest_seq.

@@ -166,13 +166,19 @@ class SessionStore:
         self._records[session_id] = record
         await self._persist()
 
-    async def update_state(self, session_id: str, state: str) -> None:
-        """Refresh a session's state, keeping created_at unchanged."""
+    async def update_state(self, session_id: str, state: str, *, touch: bool = True) -> None:
+        """Refresh a session's state, keeping created_at unchanged.
+
+        ``touch`` also marks it used now. The daemon's own lifecycle (the
+        loop it starts on a revive, the stop at shutdown) is no use, and
+        stamping it re-sorted every chat by restart order (TD-5201).
+        """
         record = self._records.get(session_id)
         if record is None:
             return
         record.state = state
-        record.updated_at = _now_iso()
+        if touch:
+            record.updated_at = _now_iso()
         await self._persist()
 
     async def touch(self, session_id: str) -> None:
@@ -237,17 +243,19 @@ class SessionStore:
         await self._persist()
         return True
 
-    async def set_preset(self, session_id: str, preset: str) -> bool:
+    async def set_preset(self, session_id: str, preset: str, *, touch: bool = True) -> bool:
         """Record the catalog preset this session is using (TD-1721).
 
         Name only — the catalog in Settings is unchanged. Returns False
-        when the id is unknown.
+        when the id is unknown. ``touch`` as for :meth:`update_state`: a
+        restart moving a row off a preset that is gone is no use.
         """
         record = self._records.get(session_id)
         if record is None:
             return False
         record.preset = preset
-        record.updated_at = _now_iso()
+        if touch:
+            record.updated_at = _now_iso()
         await self._persist()
         return True
 
