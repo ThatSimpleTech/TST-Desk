@@ -5,18 +5,23 @@
 // They were six CSS animations at the display's rate, each on frames of its
 // own. Where WebKitGTK paints in software (no GL), every one of those frames
 // repainted the whole window, the app drawn over it included, and kept the
-// page process near a whole core. Now one shared loop steps them together
-// at most CLASSIC_FPS times a second and the dust paints on the same tick,
-// so the window repaints once a tick. The curves are the old keyframes and timing
-// functions, so the look at any moment is what the CSS drew at that moment.
+// page process near a whole core. Now one shared loop steps them together,
+// capped at CLASSIC_FPS ticks a second (about 10 in WebKitGTK), and the dust
+// paints on the same tick, so the window repaints once a tick. The curves are
+// the old keyframes and timing functions, so the look at any moment is what
+// the CSS drew at that moment.
 
 import { createSharedLoop, windowFrameHost, type SharedLoop } from "./loop";
 
-/** Most ticks a second. The outermost ring turns once in 80 s about 610 px
- *  from the core of a 1200×800 window, so its dots travel about 48 px a
- *  second: 12 ticks step them 4 px, under the 7 px of a soft rim dot, and
- *  the inner rings a pixel or less. Each tick repaints the window, so the
- *  cost grows with this number; at 10 the rim's steps start to show. */
+/** Most ticks a second: the cap, not what runs. A 60 Hz display meets it
+ *  exactly, but WebKitGTK's frame timer runs a little fast (about 62 Hz),
+ *  so five frames land just short of a twelfth of a second and the loop
+ *  ticks on every sixth, about 10 times a second. That is fine: the
+ *  outermost ring turns once in 80 s about 610 px from the core of a
+ *  1200×800 window, so its dots travel about 48 px a second and step 4–5 px
+ *  a tick, under the 7 px of a soft rim dot, so its trail stays continuous
+ *  (the inner rings step a pixel or less). Each tick repaints the window,
+ *  so the cost grows with the rate (DECISIONS.md has the numbers). */
 export const CLASSIC_FPS = 12;
 
 /** A CSS cubic-bezier() timing function: progress in, eased progress out. */

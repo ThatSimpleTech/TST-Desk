@@ -7,20 +7,42 @@
 // explaining themselves when the OS asks for less motion. A preview moves
 // only under the pointer or keyboard focus: a click's focus does not keep
 // a second copy of the background running. That rule is the tile's whole
-// rule: it does not also rest when the window loses focus.
+// rule: it does not also rest when the window loses focus. Strength is a
+// second radio group, Subtle or Vivid, saved per device, that stands down
+// for Off and Classic, which have no veil.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
 import SettingsBackground from "./components/SettingsBackground.svelte";
 import { BACKGROUNDS } from "./backgrounds/catalog";
-import { BACKGROUND_KEY, MOTION_KEY, RIPPLES_KEY } from "./backgrounds/prefs";
+import { BACKGROUND_KEY, MOTION_KEY, RIPPLES_KEY, STRENGTH_KEY } from "./backgrounds/prefs";
 import { background, loadBackground, setBackground } from "./backgrounds/store.svelte.js";
 
 let target: HTMLElement;
 let component: ReturnType<typeof mount> | null = null;
 
+/** The background tiles, not the Strength choices. */
 function radios(): HTMLButtonElement[] {
-	return [...target.querySelectorAll<HTMLButtonElement>("[role='radio']")];
+	return [...target.querySelectorAll<HTMLButtonElement>(".tiles [role='radio']")];
+}
+
+function strengthGroup(): HTMLElement {
+	const group = target.querySelector<HTMLElement>("[role='radiogroup'][aria-labelledby='background-strength-title']");
+	if (!group) throw new Error("no Strength group");
+	return group;
+}
+
+function strength(name: string): HTMLButtonElement {
+	const found = [...strengthGroup().querySelectorAll<HTMLButtonElement>("[role='radio']")].find(
+		(r) => r.textContent === name,
+	);
+	if (!found) throw new Error(`no strength ${name}`);
+	return found;
+}
+
+/** The hint under the Strength row. */
+function strengthHint(): string {
+	return strengthGroup().closest(".row")?.nextElementSibling?.textContent?.trim() ?? "";
 }
 
 function radio(name: string): HTMLButtonElement {
@@ -75,7 +97,8 @@ afterEach(() => {
 
 describe("the tiles", () => {
 	it("are one labelled radio group with a tile and preview per background", () => {
-		const group = target.querySelector("[role='radiogroup']");
+		const group = target.querySelector(".tiles");
+		expect(group?.getAttribute("role")).toBe("radiogroup");
 		expect(group?.getAttribute("aria-labelledby")).toBe("background-title");
 		expect(radios().map((r) => r.getAttribute("aria-label"))).toEqual(BACKGROUNDS.map((b) => b.label));
 		for (const r of radios()) expect(r.querySelector(".preview")).not.toBeNull();
@@ -226,5 +249,65 @@ describe("the switches", () => {
 		flushSync();
 		expect(target.textContent).toContain("Your system asks for less motion");
 		expect(toggle("Motion").disabled).toBe(false);
+	});
+});
+
+describe("Strength", () => {
+	it("is a radio group named by its row, Subtle and Vivid, starting on Subtle", () => {
+		expect(document.getElementById("background-strength-title")?.textContent).toBe("Strength");
+		const options = [...strengthGroup().querySelectorAll<HTMLButtonElement>("[role='radio']")];
+		expect(options.map((o) => o.textContent)).toEqual(["Subtle", "Vivid"]);
+		expect(strength("Subtle").getAttribute("aria-checked")).toBe("true");
+		expect(options.filter((o) => o.tabIndex === 0)).toEqual([strength("Subtle")]);
+	});
+
+	it("stands down for Classic, which has no veil, and says so", () => {
+		expect(background.id).toBe("classic");
+		expect(strength("Subtle").disabled).toBe(true);
+		expect(strength("Vivid").disabled).toBe(true);
+		expect(strengthHint()).toContain("Classic");
+		setBackground("off");
+		flushSync();
+		expect(strength("Vivid").disabled).toBe(true);
+		expect(strengthHint()).toContain("Off draws nothing");
+	});
+
+	it("switches and saves on a click, for a background behind a veil", () => {
+		setBackground("galaxy");
+		flushSync();
+		expect(strength("Vivid").disabled).toBe(false);
+		expect(strengthHint()).toContain("all text stays clear");
+		strength("Vivid").click();
+		flushSync();
+		expect(background.strength).toBe("vivid");
+		expect(localStorage.getItem(STRENGTH_KEY)).toBe("vivid");
+		expect(strength("Vivid").getAttribute("aria-checked")).toBe("true");
+		expect(strength("Subtle").getAttribute("aria-checked")).toBe("false");
+		expect(strength("Vivid").tabIndex).toBe(0);
+		expect(strengthHint()).toContain("Small grey text can be harder to read");
+	});
+
+	it("moves with the arrow keys, wrapping, and keeps the focus on the choice", () => {
+		setBackground("aurora");
+		flushSync();
+		const press = (key: string) => {
+			const current = [...strengthGroup().querySelectorAll<HTMLButtonElement>("[role='radio']")].find(
+				(r) => r.getAttribute("aria-checked") === "true",
+			);
+			current?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+			flushSync();
+		};
+		press("ArrowRight");
+		expect(background.strength).toBe("vivid");
+		expect(document.activeElement).toBe(strength("Vivid"));
+		press("ArrowRight");
+		expect(background.strength).toBe("subtle");
+		press("End");
+		expect(background.strength).toBe("vivid");
+		press("Home");
+		expect(background.strength).toBe("subtle");
+		expect(localStorage.getItem(STRENGTH_KEY)).toBe("subtle");
+		// The tiles' keys are their own: the background did not move.
+		expect(background.id).toBe("aurora");
 	});
 });

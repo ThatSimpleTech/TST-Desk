@@ -77,6 +77,13 @@
 	--bg-aurora-veil:           rgb(248 246 241 / 0.88);
 	--bg-constellation-veil:    rgb(248 246 241 / 0.25);
 	--bg-firefly-veil:          rgb(248 246 241 / 0.2);
+	/* Vivid (Settings → Appearance → Strength) lays each veil at this share
+	   of its strength: the galaxy and the aurora show two to five times as
+	   much, and body text still keeps 4.5:1 over every background's soft
+	   light at its brightest (DECISIONS.md, TD-5202). A background that
+	   needs more for that sets its own --bg-*-veil-vivid, which only ever
+	   raises the share. */
+	--bg-veil-vivid:            40%;
 	--bg-galaxy-core:     #8b6a4f;
 	--bg-galaxy-arm:      #6c6658;
 	--bg-galaxy-disc:     #9e9684;
@@ -241,6 +248,9 @@
 		--bg-aurora-veil:           rgb(19 18 16 / 0.74);
 		--bg-constellation-veil:    rgb(19 18 16 / 0.2);
 		--bg-firefly-veil:          rgb(19 18 16 / 0.15);
+		/* The aurora's brightest rays need 60% for body text to keep 4.5:1
+		   at Vivid (4.1:1 at 50%); the other dark backgrounds take the default. */
+		--bg-aurora-veil-vivid:     60%;
 		--bg-galaxy-core:     #ffe4bd;
 		--bg-galaxy-arm:      #aac6ff;
 		--bg-galaxy-disc:     #b9b4c8;
@@ -320,6 +330,9 @@
 	--bg-aurora-veil:           rgb(19 18 16 / 0.74);
 	--bg-constellation-veil:    rgb(19 18 16 / 0.2);
 	--bg-firefly-veil:          rgb(19 18 16 / 0.15);
+	/* The aurora's brightest rays need 60% for body text to keep 4.5:1
+	   at Vivid (4.1:1 at 50%); the other dark backgrounds take the default. */
+	--bg-aurora-veil-vivid:     60%;
 	--bg-galaxy-core:     #ffe4bd;
 	--bg-galaxy-arm:      #aac6ff;
 	--bg-galaxy-disc:     #b9b4c8;

@@ -1,6 +1,7 @@
 // The per-device background preference (TD-5202): what a fresh device
 // gets, what a stored value reads back as, what a broken one falls back
-// to, and that storage failing never throws.
+// to, and that storage failing never throws. Strength is Subtle unless the
+// device chose Vivid.
 
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_IDS, BACKGROUNDS, DEFAULT_BACKGROUND, backgroundInfo, isBackgroundId } from "./catalog";
@@ -10,8 +11,11 @@ import {
 	LAST_ON_KEY,
 	MOTION_KEY,
 	RIPPLES_KEY,
+	STRENGTHS,
+	STRENGTH_KEY,
 	animates,
 	flagValue,
+	isStrength,
 	readLastOn,
 	readPrefs,
 	ripplesLive,
@@ -54,7 +58,7 @@ const throwing: Storage = {
 describe("catalog", () => {
 	it("keeps Classic as the default so nobody's window changes on upgrade", () => {
 		expect(DEFAULT_BACKGROUND).toBe("classic");
-		expect(DEFAULT_PREFS).toEqual({ id: "classic", motion: true, ripples: true });
+		expect(DEFAULT_PREFS).toEqual({ id: "classic", motion: true, ripples: true, strength: "subtle" });
 	});
 
 	it("offers Off, Classic, Galaxy, Deep space and at least two more, each named once", () => {
@@ -84,18 +88,38 @@ describe("readPrefs", () => {
 	});
 
 	it("reads back what was stored", () => {
-		const store = memoryStore({ [BACKGROUND_KEY]: "galaxy", [MOTION_KEY]: "off", [RIPPLES_KEY]: "off" });
-		expect(readPrefs(store)).toEqual({ id: "galaxy", motion: false, ripples: false });
+		const store = memoryStore({
+			[BACKGROUND_KEY]: "galaxy",
+			[MOTION_KEY]: "off",
+			[RIPPLES_KEY]: "off",
+			[STRENGTH_KEY]: "vivid",
+		});
+		expect(readPrefs(store)).toEqual({ id: "galaxy", motion: false, ripples: false, strength: "vivid" });
 	});
 
 	it("falls back field by field: a bad background keeps good flags", () => {
 		const store = memoryStore({ [BACKGROUND_KEY]: "nebula-9000", [MOTION_KEY]: "off" });
-		expect(readPrefs(store)).toEqual({ id: "classic", motion: false, ripples: true });
+		expect(readPrefs(store)).toEqual({ id: "classic", motion: false, ripples: true, strength: "subtle" });
+	});
+
+	it("reads a strength other than subtle or vivid as Subtle, keeping the rest", () => {
+		for (const junk of ["Vivid", "VIVID", "strong", "", "0.4", '"vivid"']) {
+			const store = memoryStore({ [STRENGTH_KEY]: junk, [BACKGROUND_KEY]: "aurora" });
+			expect(readPrefs(store), junk).toEqual({ ...DEFAULT_PREFS, id: "aurora" });
+		}
+		expect(STRENGTHS).toEqual(["subtle", "vivid"]);
+		expect(isStrength("vivid")).toBe(true);
+		expect(isStrength(null)).toBe(false);
 	});
 
 	it("treats anything but on/off as unset", () => {
 		for (const junk of ["true", "1", "", "ON", '{"on":true}']) {
-			const store = memoryStore({ [MOTION_KEY]: junk, [RIPPLES_KEY]: junk, [BACKGROUND_KEY]: junk });
+			const store = memoryStore({
+				[MOTION_KEY]: junk,
+				[RIPPLES_KEY]: junk,
+				[BACKGROUND_KEY]: junk,
+				[STRENGTH_KEY]: junk,
+			});
 			expect(readPrefs(store)).toEqual(DEFAULT_PREFS);
 		}
 	});
@@ -133,10 +157,18 @@ describe("writeItem", () => {
 		writeItem(store, RIPPLES_KEY, flagValue(true));
 		expect(readPrefs(store)).toMatchObject({ motion: false, ripples: true });
 	});
+
+	it("round-trips a strength, and a refused write keeps Subtle on the next read", () => {
+		const store = memoryStore();
+		expect(writeItem(store, STRENGTH_KEY, "vivid")).toBe(true);
+		expect(readPrefs(store).strength).toBe("vivid");
+		expect(writeItem(throwing, STRENGTH_KEY, "vivid")).toBe(false);
+		expect(readPrefs(throwing).strength).toBe("subtle");
+	});
 });
 
 describe("what the window does", () => {
-	const base = { id: "galaxy" as const, motion: true, ripples: true, reducedMotion: false };
+	const base = { id: "galaxy" as const, motion: true, ripples: true, strength: "subtle" as const, reducedMotion: false };
 
 	it("animates and ripples by default", () => {
 		expect(animates(base)).toBe(true);

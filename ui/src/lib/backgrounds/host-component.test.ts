@@ -5,7 +5,7 @@
 // runs frames; Motion off and the OS reduced-motion setting give one still
 // paint and no frames; switching tears the old loop down; ripples come and
 // go with their switch; the veil is one sheet over the window layer and
-// never in the chat pane; a window layer's backing store is capped at 1.5×
+// never in the chat pane, and Vivid thins it to a share of the same token; a window layer's backing store is capped at 1.5×
 // and follows a move to a screen of another density (Classic's one loop and
 // the rest out of focus are classic-component.test.ts). Canvas calls go to a
 // recording fake context — jsdom has no 2D canvas — and animation frames to
@@ -16,9 +16,16 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { flushSync, mount, unmount } from "svelte";
 import BackgroundHost from "../components/backgrounds/BackgroundHost.svelte";
-import { WINDOW_LAYERS, WINDOW_VEILS } from "../components/backgrounds/registry";
+import { WINDOW_LAYERS, WINDOW_VEILS, veilFill } from "../components/backgrounds/registry";
 import { BACKGROUND_IDS } from "./catalog";
-import { background, loadBackground, setBackground, setBackgroundMotion, setBackgroundRipples } from "./store.svelte.js";
+import {
+	background,
+	loadBackground,
+	setBackground,
+	setBackgroundMotion,
+	setBackgroundRipples,
+	setBackgroundStrength,
+} from "./store.svelte.js";
 
 let frames: Map<number, FrameRequestCallback>;
 let nextFrame: number;
@@ -253,6 +260,35 @@ describe("the veil", () => {
 				expect(el.compareDocumentPosition(veils[0]) & Node.DOCUMENT_POSITION_FOLLOWING, id).toBeTruthy();
 			}
 		}
+	});
+
+	it("thins to Vivid's share of the same token, only where there is a veil to thin", () => {
+		render("window");
+		setBackgroundStrength("vivid");
+		for (const id of BACKGROUND_IDS) {
+			setBackground(id);
+			flushSync();
+			const veils = [...target.querySelectorAll<HTMLElement>(".veil")];
+			const token = WINDOW_VEILS[id];
+			// Off and Classic have none, at any strength.
+			expect(veils.length, id).toBe(token === null ? 0 : 1);
+			if (token === null) continue;
+			// The same token at Vivid's share: its own where it sets one,
+			// else the default.
+			expect(veils[0].style.background, id).toBe(
+				`color-mix(in srgb, var(${token}) var(${token}-vivid, var(--bg-veil-vivid)), transparent)`,
+			);
+			// A fill, not an opacity: no transparency layer over the window.
+			expect(veils[0].style.opacity, id).toBe("");
+		}
+		setBackgroundStrength("subtle");
+		flushSync();
+		const token = WINDOW_VEILS[background.id];
+		expect(target.querySelector<HTMLElement>(".veil")?.style.background).toBe(`var(${token})`);
+	});
+
+	it("keeps Subtle as the token itself", () => {
+		expect(veilFill("--bg-galaxy-veil", "subtle")).toBe("var(--bg-galaxy-veil)");
 	});
 
 	it("never sits in the chat pane, so nothing steps where the chat meets the Activity pane", () => {

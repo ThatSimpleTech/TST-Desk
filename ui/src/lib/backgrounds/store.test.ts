@@ -3,7 +3,7 @@
 // The background preference store (TD-5202) against a real (jsdom)
 // localStorage: the default, persistence, a bad stored value, storage that
 // throws, a choice made in another window, and the OS reduced-motion
-// setting following live.
+// setting following live. Strength goes the same way as the switches.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -12,10 +12,11 @@ import {
 	setBackground,
 	setBackgroundMotion,
 	setBackgroundRipples,
+	setBackgroundStrength,
 	startBackground,
 	toggleBackground,
 } from "./store.svelte.js";
-import { BACKGROUND_KEY, LAST_ON_KEY, MOTION_KEY, RIPPLES_KEY } from "./prefs";
+import { BACKGROUND_KEY, LAST_ON_KEY, MOTION_KEY, RIPPLES_KEY, STRENGTH_KEY } from "./prefs";
 
 let stops: (() => void)[] = [];
 
@@ -34,21 +35,25 @@ afterEach(() => {
 
 describe("the stored choice", () => {
 	it("defaults to Classic, moving, with ripples", () => {
-		expect(background).toMatchObject({ id: "classic", motion: true, ripples: true });
+		expect(background).toMatchObject({ id: "classic", motion: true, ripples: true, strength: "subtle" });
 	});
 
 	it("persists each choice under its own key and reads it back", () => {
 		setBackground("galaxy");
 		setBackgroundMotion(false);
 		setBackgroundRipples(false);
+		setBackgroundStrength("vivid");
+		expect(background.strength).toBe("vivid");
 		expect(localStorage.getItem(BACKGROUND_KEY)).toBe("galaxy");
 		expect(localStorage.getItem(MOTION_KEY)).toBe("off");
 		expect(localStorage.getItem(RIPPLES_KEY)).toBe("off");
+		expect(localStorage.getItem(STRENGTH_KEY)).toBe("vivid");
 		background.id = "classic";
 		background.motion = true;
 		background.ripples = true;
+		background.strength = "subtle";
 		loadBackground();
-		expect(background).toMatchObject({ id: "galaxy", motion: false, ripples: false });
+		expect(background).toMatchObject({ id: "galaxy", motion: false, ripples: false, strength: "vivid" });
 	});
 
 	it("falls back to Classic when the stored value is not a background", () => {
@@ -63,7 +68,7 @@ describe("the stored choice", () => {
 			throw new Error("SecurityError");
 		});
 		loadBackground();
-		expect(background).toMatchObject({ id: "classic", motion: true, ripples: true });
+		expect(background).toMatchObject({ id: "classic", motion: true, ripples: true, strength: "subtle" });
 	});
 
 	it("still switches this window when storage refuses the write", () => {
@@ -72,6 +77,8 @@ describe("the stored choice", () => {
 		});
 		expect(() => setBackground("fireflies")).not.toThrow();
 		expect(background.id).toBe("fireflies");
+		expect(() => setBackgroundStrength("vivid")).not.toThrow();
+		expect(background.strength).toBe("vivid");
 	});
 });
 
@@ -109,6 +116,13 @@ describe("following the outside world", () => {
 		localStorage.setItem(BACKGROUND_KEY, "constellations");
 		window.dispatchEvent(new StorageEvent("storage", { key: BACKGROUND_KEY, newValue: "constellations" }));
 		expect(background.id).toBe("constellations");
+	});
+
+	it("picks up a strength chosen in another window", () => {
+		stops.push(startBackground(window));
+		localStorage.setItem(STRENGTH_KEY, "vivid");
+		window.dispatchEvent(new StorageEvent("storage", { key: STRENGTH_KEY, newValue: "vivid" }));
+		expect(background.strength).toBe("vivid");
 	});
 
 	it("ignores storage events for other keys", () => {

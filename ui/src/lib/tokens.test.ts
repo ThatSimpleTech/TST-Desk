@@ -134,6 +134,40 @@ describe("background veils", () => {
 	});
 });
 
+// Vivid (Settings → Appearance → Strength) lays each veil at a share of its
+// strength: one default, and a higher share for a background whose brightest
+// light needs it for body text to keep 4.5:1 (the dark aurora's rays). A
+// share only ever raises a veil above the default, never thins it further.
+
+describe("Vivid veils", () => {
+	const light = tokensOf(":root {");
+	const dark = tokensOf(':root[data-theme="dark"]');
+	const share = (value: string | undefined): number => {
+		const m = /^(\d+)%$/.exec(value ?? "");
+		if (!m) throw new Error(`not a share: ${value}`);
+		return Number(m[1]) / 100;
+	};
+	const fallback = share(light["--bg-veil-vivid"]);
+
+	it("thins every veil to well under its strength by default, in both themes", () => {
+		expect(fallback).toBeGreaterThanOrEqual(0.3);
+		expect(fallback).toBeLessThanOrEqual(0.5);
+		expect(dark["--bg-veil-vivid"]).toBeUndefined();
+	});
+
+	it("raises the share only for a veil that exists, and never above the full veil", () => {
+		const own = [light, dark].flatMap((palette) =>
+			Object.entries(palette).filter(([name]) => name.endsWith("-veil-vivid") && name !== "--bg-veil-vivid"),
+		);
+		expect(own.map(([name]) => name)).toContain("--bg-aurora-veil-vivid");
+		for (const [name, value] of own) {
+			expect(VEILS, name).toContain(name.replace(/-vivid$/, ""));
+			expect(share(value), name).toBeGreaterThan(fallback);
+			expect(share(value), name).toBeLessThan(1);
+		}
+	});
+});
+
 // ── One vocabulary ────────────────────────────────────────────────────────
 //
 // The September 2026 design rounds retired the TD-1001–TD-1404 alias names

@@ -2,7 +2,8 @@
 //
 // Classic as the window mounts it (TD-5202): the orbit, the header bands and
 // the dust step on one loop, on the same frames; Motion off shows the old
-// resting pose; picking another background leaves no frame or listener
+// resting pose, and Motion on again starts from it rather than from where
+// the clock stood; picking another background leaves no frame or listener
 // behind. Every background holds its frame while another window has the
 // focus and carries on from it after; a ripple already lit still finishes.
 // Canvas calls go to a recording fake context — jsdom has no 2D canvas —
@@ -12,7 +13,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
 import BackgroundHost from "../components/backgrounds/BackgroundHost.svelte";
-import { CLASSIC_FPS } from "./classic";
+import { CLASSIC_FPS, bandDrift } from "./classic";
 import { background, loadBackground, setBackground, setBackgroundMotion } from "./store.svelte.js";
 
 let frames: Map<number, FrameRequestCallback>;
@@ -174,6 +175,29 @@ describe("Classic", () => {
 		expect(frames.size).toBe(0);
 		expect(orbitField().style.transform).toBe("");
 		expect(bandDrifts()).toEqual(["", ""]);
+	});
+
+	it("starts again from the resting pose when Motion comes back on, not from where it stopped", () => {
+		setBackground("classic");
+		render("window");
+		render("chat");
+		runFrames(31);
+		expect(orbitClock()).toBeGreaterThan(300);
+		setBackgroundMotion(false);
+		flushSync();
+		// The dust, which stays on the tick with Motion off, repaints its
+		// first frame: it is where the next run starts.
+		expect(paints).toContain("clearRect");
+		setBackgroundMotion(true);
+		flushSync();
+		const home = bandDrift(0);
+		expect(orbitClock()).toBe(0);
+		expect(bandDrifts()).toEqual([String(home.accent), String(home.warm)]);
+		runFrames(1);
+		expect(orbitClock()).toBe(0);
+		runFrames(5);
+		expect(orbitClock()).toBeGreaterThan(50);
+		expect(orbitClock()).toBeLessThanOrEqual(100);
 	});
 
 	it("leaves no frame and no listener behind when another background is picked", () => {

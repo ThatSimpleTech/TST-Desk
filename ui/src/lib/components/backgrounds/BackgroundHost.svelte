@@ -2,8 +2,9 @@
 	// The one host for the picked background (TD-5202). It is mounted twice,
 	// where the two Classic layers always were: `layer="window"` in the root
 	// layout paints behind the whole app, with the veil that quiets it behind
-	// the text, and `layer="chat"` in the chat pane adds what belongs to that
-	// pane — Classic's header light and dust, and the click ripples.
+	// the text (thinner at the Vivid strength), and `layer="chat"` in the chat
+	// pane adds what belongs to that pane — Classic's header light and dust,
+	// and the click ripples.
 	// Switching swaps components in place: the old one's frame loop and
 	// listeners go with it, and nothing reloads.
 	//
@@ -13,7 +14,7 @@
 	import { background } from "../../backgrounds/store.svelte.js";
 	import ClassicChatLayer from "./ClassicChatLayer.svelte";
 	import RippleLayer from "./RippleLayer.svelte";
-	import { WINDOW_LAYERS, WINDOW_VEILS } from "./registry";
+	import { WINDOW_LAYERS, WINDOW_VEILS, veilFill } from "./registry";
 
 	let { layer }: { layer: "window" | "chat" } = $props();
 
@@ -21,14 +22,16 @@
 	const ripples = $derived(ripplesLive(background));
 	const WindowLayer = $derived(WINDOW_LAYERS[background.id]);
 	const veil = $derived(WINDOW_VEILS[background.id]);
+	// Strength only thins a veil that is there: Off and Classic have none.
+	const veilColour = $derived(veil === null ? null : veilFill(veil, background.strength));
 </script>
 
 {#if layer === "window"}
 	{#if WindowLayer}
 		<WindowLayer {animate} fill="window" />
 	{/if}
-	{#if veil}
-		<div class="veil" style:background="var({veil})" aria-hidden="true"></div>
+	{#if veilColour}
+		<div class="veil" style:background={veilColour} aria-hidden="true"></div>
 	{/if}
 {:else}
 	{#if background.id === "classic"}

@@ -12,8 +12,19 @@ import { DEFAULT_BACKGROUND, isBackgroundId, type BackgroundId } from "./catalog
 export const BACKGROUND_KEY = "tst-desk:background";
 export const MOTION_KEY = "tst-desk:background-motion";
 export const RIPPLES_KEY = "tst-desk:background-ripples";
+export const STRENGTH_KEY = "tst-desk:background-strength";
 /** The last background other than Off, so the palette's toggle can bring it back. */
 export const LAST_ON_KEY = "tst-desk:background-last";
+
+/** How much the veil behind the panes quiets a background. Subtle is the
+ *  veil as its token has it, strong enough that all text keeps AA; Vivid
+ *  thins it so the background shows much more (registry.ts has by how much). */
+export const STRENGTHS = ["subtle", "vivid"] as const;
+export type BackgroundStrength = (typeof STRENGTHS)[number];
+
+export function isStrength(value: unknown): value is BackgroundStrength {
+	return (STRENGTHS as readonly unknown[]).includes(value);
+}
 
 export interface BackgroundPrefs {
 	id: BackgroundId;
@@ -21,12 +32,14 @@ export interface BackgroundPrefs {
 	motion: boolean;
 	/** A ring of light from every click in the chat. */
 	ripples: boolean;
+	strength: BackgroundStrength;
 }
 
 export const DEFAULT_PREFS: Readonly<BackgroundPrefs> = {
 	id: DEFAULT_BACKGROUND,
 	motion: true,
 	ripples: true,
+	strength: "subtle",
 };
 
 export type ReadStore = Pick<Storage, "getItem">;
@@ -60,10 +73,12 @@ function readFlag(store: ReadStore | null, key: string, fallback: boolean): bool
 
 export function readPrefs(store: ReadStore | null): BackgroundPrefs {
 	const id = readItem(store, BACKGROUND_KEY);
+	const strength = readItem(store, STRENGTH_KEY);
 	return {
 		id: isBackgroundId(id) ? id : DEFAULT_PREFS.id,
 		motion: readFlag(store, MOTION_KEY, DEFAULT_PREFS.motion),
 		ripples: readFlag(store, RIPPLES_KEY, DEFAULT_PREFS.ripples),
+		strength: isStrength(strength) ? strength : DEFAULT_PREFS.strength,
 	};
 }
 
@@ -95,6 +110,7 @@ export interface BackgroundLive {
 	id: BackgroundId;
 	motion: boolean;
 	ripples: boolean;
+	strength: BackgroundStrength;
 	/** The OS asks for reduced motion: still frame, no ripples, whatever the toggles say. */
 	reducedMotion: boolean;
 }

@@ -124,9 +124,9 @@ export function createLoop(host: FrameHost, options: LoopOptions): Loop {
  *  same cap; joined here they step on the same frames, one repaint a tick. */
 export interface SharedLoop {
 	/** A loop for one layer: it runs, stops, paints and goes away like one
-	 *  from createLoop, on the shared clock and frames. The frames run while
-	 *  any joined layer runs; the last one to go takes the loop's listeners
-	 *  with it, and the next join starts a fresh clock. */
+	 *  from createLoop, on the shared clock and frames. The frames, and the
+	 *  host's listeners, live while any joined layer runs. When the last one
+	 *  stops, the clock goes back to its start (see update below). */
 	join(paint: (clockMs: number) => void): Loop;
 }
 
@@ -136,22 +136,40 @@ export function createSharedLoop(host: () => FrameHost, options: Omit<LoopOption
 		wanted: boolean;
 	}
 	const members = new Set<Member>();
+	const startMs = options.startMs ?? 0;
+	/** The frames, made when a layer starts running and dropped when none is. */
 	let loop: Loop | null = null;
 
 	function paintAll(clockMs: number): void {
 		for (const member of members) if (member.wanted) member.paint(clockMs);
 	}
 
+	const clock = (): number => loop?.clockMs() ?? startMs;
+
 	function update(): void {
 		let any = false;
 		for (const member of members) any ||= member.wanted;
-		loop?.run(any);
+		if (any) {
+			loop ??= createLoop(host(), { ...options, paint: paintAll });
+			loop.run(true);
+			return;
+		}
+		if (loop === null) return;
+		// Every layer stopped: Motion off, reduced motion, or the background
+		// going. A rest (hidden, or another window focused) is not a stop: the
+		// loop sits that out itself and keeps its clock. Classic's orbit and
+		// bands drop to their resting pose on a stop, the old CSS's first
+		// frame, so the clock goes back to its start and the layers still
+		// joined (the dust, which keeps its canvas) repaint there. Motion on
+		// again then starts from the resting pose instead of jumping to where
+		// the clock stood.
+		loop.dispose();
+		loop = null;
+		for (const member of members) member.paint(startMs);
 	}
 
 	return {
 		join(paint) {
-			loop ??= createLoop(host(), { ...options, paint: paintAll });
-			const shared = loop;
 			const member: Member = { paint, wanted: false };
 			members.add(member);
 			let gone = false;
@@ -162,20 +180,15 @@ export function createSharedLoop(host: () => FrameHost, options: Omit<LoopOption
 					update();
 				},
 				paintNow(): void {
-					if (!gone) paint(shared.clockMs());
+					if (!gone) paint(clock());
 				},
-				running: () => !gone && member.wanted && shared.running(),
-				clockMs: () => shared.clockMs(),
+				running: () => !gone && member.wanted && (loop?.running() ?? false),
+				clockMs: clock,
 				dispose(): void {
 					if (gone) return;
 					gone = true;
 					members.delete(member);
-					if (members.size > 0) {
-						update();
-						return;
-					}
-					shared.dispose();
-					if (loop === shared) loop = null;
+					update();
 				},
 			};
 		},
@@ -191,36 +204,85 @@ export interface WindowHostOptions {
 	restUnfocused?: boolean;
 }
 
+/** How often to ask whether the page still has the focus while that focus
+ *  is inside one of its iframes, where the window's own events are silent. */
+export const FRAME_FOCUS_POLL_MS = 500;
+
 /** The real browser behind a loop. A window without animation frames (some
  *  test environments) gets a host that never schedules, so the scene just
  *  shows its still frame. */
 export function windowFrameHost(win: Window, { restUnfocused = true }: WindowHostOptions = {}): FrameHost {
 	const doc = win.document;
 	const hasFrames = typeof win.requestAnimationFrame === "function";
-	// Kept from the window's own focus and blur events rather than asked of
-	// hasFocus() each frame: the events are what say the focus moved, so a
-	// focus event always wakes the loop. Gaining focus can fire several focus
-	// events in a row; each just finds the loop already scheduled.
-	let focused = typeof doc.hasFocus === "function" ? doc.hasFocus() : true;
+	const pageFocused = (): boolean => (typeof doc.hasFocus === "function" ? doc.hasFocus() : true);
+	// A click into an iframe of this page (an artifact's sandboxed preview,
+	// the Preview pane) blurs the window although the page keeps the focus,
+	// and from then on the window hears nothing: not when the app is left
+	// from inside the frame, nor when the focus comes back into it. While the
+	// focus is in a frame, the page's own hasFocus() is the answer instead.
+	const focusInFrame = (): boolean => doc.activeElement?.localName === "iframe";
+	// Otherwise kept from the window's own focus and blur events rather than
+	// asked of hasFocus() each frame: the events are what say the focus
+	// moved, so a focus event always wakes the loop. Gaining focus can fire
+	// several focus events in a row; each just finds the loop already
+	// scheduled.
+	let focused = pageFocused();
+	const unfocused = (): boolean => !(focusInFrame() ? pageFocused() : focused);
 	return {
 		request: (run) => (hasFrames ? win.requestAnimationFrame(run) : 0),
 		cancel: (id) => {
 			if (hasFrames) win.cancelAnimationFrame(id);
 		},
-		resting: () => doc.hidden === true || (restUnfocused && !focused),
+		resting: () => doc.hidden === true || (restUnfocused && unfocused()),
 		onRestChange(run) {
+			let recheck = 0;
+			let poll = 0;
+			const stopPolling = (): void => {
+				if (poll !== 0) win.clearInterval(poll);
+				poll = 0;
+			};
+			// While the focus is in a frame, look twice a second: the loop
+			// rests or wakes by what resting() says now. Every look calls
+			// run(), which does nothing when nothing changed; comparing with
+			// the last look instead would miss a trip out of the app and back
+			// between two looks, after a frame had already seen it rest. Once
+			// the focus is back out (or the frame went away with it) the
+			// window's events take over again.
+			const watchFrame = (): void => {
+				if (poll !== 0 || !focusInFrame()) return;
+				poll = win.setInterval(() => {
+					if (!focusInFrame()) {
+						stopPolling();
+						focused = pageFocused();
+					}
+					run();
+				}, FRAME_FOCUS_POLL_MS);
+			};
 			const onFocus = (): void => {
 				focused = true;
+				if (!focusInFrame()) stopPolling();
 				run();
 			};
 			const onBlur = (): void => {
 				focused = false;
+				watchFrame();
 				run();
+				// An engine may move the focus into the frame only after this
+				// event; look again once it has landed.
+				if (recheck !== 0) win.clearTimeout(recheck);
+				recheck = win.setTimeout(() => {
+					recheck = 0;
+					watchFrame();
+					run();
+				}, 0);
 			};
 			doc.addEventListener("visibilitychange", run);
 			if (restUnfocused) {
 				win.addEventListener("focus", onFocus);
 				win.addEventListener("blur", onBlur);
+				// Made while the focus already sits in a frame (a background
+				// switched from another window): watch it from the start.
+				watchFrame();
 			}
 			return () => {
 				doc.removeEventListener("visibilitychange", run);
@@ -228,6 +290,9 @@ export function windowFrameHost(win: Window, { restUnfocused = true }: WindowHos
 					win.removeEventListener("focus", onFocus);
 					win.removeEventListener("blur", onBlur);
 				}
+				if (recheck !== 0) win.clearTimeout(recheck);
+				recheck = 0;
+				stopPolling();
 			};
 		},
 	};

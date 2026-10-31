@@ -12674,8 +12674,10 @@ tokens, caps the pixel ratio (1.5 behind the window, 2 in a preview tile)
 and its frame rate at 30 or less, pauses while the window is hidden, holds
 still while another window has the focus, and holds still when the system
 asks for reduced motion. Behind the panes each one lies under an even veil
-of the page colour, so the text over it stays readable. Classic looks as it
-always did, and all of it steps on one capped tick of at most 12 a second.
+of the page colour, so the text over it stays readable; Strength picks that
+veil (Subtle) or a thinner one (Vivid) that shows the background much more
+while body text stays readable. Classic looks as it always did, and all of
+it steps on one tick capped at 12 a second (about 10 run in WebKitGTK).
 
 - [x] Off renders no layer, schedules no animation frame and lights no
       ripple, even when clicked; switching to it stops a running loop at once
@@ -12699,9 +12701,13 @@ always did, and all of it steps on one capped tick of at most 12 a second.
 - [x] Every background holds still while the window is not focused: from
       the window's blur until its focus nothing new is drawn and no frame is
       scheduled, the last frame stays on screen, and it carries on from the
-      same spot when focus returns, with no jump. A ripple already lit
-      finishes; a preview tile follows only its own pointer and keyboard-focus
-      rule (`backgrounds/loop.test.ts`, `backgrounds/host-component.test.ts`,
+      same spot when focus returns, with no jump. A click into an iframe of
+      the app (an artifact's preview, the Preview pane) is not leaving the
+      window: the background keeps moving, and leaving the app from inside
+      the frame still rests it. A ripple already lit finishes; a preview tile
+      follows only its own pointer and keyboard-focus rule
+      (`backgrounds/loop.test.ts`, `backgrounds/window-host.test.ts`, the
+      "out of focus" block of `backgrounds/classic-component.test.ts`,
       `settings-background-component.test.ts`).
 - [x] Each background's maths is seeded and pure, and no module in
       `ui/src/lib/backgrounds` calls the unseeded random source; a resize
@@ -12724,16 +12730,36 @@ always did, and all of it steps on one capped tick of at most 12 a second.
       the old keyframes (`backgrounds/classic.test.ts`) and the bands carry
       WebKit's own blur (`backgrounds/band-glow.test.ts`).
 - [x] All of Classic's motion (the orbit's turn and breathing, the wash and
-      the two pulses, both band drifts, the dust) steps on one shared loop at
-      most 12 times a second, with no CSS animation, transition or blur
-      filter left; Motion off and reduced motion show the old resting pose
-      and schedule nothing (`backgrounds/classic.test.ts`,
+      the two pulses, both band drifts, the dust) steps on one shared loop
+      capped at 12 ticks a second (about 10 run on WebKitGTK's 62 Hz frame
+      timer, still stepping a rim dot less than its own width at 1200×800,
+      so its trail stays continuous), with no CSS animation, transition or
+      blur filter left; Motion off and reduced
+      motion show the old resting pose and schedule nothing, and Motion on
+      again starts from that pose (`backgrounds/classic.test.ts`,
+      `backgrounds/classic-component.test.ts`, `backgrounds/loop.test.ts`,
       `backgrounds/host-component.test.ts`).
 - [x] Where WebKitGTK paints in software, Classic costs well under 40% of a
       core: about 23% at 1200×800 in either theme (it was about 96%), 32–34%
       at 1920×1080, and about 0.1% while another window has the focus. A
       zero-delay timer runs after 8/27 ms (median/95th percentile) instead
       of 22/38, as against 8/8 with Off (measured; numbers in DECISIONS.md).
+- [x] Strength is kept per device: Subtle by default; a bad stored value or
+      storage that throws reads as Subtle, a refused write still switches
+      the window, and another window's choice is picked up
+      (`backgrounds/prefs.test.ts`, `backgrounds/store.test.ts`).
+- [x] Vivid thins only a veil that is there: the same token at 40% of its
+      strength (the dark aurora's at 60%), laid as a fill with no opacity on
+      the box; Off and Classic draw no veil at either strength
+      (`backgrounds/host-component.test.ts`, `tokens.test.ts`).
+- [x] At Vivid, body text keeps 4.5:1 over every veiled background's soft
+      light at its brightest, in both themes; muted text may dip, and the
+      hint says so (measured in Chromium, five minutes of each dark
+      background; numbers in DECISIONS.md).
+- [x] The Strength row is a radio group named by its row, Subtle and Vivid:
+      a click or the arrow keys switch and save, and it stands down with a
+      note for Off and Classic (`settings-background-component.test.ts`); the
+      UI walk's census lists both.
 
 Review fixes (2026-10-30): the UI walk's census lists the new Appearance
 controls and the palette's Toggle background; the veil moved from a
@@ -12759,3 +12785,11 @@ theme, with WebKit's own blur, into a half-resolution canvas it carries
 light theme's orbit opacity is folded into the `--bg-orbit-*` tokens. Every
 background also rests while another window has the focus. Still open: the
 five older switches in Settings → Appearance announce only "On" or "Off".
+
+**Review fixes and Strength (2026-10-31):** a click into an in-app iframe
+blurred the window though the page kept the focus, and froze the
+background; the host now tells the two apart. Turning Motion back on
+resumed Classic from where its shared clock stood instead of the resting
+pose; the clock now goes back to its start when every layer stops, though
+not when it rests. Settings → Appearance gained Strength: Subtle keeps
+today's veils, Vivid lays them at 40% (the dark aurora's at 60%).

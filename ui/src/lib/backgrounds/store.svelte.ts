@@ -1,6 +1,6 @@
 // The background preference for this window (TD-5202): which background,
-// whether it moves, and whether clicks ripple, plus the OS reduced-motion
-// answer that overrides both toggles.
+// whether it moves, whether clicks ripple and how strongly the veil quiets
+// it, plus the OS reduced-motion answer that overrides both toggles.
 //
 // It is read at import time, not on mount, so the first frame already
 // paints the stored choice: someone who picked Off never sees Classic
@@ -12,12 +12,14 @@ import {
 	LAST_ON_KEY,
 	MOTION_KEY,
 	RIPPLES_KEY,
+	STRENGTH_KEY,
 	deviceStorage,
 	flagValue,
 	readLastOn,
 	readPrefs,
 	writeItem,
 	type BackgroundLive,
+	type BackgroundStrength,
 } from "./prefs";
 
 const REDUCE_QUERY = "(prefers-reduced-motion: reduce)";
@@ -50,6 +52,7 @@ export function loadBackground(): void {
 	background.id = prefs.id;
 	background.motion = prefs.motion;
 	background.ripples = prefs.ripples;
+	background.strength = prefs.strength;
 	lastOn = prefs.id !== "off" ? prefs.id : readLastOn(store);
 }
 
@@ -79,6 +82,12 @@ export function setBackgroundRipples(on: boolean): void {
 	writeItem(deviceStorage(), RIPPLES_KEY, flagValue(on));
 }
 
+/** Subtle or Vivid veil behind the panes; Off and Classic have none to change. */
+export function setBackgroundStrength(strength: BackgroundStrength): void {
+	background.strength = strength;
+	writeItem(deviceStorage(), STRENGTH_KEY, strength);
+}
+
 let starts = 0;
 let stop: (() => void) | null = null;
 
@@ -93,6 +102,8 @@ export function startBackground(win: Window | undefined = hostWindow()): () => v
 			background.reducedMotion = query?.matches ?? false;
 		};
 		const onStorage = (event: StorageEvent): void => {
+			// Every background key starts with this one: the choice, Motion,
+			// Click ripples, Strength and the last one on.
 			if (event.key === null || event.key.startsWith(BACKGROUND_KEY)) loadBackground();
 		};
 		onReduce();

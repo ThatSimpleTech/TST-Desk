@@ -2,7 +2,9 @@
 // frame timing is exact: nothing scheduled while stopped or resting, a
 // 30 fps cap on any display, a clock that freezes on a pause, and nothing
 // left behind after dispose. One loop shared by several layers steps them
-// on the same frames (the window host is window-host.test.ts).
+// on the same frames, and goes back to the start of its clock when every
+// layer stops, though not when it rests (the window host is
+// window-host.test.ts).
 
 import { describe, expect, it } from "vitest";
 import { createLoop, createSharedLoop, paintDue, type FrameHost } from "./loop";
@@ -267,7 +269,7 @@ describe("createSharedLoop", () => {
 		expect(b.loop.running()).toBe(true);
 	});
 
-	it("schedules nothing once every layer stops, and carries on from the frozen clock", () => {
+	it("goes back to the start once every layer stops, repainting the ones still joined there", () => {
 		const { host, tick } = shared();
 		const a = layer(tick);
 		const b = layer(tick);
@@ -275,13 +277,40 @@ describe("createSharedLoop", () => {
 		b.loop.run(true);
 		let t = host.play(60, 1);
 		a.loop.run(false);
+		expect(a.loop.clockMs()).toBeGreaterThan(800);
 		b.loop.run(false);
+		// Nothing scheduled and nothing listening: a stop (Motion off,
+		// another background) is not a rest.
 		expect(host.pending()).toBe(0);
-		const frozen = a.loop.clockMs();
+		expect(host.listeners()).toBe(0);
+		expect(a.loop.clockMs()).toBe(0);
+		// A layer that keeps its canvas (Classic's dust) now holds the frame
+		// the next run starts from.
+		expect(a.paints.at(-1)).toBe(0);
+		expect(b.paints.at(-1)).toBe(0);
 		t = host.play(60, 5, t);
 		a.loop.run(true);
 		host.play(60, 0.05, t);
+		expect(a.paints.at(-1)).toBe(0);
+		host.play(60, 0.5, t + 50);
+		expect(a.loop.clockMs()).toBeGreaterThan(300);
+		expect(a.loop.clockMs()).toBeLessThan(600);
+	});
+
+	it("keeps its clock through a rest (hidden, or another window focused), which is not a stop", () => {
+		const { host, tick } = shared();
+		const a = layer(tick);
+		a.loop.run(true);
+		let t = host.play(60, 1);
+		host.setResting(true);
+		expect(host.pending()).toBe(0);
+		const frozen = a.loop.clockMs();
+		expect(frozen).toBeGreaterThan(800);
+		t = host.play(60, 5, t);
+		host.setResting(false);
+		host.play(60, 0.05, t);
 		expect(a.paints.at(-1)).toBe(frozen);
+		expect(a.loop.clockMs()).toBe(frozen);
 	});
 
 	it("paints one layer on request, at the clock the others are at", () => {

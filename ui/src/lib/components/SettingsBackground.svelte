@@ -1,7 +1,7 @@
 <script lang="ts">
 	// Settings → Appearance → Background (TD-5202): pick the background, or
-	// turn it off, plus the Motion and Click ripples switches. Saved per
-	// device, like the theme.
+	// turn it off, how strongly the veil behind the panes quiets it, and the
+	// Motion and Click ripples switches. Saved per device, like the theme.
 	//
 	// Each tile shows the real background in miniature — the same component
 	// the window uses, drawn into the tile — held still until the pointer or
@@ -15,25 +15,35 @@
 	// the whole rule for a tile: the window's own background also holds
 	// still while another window has the focus, and a tile does not
 	// (markPreviews).
+	//
+	// Strength is a second radio group of two, Subtle and Vivid, in the
+	// theme's pill style. It only thins a veil, so it stands down for Off and
+	// Classic, which have none, and says so.
 	import { BACKGROUNDS, backgroundInfo, type BackgroundId } from '../backgrounds/catalog';
+	import { STRENGTHS, type BackgroundStrength } from '../backgrounds/prefs';
 	import { markPreviews } from '../backgrounds/preview';
 	import {
 		background,
 		setBackground,
 		setBackgroundMotion,
 		setBackgroundRipples,
+		setBackgroundStrength,
 	} from '../backgrounds/store.svelte.js';
 	import BackgroundOrbit from '../BackgroundOrbit.svelte';
-	import { WINDOW_LAYERS } from './backgrounds/registry';
+	import { WINDOW_LAYERS, WINDOW_VEILS } from './backgrounds/registry';
 
 	markPreviews();
 
 	let hovered: BackgroundId | null = $state(null);
 	let focused: BackgroundId | null = $state(null);
 	let tiles: HTMLButtonElement[] = $state([]);
+	let strengths: HTMLButtonElement[] = $state([]);
 
 	const canMove = $derived(background.motion && !background.reducedMotion);
 	const isOff = $derived(background.id === 'off');
+	const veiled = $derived(WINDOW_VEILS[background.id] !== null);
+
+	const STRENGTH_LABEL: Record<BackgroundStrength, string> = { subtle: 'Subtle', vivid: 'Vivid' };
 
 	function live(id: BackgroundId): boolean {
 		return canMove && (hovered === id || focused === id);
@@ -51,15 +61,29 @@
 
 	const STEPS: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
 
-	function onKey(event: KeyboardEvent, index: number): void {
+	/** Where a key moves the choice in a radio group of `count`: the arrows
+	 *  step and wrap, Home and End jump. Null for any other key. */
+	function moveTo(event: KeyboardEvent, index: number, count: number): number | null {
 		let next: number | null = null;
-		if (event.key in STEPS) next = (index + STEPS[event.key] + BACKGROUNDS.length) % BACKGROUNDS.length;
+		if (event.key in STEPS) next = (index + STEPS[event.key] + count) % count;
 		else if (event.key === 'Home') next = 0;
-		else if (event.key === 'End') next = BACKGROUNDS.length - 1;
+		else if (event.key === 'End') next = count - 1;
+		if (next !== null) event.preventDefault();
+		return next;
+	}
+
+	function onKey(event: KeyboardEvent, index: number): void {
+		const next = moveTo(event, index, BACKGROUNDS.length);
 		if (next === null) return;
-		event.preventDefault();
 		setBackground(BACKGROUNDS[next].id);
 		tiles[next]?.focus();
+	}
+
+	function onStrengthKey(event: KeyboardEvent, index: number): void {
+		const next = moveTo(event, index, STRENGTHS.length);
+		if (next === null) return;
+		setBackgroundStrength(STRENGTHS[next]);
+		strengths[next]?.focus();
 	}
 </script>
 
@@ -100,6 +124,38 @@
 		{/each}
 	</div>
 	<p class="hint">{backgroundInfo(background.id).blurb}</p>
+
+	<div class="row">
+		<p class="title" id="background-strength-title">Strength</p>
+		<div class="seg" role="radiogroup" aria-labelledby="background-strength-title">
+			{#each STRENGTHS as option, index (option)}
+				{@const chosen = background.strength === option}
+				<button
+					bind:this={strengths[index]}
+					class="choice"
+					class:choice--active={chosen && veiled}
+					type="button"
+					role="radio"
+					aria-checked={chosen}
+					tabindex={chosen ? 0 : -1}
+					disabled={!veiled}
+					onclick={() => setBackgroundStrength(option)}
+					onkeydown={(event) => onStrengthKey(event, index)}>{STRENGTH_LABEL[option]}</button
+				>
+			{/each}
+		</div>
+	</div>
+	<p class="hint">
+		{#if isOff}
+			Off draws nothing, so there is nothing to strengthen.
+		{:else if !veiled}
+			{backgroundInfo(background.id).label} keeps its own look; Strength changes the other backgrounds.
+		{:else if background.strength === 'vivid'}
+			Vivid lets the background show much more. Small grey text can be harder to read.
+		{:else}
+			Subtle keeps a wash of the page colour over the background, so all text stays clear.
+		{/if}
+	</p>
 
 	<div class="row">
 		<p class="title" id="background-motion-title">Motion</p>
@@ -251,6 +307,11 @@
 		justify-content: space-between;
 		gap: var(--space-3);
 		margin-top: var(--space-3);
+	}
+
+	.seg {
+		display: inline-flex;
+		gap: var(--space-1);
 	}
 
 	.choice {

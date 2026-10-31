@@ -4,6 +4,7 @@
 
 import type { Component } from "svelte";
 import type { BackgroundId } from "../../backgrounds/catalog";
+import type { BackgroundStrength } from "../../backgrounds/prefs";
 import type { BackgroundProps } from "../../backgrounds/scene";
 import BackgroundOrbit from "../../BackgroundOrbit.svelte";
 import AuroraBackground from "./AuroraBackground.svelte";
@@ -37,3 +38,16 @@ export const WINDOW_VEILS: Record<BackgroundId, string | null> = {
 	constellations: "--bg-constellation-veil",
 	fireflies: "--bg-firefly-veil",
 };
+
+/** The veil's fill at a strength. The veil token stays the one source of
+ *  its colour. Vivid mixes it with clear, which scales only its alpha, at
+ *  the share `--bg-veil-vivid` gives, or at the background's own
+ *  `--bg-*-veil-vivid` where its brightest light needs more for body text
+ *  to keep 4.5:1 (tokens.css; the numbers are in DECISIONS.md). A fill,
+ *  not an opacity on the box: an opacity under 1 on a full-window box
+ *  costs a full-window transparency layer on every repaint where WebKitGTK
+ *  paints in software. */
+export function veilFill(token: string, strength: BackgroundStrength): string {
+	if (strength === "subtle") return `var(${token})`;
+	return `color-mix(in srgb, var(${token}) var(${token}-vivid, var(--bg-veil-vivid)), transparent)`;
+}
