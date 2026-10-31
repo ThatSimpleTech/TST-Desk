@@ -354,7 +354,11 @@ class MainActivity : Activity(), PairingHost {
     }
 }
 
-/** Pads [root] by the system bars, so content stays clear of them on target 35. */
+/**
+ * Pads [root] by the system bars and, while it is up, the keyboard. Target
+ * 35 lays the window out edge-to-edge, so the keyboard is an inset rather
+ * than a resize; without the padding it covers the composer's toolbar.
+ */
 internal fun applySystemBarInsets(root: View) {
     root.setOnApplyWindowInsetsListener { view, insets ->
         val pad = systemBarPadding(insets)
@@ -369,17 +373,20 @@ internal fun applySystemBarInsets(root: View) {
 }
 
 /**
- * Status bar, navigation bar, and cutout. The keyboard is not included:
- * the window already resizes for that.
+ * Status bar, navigation bar, cutout and the keyboard. The IME can be the
+ * deepest of the two bottom insets, so the padding follows whichever is up.
  */
 internal fun systemBarPadding(insets: WindowInsets): IntArray {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
         val bars = insets.getInsets(
             WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout(),
         )
-        return intArrayOf(bars.left, bars.top, bars.right, bars.bottom)
+        val keyboard = insets.getInsets(WindowInsets.Type.ime()).bottom
+        return intArrayOf(bars.left, bars.top, bars.right, bottomInset(bars.bottom, keyboard))
     }
     @Suppress("DEPRECATION")
+    // Pre-R reports the IME in systemWindowInsetBottom, above the navigation
+    // bar, so the deepest value is already in this one.
     return intArrayOf(
         insets.systemWindowInsetLeft,
         insets.systemWindowInsetTop,
@@ -387,3 +394,7 @@ internal fun systemBarPadding(insets: WindowInsets): IntArray {
         insets.systemWindowInsetBottom,
     )
 }
+
+/** The nearest edge: the navigation bar or the keyboard's top, whichever is higher. */
+internal fun bottomInset(systemBarBottom: Int, keyboardBottom: Int): Int =
+    maxOf(systemBarBottom, keyboardBottom)

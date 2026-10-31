@@ -12048,6 +12048,34 @@ autonomous session starts none, and neither does a workspace whose
 building"; the approach is recorded in DECISIONS.md instead. Docs:
 docs/configuration.md §2 `lsp` and §4.4, docs/architecture.md seams.
 
+### TD-5213 — The phone's keyboard lifts the composer (0.4.7)
+**Size:** 2 · **Depends on:** TD-5001, TD-5026, TD-1604
+**Filed:** 2026-10-31, from the product report: on the phone, the keyboard
+came up and sat over the composer's card and send button.
+
+The window on target 35 lays out edge-to-edge. A keyboard is then an inset
+rather than a resize, so the composer keeps its slot and the keyboard covers
+the card's toolbar. `env(keyboard-inset-height)` is what a Chromium shell
+reports; Android WebView does not report it, and the visual viewport's
+difference covers that shell.
+
+**Acceptance criteria:**
+- [x] The shell pads the page bottom by the keyboard while it is up, and by
+      the navigation bar while it is down (the deeper of the two)
+- [x] The UI lifts the composer card and its toolbar by the keyboard's own
+      height, through `env(keyboard-inset-height, 0px)` and a visual-viewport
+      listener, and to zero when the keyboard is down
+- [x] A pinch-zoomed visual viewport never becomes keyboard padding
+- [x] `:app:testDebugUnitTest` green; vitest and svelte-check green
+- [ ] Live on a device: the composer and Send stay above the keyboard
+
+Done (2026-10-31): `systemBarPadding` takes the IME inset as well as the
+system bars, and `bottomInset` chooses the deeper bottom. `Composer.svelte`
+holds `--kb-inset` (zero when the keyboard is down, desktop unchanged) and
+pads the card bottom by it; `keyboardInsetPx` is the pure difference and
+vitest covers the zoomed, negative and empty cases. `InsetsTest` covers the
+deeper-of-two choice. Device AC is open — no emulator or ADB on this machine.
+
 ## Epic E53 — Connectors
 
 Owner-approved scope 2026-10-02. A connector is a local sign-in to a
