@@ -19122,3 +19122,288 @@ on a clean restart that is the stop's cancel, so it skips nothing, and
 dropping the revive's `running` alone would replay every chat as ended.
 Comparing the wall and tier with the newest ever logged: one that rotated
 out of the window would then never reach a window again.
+
+## TD-5202 — Pick the background, or turn it off (Class B)
+
+2026-10-30. The window always drew the orbit halo, the dust and the click
+ripples. The background is now a choice in Settings → Appearance: Off,
+Classic (the default, unchanged), Galaxy, Deep space, Aurora,
+Constellations, Fireflies, plus Motion and Click ripples switches.
+
+**Decision:**
+- Per device, like the theme: three localStorage keys,
+  `tst-desk:background`, `tst-desk:background-motion` and
+  `tst-desk:background-ripples` ("on"/"off"), plus
+  `tst-desk:background-last` so the palette's Toggle background can bring
+  the last one back. Not the daemon's config: a phone and a laptop on one
+  daemon keep their own. Every read and write is in try/catch; a failure
+  reads as the defaults and a refused write still switches the window. The
+  store reads at import, so the first frame already shows the choice, and it
+  follows other windows through the `storage` event.
+- One host component, `BackgroundHost`, mounted where the two Classic
+  layers were: `layer="window"` in the root layout (fixed, under the app,
+  with the veil that quiets the other backgrounds behind the text) and
+  `layer="chat"` in the chat pane (Classic's header light and dust, and the
+  ripples).
+  The ripples moved out of the dust into their own `RippleLayer`, shared by
+  every background but Off, drawn exactly as before and scheduling frames
+  only while a ring is alive. The quick-entry window gets no background: it
+  paints its own ground over the whole window.
+- A background is a `Scene` (`resize`, `recolor`, `draw`) handed to one
+  canvas host, `AmbientCanvas`, which owns sizing (pixel ratio capped at
+  1.5 behind the window and 2 in a preview tile), the frame loop and theme
+  switches. The loop (`backgrounds/loop.ts`) paints at most its cap,
+  schedules nothing while stopped, while the document is hidden or (since
+  the follow-up below) while another window has the focus, and keeps its
+  own clock that only advances while frames run, so a pause freezes the
+  scene instead of jumping it. Caps follow how fast each one moves: Deep
+  space 30, Fireflies 24, Aurora and Constellations 20, Galaxy 15, Classic
+  12 (about 10 in WebKitGTK; its orbit, header bands and dust on one tick
+  since the follow-up; before it, the dust alone at 8). Soft light that moves is drawn at a
+  fraction of the resolution (the galaxy's glow at half, the aurora at
+  0.3); soft light that never moves is a CSS gradient.
+- Theme: every colour is a `--bg-*` token with a light and a dark value.
+  `--bg-ambient-blend` is `lighter` in dark (light is added) and
+  `source-over` in light, where the space backgrounds are inked in warm
+  greys and rust like a printed star atlas, so the ground stays paper. The
+  inks alone do not keep text readable; the veil does (review fixes below).
+- Motion off holds a still frame and schedules nothing; Click ripples is its
+  own switch. The OS reduced-motion setting forces both off. playful-bg.ts
+  lost `shouldAnimate` and `staticAlpha`: the rule lives in
+  `backgrounds/prefs.ts` now.
+
+**Rejected:** WebGL (some machines run without it); compositor-driven CSS
+animation for the galaxy (no frame cap, and the stars blur as the layer
+turns); keeping the choice in config.yaml (a display choice belongs to the
+screen showing it, as the theme does); turning the ripples off with Motion
+(a still background with ripples is a fair choice, and reduced motion
+already covers "nothing moves").
+
+**Review fixes (2026-10-30):**
+- The veil. It was a radial pool of ground colour inside the chat pane. The
+  Activity pane got none, so its muted text sat on the raw background
+  (under 3:1 over the aurora), and the pool stopped at the divider with a
+  visible step. Now `BackgroundHost` lays one even sheet of the ground
+  colour over the window layer, a token per background (`--bg-galaxy-veil`,
+  `--bg-space-veil`, `--bg-aurora-veil`, `--bg-constellation-veil`,
+  `--bg-firefly-veil`) and none for Classic or Off. Muted text has 4.93:1 on
+  bare paper, so wherever text can be, a background may darken the paper by
+  only about a tenth. Each strength is what that background's brightest
+  moment needs for muted text to keep 4.5:1 over 99% of the chat column and
+  the Activity pane, measured on a five-minute time-lapse of each one in
+  Chromium. In light, the galaxy (0.8) and the aurora (0.88) then read as a
+  faint print; the preview tiles still show them at full strength. The dark
+  galaxy's veil (0.65) also holds body text at 4.5:1 over its core, where
+  hundreds of stacked stars add up to pure white (`tokens.test.ts`), and the
+  core's glow peaks at 0.6 instead of 1. Still below 4.5:1 for muted text:
+  the spot right over the galaxy's core, single stars and shooting stars.
+- Window layers cap the backing store at 1.5×, tiles keep 2×. In software
+  canvas at 1920×1080 CSS px a 2× store cost 1.7–4.4 times the 1× one, all
+  fill rate. A `(resolution: Ndppx)` query, made again for each new ratio,
+  re-measures the canvas when the window moves to a screen of another
+  density, which no ResizeObserver reports.
+- Galaxy stars each draw from their own seeded stream and pick their kind by
+  hash; Deep space hashes a star's trips by a stable id, not its sorted
+  place. A resize that changes the count only adds or drops stars.
+- A preview tile comes alive on keyboard focus only (`:focus-visible`):
+  Chromium and WebKitGTK also focus a clicked button, which kept a second
+  copy of the background running while Settings stayed open.
+- Classic's dust paints 8 times a second, not 30: it drifts under 2 px a
+  second, and each paint repaints the whole chat pane in software. (The
+  follow-up below moved it onto Classic's shared tick.)
+
+**Rejected in review:** moving the galaxy's core to the top-right corner (at
+common window sizes it lands on the Activity pane's text); a second veil in
+the Activity pane matched to the chat pane's (two shapes to keep in step);
+dimming the backgrounds' own tokens instead (the tiles would go faint too).
+Classic's orbit halo and header bands stayed CSS animations with no frame
+cap, keeping a software-rendered WebKitGTK page near a whole core; the
+follow-up below put them on a capped tick.
+
+**Follow-up (2026-10-31): Classic on one capped tick; backgrounds rest while
+unfocused.** WebKitGTK paints in software (hardware acceleration policy
+"never") on machines without GL, a remote desktop for one. There every frame
+in which anything moves repaints the whole dirty area on the main thread,
+the app drawn over the background included, and Classic's six uncapped CSS
+animations (orbit turn, wash breathing, two pulses, two band drifts, each on
+frames of its own) kept the page process at about 96% of a core.
+
+**Decision:**
+- One shared loop drives all of Classic: `createSharedLoop` in
+  `backgrounds/loop.ts`, its instance `classicTick` in
+  `backgrounds/classic.ts`, at most 12 ticks a second. The orbit writes its
+  pose as inline styles (turn and scale on the field, opacity on the wash,
+  ring dots and anchor), each band a `--drift` custom property, and the dust
+  paints its canvas, all in the same frame, so the window repaints once a
+  tick. `orbitPose` and `bandDrift` are the old keyframes and timing
+  functions, so at any moment the pose is what the CSS drew then. Motion off
+  and reduced motion drop the styles and show the stylesheet's resting pose,
+  the old still look; a hidden or unfocused window keeps the current pose.
+- The cap is 12, and about 10 run. A 60 Hz display meets the cap exactly,
+  but WebKitGTK's frame timer runs a little fast (about 62 Hz), so five
+  frames land just short of a twelfth of a second and the loop ticks on
+  every sixth frame, about 10.3 times a second (the 10 window updates a
+  second measured below). That is fine: the outermost ring travels about
+  48 px a second at 1200×800, so a rim dot steps 4–5 px a tick, less than
+  the 7 px of the soft dot itself, and its trail stays continuous; the
+  inner rings step a pixel or less. A cap of 10 ticks about 9 times a
+  second there, for 5.4 px steps and about 3 points less CPU (below).
+- The header bands are blurred once, not on every repaint: each band keeps
+  its box and drift and carries a canvas, 96 px (2σ) bigger on every side at
+  half the pixel ratio, into which `backgrounds/band-glow.ts` draws the
+  ellipse blurred by the SVG spec's three box passes. That is what WebKit
+  draws for CSS `blur()`: measured in WebKitGTK, within 0.7/255 of the old
+  band. The canvas is painted on mount, on a resize or a new pixel ratio,
+  and on a theme switch; the band's old colour mix and opacity are its
+  strength, so there is no transparency layer.
+- The wash is sized to its gradient (a 58.8vmin square at 48% 47%, the same
+  gradient), so a repaint fills that square instead of the window.
+- Light theme: the orbit's 0.55 is folded into the `--bg-orbit-*` alphas
+  instead of an opacity on the full-window layer, which cost a full-window
+  transparency layer per repaint. The glow keeps its alpha: a drop shadow
+  takes its strength from the dots it shadows. `--bg-orbit-opacity` is gone.
+- Out of focus: `windowFrameHost` rests while another window has the focus
+  as well as while the document is hidden (`restUnfocused`, on by default).
+  It follows the window's `blur` and `focus` events, starting from
+  `document.hasFocus()`, and the loop treats it like a hidden document:
+  nothing scheduled, the clock frozen, the last frame left on screen, so it
+  carries on from the same spot. The click ripples finish their ring (under
+  a second), and the Settings preview tiles follow only their pointer and
+  keyboard-focus rule: the tile grid marks its subtree with a Svelte context
+  (`backgrounds/preview.ts`) and those loops do not rest out of focus.
+- Measured in WebKitGTK 2.52 under a bare Xvfb (no window manager, so the
+  harness presents the window and records `document.hasFocus()` throughout),
+  production build, mock UI-walk daemon, CPU of the page process over 15 s:
+
+  | Run | Before | After |
+  |---|---|---|
+  | Classic dark, 1200×800 | 96.2% | 23.3% |
+  | Classic light, 1200×800 | 96.9% | 23.0% |
+  | Classic dark, 1920×1080 | 94.4% | 34.1% |
+  | Classic light, 1920×1080 | 94.8% | 32.4% |
+  | Classic, window not focused | 94.8% | 0.1% |
+  | Galaxy, 1200×800, focused | 37.4% | 37.1% |
+  | Galaxy, window not focused | not measured | 0.1% |
+  | Off | 0.1% | 0.1% |
+
+  The window changed 17–43 times a second before and 10 after; a
+  zero-delay timer ran after 22/38 ms (median/95th percentile) before and
+  8/27 after (8/8 with Off). With the cap at 10 (about 9 ticks a second
+  on that timer) Classic measured about 20% at 1200×800. Still frames of the old CSS and the new tick at the same moment
+  differ by at most 4/255 at both sizes in both themes, header bands
+  included. In the 1920×1080 runs the bands (3–5 points) and the wash
+  (2–4) cost most of what is left beyond the repaint itself; the opacities
+  and the drop shadow cost nothing measurable.
+
+**Rejected:** stepped CSS keyframes started on one frame (the review's
+prototype): CSS time keeps running through a pause, so a resumed animation
+jumps, and the steps line up only if every animation starts on the same
+frame. A loop per layer at the same cap: the layers land on different
+frames and each repaints the window. Writing the pose as custom properties
+on the root: every element inherits them, so each tick would restyle the
+page. A pre-blurred radial gradient for the bands: it matched within 5/255
+in a 616 px chat pane but up to 25/255 at 1920×1080, where a band is three
+times wider than tall and its blur has a flat top with soft edges that a
+gradient's stretched falloff cannot draw (the bands came out rounder).
+Canvas `filter` (not in WebKitGTK 2.52) and canvas shadows (unusable there)
+for drawing the blur. Snapping to the resting pose when focus goes, as
+Motion off does: a visible jump every time focus moves. Resting the preview
+tiles too: a tile moves only under the pointer or keyboard focus, which is
+already someone looking at it. Freezing a ripple half-way: it would sit on
+the screen until focus came back.
+
+**Review fixes (2026-10-31):**
+- Focus inside an iframe. A click into an artifact's sandboxed preview or
+  the Preview pane blurs the window while the page keeps the focus
+  (`document.hasFocus()` stays true), and the host took that blur for
+  another window taking the focus: the background froze while someone
+  worked in the preview. Now a blur that leaves the focus in one of the
+  page's iframes keeps it going, and the host looks again once the event
+  is over (`setTimeout` 0) for an engine that moves the focus there only
+  afterwards. While the focus sits in a frame the window hears nothing
+  more, so the resting check asks `document.hasFocus()` then, and a watch
+  every 500 ms wakes or rests the loop when the answer flips: leaving the
+  app from inside the frame still rests it, and coming back into the frame
+  wakes it. Outside a frame the window's events decide, as before
+  (`backgrounds/window-host.test.ts`).
+- Motion on again. Classic's dust stays on the shared tick with Motion off
+  (it keeps its canvas), so the tick's clock outlived Motion off and the
+  orbit and bands came back where it stood, a jump away from their resting
+  pose. Now the shared tick drops its frames and puts its clock back at
+  the start when its last running layer stops (Motion off, reduced motion,
+  another background), and repaints the layers still on it there; a rest
+  (hidden, or another window focused) is not a stop and keeps the clock
+  (`backgrounds/loop.test.ts`, `backgrounds/classic-component.test.ts`).
+- The rate is described as what runs: a cap of 12, about 10 in WebKitGTK
+  (above). The rate itself is unchanged.
+
+**Rejected in review:** taking the dust off the tick while Motion is off
+(its still frame would need a clock of its own, and Motion on would still
+jump it); asking `document.hasFocus()` on every frame instead of following
+the events (a focus event is what wakes a resting loop, and the watch runs
+only while a frame holds the focus).
+
+**Strength (2026-10-31): Subtle or Vivid.** The veils that keep muted text
+at AA left Galaxy, Aurora and the other space backgrounds faint, the light
+theme most of all. Settings → Appearance now has a Strength choice for the
+backgrounds behind a veil.
+
+**Decision:**
+- Per device, like the rest: `tst-desk:background-strength`, "subtle" (the
+  default) or "vivid"; any other value, or storage that throws, reads as
+  Subtle, and a refused write still switches the window. The key starts
+  with `tst-desk:background`, so the storage listener already follows it
+  across windows. The palette gets no action for it.
+- Subtle is the veil as it was. Vivid lays each veil at 40% of its
+  strength (`--bg-veil-vivid`), and the dark aurora's at 60%
+  (`--bg-aurora-veil-vivid`). The galaxy and the aurora then show two to
+  five times as much as at Subtle (the share of the background that shows:
+  dark galaxy 35% to 74%, dark aurora 26% to 56%, light galaxy 20% to 68%,
+  light aurora 12% to 65%), the thinly veiled ones a little more (dark deep
+  space 75% to 90%), and body text keeps 4.5:1 over every background's
+  soft light at its brightest. Muted and secondary text drop below 4.5:1
+  over the brightest light; the hint says so.
+- Measured in Chromium at 1280×800 against the mock walk daemon, with the
+  app and the veil hidden: five minutes of each dark background
+  fast-forwarded (ten frames; the frame clock ran ten times fast, so every
+  paint took the loop's longest step) and three frames over 20 s in light.
+  Each strength is composited as the browser draws it, in sRGB, over the
+  chat pane and the Activity pane. Soft light is what is left once point
+  lights are taken out: a light under 41 px both ways (a single star, a
+  shooting star, a firefly). An aurora ray is narrow but tall, so it
+  counts. Body text over soft light, at its lowest, at Vivid:
+
+  | Background | Dark | Light |
+  |---|---|---|
+  | Galaxy | 5.2:1 (the core) | 12.0:1 |
+  | Deep space | 13.8:1 | 14.6:1 |
+  | Aurora | 4.9:1 at 60% (3.5:1 at 40%, 4.1:1 at 50%) | 10.5:1 |
+  | Constellations | 14.4:1 | 15.1:1 |
+  | Fireflies | 10.5:1 | 15.0:1 |
+
+  Muted text over the same light falls to about 2.1–2.3:1 over the dark
+  galaxy's core and the dark aurora's rays, and to 3.1–4.5:1 in light.
+  Point lights (single stars, fireflies) put body text under 4.5:1 on 0.1%
+  of the panes or less; single stars already did at Subtle.
+- 40% in light too: 68% of the light galaxy shows at Vivid and it is still
+  a pale print, because its inks are pale (the printed star atlas). At 25%
+  it would show 80%, for muted text under 3:1 over the aurora.
+- A fill, not an opacity. `veilFill` (components/backgrounds/registry.ts)
+  mixes the veil token with clear, `color-mix(in srgb, var(--bg-galaxy-veil)
+  var(--bg-galaxy-veil-vivid, var(--bg-veil-vivid)), transparent)`, which
+  scales only its alpha: the token stays the one source of the colour, and
+  the veil stays a plain fill. An opacity under 1 on the full-window veil
+  would cost a full-window transparency layer on every repaint in
+  software, as the orbit's group opacity did.
+- The row is a radio group of two pills in the theme's style, with the
+  tiles' arrow keys and one tab stop. It stands down, with a note, for Off
+  and Classic, which have no veil.
+
+**Rejected:** one share for every background (at 40% the dark aurora's rays
+take body text to 3.5:1; at 60% everywhere the dark galaxy would show 61%
+instead of 74%); a share per theme (the same trade, only to cover the dark
+aurora); an opacity on the veil (the transparency layer above); a second
+veil token per strength (two sources for one colour); a slider (each of two
+named strengths can be checked for readable text, a slider's every stop
+cannot); bolder light-theme inks (they would change Subtle and the preview
+tiles too).

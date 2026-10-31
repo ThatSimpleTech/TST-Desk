@@ -23,6 +23,7 @@ export type PaletteCommand =
 	| { kind: "open-in-terminal" }
 	| { kind: "open-settings" }
 	| { kind: "toggle-theme" }
+	| { kind: "toggle-background" }
 	| { kind: "end-session" }
 	| { kind: "stop-computer-use" }
 	| { kind: "resume-computer-use" }
@@ -125,6 +126,14 @@ export const ACTION_ENTRIES: readonly PaletteEntry[] = [
 		icon: "moon",
 		keywords: "appearance dark light",
 		command: { kind: "toggle-theme" },
+	},
+	{
+		id: "action:toggle-background",
+		title: "Toggle background",
+		subtitle: "Turn the background off, or back on",
+		icon: "star",
+		keywords: "appearance effects animation motion galaxy space aurora off",
+		command: { kind: "toggle-background" },
 	},
 	{
 		id: "action:end-session",

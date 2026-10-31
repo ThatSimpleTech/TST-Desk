@@ -564,6 +564,7 @@ test("runs the command palette actions that stay in this window", async () => {
 		"Open plan",
 		"Open settings",
 		"Toggle theme",
+		"Toggle background",
 		"Stop computer use",
 		"Resume computer use",
 		"Toggle Design mode",

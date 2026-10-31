@@ -92,6 +92,82 @@ describe("text contrast", () => {
 	}
 });
 
+// ── Background veils (TD-5202) ────────────────────────────────────────────
+//
+// A picked background is quieted behind the panes by an even veil of the
+// ground colour, one per background. It has to be the ground, or it would
+// tint the page. The dark galaxy's also has to hold body text at AA over the
+// galaxy's core, where hundreds of stacked stars add up to pure white.
+
+const VEILS = ["--bg-galaxy-veil", "--bg-space-veil", "--bg-aurora-veil", "--bg-constellation-veil", "--bg-firefly-veil"];
+
+/** `rgb(r g b / a)` as its channels and alpha. */
+function rgba(value: string): { rgb: number[]; alpha: number } {
+	const m = /^rgb\((\d+) (\d+) (\d+) \/ ([\d.]+)\)$/.exec(value);
+	if (!m) throw new Error(`not rgb(r g b / a): ${value}`);
+	return { rgb: [m[1], m[2], m[3]].map(Number), alpha: Number(m[4]) };
+}
+
+function hex(rgb: number[]): string {
+	return `#${rgb.map((c) => Math.round(c).toString(16).padStart(2, "0")).join("")}`;
+}
+
+describe("background veils", () => {
+	const palettes = { light: tokensOf(":root {"), dark: tokensOf(':root[data-theme="dark"]') };
+
+	for (const [theme, palette] of Object.entries(palettes)) {
+		it(`${theme}: every veil is the ground colour, partly clear`, () => {
+			for (const name of VEILS) {
+				const veil = rgba(palette[name] ?? "");
+				expect(hex(veil.rgb), name).toBe(palette["--color-ground"]);
+				expect(veil.alpha, name).toBeGreaterThan(0);
+				expect(veil.alpha, name).toBeLessThan(1);
+			}
+		});
+	}
+
+	it("dark: the galaxy's veil keeps body text at AA over its core, where stars add up to white", () => {
+		const dark = palettes.dark;
+		const veil = rgba(dark["--bg-galaxy-veil"]);
+		const core = veil.rgb.map((ground) => 255 * (1 - veil.alpha) + ground * veil.alpha);
+		expect(contrast(dark["--color-ink"], hex(core))).toBeGreaterThanOrEqual(4.5);
+	});
+});
+
+// Vivid (Settings → Appearance → Strength) lays each veil at a share of its
+// strength: one default, and a higher share for a background whose brightest
+// light needs it for body text to keep 4.5:1 (the dark aurora's rays). A
+// share only ever raises a veil above the default, never thins it further.
+
+describe("Vivid veils", () => {
+	const light = tokensOf(":root {");
+	const dark = tokensOf(':root[data-theme="dark"]');
+	const share = (value: string | undefined): number => {
+		const m = /^(\d+)%$/.exec(value ?? "");
+		if (!m) throw new Error(`not a share: ${value}`);
+		return Number(m[1]) / 100;
+	};
+	const fallback = share(light["--bg-veil-vivid"]);
+
+	it("thins every veil to well under its strength by default, in both themes", () => {
+		expect(fallback).toBeGreaterThanOrEqual(0.3);
+		expect(fallback).toBeLessThanOrEqual(0.5);
+		expect(dark["--bg-veil-vivid"]).toBeUndefined();
+	});
+
+	it("raises the share only for a veil that exists, and never above the full veil", () => {
+		const own = [light, dark].flatMap((palette) =>
+			Object.entries(palette).filter(([name]) => name.endsWith("-veil-vivid") && name !== "--bg-veil-vivid"),
+		);
+		expect(own.map(([name]) => name)).toContain("--bg-aurora-veil-vivid");
+		for (const [name, value] of own) {
+			expect(VEILS, name).toContain(name.replace(/-vivid$/, ""));
+			expect(share(value), name).toBeGreaterThan(fallback);
+			expect(share(value), name).toBeLessThan(1);
+		}
+	});
+});
+
 // ── One vocabulary ────────────────────────────────────────────────────────
 //
 // The September 2026 design rounds retired the TD-1001–TD-1404 alias names

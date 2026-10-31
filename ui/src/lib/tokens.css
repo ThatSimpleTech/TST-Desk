@@ -50,14 +50,71 @@
 	/* ---- Ambient background — "Orbit Halo" (light) ----
 	   The orbit field layers over --color-ground; the base is not painted
 	   here so the existing page ground shows through. Light keeps it faint and
-	   warm — dot in warm taupe, the anchor dot in rust, glow barely there.
-	   --bg-orbit-opacity is the global multiplier the component reads. */
-	--bg-orbit-dot:       #c9a98f;
-	--bg-orbit-dot-hot:   #b4532a;
+	   warm — dot in warm taupe (#c9a98f), the anchor dot in rust (#b4532a),
+	   glow barely there — at 0.55 of full strength, folded into each alpha
+	   rather than set as one opacity on the layer: where WebKitGTK paints in
+	   software, an opacity on the full-window layer costs a full-window
+	   transparency layer on every repaint. The glow keeps its alpha: a drop
+	   shadow takes its strength from the dots it shadows, which carry the
+	   0.55 already. */
+	--bg-orbit-dot:       rgb(201 169 143 / 0.55);
+	--bg-orbit-dot-hot:   rgb(180 83 42 / 0.55);
 	--bg-orbit-glow:      rgb(180 83 42 / 0.10);
-	--bg-orbit-wash:      rgb(94 88 74 / 0.05);
-	--bg-orbit-vignette:  rgb(25 24 23 / 0.06);
-	--bg-orbit-opacity:   0.55;
+	--bg-orbit-wash:      rgb(94 88 74 / 0.0275);
+	--bg-orbit-vignette:  rgb(25 24 23 / 0.033);
+
+	/* ---- Picked backgrounds (TD-5202) ----
+	   Every background reads only these. Light keeps paper paper: skies are
+	   inked in warm greys and rust, like a printed star atlas, and laid over
+	   the ground ("source-over"); dark adds light ("lighter").
+	   Each --bg-*-veil is the ground colour laid evenly over that
+	   background behind the panes: as strong as its brightest moment needs
+	   for muted text to keep 4.5:1 over 99% of each pane, or a light wash
+	   where it needs none. */
+	--bg-ambient-blend:   source-over;
+	--bg-galaxy-veil:           rgb(248 246 241 / 0.8);
+	--bg-space-veil:            rgb(248 246 241 / 0.45);
+	--bg-aurora-veil:           rgb(248 246 241 / 0.88);
+	--bg-constellation-veil:    rgb(248 246 241 / 0.25);
+	--bg-firefly-veil:          rgb(248 246 241 / 0.2);
+	/* Vivid (Settings → Appearance → Strength) lays each veil at this share
+	   of its strength: the galaxy and the aurora show two to five times as
+	   much, and body text still keeps 4.5:1 over every background's soft
+	   light at its brightest (DECISIONS.md, TD-5202). A background that
+	   needs more for that sets its own --bg-*-veil-vivid, which only ever
+	   raises the share. */
+	--bg-veil-vivid:            40%;
+	--bg-galaxy-core:     #8b6a4f;
+	--bg-galaxy-arm:      #6c6658;
+	--bg-galaxy-disc:     #9e9684;
+	--bg-galaxy-haze:     #b9a996;
+	--bg-galaxy-nebula:   #c0714c;
+	--bg-galaxy-sky:      #8f8877;
+	--bg-galaxy-opacity:  0.62;
+	--bg-space-star:      #6b6557;
+	--bg-space-cool:      #66768b;
+	--bg-space-warm:      #9a6a4a;
+	--bg-space-dust:      #a39b88;
+	--bg-space-meteor:    #b4532a;
+	--bg-space-haze:      rgb(150 138 116 / 0.09);
+	--bg-space-core:      rgb(180 83 42 / 0.05);
+	--bg-space-opacity:   0.78;
+	--bg-aurora-low:      #3f9a86;
+	--bg-aurora-mid:      #5d86bd;
+	--bg-aurora-high:     #b06f95;
+	--bg-aurora-star:     rgb(0 0 0 / 0);
+	--bg-aurora-sky:      rgb(63 154 134 / 0.05);
+	--bg-aurora-rays:     0.12;
+	--bg-aurora-opacity:  0.6;
+	--bg-constellation-star:    #6b6557;
+	--bg-constellation-bright:  #b4532a;
+	--bg-constellation-line:    #9a917d;
+	--bg-constellation-opacity: 0.8;
+	--bg-constellation-sky:     rgb(150 138 116 / 0.07);
+	--bg-firefly-glow:          #dc9b2c;
+	--bg-firefly-core:          #a8660f;
+	--bg-firefly-dusk:          rgb(220 155 44 / 0.06);
+	--bg-firefly-opacity:       0.6;
 
 	/* ---- Syntax highlighting (TD-1609) ----
 	   Warm code palette consumed by hljs-theme.css; dark lifts each hue. */
@@ -183,7 +240,48 @@
 		--bg-orbit-glow:      rgb(95 224 255 / 0.35);
 		--bg-orbit-wash:      rgb(16 19 26 / 0.6);
 		--bg-orbit-vignette:  rgb(0 0 0 / 0.45);
-		--bg-orbit-opacity:   1;
+
+		/* Picked backgrounds — dark (TD-5202): luminous, added as light. */
+		--bg-ambient-blend:   lighter;
+		--bg-galaxy-veil:           rgb(19 18 16 / 0.65);
+		--bg-space-veil:            rgb(19 18 16 / 0.25);
+		--bg-aurora-veil:           rgb(19 18 16 / 0.74);
+		--bg-constellation-veil:    rgb(19 18 16 / 0.2);
+		--bg-firefly-veil:          rgb(19 18 16 / 0.15);
+		/* The aurora's brightest rays need 60% for body text to keep 4.5:1
+		   at Vivid (4.1:1 at 50%); the other dark backgrounds take the default. */
+		--bg-aurora-veil-vivid:     60%;
+		--bg-galaxy-core:     #ffe4bd;
+		--bg-galaxy-arm:      #aac6ff;
+		--bg-galaxy-disc:     #b9b4c8;
+		--bg-galaxy-haze:     #5b6cd6;
+		--bg-galaxy-nebula:   #f0719c;
+		--bg-galaxy-sky:      #e6e9f4;
+		--bg-galaxy-opacity:  0.74;
+		--bg-space-star:      #f1f3fb;
+		--bg-space-cool:      #a9c4ff;
+		--bg-space-warm:      #ffd2a1;
+		--bg-space-dust:      #c9cfe0;
+		--bg-space-meteor:    #ffffff;
+		--bg-space-haze:      rgb(70 92 170 / 0.1);
+		--bg-space-core:      rgb(92 112 210 / 0.13);
+		--bg-space-opacity:   0.92;
+		--bg-aurora-low:      #39e6a0;
+		--bg-aurora-mid:      #3cc6e0;
+		--bg-aurora-high:     #a07cff;
+		--bg-aurora-star:     #e6e9f4;
+		--bg-aurora-sky:      rgb(22 70 66 / 0.22);
+		--bg-aurora-rays:     0.45;
+		--bg-aurora-opacity:  0.6;
+		--bg-constellation-star:    #dfe7ff;
+		--bg-constellation-bright:  #ffffff;
+		--bg-constellation-line:    #8aa6e0;
+		--bg-constellation-opacity: 0.85;
+		--bg-constellation-sky:     rgb(46 64 120 / 0.2);
+		--bg-firefly-glow:          #ffcf5a;
+		--bg-firefly-core:          #fff3c4;
+		--bg-firefly-dusk:          rgb(54 70 36 / 0.2);
+		--bg-firefly-opacity:       0.85;
 	}
 }
 
@@ -224,5 +322,46 @@
 	--bg-orbit-glow:      rgb(95 224 255 / 0.35);
 	--bg-orbit-wash:      rgb(16 19 26 / 0.6);
 	--bg-orbit-vignette:  rgb(0 0 0 / 0.45);
-	--bg-orbit-opacity:   1;
+
+	/* Picked backgrounds — dark (TD-5202): luminous, added as light. */
+	--bg-ambient-blend:   lighter;
+	--bg-galaxy-veil:           rgb(19 18 16 / 0.65);
+	--bg-space-veil:            rgb(19 18 16 / 0.25);
+	--bg-aurora-veil:           rgb(19 18 16 / 0.74);
+	--bg-constellation-veil:    rgb(19 18 16 / 0.2);
+	--bg-firefly-veil:          rgb(19 18 16 / 0.15);
+	/* The aurora's brightest rays need 60% for body text to keep 4.5:1
+	   at Vivid (4.1:1 at 50%); the other dark backgrounds take the default. */
+	--bg-aurora-veil-vivid:     60%;
+	--bg-galaxy-core:     #ffe4bd;
+	--bg-galaxy-arm:      #aac6ff;
+	--bg-galaxy-disc:     #b9b4c8;
+	--bg-galaxy-haze:     #5b6cd6;
+	--bg-galaxy-nebula:   #f0719c;
+	--bg-galaxy-sky:      #e6e9f4;
+	--bg-galaxy-opacity:  0.74;
+	--bg-space-star:      #f1f3fb;
+	--bg-space-cool:      #a9c4ff;
+	--bg-space-warm:      #ffd2a1;
+	--bg-space-dust:      #c9cfe0;
+	--bg-space-meteor:    #ffffff;
+	--bg-space-haze:      rgb(70 92 170 / 0.1);
+	--bg-space-core:      rgb(92 112 210 / 0.13);
+	--bg-space-opacity:   0.92;
+	--bg-aurora-low:      #39e6a0;
+	--bg-aurora-mid:      #3cc6e0;
+	--bg-aurora-high:     #a07cff;
+	--bg-aurora-star:     #e6e9f4;
+	--bg-aurora-sky:      rgb(22 70 66 / 0.22);
+	--bg-aurora-rays:     0.45;
+	--bg-aurora-opacity:  0.6;
+	--bg-constellation-star:    #dfe7ff;
+	--bg-constellation-bright:  #ffffff;
+	--bg-constellation-line:    #8aa6e0;
+	--bg-constellation-opacity: 0.85;
+	--bg-constellation-sky:     rgb(46 64 120 / 0.2);
+	--bg-firefly-glow:          #ffcf5a;
+	--bg-firefly-core:          #fff3c4;
+	--bg-firefly-dusk:          rgb(54 70 36 / 0.2);
+	--bg-firefly-opacity:       0.85;
 }

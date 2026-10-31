@@ -3243,6 +3243,23 @@ fires, not for eight seconds after the last click. Wayland has no real-display
 ring. Screenshots hide the ring for the grab so it cannot appear in the frame.
 This is not a second hardware pointer.
 
+**Background**, **Strength**, **Motion** and **Click ripples** (TD-5202) are not keys in this file either.
+Settings → Appearance keeps them per device, like the theme, in the window's local storage:
+a phone and a computer on one daemon each keep their own. Background is Off (the plain
+ground, nothing drawn), Classic (the default: the orbit halo, the header light and the
+dust), Galaxy, Deep space, Aurora, Constellations or Fireflies; the command palette's
+**Toggle background** switches it off and back. Motion off holds a still frame of the same
+background, and Click ripples turns the ring of light from a click in the chat off on its
+own. When the system asks for reduced motion, backgrounds hold still and clicks do not
+ripple, whatever the switches say. While another window has the focus (a click into a
+preview inside the app does not count), the background holds its last frame and draws nothing new, then carries on from there when you come back;
+a preview tile in Settings still moves under the pointer. Behind the panes, every background
+but Classic lies under an even veil of the page colour so the text over it stays readable;
+the preview tiles show each one at full strength. **Strength** picks that veil: Subtle (the
+default) is strong enough for small grey text to keep its contrast, and Vivid thins it so the background shows much
+more while body text stays readable (small grey text can be harder to read). Off and
+Classic have no veil, so Strength stands down for them.
+
 ### 4.5 `approved_external_imports`
 
 | Key | Type | Default | Effect |
