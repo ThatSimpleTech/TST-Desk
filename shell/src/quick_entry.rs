@@ -163,19 +163,18 @@ pub fn setup(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState,
     };
 
+    // The plugin is built once in lib.rs (TD-5224 shares it for the
+    // computer-use stop shortcut); each shortcut brings its own handler.
     let shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::Period);
     let handle = app.handle().clone();
-    app.handle().plugin(
-        tauri_plugin_global_shortcut::Builder::new()
-            .with_handler(move |app, sc, event| {
-                if sc == &shortcut && event.state() == ShortcutState::Pressed {
-                    toggle_overlay(app);
-                }
-            })
-            .build(),
-    )?;
-
-    if let Err(err) = handle.global_shortcut().register(shortcut) {
+    let registered = handle
+        .global_shortcut()
+        .on_shortcut(shortcut, |app, _sc, event| {
+            if event.state() == ShortcutState::Pressed {
+                toggle_overlay(app);
+            }
+        });
+    if let Err(err) = registered {
         log::warn!("quick entry shortcut registration failed: {err}");
         emit_permission_notice(&handle);
     }

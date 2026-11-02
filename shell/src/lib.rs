@@ -11,6 +11,7 @@ mod received_files;
 mod sent_files;
 mod session_window;
 mod single_instance;
+mod stop_hotkey;
 mod tray;
 mod updater;
 
@@ -367,6 +368,11 @@ pub fn run() {
             let embeddings = daemon::embeddings::start(data_dir);
             app.manage(handle);
             app.manage(embeddings);
+            // One global-shortcut plugin; each shortcut registers its own
+            // handler (quick entry on macOS, the stop shortcut everywhere).
+            app.handle()
+                .plugin(tauri_plugin_global_shortcut::Builder::new().build())?;
+            stop_hotkey::setup(app.handle(), &daemon::data_dir());
             quick_entry::setup(app)?;
             updater::start(app.handle());
             Ok(())

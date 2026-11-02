@@ -19589,3 +19589,23 @@ it exists. Capture, permissions and `ui_snapshot` keep working.
 - `TST_CU_MCP_STOP` set in the daemon's own environment keeps the switch
   engaged on Resume, matching tst-cu-mcp; the reply says so.
 
+## 2026-11-02 — TD-5224: a system-wide stop shortcut, engage only (Class B)
+
+**Decision:** The app registers a global shortcut, default
+`Ctrl+Alt+Super+Period` (⌃⌥⌘. on macOS), set by `computer_use.stop_shortcut`
+and read at launch. Pressing it creates the TD-5223 stop-file in the app
+process. It never removes the file.
+
+**Rationale:**
+- Engage only: an agent can press key combos (`press_keys`), so a toggle
+  would let it switch itself back on. Resume stays a click in TST Desk.
+- Not ⌘.: many apps use it for Cancel, and a global grab would take it
+  from all of them. Four modifiers plus `.` is a combo nothing else
+  claims; the in-window ⌘. stays as it was.
+- The app writes the file itself instead of asking the daemon, so the
+  shortcut still stops input while the daemon is busy or restarting. The
+  daemon's once-a-second check (TD-5223) then updates every window.
+- The global-shortcut plugin is built once, and each shortcut registers its
+  own handler (`on_shortcut`). Quick entry used to build the plugin with a
+  single handler, which would have left no room for a second shortcut.
+

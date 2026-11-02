@@ -1333,12 +1333,18 @@ class ComputerUseConfig(BaseModel):
     Brain stays on the active preset.
 
     ``accessibility`` turns on the element-level desktop tools (TD-5220).
+
+    ``stop_shortcut`` is the system-wide combo that stops computer use on
+    the whole machine, even with TST Desk in the background (TD-5224). It
+    only engages; resume is a click in TST Desk. Empty turns it off. The
+    app reads it at launch.
     """
 
     command: str | list[str] = ""
     browser: Literal["mock", "playwright"] = "mock"
     grounding: GroundingConfig = Field(default_factory=GroundingConfig)
     accessibility: AccessibilityConfig = Field(default_factory=AccessibilityConfig)
+    stop_shortcut: str = "Ctrl+Alt+Super+Period"
     local_worker_preset: str = ""
     # Hosted vLLM forge is --limit-mm-per-prompt image:1 (TD-1730).
     max_prompt_images: int = Field(default=1, ge=0)

@@ -282,6 +282,15 @@ onboarding is the same kind of honesty as Windows (no grant dialog). A
 Wayland session is unsupported (TD-2002); `health` reports
 `supported: false` and `session_type: "wayland"`.
 
+**Stop** (title bar, ⌘. / Ctrl+. in the window, the palette, and the
+system-wide `stop_shortcut`) creates the tst-cu-mcp stop-file
+(`killswitch.stop_file` in that config, else `$TST_CU_MCP_STOP_FILE`, else
+`~/.tst-cu-mcp/STOP`). Every computer-use client refuses input while it
+exists, including ones TST Desk did not start, and the host's
+`cu-agent.sock` refuses too. Capture keeps working. Resume removes it. A
+stop-file created by another tool shows in TST Desk as stopped within a
+second (TD-5223).
+
 Settings → Computer use (TD-4830) writes `~/.tst-cu-mcp/config.yaml`
 (or `$TST_CU_MCP_CONFIG`): `actuation.enabled`, `mode` (`background` or
 `full_control`), `scoping.denied_apps`, `scoping.unhide_on_finish`. The
@@ -297,6 +306,7 @@ under the user data dir. Playwright missing always falls back to mock.
 | `browser` | `mock` or `playwright` | `mock` | Browser driver. `mock` never launches Chrome. `playwright` uses a persistent profile under the user data dir when Playwright is installed; otherwise the mock. |
 | `grounding` | mapping | see below | Local vision model for click targeting (TD-3902). |
 | `accessibility` | mapping | see below | Element-level desktop tools on the accessibility tree (TD-5220). Off by default. |
+| `stop_shortcut` | string | `Ctrl+Alt+Super+Period` | System-wide shortcut that stops computer use on the whole machine, even while TST Desk is in the background (TD-5224): ⌃⌥⌘. on macOS, Ctrl+Alt+Super+. elsewhere. It creates the same stop-file as the title-bar Stop, so every computer-use client halts. It only engages: resume is a click in TST Desk, because an agent can press key combos. Modifiers `Ctrl`, `Alt`/`Option`, `Super`/`Cmd`, `Shift` joined with `+`, then one key (`Period`, `F12`, `KeyS`, …). Empty turns it off. Read at launch. Not available in a Wayland session. |
 | `local_worker_preset` | string | *empty* | After this session has used a `desktop_` or `browser_` tool, the worker *client* uses that named preset's worker tier (loopback URL + optional slug). Brain stays on the active preset. Empty never remaps. The name is a preset key, not a model slug. Lead-turns, `set_tier`, and escalation are unchanged. |
 | `max_prompt_images` | int ≥ 0 | `1` | How many `image_url` parts a completion may keep. Oldest images (screenshots, and images `fs_read` returned) are dropped first. `1` matches gateway-model (`--limit-mm-per-prompt image:1`). It also caps the page images one PDF read returns (at most 5), and `0` makes `fs_read` treat every tier as text-only (TD-5130). |
 
