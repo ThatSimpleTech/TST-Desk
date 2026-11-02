@@ -3,15 +3,17 @@
 //! Checkout Python is the wrong TCC identity. AXUIElement reads and
 //! AXPress/AXSetValue run here so System Settings attributes them to
 //! **TST Desk**. Nested tree JSON is flattened by the Python MCP layer.
+//! Every CF value goes through `cu_cf`, which checks its type and owns its
+//! reference (TD-5225).
 
 #![cfg(target_os = "macos")]
 
-use std::ffi::{c_char, c_void, CStr, CString};
-use std::ptr;
+use std::ffi::c_void;
 
 use serde_json::{json, Value};
 
-const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
+use crate::cu_cf::{self, Owned};
+
 const AX_OK: i32 = 0;
 const MAX_CHILDREN: usize = 200;
 const MAX_DEPTH: usize = 24;
@@ -33,27 +35,6 @@ extern "C" {
     ) -> i32;
 }
 
-#[link(name = "CoreFoundation", kind = "framework")]
-extern "C" {
-    fn CFRelease(cf: *const c_void);
-    fn CFStringCreateWithCString(
-        alloc: *mut c_void,
-        c_str: *const c_char,
-        encoding: u32,
-    ) -> *mut c_void;
-    fn CFStringGetLength(the_string: *const c_void) -> isize;
-    fn CFStringGetCString(
-        the_string: *const c_void,
-        buffer: *mut c_char,
-        buffer_size: isize,
-        encoding: u32,
-    ) -> u8;
-    fn CFArrayGetCount(the_array: *const c_void) -> isize;
-    fn CFArrayGetValueAtIndex(the_array: *const c_void, idx: isize) -> *const c_void;
-    fn CFBooleanGetValue(boolean: *const c_void) -> u8;
-    static kCFBooleanTrue: *const c_void;
-}
-
 pub fn handle(body: &Value) -> Value {
     let op = body.get("op").and_then(Value::as_str).unwrap_or("");
     match op {
@@ -69,12 +50,10 @@ fn snapshot(body: &Value) -> Value {
         return json!({"ok": false, "error": "pid must be a positive process id"});
     }
     unsafe {
-        let app = AXUIElementCreateApplication(pid);
-        if app.is_null() {
+        let Some(app) = Owned::adopt(AXUIElementCreateApplication(pid)) else {
             return json!({"ok": false, "error": format!("no accessibility element for pid {pid}")});
-        }
-        let tree = read_app(app);
-        CFRelease(app);
+        };
+        let tree = read_app(app.as_ptr());
         json!({"ok": true, "pid": pid, "tree": tree, "path": "host"})
     }
 }
@@ -91,25 +70,21 @@ fn act(body: &Value) -> Value {
         return json!({"ok": false, "error": "element id is empty"});
     }
     unsafe {
-        let app = AXUIElementCreateApplication(pid);
-        if app.is_null() {
+        let Some(app) = Owned::adopt(AXUIElementCreateApplication(pid)) else {
             return json!({"ok": false, "error": format!("no accessibility element for pid {pid}")});
-        }
-        let result = match element_at(app, id) {
-            Some(el) => perform(el, action, value),
-            None => json!({"ok": false, "error": format!("element {id} is not in the tree")}),
         };
-        CFRelease(app);
-        result
+        match element_at(app.as_ptr(), id) {
+            Some(el) => perform(el.as_ptr(), action, value),
+            None => json!({"ok": false, "error": format!("element {id} is not in the tree")}),
+        }
     }
 }
 
 unsafe fn read_app(app: *mut c_void) -> Value {
-    let windows = attr_list(app, "AXWindows");
-    let children: Vec<Value> = windows
-        .into_iter()
+    let children: Vec<Value> = attr_list(app, "AXWindows")
+        .iter()
         .take(MAX_CHILDREN)
-        .map(|child| read_element(child as *mut c_void, 1))
+        .map(|child| read_element(child.as_ptr(), 1))
         .collect();
     json!({
         "role": "AXApplication",
@@ -128,9 +103,9 @@ unsafe fn read_element(element: *mut c_void, depth: usize) -> Value {
         Vec::new()
     } else {
         attr_list(element, "AXChildren")
-            .into_iter()
+            .iter()
             .take(MAX_CHILDREN)
-            .map(|child| read_element(child as *mut c_void, depth + 1))
+            .map(|child| read_element(child.as_ptr(), depth + 1))
             .collect()
     };
     let mut description = attr_string(element, "AXDescription");
@@ -149,21 +124,25 @@ unsafe fn read_element(element: *mut c_void, depth: usize) -> Value {
     })
 }
 
-unsafe fn element_at(app: *mut c_void, element_id: &str) -> Option<*mut c_void> {
-    let mut node = app;
+/// The element at a dotted path (`window.child.child…`), holding its own
+/// reference so it outlives the lists it was found in.
+unsafe fn element_at(app: *mut c_void, element_id: &str) -> Option<Owned> {
+    let mut node: Option<Owned> = None;
     for (index, part) in element_id.split('.').enumerate() {
         let pos: usize = part.parse().ok()?;
-        let siblings = if index == 0 {
-            attr_list(node, "AXWindows")
+        let parent = node.as_ref().map_or(app, Owned::as_ptr);
+        let name = if index == 0 {
+            "AXWindows"
         } else {
-            attr_list(node, "AXChildren")
+            "AXChildren"
         };
-        node = *siblings.get(pos)? as *mut c_void;
-        if node.is_null() {
+        let mut siblings = attr_list(parent, name);
+        if pos >= siblings.len() {
             return None;
         }
+        node = Some(siblings.swap_remove(pos));
     }
-    Some(node)
+    node
 }
 
 unsafe fn perform(element: *mut c_void, action: &str, value: &str) -> Value {
@@ -171,8 +150,11 @@ unsafe fn perform(element: *mut c_void, action: &str, value: &str) -> Value {
         "press" => perform_named(element, "AXPress"),
         "raise" => perform_named(element, "AXRaise"),
         "show_menu" => perform_named(element, "AXShowMenu"),
-        "focus" => set_bool(element, "AXFocused"),
-        "set_value" => set_string(element, "AXValue", value),
+        "focus" => set_value(element, "AXFocused", cu_cf::boolean_true()),
+        "set_value" => match cu_cf::cfstring(value) {
+            Some(text) => set_value(element, "AXValue", text.as_ptr()),
+            None => -1,
+        },
         other => {
             return json!({"ok": false, "error": format!("unknown ui action {other}")});
         }
@@ -184,151 +166,63 @@ unsafe fn perform(element: *mut c_void, action: &str, value: &str) -> Value {
 }
 
 unsafe fn perform_named(element: *mut c_void, name: &str) -> i32 {
-    let cf = cfstring(name);
-    if cf.is_null() {
-        return -1;
+    match cu_cf::cfstring(name) {
+        Some(action) => AXUIElementPerformAction(element, action.as_ptr()),
+        None => -1,
     }
-    let err = AXUIElementPerformAction(element, cf);
-    CFRelease(cf);
-    err
 }
 
-unsafe fn set_string(element: *mut c_void, name: &str, value: &str) -> i32 {
-    let attr = cfstring(name);
-    let cf_val = cfstring(value);
-    if attr.is_null() || cf_val.is_null() {
-        if !attr.is_null() {
-            CFRelease(attr);
-        }
-        if !cf_val.is_null() {
-            CFRelease(cf_val);
-        }
-        return -1;
+unsafe fn set_value(element: *mut c_void, name: &str, value: *const c_void) -> i32 {
+    match cu_cf::cfstring(name) {
+        Some(attr) => AXUIElementSetAttributeValue(element, attr.as_ptr(), value),
+        None => -1,
     }
-    let err = AXUIElementSetAttributeValue(element, attr, cf_val);
-    CFRelease(attr);
-    CFRelease(cf_val);
-    err
 }
 
-unsafe fn set_bool(element: *mut c_void, name: &str) -> i32 {
-    let attr = cfstring(name);
-    if attr.is_null() {
-        return -1;
+unsafe fn attr_copy(element: *mut c_void, name: &str) -> Option<Owned> {
+    let attr = cu_cf::cfstring(name)?;
+    let mut out: *mut c_void = std::ptr::null_mut();
+    if AXUIElementCopyAttributeValue(element, attr.as_ptr(), &mut out) != AX_OK {
+        return None;
     }
-    let err = AXUIElementSetAttributeValue(element, attr, kCFBooleanTrue);
-    CFRelease(attr);
-    err
-}
-
-unsafe fn attr_copy(element: *mut c_void, name: &str) -> *mut c_void {
-    let attr = cfstring(name);
-    if attr.is_null() {
-        return ptr::null_mut();
-    }
-    let mut out: *mut c_void = ptr::null_mut();
-    let err = AXUIElementCopyAttributeValue(element, attr, &mut out);
-    CFRelease(attr);
-    if err != AX_OK {
-        return ptr::null_mut();
-    }
-    out
+    Owned::adopt(out)
 }
 
 unsafe fn attr_string(element: *mut c_void, name: &str) -> String {
-    let out = attr_copy(element, name);
-    if out.is_null() {
-        return String::new();
-    }
-    let text = cf_to_string(out);
-    CFRelease(out);
-    text
+    attr_copy(element, name).map_or_else(String::new, |v| cu_cf::text(v.as_ptr()))
 }
 
 unsafe fn attr_bool(element: *mut c_void, name: &str, default: bool) -> bool {
-    let out = attr_copy(element, name);
-    if out.is_null() {
-        return default;
-    }
-    let value = CFBooleanGetValue(out) != 0;
-    CFRelease(out);
-    value
+    attr_copy(element, name)
+        .and_then(|v| cu_cf::flag(v.as_ptr()))
+        .unwrap_or(default)
 }
 
-unsafe fn attr_list(element: *mut c_void, name: &str) -> Vec<*const c_void> {
-    let out = attr_copy(element, name);
-    if out.is_null() {
-        return Vec::new();
-    }
-    let count = CFArrayGetCount(out);
-    let mut items = Vec::new();
-    if count > 0 {
-        for idx in 0..count {
-            let item = CFArrayGetValueAtIndex(out, idx);
-            if !item.is_null() {
-                items.push(item);
-            }
-        }
-    }
-    CFRelease(out);
-    items
+unsafe fn attr_list(element: *mut c_void, name: &str) -> Vec<Owned> {
+    attr_copy(element, name).map_or_else(Vec::new, |v| cu_cf::items(v.as_ptr()))
 }
 
 unsafe fn action_names(element: *mut c_void) -> Vec<String> {
-    let mut names_ref: *mut c_void = ptr::null_mut();
-    let err = AXUIElementCopyActionNames(element, &mut names_ref);
+    let mut names_ref: *mut c_void = std::ptr::null_mut();
     let mut names: Vec<String> = Vec::new();
-    if err == AX_OK && !names_ref.is_null() {
-        let count = CFArrayGetCount(names_ref);
-        for idx in 0..count {
-            let item = CFArrayGetValueAtIndex(names_ref, idx);
-            let token = cf_to_string(item);
-            let mapped = match token.as_str() {
-                "AXPress" | "AXConfirm" => Some("press"),
-                "AXRaise" => Some("raise"),
-                "AXShowMenu" => Some("show_menu"),
-                _ => None,
-            };
-            if let Some(name) = mapped {
-                if !names.iter().any(|existing| existing == name) {
-                    names.push(name.to_string());
+    if AXUIElementCopyActionNames(element, &mut names_ref) == AX_OK {
+        if let Some(list) = Owned::adopt(names_ref) {
+            for item in cu_cf::items(list.as_ptr()) {
+                let mapped = match cu_cf::text(item.as_ptr()).as_str() {
+                    "AXPress" | "AXConfirm" => Some("press"),
+                    "AXRaise" => Some("raise"),
+                    "AXShowMenu" => Some("show_menu"),
+                    _ => None,
+                };
+                if let Some(name) = mapped {
+                    if !names.iter().any(|existing| existing == name) {
+                        names.push(name.to_string());
+                    }
                 }
             }
         }
-        CFRelease(names_ref);
     }
     names.push("set_value".into());
     names.push("focus".into());
     names
-}
-
-fn cfstring(s: &str) -> *mut c_void {
-    let Ok(c) = CString::new(s) else {
-        return ptr::null_mut();
-    };
-    unsafe { CFStringCreateWithCString(ptr::null_mut(), c.as_ptr(), K_CF_STRING_ENCODING_UTF8) }
-}
-
-unsafe fn cf_to_string(cf: *const c_void) -> String {
-    if cf.is_null() {
-        return String::new();
-    }
-    let len = CFStringGetLength(cf);
-    if len < 0 {
-        return String::new();
-    }
-    let cap = (len as usize).saturating_mul(4).saturating_add(1);
-    let mut buf = vec![0u8; cap];
-    let ok = CFStringGetCString(
-        cf,
-        buf.as_mut_ptr().cast::<c_char>(),
-        cap as isize,
-        K_CF_STRING_ENCODING_UTF8,
-    );
-    if ok == 0 {
-        return String::new();
-    }
-    CStr::from_ptr(buf.as_ptr().cast::<c_char>())
-        .to_string_lossy()
-        .into_owned()
 }
