@@ -360,7 +360,7 @@ effect when the daemon restarts.
 |---|---|---|---|
 | `enabled` | bool | `false` | Lists the four tools. Off, they are not offered to the model. |
 | `binary` | string | *empty* | Path to the `agent-desktop` binary. Empty uses the copy beside the packaged daemon (bundled in the Linux packages), then `PATH`. |
-| `sha256` | string | *empty* | The binary's SHA-256 (64 hex characters). Empty accepts only the pinned 1.0.2 release binaries. A binary that does not match is never run. |
+| `sha256` | string | *empty* | The binary's SHA-256 (64 hex characters). Empty accepts only the pinned 1.0.2 release binaries, except the copy shipped inside the app package, which runs as is (the AppImage tool rewrites the binaries it packs). A binary that does not match is never run. |
 | `timeout_seconds` | float > 0 | `20` | How long one CLI command may run. |
 | `max_snapshot_chars` | int ≥ 1000 | `12000` | Cap on one snapshot's text. A larger window comes back as a shallow skeleton, and `root=<ref>` opens one branch. |
 

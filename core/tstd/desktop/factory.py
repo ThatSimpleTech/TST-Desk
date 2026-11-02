@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .ax_cli import AgentDesktopCli, resolve_binary
+from .ax_cli import AgentDesktopCli, bundled_binary, resolve_binary
 from .ax_driver import AccessibilityDriver
 from .mcp_driver import McpDesktopDriver
 from .mock import MockDesktopDriver
@@ -92,8 +92,10 @@ def accessibility_driver_from_config(
     ax = config.computer_use.accessibility
     if not ax.enabled:
         return None
+    binary = resolve_binary(ax.binary)
     cli = AgentDesktopCli(
-        resolve_binary(ax.binary),
+        binary,
+        packaged=binary is not None and binary == bundled_binary(),
         sha256=ax.sha256,
         state_dir=data_dir / "agent-desktop",
         timeout_seconds=ax.timeout_seconds,

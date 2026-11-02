@@ -13041,6 +13041,23 @@ step 1; elsewhere the binary comes from `binary` or `PATH`.
 
 ---
 
+### TD-5222 — The AppImage's agent-desktop copy fails the release digest
+**Size:** 1 · **Depends on:** TD-5221
+**Status:** Complete 2026-11-02.
+
+The AppImage tool rewrites the binaries it packs, so the installed
+AppImage's `agent-desktop` never matched the pinned 1.0.2 digest and the
+TD-5220 tools refused to run. The deb copy was byte-identical, so the
+deb-only smoke passed.
+
+**Acceptance criteria:**
+- [x] The copy beside the packaged daemon runs without the release digest
+- [x] A configured or `PATH` copy is still digest-checked; an explicit `sha256` applies to every copy
+- [x] Unit tests for each case
+- [x] The package smoke runs the AppImage's copy
+
+---
+
 ### TD-5221 — Ship agent-desktop as a per-platform sidecar
 
 **Size:** 3 · **Depends on:** TD-5220, TD-1725 · **Status:** In progress (step 1, Linux, done)

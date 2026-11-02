@@ -20,6 +20,7 @@ from tstd.desktop import DesktopError, ax_tree
 from tstd.desktop.ax_cli import (
     PINNED_SHA256,
     AgentDesktopCli,
+    bundled_binary,
     child_env,
     host_target,
     resolve_binary,
@@ -43,6 +44,25 @@ class TestChecksum:
         binary.write_bytes(b"not the release")
         with pytest.raises(DesktopError) as err:
             await AgentDesktopCli(binary, runner=fake).run("list-windows")
+        assert err.value.code == "ax_checksum"
+        assert fake.calls == []
+
+    async def test_packaged_copy_runs_without_the_release_digest(self, tmp_path: Path) -> None:
+        """The AppImage tool rewrites the binaries it packs (TD-5222)."""
+        fake = FakeCli({"list-windows": "list_windows.json"})
+        binary = tmp_path / "agent-desktop"
+        binary.write_bytes(b"release binary, rewritten by the packager")
+        data = await AgentDesktopCli(binary, runner=fake, packaged=True).run("list-windows")
+        assert isinstance(data, list)
+        assert fake.commands() == ["list-windows"]
+
+    async def test_explicit_digest_still_applies_to_the_packaged_copy(self, tmp_path: Path) -> None:
+        fake = FakeCli({"list-windows": "list_windows.json"})
+        binary = tmp_path / "agent-desktop"
+        binary.write_bytes(b"packaged copy")
+        cli = AgentDesktopCli(binary, sha256="0" * 64, runner=fake, packaged=True)
+        with pytest.raises(DesktopError) as err:
+            await cli.run("list-windows")
         assert err.value.code == "ax_checksum"
         assert fake.calls == []
 
@@ -242,6 +262,14 @@ class TestResolveBinary:
         self._layout(tmp_path, monkeypatch, frozen=False)
         found = resolve_binary("")
         assert found is not None and found.parent == tmp_path / "path"
+
+    def test_bundled_binary_only_in_a_packaged_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        app = self._layout(tmp_path, monkeypatch, frozen=True)
+        assert bundled_binary() == (app / self.NAME).resolve()
+        monkeypatch.setattr(sys, "frozen", False, raising=False)
+        assert bundled_binary() is None
 
     def test_none_when_missing_everywhere(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
