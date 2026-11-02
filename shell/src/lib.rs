@@ -1,5 +1,6 @@
 mod approval_notice;
 pub(crate) mod cu_agent;
+pub(crate) mod cu_stop;
 #[cfg(target_os = "macos")]
 mod cu_ax;
 pub mod cu_identity;

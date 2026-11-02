@@ -257,8 +257,37 @@ async def _cu_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)
             await writer.wait_closed()
 
 
+_ACTING_PREFIXES = ("move ", "click ", "key ", "scroll ", "type ")
+
+
+def _acts(text: str) -> bool:
+    """True for a command that drives input. json ops act unless a known read."""
+    if text.startswith(_ACTING_PREFIXES):
+        return True
+    if text.startswith("json "):
+        try:
+            body = json.loads(text[5:])
+        except ValueError:
+            return True
+        return not (isinstance(body, dict) and body.get("op") == "ui_snapshot")
+    return False
+
+
 def dispatch(text: str) -> tuple[bytes, bytes | None]:
-    """Handle one CU command. Returns (header_line_with_nl, optional body)."""
+    """Handle one CU command. Returns (header_line_with_nl, optional body).
+
+    TD-5223: while the machine-wide stop-file exists, input commands are
+    refused before they run. Capture and permissions keep working. Matches
+    ``shell/src/cu_agent.rs``.
+    """
+    if _acts(text):
+        from .cu_stopfile import stop_engaged
+
+        if stop_engaged():
+            if text.startswith("json "):
+                reply = {"ok": False, "error": "computer use is stopped", "stopped": True}
+                return json.dumps(reply).encode("utf-8") + b"\n", None
+            return b"err stopped\n", None
     if not text or text == "quit":
         return b"ok\n", None
     if text == "permissions" or text == "permissions request":

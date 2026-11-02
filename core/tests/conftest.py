@@ -97,6 +97,10 @@ def _throwaway_home(
     home = tmp_path_factory.mktemp("home")
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    # TD-5223: Stop writes the computer-use stop-file. It must land in this
+    # throwaway home, never in a path the machine's own env points at.
+    for name in ("TST_CU_MCP_CONFIG", "TST_CU_MCP_STOP_FILE", "TST_CU_MCP_STOP"):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.delenv("APPDATA", raising=False)
     cached_config.cache_clear()
     yield

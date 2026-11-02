@@ -177,9 +177,74 @@ fn parse_line(text: &str) -> Command<'_> {
     Command::Unknown
 }
 
+/// The host's reply header plus an optional binary body.
+type Reply = (Vec<u8>, Option<Vec<u8>>);
+
+/// True for a command that drives input (TD-5223). Capture, permissions
+/// and json reads (`ui_snapshot`) are reads and keep working while stopped.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn acts(cmd: &Command<'_>) -> bool {
+    match cmd {
+        Command::Move { .. }
+        | Command::Click { .. }
+        | Command::Key { .. }
+        | Command::Scroll { .. }
+        | Command::Type { .. } => true,
+        Command::Json(raw) => json_acts(raw),
+        Command::Quit | Command::Permissions { .. } | Command::Capture { .. } | Command::Unknown => {
+            false
+        }
+    }
+}
+
+/// A json op acts unless it is a known read. Unknown ops count as acting,
+/// so a new verb is refused while stopped until it is listed here.
+fn json_acts(raw: &str) -> bool {
+    let op = serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|v| v.get("op").and_then(|op| op.as_str()).map(str::to_owned));
+    !matches!(op.as_deref(), Some("ui_snapshot"))
+}
+
+/// The refusal for an actuation while the stop-file exists. Line verbs get
+/// `err stopped` (tst-cu-mcp's darwin client requires exactly `ok`, so this
+/// is a failure there); json ops get `{"ok": false}`.
+fn stopped_reply(cmd: &Command<'_>) -> Vec<u8> {
+    let mut bytes = match cmd {
+        Command::Json(_) => serde_json::json!({
+            "ok": false,
+            "error": "computer use is stopped",
+            "stopped": true
+        })
+        .to_string()
+        .into_bytes(),
+        _ => b"err stopped".to_vec(),
+    };
+    bytes.push(b'\n');
+    bytes
+}
+
+/// Parse one line, refuse actuation while stopped, else run it (TD-5223).
+///
+/// Platform-neutral so the refusal is built and tested everywhere; only
+/// `run` is the macOS CoreGraphics code. `stopped` is read per command, and
+/// only for commands that act, so capture never waits on the file system.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn dispatch_gated<S, R>(text: &str, stopped: S, run: R) -> Reply
+where
+    S: FnOnce() -> bool,
+    R: FnOnce(Command<'_>) -> Reply,
+{
+    let cmd = parse_line(text);
+    if acts(&cmd) && stopped() {
+        return (stopped_reply(&cmd), None);
+    }
+    run(cmd)
+}
+
 #[cfg(target_os = "macos")]
 mod macos {
-    use super::{parse_line, sock_path, Command};
+    use super::{dispatch_gated, parse_line, sock_path, Command, Reply};
     use std::ffi::{c_char, c_void};
     use std::io::{self, BufRead, BufReader, Write};
     use std::os::unix::fs::PermissionsExt;
@@ -456,8 +521,12 @@ mod macos {
         }
     }
 
-    fn dispatch(text: &str) -> (Vec<u8>, Option<Vec<u8>>) {
-        match parse_line(text) {
+    fn dispatch(text: &str) -> Reply {
+        dispatch_gated(text, crate::cu_stop::engaged, run_command)
+    }
+
+    fn run_command(cmd: Command<'_>) -> Reply {
+        match cmd {
             Command::Quit => (b"ok\n".to_vec(), None),
             Command::Permissions { request, reset } => {
                 let reset_error = if reset { reset_tcc_grants() } else { None };
@@ -915,7 +984,8 @@ mod macos {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_line, sock_path, Command};
+    use super::{dispatch_gated, parse_line, sock_path, Command, Reply};
+    use std::cell::RefCell;
     use std::path::Path;
 
     #[test]
@@ -998,5 +1068,90 @@ mod tests {
             parse_line("json {\"op\":\"ui_snapshot\",\"pid\":1}"),
             Command::Json("{\"op\":\"ui_snapshot\",\"pid\":1}")
         );
+    }
+
+    /// Run one line through the gate with a recording fake actuator.
+    fn gated(text: &str, stopped: bool, ran: &RefCell<Vec<String>>) -> Reply {
+        dispatch_gated(
+            text,
+            || stopped,
+            |cmd| {
+                ran.borrow_mut().push(format!("{cmd:?}"));
+                (b"ok\n".to_vec(), None)
+            },
+        )
+    }
+
+    const ACTING: [&str; 6] = [
+        "move 1 2",
+        "click 3 4 left 1",
+        "key cmd+space",
+        "scroll 0 -3",
+        "type aGVsbG8=",
+        "json {\"op\":\"ui_act\",\"pid\":1,\"id\":\"0\",\"action\":\"press\"}",
+    ];
+
+    #[test]
+    fn stopped_refuses_every_actuation_before_it_runs() {
+        for line in ACTING {
+            let ran = RefCell::new(Vec::new());
+            let (header, body) = gated(line, true, &ran);
+            assert!(ran.borrow().is_empty(), "{line} reached the actuator");
+            assert!(body.is_none());
+            assert_ne!(header.as_slice(), b"ok\n", "{line} answered ok");
+            if line.starts_with("json ") {
+                let reply: serde_json::Value = serde_json::from_slice(&header).unwrap();
+                assert_eq!(reply["ok"], false);
+            } else {
+                assert_eq!(header.as_slice(), b"err stopped\n");
+            }
+        }
+    }
+
+    #[test]
+    fn stopped_still_serves_reads() {
+        for line in [
+            "capture 0 0 10 10",
+            "permissions",
+            "permissions request",
+            "json {\"op\":\"ui_snapshot\",\"pid\":1}",
+        ] {
+            let ran = RefCell::new(Vec::new());
+            let (header, _) = gated(line, true, &ran);
+            assert_eq!(ran.borrow().len(), 1, "{line} was refused");
+            assert_eq!(header.as_slice(), b"ok\n");
+        }
+    }
+
+    #[test]
+    fn not_stopped_runs_actuation() {
+        for line in ACTING {
+            let ran = RefCell::new(Vec::new());
+            gated(line, false, &ran);
+            assert_eq!(ran.borrow().len(), 1, "{line} did not run");
+        }
+    }
+
+    #[test]
+    fn reads_never_consult_the_stop_file() {
+        let asked = RefCell::new(0);
+        dispatch_gated(
+            "capture 0 0 1 1",
+            || {
+                *asked.borrow_mut() += 1;
+                true
+            },
+            |_| (b"ok\n".to_vec(), None),
+        );
+        assert_eq!(*asked.borrow(), 0);
+    }
+
+    #[test]
+    fn unknown_json_ops_count_as_acting() {
+        let ran = RefCell::new(Vec::new());
+        let (header, _) = gated("json {\"op\":\"something_new\"}", true, &ran);
+        assert!(ran.borrow().is_empty());
+        let reply: serde_json::Value = serde_json::from_slice(&header).unwrap();
+        assert_eq!(reply["stopped"], true);
     }
 }

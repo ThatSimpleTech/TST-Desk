@@ -19560,3 +19560,32 @@ binary the user points at, and that check is unchanged.
 **Coverage:** unit tests for the packaged / configured / explicit-digest
 cases, and the package smoke now runs the AppImage's copy as well.
 
+## 2026-11-02 — TD-5223: Stop is the tst-cu-mcp stop-file (Class B)
+
+**Decision:** The computer-use kill switch is the file tst-cu-mcp already
+checks before every input event. Stop creates it, Resume removes it, and
+the daemon follows it with a once-a-second `stat` off the event loop. The
+host's `cu-agent.sock` and the daemon's fallback socket refuse input while
+it exists. Capture, permissions and `ui_snapshot` keep working.
+
+**Rationale:**
+- Every client already honours the file, including ones TST Desk did not
+  start, so one file stops all of them without a new protocol.
+- The daemon's own flags stay as they were; the file is the shared truth
+  and the flags follow it, so an outside `touch` or `rm` shows in the UI.
+- A one-second poll, not a file watcher: the file can live anywhere
+  `killswitch.stop_file` points (a folder that may not exist yet), the
+  platforms' change APIs differ, and one `stat` a second is cheap. The
+  tst-cu-mcp clients and the host check it on every command, so the
+  poll only delays what the window shows, never the refusal.
+- The host refuses in the platform-neutral dispatch, before the macOS
+  CoreGraphics code, so the refusal is built and tested on every platform.
+  Only commands that act read the file, so capture never waits on it.
+- json ops count as acting unless they are a known read (`ui_snapshot`):
+  a new op is refused while stopped until it is listed as a read.
+- Line refusals are `err stopped`. tst-cu-mcp's darwin client requires an
+  exact `ok`, so it reports the action blocked; json ops answer
+  `{"ok": false, "stopped": true}`.
+- `TST_CU_MCP_STOP` set in the daemon's own environment keeps the switch
+  engaged on Resume, matching tst-cu-mcp; the reply says so.
+

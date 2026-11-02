@@ -85,7 +85,7 @@
 	import { startCoworkerIndicator } from '../coworker-indicator.svelte.js';
 	import { isTauri } from '../open-file';
 	import { localWorkspacePath, session } from '../session-status.svelte.js';
-	import { startCuKill, setCuKill } from '../cu-kill.svelte.js';
+	import { startCuKill, engageFromShortcut } from '../cu-kill.svelte.js';
 	import { startGrok } from '../grok.svelte.js';
 	import { startTaskLists } from '../task-list-store.svelte.js';
 	import { startShellJobs } from '../shell-jobs-store.svelte.js';
@@ -163,7 +163,7 @@
 		else if (action === 'open-palette') openPalette();
 		else if (action === 'toggle-design') {
 			if (toggleDesign()) showRightPane('screen');
-		} else if (action === 'stop-computer-use') setCuKill(true);
+		} else if (action === 'stop-computer-use') engageFromShortcut();
 		else if (action === 'next-session' || action === 'prev-session') {
 			const id = stepSessionId(sessionOrder(), chat.sessionId, action === 'next-session' ? 1 : -1);
 			if (id !== null) selectRow(id);
