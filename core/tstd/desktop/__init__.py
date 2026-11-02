@@ -1,6 +1,12 @@
 """Desktop computer-use drivers for tstd (TD-3301)."""
 
-from .factory import argv_from_command, desktop_driver_from_config, driver_for_command
+from .ax_driver import AccessibilityDriver
+from .factory import (
+    accessibility_driver_from_config,
+    argv_from_command,
+    desktop_driver_from_config,
+    driver_for_command,
+)
 from .mcp_driver import LIVE_PLATFORMS, MCP_TOOLS, McpDesktopDriver
 from .mock import MockDesktopDriver
 from .permissions import ACCESSIBILITY_URL, SCREEN_RECORDING_URL
@@ -19,10 +25,12 @@ __all__ = [
     "MCP_TOOLS",
     "SCREEN_RECORDING_URL",
     "TINY_PNG",
+    "AccessibilityDriver",
     "DesktopDriver",
     "DesktopError",
     "McpDesktopDriver",
     "MockDesktopDriver",
+    "accessibility_driver_from_config",
     "argv_from_command",
     "desktop_driver_from_config",
     "driver_for_command",

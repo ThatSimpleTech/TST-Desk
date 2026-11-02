@@ -1,0 +1,28 @@
+{
+ "version": "2.5",
+ "ok": true,
+ "command": "launch",
+ "data": {
+  "app": "mousepad",
+  "pid": 4076644,
+  "process_instance": "00539a50:28391214",
+  "suggestion": "The window could not be brought forward: The window is not mapped on the display",
+  "window": {
+   "accessible": true,
+   "app_name": "mousepad",
+   "bounds": {
+    "height": 172.0,
+    "width": 649.0,
+    "x": 630.0,
+    "y": 367.0
+   },
+   "id": "w-1.355-org-a11y-atspi-accessible-11",
+   "is_focused": false,
+   "minimized": false,
+   "pid": 4076644,
+   "process_instance": "00539a50:28391214",
+   "title": "Question",
+   "visible": true
+  }
+ }
+}

@@ -296,6 +296,7 @@ under the user data dir. Playwright missing always falls back to mock.
 | `command` | string or list | *empty* | Argv for the computer-use MCP sidecar. A string is split with the shell; a list is used as-is. Empty or omitted is mock-only. |
 | `browser` | `mock` or `playwright` | `mock` | Browser driver. `mock` never launches Chrome. `playwright` uses a persistent profile under the user data dir when Playwright is installed; otherwise the mock. |
 | `grounding` | mapping | see below | Local vision model for click targeting (TD-3902). |
+| `accessibility` | mapping | see below | Element-level desktop tools on the accessibility tree (TD-5220). Off by default. |
 | `local_worker_preset` | string | *empty* | After this session has used a `desktop_` or `browser_` tool, the worker *client* uses that named preset's worker tier (loopback URL + optional slug). Brain stays on the active preset. Empty never remaps. The name is a preset key, not a model slug. Lead-turns, `set_tier`, and escalation are unchanged. |
 | `max_prompt_images` | int ≥ 0 | `1` | How many `image_url` parts a completion may keep. Oldest images (screenshots, and images `fs_read` returned) are dropped first. `1` matches gateway-model (`--limit-mm-per-prompt image:1`). It also caps the page images one PDF read returns (at most 5), and `0` makes `fs_read` treat every tier as text-only (TD-5130). |
 
@@ -317,6 +318,59 @@ when omitted, same as a loopback tier (TD-1805).
 | `base_url` | string | *empty* | OpenAI-compatible endpoint, including the `/v1` suffix. Empty disables. Must be loopback when set. |
 | `slug` | string or omitted | *omitted* | Model id. Omitted discovers the single model the endpoint serves. Required only if the server lists several. |
 | `timeout_seconds` | float > 0 | `8` | How long a locate request may run before the intended point is used. |
+
+#### `computer_use.accessibility`
+
+Four desktop tools that work on a window's accessibility tree instead of
+its pixels (TD-5220): `desktop_windows` lists windows, `desktop_snapshot`
+reads one window's controls as text with a ref per control,
+`desktop_act` clicks, types, sets, toggles, selects, expands or scrolls
+to one control by ref, and `desktop_launch` starts an app with its
+accessibility switched on. Actions use the app's accessibility interface,
+so the pointer does not move and focus does not change. They run on
+Vercel Labs' [`agent-desktop`](https://github.com/vercel-labs/agent-desktop)
+CLI (Apache-2.0), release 1.0.2, which TST Desk runs as a short-lived
+child per command. Nothing listens on a socket.
+
+The coordinate tools stay. Browsers, canvases, remote desktops and TST
+Desk's own window expose little or nothing to the accessibility tree.
+Chromium on Linux takes no text entry this way, so keep the browser
+tools for web pages.
+
+Guards: `desktop_act` asks like the other actuating tools; it refuses
+`type` and `set_value` on a password field (state `secure` or a password
+role, checked from the snapshot and again live) and asks the user to
+enter it themselves; the kill switch, the on-screen ring and Settings →
+Computer use (actions on/off, allowed and denied apps) apply. A denied
+app's windows are left out of `desktop_windows`. With
+`judgments.verification` on, a `desktop_act` is judged against a compact
+text snapshot of its window before and after (TD-709).
+
+The CLI keeps recent snapshots, which hold screen text, in
+`agent-desktop/` under the data dir (owner-only). Changes here take
+effect when the daemon restarts.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `enabled` | bool | `false` | Lists the four tools. Off, they are not offered to the model. |
+| `binary` | string | *empty* | Path to the `agent-desktop` binary. Empty looks beside the packaged daemon, then on `PATH`. |
+| `sha256` | string | *empty* | The binary's SHA-256 (64 hex characters). Empty accepts only the pinned 1.0.2 release binaries. A binary that does not match is never run. |
+| `timeout_seconds` | float > 0 | `20` | How long one CLI command may run. |
+| `max_snapshot_chars` | int ≥ 1000 | `12000` | Cap on one snapshot's text. A larger window comes back as a shallow skeleton, and `root=<ref>` opens one branch. |
+
+<!-- verify: model -->
+```yaml
+computer_use:
+  accessibility:
+    enabled: true
+    binary: /opt/agent-desktop/agent-desktop
+```
+
+On Linux the apps must be on the AT-SPI accessibility bus. A desktop
+host that sets `NO_AT_BRIDGE=1` keeps apps off it; TST Desk removes that
+variable for the CLI and for every app `desktop_launch` starts. An app
+that was already running when the bus or its flags were off stays
+unreadable until it is restarted.
 
 ### `judgments`
 

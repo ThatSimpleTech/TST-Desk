@@ -1,0 +1,20 @@
+{
+ "version": "2.5",
+ "ok": false,
+ "command": "click",
+ "error": {
+  "code": "STALE_REF",
+  "message": "Stored ref's owning application has exited",
+  "suggestion": "The target process exited. Run 'list-apps' to see whether the application runs again, launch it if it does not, then take a new snapshot",
+  "details": {
+   "complete": true,
+   "kind": "resolve_owning_process_exited",
+   "process_state": "exited",
+   "retryable": false
+  },
+  "disposition": {
+   "delivery": "not_delivered",
+   "retry": "safe"
+  }
+ }
+}

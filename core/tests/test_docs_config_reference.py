@@ -52,6 +52,7 @@ from tstd.boundary_config import (
 )
 from tstd.config import (
     TIER_NAMES,
+    AccessibilityConfig,
     AutonomyConfig,
     ClearToolResultsConfig,
     ComputerUseConfig,
@@ -238,6 +239,7 @@ _SHELL_FIELDS = frozenset(ShellConfig.model_fields)
 _SHELL_READ_ONLY_FIELDS = frozenset(ShellReadOnlyConfig.model_fields)
 _COMPUTER_USE_FIELDS = frozenset(ComputerUseConfig.model_fields)
 _GROUNDING_FIELDS = frozenset(GroundingConfig.model_fields)
+_ACCESSIBILITY_FIELDS = frozenset(AccessibilityConfig.model_fields)
 _JUDGMENTS_FIELDS = frozenset(JudgmentsConfig.model_fields)
 _REMOTE_FIELDS = frozenset(RemoteConfig.model_fields)
 _NOTIFY_FIELDS = frozenset(NotifyConfig.model_fields)
@@ -373,6 +375,12 @@ def test_example_keys_exist_in_the_schema(example: Example) -> None:
                     _GROUNDING_FIELDS,
                     f"{where} computer_use.grounding",
                 )
+            if "accessibility" in data["computer_use"]:
+                _check_keys(
+                    data["computer_use"]["accessibility"],
+                    _ACCESSIBILITY_FIELDS,
+                    f"{where} computer_use.accessibility",
+                )
         if "judgments" in data:
             _check_keys(data["judgments"], _JUDGMENTS_FIELDS, f"{where} judgments")
         if "remote" in data:
@@ -472,6 +480,7 @@ def test_every_config_key_is_documented() -> None:
         | _SHELL_READ_ONLY_FIELDS
         | _COMPUTER_USE_FIELDS
         | _GROUNDING_FIELDS
+        | _ACCESSIBILITY_FIELDS
         | _JUDGMENTS_FIELDS
         | _REMOTE_FIELDS
         | _NOTIFY_FIELDS

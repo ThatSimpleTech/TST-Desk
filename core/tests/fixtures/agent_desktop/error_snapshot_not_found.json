@@ -1,0 +1,19 @@
+{
+ "version": "2.5",
+ "ok": false,
+ "command": "click",
+ "error": {
+  "code": "SNAPSHOT_NOT_FOUND",
+  "message": "Snapshot 'sdeadbeef00' not found",
+  "suggestion": "Re-run a snapshot and retry with a ref from the returned snapshot",
+  "recovery": {
+   "strategy": "refresh_snapshot_then_retry_original",
+   "retryable": true,
+   "requires_fresh_snapshot": true
+  },
+  "disposition": {
+   "delivery": "not_delivered",
+   "retry": "safe"
+  }
+ }
+}

@@ -1,0 +1,33 @@
+{
+ "version": "2.5",
+ "ok": true,
+ "command": "type",
+ "data": {
+  "action": "type",
+  "details": {
+   "application_commit": "not_verified",
+   "verification_scope": "element_value"
+  },
+  "disposition": {
+   "delivery": "delivered_verified",
+   "retry": "unsafe"
+  },
+  "post_state": {
+   "enabled": true,
+   "offscreen": false,
+   "role": "textfield",
+   "states": [
+    "focused"
+   ],
+   "value": "abc"
+  },
+  "steps": [
+   {
+    "label": "EditableText.InsertText",
+    "mechanism": "semantic_api",
+    "outcome": "succeeded",
+    "verified": true
+   }
+  ]
+ }
+}

@@ -119,7 +119,12 @@ from .cu_indicators import (
 )
 from .cu_policy import CuPolicy, load_cu_policy, save_cu_policy
 from .data_dir_lock import acquire_data_dir_lock
-from .desktop import DesktopDriver, desktop_driver_from_config
+from .desktop import (
+    AccessibilityDriver,
+    DesktopDriver,
+    accessibility_driver_from_config,
+    desktop_driver_from_config,
+)
 from .desktop.grounding_client import GroundingClient
 from .desktop.host_probe import host_permissions
 from .desktop.permissions import (
@@ -1232,6 +1237,11 @@ class Daemon:
         self.desktop_driver: DesktopDriver = desktop_driver_from_config(
             self.config, self.cu_indicators
         )
+        # Element-level desktop tools (TD-5220); None while the feature is
+        # off. Built once, like the driver above: a change needs a restart.
+        self.ax_driver: AccessibilityDriver | None = accessibility_driver_from_config(
+            self.config, self.data_dir
+        )
         # Browser CU (TD-1710): mock unless computer_use.browser is playwright
         # and Playwright is importable. Profile lives under the data dir.
         self.browser_driver: BrowserDriver = browser_driver_from_config(self.config, self.data_dir)
@@ -1259,6 +1269,8 @@ class Daemon:
     def set_computer_use_killed(self, killed: bool) -> None:
         """Stop or resume desktop actuation. Capture still works (TD-3301)."""
         self.desktop_driver.set_killed(killed)
+        if self.ax_driver is not None:
+            self.ax_driver.set_killed(killed)
 
     async def _build_client(self, tier_cfg: TierConfig) -> ProviderClient:
         """Build a client for *tier_cfg*'s endpoint.
@@ -4853,6 +4865,7 @@ class Daemon:
             candidate_selection=self.config.judgments.candidate_selection,
             search=bound_search,
             lsp_enabled=bool(bound_lsp.servers),
+            accessibility=self.ax_driver is not None,
         )
         tool_dispatcher = ToolDispatcher(tool_registry)
         tool_dispatcher.skip_all_fn = lambda: self.skip_all_approvals
@@ -4871,6 +4884,7 @@ class Daemon:
             grounding_client=GroundingClient.from_config(self.config.computer_use.grounding),
             sent_files=sent_files,
             session_recall=SessionRecall(self._session_index, self._session_store.records),
+            ax_driver=self.ax_driver,
         )
         from .tools.plugins import bind_plugin_handlers
 

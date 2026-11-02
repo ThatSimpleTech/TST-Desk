@@ -30,13 +30,14 @@ from ..browser import BrowserDriver, MockBrowserDriver
 from ..context.manifest import _FALLBACK_IGNORE
 from ..context.skills import register_skill_handlers
 from ..cu_verify import DriverStateProbe
-from ..desktop import DesktopDriver, MockDesktopDriver
+from ..desktop import AccessibilityDriver, DesktopDriver, MockDesktopDriver
 from ..desktop.grounding_client import GroundingLocator
 from .ask_user import ask_user
 from .browser import register_browser_handlers
 from .consult import handle_consult
 from .delegate import register_delegate_handlers
 from .desktop import register_desktop_handlers
+from .desktop_ax import register_ax_handlers
 from .dispatch import ToolDispatcher
 from .exit_plan import exit_plan_mode
 from .read_notebook import render_notebook
@@ -555,6 +556,7 @@ def register_builtin_handlers(
     sent_files: SentFiles | None = None,
     shell_allowlist: Callable[[], tuple[str, ...] | None] | None = None,
     session_recall: SessionRecall | None = None,
+    ax_driver: AccessibilityDriver | None = None,
 ) -> None:
     """Register the built-in tool handlers on *dispatcher*.
 
@@ -572,6 +574,8 @@ def register_builtin_handlers(
     handler still exists and refuses with ``send_unavailable``.
     ``session_recall`` backs ``session_search`` (TD-5129); omitted, that
     handler refuses with ``session_search_unavailable``.
+    ``ax_driver`` backs the element-level desktop tools (TD-5220); omitted
+    while ``computer_use.accessibility`` is off, and they are not listed.
     """
     dispatcher.register_handler("fs_read", _fs_read_handler(dispatcher))
     dispatcher.register_handler("fs_list", fs_list)
@@ -595,11 +599,14 @@ def register_builtin_handlers(
     register_browser_handlers(
         dispatcher, browser_driver if browser_driver is not None else MockBrowserDriver()
     )
+    if ax_driver is not None:
+        register_ax_handlers(dispatcher, ax_driver)
     # TD-709 (dev): the state probe lets an attached verifier snapshot
     # before/after actuation.  Inert until a verifier is wired (config-gated).
     dispatcher.state_probe = DriverStateProbe(
         desktop_driver if desktop_driver is not None else MockDesktopDriver(),
         browser_driver if browser_driver is not None else MockBrowserDriver(),
+        ax=ax_driver,
     )
     register_skill_handlers(dispatcher)
     register_delegate_handlers(dispatcher)

@@ -1,0 +1,14 @@
+{
+ "version": "2.5",
+ "ok": false,
+ "command": "click",
+ "error": {
+  "code": "INVALID_ARGS",
+  "message": "Invalid ref_id '@e4': expected @<snapshot_id>:e<N>",
+  "suggestion": "Use the snapshot-qualified ref that snapshot prints, for example @s8f3k2p9:e1. A bare @eN ref is not accepted.",
+  "disposition": {
+   "delivery": "not_delivered",
+   "retry": "safe"
+  }
+ }
+}

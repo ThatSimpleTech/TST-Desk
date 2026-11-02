@@ -95,9 +95,10 @@ asyncio_mode = "auto"
 # Live tests need a model server on this machine, which CI does not have
 # and a developer may not have running.  Deselected by default so the
 # ordinary suite stays offline; opt in with `uv run pytest -m live`.
-addopts = ["-m", "not live"]
+addopts = ["-m", "not live and not desktop"]
 markers = [
     "live: needs a reachable local OpenAI-compatible model endpoint",
+    "desktop: drives a real desktop session through accessibility (TD-5220); also needs TST_AX_LIVE=1",
     "shipped_config: new user configs copy the real shipped file (empty catalog), not the test catalog",
 ]
 # Leaked sockets and exceptions raised from ``__del__`` fail the run.

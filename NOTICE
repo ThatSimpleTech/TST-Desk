@@ -15,3 +15,15 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+--------------------------------------------------------------------------
+
+Third-party software
+
+agent-desktop (https://github.com/vercel-labs/agent-desktop)
+Vercel Labs. Licensed under the Apache License, Version 2.0.
+The accessibility desktop tools (computer_use.accessibility, TD-5220) run
+the unmodified agent-desktop command-line tool, release 1.0.2, as a separate
+process. This repository does not include its source or binaries; a build
+that ships the binary ships it unmodified, with this notice and a copy of
+the Apache License, Version 2.0.

@@ -620,7 +620,7 @@ class ToolDispatcher:
         verify_before: str | None = None
         if tool.actuates and self.verifier is not None and self.state_probe is not None:
             try:
-                verify_before = await self.state_probe.snapshot(name)
+                verify_before = await self.state_probe.snapshot(name, arguments)
             except Exception:
                 log.warning(
                     "state probe failed before actuation; verification skipped",
@@ -734,7 +734,7 @@ class ToolDispatcher:
         verification: Verification | None = None
         if tool.actuates and self.verifier is not None and self.state_probe is not None:
             try:
-                verify_after = await self.state_probe.snapshot(name)
+                verify_after = await self.state_probe.snapshot(name, arguments)
                 verification = await self.verifier.verify(
                     name, arguments, verify_before, verify_after, output
                 )

@@ -1,0 +1,55 @@
+{
+ "version": "2.5",
+ "ok": false,
+ "command": "snapshot",
+ "error": {
+  "code": "AMBIGUOUS_TARGET",
+  "message": "More than one window matches the target",
+  "suggestion": "Run 'list-windows' and retry with --window-id <id>.",
+  "details": {
+   "candidate_count": 6,
+   "candidates": [
+    {
+     "id": "w-1.4-org-a11y-atspi-accessible-36",
+     "is_focused": false,
+     "title": "",
+     "visible": true
+    },
+    {
+     "id": "w-1.4-org-a11y-atspi-accessible-37",
+     "is_focused": false,
+     "title": "",
+     "visible": true
+    },
+    {
+     "id": "w-1.4-org-a11y-atspi-accessible-38",
+     "is_focused": false,
+     "title": "",
+     "visible": true
+    },
+    {
+     "id": "w-1.4-org-a11y-atspi-accessible-39",
+     "is_focused": false,
+     "title": "",
+     "visible": true
+    },
+    {
+     "id": "w-1.4-org-a11y-atspi-accessible-40",
+     "is_focused": false,
+     "title": "",
+     "visible": true
+    },
+    {
+     "id": "w-1.4-org-a11y-atspi-accessible-41",
+     "is_focused": false,
+     "title": "",
+     "visible": true
+    }
+   ]
+  },
+  "disposition": {
+   "delivery": "not_delivered",
+   "retry": "safe"
+  }
+ }
+}

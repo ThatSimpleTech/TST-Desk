@@ -49,25 +49,43 @@ class Verification:
 class StateProbe(Protocol):
     """Captures a compact text snapshot of the surface a tool actuates on."""
 
-    async def snapshot(self, tool_name: str) -> str | None:
-        """State text, or ``None`` when the driver cannot describe it."""
+    async def snapshot(self, tool_name: str, arguments: dict[str, Any] | None = None) -> str | None:
+        """State text, or ``None`` when the driver cannot describe it.
+
+        *arguments* are the tool call's, so a probe can find the window an
+        element ref belongs to (TD-5220).
+        """
         ...
+
+
+class AxStateSource(Protocol):
+    """The accessibility driver's view of the window behind a ref."""
+
+    async def state_for_ref(self, ref: str) -> str | None: ...
 
 
 class DriverStateProbe:
     """Best-effort state from the CU drivers (dev build).
 
     Reads only driver-exposed attributes — the mock drivers' scripted
-    state today; richer AX/DOM summaries are the hardening path.  A
-    driver that exposes nothing yields ``None``, and verification is
-    simply unavailable for that call: today's behavior, by design.
+    state today. ``desktop_act`` is the exception: with the accessibility
+    driver (TD-5220) the state is a compact snapshot of the window the
+    ref belongs to. A driver that exposes nothing yields ``None``, and
+    verification is simply unavailable for that call: today's behavior,
+    by design.
     """
 
-    def __init__(self, desktop: object, browser: object) -> None:
+    def __init__(self, desktop: object, browser: object, ax: AxStateSource | None = None) -> None:
         self._desktop = desktop
         self._browser = browser
+        self._ax = ax
 
-    async def snapshot(self, tool_name: str) -> str | None:
+    async def snapshot(self, tool_name: str, arguments: dict[str, Any] | None = None) -> str | None:
+        if tool_name == "desktop_act":
+            ref = (arguments or {}).get("ref")
+            if self._ax is None or not isinstance(ref, str):
+                return None
+            return await self._ax.state_for_ref(ref)
         driver = self._browser if tool_name.startswith("browser_") else self._desktop
         if driver is None:
             return None
@@ -104,7 +122,8 @@ def _cap(text: str, max_chars: int) -> str:
 # Argument keys whose values can carry user content or credentials.  The
 # judgment needs the action's *shape* — "typed 42 chars", "navigated to
 # host" — never the payload.  Size caps are not redaction (review, TD-709).
-_REDACT_VALUE_KEYS = frozenset({"text"})
+# "value" is desktop_act's text for type / set_value (TD-5220).
+_REDACT_VALUE_KEYS = frozenset({"text", "value"})
 _HOST_ONLY_KEYS = frozenset({"url"})
 
 

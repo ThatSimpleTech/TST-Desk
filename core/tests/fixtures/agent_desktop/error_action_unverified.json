@@ -1,0 +1,13 @@
+{
+ "version": "2.5",
+ "ok": false,
+ "command": "click",
+ "error": {
+  "code": "ACTION_FAILED",
+  "message": "The press was sent but the element did not confirm it",
+  "disposition": {
+   "delivery": "delivered_unverified",
+   "retry": "unsafe"
+  }
+ }
+}

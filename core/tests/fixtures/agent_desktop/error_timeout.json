@@ -1,0 +1,24 @@
+{
+ "version": "2.5",
+ "ok": false,
+ "command": "snapshot",
+ "error": {
+  "code": "TIMEOUT",
+  "message": "Accessibility observation was incomplete",
+  "suggestion": "Retry with a larger timeout or a narrower tree depth",
+  "recovery": {
+   "strategy": "inspect_state_then_retry_original",
+   "retryable": true,
+   "requires_fresh_snapshot": true,
+   "retry_after_ms": 250
+  },
+  "details": {
+   "kind": "observation_incomplete",
+   "nodes_observed": 9
+  },
+  "disposition": {
+   "delivery": "not_delivered",
+   "retry": "safe"
+  }
+ }
+}

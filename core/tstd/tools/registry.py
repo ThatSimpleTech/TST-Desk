@@ -652,6 +652,7 @@ def create_registry(
     candidate_selection: bool = False,
     search: SearchConfig | None = None,
     lsp_enabled: bool = False,
+    accessibility: bool = False,
 ) -> ToolRegistry:
     """Registry of builtins, skills, delegate, consult, send_file, steering, and plugins.
 
@@ -662,7 +663,9 @@ def create_registry(
     ``candidate_selection`` (judgments.candidate_selection, TD-711) adds
     ``browser_pick`` to the tool surface. ``lsp_enabled`` (a server in
     ``lsp.servers``, TD-5139) adds the three language-server tools; with
-    none they would only cost prompt tokens.
+    none they would only cost prompt tokens. ``accessibility``
+    (``computer_use.accessibility.enabled``, TD-5220) adds the four
+    element-level desktop tools.
     """
     from ..context.skills import register_skill_tools
     from .ask_user import register_ask_user_tool
@@ -683,6 +686,10 @@ def create_registry(
     registry = ToolRegistry()
     _register_builtins(registry, search=search)
     register_desktop_tools(registry)
+    if accessibility:
+        from .desktop_ax import register_ax_tools
+
+        register_ax_tools(registry)
     register_browser_tools(registry, candidate_selection=candidate_selection)
     register_skill_tools(registry)
     register_delegate_tools(registry)

@@ -1,0 +1,75 @@
+{
+ "version": "2.5",
+ "ok": true,
+ "command": "list-windows",
+ "data": [
+  {
+   "accessible": true,
+   "app_name": "python3.14",
+   "bounds": {
+    "height": 285.0,
+    "width": 422.0,
+    "x": 744.0,
+    "y": 336.0
+   },
+   "id": "w-1.300-org-a11y-atspi-accessible-6",
+   "is_focused": true,
+   "minimized": false,
+   "pid": 4074446,
+   "process_instance": "00539a50:28387823",
+   "title": "Test Form",
+   "visible": true
+  },
+  {
+   "accessible": true,
+   "app_name": "mousepad",
+   "bounds": {
+    "height": 600.0,
+    "width": 800.0,
+    "x": 100.0,
+    "y": 100.0
+   },
+   "id": "w-1.310-org-a11y-atspi-accessible-116",
+   "is_focused": false,
+   "minimized": false,
+   "pid": 4076644,
+   "process_instance": "00539a50:28391214",
+   "title": "notes.txt - Mousepad",
+   "visible": true
+  },
+  {
+   "accessible": true,
+   "app_name": "xfce4-panel",
+   "bounds": {
+    "height": 1.0,
+    "width": 1.0,
+    "x": -99.0,
+    "y": -99.0
+   },
+   "id": "w-1.4-org-a11y-atspi-accessible-38",
+   "is_focused": false,
+   "minimized": false,
+   "pid": 11423,
+   "process_instance": "00539a50:3086",
+   "title": "",
+   "visible": true
+  },
+  {
+   "accessible": true,
+   "app_name": "keepassxc",
+   "bounds": {
+    "height": 500.0,
+    "width": 700.0,
+    "x": 50.0,
+    "y": 50.0
+   },
+   "id": "w-1.20-org-a11y-atspi-accessible-3",
+   "is_focused": false,
+   "minimized": true,
+   "pid": 2222,
+   "process_instance": "00539a50:4000",
+   "title": "Passwords - KeePassXC",
+   "visible": true
+  }
+ ]
+}
