@@ -13041,6 +13041,23 @@ step 1; elsewhere the binary comes from `binary` or `PATH`.
 
 ---
 
+### TD-5224 — A system-wide stop shortcut for computer use
+**Size:** 3 · **Depends on:** TD-5223
+**Status:** In review 2026-11-02.
+
+⌘. / Ctrl+. only works while TST Desk is the front window, and during
+computer use the agent is usually working in another app. A shortcut that
+works from anywhere stops it without switching windows first.
+
+**Acceptance criteria:**
+- [x] Works while TST Desk is in the background (a global shortcut registered by the app)
+- [x] Creates the same stop-file as the title-bar Stop (TD-5223), so every computer-use client halts
+- [x] Engage only: it never resumes, so an agent pressing the combo cannot switch actuation back on
+- [x] Does not take ⌘. system-wide; default `Ctrl+Alt+Super+Period` (⌃⌥⌘. on macOS), configurable as `computer_use.stop_shortcut`, empty turns it off
+- [x] Quick entry (macOS) and the stop shortcut share one global-shortcut plugin
+
+---
+
 ### TD-5223 — Stop halts every computer-use agent on the machine
 **Size:** 5 · **Depends on:** TD-3404, TD-4830
 **Status:** In review 2026-11-02. The live macOS check (an outside client acting through `cu-agent.sock`, then Stop) runs separately against the PR build.

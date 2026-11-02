@@ -114,6 +114,9 @@ FEATURE_HELP: dict[str, str | tuple[str, str]] = {
     "no real pointer.",
     "ComputerUseConfig.browser": "Browser driver: mock never launches a browser.",
     "ComputerUseConfig.grounding": "Local vision model for click targeting.",
+    "ComputerUseConfig.stop_shortcut": "System-wide key combo that stops computer use on the "
+    "whole machine, even with TST Desk in the background. It only stops; resume in TST Desk. "
+    "Empty turns it off. Takes effect at the next launch.",
     "ComputerUseConfig.local_worker_preset": "Model whose worker tier serves a session after "
     "it uses a desktop or browser tool. Empty never switches.",
     "ComputerUseConfig.max_prompt_images": "How many images a request may keep; the oldest "

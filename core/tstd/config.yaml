@@ -354,6 +354,8 @@ computer_use:
     sha256: ""
     timeout_seconds: 20
     max_snapshot_chars: 12000
+  # System-wide stop (TD-5224): engage only; empty turns it off.
+  stop_shortcut: Ctrl+Alt+Super+Period
   local_worker_preset: ""
   max_prompt_images: 1
 
