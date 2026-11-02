@@ -8,6 +8,7 @@ any command is sent, and a ref from no known snapshot is refused.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -316,6 +317,24 @@ class TestConfig:
             {"computer_use": {"accessibility": {"enabled": True, "binary": "/opt/ad"}}}
         )
         assert isinstance(accessibility_driver_from_config(cfg, tmp_path), AccessibilityDriver)
+
+    def test_only_the_bundled_copy_skips_the_release_digest(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """TD-5222: the packaged copy is trusted; a configured one is checked."""
+        app = tmp_path / "app"
+        app.mkdir()
+        (app / "tstd").write_bytes(b"")
+        name = "agent-desktop.exe" if sys.platform == "win32" else "agent-desktop"
+        (app / name).write_bytes(b"packed")
+        monkeypatch.setattr(sys, "executable", str(app / "tstd"))
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        on = {"computer_use": {"accessibility": {"enabled": True}}}
+        bundled = accessibility_driver_from_config(ModelConfig.model_validate(on), tmp_path)
+        assert bundled is not None and bundled._cli._packaged is True
+        on["computer_use"]["accessibility"]["binary"] = "/opt/ad"
+        configured = accessibility_driver_from_config(ModelConfig.model_validate(on), tmp_path)
+        assert configured is not None and configured._cli._packaged is False
 
     def test_digest_must_be_hex(self) -> None:
         with pytest.raises(ValueError):

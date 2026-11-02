@@ -19540,3 +19540,23 @@ and Windows stay unbundled. The tools stay off by default.
 did not start, §2.3); one shared `externalBin` list with empty placeholder
 files on macOS and Windows (an empty "agent-desktop" in a package is worse
 than none).
+
+## 2026-11-02 — TD-5222: the packaged agent-desktop copy runs without the release digest (Class B)
+
+**Decision:** The copy of `agent-desktop` that ships beside the packaged
+daemon is trusted as part of the package and runs without matching the
+1.0.2 release digest. A configured `binary` or one found on `PATH` is
+still checked against the pinned digests, and an explicit `sha256` still
+applies to every copy, the packaged one included.
+
+**Rationale:** The AppImage tool rewrites the binaries it packs, so the
+AppImage's copy never matches the release digest and the four tools
+refused to run from an installed AppImage. The deb copy is byte-identical,
+which is why TD-5221's package smoke (deb only) passed. The package is as
+trusted as the daemon running from it: whoever can change one can change
+the other, so the digest adds nothing there. The digest exists for a
+binary the user points at, and that check is unchanged.
+
+**Coverage:** unit tests for the packaged / configured / explicit-digest
+cases, and the package smoke now runs the AppImage's copy as well.
+

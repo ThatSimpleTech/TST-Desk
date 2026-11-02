@@ -149,6 +149,13 @@ jobs:
           PY
           extracted/usr/bin/agent-desktop version | grep -q '"version":"1.0.2"'
           ls extracted/usr/lib/*/licenses/LICENSE extracted/usr/lib/*/licenses/NOTICE
+          # TD-5222: the AppImage tool rewrites the binaries it packs, so its
+          # copy differs from the release digest. It must still be there and
+          # run; the daemon trusts the packaged copy rather than the digest.
+          AI=$(ls "$OLDPWD"/shell/target/release/bundle/appimage/*.AppImage)
+          (mkdir -p ai && cd ai && "$AI" --appimage-extract 'usr/bin/*' > /dev/null)
+          test -x ai/squashfs-root/usr/bin/agent-desktop-linux-clipboard-owner
+          ai/squashfs-root/usr/bin/agent-desktop version | grep -q '"version":"1.0.2"'
           # TD-1301 AC: the bare ubuntu image ships no Python at all — the
           # strictest no-Python machine available in CI.
           docker run --rm -v "$PWD/extracted:/app:ro" ubuntu:22.04 sh -c '

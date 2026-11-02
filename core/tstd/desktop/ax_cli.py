@@ -99,16 +99,25 @@ def child_env(base: Mapping[str, str], state_dir: Path | None) -> dict[str, str]
     return env
 
 
+_NAME = "agent-desktop.exe" if sys.platform == "win32" else "agent-desktop"
+
+
+def bundled_binary() -> Path | None:
+    """The copy shipped beside the packaged daemon, when this is a packaged run."""
+    if not getattr(sys, "frozen", False):
+        return None
+    beside = Path(sys.executable).resolve().parent / _NAME
+    return beside if beside.is_file() else None
+
+
 def resolve_binary(configured: str) -> Path | None:
     """The configured path, else beside the packaged daemon, else ``PATH``."""
     if configured:
         return Path(configured).expanduser()
-    name = "agent-desktop.exe" if sys.platform == "win32" else "agent-desktop"
-    if getattr(sys, "frozen", False):
-        beside = Path(sys.executable).resolve().parent / name
-        if beside.is_file():
-            return beside
-    found = shutil.which(name)
+    bundled = bundled_binary()
+    if bundled is not None:
+        return bundled
+    found = shutil.which(_NAME)
     return Path(found) if found else None
 
 
@@ -223,9 +232,15 @@ class AgentDesktopCli:
         timeout_seconds: float = 20.0,
         runner: Runner | None = None,
         base_env: Mapping[str, str] | None = None,
+        packaged: bool = False,
     ) -> None:
         self._binary = binary
         self._sha256 = sha256.lower()
+        # The copy shipped inside the app package. The AppImage tool rewrites
+        # the binaries it packs, so the release digest cannot match there; the
+        # package is as trusted as the daemon running from it. An explicit
+        # ``sha256`` still applies.
+        self._packaged = packaged
         self._state_dir = state_dir
         self._timeout = timeout_seconds
         self._runner: Runner = runner if runner is not None else _run_process
@@ -259,7 +274,7 @@ class AgentDesktopCli:
             raise DesktopError(
                 "ax_unavailable", f"The agent-desktop CLI could not be read: {exc.strerror}."
             ) from exc
-        if digest not in self.accepted_digests():
+        if digest not in self.accepted_digests() and not (self._packaged and not self._sha256):
             raise DesktopError(
                 "ax_checksum",
                 f"The agent-desktop CLI at {binary} does not match the pinned checksum "
