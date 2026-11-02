@@ -13041,6 +13041,25 @@ step 1; elsewhere the binary comes from `binary` or `PATH`.
 
 ---
 
+### TD-5223 — Stop halts every computer-use agent on the machine
+**Size:** 5 · **Depends on:** TD-3404, TD-4830
+**Status:** In review 2026-11-02. The live macOS check (an outside client acting through `cu-agent.sock`, then Stop) runs separately against the PR build.
+
+The title-bar Stop, ⌘. and the palette entry only flipped flags on the
+daemon's own drivers. An outside MCP client running tst-cu-mcp (for example
+another desktop assistant) acting through the host's `cu-agent.sock` kept
+clicking and typing after Stop. tst-cu-mcp already refuses input while its
+stop-file exists, and every client checks it before each actuation.
+
+**Acceptance criteria:**
+- [x] One kill state for the machine: Stop creates the tst-cu-mcp stop-file (resolved as `safety.stop_file_path` resolves it), Resume removes it, and the daemon's driver flags follow
+- [x] A stop-file created outside TST Desk shows as engaged: checked at startup, followed by a once-a-second check off the event loop, pushed to every window and to a window that connects while stopped; Resume clears it
+- [x] `cu_agent.rs` refuses move, click, key, scroll, type and acting json ops while the file exists, in its platform-neutral dispatch (tested on Linux); capture, permissions and `ui_snapshot` keep working; replies fail tst-cu-mcp's `_require_ok`
+- [x] The daemon's own fallback socket (`cu_host.py`) refuses the same way
+- [x] Tests in core, shell, ui and tst-cu-mcp, each shown to fail when its piece is broken; no test writes a real stop-file
+
+---
+
 ### TD-5222 — The AppImage's agent-desktop copy fails the release digest
 **Size:** 1 · **Depends on:** TD-5221
 **Status:** Complete 2026-11-02.

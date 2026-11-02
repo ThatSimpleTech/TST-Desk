@@ -27,7 +27,7 @@ import websockets.exceptions
 from pydantic import ValidationError
 from pydantic_core import PydanticSerializationError
 
-from . import fast_switch, keychain_mcp
+from . import cu_stopfile, fast_switch, keychain_mcp
 from .artifacts import ArtifactError, ArtifactRecord, ArtifactStore, artifact_ready_for, to_entry
 from .attachment_handlers import Extractions
 from .attachments import (
@@ -597,6 +597,9 @@ log = get_logger("tstd.daemon")
 
 #: Seconds after start before the first background card refresh (TD-5197):
 #: revived sessions and the first turns go first.
+#: How often the daemon checks the computer-use stop-file (TD-5223).
+CU_STOP_POLL_SECONDS = 1.0
+
 CARD_REFRESH_FIRST_DELAY = 30.0
 #: Seconds in an hour, a name so a test can shrink ``every_hours``.
 CARD_REFRESH_HOUR = 3600.0
@@ -1265,12 +1268,61 @@ class Daemon:
         # Process memory, not jobs.json. A crash has no turn left in flight,
         # and a stale true on disk would disable Run now until edited by hand.
         self._in_flight = InFlight()
+        # TD-5223: mirrors the machine-wide stop-file. The file is the truth
+        # (every tst-cu-mcp client reads it); this is what the drivers and
+        # the windows were last told.
+        self._cu_killed = False
 
-    def set_computer_use_killed(self, killed: bool) -> None:
-        """Stop or resume desktop actuation. Capture still works (TD-3301)."""
+    def set_computer_use_killed(self, killed: bool, *, write_file: bool = True) -> None:
+        """Stop or resume desktop actuation. Capture still works (TD-3301).
+
+        TD-5223: also creates or removes the tst-cu-mcp stop-file, so Stop
+        halts every agent on the machine, not only this daemon's drivers.
+        *write_file* is False when the change came from the file itself.
+        """
+        self._cu_killed = killed
         self.desktop_driver.set_killed(killed)
         if self.ax_driver is not None:
             self.ax_driver.set_killed(killed)
+        if not write_file:
+            return
+        try:
+            path = cu_stopfile.engage() if killed else cu_stopfile.clear()
+        except OSError:
+            log.exception(
+                "computer-use stop-file could not be %s", "created" if killed else "removed"
+            )
+            return
+        log.info("computer-use stop-file %s: %s", "created" if killed else "removed", path)
+
+    async def _apply_cu_kill(self, killed: bool, *, write_file: bool) -> None:
+        """Set the switch and close what an engaged switch closes."""
+        self.set_computer_use_killed(killed, write_file=write_file)
+        if killed:
+            for sess in await self.session_registry.list_sessions():
+                await sess.close_cu_session()
+            await self.desktop_driver.set_overlay_session(False)
+
+    async def _cu_stop_watch(self, interval: float = CU_STOP_POLL_SECONDS) -> None:
+        """Follow a stop-file created or removed outside TST Desk (TD-5223).
+
+        One ``stat`` per *interval*, off the event loop. The file can live
+        anywhere ``killswitch.stop_file`` points, and the platforms' change
+        APIs differ, so a slow poll is the simple, portable choice.
+        """
+        while not self._shutdown_event.is_set():
+            await asyncio.sleep(interval)
+            try:
+                engaged = await asyncio.to_thread(cu_stopfile.stop_engaged)
+            except OSError:
+                continue
+            if engaged == self._cu_killed:
+                continue
+            log.info(
+                "computer-use stop-file %s outside TST Desk", "engaged" if engaged else "cleared"
+            )
+            await self._apply_cu_kill(engaged, write_file=False)
+            await self.ws_server.broadcast(CuKillState(killed=engaged).model_dump_json())
 
     async def _build_client(self, tier_cfg: TierConfig) -> ProviderClient:
         """Build a client for *tier_cfg*'s endpoint.
@@ -2469,6 +2521,11 @@ class Daemon:
         self._tasks.append(
             asyncio.create_task(self._card_refresh_loop(), name="model-card-refresh")
         )
+        # TD-5223: a stop-file left from before (or made by another tool)
+        # stops this daemon too, and later changes to it are followed.
+        if await asyncio.to_thread(cu_stopfile.stop_engaged):
+            self.set_computer_use_killed(True, write_file=False)
+        self._tasks.append(asyncio.create_task(self._cu_stop_watch(), name="cu-stop-watch"))
         await self._shutdown_event.wait()
 
     async def _shutdown(self) -> None:
@@ -4504,14 +4561,15 @@ class Daemon:
             return None
 
         if isinstance(msg, SetCuKill):
-            self.set_computer_use_killed(msg.killed)
-            if msg.killed:
-                for sess in await self.session_registry.list_sessions():
-                    await sess.close_cu_session()
-                await self.desktop_driver.set_overlay_session(False)
+            await self._apply_cu_kill(msg.killed, write_file=True)
+            # TD-5223: report what is true, not what was asked. An outside
+            # TST_CU_MCP_STOP in this process keeps the switch engaged.
+            killed = msg.killed or cu_stopfile.env_stop_engaged()
+            if killed != msg.killed:
+                self.set_computer_use_killed(killed, write_file=False)
             # Connection-scoped: the switch is process-wide, so this is
             # not written to any session log (TD-3404).
-            return CuKillState(killed=msg.killed).model_dump_json()
+            return CuKillState(killed=killed).model_dump_json()
 
         return None
 
@@ -6621,6 +6679,10 @@ class Daemon:
 
     async def _on_handshake(self, connection: Any) -> None:
         await self.hub.on_handshake(connection)
+        if self._cu_killed:
+            # TD-5223: a window that opens while stopped shows it at once.
+            with contextlib.suppress(Exception):
+                await connection.send(CuKillState(killed=True).model_dump_json())
 
     async def _on_connection_closed(self, connection: Any) -> None:
         """Clean up all subscriptions for a disconnected client."""
