@@ -19504,3 +19504,39 @@ and they ask); a `desktop_launch` argument list (above).
 The marker is a selector, not a guard (the 2026-08-18 correction); the
 variable is the guard, and every ref the test uses comes from a snapshot of
 the window whose pid is the form it started.
+
+## 2026-11-02 — TD-5221 step 1: the Linux packages carry agent-desktop (Class B)
+
+**Decision:** The Linux AppImage and deb (x86_64, aarch64) ship the pinned
+`agent-desktop` 1.0.2 CLI and its `agent-desktop-linux-clipboard-owner`
+helper beside `tstd`, so the TD-5220 tools work with `binary` empty. macOS
+and Windows stay unbundled. The tools stay off by default.
+
+1. **Fetched at build time, never at run time.** `build_sidecar.py` calls
+   `fetch_agent_desktop.ensure()` on Linux hosts, in both normal and
+   `--if-missing` modes, so the package workflow and `tauri dev` get the
+   files the same way. The binaries are not committed (`shell/binaries/` is
+   ignored).
+2. **Three digests, all pinned in the tree.** The archive's SHA-256 is
+   copied from the release's `checksums.txt` into the script rather than
+   downloading `checksums.txt` beside the archive: a file fetched from the
+   same place as the archive adds no trust. The CLI must also match
+   `ax_cli.PINNED_SHA256`, the table the daemon checks at run time, and the
+   helper its own pin. Any mismatch fails the build and writes nothing.
+3. **Read members by name.** Only the two named members are read, and each
+   must be a regular file; nothing is extracted with `extractall`, so a
+   link or an escaping path in the archive is never written.
+4. **A platform config, not a shared one.** `shell/tauri.linux.conf.json`
+   holds the Linux `externalBin` list and the `licenses/LICENSE` +
+   `licenses/NOTICE` resources. Tauri merges it as a JSON merge patch, so
+   the list replaces the shared one wholesale and must repeat
+   `binaries/tstd`; a test checks it keeps every shared entry. macOS and
+   Windows builds see no change.
+5. **Lookup order unchanged:** `binary` when set, else beside the packaged
+   daemon, else `PATH` (now covered by tests). The CLI finds its helper
+   beside itself.
+
+**Rejected:** downloading on first use in the app (a network call the user
+did not start, §2.3); one shared `externalBin` list with empty placeholder
+files on macOS and Windows (an empty "agent-desktop" in a package is worse
+than none).

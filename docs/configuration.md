@@ -332,6 +332,12 @@ Vercel Labs' [`agent-desktop`](https://github.com/vercel-labs/agent-desktop)
 CLI (Apache-2.0), release 1.0.2, which TST Desk runs as a short-lived
 child per command. Nothing listens on a socket.
 
+The Linux packages (AppImage and deb, x86_64 and aarch64) carry that
+binary and its `agent-desktop-linux-clipboard-owner` helper beside the
+daemon, so there `binary` can stay empty. On macOS and Windows nothing is
+bundled yet: install the 1.0.2 release yourself and set `binary`, or put
+it on `PATH`. The tools stay off until `enabled` is on.
+
 The coordinate tools stay. Browsers, canvases, remote desktops and TST
 Desk's own window expose little or nothing to the accessibility tree.
 Chromium on Linux takes no text entry this way, so keep the browser
@@ -353,7 +359,7 @@ effect when the daemon restarts.
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `enabled` | bool | `false` | Lists the four tools. Off, they are not offered to the model. |
-| `binary` | string | *empty* | Path to the `agent-desktop` binary. Empty looks beside the packaged daemon, then on `PATH`. |
+| `binary` | string | *empty* | Path to the `agent-desktop` binary. Empty uses the copy beside the packaged daemon (bundled in the Linux packages), then `PATH`. |
 | `sha256` | string | *empty* | The binary's SHA-256 (64 hex characters). Empty accepts only the pinned 1.0.2 release binaries. A binary that does not match is never run. |
 | `timeout_seconds` | float > 0 | `20` | How long one CLI command may run. |
 | `max_snapshot_chars` | int ≥ 1000 | `12000` | Cap on one snapshot's text. A larger window comes back as a shallow skeleton, and `root=<ref>` opens one branch. |

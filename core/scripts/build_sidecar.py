@@ -11,6 +11,10 @@ binary size and cold-start time (acceptance: startup under 3 s).
 tauri.conf.json's beforeDevCommand uses it so `tauri dev` pays the build
 once instead of on every start.
 
+On Linux it also puts the pinned agent-desktop CLI and its helper beside
+the sidecar (TD-5221, ``fetch_agent_desktop.py``); tauri.linux.conf.json
+bundles them. Both modes do this, and a checksum mismatch fails the build.
+
 Run from anywhere; paths resolve from this file's location.
 """
 
@@ -27,6 +31,8 @@ import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
+
+import fetch_agent_desktop
 
 CORE = Path(__file__).resolve().parent.parent
 REPO = CORE.parent
@@ -341,6 +347,13 @@ def main() -> int:
     )
     args = parser.parse_args()
     triple = host_triple()
+    if sys.platform.startswith("linux"):
+        try:
+            for path in fetch_agent_desktop.ensure(triple):
+                print(f"agent-desktop {fetch_agent_desktop.PINNED_RELEASE}: {path}")
+        except fetch_agent_desktop.FetchError as exc:
+            print(f"agent-desktop: {exc}", file=sys.stderr)
+            return 1
     if args.if_missing and target_path(triple).is_file():
         print(f"sidecar up to date: {target_path(triple)}")
         return 0
