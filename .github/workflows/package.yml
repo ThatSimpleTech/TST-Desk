@@ -138,6 +138,17 @@ jobs:
           for i in $(seq 1 100); do [ -f "$DATA/port.json" ] && break; sleep 0.1; done
           kill $PID || true
           test -f "$DATA/port.json"
+          # TD-5221: the pinned agent-desktop CLI and its helper sit beside
+          # tstd, the CLI's digest is the daemon's pin, and it runs from there.
+          test -x extracted/usr/bin/agent-desktop-linux-clipboard-owner
+          (cd ../../../../../core && uv run python - "$OLDPWD/extracted/usr/bin/agent-desktop") <<'PY'
+          import hashlib, sys
+          from tstd.desktop.ax_cli import PINNED_SHA256
+          digest = hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest()
+          assert digest in PINNED_SHA256.values(), digest
+          PY
+          extracted/usr/bin/agent-desktop version | grep -q '"version":"1.0.2"'
+          ls extracted/usr/lib/*/licenses/LICENSE extracted/usr/lib/*/licenses/NOTICE
           # TD-1301 AC: the bare ubuntu image ships no Python at all — the
           # strictest no-Python machine available in CI.
           docker run --rm -v "$PWD/extracted:/app:ro" ubuntu:22.04 sh -c '

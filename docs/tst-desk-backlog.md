@@ -13036,27 +13036,52 @@ and headless type, toggle and click with no pointer movement.
       Apache-2.0 attribution.
 
 **Not in this story:** shipping the binary as a per-platform sidecar in the
-packaged app (TD-5221, below). Until then the binary comes from `binary` or
-`PATH`.
+packaged app (TD-5221, below). The Linux packages carry it since TD-5221
+step 1; elsewhere the binary comes from `binary` or `PATH`.
 
 ---
 
 ### TD-5221 — Ship agent-desktop as a per-platform sidecar
 
-**Size:** 3 · **Depends on:** TD-5220, TD-1725 · **Status:** Not started
+**Size:** 3 · **Depends on:** TD-5220, TD-1725 · **Status:** In progress (step 1, Linux, done)
 
 TD-5220 runs a user-supplied binary. The packaged app should carry the
 pinned release beside `tstd` for each of the five package targets (the
 binary already resolves from there first), add its helper binaries
 (`agent-desktop-linux-clipboard-owner`, `agent-desktop-macos-helper`) and a
-copy of the Apache-2.0 licence, and fetch each archive in CI by URL and
-checksum from configuration.
+copy of the Apache-2.0 licence, and fetch each archive at build time by URL
+and pinned checksum.
 
-- [ ] The package workflow downloads the 1.0.2 archive per target, checks it
-      against the release's `checksums.txt`, and places the binary beside
-      `tstd`; a mismatch fails the build.
-- [ ] The packaged app finds the binary with `binary` empty, and its digest
-      is in the pin table.
-- [ ] The licence and NOTICE ship in the bundle.
-- [ ] macOS: the helper is signed with the app, and Accessibility permission
-      is attributed to the process TCC sees (TD-4823).
+Staged, because the upstream project is young (its Linux support only
+just landed) and only Linux has been tested live. The feature stays off by
+default on every platform.
+
+**Step 1 — Linux (x86_64, aarch64).** `core/scripts/fetch_agent_desktop.py`,
+run by `build_sidecar.py` on Linux hosts, downloads the archive, checks
+the archive digest (copied from the release's `checksums.txt`) and both
+files' digests (the CLI's is `ax_cli.PINNED_SHA256`), and writes them as
+`externalBin` sidecars. `shell/tauri.linux.conf.json` bundles them and
+`licenses/LICENSE` + `licenses/NOTICE` as resources.
+
+- [x] Linux: the build downloads the 1.0.2 archive per target, checks it
+      against digests copied from the release's `checksums.txt`, and places
+      the binary and its helper beside `tstd`; a mismatch fails the build
+      (`test_fetch_agent_desktop.py`).
+- [x] Linux: the packaged app finds the binary with `binary` empty
+      (configured path, then beside the packaged daemon, then `PATH`:
+      `TestResolveBinary`), and its digest is in the pin table; the package
+      workflow runs `agent-desktop version` from the extracted deb.
+- [x] Linux: the licence and NOTICE ship in the bundle.
+
+**Step 2 — macOS (follow-up).** Needs a live test on a real Mac first,
+including the Accessibility permission prompt.
+
+- [ ] macOS: the CLI and `agent-desktop-macos-helper` are signed with the
+      app, and Accessibility permission is attributed to the process TCC
+      sees through TST Desk's existing host (TD-4823), with no separate
+      prompt.
+
+**Step 3 — Windows (later, on demand).**
+
+- [ ] Windows: the CLI ships beside `tstd.exe` in the MSI, checked the
+      same way.

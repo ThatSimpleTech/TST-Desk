@@ -117,13 +117,18 @@ jobs:
       # so the sidecar path must exist even for clippy/test. CI never
       # bundles; an empty sentinel satisfies the existence check. The real,
       # smoke-tested binary comes from core/scripts/build_sidecar.py in the
-      # package workflow.
+      # package workflow. On Linux, tauri.linux.conf.json also lists the
+      # agent-desktop CLI and its helper (TD-5221).
       - name: Sentinel for externalBin validation
         shell: bash
         run: |
           triple=$(rustc -vV | sed -n 's/^host: *//p')
           mkdir -p binaries
           : > "binaries/tstd-${triple}"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            : > "binaries/agent-desktop-${triple}"
+            : > "binaries/agent-desktop-linux-clipboard-owner-${triple}"
+          fi
 
       - name: Clippy
         run: cargo clippy -- -D warnings

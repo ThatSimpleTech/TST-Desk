@@ -17,7 +17,13 @@ import pytest
 
 from tests.ax_fakes import FakeCli, fixture, make_cli
 from tstd.desktop import DesktopError, ax_tree
-from tstd.desktop.ax_cli import PINNED_SHA256, AgentDesktopCli, child_env, host_target
+from tstd.desktop.ax_cli import (
+    PINNED_SHA256,
+    AgentDesktopCli,
+    child_env,
+    host_target,
+    resolve_binary,
+)
 
 
 class TestChecksum:
@@ -184,6 +190,66 @@ async def test_real_subprocess_round_trip(tmp_path: Path) -> None:
         "bridge": None,
         "home": str(tmp_path / "state"),
     }
+
+
+class TestResolveBinary:
+    """Which CLI runs: the configured path, the bundled copy, then PATH (TD-5221)."""
+
+    NAME = "agent-desktop.exe" if sys.platform == "win32" else "agent-desktop"
+
+    def _layout(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, frozen: bool) -> Path:
+        """A packaged-daemon dir with the CLI beside tstd, and one more on PATH."""
+        app = tmp_path / "app"
+        app.mkdir()
+        (app / "tstd").write_bytes(b"")
+        on_path = tmp_path / "path"
+        on_path.mkdir()
+        for folder in (app, on_path):
+            cli = folder / self.NAME
+            cli.write_bytes(b"cli")
+            cli.chmod(0o755)
+        monkeypatch.setattr(sys, "executable", str(app / "tstd"))
+        monkeypatch.setattr(sys, "frozen", frozen, raising=False)
+        monkeypatch.setenv("PATH", str(on_path))
+        return app
+
+    def test_configured_path_wins_over_bundled(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._layout(tmp_path, monkeypatch, frozen=True)
+        assert resolve_binary("/opt/elsewhere/agent-desktop") == Path(
+            "/opt/elsewhere/agent-desktop"
+        )
+
+    def test_bundled_copy_wins_over_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        app = self._layout(tmp_path, monkeypatch, frozen=True)
+        assert resolve_binary("") == (app / self.NAME).resolve()
+
+    def test_path_when_nothing_is_bundled(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        app = self._layout(tmp_path, monkeypatch, frozen=True)
+        (app / self.NAME).unlink()
+        found = resolve_binary("")
+        assert found is not None and found.parent == tmp_path / "path"
+
+    def test_source_run_ignores_the_interpreter_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Not frozen: sys.executable is Python, and its folder is not the bundle."""
+        self._layout(tmp_path, monkeypatch, frozen=False)
+        found = resolve_binary("")
+        assert found is not None and found.parent == tmp_path / "path"
+
+    def test_none_when_missing_everywhere(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        app = self._layout(tmp_path, monkeypatch, frozen=True)
+        (app / self.NAME).unlink()
+        (tmp_path / "path" / self.NAME).unlink()
+        assert resolve_binary("") is None
 
 
 class TestTree:

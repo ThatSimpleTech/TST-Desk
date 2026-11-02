@@ -274,6 +274,9 @@ not replace the README or §10.
   `cargo clippy` and `cargo test` in `shell/` fail until `shell/binaries/tstd-<host triple>`
   exists. An empty file is enough, as in CI:
   `mkdir -p binaries && : > "binaries/tstd-$(rustc -vV | sed -n 's/^host: *//p')"`.
+  On Linux, `tauri.linux.conf.json` also needs `binaries/agent-desktop-<triple>` and
+  `binaries/agent-desktop-linux-clipboard-owner-<triple>` (TD-5221); empty files work for
+  clippy and tests, and `build_sidecar.py` fetches the real, checksum-pinned ones.
 
 ### Keychain
 The checks need no D-Bus session or unlocked keyring. `core/tests/conftest.py` keeps the
