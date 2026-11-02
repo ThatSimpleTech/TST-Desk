@@ -1286,6 +1286,33 @@ class GroundingConfig(BaseModel):
         return self
 
 
+class AccessibilityConfig(BaseModel):
+    """Accessibility-tree desktop tools on the ``agent-desktop`` CLI (TD-5220).
+
+    Off by default. ``binary`` empty looks beside the packaged daemon, then
+    on ``PATH``. Whatever runs must match ``sha256`` or, when that is
+    empty, a digest in the built-in pin table, or the tools refuse.
+    """
+
+    enabled: bool = False
+    binary: str = ""
+    sha256: str = ""
+    timeout_seconds: float = Field(default=20.0, gt=0)
+    max_snapshot_chars: int = Field(default=12000, ge=1000)
+
+    @field_validator("binary", "sha256")
+    @classmethod
+    def _strip(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("sha256")
+    @classmethod
+    def _hex_digest(cls, value: str) -> str:
+        if value and not re.fullmatch(r"[0-9a-fA-F]{64}", value):
+            raise ValueError("computer_use.accessibility.sha256 must be 64 hex characters")
+        return value.lower()
+
+
 class ComputerUseConfig(BaseModel):
     """Desktop computer-use sidecar (TD-3301) and browser (TD-1710).
 
@@ -1304,11 +1331,14 @@ class ComputerUseConfig(BaseModel):
     for the worker client after a session has used a desktop_ or
     browser_ tool (TD-3903). Default empty: never remap (TD-5172).
     Brain stays on the active preset.
+
+    ``accessibility`` turns on the element-level desktop tools (TD-5220).
     """
 
     command: str | list[str] = ""
     browser: Literal["mock", "playwright"] = "mock"
     grounding: GroundingConfig = Field(default_factory=GroundingConfig)
+    accessibility: AccessibilityConfig = Field(default_factory=AccessibilityConfig)
     local_worker_preset: str = ""
     # Hosted vLLM forge is --limit-mm-per-prompt image:1 (TD-1730).
     max_prompt_images: int = Field(default=1, ge=0)

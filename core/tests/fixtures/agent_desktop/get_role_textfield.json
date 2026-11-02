@@ -1,0 +1,10 @@
+{
+ "version": "2.5",
+ "ok": true,
+ "command": "get",
+ "data": {
+  "property": "role",
+  "ref": "@s3wspdr2z8h6x:e2",
+  "value": "textfield"
+ }
+}

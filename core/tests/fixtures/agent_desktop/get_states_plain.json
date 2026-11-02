@@ -1,0 +1,12 @@
+{
+ "version": "2.5",
+ "ok": true,
+ "command": "get",
+ "data": {
+  "property": "states",
+  "ref": "@s3wspdr2z8h6x:e1",
+  "value": [
+   "focused"
+  ]
+ }
+}

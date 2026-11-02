@@ -19420,3 +19420,87 @@ about 3.4:1, and to 4.0–4.5:1 over the dark galaxy's core, the light
 galaxy and the light fireflies; body and secondary text hold. Capping a
 crossing at one curtain's brightness (a `lighten` blend) would let the
 aurora use the default share again; it is a follow-up, not done here.
+
+## 2026-11-02 — TD-5220: element-level desktop tools on the agent-desktop CLI (Class B)
+
+**Decision:** The desktop gains four tools that work on a window's
+accessibility tree (`desktop_windows`, `desktop_snapshot`, `desktop_act`,
+`desktop_launch`), built on Vercel Labs' `agent-desktop` CLI, release 1.0.2,
+run as a short-lived child process per command. A new
+`AccessibilityDriver` sits beside the coordinate driver; it does not
+replace it. Off by default (`computer_use.accessibility.enabled`).
+
+This answers the TD-3301 "Still open" note ("there is no element-level
+targeting"). The coordinate tools and grounding stay as the fallback:
+browsers (Chromium on Linux takes no text entry this way), canvases, remote
+desktops and TST Desk's own WebKitGTK window expose little or nothing.
+
+Choices worth recording:
+
+1. **A CLI child per command, not a library or a daemon.** The CLI prints
+   one JSON envelope per command and keeps no process alive, so there is
+   nothing to supervise and no socket (§2.1). Each read takes 0.1–0.4 s on
+   GTK apps, which is fine for an agent turn. The FFI build was not used: it
+   would put a native library inside the daemon's process.
+2. **Checksum-pinned, always.** The binary runs only if its SHA-256 equals
+   `sha256` or, when that is empty, one of the six 1.0.2 release binaries
+   (each archive checked against the release's `checksums.txt` before its
+   binary was hashed). A mismatch is `ax_checksum` and nothing runs. The
+   helper binaries the CLI itself starts are not hashed here; shipping
+   them as signed sidecars is TD-5221.
+3. **Error mapping.** `STALE_REF`, `SNAPSHOT_NOT_FOUND` → `ax_stale_ref`;
+   `AMBIGUOUS_TARGET` → `ax_ambiguous` (with the candidate window ids). Both
+   tell the model to take a new snapshot. One retry happens only when
+   `disposition.retry` is `safe`, the CLI marks the error retryable, and the
+   command is a read or needs no fresh snapshot. Any other delivery value
+   means the action may have landed, and the message says to read the
+   state before repeating it. stderr is never echoed (it can quote window
+   text).
+4. **The password guard is ours.** The CLI flags password fields `secure`
+   but still types into them (spike, 2026-11-01). `type` and `set_value`
+   are refused when the snapshot's node or a live `get` of its states and
+   role shows `secure` or a password role, before the action command runs.
+   `click` stays allowed so the model can put the caret there for the user.
+   A secure node's value is never rendered, and an action's `post_state`
+   value is reported as a character count, never the text. The TD-709
+   verifier now redacts `value` like `text`.
+5. **Refs must come from our own recent snapshots.** `desktop_act` refuses a
+   ref whose snapshot this driver did not take (32 kept) without calling the
+   CLI. That ties every action to a window whose app passed the
+   allowed/denied apps check, and a ref's window replaces `expect_window`.
+6. **Filtering and size.** Nameless nodes that are hidden, disabled or have
+   no ref are dropped; `menu` subtrees are folded to a count with their
+   ref; one line per node. A spike text editor went from a 46 KB tree to
+   1.8 KB. Over `max_snapshot_chars` the driver re-reads with `--skeleton`,
+   then cuts with a note; `root=<ref>` opens one branch.
+7. **Environment.** The child environment drops `NO_AT_BRIDGE` (some desktop
+   hosts set it, and a GTK app started with it never joins the bus), and
+   sets `AGENT_DESKTOP_HOME` to `agent-desktop/` under the data dir, 0700,
+   because the CLI's snapshot store holds screen text. `desktop_launch`
+   adds `ACCESSIBILITY_ENABLED=1` and `QT_ACCESSIBILITY=1`, and
+   `--force-renderer-accessibility` only for Chromium-family names (other
+   apps may refuse an unknown flag). It takes no argument list: arbitrary
+   arguments would turn it into a second `shell` outside the shell
+   allowlist.
+8. **Policy.** Reads are not blocked by the kill switch (same as
+   screenshots); actions and launches are, and also by Settings →
+   Computer use's actions switch. Allowed/denied apps apply to every tool;
+   a denied app's windows are left out of `desktop_windows`, not named.
+9. **Verification (TD-709).** `StateProbe.snapshot` now gets the call's
+   arguments, so for `desktop_act` the probe snapshots the ref's window. The
+   state text carries no refs, which differ on every snapshot and would make
+   any before/after pair look changed.
+
+**Rejected:** driving the tree through the existing `tst-cu-mcp` sidecar
+(its background tools are macOS-only today, and a second copy of AT-SPI
+handling would duplicate what the CLI already measures and hardens);
+typing into a field after a refused secure check with a warning (the
+whole point is that the model never holds the password); `--headed` as a
+fallback (the CLI's own guidance: never switch to physical input to
+recover from a headless failure; the coordinate tools are that fallback
+and they ask); a `desktop_launch` argument list (above).
+
+**Test note:** the live test needs `-m desktop` *and* `TST_AX_LIVE=1`.
+The marker is a selector, not a guard (the 2026-08-18 correction); the
+variable is the guard, and every ref the test uses comes from a snapshot of
+the window whose pid is the form it started.

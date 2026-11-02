@@ -1,0 +1,14 @@
+{
+ "version": "2.5",
+ "ok": false,
+ "command": "snapshot",
+ "error": {
+  "code": "WINDOW_NOT_FOUND",
+  "message": "No window with id w-nope",
+  "suggestion": "Run 'list-windows' to see available window IDs.",
+  "disposition": {
+   "delivery": "not_delivered",
+   "retry": "safe"
+  }
+ }
+}

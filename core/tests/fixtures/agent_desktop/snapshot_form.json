@@ -1,0 +1,72 @@
+{
+ "version": "2.5",
+ "ok": true,
+ "command": "snapshot",
+ "data": {
+  "app": "python3.14",
+  "complete": true,
+  "ref_count": 4,
+  "snapshot_id": "s3wspdr2z8h6x",
+  "tree": {
+   "children": [
+    {
+     "children": [
+      {
+       "available_actions": [
+        "Click",
+        "SetValue",
+        "TypeText",
+        "SetFocus"
+       ],
+       "name": "Username",
+       "ref_id": "@s3wspdr2z8h6x:e1",
+       "role": "textfield",
+       "states": [
+        "focused"
+       ]
+      },
+      {
+       "available_actions": [
+        "Click",
+        "SetValue",
+        "TypeText",
+        "SetFocus"
+       ],
+       "name": "Password",
+       "ref_id": "@s3wspdr2z8h6x:e2",
+       "role": "textfield",
+       "states": [
+        "secure"
+       ]
+      },
+      {
+       "available_actions": [
+        "Click",
+        "SetFocus"
+       ],
+       "name": "Remember me",
+       "ref_id": "@s3wspdr2z8h6x:e3",
+       "role": "checkbox"
+      },
+      {
+       "available_actions": [
+        "Click",
+        "SetFocus"
+       ],
+       "name": "Sign in",
+       "ref_id": "@s3wspdr2z8h6x:e4",
+       "role": "button"
+      }
+     ],
+     "role": "group"
+    }
+   ],
+   "name": "Test Form",
+   "role": "window"
+  },
+  "window": {
+   "id": "w-1.300-org-a11y-atspi-accessible-6",
+   "title": "Test Form"
+  }
+ }
+}

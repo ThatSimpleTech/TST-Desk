@@ -125,6 +125,19 @@ FEATURE_HELP: dict[str, str | tuple[str, str]] = {
         "How long a locate request may run before the intended point is used.",
         S,
     ),
+    "ComputerUseConfig.accessibility": "Desktop tools that read and act on a window's "
+    "controls instead of its pixels. Restart to apply.",
+    "AccessibilityConfig.enabled": "Offer desktop_windows, desktop_snapshot, desktop_act and "
+    "desktop_launch to the model.",
+    "AccessibilityConfig.binary": "Path to the agent-desktop binary. Empty looks beside the "
+    "app, then on PATH.",
+    "AccessibilityConfig.sha256": "The binary's SHA-256. Empty accepts only the pinned 1.0.2 "
+    "release. A binary that does not match never runs.",
+    "AccessibilityConfig.timeout_seconds": ("How long one agent-desktop command may run.", S),
+    "AccessibilityConfig.max_snapshot_chars": (
+        "Largest snapshot text. A larger window comes back as a shallow outline.",
+        CHARS,
+    ),
     "JudgmentsConfig.verification": "Check that a desktop or browser action had its intended "
     "effect.",
     "JudgmentsConfig.semantic_breaker": "Stop an unattended run that keeps acting without "

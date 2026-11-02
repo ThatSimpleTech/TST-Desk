@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import shlex
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .ax_cli import AgentDesktopCli, resolve_binary
+from .ax_driver import AccessibilityDriver
 from .mcp_driver import McpDesktopDriver
 from .mock import MockDesktopDriver
 from .protocol import DesktopDriver
@@ -80,6 +83,22 @@ def desktop_driver_from_config(
             env[OVERLAY_ENV] = "1" if cu_prefs.show_on_real_display else "0"
         command = argv
     return driver_for_command(command, env=env)
+
+
+def accessibility_driver_from_config(
+    config: ModelConfig, data_dir: Path
+) -> AccessibilityDriver | None:
+    """The element-level driver (TD-5220), or ``None`` while it is off."""
+    ax = config.computer_use.accessibility
+    if not ax.enabled:
+        return None
+    cli = AgentDesktopCli(
+        resolve_binary(ax.binary),
+        sha256=ax.sha256,
+        state_dir=data_dir / "agent-desktop",
+        timeout_seconds=ax.timeout_seconds,
+    )
+    return AccessibilityDriver(cli, max_snapshot_chars=ax.max_snapshot_chars)
 
 
 def _linux_inprocess() -> bool:

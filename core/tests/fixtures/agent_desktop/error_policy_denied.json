@@ -1,0 +1,14 @@
+{
+ "version": "2.5",
+ "ok": false,
+ "command": "type",
+ "error": {
+  "code": "POLICY_DENIED",
+  "message": "Text entry into this element needs physical input",
+  "suggestion": "Use --headed only when the user permits physical input",
+  "disposition": {
+   "delivery": "not_delivered",
+   "retry": "safe"
+  }
+ }
+}

@@ -1261,7 +1261,8 @@ dev-time API reference for building that connector.
 **Size:** 5 · **Depends on:** TD-708, TD-3301, TD-1710
 **Status:** Dev build shipped on main 2026-09-17 (30fec39). Open for hardening: real-driver
 state extraction (AX/DOM summarizer — the probe reads mock attributes, so real drivers
-report `unavailable`), retry-with-re-grounding on refutation, and the recorded-fixture
+report `unavailable`; TD-5220 gives `desktop_act` a real one, an accessibility snapshot of
+the acted-on window), retry-with-re-grounding on refutation, and the recorded-fixture
 accuracy/latency corpus against a live connector.
 
 **Acceptance criteria:**
@@ -12981,3 +12982,81 @@ download of the new release; updates after that run in the app again.
       change on GitHub's side is diagnosable from the message alone.
 - [x] Checked against the live 0.4.5 release: the updater's own client
       downloads its `SHA256SUMS.txt` through the redirect.
+
+---
+
+### TD-5220 — Desktop tools that act on a window's controls, not its pixels
+
+**Size:** 5 · **Depends on:** TD-3301, TD-709, TD-4830 · **Status:** In review
+
+The coordinate tools aim at points, and a point changes meaning whenever a
+window moves or redraws (the TD-3301 "Still open" note: "no element-level
+targeting"). Four tools now read a window's accessibility tree and act on
+one control by ref, through Vercel Labs' `agent-desktop` CLI (Apache-2.0,
+release 1.0.2, checksum-pinned) run as a short-lived child per command. Off
+by default (`computer_use.accessibility.enabled`). The approach is the
+wiring plan from the 2026-11-01 spike, which measured GTK reads at 0.1–0.4 s
+and headless type, toggle and click with no pointer movement.
+
+- [x] An accessibility driver beside the coordinate one runs the CLI and maps
+      its JSON envelope to `DesktopError` codes: `STALE_REF`,
+      `SNAPSHOT_NOT_FOUND` and `AMBIGUOUS_TARGET` say "take a new snapshot";
+      it retries once only when `disposition.retry` is `safe` and the CLI
+      calls the error retryable; an unsafe refusal says the action may have
+      landed (`test_desktop_ax.py::TestErrorMapping`, `TestRetry`).
+- [x] The binary runs only if its SHA-256 matches `sha256`, or (empty) a
+      pinned 1.0.2 release binary for one of six platforms; the child
+      environment drops `NO_AT_BRIDGE` and keeps the CLI's snapshot store
+      under the data dir (`TestChecksum`, `TestEnvironment`,
+      `test_real_subprocess_round_trip`).
+- [x] `desktop_snapshot` (window, app or `root` ref; interactive only) drops
+      hidden or disabled nameless nodes, folds menus, never shows a secure
+      field's value, and caps its text, falling back to a skeleton and
+      `root` drill-down (`TestTree`, `TestSnapshot`).
+- [x] `desktop_act` (click, type, set_value, toggle, select, expand,
+      scroll_to) is actuating and asks like the other actuating tools;
+      `desktop_windows` reads; `desktop_launch` starts an app with
+      `ACCESSIBILITY_ENABLED=1`, `QT_ACCESSIBILITY=1` and, for Chromium-family
+      apps, `--force-renderer-accessibility` (`TestDispatch`,
+      `TestWindowsAndLaunch`).
+- [x] `type` and `set_value` on a password field (state `secure` or a
+      password role, from the snapshot and again live) are refused in code
+      before the CLI is called, and the message asks the user to enter it;
+      the kill switch, Settings' actions switch and the allowed/denied apps
+      apply (`TestPasswordGuard`, `TestActGuards`).
+- [x] TD-709: with `judgments.verification` on, a `desktop_act` is judged
+      against a compact, ref-free text snapshot of its window before and
+      after, and its `value` is redacted like `text`
+      (`TestVerificationState`, `TestDispatch::test_act_is_verified_on_window_state`).
+- [x] Live on an X11 desktop: the test drives a GTK form it opens (type,
+      toggle, click), the guard refuses its password field, and the form's
+      own log shows no password input
+      (`test_desktop_ax_live.py`, `-m desktop` with `TST_AX_LIVE=1`).
+- [x] `docs/configuration.md` documents every new key; NOTICE carries the
+      Apache-2.0 attribution.
+
+**Not in this story:** shipping the binary as a per-platform sidecar in the
+packaged app (TD-5221, below). Until then the binary comes from `binary` or
+`PATH`.
+
+---
+
+### TD-5221 — Ship agent-desktop as a per-platform sidecar
+
+**Size:** 3 · **Depends on:** TD-5220, TD-1725 · **Status:** Not started
+
+TD-5220 runs a user-supplied binary. The packaged app should carry the
+pinned release beside `tstd` for each of the five package targets (the
+binary already resolves from there first), add its helper binaries
+(`agent-desktop-linux-clipboard-owner`, `agent-desktop-macos-helper`) and a
+copy of the Apache-2.0 licence, and fetch each archive in CI by URL and
+checksum from configuration.
+
+- [ ] The package workflow downloads the 1.0.2 archive per target, checks it
+      against the release's `checksums.txt`, and places the binary beside
+      `tstd`; a mismatch fails the build.
+- [ ] The packaged app finds the binary with `binary` empty, and its digest
+      is in the pin table.
+- [ ] The licence and NOTICE ship in the bundle.
+- [ ] macOS: the helper is signed with the app, and Accessibility permission
+      is attributed to the process TCC sees (TD-4823).
