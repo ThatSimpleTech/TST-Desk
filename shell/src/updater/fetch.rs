@@ -37,8 +37,10 @@ pub fn client() -> Result<reqwest::Client, String> {
         .map_err(|e| format!("client build failed: {e}"))
 }
 
-/// reqwest's Display stops at "error following redirect for url (...)";
-/// the reason (which host was refused) is in the source chain.
+/// reqwest's Display stops at "error following redirect for url (...)" or
+/// "error sending request for url (...)"; the reason (which host was
+/// refused, a refused connection, a DNS or certificate failure) is in the
+/// source chain.
 fn with_causes(e: &reqwest::Error) -> String {
     let mut text = e.to_string();
     let mut source = std::error::Error::source(e);
@@ -53,6 +55,24 @@ fn with_causes(e: &reqwest::Error) -> String {
     text
 }
 
+/// The update check could not get an answer from GitHub (TD-5229). Says
+/// what kind of failure it was in words, then the full cause chain, so the
+/// message alone tells a dropped network from a refused or intercepted one.
+pub(crate) fn unreachable_message(e: &reqwest::Error) -> String {
+    let what = if e.is_timeout() {
+        "GitHub did not answer in time"
+    } else if e.is_connect() {
+        "Could not connect to GitHub"
+    } else {
+        "The request to GitHub failed"
+    };
+    format!(
+        "{what}, so the update check stopped. Check the network connection and try again. \
+         Details: {}",
+        with_causes(e)
+    )
+}
+
 pub async fn fetch_releases(http: &reqwest::Client) -> Result<Vec<Release>, String> {
     let url = releases_url();
     if !releases_api_allowed(&url) {
@@ -63,7 +83,7 @@ pub async fn fetch_releases(http: &reqwest::Client) -> Result<Vec<Release>, Stri
         .header("Accept", "application/vnd.github+json")
         .send()
         .await
-        .map_err(|e| format!("release fetch failed: {e}"))?;
+        .map_err(|e| unreachable_message(&e))?;
     if response.status() == reqwest::StatusCode::FORBIDDEN
         || response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS
     {
@@ -75,7 +95,7 @@ pub async fn fetch_releases(http: &reqwest::Client) -> Result<Vec<Release>, Stri
     let body = response
         .text()
         .await
-        .map_err(|e| format!("release read failed: {e}"))?;
+        .map_err(|e| format!("release read failed: {}", with_causes(&e)))?;
     if body.len() > MAX_SUMS_BYTES * 5 {
         return Err("the release list was larger than expected".into());
     }
@@ -90,7 +110,7 @@ pub async fn download_text(http: &reqwest::Client, url: &str) -> Result<String, 
     let body = response
         .text()
         .await
-        .map_err(|e| format!("checksum read failed: {e}"))?;
+        .map_err(|e| format!("checksum read failed: {}", with_causes(&e)))?;
     if body.len() > MAX_SUMS_BYTES {
         return Err("SHA256SUMS.txt was larger than expected".into());
     }
@@ -129,7 +149,7 @@ pub async fn download_verified(
     let mut got: u64 = 0;
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("download failed: {e}"))?;
+        let chunk = chunk.map_err(|e| format!("download failed: {}", with_causes(&e)))?;
         got += chunk.len() as u64;
         if got > MAX_DOWNLOAD_BYTES {
             let _ = tokio::fs::remove_file(&partial).await;
@@ -166,4 +186,26 @@ async fn send_download(http: &reqwest::Client, url: &str) -> Result<reqwest::Res
     response
         .error_for_status()
         .map_err(|e| format!("download failed: {}", with_causes(&e)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A refused connection on loopback: no outside network, and the real
+    /// reqwest error type the check sees when the network is down.
+    #[tokio::test]
+    async fn an_unreachable_check_says_why() {
+        let http = client().expect("client");
+        let err = http
+            .get("http://127.0.0.1:1/releases")
+            .send()
+            .await
+            .expect_err("nothing listens on port 1");
+        let text = unreachable_message(&err);
+        assert!(text.starts_with("Could not connect to GitHub"), "{text}");
+        assert!(text.contains("Check the network connection"), "{text}");
+        // The OS reason survives, which "error sending request" alone lost.
+        assert!(text.to_lowercase().contains("refused"), "{text}");
+    }
 }
