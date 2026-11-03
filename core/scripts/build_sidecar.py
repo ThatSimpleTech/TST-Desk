@@ -11,9 +11,10 @@ binary size and cold-start time (acceptance: startup under 3 s).
 tauri.conf.json's beforeDevCommand uses it so `tauri dev` pays the build
 once instead of on every start.
 
-On Linux it also puts the pinned agent-desktop CLI and its helper beside
-the sidecar (TD-5221, ``fetch_agent_desktop.py``); tauri.linux.conf.json
-bundles them. Both modes do this, and a checksum mismatch fails the build.
+On Linux and macOS it also puts the pinned agent-desktop CLI and its helper
+beside the sidecar (TD-5221, TD-5228, ``fetch_agent_desktop.py``);
+tauri.linux.conf.json and tauri.macos.conf.json bundle them. Both modes do
+this, and a checksum mismatch fails the build.
 
 Run from anywhere; paths resolve from this file's location.
 """
@@ -56,6 +57,11 @@ def host_triple() -> str:
         if line.startswith("host:"):
             return line.split(":", 1)[1].strip()
     raise RuntimeError("could not parse host triple from rustc -vV")
+
+
+def bundles_agent_desktop() -> bool:
+    """True on the hosts whose package carries the agent-desktop CLI."""
+    return sys.platform.startswith("linux") or sys.platform == "darwin"
 
 
 def target_path(triple: str) -> Path:
@@ -347,7 +353,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     triple = host_triple()
-    if sys.platform.startswith("linux"):
+    if bundles_agent_desktop():
         try:
             for path in fetch_agent_desktop.ensure(triple):
                 print(f"agent-desktop {fetch_agent_desktop.PINNED_RELEASE}: {path}")

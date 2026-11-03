@@ -19663,3 +19663,57 @@ as two agents); hiding the ring after a fixed time inside an episode (the
 TD-3407 reason stands: a long think between actions is still the agent
 driving); a stop-file watch inside the AppKit helper (it would need the
 config path and the mode as well; the sidecar already has both).
+
+## 2026-11-03 — TD-5228: the Mac app carries agent-desktop (Class B)
+
+**Decision:** The macOS app (Apple silicon and Intel) ships the pinned
+`agent-desktop` 1.0.2 CLI and its `agent-desktop-macos-helper` beside
+`tstd`, the same way TD-5221 step 1 does on Linux, so the TD-5220 tools
+work with `binary` empty. Windows stays unbundled. The tools stay off by
+default.
+
+1. **The same fetch, two more targets.** `fetch_agent_desktop.py` pins
+   both macOS archives (digests copied from the release's `checksums.txt`)
+   and both helpers (hashed from the checked archives). The CLI digests
+   were already in `ax_cli.PINNED_SHA256`. The helper's name now depends
+   on the platform. `build_sidecar.py` fetches on macOS hosts too, in both
+   modes.
+2. **A macOS platform config.** `shell/tauri.macos.conf.json` repeats
+   `binaries/tstd` (the merge patch replaces the list) and adds the two
+   files and the licence resources. A test checks that each platform config
+   keeps every shared entry and never names the other platform's helper,
+   which is not fetched there and would fail the build.
+3. **Signed by the bundler, under their own names.** Tauri's macOS bundler
+   (CLI 2.11.4) copies every `externalBin` into `Contents/MacOS` with the
+   triple dropped, then signs each one before the app, with the app's
+   identity, the hardened runtime and the app's entitlements. So the CLI
+   and helper carry the same `tst-desk-dev` certificate signature as the
+   rest of the bundle, with identifiers `agent-desktop` and
+   `agent-desktop-macos-helper`. Unlike `tstd`, they are not re-signed
+   with the bundle id. TCC charges a command-line tool's Accessibility use
+   to the app that started its process tree, here the `tst-desk` host:
+   the 2026-09-02 entry saw exactly that for `tstd`'s own input events,
+   and the CLI's own permission guide relies on the same rule.
+   `install-macos.sh` refuses a bundle where either file is not
+   certificate-signed.
+4. **The packaged copy is not the release's bytes.** Signing rewrites the
+   binary, so the bundled CLI never matches the release digest. TD-5222's
+   rule (the copy beside the packaged daemon is trusted as part of the
+   package) already covers it. The files in `shell/binaries/` stay as
+   released, so the build's pin check still holds and a rebuild needs no
+   download.
+5. **The helper is for the clipboard only.** In 1.0.2 the CLI starts
+   `agent-desktop-macos-helper` only for its clipboard commands, which none
+   of the four tools use. It ships so the bundle matches the upstream
+   package. The CLI accepts it only beside itself under that exact name,
+   owned by the user running the CLI, with no folder above it writable by
+   others. `/Applications` is group-writable (admin), so from there the
+   clipboard commands would refuse; nothing in TST Desk calls them.
+
+**Rejected:** re-signing the two files with the bundle id, as
+`install-macos.sh` does for `tstd` (attribution follows the responsible
+process, and another identity rewrite is one more step that can drift);
+signing them in `build_sidecar.py` before bundling (the bundler re-signs
+every `externalBin` anyway, and the files in `shell/binaries/` would stop
+matching their pins); bumping to agent-desktop 1.1.0, released the same
+day (the tools were built and tested against 1.0.2).

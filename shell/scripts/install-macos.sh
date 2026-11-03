@@ -127,6 +127,17 @@ for bin in "$HOST" "$SIDECAR"; do
     exit 1
   fi
 done
+# The agent-desktop CLI and its helper (TD-5228) run under TST Desk, so TCC
+# charges their Accessibility use to the app. They keep their own
+# identifiers, but the bundler must have signed them with the same identity.
+for bin in "$BUILT/Contents/MacOS/agent-desktop" "$BUILT/Contents/MacOS/agent-desktop-macos-helper"; do
+  [[ -f "$bin" ]] || continue
+  req="$(requirement "$bin")"
+  if [[ "$req" != *"certificate leaf"* ]]; then
+    echo "install-macos: $bin is not signed with a certificate (requirement: $req)" >&2
+    exit 1
+  fi
+done
 
 # 5. Never replace a running app.
 if pgrep -x tst-desk >/dev/null 2>&1; then
