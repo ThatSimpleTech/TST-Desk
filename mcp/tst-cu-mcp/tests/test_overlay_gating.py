@@ -81,11 +81,14 @@ class RecordingOverlay:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    def begin_session(self) -> None:
+    def begin_session(self, key: str = "") -> None:
         self.calls.append("begin")
 
-    def end_session(self) -> None:
+    def end_session(self, key: str = "") -> None:
         self.calls.append("end")
+
+    def set_target(self, display_id: int | None) -> None:
+        self.calls.append(f"target:{display_id}")
 
     def activity(self) -> None:
         self.calls.append("activity")
@@ -219,6 +222,14 @@ class TestDarwinGating:
         assert dead.commands == ["grab_begin"]
         assert overlay2.degraded is True
 
+    def test_set_target_names_the_display(self) -> None:
+        transport = RecordingTransport()
+        overlay = DarwinOverlay(spawn=lambda: transport)
+        overlay.set_target(51)
+        overlay.set_target(None)
+        overlay.set_target(-1)
+        assert transport.commands == ["target 51"]
+
     def test_shutdown_closes_transport(self) -> None:
         transport = RecordingTransport()
         overlay = DarwinOverlay(spawn=lambda: transport)
@@ -276,22 +287,30 @@ class TestToolHooks:
         monkeypatch.setattr(backends, "get_backend", lambda: backend)
 
     @pytest.mark.parametrize(
-        "action, act",
+        "action, expected",
         [
-            (lambda: input_control.move_mouse(10, 10), "move"),
-            (lambda: input_control.click(10, 10), "click"),
-            (lambda: input_control.type_text("hello"), "type"),
-            (lambda: input_control.press_keys("ctrl+c"), "press"),
-            (lambda: input_control.scroll(0, 3), "scroll"),
+            (lambda: input_control.move_mouse(10, 10), ["target:1", "activity", "move"]),
+            (lambda: input_control.click(10, 10), ["target:1", "activity", "click"]),
+            (lambda: input_control.type_text("hello"), ["activity", "type"]),
+            (lambda: input_control.press_keys("ctrl+c"), ["activity", "press"]),
+            (lambda: input_control.scroll(0, 3), ["activity", "scroll"]),
         ],
         ids=["move", "click", "type", "press", "scroll"],
     )
     def test_actuation_pokes_activity_first(
-        self, recorder: RecordingOverlay, fake_desktop: None, action: Any, act: str
+        self, recorder: RecordingOverlay, fake_desktop: None, action: Any, expected: list[str]
     ) -> None:
         action()
-        # The glow lights on intent; the backend act follows it.
-        assert recorder.calls == ["activity", act]
+        # A pointer act aims the ring at its display, the glow lights on
+        # intent, and the backend act follows.
+        assert recorder.calls == expected
+
+    def test_pointer_off_every_display_aims_nowhere(
+        self, recorder: RecordingOverlay, fake_desktop: None
+    ) -> None:
+        with pytest.raises(ValueError, match="off-screen"):
+            input_control.move_mouse(5000, 10)
+        assert recorder.calls == ["target:None", "activity"]
 
     def test_refusal_notifies_blocked(
         self, recorder: RecordingOverlay, fake_desktop: None, tmp_path: Path
@@ -324,7 +343,8 @@ class TestToolHooks:
     ) -> None:
         result = capture.capture(max_long_edge=64)
         assert result.png_bytes.startswith(b"\x89PNG")
-        assert recorder.calls == ["grab_begin", "grab", "grab_end"]
+        # The ring moves to the captured display before the grab hides it.
+        assert recorder.calls == ["target:1", "grab_begin", "grab", "grab_end"]
 
     def test_capture_without_overlay_still_works(self, fake_desktop: None) -> None:
         set_overlay(NullOverlay())

@@ -72,7 +72,7 @@ async def test_set_cu_kill_emits_cu_session_false(tmp_path: Path) -> None:
     assert session.cu_session_active is False
     tags = [e for e in session.event_log.all_events if isinstance(e, CuSession)]
     assert tags[-1].active is False
-    assert ("overlay_session", {"active": False}) in mock.calls
+    assert ("overlay_session", {"active": False, "session": sid}) in mock.calls
     runner = daemon.session_registry.get_runner(sid)
     if runner is not None:
         await runner.cancel()

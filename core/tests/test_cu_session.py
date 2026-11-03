@@ -21,7 +21,7 @@ async def test_first_cu_tool_opens_once_and_overlay_is_told() -> None:
     tags = [e for e in session.event_log.all_events if isinstance(e, CuSession)]
     assert len(tags) == 1
     assert tags[0].active is True
-    assert driver.calls == [("overlay_session", {"active": True})]
+    assert driver.calls == [("overlay_session", {"active": True, "session": session.id})]
 
 
 @pytest.mark.asyncio
@@ -44,9 +44,23 @@ async def test_close_emits_false_and_is_idempotent() -> None:
     tags = [e for e in session.event_log.all_events if isinstance(e, CuSession)]
     assert [t.active for t in tags] == [True, False]
     assert driver.calls == [
-        ("overlay_session", {"active": True}),
-        ("overlay_session", {"active": False}),
+        ("overlay_session", {"active": True, "session": session.id}),
+        ("overlay_session", {"active": False, "session": session.id}),
     ]
+
+
+@pytest.mark.asyncio
+async def test_window_only_episode_leaves_the_ring_to_the_acting_copy() -> None:
+    """Grok's own tst-cu-mcp paints its ring; the sidecar must not light one too."""
+    session = Session("/tmp/ws")
+    driver = MockDesktopDriver()
+    session._overlay_session = driver.set_overlay_session
+    await session.open_cu_session("computer-use__click", ring=False)
+    await session.close_cu_session()
+
+    tags = [e for e in session.event_log.all_events if isinstance(e, CuSession)]
+    assert [t.active for t in tags] == [True, False]
+    assert driver.calls == []
 
 
 @pytest.mark.asyncio

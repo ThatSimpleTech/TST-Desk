@@ -294,7 +294,8 @@ second (TD-5223).
 Settings → Computer use (TD-4830) writes `~/.tst-cu-mcp/config.yaml`
 (or `$TST_CU_MCP_CONFIG`): `actuation.enabled`, `mode` (`background` or
 `full_control`), `scoping.denied_apps`, `scoping.unhide_on_finish`. The
-MCP server re-reads that file on each background tool call.
+MCP server re-reads that file on each background tool call, and the real-display
+ring follows `mode` whenever the file changes (TD-5226).
 
 Browser computer-use (TD-1710): `browser` selects the in-process mock
 (CI, never launches Chrome) or Playwright with a persistent profile
@@ -3307,11 +3308,18 @@ proposals for the run summary and never accepts them either. The classifier stil
 not keys in this file. Settings → Appearance persists them as `cu-indicators.yaml` in the
 user data dir (glow and cursor default on; the real-display ring defaults on). Glow and
 the agent cursor are drawn on the Screen pane. The rust ring on the real display
-follows the same `cu_session` open/close tags (TD-3407) on macOS, Windows, and
-Linux X11 — it stays up until the turn ends, you cancel, or the kill-switch
-fires, not for eight seconds after the last click. Wayland has no real-display
-ring. Screenshots hide the ring for the grab so it cannot appear in the frame.
-This is not a second hardware pointer.
+means "an agent has the real screen", so it shows only in `full_control` mode
+(the `mode` in `~/.tst-cu-mcp/config.yaml`, re-read when it changes); in
+`background` mode it stays off on every display (TD-5226). On macOS it lights only
+the display being acted on: the one the last screenshot targeted, or the one
+under the last pointer action, else the primary display. Windows and Linux X11
+still ring every display. For a TST Desk session it follows the `cu_session`
+open/close tags (TD-3407) and stays up while any session's episode is open; a
+client that never sends them (Grok's own copy, another MCP client) lights it on
+each action and it fades 30 seconds after the last one. Stop fades it out within
+about a second, without waiting for the agent's next action. Wayland has no real-display ring. The ring's windows are left out
+of screenshots, and a grab also hides it, so it cannot appear in the frame. This
+is not a second hardware pointer.
 
 **Background**, **Strength**, **Motion** and **Click ripples** (TD-5202) are not keys in this file either.
 Settings → Appearance keeps them per device, like the theme, in the window's local storage:

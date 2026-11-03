@@ -546,7 +546,10 @@ class Session:
         # TD-3407: computer-use episode is open this turn. The overlay
         # callback is the sidecar ring; None on a tombstone or mock-only.
         self.cu_session_active = False
-        self._overlay_session: Callable[[bool], Awaitable[None]] | None = None
+        # (active, session id): the sidecar holds the ring while any
+        # session's episode is open (TD-5226).
+        self._overlay_session: Callable[[bool, str], Awaitable[None]] | None = None
+        self._cu_ring = False
         # TD-4101: unattended runs iterate without a user message.
         # Interactive sessions leave this false and wait on the queue.
         self.autonomy = False
@@ -609,8 +612,14 @@ class Session:
         if self.autonomy_stop_reason is None:
             self.autonomy_stop_reason = reason
 
-    async def open_cu_session(self, tool_name: str) -> None:
-        """Open the computer-use episode on the first CU tool of a turn."""
+    async def open_cu_session(self, tool_name: str, *, ring: bool = True) -> None:
+        """Open the computer-use episode on the first CU tool of a turn.
+
+        ``ring=False`` tags the episode for the window only: the copy of
+        tst-cu-mcp that acts paints the real-display ring itself (Grok's own
+        child does, TD-5226), so the daemon's sidecar must not light a second
+        one on a display it is not acting on.
+        """
         from .local_worker import is_cu_tool
         from .protocol import CuSession
 
@@ -618,8 +627,9 @@ class Session:
             return
         self.cu_session_active = True
         await self.event_log.add(CuSession(session_id=self.id, active=True, seq=1))
-        if self._overlay_session is not None:
-            await self._overlay_session(True)
+        self._cu_ring = ring and self._overlay_session is not None
+        if self._cu_ring and self._overlay_session is not None:
+            await self._overlay_session(True, self.id)
 
     async def close_cu_session(self) -> None:
         """Close the computer-use episode. Idempotent."""
@@ -629,8 +639,9 @@ class Session:
             return
         self.cu_session_active = False
         await self.event_log.add(CuSession(session_id=self.id, active=False, seq=1))
-        if self._overlay_session is not None:
-            await self._overlay_session(False)
+        if self._cu_ring and self._overlay_session is not None:
+            self._cu_ring = False
+            await self._overlay_session(False, self.id)
 
     async def _observe_turn_end(self, event: DaemonEvent, _log: SessionEventLog) -> None:
         """Lower the open-turn count when the loop reports a turn complete."""

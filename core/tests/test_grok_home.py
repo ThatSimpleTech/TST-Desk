@@ -125,9 +125,27 @@ def test_computer_use_mcp_from_command(tmp_path: Path, monkeypatch: pytest.Monke
     assert spec is not None
     assert spec["name"] == "computer-use"
     assert spec["command"] == str(binary.resolve())
-    # A configured command is the daemon's driver too: it paints the ring
-    # from cu_session tags, so this child is told not to.
-    assert spec["env"] == [{"name": "TST_CU_MCP_OVERLAY", "value": "0"}]
+    # The child acts, so it paints its own ring (TD-5226), following the
+    # user's show_on_real_display switch.
+    assert spec["env"] == [{"name": "TST_CU_MCP_OVERLAY", "value": "1"}]
+
+
+def test_computer_use_mcp_follows_the_real_display_switch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tstd.cu_indicators import CuIndicatorPrefs, reset_cu_indicators, set_current_prefs
+
+    monkeypatch.delenv("TST_CU_AGENT_SOCK", raising=False)
+    binary = tmp_path / "tst-cu-mcp"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o755)
+    set_current_prefs(CuIndicatorPrefs(show_on_real_display=False))
+    try:
+        spec = computer_use_mcp(str(binary))
+    finally:
+        reset_cu_indicators()
+    assert spec is not None
+    assert {"name": "TST_CU_MCP_OVERLAY", "value": "0"} in spec["env"]
 
 
 def test_acp_mcp_servers_merges_computer_use(
@@ -165,8 +183,8 @@ def test_computer_use_mcp_finds_checkout_from_workspace(
     spec = computer_use_mcp("", search_from=str(tmp_path / "Documents"))
     assert spec is not None
     assert spec["command"] == str(binary.resolve())
-    # No configured driver means nobody else paints; this child keeps the ring.
-    assert {"name": "TST_CU_MCP_OVERLAY", "value": "0"} not in spec["env"]
+    # Found on disk: same rule, the child paints its own ring.
+    assert {"name": "TST_CU_MCP_OVERLAY", "value": "1"} in spec["env"]
 
 
 def test_open_in_terminal_rejects_control_chars() -> None:

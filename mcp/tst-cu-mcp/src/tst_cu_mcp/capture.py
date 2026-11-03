@@ -123,6 +123,8 @@ def capture(
     displays = list_displays()
     display = select_display(displays, display_index)
     rect = resolve_region(display, region)
+    # The ring follows the display the agent is looking at (TD-5226).
+    get_overlay().set_target(display.display_id)
 
     # The real-display glow must never paint into the frame it signals for.
     # grab_hidden orders the panels out and only returns once they are gone

@@ -60,8 +60,8 @@ class MockDesktopDriver:
     def set_killed(self, killed: bool) -> None:
         self.killed = bool(killed)
 
-    async def set_overlay_session(self, active: bool) -> None:
-        self.calls.append(("overlay_session", {"active": bool(active)}))
+    async def set_overlay_session(self, active: bool, session: str = "") -> None:
+        self.calls.append(("overlay_session", {"active": bool(active), "session": session}))
 
     def _refuse_if_wayland(self) -> None:
         if normalize_cu_platform(self.platform) != "linux":
