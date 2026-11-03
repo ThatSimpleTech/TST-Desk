@@ -19609,3 +19609,57 @@ process. It never removes the file.
   own handler (`on_shortcut`). Quick entry used to build the plugin with a
   single handler, which would have left no room for a second shortcut.
 
+## 2026-11-03 — TD-5226: the ring marks the acted-on display, in full control only (Class B; revises TD-3402 and TD-3407)
+
+**Decision:** The real-display ring means "an agent has the real screen".
+tst-cu-mcp now applies its rules in one platform-neutral controller
+(`overlay/control.py`) in front of the painters, which only light, darken
+and aim.
+
+1. **Full control only.** The ring shows only while the policy file's
+   `mode` is `full_control`. In `background` mode it is dark on every
+   display, even if a background-mode agent falls back to a coordinate
+   tool. The file is re-parsed when its size or mtime changes, so Settings
+   applies to every running client. A file that fails to parse reads as
+   background: a broken edit darkens the ring rather than lighting it. With
+   no file at all a client uses its installed config, whose default is also
+   background.
+2. **One display.** The ring follows the display being acted on: the last
+   screenshot's display, or the display under the last pointer action
+   (move, click, and the scroll that moves first). The macOS helper keeps a
+   panel per screen and lights only the target's, named by its
+   CGDirectDisplayID (`target <id>`); an unknown id or no target yet means
+   the primary display. Windows and Linux X11 still ring every display;
+   aiming them is a follow-up.
+3. **Episodes per session.** `overlay_session` takes the session id. The
+   ring holds while any session's episode is open, so one TST Desk session
+   ending no longer darkens another's.
+4. **Non-bracketing clients fade.** A client that never sends
+   `overlay_session` lights the ring on each action, and it fades 30
+   seconds after the last one. A client that has bracketed once never falls
+   back to this rule, so TST Desk's own ring still lasts exactly as long as
+   the episode.
+5. **Stop is watched, not waited for.** A watcher thread re-checks Stop,
+   the mode and the fade every quarter second. Stop fades the ring out (the
+   helper's normal hide, under a second) and drops a non-bracketing
+   client's claim, so after Resume it takes a new action to light it. TST
+   Desk's own episodes are closed by Stop already (TD-3407).
+6. **The copy that acts paints.** Grok's own tst-cu-mcp child always paints
+   (with the user's `show_on_real_display` switch passed through), and Grok
+   sessions tag their episodes for the window only, so the daemon's sidecar
+   no longer lights a second ring on a display it is not acting on. Before
+   this the child was told not to paint when a command was configured,
+   because nothing ended its ring; rule 4 now does.
+
+**Rationale:** The user works across several displays and could not tell
+which one an agent was on. In background mode nothing takes the screen, so
+a ring there signals something that is not happening. Level-triggered state
+(work out "wanted" on every call and tick, talk to the painter only on a
+change) keeps the watcher and the tool thread from fighting, under one lock.
+
+**Rejected:** ringing every display with the acted-on one brighter (still
+says "everything is taken" in background mode, and two weights of ring read
+as two agents); hiding the ring after a fixed time inside an episode (the
+TD-3407 reason stands: a long think between actions is still the agent
+driving); a stop-file watch inside the AppKit helper (it would need the
+config path and the mode as well; the sidecar already has both).

@@ -13041,6 +13041,32 @@ step 1; elsewhere the binary comes from `binary` or `PATH`.
 
 ---
 
+### TD-5226 — The ring marks the display the agent is acting on, and only in full control
+**Size:** 3 · **Depends on:** TD-3402, TD-3407, TD-5223
+**Status:** In review 2026-11-03.
+
+The ring lit every display at once, so with several monitors it did not say
+which one the agent was working on. It also lit in background mode, where the
+agent works through accessibility calls and never takes the screen. A client
+that never sends the episode bracket (Grok's own copy of tst-cu-mcp, another
+desktop assistant) lit it on its first action and nothing ever put it out: on
+one Mac a ring stayed on all four displays for hours. Grok sessions in the
+packaged app also lit the daemon's sidecar from their episode tags, a second
+ring on a display neither copy was acting on. And one TST Desk session closing
+its episode darkened the ring of another session that was still working.
+
+**Acceptance criteria:**
+- [x] The ring shows only when the policy file's `mode` is `full_control`; in `background` it is dark on every display, and a mode change applies within a quarter second without restarting any client
+- [x] macOS lights only the display being acted on: the last screenshot's display, or the display under the last pointer action; before either, the primary display. Windows and Linux X11 keep ringing every display
+- [x] Episodes are per session: the ring holds while any TST Desk session's episode is open
+- [x] A client that never brackets lights the ring per action, and it fades 30 seconds after the last one
+- [x] Stop fades the ring out within about a second (checked every quarter second), without waiting for the agent's next action; a client that never brackets needs a new action after Resume
+- [x] Grok sessions leave the ring to Grok's own copy, which paints on the display it acts on and follows the user's `show_on_real_display` switch
+- [x] Tests for every rule against a recording painter, each shown to fail with its rule removed (`test_overlay_rules.py`), plus the helper's argument parsing and panel choice
+- [ ] Live on a Mac with several displays: acting on a secondary display rings that display only; background mode shows no ring; screenshots do not contain it; Stop darkens it
+
+---
+
 ### TD-5225 — Reading a window's accessibility tree crashes TST Desk
 **Size:** 2 · **Depends on:** TD-4829
 **Status:** In review 2026-11-02.

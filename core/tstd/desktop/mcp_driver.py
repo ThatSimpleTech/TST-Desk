@@ -50,10 +50,12 @@ class McpDesktopDriver:
     def set_killed(self, killed: bool) -> None:
         self.killed = bool(killed)
 
-    async def set_overlay_session(self, active: bool) -> None:
-        """Tell the sidecar the computer-use episode opened or closed."""
+    async def set_overlay_session(self, active: bool, session: str = "") -> None:
+        """Tell the sidecar one session's computer-use episode opened or closed."""
         try:
-            await self._client.call_tool("overlay_session", {"active": bool(active)})
+            await self._client.call_tool(
+                "overlay_session", {"active": bool(active), "session": session}
+            )
         except Exception:
             return
 

@@ -35,6 +35,7 @@ from tst_cu_mcp.overlay import (
     CMD_HIDE,
     CMD_QUIT,
     CMD_SHOW,
+    CMD_TARGET,
 )
 
 #: ``show``/``hide`` are acked by the helper's reader thread on arrival.
@@ -165,6 +166,10 @@ class DarwinOverlay:
 
     def notify_blocked(self) -> None:
         self._send(CMD_HIDE)
+
+    def set_target(self, display_id: int | None) -> None:
+        if display_id is not None and display_id >= 0:
+            self._send(f"{CMD_TARGET} {int(display_id)}")
 
     @contextmanager
     def grab_hidden(self) -> Iterator[None]:

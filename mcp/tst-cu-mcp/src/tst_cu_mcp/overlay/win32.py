@@ -84,6 +84,10 @@ class Win32Overlay:
     def notify_blocked(self) -> None:
         self.end_session()
 
+    def set_target(self, display_id: int | None) -> None:
+        """Every display keeps its bars; lighting one display is darwin-only so far."""
+        del display_id
+
     @contextmanager
     def grab_hidden(self) -> Iterator[None]:
         with self._lock:

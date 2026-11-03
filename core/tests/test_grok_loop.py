@@ -195,10 +195,8 @@ async def test_grok_loop_tags_the_computer_use_episode(monkeypatch: pytest.Monke
     assert types.index("cu_session") == types.index("tool_call", types.index("tool_call") + 1) + 1
     # Closed at turn end, not at the last tool.
     assert types[types.index("turn_complete") + 1] == "cu_session"
-    assert driver.calls == [
-        ("overlay_session", {"active": True}),
-        ("overlay_session", {"active": False}),
-    ]
+    # The ring is Grok's own child's (TD-5226): the daemon's sidecar stays dark.
+    assert driver.calls == []
     await session.cancel()
     await asyncio.wait_for(task, timeout=2)
 
@@ -237,7 +235,7 @@ async def test_grok_loop_failed_turn_closes_the_episode(monkeypatch: pytest.Monk
     assert done and done[0].failed is True
     tags = [e for e in session.event_log.events_from(1) if isinstance(e, CuSession)]
     assert [t.active for t in tags] == [True, False]
-    assert driver.calls[-1] == ("overlay_session", {"active": False})
+    assert driver.calls == []
     await session.cancel()
     await asyncio.wait_for(task, timeout=2)
 

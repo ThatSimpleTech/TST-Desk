@@ -3,7 +3,9 @@
 One borderless, click-through, topmost panel per display strokes a rust
 ring around the screen edges while computer use is active — same accent
 as tst-desk's Screen-pane glow, so "the agent is driving" reads the same
-in both places. The ring pulses like ``GlowLayer``'s CSS animation, sits
+in both places. Only the panel of the display being acted on is lit
+(``target``); before any target arrives that is the primary display.
+The ring pulses like ``GlowLayer``'s CSS animation, sits
 at the screen-saver window level so it floats above everything, ignores
 mouse events so it can never eat input, and stays up until an explicit hide
 (computer-use session close), not a linger timeout.
@@ -16,6 +18,9 @@ Protocol (one command per stdin line, one ack line per command on stdout):
 
 * ``show`` / ``hide`` — acked by the reader thread the moment they are
   queued; the next tick (~33ms) acts on them.
+* ``target <display-id>`` — light that display's panel instead (a
+  CGDirectDisplayID, the same number as ``NSScreenNumber``). Acked on
+  arrival like ``show``. An unknown id falls back to the primary display.
 * ``grab_begin`` / ``grab_end`` — acked only after the main thread has
   actually ordered the panels out/in. That ordering is the guarantee a
   screenshot capture relies on: between the parent receiving the
@@ -65,9 +70,10 @@ SCREEN_SAVER_WINDOW_LEVEL = 1000
 #: NSEventTypeApplicationDefined — the wake-up that lets stop_ unwind.
 _APPLICATION_DEFINED_EVENT_TYPE = 15
 
-_SHOW, _HIDE, _GRAB_BEGIN, _GRAB_END, _QUIT = (
+_SHOW, _HIDE, _TARGET, _GRAB_BEGIN, _GRAB_END, _QUIT = (
     "show",
     "hide",
+    "target",
     "grab_begin",
     "grab_end",
     "quit",
@@ -77,7 +83,9 @@ _MAIN_THREAD_ACKS = frozenset({_GRAB_BEGIN, _GRAB_END})
 #: Reader-thread patience with the main thread before reporting failure.
 _MAIN_ACK_TIMEOUT = 2.5
 
-Command = tuple[str, threading.Event | None]
+#: (name, argument, ack). The argument is the rest of the line, or "".
+Command = tuple[str, str, threading.Event | None]
+PanelKey = tuple[int, str, int, int, int, int]
 
 
 def main() -> None:
@@ -148,8 +156,10 @@ def _build_controller(commands: queue.Queue[Command]) -> Any:
             if self is None:
                 return None
             self.commands = q
-            # Keyed by (name, frame) so a display change rebuilds its panel.
-            self.panels: dict[tuple[str, int, int, int, int], Any] = {}
+            # Keyed by (display id, name, frame) so a display change rebuilds
+            # its panel. The display id is what ``target`` names.
+            self.panels: dict[PanelKey, Any] = {}
+            self.target: int | None = None
             self.visible = False
             self.grab_depth = 0
             self.last_activity = 0.0
@@ -200,10 +210,12 @@ def _build_controller(commands: queue.Queue[Command]) -> Any:
         def _drain_commands(self) -> None:
             while True:
                 try:
-                    command, ack = self.commands.get_nowait()
+                    command, arg, ack = self.commands.get_nowait()
                 except queue.Empty:
                     return
-                if command == _SHOW:
+                if command == _TARGET:
+                    _retarget(self, _parse_display_id(arg))
+                elif command == _SHOW:
                     self.visible = True
                     self.last_activity = time.monotonic()
                     if self.grab_depth == 0:
@@ -226,9 +238,10 @@ def _build_controller(commands: queue.Queue[Command]) -> Any:
         def rebuild_panels(self) -> None:
             from AppKit import NSScreen
 
-            def _key(screen: Any) -> tuple[str, int, int, int, int]:
+            def _key(screen: Any) -> PanelKey:
                 frame = screen.frame()
                 return (
+                    _screen_number(screen),
                     str(screen.localizedName()),
                     round(frame.origin.x),
                     round(frame.origin.y),
@@ -243,6 +256,12 @@ def _build_controller(commands: queue.Queue[Command]) -> Any:
             for key, screen in wanted.items():
                 if key not in self.panels:
                     self.panels[key] = self._make_panel(screen)
+            # A display that came or went may change which panel is lit.
+            if self.visible and self.grab_depth == 0:
+                self._ensure_front()
+
+        def _lit_keys(self) -> list[PanelKey]:
+            return lit_keys(list(self.panels), self.target)
 
         def _make_panel(self, screen: Any) -> Any:
             from AppKit import (
@@ -287,8 +306,13 @@ def _build_controller(commands: queue.Queue[Command]) -> Any:
         def _ensure_front(self) -> None:
             # orderFrontRegardless, not makeKeyAndOrderFront: the glow may
             # never take focus or interrupt whatever the user is doing.
-            for panel in self.panels.values():
-                panel.orderFrontRegardless()
+            lit = set(self._lit_keys())
+            for key, panel in self.panels.items():
+                if key in lit:
+                    panel.orderFrontRegardless()
+                else:
+                    panel.setAlphaValue_(0.0)
+                    panel.orderOut_(None)
 
         def _hide_panels_now(self) -> None:
             self.fade_alpha = 0.0
@@ -315,8 +339,8 @@ def _build_controller(commands: queue.Queue[Command]) -> Any:
                 else PULSE_MIN + (1.0 - PULSE_MIN) * (0.5 + 0.5 * math.sin(self.phase))
             )
             alpha = self.fade_alpha * pulse
-            for panel in self.panels.values():
-                panel.setAlphaValue_(alpha)
+            for key in self._lit_keys():
+                self.panels[key].setAlphaValue_(alpha)
 
         def _stop_app(self) -> None:
             from AppKit import NSApplication, NSEvent
@@ -339,6 +363,47 @@ def _build_controller(commands: queue.Queue[Command]) -> Any:
             app.postEvent_atStart_(wake, True)
 
     return GlowController.alloc().initWithQueue_(commands)
+
+
+def _retarget(controller: Any, display_id: int | None) -> None:
+    """Light ``display_id``'s panel instead.
+
+    A module function, not a controller method: PyObjC reads a method name
+    without trailing underscores as a zero-argument selector and refuses a
+    method that takes one.
+    """
+    if display_id is None or display_id == controller.target:
+        return
+    controller.target = display_id
+    if controller.visible and controller.grab_depth == 0:
+        controller._ensure_front()
+
+
+def lit_keys(keys: list[PanelKey], target: int | None) -> list[PanelKey]:
+    """The target display's panel, else the primary display's.
+
+    NSScreen.screens() lists the primary (menu-bar) display first and the
+    panel dict keeps that order, so the first key is the fallback.
+    """
+    chosen = [key for key in keys if key[0] == target]
+    return chosen or keys[:1]
+
+
+def _screen_number(screen: Any) -> int:
+    """The CGDirectDisplayID AppKit stores as ``NSScreenNumber``; -1 if absent."""
+    try:
+        return int(screen.deviceDescription()["NSScreenNumber"])
+    except Exception:
+        return -1
+
+
+def _parse_display_id(arg: str) -> int | None:
+    """``target``'s argument: a non-negative display id, else ``None``."""
+    try:
+        value = int(arg.strip())
+    except ValueError:
+        return None
+    return value if value >= 0 else None
 
 
 def _rust() -> tuple[float, float, float]:
@@ -370,23 +435,23 @@ def _read_stdin(commands: queue.Queue[Command]) -> None:
     """
     try:
         for line in sys.stdin:
-            command = line.strip()
+            command, _, arg = line.strip().partition(" ")
             if not command:
                 continue
             if command in _MAIN_THREAD_ACKS:
                 ack: threading.Event = threading.Event()
-                commands.put((command, ack))
+                commands.put((command, arg, ack))
                 print("ok" if ack.wait(_MAIN_ACK_TIMEOUT) else "err", flush=True)
             elif command == _QUIT:
-                commands.put((_QUIT, None))
+                commands.put((_QUIT, "", None))
                 return
             else:
-                commands.put((command, None))
+                commands.put((command, arg, None))
                 print("ok", flush=True)
     except Exception:
         pass
     finally:
-        commands.put((_QUIT, None))
+        commands.put((_QUIT, "", None))
 
 
 if __name__ == "__main__":

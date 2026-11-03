@@ -393,10 +393,10 @@ async def grok_loop(
                     seq=1,
                 )
             )
-            # Same episode tags as the native loop (TD-3407): the pane glow
-            # and the daemon's real-display ring follow cu_session, which
-            # is the only thing that can close them on this engine.
-            await session.open_cu_session(name)
+            # Same episode tags as the native loop (TD-3407) for the pane
+            # glow. The real-display ring is Grok's own tst-cu-mcp child's:
+            # it acts, so it knows the display (TD-5226).
+            await session.open_cu_session(name, ring=False)
             after_tool = True
             return
         if kind == "tool_call_update":

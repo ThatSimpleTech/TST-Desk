@@ -235,9 +235,6 @@ def computer_use_mcp(
         import shlex
 
         argv = shlex.split(cu_command)
-    # A configured command is also the daemon's own driver, which paints
-    # the real-display ring from cu_session tags; this child must not.
-    configured = bool(argv)
     if not argv:
         from .desktop.factory import packaged_cu_argv
 
@@ -260,11 +257,11 @@ def computer_use_mcp(
         "name": "computer-use",
         "command": str(binary.resolve()),
         "args": argv[1:],
-        "env": _host_env(argv, paint=not configured),
+        "env": _host_env(argv),
     }
 
 
-def _host_env(argv: list[str], *, paint: bool = True) -> list[dict[str, str]]:
+def _host_env(argv: list[str]) -> list[dict[str, str]]:
     env: list[dict[str, str]] = []
     from .cu_host import SOCK_ENV
 
@@ -273,10 +270,12 @@ def _host_env(argv: list[str], *, paint: bool = True) -> list[dict[str, str]]:
         env.append({"name": SOCK_ENV, "value": sock})
     if argv and Path(argv[0]).name.startswith("tstd") and "--cu-mcp" in argv[1:]:
         env.append({"name": "TST_CU_MCP_HOST", "value": "1"})
-    if not paint:
-        # Nothing tells this child when a turn ends, so a ring it lit would
-        # linger; the daemon's driver paints and closes it instead.
-        env.append({"name": OVERLAY_ENV, "value": "0"})
+    # This child acts, so it paints the ring on the display it acts on; Grok
+    # sessions do not light the daemon's sidecar (TD-5226). With no episode
+    # bracket its ring fades on idle. The user's switch still applies.
+    from .cu_indicators import current_prefs
+
+    env.append({"name": OVERLAY_ENV, "value": "1" if current_prefs().show_on_real_display else "0"})
     return env
 
 

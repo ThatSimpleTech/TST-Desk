@@ -457,13 +457,14 @@ def build_server() -> MCPServer:
             ),
             structured_output=False,
         )
-        def overlay_session(active: bool) -> dict[str, Any]:
+        def overlay_session(active: bool, session: str = "") -> dict[str, Any]:
             from tst_cu_mcp.overlay import get_overlay
 
+            # One episode per client session: the ring holds while any is open.
             if active:
-                get_overlay().begin_session()
+                get_overlay().begin_session(session)
             else:
-                get_overlay().end_session()
+                get_overlay().end_session(session)
             return {"active": bool(active)}
 
     @server.tool(

@@ -50,15 +50,15 @@ class InProcessDesktopDriver:
         else:
             os.environ.pop(_STOP_ENV, None)
 
-    async def set_overlay_session(self, active: bool) -> None:
+    async def set_overlay_session(self, active: bool, session: str = "") -> None:
         try:
             from tst_cu_mcp.overlay import get_overlay
 
             overlay = get_overlay()
             if active:
-                overlay.begin_session()
+                overlay.begin_session(session)
             else:
-                overlay.end_session()
+                overlay.end_session(session)
         except Exception:
             return
 

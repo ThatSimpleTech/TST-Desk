@@ -15,7 +15,8 @@ guard, because it never gets the chance to forget them.
 Immediately after the kill-switch passes, every action pings
 :func:`tst_cu_mcp.overlay.get_overlay` so the real-display glow tracks the
 attempt — including attempts that then fail validation, which are still the
-agent driving. A refusal from the backend itself — the OS said no, as with a
+agent driving. A pointer action first aims the glow at the display under its
+point. A refusal from the backend itself — the OS said no, as with a
 missing Accessibility grant — puts the glow out again
 (:func:`tst_cu_mcp.safety.notify_blocked`): nothing was driven.
 
@@ -58,6 +59,25 @@ def _actuate(act: Callable[..., None], *args: Any) -> None:
     except Exception:
         safety.notify_blocked()
         raise
+
+
+def display_at(x: float, y: float) -> int | None:
+    """The id of the display containing the global point, or ``None``."""
+    for display in list_displays():
+        if display.x <= x < display.x + display.width and (
+            display.y <= y < display.y + display.height
+        ):
+            return display.display_id
+    return None
+
+
+def _aim_overlay(x: float, y: float) -> None:
+    """Point the ring at the display this pointer action lands on."""
+    try:
+        target = display_at(x, y)
+    except Exception:
+        return
+    get_overlay().set_target(target)
 
 
 def _display_bounds_union() -> tuple[int, int, int, int] | None:
@@ -108,6 +128,7 @@ def cursor_position() -> tuple[int, int]:
 def move_mouse(x: float, y: float, expect_window: str | None = None) -> None:
     """Move the cursor to a global coordinate."""
     safety.ensure_actuation_allowed()
+    _aim_overlay(x, y)
     get_overlay().activity()
     assert_on_screen(x, y)
     assert_foreground(expect_window)
@@ -123,6 +144,7 @@ def click(
 ) -> None:
     """Click at a global coordinate. ``count`` >= 2 produces a multi-click."""
     safety.ensure_actuation_allowed()
+    _aim_overlay(x, y)
     get_overlay().activity()
     if button not in MOUSE_BUTTONS:
         raise ValueError(f"unknown button {button!r}; use one of {MOUSE_BUTTONS}")
