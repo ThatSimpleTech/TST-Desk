@@ -2,7 +2,8 @@
 # Packaged-sidecar smoke on a clean macOS guest (TD-4906).
 #
 # Run on macOS after `npm run tauri:build` in ui/. Proves the bundled sidecar
-# serves with no Python on PATH, then runs the protocol stranger loop
+# serves with no Python on PATH, that agent-desktop and its helper ship signed
+# beside it (TD-5228), then runs the protocol stranger loop
 # (mock OpenAI → local preset → fs_write → reply) and a keychain probe.
 #
 # Usage: smoke_macos_bundle.sh [path-to-.app]
@@ -46,6 +47,18 @@ kill "$PID" 2>/dev/null || true
 wait "$PID" 2>/dev/null || true
 echo "sidecar ok: $(cat "$DATA/d/port.json")"
 
+echo "== agent-desktop beside tstd (TD-5228) =="
+AD="$APP/Contents/MacOS/agent-desktop"
+AD_HELPER="$APP/Contents/MacOS/agent-desktop-macos-helper"
+test -x "$AD"
+test -x "$AD_HELPER"
+codesign -v "$AD"
+codesign -v "$AD_HELPER"
+"$AD" version | grep -q '"version":"1.0.2"'
+test -f "$APP/Contents/Resources/licenses/LICENSE"
+test -f "$APP/Contents/Resources/licenses/NOTICE"
+echo "agent-desktop ok: $("$AD" version)"
+
 echo "== protocol E2E (bundled tstd + loopback mock) =="
 WS=$(mktemp -d)
 export HOME="$DATA/home"
@@ -79,4 +92,4 @@ kill "$DAEMON" 2>/dev/null || true
 wait "$DAEMON" 2>/dev/null || true
 kill "$MOCK" 2>/dev/null || true
 wait "$MOCK" 2>/dev/null || true
-echo "clean macOS guest: sidecar + protocol E2E + keychain probe ok"
+echo "clean macOS guest: sidecar + agent-desktop + protocol E2E + keychain probe ok"

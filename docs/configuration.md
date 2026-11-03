@@ -343,11 +343,13 @@ Vercel Labs' [`agent-desktop`](https://github.com/vercel-labs/agent-desktop)
 CLI (Apache-2.0), release 1.0.2, which TST Desk runs as a short-lived
 child per command. Nothing listens on a socket.
 
-The Linux packages (AppImage and deb, x86_64 and aarch64) carry that
-binary and its `agent-desktop-linux-clipboard-owner` helper beside the
-daemon, so there `binary` can stay empty. On macOS and Windows nothing is
-bundled yet: install the 1.0.2 release yourself and set `binary`, or put
-it on `PATH`. The tools stay off until `enabled` is on.
+The Linux packages (AppImage and deb, x86_64 and aarch64) and the macOS
+app (Apple silicon and Intel) carry that binary and its helper
+(`agent-desktop-linux-clipboard-owner` on Linux,
+`agent-desktop-macos-helper` on macOS) beside the daemon, so there
+`binary` can stay empty. On Windows nothing is bundled yet: install the
+1.0.2 release yourself and set `binary`, or put it on `PATH`. The tools
+stay off until `enabled` is on.
 
 The coordinate tools stay. Browsers, canvases, remote desktops and TST
 Desk's own window expose little or nothing to the accessibility tree.
@@ -370,8 +372,8 @@ effect when the daemon restarts.
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `enabled` | bool | `false` | Lists the four tools. Off, they are not offered to the model. |
-| `binary` | string | *empty* | Path to the `agent-desktop` binary. Empty uses the copy beside the packaged daemon (bundled in the Linux packages), then `PATH`. |
-| `sha256` | string | *empty* | The binary's SHA-256 (64 hex characters). Empty accepts only the pinned 1.0.2 release binaries, except the copy shipped inside the app package, which runs as is (the AppImage tool rewrites the binaries it packs). A binary that does not match is never run. |
+| `binary` | string | *empty* | Path to the `agent-desktop` binary. Empty uses the copy beside the packaged daemon (bundled in the Linux packages and the macOS app), then `PATH`. |
+| `sha256` | string | *empty* | The binary's SHA-256 (64 hex characters). Empty accepts only the pinned 1.0.2 release binaries, except the copy shipped inside the app package, which runs as is (the AppImage tool rewrites the binaries it packs, and the macOS app signs them with its own signature). A binary that does not match is never run. |
 | `timeout_seconds` | float > 0 | `20` | How long one CLI command may run. |
 | `max_snapshot_chars` | int ≥ 1000 | `12000` | Cap on one snapshot's text. A larger window comes back as a shallow skeleton, and `root=<ref>` opens one branch. |
 
@@ -382,6 +384,10 @@ computer_use:
     enabled: true
     binary: /opt/agent-desktop/agent-desktop
 ```
+
+On macOS the bundled CLI runs as part of TST Desk, so it uses TST Desk's
+own Accessibility permission (System Settings → Privacy & Security →
+Accessibility); it has no entry of its own.
 
 On Linux the apps must be on the AT-SPI accessibility bus. A desktop
 host that sets `NO_AT_BRIDGE=1` keeps apps off it; TST Desk removes that

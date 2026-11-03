@@ -121,6 +121,17 @@ jobs:
           for i in $(seq 1 100); do [ -f "$DATA2/port.json" ] && break; sleep 0.1; done
           kill $PID2 || true
           test -f "$DATA2/port.json"
+          # TD-5228: the pinned agent-desktop CLI and its helper sit beside
+          # tstd, signed along with the app (ad-hoc here, run-tauri.mjs), and
+          # the CLI runs from there. Signing changes the bytes, so the release
+          # digest is not checked here; the daemon trusts the packaged copy
+          # (TD-5222).
+          AD="$APP/Contents/MacOS/agent-desktop"
+          test -x "$APP/Contents/MacOS/agent-desktop-macos-helper"
+          codesign -v "$AD"
+          codesign -v "$APP/Contents/MacOS/agent-desktop-macos-helper"
+          "$AD" version | grep -q '"version":"1.0.2"'
+          ls "$APP/Contents/Resources/licenses/LICENSE" "$APP/Contents/Resources/licenses/NOTICE"
 
       - name: Smoke the bundled sidecar (Linux)
         if: runner.os == 'Linux'

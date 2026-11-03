@@ -26,7 +26,9 @@ The accessibility desktop tools (computer_use.accessibility, TD-5220) run
 the unmodified agent-desktop command-line tool, release 1.0.2, as a separate
 process. This repository does not include its source or binaries. The Linux
 packages (AppImage, deb) ship the unmodified release binaries agent-desktop
-and agent-desktop-linux-clipboard-owner, downloaded at build time and
-checked against pinned SHA-256 digests (TD-5221), together with this notice
-and a copy of the Apache License, Version 2.0 (licenses/LICENSE and
+and agent-desktop-linux-clipboard-owner, and the macOS app ships
+agent-desktop and agent-desktop-macos-helper, re-signed with the app's own
+code signature. All are downloaded at build time and checked against pinned
+SHA-256 digests (TD-5221, TD-5228), and ship together with this notice and a
+copy of the Apache License, Version 2.0 (licenses/LICENSE and
 licenses/NOTICE in the installed app's resources).

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "externalBin": [
+      "binaries/tstd",
+      "binaries/agent-desktop",
+      "binaries/agent-desktop-macos-helper"
+    ],
+    "resources": {
+      "../LICENSE": "licenses/LICENSE",
+      "../NOTICE": "licenses/NOTICE"
+    }
+  }
+}

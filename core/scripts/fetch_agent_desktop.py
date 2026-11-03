@@ -1,25 +1,28 @@
-"""Fetch the pinned agent-desktop CLI for the Linux package (TD-5221).
+"""Fetch the pinned agent-desktop CLI for the Linux and macOS packages (TD-5221, TD-5228).
 
     uv run python scripts/fetch_agent_desktop.py [--triple T] [--archive FILE]
 
-Downloads the ``agent-desktop`` release archive for one Linux target, checks
-the archive and both files inside it against pinned SHA-256 digests, and
-writes them as Tauri ``externalBin`` sidecars:
+Downloads the ``agent-desktop`` release archive for one Linux or macOS
+target, checks the archive and both files inside it against pinned SHA-256
+digests, and writes them as Tauri ``externalBin`` sidecars:
 
     shell/binaries/agent-desktop-<triple>
-    shell/binaries/agent-desktop-linux-clipboard-owner-<triple>
+    shell/binaries/<helper>-<triple>
 
-The bundler drops the triple, so both land beside ``tstd`` in the package,
-which is where the CLI looks for its helper and where the daemon looks for
-the CLI. Any digest mismatch fails the build. Nothing here runs in the app:
-the packaged app never downloads.
+where the helper is ``agent-desktop-linux-clipboard-owner`` on Linux and
+``agent-desktop-macos-helper`` on macOS. The bundler drops the triple, so
+both land beside ``tstd`` in the package, which is where the CLI looks for
+its helper and where the daemon looks for the CLI. On macOS the bundler
+signs both with the app's identity, and they run as children of TST Desk,
+so their Accessibility use is TST Desk's own; the files written here stay
+as released. Any digest mismatch fails the build. Nothing here runs in the
+app: the packaged app never downloads.
 
 Files already in place with the pinned digests are kept, so a rebuild needs
 no network. ``--archive`` uses a local copy of the archive instead of
 downloading it; it is checked the same way.
 
-Only Linux is bundled for now. macOS needs the helper signed with the app
-and its Accessibility grant (TD-4823); Windows has no live test yet.
+Windows is not bundled yet: it has no live test.
 """
 
 from __future__ import annotations
@@ -41,7 +44,9 @@ CORE = Path(__file__).resolve().parent.parent
 BINARIES = CORE.parent / "shell" / "binaries"
 
 CLI = "agent-desktop"
-HELPER = "agent-desktop-linux-clipboard-owner"
+LINUX_HELPER = "agent-desktop-linux-clipboard-owner"
+#: The CLI accepts this helper only under exactly this name, beside itself.
+MACOS_HELPER = "agent-desktop-macos-helper"
 
 URL = (
     "https://github.com/vercel-labs/agent-desktop/releases/download/"
@@ -52,6 +57,8 @@ URL = (
 ARCHIVE_SHA256: Mapping[str, str] = {
     "x86_64-unknown-linux-gnu": "ad661b7a3fd8f990a769243f4889a240ca0e2c8dab3ef5bddd6019086c71e0b4",
     "aarch64-unknown-linux-gnu": "864cb782e0afc8bf0df19622016b24bdbd1a83fc7749f784ee82aa49a7f845eb",
+    "aarch64-apple-darwin": "7bee385196d7b478de80cf05ca4304aaa38f0eba593b3406ad3c247c1773be19",
+    "x86_64-apple-darwin": "8edda6df17eafc042395502a823dbb8415bc8ac14835a6731e4d8becc9cb4121",
 }
 
 #: SHA-256 of the clipboard helper inside each archive above. The CLI's own
@@ -59,6 +66,8 @@ ARCHIVE_SHA256: Mapping[str, str] = {
 HELPER_SHA256: Mapping[str, str] = {
     "x86_64-unknown-linux-gnu": "bf17de139902724e86b3616970b7b7f16f5f1fb4143910b532a38dd2182720fa",
     "aarch64-unknown-linux-gnu": "dcd6f2ce9a0e92e42f4d2ee9161ea1b9f2b11c0e4b1878119a19c0a2db3630a6",
+    "aarch64-apple-darwin": "522829116cb006b5770c6a82b361f466a4775f794d6af4083e75231a2d6bb551",
+    "x86_64-apple-darwin": "ce52467818ac601ae1145a0b9ecaa14aaf04d2e72d24cf6d29d26757340f9c6b",
 }
 
 #: The archives are about 3.4 MB; anything far larger is not the release.
@@ -77,16 +86,21 @@ def bundled(triple: str) -> bool:
     return triple in ARCHIVE_SHA256
 
 
+def helper_name(triple: str) -> str:
+    """The helper the CLI starts on *triple*'s platform."""
+    return MACOS_HELPER if triple.endswith("-apple-darwin") else LINUX_HELPER
+
+
 def expected(triple: str) -> dict[str, str]:
     """File name inside the archive → its pinned SHA-256."""
     if not bundled(triple):
         raise FetchError(f"no pinned agent-desktop {PINNED_RELEASE} archive for {triple}")
-    return {CLI: PINNED_SHA256[triple], HELPER: HELPER_SHA256[triple]}
+    return {CLI: PINNED_SHA256[triple], helper_name(triple): HELPER_SHA256[triple]}
 
 
 def sidecar_paths(triple: str, binaries: Path = BINARIES) -> dict[str, Path]:
     """Where each file lands: Tauri's ``externalBin`` name-triple convention."""
-    return {name: binaries / f"{name}-{triple}" for name in (CLI, HELPER)}
+    return {name: binaries / f"{name}-{triple}" for name in (CLI, helper_name(triple))}
 
 
 def _sha256(data: bytes) -> str:

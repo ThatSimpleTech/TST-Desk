@@ -13037,7 +13037,39 @@ and headless type, toggle and click with no pointer movement.
 
 **Not in this story:** shipping the binary as a per-platform sidecar in the
 packaged app (TD-5221, below). The Linux packages carry it since TD-5221
-step 1; elsewhere the binary comes from `binary` or `PATH`.
+step 1 and the Mac app since TD-5228; on Windows the binary comes from
+`binary` or `PATH`.
+
+---
+
+### TD-5228 — The Mac app ships agent-desktop
+**Size:** 3 · **Depends on:** TD-5221
+**Status:** In review 2026-11-03. The live check runs separately against a signed build.
+
+This is TD-5221 step 2. The TD-5220 tools only worked on a Mac when the
+user installed the `agent-desktop` CLI and set `binary`. The macOS app
+(Apple silicon and Intel) now carries the pinned 1.0.2 CLI and
+`agent-desktop-macos-helper` beside `tstd`, fetched at build time by URL
+and pinned digest, the same way the Linux packages do. Tauri's bundler
+signs both with the app's identity. The tools stay off by default.
+
+**Acceptance criteria:**
+- [x] The build downloads the 1.0.2 archive for `aarch64-apple-darwin` and `x86_64-apple-darwin`, checks it against digests copied from the release's `checksums.txt`, checks the CLI against `ax_cli.PINNED_SHA256` and the helper against its own pin, and reads only those two members; any mismatch fails the build and writes nothing (`test_fetch_agent_desktop.py`; a real fetch on an Apple silicon Mac wrote both files with their pinned digests, and the Intel pins match the real Intel archive)
+- [x] `build_sidecar.py` fetches them on macOS hosts in both normal and `--if-missing` modes (`test_build_fails_without_a_pin`, `test_if_missing_still_fetches_where_the_package_carries_it`; also run for real in `--if-missing` mode on a Mac)
+- [x] `shell/tauri.macos.conf.json` bundles both beside `tstd` and ships `licenses/LICENSE` and `licenses/NOTICE`; a test checks it keeps every shared `externalBin` entry and names only the macOS helper. Tauri drops the triple, so the helper lands under the exact name the CLI looks for beside itself
+- [x] The package workflow and `smoke_macos_bundle.sh` check that both files are present and signed, that the CLI's `version` is 1.0.2, and that the licence files ship; `install-macos.sh` refuses a bundle where either file is not certificate-signed (each check run against a hand-made bundle)
+- [ ] A signed build carries both files with the app's certificate signature (Tauri 2.11.4's bundler signs every `externalBin` with the app's identity before the app)
+- [ ] Live on macOS: desktop_windows, desktop_snapshot, desktop_act and desktop_launch work from the packaged app with `binary` empty, and Accessibility is attributed to TST Desk with no separate prompt
+
+**Notes:** In 1.0.2 the CLI starts `agent-desktop-macos-helper` only for
+its clipboard commands, which the four tools do not use; it accepts the
+helper only beside itself, owned by the user, with no folder above it
+writable by others, so under the group-writable `/Applications` those
+commands would refuse. Seen on a managed Mac: 1.0.2's `list-windows` with
+no app filter refuses with `PERM_DENIED` (`process_identity_permission`)
+when a root-owned process has a window on screen, while `--app <name>`
+works. That is upstream, and it affects `desktop_windows` without `app`
+on such a Mac whether or not the CLI is bundled.
 
 ---
 
@@ -13162,7 +13194,7 @@ deb-only smoke passed.
 
 ### TD-5221 — Ship agent-desktop as a per-platform sidecar
 
-**Size:** 3 · **Depends on:** TD-5220, TD-1725 · **Status:** In progress (step 1, Linux, done)
+**Size:** 3 · **Depends on:** TD-5220, TD-1725 · **Status:** In progress (step 1, Linux, done; step 2, macOS, is TD-5228)
 
 TD-5220 runs a user-supplied binary. The packaged app should carry the
 pinned release beside `tstd` for each of the five package targets (the
@@ -13192,13 +13224,13 @@ files' digests (the CLI's is `ax_cli.PINNED_SHA256`), and writes them as
       workflow runs `agent-desktop version` from the extracted deb.
 - [x] Linux: the licence and NOTICE ship in the bundle.
 
-**Step 2 — macOS (follow-up).** Needs a live test on a real Mac first,
-including the Accessibility permission prompt.
+**Step 2 — macOS.** Built as TD-5228 (above), which carries the live
+check on a real Mac, including the Accessibility permission.
 
 - [ ] macOS: the CLI and `agent-desktop-macos-helper` are signed with the
       app, and Accessibility permission is attributed to the process TCC
       sees through TST Desk's existing host (TD-4823), with no separate
-      prompt.
+      prompt. Ticks with TD-5228's live criterion.
 
 **Step 3 — Windows (later, on demand).**
 
