@@ -1,7 +1,7 @@
 //! Computer-use actuator in the TST Desk host process.
 //!
 //! Checkout Python and the `tstd` sidecar are the wrong TCC identity.
-//! Capture (`CGWindowListCreateImage`) and input (`CGEventPost`) run here so
+//! Capture (`cu_capture`) and input (`CGEventPost`) run here so
 //! System Settings attributes both to **TST Desk**, not a helper named
 //! `tst-desk` / `tstd`. The protocol matches `core/tstd/cu_host.py` so
 //! Darwin `tst-cu-mcp` stays a Unix-socket client.
@@ -274,7 +274,6 @@ mod macos {
     const K_CG_MOUSE_BUTTON_LEFT: u32 = 0;
     const K_CG_MOUSE_BUTTON_RIGHT: u32 = 1;
     const K_CG_MOUSE_EVENT_CLICK_STATE: u32 = 1;
-    const K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY: u32 = 1;
     const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
     const K_CG_SCROLL_EVENT_UNIT_LINE: u32 = 0;
 
@@ -363,18 +362,6 @@ mod macos {
     }
 
     #[repr(C)]
-    struct CGSize {
-        width: f64,
-        height: f64,
-    }
-
-    #[repr(C)]
-    struct CGRect {
-        origin: CGPoint,
-        size: CGSize,
-    }
-
-    #[repr(C)]
     struct CFDictionaryKeyCallBacks {
         version: isize,
         retain: *const c_void,
@@ -410,12 +397,6 @@ mod macos {
         fn CGEventSetFlags(event: *mut c_void, flags: u64);
         fn CGEventKeyboardSetUnicodeString(event: *mut c_void, length: u32, string: *const u16);
         fn CGEventPost(tap: u32, event: *mut c_void);
-        fn CGWindowListCreateImage(
-            rect: CGRect,
-            list_option: u32,
-            window_id: u32,
-            image_option: u32,
-        ) -> *mut c_void;
         fn CGImageGetWidth(image: *mut c_void) -> usize;
         fn CGImageGetHeight(image: *mut c_void) -> usize;
         fn CGPreflightScreenCaptureAccess() -> u8;
@@ -912,27 +893,15 @@ mod macos {
         if w <= 0 || h <= 0 {
             return None;
         }
+        let owned = crate::cu_capture::screen_image(
+            f64::from(x),
+            f64::from(y),
+            f64::from(w),
+            f64::from(h),
+        )?;
+        let image = owned.as_ptr();
         unsafe {
-            let image = CGWindowListCreateImage(
-                CGRect {
-                    origin: CGPoint {
-                        x: f64::from(x),
-                        y: f64::from(y),
-                    },
-                    size: CGSize {
-                        width: f64::from(w),
-                        height: f64::from(h),
-                    },
-                },
-                K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY,
-                0,
-                0,
-            );
-            if image.is_null() {
-                return None;
-            }
             if CGImageGetWidth(image) < 1 || CGImageGetHeight(image) < 1 {
-                CFRelease(image);
                 return None;
             }
             let uti = CFStringCreateWithCString(
@@ -976,7 +945,6 @@ mod macos {
             if !uti.is_null() {
                 CFRelease(uti);
             }
-            CFRelease(image);
             png
         }
     }

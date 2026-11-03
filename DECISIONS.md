@@ -19717,3 +19717,90 @@ signing them in `build_sidecar.py` before bundling (the bundler re-signs
 every `externalBin` anyway, and the files in `shell/binaries/` would stop
 matching their pins); bumping to agent-desktop 1.1.0, released the same
 day (the tools were built and tested against 1.0.2).
+
+## 2026-11-03 — TD-5227: each agent has its own cursor on the real display (Class B; replaces the TD-3402 cursor rule)
+
+**Decision:** TD-3402 decided the agent cursor is a CSS overlay on the Screen
+pane only, never on the real display. That rule is replaced: every
+computer-use agent now also has its own drawn cursor on the real display,
+with its own color and label. The Screen-pane cursor stays as it was.
+
+1. **Two renderers, one identity.**
+   - tst-cu-mcp's overlay helper (macOS) draws one small panel per agent:
+     an arrow in the agent's color and a pill with its label. It is the same
+     kind of window as the ring: borderless, click-through, never takes
+     focus, joins every space, one level above the ring, and
+     `NSWindowSharingNone`, so no screenshot contains it (it is also ordered
+     out during a grab). It goes to the agent's last move, click (with a
+     short ring), or background element action (the acted element's centre,
+     from the frame the host's `ui_act` now returns). This covers every
+     tst-cu-mcp client: TST Desk's sessions, Grok's own copy, any other MCP
+     client.
+   - agent-desktop's own presentation-only multi-agent cursor draws for the
+     element tools (`desktop_act` and the rest), which never go through
+     tst-cu-mcp. TST Desk runs one agent-desktop session per daemon run
+     (`session start --cursor --multi-agent --no-trace`) and enables each
+     TST Desk session as an agent with the same label and color.
+2. **Who is an agent.** One tst-cu-mcp process, labelled from its MCP
+   client's `clientInfo.name` ("Claude", "Grok", ...), or one TST Desk
+   session, labelled "TST Desk · <chat title>". The daemon's sessions share
+   one sidecar, so the driver names the acting session with the internal
+   `overlay_agent` tool before each pointer action, under one lock; the
+   session is known from a context variable the session loop sets.
+3. **Colors.** A machine-wide slot registry: slot N is a lock file under the
+   policy folder's `agents/`, held with a non-blocking `flock` by the process
+   that claimed it, released by the OS when that process exits. Eight
+   colors, none close to the rust ring; past eight live agents a color
+   repeats and the label still tells them apart. TST Desk takes each
+   session's color from the sidecar and hands it to agent-desktop.
+4. **What "separate cursor" means in each mode.** The drawn cursor is a
+   window. No cursor API is called and the hardware pointer is never moved
+   or replaced by it.
+   - **background**: agents act through accessibility (tst-cu-mcp's
+     `ui_action`, agent-desktop's headless actions). Your pointer does not
+     move at all. Each agent's drawn cursor is the only on-screen sign of
+     where it is working. No ring (TD-5226).
+   - **full_control**: the coordinate tools still move the real pointer,
+     because a synthesized click lands under it; there is one system
+     pointer and agents share it with you. Here the separate cursor marks
+     where each agent last acted, in its own color and label, so several
+     agents can be told apart even though the real pointer only shows
+     whoever moved it last. agent-desktop hides its own cursor during
+     physical (`--headed`) input. The ring marks the display being acted on.
+5. **Switches.** `cu-indicators.yaml` stays the source of truth. The daemon
+   mirrors "Show on the real display" and "Agent cursor" into the shared
+   policy file as `overlay.enabled` and `overlay.cursor`; every tst-cu-mcp
+   client re-reads them when the file changes, so the switches apply to
+   clients TST Desk did not start. agent-desktop's cursor follows the same
+   two switches.
+6. **Idle and Stop.** A drawn cursor fades out 10 s after its agent's last
+   action; agent-desktop uses its own fade. Stop hides every drawn cursor
+   within a quarter second (the TD-5226 watcher) and disables
+   agent-desktop's overlay for the whole session, which removes every one of
+   its cursors. They return on the next action after Resume.
+7. **Reduced motion.** The drawn cursor jumps instead of gliding and does
+   not ring on a click. agent-desktop reads the same system setting itself
+   (its 1.0.2 source checks `accessibilityDisplayShouldReduceMotion`).
+8. **Screenshots.** agent-desktop's cursor windows are ordinary capturable
+   windows (1.0.2, and upstream head at the time of writing). TST Desk's
+   capture therefore builds its image from the on-screen windows minus any
+   owned by `agent-desktop` (`CGWindowListCreateImageFromArray`); with none
+   on screen it uses the plain capture as before. Screenshots taken by
+   other apps can still show agent-desktop's cursor until upstream marks
+   those windows non-shareable.
+9. **Platforms.** The drawn cursor is macOS-only for now; the Windows and
+   Linux painters ignore it. agent-desktop's cursor works wherever its
+   overlay does.
+
+**Rejected:** agent-desktop's cursor alone (it follows only its own tools,
+which are off by default and are not what Grok, other clients or the
+coordinate tools use, and its windows are capturable); the drawn cursor
+alone (the element tools act outside tst-cu-mcp, and agent-desktop already
+draws there with travel and an element highlight); moving the hardware
+pointer to show an agent (it would fight the user and the other agents);
+one sidecar per session to tell sessions apart (a process per chat for an
+identity the lock-guarded `overlay_agent` call already gives).
+
+**Known limits:** an agent that alternates between a coordinate tool and an
+element tool can show two cursors with its color and label for up to 10 s;
+on Windows and Linux only agent-desktop's cursor exists.

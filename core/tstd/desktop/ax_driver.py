@@ -18,12 +18,15 @@ from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..cu_policy import CuPolicy, load_cu_policy
 from . import ax_tree
 from .ax_cli import AgentDesktopCli
 from .protocol import DesktopError
+
+if TYPE_CHECKING:
+    from .ax_cursor import AxCursor
 
 #: desktop_act action → CLI command, and whether it takes a value.
 ACTIONS: dict[str, tuple[str, bool]] = {
@@ -97,8 +100,19 @@ class AccessibilityDriver:
     def set_killed(self, killed: bool) -> None:
         self.killed = bool(killed)
 
+    def attach_cursor(self, cursor: AxCursor) -> None:
+        """Draw agent-desktop's per-agent cursor for these tools (TD-5227)."""
+        self._cli.cursor = cursor
+
+    async def cursor_off(self) -> None:
+        """Remove every agent's cursor now (Stop, or a switch turned off)."""
+        if self._cli.cursor is not None:
+            await self._cli.cursor.off(self._cli)
+
     async def aclose(self) -> None:
-        """Nothing to reap: each command is its own short-lived process."""
+        """End the cursor session, if one was started; commands leave nothing else."""
+        if self._cli.cursor is not None:
+            await self._cli.cursor.end(self._cli)
 
     # -- policy -----------------------------------------------------------
 

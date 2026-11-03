@@ -34,6 +34,7 @@ from tst_cu_mcp.overlay import (
     reset_overlay,
     set_overlay,
 )
+from tst_cu_mcp.overlay.agents import Agent
 from tst_cu_mcp.overlay.darwin import DarwinOverlay
 
 ONE_DISPLAY = [
@@ -89,6 +90,12 @@ class RecordingOverlay:
 
     def set_target(self, display_id: int | None) -> None:
         self.calls.append(f"target:{display_id}")
+
+    def use_agent(self, key: str, label: str = "") -> Agent:
+        return Agent(key=key, label=label or "Agent", color="#2F6FDE")
+
+    def pointer(self, x: float, y: float, *, click: bool = False) -> None:
+        self.calls.append("cursor_click" if click else "cursor_move")
 
     def activity(self) -> None:
         self.calls.append("activity")
@@ -289,8 +296,14 @@ class TestToolHooks:
     @pytest.mark.parametrize(
         "action, expected",
         [
-            (lambda: input_control.move_mouse(10, 10), ["target:1", "activity", "move"]),
-            (lambda: input_control.click(10, 10), ["target:1", "activity", "click"]),
+            (
+                lambda: input_control.move_mouse(10, 10),
+                ["target:1", "activity", "cursor_move", "move"],
+            ),
+            (
+                lambda: input_control.click(10, 10),
+                ["target:1", "activity", "cursor_click", "click"],
+            ),
             (lambda: input_control.type_text("hello"), ["activity", "type"]),
             (lambda: input_control.press_keys("ctrl+c"), ["activity", "press"]),
             (lambda: input_control.scroll(0, 3), ["activity", "scroll"]),

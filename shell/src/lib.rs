@@ -3,6 +3,7 @@ pub(crate) mod cu_agent;
 pub(crate) mod cu_stop;
 #[cfg(target_os = "macos")]
 mod cu_ax;
+mod cu_capture;
 #[cfg(target_os = "macos")]
 mod cu_cf;
 pub mod cu_identity;

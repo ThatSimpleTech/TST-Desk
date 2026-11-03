@@ -79,7 +79,10 @@ def save_cu_policy(policy: CuPolicy, path: Path | None = None) -> None:
     killswitch = _as_map(existing.get("killswitch"))
     body: dict[str, Any] = {
         "actuation": {"enabled": policy.enabled},
-        "overlay": {"enabled": overlay.get("enabled", True)},
+        "overlay": {
+            "enabled": overlay.get("enabled", True),
+            "cursor": overlay.get("cursor", True),
+        },
         "mode": policy.mode,
         "scoping": {
             "allowed_apps": list(policy.allowed_apps),
@@ -98,6 +101,41 @@ def save_cu_policy(policy: CuPolicy, path: Path | None = None) -> None:
         with suppress(OSError):
             Path(tmp).unlink()
         raise
+
+
+def save_overlay_prefs(*, enabled: bool, cursor: bool, path: Path | None = None) -> bool:
+    """Mirror TST Desk's display switches into the shared policy file (TD-5227).
+
+    ``overlay.enabled`` is "Show on the real display" and ``overlay.cursor``
+    is "Agent cursor". Every tst-cu-mcp client re-reads them when the file
+    changes, so the switches apply to all of them, not only TST Desk's own.
+    Every other key is kept as it is. Returns True when the file changed.
+    """
+    target = path if path is not None else cu_policy_path()
+    existing: dict[str, Any] = {}
+    if target.exists():
+        try:
+            loaded = yaml.safe_load(target.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError):
+            return False
+        if loaded is not None and not isinstance(loaded, dict):
+            return False
+        existing = loaded or {}
+    overlay = _as_map(existing.get("overlay"))
+    if overlay.get("enabled", True) is enabled and overlay.get("cursor", True) is cursor:
+        return False
+    existing["overlay"] = {**overlay, "enabled": enabled, "cursor": cursor}
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=".config.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            yaml.safe_dump(existing, handle, sort_keys=False)
+        Path(tmp).replace(target)
+    except Exception:
+        with suppress(OSError):
+            Path(tmp).unlink()
+        raise
+    return True
 
 
 def _as_map(value: object) -> dict[str, Any]:

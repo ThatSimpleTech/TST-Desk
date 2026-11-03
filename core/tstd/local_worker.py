@@ -22,7 +22,7 @@ from .session import Session
 #: is registered as ``computer-use`` (``grok_home.computer_use_mcp``).
 GROK_CU_PREFIX = "computer-use__"
 #: Diagnostics that neither look at nor touch the desktop.
-_GROK_CU_META = frozenset({"check_permissions", "health", "overlay_session"})
+_GROK_CU_META = frozenset({"check_permissions", "health", "overlay_session", "overlay_agent"})
 
 CuSurface = Literal["desktop", "browser"]
 

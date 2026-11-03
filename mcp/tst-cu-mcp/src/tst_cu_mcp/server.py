@@ -450,6 +450,20 @@ def build_server() -> MCPServer:
     if internal_tools_enabled():
 
         @server.tool(
+            name="overlay_agent",
+            description=(
+                "Internal TST Desk signal: the session whose actions follow, so "
+                "its drawn cursor has its own color and label. Not a model tool."
+            ),
+            structured_output=False,
+        )
+        def overlay_agent(agent_id: str, label: str = "") -> dict[str, Any]:
+            from tst_cu_mcp.overlay import get_overlay
+
+            agent = get_overlay().use_agent(agent_id, label)
+            return {"agent_id": agent.key, "label": agent.label, "color": agent.color}
+
+        @server.tool(
             name="overlay_session",
             description=(
                 "Internal TST Desk signal: computer-use episode open/close. "

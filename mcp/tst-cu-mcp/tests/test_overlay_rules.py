@@ -7,6 +7,8 @@
 * Non-bracketing clients: the ring fades after the linger, and a client
   that brackets never falls back to the linger.
 * Stop and refusals darken it until the next action.
+* Cursors (TD-5227): the acting agent's cursor follows its points in both
+  modes, needs both switches, and every cursor goes on Stop.
 """
 
 from __future__ import annotations
@@ -23,8 +25,9 @@ import pytest
 from tst_cu_mcp import safety
 from tst_cu_mcp.config import Config, save_config
 from tst_cu_mcp.overlay import OVERLAY_ENV, get_overlay, reset_overlay
-from tst_cu_mcp.overlay.control import GatedOverlay, PolicyMode
-from tst_cu_mcp.overlay.darwin_helper import _parse_display_id, _read_stdin, lit_keys
+from tst_cu_mcp.overlay.agents import Agent, AgentBook, SlotRegistry
+from tst_cu_mcp.overlay.control import GatedOverlay, PolicyFile
+from tst_cu_mcp.overlay.darwin_wire import _parse_display_id, _read_stdin, lit_keys
 
 
 class Painter:
@@ -48,6 +51,13 @@ class Painter:
     def set_target(self, display_id: int | None) -> None:
         self.calls.append(f"target:{display_id}")
 
+    def cursor(self, agent: Agent, x: float, y: float, click: bool) -> None:
+        verb = "click" if click else "move"
+        self.calls.append(f"cursor:{agent.key}:{agent.label}:{verb}:{x:.0f},{y:.0f}")
+
+    def cursor_hide(self, key: str | None) -> None:
+        self.calls.append(f"cursor_hide:{key}")
+
     @contextmanager
     def grab_hidden(self) -> Iterator[None]:
         self.calls.append("grab_begin")
@@ -61,12 +71,21 @@ class Painter:
 
 
 class World:
-    """Mode, Stop and time the controller reads, all set by the test."""
+    """Policy, Stop and time the controller reads, all set by the test."""
 
     def __init__(self) -> None:
         self.mode = "full_control"
+        self.overlay = True
+        self.cursor = True
         self.stopped = False
         self.now = 1000.0
+
+    def policy(self) -> Config:
+        return Config(
+            mode=self.mode,  # type: ignore[arg-type]
+            overlay_enabled=self.overlay,
+            cursor_enabled=self.cursor,
+        )
 
 
 @pytest.fixture
@@ -80,13 +99,14 @@ def painter() -> Painter:
 
 
 @pytest.fixture
-def ring(world: World, painter: Painter) -> GatedOverlay:
+def ring(world: World, painter: Painter, tmp_path: Path) -> GatedOverlay:
     return GatedOverlay(
         painter,
-        mode=lambda: world.mode,
+        policy=world.policy,
         stopped=lambda: world.stopped,
         clock=lambda: world.now,
         linger=30.0,
+        agents=AgentBook(SlotRegistry(tmp_path / "agents")),
         watch=False,
     )
 
@@ -226,7 +246,7 @@ class TestSafety:
             def activity(self) -> None:
                 raise RuntimeError("window server gone")
 
-        ring = GatedOverlay(Broken(), mode=lambda: world.mode, stopped=lambda: False, watch=False)
+        ring = GatedOverlay(Broken(), policy=world.policy, stopped=lambda: False, watch=False)
         ring.activity()
         ring.tick()
 
@@ -241,26 +261,81 @@ class TestSafety:
         assert isinstance(resolved.painter, Painter)
 
 
-class TestPolicyMode:
+class TestPolicyFile:
     def test_missing_file_uses_the_installed_config(self, tmp_path: Path) -> None:
         safety.set_config(Config(mode="full_control"))
         try:
-            assert PolicyMode(lambda: tmp_path / "absent.yaml")() == "full_control"
+            assert PolicyFile(lambda: tmp_path / "absent.yaml")().mode == "full_control"
         finally:
             safety.set_config(None)
 
     def test_reads_the_file_and_follows_edits(self, tmp_path: Path) -> None:
         path = tmp_path / "config.yaml"
         save_config(Config(mode="full_control"), path)
-        mode = PolicyMode(lambda: path)
-        assert mode() == "full_control"
-        save_config(Config(mode="background", allowed_apps=("Finder",)), path)
-        assert mode() == "background"
+        policy = PolicyFile(lambda: path)
+        assert policy().mode == "full_control"
+        save_config(Config(mode="background", cursor_enabled=False, allowed_apps=("A",)), path)
+        assert policy().mode == "background"
+        assert policy().cursor_enabled is False
 
-    def test_a_broken_file_reads_as_background(self, tmp_path: Path) -> None:
+    def test_a_broken_file_reads_as_background_with_the_overlay_off(self, tmp_path: Path) -> None:
         path = tmp_path / "config.yaml"
         path.write_text("mode: sideways\n", encoding="utf-8")
-        assert PolicyMode(lambda: path)() == "background"
+        broken = PolicyFile(lambda: path)()
+        assert broken.mode == "background"
+        assert broken.overlay_enabled is False
+
+
+class TestCursors:
+    def test_the_acting_agents_cursor_follows_in_background_too(
+        self, ring: GatedOverlay, painter: Painter, world: World
+    ) -> None:
+        world.mode = "background"
+        ring.pointer(10, 20)
+        ring.pointer(30, 40, click=True)
+        assert painter.calls == [
+            "cursor:client:Agent:move:10,20",
+            "cursor:client:Agent:click:30,40",
+        ]
+
+    def test_named_agents_get_their_own_cursor_and_color(
+        self, ring: GatedOverlay, painter: Painter
+    ) -> None:
+        first = ring.use_agent("session-a", "Fix the login")
+        ring.pointer(1, 1)
+        second = ring.use_agent("session-b", "Write the report")
+        ring.pointer(2, 2)
+        assert first.color != second.color
+        assert painter.calls == [
+            "cursor:session-a:Fix the login:move:1,1",
+            "cursor:session-b:Write the report:move:2,2",
+        ]
+
+    @pytest.mark.parametrize("switch", ["overlay", "cursor"])
+    def test_either_switch_off_draws_nothing(
+        self, ring: GatedOverlay, painter: Painter, world: World, switch: str
+    ) -> None:
+        setattr(world, switch, False)
+        ring.pointer(10, 20)
+        assert painter.calls == []
+
+    def test_switching_off_hides_cursors_already_out(
+        self, ring: GatedOverlay, painter: Painter, world: World
+    ) -> None:
+        ring.pointer(10, 20)
+        world.cursor = False
+        ring.tick()
+        ring.tick()
+        assert painter.calls == ["cursor:client:Agent:move:10,20", "cursor_hide:None"]
+
+    def test_stop_hides_every_cursor_and_draws_no_more(
+        self, ring: GatedOverlay, painter: Painter, world: World
+    ) -> None:
+        ring.pointer(10, 20)
+        world.stopped = True
+        ring.tick()
+        ring.pointer(30, 40)
+        assert painter.calls == ["cursor:client:Agent:move:10,20", "cursor_hide:None"]
 
 
 class TestHelperParsing:

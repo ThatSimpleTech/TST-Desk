@@ -1698,6 +1698,10 @@ class SessionRunner:
 
     async def _run(self) -> None:
         """Run the session loop with lifecycle management."""
+        from .cu_agents import CuAgent, current_cu_agent
+
+        # Every tool this loop runs acts as this session's agent (TD-5227).
+        current_cu_agent.set(CuAgent(self.session.id))
         try:
             await self.session.set_state("running")
             await self._loop_factory(self.session)

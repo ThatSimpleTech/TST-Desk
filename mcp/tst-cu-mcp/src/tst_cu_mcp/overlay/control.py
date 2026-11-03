@@ -1,32 +1,37 @@
-"""When the ring shows and where, for every painter (TD-5226).
+"""When the ring and the agent cursors show, and where (TD-5226, TD-5227).
 
-Painters (darwin, win32, linux) only know how to light and darken a ring.
-This controller owns the rules:
+Painters (darwin, win32, linux) only light, darken and aim. This controller
+owns the rules:
 
 * **Mode.** The ring means "the agent has the real screen". In background
   mode (``mode: background`` in the policy file) agents work through
   accessibility calls and never take the screen, so the ring stays off on
   every display, even when such an agent falls back to a coordinate tool.
-  Only ``full_control`` lights it. The file is re-read when it changes, so
-  Settings applies without restarting any client.
+  Only ``full_control`` lights it. The agent cursor shows in both modes.
+* **Switches.** ``overlay.enabled`` (TST Desk's "show on the real display")
+  gates both; ``overlay.cursor`` (its "agent cursor") gates the cursor. The
+  file is re-read when it changes, so Settings applies to every running
+  client without a restart.
 * **Display.** Only the display being acted on is lit: the one the last
   capture targeted, or the one under the last pointer action. Before
   either, the painter's default (the primary display). Painters that cannot
   light a single display (Windows and Linux today) ring every display.
 * **Episodes.** TST Desk brackets each session's computer use with
   ``overlay_session``; the ring stays up while any session's episode is
-  open, so one session finishing does not darken another's ring. A client
-  that never brackets (any other MCP client) lights the ring on activity,
-  and it fades after :data:`UNBRACKETED_LINGER_SECONDS` without one.
-* **Stop.** While the kill-switch is engaged the ring is dark. A watcher
-  checks every :data:`WATCH_SECONDS`, so Stop clears the ring without
-  waiting for the agent's next action.
+  open. A client that never brackets lights the ring per action, and it
+  fades :data:`UNBRACKETED_LINGER_SECONDS` after the last one.
+* **Cursors.** Each agent's cursor goes to its last move, click or acted-on
+  element; the painter fades it when that agent goes idle. It never touches
+  the hardware pointer.
+* **Stop.** While the kill-switch is engaged the ring and every cursor are
+  dark. A watcher re-checks every :data:`WATCH_SECONDS`, so Stop clears them
+  without waiting for the agent's next action.
 
 The state is level-triggered: each entry point and each watcher tick works
-out whether the ring is wanted and talks to the painter only when that, or
-the target display, changes. Painter calls happen under one lock because
-the watcher thread and the tool thread both reach the painter. The failure
-rule of the package holds: nothing here may raise into a tool.
+out what is wanted and talks to the painter only on a change. Painter calls
+happen under one lock because the watcher thread and the tool thread both
+reach the painter. The package's failure rule holds: nothing here raises
+into a tool.
 """
 
 from __future__ import annotations
@@ -39,10 +44,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from tst_cu_mcp.config import Config
+from tst_cu_mcp.overlay.agents import Agent, AgentBook
+
 if TYPE_CHECKING:
     from tst_cu_mcp.overlay import Painter
 
-#: How often the watcher re-checks Stop, the mode and the linger.
+#: How often the watcher re-checks Stop, the policy file and the linger.
 WATCH_SECONDS = 0.25
 #: A non-bracketing client's ring fades this long after its last action.
 UNBRACKETED_LINGER_SECONDS = 30.0
@@ -50,12 +58,13 @@ UNBRACKETED_LINGER_SECONDS = 30.0
 FULL_CONTROL = "full_control"
 
 
-class PolicyMode:
-    """The policy file's ``mode``, re-parsed only when the file changes.
+class PolicyFile:
+    """The policy file as a :class:`Config`, re-parsed only when it changes.
 
-    No file means the installed config (permissive defaults: background).
-    A file that fails to parse keeps the last good answer, or background,
-    so a broken edit darkens the ring rather than lighting it.
+    No file means the installed config (permissive defaults: background
+    mode, overlay and cursor on). A file that fails to parse reads as
+    background with the overlay off, so a broken edit darkens rather than
+    lights.
     """
 
     def __init__(self, path: Callable[[], Path] | None = None) -> None:
@@ -63,9 +72,9 @@ class PolicyMode:
 
         self._path = path or policy_path
         self._stamp: tuple[float, int] | None = None
-        self._mode = "background"
+        self._config = Config(overlay_enabled=False)
 
-    def __call__(self) -> str:
+    def __call__(self) -> Config:
         from tst_cu_mcp import safety
         from tst_cu_mcp.config import load_config
 
@@ -74,15 +83,15 @@ class PolicyMode:
             stat = target.stat()
         except OSError:
             self._stamp = None
-            return safety.active_config().mode
+            return safety.active_config()
         stamp = (stat.st_mtime, stat.st_size)
         if stamp != self._stamp:
             self._stamp = stamp
             try:
-                self._mode = load_config(target).mode
+                self._config = load_config(target)
             except Exception:
-                self._mode = "background"
-        return self._mode
+                self._config = Config(overlay_enabled=False)
+        return self._config
 
 
 def _killswitch() -> bool:
@@ -95,21 +104,23 @@ def _killswitch() -> bool:
 
 
 class GatedOverlay:
-    """An :class:`~tst_cu_mcp.overlay.Overlay` that applies the ring's rules."""
+    """An :class:`~tst_cu_mcp.overlay.Overlay` that applies the rules."""
 
     def __init__(
         self,
         painter: Painter,
         *,
-        mode: Callable[[], str] | None = None,
+        policy: Callable[[], Config] | None = None,
         stopped: Callable[[], bool] = _killswitch,
         clock: Callable[[], float] = time.monotonic,
         linger: float = UNBRACKETED_LINGER_SECONDS,
+        agents: AgentBook | None = None,
         watch: bool = True,
     ) -> None:
         self.painter = painter
         self.name = painter.name
-        self._mode = mode or PolicyMode()
+        self.agents = agents or AgentBook()
+        self._policy = policy or PolicyFile()
         self._stopped = stopped
         self._clock = clock
         self._linger = linger
@@ -122,6 +133,7 @@ class GatedOverlay:
         self._target: int | None = None
         self._sent_target: int | None = None
         self._shown = False
+        self._cursors_out = False
         self._watcher: threading.Thread | None = None
         self._halt = threading.Event()
 
@@ -164,6 +176,23 @@ class GatedOverlay:
                 self._target = display_id
             self._sync()
 
+    def use_agent(self, key: str, label: str = "") -> Agent:
+        """Name the agent whose actions follow (TST Desk's shared sidecar)."""
+        with self._lock:
+            return self.agents.use(key, label)
+
+    def pointer(self, x: float, y: float, *, click: bool = False) -> None:
+        """The acting agent's cursor goes to this global point (points)."""
+        with self._lock:
+            try:
+                if not self._cursor_wanted():
+                    return
+                self.painter.cursor(self.agents.current(), float(x), float(y), click)
+                self._cursors_out = True
+                self._start_watcher()
+            except Exception:
+                return
+
     @contextmanager
     def grab_hidden(self) -> Iterator[None]:
         """Hide the painter for one capture, holding the lock only at the edges."""
@@ -183,6 +212,7 @@ class GatedOverlay:
             watcher.join(timeout=1.0)
         with self._lock, contextlib.suppress(Exception):
             self.painter.shutdown()
+            self.agents.close()
 
     # -- rules ------------------------------------------------------------
 
@@ -190,13 +220,20 @@ class GatedOverlay:
         """Whether the ring should be lit right now."""
         if self._blocked or self._stopped():
             return False
-        if self._mode() != FULL_CONTROL:
+        policy = self._policy()
+        if not policy.overlay_enabled or policy.mode != FULL_CONTROL:
             return False
         if self._episodes:
             return True
         if self._bracketing or self._last_activity is None:
             return False
         return self._clock() - self._last_activity < self._linger
+
+    def _cursor_wanted(self) -> bool:
+        if self._stopped():
+            return False
+        policy = self._policy()
+        return policy.overlay_enabled and policy.cursor_enabled
 
     def tick(self) -> None:
         """One watcher pass. Public so tests drive it without a thread."""
@@ -209,6 +246,9 @@ class GatedOverlay:
                 # Stop ends an unbracketed client's claim on the ring: after
                 # Resume it takes a new action to light it again.
                 self._last_activity = None
+            if self._cursors_out and not self._cursor_wanted():
+                self.painter.cursor_hide(None)
+                self._cursors_out = False
             wanted = self.wanted()
             if wanted and self._target is not None and self._target != self._sent_target:
                 self.painter.set_target(self._target)
@@ -239,5 +279,5 @@ __all__ = [
     "UNBRACKETED_LINGER_SECONDS",
     "WATCH_SECONDS",
     "GatedOverlay",
-    "PolicyMode",
+    "PolicyFile",
 ]

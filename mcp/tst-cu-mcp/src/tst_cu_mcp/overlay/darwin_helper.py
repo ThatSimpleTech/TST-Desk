@@ -25,6 +25,8 @@ Protocol (one command per stdin line, one ack line per command on stdout):
   actually ordered the panels out/in. That ordering is the guarantee a
   screenshot capture relies on: between the parent receiving the
   ``grab_begin`` ack and sending ``grab_end``, no ring pixel exists.
+* ``cursor ...`` / ``cursor_hide ...`` — agent cursors, drawn by
+  :mod:`tst_cu_mcp.overlay.darwin_cursor` (TD-5227). Acked on arrival.
 * ``quit`` — clean exit; stdin EOF triggers it too, so a dead parent
   never leaves a halo behind.
 
@@ -39,10 +41,24 @@ from __future__ import annotations
 
 import math
 import queue
-import sys
 import threading
 import time
 from typing import Any
+
+from tst_cu_mcp.overlay.darwin_wire import (
+    _CURSOR_COMMANDS,
+    _GRAB_BEGIN,
+    _GRAB_END,
+    _HIDE,
+    _QUIT,
+    _SHOW,
+    _TARGET,
+    Command,
+    PanelKey,
+    _parse_display_id,
+    _read_stdin,
+    lit_keys,
+)
 
 # --- geometry / motion ------------------------------------------------------
 
@@ -70,23 +86,6 @@ SCREEN_SAVER_WINDOW_LEVEL = 1000
 #: NSEventTypeApplicationDefined — the wake-up that lets stop_ unwind.
 _APPLICATION_DEFINED_EVENT_TYPE = 15
 
-_SHOW, _HIDE, _TARGET, _GRAB_BEGIN, _GRAB_END, _QUIT = (
-    "show",
-    "hide",
-    "target",
-    "grab_begin",
-    "grab_end",
-    "quit",
-)
-#: Commands whose ack must wait for the main thread to have acted.
-_MAIN_THREAD_ACKS = frozenset({_GRAB_BEGIN, _GRAB_END})
-#: Reader-thread patience with the main thread before reporting failure.
-_MAIN_ACK_TIMEOUT = 2.5
-
-#: (name, argument, ack). The argument is the rest of the line, or "".
-Command = tuple[str, str, threading.Event | None]
-PanelKey = tuple[int, str, int, int, int, int]
-
 
 def main() -> None:
     """Build the app, wire stdin to the command queue, and run forever."""
@@ -102,6 +101,9 @@ def main() -> None:
 
     commands: queue.Queue[Command] = queue.Queue()
     controller = _build_controller(commands)
+    from tst_cu_mcp.overlay.darwin_cursor import build_cursor_layer
+
+    controller.cursors = build_cursor_layer()
 
     reader = threading.Thread(target=_read_stdin, args=(commands,), daemon=True)
     reader.start()
@@ -160,6 +162,7 @@ def _build_controller(commands: queue.Queue[Command]) -> Any:
             # its panel. The display id is what ``target`` names.
             self.panels: dict[PanelKey, Any] = {}
             self.target: int | None = None
+            self.cursors: Any = None
             self.visible = False
             self.grab_depth = 0
             self.last_activity = 0.0
@@ -201,9 +204,13 @@ def _build_controller(commands: queue.Queue[Command]) -> Any:
             self._drain_commands()
             self._advance_fade(elapsed)
             self._apply_alpha(elapsed)
+            if self.cursors is not None:
+                self.cursors.tick(now, elapsed, _reduce_motion(), self.grab_depth > 0)
 
         def screensChanged_(self, _note: Any) -> None:
             self.rebuild_panels()
+            if self.cursors is not None:
+                self.cursors.screens_changed()
 
         # -- state transitions -------------------------------------------------
 
@@ -213,7 +220,10 @@ def _build_controller(commands: queue.Queue[Command]) -> Any:
                     command, arg, ack = self.commands.get_nowait()
                 except queue.Empty:
                     return
-                if command == _TARGET:
+                if command in _CURSOR_COMMANDS:
+                    if self.cursors is not None:
+                        self.cursors.command(command, arg, time.monotonic())
+                elif command == _TARGET:
                     _retarget(self, _parse_display_id(arg))
                 elif command == _SHOW:
                     self.visible = True
@@ -226,6 +236,8 @@ def _build_controller(commands: queue.Queue[Command]) -> Any:
                     # Instant, not faded: a capture cannot wait out an ease.
                     self.grab_depth += 1
                     self._hide_panels_now()
+                    if self.cursors is not None:
+                        self.cursors.hide_now()
                 elif command == _GRAB_END:
                     self.grab_depth = max(0, self.grab_depth - 1)
                     if self.grab_depth == 0 and self.visible:
@@ -379,31 +391,12 @@ def _retarget(controller: Any, display_id: int | None) -> None:
         controller._ensure_front()
 
 
-def lit_keys(keys: list[PanelKey], target: int | None) -> list[PanelKey]:
-    """The target display's panel, else the primary display's.
-
-    NSScreen.screens() lists the primary (menu-bar) display first and the
-    panel dict keeps that order, so the first key is the fallback.
-    """
-    chosen = [key for key in keys if key[0] == target]
-    return chosen or keys[:1]
-
-
 def _screen_number(screen: Any) -> int:
     """The CGDirectDisplayID AppKit stores as ``NSScreenNumber``; -1 if absent."""
     try:
         return int(screen.deviceDescription()["NSScreenNumber"])
     except Exception:
         return -1
-
-
-def _parse_display_id(arg: str) -> int | None:
-    """``target``'s argument: a non-negative display id, else ``None``."""
-    try:
-        value = int(arg.strip())
-    except ValueError:
-        return None
-    return value if value >= 0 else None
 
 
 def _rust() -> tuple[float, float, float]:
@@ -423,35 +416,6 @@ def _reduce_motion() -> bool:
         return bool(NSWorkspace.sharedWorkspace().accessibilityDisplayShouldReduceMotion())
     except Exception:
         return False
-
-
-def _read_stdin(commands: queue.Queue[Command]) -> None:
-    """Reader thread: enqueue lines, hand back acks.
-
-    ``show``/``hide`` ack immediately — they are queued and the tick will
-    act within ~33ms. The grab pair waits for the main thread's event, so
-    the parent's capture ordering holds. EOF means the parent is gone:
-    quit rather than haunt the screen.
-    """
-    try:
-        for line in sys.stdin:
-            command, _, arg = line.strip().partition(" ")
-            if not command:
-                continue
-            if command in _MAIN_THREAD_ACKS:
-                ack: threading.Event = threading.Event()
-                commands.put((command, arg, ack))
-                print("ok" if ack.wait(_MAIN_ACK_TIMEOUT) else "err", flush=True)
-            elif command == _QUIT:
-                commands.put((_QUIT, "", None))
-                return
-            else:
-                commands.put((command, arg, None))
-                print("ok", flush=True)
-    except Exception:
-        pass
-    finally:
-        commands.put((_QUIT, "", None))
 
 
 if __name__ == "__main__":

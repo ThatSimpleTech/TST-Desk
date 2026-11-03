@@ -26,6 +26,9 @@ class Config:
     stop_file: str | None = None
     # Real-display glow; the TST_CU_MCP_OVERLAY env var overrides this.
     overlay_enabled: bool = True
+    # Each agent's drawn cursor on the real display (TD-5227). Needs the
+    # overlay too; TST Desk writes both from its Settings switches.
+    cursor_enabled: bool = True
     # Empty allowlist means every app except denied. Non-empty is an allowlist.
     allowed_apps: tuple[str, ...] = ()
     denied_apps: tuple[str, ...] = ()
@@ -82,7 +85,7 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     body: dict[str, Any] = {
         "actuation": {"enabled": cfg.actuation_enabled},
-        "overlay": {"enabled": cfg.overlay_enabled},
+        "overlay": {"enabled": cfg.overlay_enabled, "cursor": cfg.cursor_enabled},
         "mode": cfg.mode,
         "scoping": {
             "allowed_apps": list(cfg.allowed_apps),
@@ -123,6 +126,7 @@ def load_config(path: Path | None = None) -> Config:
         actuation_enabled=_actuation_flag(actuation.get("enabled", True), target),
         stop_file=killswitch.get("stop_file"),
         overlay_enabled=bool(overlay.get("enabled", True)),
+        cursor_enabled=overlay.get("cursor", True) is not False,
         allowed_apps=_string_tuple(scoping.get("allowed_apps")),
         denied_apps=_string_tuple(scoping.get("denied_apps")),
         mode=_mode_flag(raw.get("mode") or scoping.get("mode") or "background", target),

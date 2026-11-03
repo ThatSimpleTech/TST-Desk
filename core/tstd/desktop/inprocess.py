@@ -14,6 +14,7 @@ import json
 import os
 from typing import Any
 
+from ..cu_agents import CuAgent
 from .protocol import DesktopError
 
 _STOP_ENV = "TST_CU_MCP_STOP"
@@ -49,6 +50,14 @@ class InProcessDesktopDriver:
             os.environ[_STOP_ENV] = "1"
         else:
             os.environ.pop(_STOP_ENV, None)
+
+    async def agent_color(self, agent: CuAgent) -> str | None:
+        try:
+            from tst_cu_mcp.overlay import get_overlay
+
+            return str(get_overlay().use_agent(agent.agent_id, agent.label).color)
+        except Exception:
+            return None
 
     async def set_overlay_session(self, active: bool, session: str = "") -> None:
         try:

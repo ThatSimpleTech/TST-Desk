@@ -8,7 +8,10 @@ never move a pointer.
 from __future__ import annotations
 
 import base64
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from ..cu_agents import CuAgent
 
 # 1x1 PNG so CI can exercise screenshot without a display.
 TINY_PNG_B64 = (
@@ -81,6 +84,9 @@ class DesktopDriver(Protocol):
 
     async def set_overlay_session(self, active: bool, session: str = "") -> None:
         """Open or close one session's real-display ring episode (TD-3407, TD-5226)."""
+
+    async def agent_color(self, agent: CuAgent) -> str | None:
+        """Name a session's agent; its cursor color, or None (TD-5227)."""
 
     async def screenshot(self, display: int | None = None) -> str:
         """Return a JSON object with ``png_base64`` (and size if known)."""
