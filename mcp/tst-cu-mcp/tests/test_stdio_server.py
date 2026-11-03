@@ -66,6 +66,9 @@ def child_env(*, internal: bool = False) -> dict[str, str]:
     """
     env = dict(os.environ)
     env.pop(INTERNAL_ENV, None)
+    # The server starts its overlay helper at launch (TD-5230); a test child
+    # must never put windows on the developer's screen.
+    env["TST_CU_MCP_OVERLAY"] = "0"
     if internal:
         env[INTERNAL_ENV] = "1"
     return env

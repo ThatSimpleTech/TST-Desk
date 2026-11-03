@@ -92,6 +92,10 @@ class Overlay(Protocol):
         """The acting agent's cursor goes to this global point (TD-5227)."""
         ...
 
+    def prewarm(self) -> None:
+        """Start the painter's helper ahead of the first action (TD-5230)."""
+        ...
+
     @contextmanager
     def grab_hidden(self) -> Iterator[None]:
         """Hide the glow for the duration of one screenshot grab."""
@@ -164,6 +168,9 @@ class NullOverlay:
         return _null_book().use(key, label)
 
     def pointer(self, x: float, y: float, *, click: bool = False) -> None:
+        return None
+
+    def prewarm(self) -> None:
         return None
 
     def cursor(self, agent: Agent, x: float, y: float, click: bool) -> None:
