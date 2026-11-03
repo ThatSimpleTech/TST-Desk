@@ -105,8 +105,9 @@ def _point_at(frame: object) -> None:
     """The acting agent's cursor goes to the element it just acted on.
 
     Background actions never move the pointer, so this drawn cursor is the
-    only on-screen sign of where the agent works (TD-5227). Best effort: no
-    frame (the host could not read one) means no cursor move.
+    only on-screen sign of where the agent works (TD-5227). In full control
+    the ring moves to that element's display too, as for a click (TD-5232).
+    Best effort: no frame (the host could not read one) means neither moves.
     """
     if not isinstance(frame, dict):
         return
@@ -115,6 +116,9 @@ def _point_at(frame: object) -> None:
         y = float(frame["y"]) + float(frame["height"]) / 2.0
     except (KeyError, TypeError, ValueError):
         return
+    from tst_cu_mcp.input_control import aim_overlay
+
+    aim_overlay(x, y)
     get_overlay().pointer(x, y, click=True)
 
 

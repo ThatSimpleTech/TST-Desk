@@ -13042,9 +13042,25 @@ step 1 and the Mac app since TD-5228; on Windows the binary comes from
 
 ---
 
+### TD-5232 — An element action in full control moves the ring to its display
+**Size:** 1 · **Depends on:** TD-5226, TD-5227
+**Status:** In review 2026-11-03.
+
+A pointer action and a screenshot aimed the ring at their display, but a
+`ui_action` did not, so in full control a client acting on an element on
+another display left the ring on the primary display. Found in the TD-5227
+live check, where Calculator sat on the left display.
+
+**Acceptance criteria:**
+- [x] After a `ui_action` whose reply carries the element's frame, the ring is aimed at the display under the element's centre, as for a click; the drawn cursor still goes there too
+- [x] Unit test with two displays (fails without the change)
+- [x] Live: a full-control `ui_action` on Calculator on the left display lit that display's ring
+
+---
+
 ### TD-5231 — agent-desktop's cursor works from the packaged app
 **Size:** 2 · **Depends on:** TD-5227, TD-5228
-**Status:** In review 2026-11-03.
+**Status:** Done 2026-11-03.
 
 Two bugs found in the TD-5227 live check against the packaged build:
 
@@ -13063,7 +13079,7 @@ Two bugs found in the TD-5227 live check against the packaged build:
 - [x] Live with the packaged binary: two sessions' clicks land in one agent-desktop session; while the bundled copy's cursor is on screen, the capture drops exactly its window (reported owner "TST Desk", its own pid) and keeps the TST Desk window
 ### TD-5230 — The packaged app's ring and cursors survive the helper's slow start
 **Size:** 1 · **Depends on:** TD-4834, TD-5226, TD-5227
-**Status:** In review 2026-11-03.
+**Status:** Done 2026-11-03.
 
 In the packaged Mac app the overlay helper is the frozen `tstd --cu-overlay`,
 which unpacks itself before Python starts. Its first ack took 2.4 to 5.4
@@ -13084,7 +13100,7 @@ no helper running.
 
 ### TD-5227 — Each agent has its own cursor on the real display
 **Size:** 5 · **Depends on:** TD-3402, TD-5220, TD-5226
-**Status:** In review 2026-11-03.
+**Status:** Done 2026-11-03.
 
 An agent doing computer use had no cursor of its own on the real display. In
 full control it moved the user's pointer, and with several agents at once
@@ -13105,13 +13121,13 @@ up in screenshots. This story combines the two with one identity per agent.
 - [x] Stop hides every drawn cursor within a quarter second and disables agent-desktop's overlay; a cursor fades 10 s after its agent's last action
 - [x] TST Desk's own screenshots leave agent-desktop's cursor windows out
 - [x] Tests: identity, colors across processes, the cursor model, the wire, the daemon's announce, the agent-desktop session and the shared switches, each shown to fail with its piece removed
-- [ ] Live on a Mac: two agents at once show two distinct cursors; the pointer stays still in background mode; screenshots contain neither the ring nor any cursor; Stop clears everything
+- [x] Live on a Mac: two agents at once show two distinct cursors; the pointer stays still in background mode; screenshots contain neither the ring nor any cursor; Stop clears everything (packaged build of b383be36: two TST Desk sessions in blue and green and a third client, each at the Calculator key it pressed, pointer unchanged; agent-desktop's cursor in a macOS screenshot but not in TST Desk's capture of the same rect; the stop shortcut, the stop-file and the title-bar Stop message each cleared every ring and cursor)
 
 ---
 
 ### TD-5228 — The Mac app ships agent-desktop
 **Size:** 3 · **Depends on:** TD-5221
-**Status:** In review 2026-11-03. The live check runs separately against a signed build.
+**Status:** In review 2026-11-03. Signed build checked; a run of the four tools from the packaged daemon is still to do.
 
 This is TD-5221 step 2. The TD-5220 tools only worked on a Mac when the
 user installed the `agent-desktop` CLI and set `binary`. The macOS app
@@ -13125,8 +13141,8 @@ signs both with the app's identity. The tools stay off by default.
 - [x] `build_sidecar.py` fetches them on macOS hosts in both normal and `--if-missing` modes (`test_build_fails_without_a_pin`, `test_if_missing_still_fetches_where_the_package_carries_it`; also run for real in `--if-missing` mode on a Mac)
 - [x] `shell/tauri.macos.conf.json` bundles both beside `tstd` and ships `licenses/LICENSE` and `licenses/NOTICE`; a test checks it keeps every shared `externalBin` entry and names only the macOS helper. Tauri drops the triple, so the helper lands under the exact name the CLI looks for beside itself
 - [x] The package workflow and `smoke_macos_bundle.sh` check that both files are present and signed, that the CLI's `version` is 1.0.2, and that the licence files ship; `install-macos.sh` refuses a bundle where either file is not certificate-signed (each check run against a hand-made bundle)
-- [ ] A signed build carries both files with the app's certificate signature (Tauri 2.11.4's bundler signs every `externalBin` with the app's identity before the app)
-- [ ] Live on macOS: desktop_windows, desktop_snapshot, desktop_act and desktop_launch work from the packaged app with `binary` empty, and Accessibility is attributed to TST Desk with no separate prompt
+- [x] A signed build carries both files with the app's certificate signature (Tauri 2.11.4's bundler signs every `externalBin` with the app's identity before the app; checked on a local signed build: identifiers `agent-desktop` and `agent-desktop-macos-helper`, certificate requirement accepted by `install-macos.sh`)
+- [ ] Live on macOS: desktop_windows, desktop_snapshot, desktop_act and desktop_launch work from the packaged app with `binary` empty, and Accessibility is attributed to TST Desk with no separate prompt — snapshot and act verified with the bundled binary driven by the daemon's own driver code from a terminal; a run from the packaged daemon (tools turned on, a model session) is still to do
 
 **Notes:** In 1.0.2 the CLI starts `agent-desktop-macos-helper` only for
 its clipboard commands, which the four tools do not use; it accepts the
@@ -13142,7 +13158,7 @@ on such a Mac whether or not the CLI is bundled.
 
 ### TD-5229 — A failed update check says why
 **Size:** 1 · **Depends on:** TD-4837, TD-5204
-**Status:** In review 2026-11-03.
+**Status:** Done 2026-11-03.
 
 Settings → About → Check for updates showed only "release fetch failed:
 error sending request for url (https://api.github.com/...)". That is
@@ -13159,7 +13175,7 @@ so.
 - [x] A unit test makes a real refused connection on loopback and finds the OS reason in the message; it fails against the old message
 ### TD-5226 — The ring marks the display the agent is acting on, and only in full control
 **Size:** 3 · **Depends on:** TD-3402, TD-3407, TD-5223
-**Status:** In review 2026-11-03.
+**Status:** Done 2026-11-03.
 
 The ring lit every display at once, so with several monitors it did not say
 which one the agent was working on. It also lit in background mode, where the
@@ -13179,7 +13195,7 @@ its episode darkened the ring of another session that was still working.
 - [x] Stop fades the ring out within about a second (checked every quarter second), without waiting for the agent's next action; a client that never brackets needs a new action after Resume
 - [x] Grok sessions leave the ring to Grok's own copy, which paints on the display it acts on and follows the user's `show_on_real_display` switch
 - [x] Tests for every rule against a recording painter, each shown to fail with its rule removed (`test_overlay_rules.py`), plus the helper's argument parsing and panel choice
-- [ ] Live on a Mac with several displays: acting on a secondary display rings that display only; background mode shows no ring; screenshots do not contain it; Stop darkens it
+- [x] Live on a Mac with several displays: acting on a secondary display rings that display only; background mode shows no ring; screenshots do not contain it; Stop darkens it (packaged build of b383be36, four displays: the window server showed one lit panel following captures on the portrait and built-in displays and a move on the left one; four real screenshots without it; dark in background mode and after the stop-file)
 
 ---
 
