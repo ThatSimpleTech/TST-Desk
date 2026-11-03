@@ -13041,6 +13041,23 @@ step 1; elsewhere the binary comes from `binary` or `PATH`.
 
 ---
 
+### TD-5229 — A failed update check says why
+**Size:** 1 · **Depends on:** TD-4837, TD-5204
+**Status:** In review 2026-11-03.
+
+Settings → About → Check for updates showed only "release fetch failed:
+error sending request for url (https://api.github.com/...)". That is
+reqwest's top line; the reason (no route, a refused connection, a DNS or
+certificate failure) is in the error's source chain, which this path dropped.
+On the Mac where it was reported, the same request with the updater's own
+client settings returned 200 a few hours later (real certificate, no proxy),
+so the failure was the network at that moment, and the message could not say
+so.
+
+**Acceptance criteria:**
+- [x] A check that gets no answer says in words what failed (timed out, could not connect, or the request failed), asks to check the network and try again, and keeps the full cause chain as details
+- [x] Reading the release list, the checksum file, or a download chunk keeps the cause chain too
+- [x] A unit test makes a real refused connection on loopback and finds the OS reason in the message; it fails against the old message
 ### TD-5226 — The ring marks the display the agent is acting on, and only in full control
 **Size:** 3 · **Depends on:** TD-3402, TD-3407, TD-5223
 **Status:** In review 2026-11-03.
