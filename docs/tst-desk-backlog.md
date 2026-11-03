@@ -13041,6 +13041,29 @@ step 1; elsewhere the binary comes from `binary` or `PATH`.
 
 ---
 
+### TD-5225 — Reading a window's accessibility tree crashes TST Desk
+**Size:** 2 · **Depends on:** TD-4829
+**Status:** In review 2026-11-02.
+
+`ui_snapshot` through the host (`cu-agent.sock`, json op `ui_snapshot`)
+aborted the whole app on macOS, for any target app, about a second after
+the call. The host read every `AXValue`, `AXTitle` and similar attribute
+as a CFString, but `AXValue` is a number on a checkbox or slider and an
+AXValueRef on a scroll area. CoreFoundation throws on a non-string, and
+Rust aborts on a foreign exception. The daemon then shut down with the
+host, so every computer-use client lost its tools until the app was
+reopened, and tst-cu-mcp quietly fell back to an empty local snapshot.
+Separately, children taken out of a CFArray were used after the array
+was released, which freed them.
+
+**Acceptance criteria:**
+- [x] Attribute reads check the CF type: strings as-is, numbers and booleans written out, anything else empty; boolean reads accept CFBoolean or a number
+- [x] Elements taken from a CFArray hold their own reference until the walk is done; `ui_action` keeps the element it found alive while acting on it
+- [x] Unit tests on real CF objects, each shown to fail with its fix removed (no type check: the test process aborts; no retain: it segfaults)
+- [x] Live on macOS: `ui_snapshot` of Finder and of TST Desk itself returns a tree with `path: host`, and the app keeps running
+
+---
+
 ### TD-5224 — A system-wide stop shortcut for computer use
 **Size:** 3 · **Depends on:** TD-5223
 **Status:** In review 2026-11-02.
