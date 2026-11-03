@@ -33,7 +33,10 @@ import os
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from tst_cu_mcp.overlay.agents import Agent, AgentBook
 
 #: Env override resolved before the config file. The daemon sets this from
 #: the user's ``show_on_real_display`` pref when it spawns the sidecar, so
@@ -46,6 +49,8 @@ OVERLAY_ENV = "TST_CU_MCP_OVERLAY"
 CMD_SHOW = "show"
 CMD_HIDE = "hide"
 CMD_TARGET = "target"
+CMD_CURSOR = "cursor"
+CMD_CURSOR_HIDE = "cursor_hide"
 CMD_GRAB_BEGIN = "grab_begin"
 CMD_GRAB_END = "grab_end"
 CMD_QUIT = "quit"
@@ -79,6 +84,14 @@ class Overlay(Protocol):
         """The display being acted on (a display id from :mod:`displays`)."""
         ...
 
+    def use_agent(self, key: str, label: str = "") -> Agent:
+        """Name the agent whose actions follow; returns its cursor identity."""
+        ...
+
+    def pointer(self, x: float, y: float, *, click: bool = False) -> None:
+        """The acting agent's cursor goes to this global point (TD-5227)."""
+        ...
+
     @contextmanager
     def grab_hidden(self) -> Iterator[None]:
         """Hide the glow for the duration of one screenshot grab."""
@@ -110,6 +123,14 @@ class Painter(Protocol):
         """Light this display only, where the platform can; else a no-op."""
         ...
 
+    def cursor(self, agent: Agent, x: float, y: float, click: bool) -> None:
+        """Draw ``agent``'s cursor at a global point; a no-op where unsupported."""
+        ...
+
+    def cursor_hide(self, key: str | None) -> None:
+        """Hide one agent's cursor, or every cursor when ``key`` is None."""
+        ...
+
     @contextmanager
     def grab_hidden(self) -> Iterator[None]:
         yield
@@ -137,12 +158,38 @@ class NullOverlay:
     def set_target(self, display_id: int | None) -> None:
         return None
 
+    def use_agent(self, key: str, label: str = "") -> Agent:
+        # Colors still matter with no painter: TST Desk hands them to
+        # agent-desktop's own cursor.
+        return _null_book().use(key, label)
+
+    def pointer(self, x: float, y: float, *, click: bool = False) -> None:
+        return None
+
+    def cursor(self, agent: Agent, x: float, y: float, click: bool) -> None:
+        return None
+
+    def cursor_hide(self, key: str | None) -> None:
+        return None
+
     @contextmanager
     def grab_hidden(self) -> Iterator[None]:
         yield
 
     def shutdown(self) -> None:
         return None
+
+
+_book: AgentBook | None = None
+
+
+def _null_book() -> AgentBook:
+    global _book
+    if _book is None:
+        from tst_cu_mcp.overlay.agents import AgentBook
+
+        _book = AgentBook()
+    return _book
 
 
 def overlay_enabled(platform: str | None = None) -> bool:

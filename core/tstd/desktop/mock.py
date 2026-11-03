@@ -11,6 +11,7 @@ import base64
 import json
 from typing import Any
 
+from ..cu_agents import CuAgent, fallback_color
 from .permissions import normalize_cu_platform, windows_report
 from .permissions_linux import linux_report
 from .protocol import (
@@ -59,6 +60,10 @@ class MockDesktopDriver:
 
     def set_killed(self, killed: bool) -> None:
         self.killed = bool(killed)
+
+    async def agent_color(self, agent: CuAgent) -> str | None:
+        self.calls.append(("overlay_agent", {"agent_id": agent.agent_id, "label": agent.label}))
+        return fallback_color(agent.agent_id)
 
     async def set_overlay_session(self, active: bool, session: str = "") -> None:
         self.calls.append(("overlay_session", {"active": bool(active), "session": session}))

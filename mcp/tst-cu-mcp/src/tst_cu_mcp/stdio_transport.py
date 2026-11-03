@@ -63,6 +63,7 @@ class DrainingStdioServer(MCPServer):
                 """Forward frames toward the server, then hold EOF until drained."""
                 async with to_server_send:
                     async for item in wire_read:
+                        _note_client(item)
                         if (
                             isinstance(item, SessionMessage)
                             and isinstance(item.message, JSONRPCRequest)
@@ -103,6 +104,22 @@ class DrainingStdioServer(MCPServer):
                     from_server_send,
                     self._lowlevel_server.create_initialization_options(),
                 )
+
+
+def _note_client(item: object) -> None:
+    """Remember the client's name from ``initialize`` for its cursor label."""
+    if not (
+        isinstance(item, SessionMessage)
+        and isinstance(item.message, JSONRPCRequest)
+        and item.message.method == "initialize"
+        and isinstance(item.message.params, dict)
+    ):
+        return
+    info = item.message.params.get("clientInfo")
+    if isinstance(info, dict) and isinstance(info.get("name"), str):
+        from tst_cu_mcp.overlay.agents import set_client_name
+
+        set_client_name(info["name"])
 
 
 def _stamp_unanswered_hook(

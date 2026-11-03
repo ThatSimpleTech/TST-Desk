@@ -18,7 +18,7 @@ import sys
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .protocol import DesktopError
 
@@ -154,6 +154,10 @@ async def _run_process(
     return proc.returncode if proc.returncode is not None else -1, out, err
 
 
+if TYPE_CHECKING:
+    from .ax_cursor import AxCursor
+
+
 @dataclass(frozen=True)
 class CliFailure:
     """A parsed ``ok: false`` envelope."""
@@ -247,6 +251,8 @@ class AgentDesktopCli:
         self._env = child_env(os.environ if base_env is None else base_env, state_dir)
         # (inode, size, mtime) of the file last hashed: a changed file is hashed again.
         self._verified: tuple[int, int, int] | None = None
+        # agent-desktop's per-agent cursor (TD-5227); None runs without it.
+        self.cursor: AxCursor | None = None
 
     @property
     def env(self) -> Mapping[str, str]:
@@ -286,9 +292,14 @@ class AgentDesktopCli:
         return binary
 
     async def run(self, command: str, *args: str) -> Any:
-        """Run one command and return its ``data``. Refusals raise ``DesktopError``."""
+        """Run one command as the acting session's agent. Refusals raise ``DesktopError``."""
+        prefix = await self.cursor.scope(self) if self.cursor is not None else []
+        return await self.run_with(prefix, command, *args)
+
+    async def run_with(self, prefix: list[str], command: str, *args: str) -> Any:
+        """Run one command after global flags (``--session``, ``--agent-id``)."""
         binary = await self._verify()
-        argv = [str(binary), command, *args]
+        argv = [str(binary), *prefix, command, *args]
         result = await self._once(argv)
         if isinstance(result, CliFailure):
             if not result.may_retry(command):

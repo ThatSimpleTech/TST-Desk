@@ -30,6 +30,8 @@ from contextlib import contextmanager
 from typing import Protocol
 
 from tst_cu_mcp.overlay import (
+    CMD_CURSOR,
+    CMD_CURSOR_HIDE,
     CMD_GRAB_BEGIN,
     CMD_GRAB_END,
     CMD_HIDE,
@@ -37,6 +39,7 @@ from tst_cu_mcp.overlay import (
     CMD_SHOW,
     CMD_TARGET,
 )
+from tst_cu_mcp.overlay.agents import Agent, clean_key, clean_label
 
 #: ``show``/``hide`` are acked by the helper's reader thread on arrival.
 FAST_ACK_TIMEOUT = 1.0
@@ -170,6 +173,16 @@ class DarwinOverlay:
     def set_target(self, display_id: int | None) -> None:
         if display_id is not None and display_id >= 0:
             self._send(f"{CMD_TARGET} {int(display_id)}")
+
+    def cursor(self, agent: Agent, x: float, y: float, click: bool) -> None:
+        # One line: key, point (global, top-left origin), fill, click, label.
+        self._send(
+            f"{CMD_CURSOR} {clean_key(agent.key)} {x:.1f} {y:.1f} {agent.color} "
+            f"{1 if click else 0} {clean_label(agent.label)}"
+        )
+
+    def cursor_hide(self, key: str | None) -> None:
+        self._send(f"{CMD_CURSOR_HIDE} {'*' if key is None else clean_key(key)}")
 
     @contextmanager
     def grab_hidden(self) -> Iterator[None]:

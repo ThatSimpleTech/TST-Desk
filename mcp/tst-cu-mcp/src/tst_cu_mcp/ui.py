@@ -96,8 +96,26 @@ def ui_action(
     except Exception:
         safety.notify_blocked()
         raise
+    _point_at(result.get("frame"))
     result["app"] = target.to_dict()
     return result
+
+
+def _point_at(frame: object) -> None:
+    """The acting agent's cursor goes to the element it just acted on.
+
+    Background actions never move the pointer, so this drawn cursor is the
+    only on-screen sign of where the agent works (TD-5227). Best effort: no
+    frame (the host could not read one) means no cursor move.
+    """
+    if not isinstance(frame, dict):
+        return
+    try:
+        x = float(frame["x"]) + float(frame["width"]) / 2.0
+        y = float(frame["y"]) + float(frame["height"]) / 2.0
+    except (KeyError, TypeError, ValueError):
+        return
+    get_overlay().pointer(x, y, click=True)
 
 
 def launch_app(app: str) -> dict[str, Any]:

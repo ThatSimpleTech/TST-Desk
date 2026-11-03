@@ -81,7 +81,7 @@ ignore_missing_imports = true
 # bases are Any, which strict mode refuses. It only ever runs inside the helper
 # child process, so the loosening stays contained there.
 [[tool.mypy.overrides]]
-module = ["tst_cu_mcp.overlay.darwin_helper"]
+module = ["tst_cu_mcp.overlay.darwin_helper", "tst_cu_mcp.overlay.darwin_cursor"]
 disallow_subclassing_any = false
 
 # The Windows backend names ctypes attributes (WinDLL, WINFUNCTYPE, ...) that

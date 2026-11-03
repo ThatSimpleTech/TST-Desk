@@ -111,13 +111,14 @@ from .context.skills import list_workspace_skills_async, skills_doctor_detail
 from .context.stack import build_instruction_stack
 from .context_pins import PinOutsideError, add_pin, list_pin_cards, project_capacity, remove_pin
 from .coworker import load_coworker, save_coworker
+from .cu_agents import set_title_lookup
 from .cu_indicators import (
     CuIndicatorPrefs,
     load_cu_indicators,
     save_cu_indicators,
     set_current_prefs,
 )
-from .cu_policy import CuPolicy, load_cu_policy, save_cu_policy
+from .cu_policy import CuPolicy, load_cu_policy, save_cu_policy, save_overlay_prefs
 from .data_dir_lock import acquire_data_dir_lock
 from .desktop import (
     AccessibilityDriver,
@@ -125,6 +126,7 @@ from .desktop import (
     accessibility_driver_from_config,
     desktop_driver_from_config,
 )
+from .desktop.ax_cursor import AxCursor
 from .desktop.grounding_client import GroundingClient
 from .desktop.host_probe import host_permissions
 from .desktop.permissions import (
@@ -1138,6 +1140,7 @@ class Daemon:
         self._tasks: list[asyncio.Task[Any]] = []
         self.session_registry = SessionRegistry()
         self._session_store = SessionStore(self.data_dir)
+        set_title_lookup(self._session_title)
         # The path is this daemon's file, never the no-arg library cache.
         # A zero-arg test double still injects; a real loader is not caught
         # and retried against the default path (TD-4843).
@@ -1191,6 +1194,7 @@ class Daemon:
         self.remote_attach_enabled, self.remote_attach_last_bind = load_remote_attach(self.data_dir)
         self.cu_indicators = load_cu_indicators(self.data_dir)
         set_current_prefs(self.cu_indicators)
+        self._mirror_overlay_prefs()
         self.cu_policy = load_cu_policy()
         self.workspace_pins = load_workspace_pins(self.data_dir)
         self.session_stars = load_session_stars(self.data_dir)
@@ -1245,6 +1249,14 @@ class Daemon:
         self.ax_driver: AccessibilityDriver | None = accessibility_driver_from_config(
             self.config, self.data_dir
         )
+        if self.ax_driver is not None:
+            # agent-desktop draws each session's cursor for these tools, in
+            # the color the sidecar gave that session (TD-5227).
+            self.ax_driver.attach_cursor(
+                AxCursor(
+                    wanted=self._agent_cursor_wanted, color_for=self.desktop_driver.agent_color
+                )
+            )
         # Browser CU (TD-1710): mock unless computer_use.browser is playwright
         # and Playwright is importable. Profile lives under the data dir.
         self.browser_driver: BrowserDriver = browser_driver_from_config(self.config, self.data_dir)
@@ -1295,6 +1307,26 @@ class Daemon:
             return
         log.info("computer-use stop-file %s: %s", "created" if killed else "removed", path)
 
+    def _agent_cursor_wanted(self) -> bool:
+        """Each agent's real-display cursor: both switches on and not stopped."""
+        prefs = self.cu_indicators
+        return prefs.agent_cursor and prefs.show_on_real_display and not self._cu_killed
+
+    def _mirror_overlay_prefs(self) -> None:
+        """Hand the display switches to every tst-cu-mcp client (TD-5227)."""
+        prefs = self.cu_indicators
+        try:
+            save_overlay_prefs(enabled=prefs.show_on_real_display, cursor=prefs.agent_cursor)
+        except OSError as exc:
+            log.warning("computer-use display switches not shared: %s", exc)
+
+    def _session_title(self, session_id: str) -> str | None:
+        """A chat's title for its agent cursor label."""
+        for record in self._session_store.records():
+            if record.session_id == session_id:
+                return record.title or record.auto_title
+        return None
+
     async def _apply_cu_kill(self, killed: bool, *, write_file: bool) -> None:
         """Set the switch and close what an engaged switch closes."""
         self.set_computer_use_killed(killed, write_file=write_file)
@@ -1302,6 +1334,8 @@ class Daemon:
             for sess in await self.session_registry.list_sessions():
                 await sess.close_cu_session()
             await self.desktop_driver.set_overlay_session(False)
+            if self.ax_driver is not None:
+                await self.ax_driver.cursor_off()
 
     async def _cu_stop_watch(self, interval: float = CU_STOP_POLL_SECONDS) -> None:
         """Follow a stop-file created or removed outside TST Desk (TD-5223).
@@ -2634,6 +2668,8 @@ class Daemon:
         await phases.run("session_index", asyncio.to_thread(self._close_session_index))
 
         await phases.run("desktop", self.desktop_driver.aclose())
+        if self.ax_driver is not None:
+            await phases.run("accessibility", self.ax_driver.aclose())
         await phases.run("browser", self.browser_driver.aclose())
         await phases.run("mcp", self._mcp.aclose())
         # TD-5139: language servers are the daemon's children.
@@ -3909,6 +3945,9 @@ class Daemon:
             )
             save_cu_indicators(self.data_dir, self.cu_indicators)
             set_current_prefs(self.cu_indicators)
+            await asyncio.to_thread(self._mirror_overlay_prefs)
+            if self.ax_driver is not None and not self._agent_cursor_wanted():
+                await self.ax_driver.cursor_off()
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, SetCuPolicy):

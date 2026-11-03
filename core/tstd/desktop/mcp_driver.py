@@ -9,13 +9,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar
 
+from ..cu_agents import CuAgent, current_cu_agent
 from .permissions import parse_mcp_permissions_result
 from .protocol import DesktopError
 from .stdio_mcp import StdioMcpClient, map_mcp_error
 
 LIVE_PLATFORMS = frozenset({"darwin", "win32", "linux"})
+_T = TypeVar("_T")
 
 # Product tools → existing MCP tool names. Points, not last-screenshot
 # image space: tstd does not yet thread capture metadata between calls.
@@ -46,9 +49,47 @@ class McpDesktopDriver:
         self.platform = self._platform
         self._client = client if client is not None else StdioMcpClient(command, env=env)
         self.killed = False
+        # TD-5227: which session's cursor the sidecar draws next.
+        self._agent_lock = asyncio.Lock()
+        self._announced: tuple[str, str] | None = None
+        self._colors: dict[str, str] = {}
 
     def set_killed(self, killed: bool) -> None:
         self.killed = bool(killed)
+
+    async def agent_color(self, agent: CuAgent) -> str | None:
+        """Name ``agent`` to the sidecar; its cursor color, or None if unknown."""
+        async with self._agent_lock:
+            return await self._announce(agent)
+
+    async def _announce(self, agent: CuAgent) -> str | None:
+        label = agent.label
+        if self._announced == (agent.agent_id, label):
+            return self._colors.get(agent.agent_id)
+        try:
+            result = await self._client.call_tool(
+                "overlay_agent", {"agent_id": agent.agent_id, "label": label}
+            )
+            color = _agent_color(result)
+        except Exception:
+            return None
+        self._announced = (agent.agent_id, label)
+        if color is not None:
+            self._colors[agent.agent_id] = color
+        return color
+
+    async def _as_agent(self, act: Callable[[], Awaitable[_T]]) -> _T:
+        """Run one pointer action as the acting session (TD-5227).
+
+        The sidecar draws the cursor of whichever agent it was last told
+        about, so naming the agent and acting happen under one lock: two
+        sessions acting at once cannot swap each other's cursors.
+        """
+        agent = current_cu_agent.get()
+        async with self._agent_lock:
+            if agent is not None:
+                await self._announce(agent)
+            return await act()
 
     async def set_overlay_session(self, active: bool, session: str = "") -> None:
         """Tell the sidecar one session's computer-use episode opened or closed."""
@@ -95,9 +136,8 @@ class McpDesktopDriver:
     async def move(self, x: float, y: float, expect_window: str | None = None) -> str:
         self._refuse_if_no_live_path()
         self._refuse_if_killed()
-        result = await self._client.call_tool(
-            MCP_TOOLS["move"],
-            _point_args(x, y, expect_window),
+        result = await self._as_agent(
+            lambda: self._client.call_tool(MCP_TOOLS["move"], _point_args(x, y, expect_window))
         )
         return json.dumps({"moved_to": {"x": x, "y": y}, "sidecar": result}, default=str)
 
@@ -114,7 +154,7 @@ class McpDesktopDriver:
         args = _point_args(x, y, expect_window)
         args["button"] = button
         args["count"] = count
-        result = await self._client.call_tool(MCP_TOOLS["click"], args)
+        result = await self._as_agent(lambda: self._client.call_tool(MCP_TOOLS["click"], args))
         return json.dumps(
             {"clicked": {"x": x, "y": y}, "button": button, "count": count, "sidecar": result},
             default=str,
@@ -149,7 +189,7 @@ class McpDesktopDriver:
             args["y"] = y
         if expect_window is not None:
             args["expect_window"] = expect_window
-        await self._client.call_tool(MCP_TOOLS["scroll"], args)
+        await self._as_agent(lambda: self._client.call_tool(MCP_TOOLS["scroll"], args))
         return json.dumps({"scrolled": {"dx": dx, "dy": dy}})
 
     async def foreground_window(self) -> dict[str, Any]:
@@ -173,6 +213,22 @@ class McpDesktopDriver:
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+
+def _agent_color(result: Any) -> str | None:
+    """The ``color`` from an ``overlay_agent`` reply (a JSON text block)."""
+    for block in _content_blocks(result):
+        text = block.get("text") if isinstance(block, dict) else getattr(block, "text", None)
+        if not isinstance(text, str):
+            continue
+        try:
+            body = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        color = body.get("color") if isinstance(body, dict) else None
+        if isinstance(color, str) and len(color) == 7 and color.startswith("#"):
+            return color
+    return None
 
 
 def _point_args(x: float, y: float, expect_window: str | None) -> dict[str, Any]:

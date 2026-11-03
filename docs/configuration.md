@@ -3313,7 +3313,18 @@ proposals for the run summary and never accepts them either. The classifier stil
 **Computer-use glow**, **Agent cursor**, and **Show indicators on the real display** are also
 not keys in this file. Settings → Appearance persists them as `cu-indicators.yaml` in the
 user data dir (glow and cursor default on; the real-display ring defaults on). Glow and
-the agent cursor are drawn on the Screen pane. The rust ring on the real display
+the agent cursor are drawn on the Screen pane. With both **Agent cursor** and **Show
+indicators on the real display** on, each computer-use agent also gets its own cursor on
+the real display (TD-5227): an arrow and a label in that agent's color ("TST Desk · <chat
+title>" for a TST Desk session, the client's name for Grok or another assistant). It goes
+to the agent's last move, click or acted-on control and fades 10 seconds after its last
+action. It is a drawn window, left out of screenshots; it never moves your pointer. In
+`background` mode your pointer stays still and this cursor shows where each agent works;
+in `full_control` the real pointer still moves for each click, and the drawn cursors keep
+the agents apart. The element tools (`desktop_act` and the rest) show agent-desktop's own
+cursor in the same color and label. On macOS only, apart from agent-desktop's. Stop hides
+every one. TST Desk copies the two switches into `~/.tst-cu-mcp/config.yaml` as
+`overlay.enabled` and `overlay.cursor`, so other tst-cu-mcp clients follow them too. The rust ring on the real display
 means "an agent has the real screen", so it shows only in `full_control` mode
 (the `mode` in `~/.tst-cu-mcp/config.yaml`, re-read when it changes); in
 `background` mode it stays off on every display (TD-5226). On macOS it lights only

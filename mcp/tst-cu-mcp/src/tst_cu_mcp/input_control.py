@@ -16,7 +16,11 @@ Immediately after the kill-switch passes, every action pings
 :func:`tst_cu_mcp.overlay.get_overlay` so the real-display glow tracks the
 attempt — including attempts that then fail validation, which are still the
 agent driving. A pointer action first aims the glow at the display under its
-point. A refusal from the backend itself — the OS said no, as with a
+point, and once it is valid and in front, moves the acting agent's own drawn
+cursor there (TD-5227) before the backend acts. That cursor is a window; the
+hardware pointer moves only because the backend's act moves it.
+
+A refusal from the backend itself — the OS said no, as with a
 missing Accessibility grant — puts the glow out again
 (:func:`tst_cu_mcp.safety.notify_blocked`): nothing was driven.
 
@@ -132,6 +136,7 @@ def move_mouse(x: float, y: float, expect_window: str | None = None) -> None:
     get_overlay().activity()
     assert_on_screen(x, y)
     assert_foreground(expect_window)
+    get_overlay().pointer(x, y)
     _actuate(get_backend().move_mouse, float(x), float(y))
 
 
@@ -154,6 +159,7 @@ def click(
         raise ValueError(f"click count too large ({count} > {MAX_CLICK_COUNT})")
     assert_on_screen(x, y)
     assert_foreground(expect_window)
+    get_overlay().pointer(x, y, click=True)
     _actuate(get_backend().click, float(x), float(y), button, count)
 
 

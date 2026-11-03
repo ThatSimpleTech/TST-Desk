@@ -201,6 +201,7 @@ class TestToolListing:
         computer-use episode is running when none is."""
         listed = {tool["name"] for tool in session["responses"][2]["result"]["tools"]}
         assert "overlay_session" not in listed
+        assert "overlay_agent" not in listed
 
     def test_the_daemons_own_child_still_gets_the_episode_bracket(self) -> None:
         """The other half: gating it off the model must not take it away from
@@ -208,7 +209,7 @@ class TestToolListing:
         result = run_session(handshake_requests(), internal=True)
         listed = {tool["name"] for tool in result["responses"][2]["result"]["tools"]}
         assert "overlay_session" in listed
-        assert listed == TOOL_NAMES | {"overlay_session"}
+        assert listed == TOOL_NAMES | {"overlay_session", "overlay_agent"}
 
     def test_every_tool_has_a_description(self, session: dict[str, Any]) -> None:
         for tool in session["responses"][2]["result"]["tools"]:

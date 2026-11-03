@@ -13042,6 +13042,33 @@ step 1 and the Mac app since TD-5228; on Windows the binary comes from
 
 ---
 
+### TD-5227 — Each agent has its own cursor on the real display
+**Size:** 5 · **Depends on:** TD-3402, TD-5220, TD-5226
+**Status:** In review 2026-11-03.
+
+An agent doing computer use had no cursor of its own on the real display. In
+full control it moved the user's pointer, and with several agents at once
+nothing showed which agent was where. TD-3402 had kept the agent cursor on the
+Screen pane only. agent-desktop (TD-5220) already draws a presentation-only
+cursor per agent, but only for its own tools, which are off by default and not
+what the coordinate tools, Grok or other assistants use, and its windows show
+up in screenshots. This story combines the two with one identity per agent.
+
+**Acceptance criteria:**
+- [x] DECISIONS.md replaces the TD-3402 cursor rule and says what "separate cursor" means in background and in full control
+- [x] Each tst-cu-mcp client draws its own cursor on macOS (arrow and label in its color) at its last move, click or acted-on element, in a click-through, non-shareable window; no cursor API is called and the hardware pointer is never moved for it
+- [x] Each TST Desk session is its own agent ("TST Desk · <chat title>"), named to the shared sidecar before each pointer action under one lock
+- [x] Colors come from a machine-wide registry, so live clients do not share one while colors remain; a client that exits frees its color
+- [x] The element tools run in one agent-desktop session with its multi-agent cursor, each session enabled with the same label and color
+- [x] Both switches in `cu-indicators.yaml` apply, live, to every tst-cu-mcp client through the shared policy file, and to agent-desktop's cursor
+- [x] Reduced motion: no glide and no click ring; agent-desktop reads the system setting itself
+- [x] Stop hides every drawn cursor within a quarter second and disables agent-desktop's overlay; a cursor fades 10 s after its agent's last action
+- [x] TST Desk's own screenshots leave agent-desktop's cursor windows out
+- [x] Tests: identity, colors across processes, the cursor model, the wire, the daemon's announce, the agent-desktop session and the shared switches, each shown to fail with its piece removed
+- [ ] Live on a Mac: two agents at once show two distinct cursors; the pointer stays still in background mode; screenshots contain neither the ring nor any cursor; Stop clears everything
+
+---
+
 ### TD-5228 — The Mac app ships agent-desktop
 **Size:** 3 · **Depends on:** TD-5221
 **Status:** In review 2026-11-03. The live check runs separately against a signed build.

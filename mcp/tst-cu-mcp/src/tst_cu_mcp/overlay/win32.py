@@ -13,6 +13,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from typing import Any
 
+from tst_cu_mcp.overlay.agents import Agent
 from tst_cu_mcp.overlay.style import (
     CORE_WIDTH_PX,
     INSET_PX,
@@ -87,6 +88,13 @@ class Win32Overlay:
     def set_target(self, display_id: int | None) -> None:
         """Every display keeps its bars; lighting one display is darwin-only so far."""
         del display_id
+
+    def cursor(self, agent: Agent, x: float, y: float, click: bool) -> None:
+        """The drawn agent cursor is darwin-only so far (TD-5227)."""
+        del agent, x, y, click
+
+    def cursor_hide(self, key: str | None) -> None:
+        del key
 
     @contextmanager
     def grab_hidden(self) -> Iterator[None]:
