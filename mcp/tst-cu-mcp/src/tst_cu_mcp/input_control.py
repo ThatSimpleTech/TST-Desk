@@ -75,8 +75,8 @@ def display_at(x: float, y: float) -> int | None:
     return None
 
 
-def _aim_overlay(x: float, y: float) -> None:
-    """Point the ring at the display this pointer action lands on."""
+def aim_overlay(x: float, y: float) -> None:
+    """Point the ring at the display this action lands on."""
     try:
         target = display_at(x, y)
     except Exception:
@@ -132,7 +132,7 @@ def cursor_position() -> tuple[int, int]:
 def move_mouse(x: float, y: float, expect_window: str | None = None) -> None:
     """Move the cursor to a global coordinate."""
     safety.ensure_actuation_allowed()
-    _aim_overlay(x, y)
+    aim_overlay(x, y)
     get_overlay().activity()
     assert_on_screen(x, y)
     assert_foreground(expect_window)
@@ -149,7 +149,7 @@ def click(
 ) -> None:
     """Click at a global coordinate. ``count`` >= 2 produces a multi-click."""
     safety.ensure_actuation_allowed()
-    _aim_overlay(x, y)
+    aim_overlay(x, y)
     get_overlay().activity()
     if button not in MOUSE_BUTTONS:
         raise ValueError(f"unknown button {button!r}; use one of {MOUSE_BUTTONS}")

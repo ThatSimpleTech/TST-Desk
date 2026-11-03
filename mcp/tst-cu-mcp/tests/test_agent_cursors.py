@@ -238,15 +238,40 @@ class TestElementPoint:
     class Recorder:
         def __init__(self) -> None:
             self.points: list[tuple[float, float, bool]] = []
+            self.targets: list[int | None] = []
 
         def pointer(self, x: float, y: float, *, click: bool = False) -> None:
             self.points.append((x, y, click))
 
-    def test_frame_center_with_a_click(self) -> None:
+        def set_target(self, display_id: int | None) -> None:
+            self.targets.append(display_id)
+
+    def test_frame_center_with_a_click(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from tst_cu_mcp import input_control
+        from tst_cu_mcp.displays import DisplayInfo
+
+        displays = [
+            DisplayInfo(
+                display_id=52, index=0, x=0, y=0, width=1920, height=1080, scale=1.0, is_main=True
+            ),
+            DisplayInfo(
+                display_id=53,
+                index=1,
+                x=-1920,
+                y=0,
+                width=1920,
+                height=1080,
+                scale=1.0,
+                is_main=False,
+            ),
+        ]
+        monkeypatch.setattr(input_control, "list_displays", lambda: displays)
         recorder = self.Recorder()
         set_overlay(recorder)  # type: ignore[arg-type]
-        ui._point_at({"x": 100, "y": 50, "width": 40, "height": 20})
-        assert recorder.points == [(120.0, 60.0, True)]
+        ui._point_at({"x": -1506, "y": 734, "width": 48, "height": 48})
+        assert recorder.points == [(-1482.0, 758.0, True)]
+        # TD-5232: the ring moves to the element's display, as for a click.
+        assert recorder.targets == [53]
 
     @pytest.mark.parametrize("frame", [None, {}, {"x": 1}, {"x": "a", "y": 1, "width": 1}])
     def test_no_usable_frame_moves_nothing(self, frame: Any) -> None:
