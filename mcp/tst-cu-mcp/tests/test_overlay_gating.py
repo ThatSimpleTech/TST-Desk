@@ -97,6 +97,9 @@ class RecordingOverlay:
     def pointer(self, x: float, y: float, *, click: bool = False) -> None:
         self.calls.append("cursor_click" if click else "cursor_move")
 
+    def prewarm(self) -> None:
+        self.calls.append("prewarm")
+
     def activity(self) -> None:
         self.calls.append("activity")
 
@@ -187,11 +190,13 @@ class TestGetOverlay:
 
 
 class TestDarwinGating:
+    """Every spawn starts with a ``hide`` probe that waits out the start-up."""
+
     def test_activity_shows_when_alive(self) -> None:
         transport = RecordingTransport()
         overlay = DarwinOverlay(spawn=lambda: transport)
         overlay.activity()
-        assert transport.commands == ["show"]
+        assert transport.commands == ["hide", "show"]
 
     def test_session_stays_until_end(self) -> None:
         transport = RecordingTransport()
@@ -199,7 +204,7 @@ class TestDarwinGating:
         overlay.begin_session()
         overlay.begin_session()
         overlay.end_session()
-        assert transport.commands == ["show", "show", "hide"]
+        assert transport.commands == ["hide", "show", "show", "hide"]
 
     def test_killswitch_forces_hide(self, tmp_path: Path) -> None:
         stop = tmp_path / "STOP"
@@ -207,27 +212,85 @@ class TestDarwinGating:
         transport = RecordingTransport()
         overlay = DarwinOverlay(spawn=lambda: transport)
         overlay.activity()
-        assert transport.commands == ["hide"]
+        assert transport.commands == ["hide", "hide"]
 
     def test_notify_blocked_hides(self) -> None:
         transport = RecordingTransport()
         overlay = DarwinOverlay(spawn=lambda: transport)
         overlay.notify_blocked()
-        assert transport.commands == ["hide"]
+        assert transport.commands == ["hide", "hide"]
 
     def test_grab_pair_brackets_and_survives_failed_begin(self) -> None:
         ok = RecordingTransport()
         overlay = DarwinOverlay(spawn=lambda: ok)
         with overlay.grab_hidden():
             ok.commands.append("<grab>")
-        assert ok.commands == ["grab_begin", "<grab>", "grab_end"]
+        assert ok.commands == ["hide", "grab_begin", "<grab>", "grab_end"]
 
         dead = RecordingTransport(ack=False)
         overlay2 = DarwinOverlay(spawn=lambda: dead)
         with overlay2.grab_hidden():
-            pass  # begin was never acked; end must not be sent either
-        assert dead.commands == ["grab_begin"]
+            pass  # the helper never answered; no grab command may follow
+        assert dead.commands == ["hide"]
         assert overlay2.degraded is True
+        assert dead.closed is True
+
+    def test_a_slow_start_is_waited_out_not_given_up_on(self) -> None:
+        """TD-5230: the frozen helper's first ack takes seconds."""
+
+        class SlowStart(RecordingTransport):
+            def __init__(self) -> None:
+                super().__init__()
+                self.timeouts: list[float] = []
+
+            def send(self, command: str, *, timeout: float = 1.0) -> bool:
+                self.timeouts.append(timeout)
+                self.commands.append(command)
+                # Only a budget that covers a cold start sees the ack.
+                return len(self.commands) > 1 or timeout >= 5.0
+
+        transport = SlowStart()
+        overlay = DarwinOverlay(spawn=lambda: transport)
+        overlay.activity()
+        assert overlay.degraded is False
+        assert transport.commands == ["hide", "show"]
+        assert transport.timeouts[0] >= 5.0
+        assert transport.timeouts[1] <= 1.0
+
+    def test_prewarm_starts_the_helper_once_off_the_tool_path(self) -> None:
+        import threading
+
+        spawned: list[RecordingTransport] = []
+        started = threading.Event()
+
+        def spawn() -> RecordingTransport:
+            transport = RecordingTransport()
+            spawned.append(transport)
+            started.set()
+            return transport
+
+        overlay = DarwinOverlay(spawn=spawn)
+        overlay.prewarm()
+        assert started.wait(5.0)
+        overlay.activity()
+        overlay.prewarm()
+        assert len(spawned) == 1
+        assert spawned[0].commands == ["hide", "show"]
+
+    def test_a_failed_prewarm_degrades_quietly(self) -> None:
+        import time
+
+        def spawn() -> RecordingTransport:
+            raise OSError("no window server")
+
+        overlay = DarwinOverlay(spawn=spawn)
+        overlay.prewarm()
+        for _ in range(50):
+            if overlay.degraded:
+                break
+            time.sleep(0.02)
+        assert overlay.degraded is True
+        overlay.activity()  # still a quiet no-op
 
     def test_set_target_names_the_display(self) -> None:
         transport = RecordingTransport()
@@ -235,7 +298,7 @@ class TestDarwinGating:
         overlay.set_target(51)
         overlay.set_target(None)
         overlay.set_target(-1)
-        assert transport.commands == ["target 51"]
+        assert transport.commands == ["hide", "target 51"]
 
     def test_shutdown_closes_transport(self) -> None:
         transport = RecordingTransport()

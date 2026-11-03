@@ -13042,6 +13042,27 @@ step 1 and the Mac app since TD-5228; on Windows the binary comes from
 
 ---
 
+### TD-5230 — The packaged app's ring and cursors survive the helper's slow start
+**Size:** 1 · **Depends on:** TD-4834, TD-5226, TD-5227
+**Status:** In review 2026-11-03.
+
+In the packaged Mac app the overlay helper is the frozen `tstd --cu-overlay`,
+which unpacks itself before Python starts. Its first ack took 2.4 to 5.4
+seconds on a Mac, but the sidecar waited 1 second for it and then switched the
+overlay off for the rest of the process. So the packaged app often showed no
+ring and no agent cursor at all, which the source build never shows. Found in
+the TD-5227 live check: an episode opened right after the sidecar started left
+no helper running.
+
+**Acceptance criteria:**
+- [x] The first command after a spawn is a `hide` probe allowed 15 seconds; later commands keep the 1 second budget
+- [x] The server starts the helper in the background at launch, so the agent's first action rarely waits for it; a failed start still degrades quietly
+- [x] Test children of the server run with the overlay off, so no test puts windows on the screen
+- [x] Unit tests: a slow first ack is waited out (fails with the old 1 second budget), prewarm spawns once, a failed prewarm degrades
+- [x] Live: the new code drives the packaged helper through a 5.4 second cold start and lights the ring on the targeted display
+
+---
+
 ### TD-5227 — Each agent has its own cursor on the real display
 **Size:** 5 · **Depends on:** TD-3402, TD-5220, TD-5226
 **Status:** In review 2026-11-03.

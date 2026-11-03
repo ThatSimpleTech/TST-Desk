@@ -205,6 +205,13 @@ class GatedOverlay:
             with self._lock:
                 grab.__exit__(None, None, None)
 
+    def prewarm(self) -> None:
+        """Start a slow-starting painter now, off the tool path (TD-5230)."""
+        warm = getattr(self.painter, "prewarm", None)
+        if callable(warm):
+            with contextlib.suppress(Exception):
+                warm()
+
     def shutdown(self) -> None:
         self._halt.set()
         watcher = self._watcher

@@ -522,6 +522,9 @@ def run() -> None:
 
     configure_logging()
     safety.set_config(load_config())
+    # The packaged helper takes seconds to start; begin now, not on the
+    # agent's first action (TD-5230). A no-op where the overlay is off.
+    get_overlay().prewarm()
     try:
         build_server().run(transport="stdio")
     finally:

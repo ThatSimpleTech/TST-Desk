@@ -13,6 +13,15 @@ that already carries pyobjc) and drives it with a line protocol over stdin:
 * ``quit`` ends the helper; stdin EOF does too, so a crashed sidecar never
   leaves an orphaned halo behind.
 
+Start-up (TD-5230): in the packaged app the helper is the frozen ``tstd``,
+which unpacks itself before Python starts, so its first ack takes seconds
+(2-5 s measured), not milliseconds. The first command after a spawn is a
+``hide`` probe allowed :data:`STARTUP_ACK_TIMEOUT`; the server starts the
+helper in the background at launch (:meth:`DarwinOverlay.prewarm`) so the
+agent's first action rarely waits for it. Before this, the 1 s ack budget
+expired on almost every cold start and the overlay switched itself off for
+the life of the process, so the packaged app often showed no ring at all.
+
 Failure rule (see the package docstring): any spawn, write, or ack trouble
 degrades this manager — permanently — to a no-op. A capture whose grab ack
 timed out still proceeds; worst case one frame contains the ring, and the
@@ -25,6 +34,7 @@ import contextlib
 import select
 import subprocess
 import sys
+import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Protocol
@@ -44,8 +54,10 @@ from tst_cu_mcp.overlay.agents import Agent, clean_key, clean_label
 #: ``show``/``hide`` are acked by the helper's reader thread on arrival.
 FAST_ACK_TIMEOUT = 1.0
 #: ``grab_*`` wait for the helper's main thread to have acted (a tick is
-#: ~33ms; the budget covers helper startup and a busy runloop).
+#: ~33ms; the budget covers a busy runloop).
 GRAB_ACK_TIMEOUT = 3.0
+#: The first ack after a spawn: a frozen helper unpacks itself first.
+STARTUP_ACK_TIMEOUT = 15.0
 
 
 class Transport(Protocol):
@@ -131,19 +143,46 @@ class DarwinOverlay:
         self._spawn = spawn or default_spawn
         self._transport: Transport | None = None
         self.degraded = False
+        # Serializes the prewarm thread with commands from the tool thread.
+        self._lock = threading.Lock()
+
+    def prewarm(self) -> None:
+        """Start the helper in the background so the first action finds it up."""
+        if self.degraded or self._transport is not None:
+            return
+        threading.Thread(target=self._prewarm, name="overlay-prewarm", daemon=True).start()
+
+    def _prewarm(self) -> None:
+        with self._lock:
+            if self.degraded or self._transport is not None:
+                return
+            try:
+                self._transport = self._connect()
+            except Exception:
+                self._degrade()
+
+    def _connect(self) -> Transport:
+        """Spawn the helper and wait, generously, for its first ack."""
+        transport = self._spawn()
+        if not transport.send(CMD_HIDE, timeout=STARTUP_ACK_TIMEOUT):
+            with contextlib.suppress(Exception):
+                transport.close()
+            raise RuntimeError("overlay helper did not start")
+        return transport
 
     def _send(self, command: str, *, timeout: float = FAST_ACK_TIMEOUT) -> bool:
-        if self.degraded:
+        with self._lock:
+            if self.degraded:
+                return False
+            try:
+                if self._transport is None:
+                    self._transport = self._connect()
+                if self._transport.send(command, timeout=timeout):
+                    return True
+            except Exception:
+                pass
+            self._degrade()
             return False
-        try:
-            if self._transport is None:
-                self._transport = self._spawn()
-            if self._transport.send(command, timeout=timeout):
-                return True
-        except Exception:
-            pass
-        self._degrade()
-        return False
 
     def _degrade(self) -> None:
         """Give up on the glow for the life of the process."""

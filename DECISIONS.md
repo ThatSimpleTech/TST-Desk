@@ -19804,3 +19804,25 @@ identity the lock-guarded `overlay_agent` call already gives).
 **Known limits:** an agent that alternates between a coordinate tool and an
 element tool can show two cursors with its color and label for up to 10 s;
 on Windows and Linux only agent-desktop's cursor exists.
+
+## 2026-11-03 — TD-5230: the overlay helper starts at launch and gets a start-up budget (Class B)
+
+**Decision:** tst-cu-mcp starts its macOS overlay helper in a background
+thread when the server launches, and the first command after any spawn is a
+`hide` probe allowed 15 seconds. Every later command keeps the 1 second ack
+budget, and any failure still degrades the overlay to a quiet no-op.
+
+**Rationale:** the packaged helper is the frozen `tstd`, which unpacks itself
+before Python runs; its first ack took 2.4 to 5.4 seconds on a Mac. With the
+old 1 second budget the overlay gave up on almost every cold start, so the
+packaged app often had no ring and no cursors, while the source build (whose
+helper starts in well under a second) always did. Starting at launch keeps
+that wait off the agent's first action; the long first budget covers an
+action that arrives before the helper is up.
+
+**Rejected:** raising every ack budget (a hung helper would then stall each
+action for seconds); a non-blocking start that drops commands until the
+helper answers (the rules controller assumes a lit ring is lit, and would
+need a replay path for nothing the probe does not already give); starting
+the helper only when the overlay is first needed (that is the path that
+failed).

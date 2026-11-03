@@ -225,6 +225,7 @@ class TestWire:
         painter.cursor_hide("s1")
         painter.cursor_hide(None)
         assert sent == [
+            "hide",  # the start-up probe (TD-5230)
             "cursor s1 10.0 20.2 #2F6FDE 1 Fix login",
             "cursor_hide s1",
             "cursor_hide *",
