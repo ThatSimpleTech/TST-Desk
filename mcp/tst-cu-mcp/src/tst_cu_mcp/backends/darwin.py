@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from tst_cu_mcp.backends.base import Rect
+from tst_cu_mcp.backends.darwin_capture import screen_image
 from tst_cu_mcp.displays import DisplayInfo
 from tst_cu_mcp.focus import WindowInfo
 from tst_cu_mcp.permissions import ACCESSIBILITY, NO_HOST_FIX, SCREEN_RECORDING, build_report
@@ -677,24 +678,11 @@ def _cg_capture_png(rect: Rect) -> bytes | None:
     if w <= 0 or h <= 0:
         return None
     try:
-        from Quartz import (
-            CGImageGetHeight,
-            CGImageGetWidth,
-            CGRectMake,
-            CGWindowListCreateImage,
-            kCGNullWindowID,
-            kCGWindowImageDefault,
-            kCGWindowListOptionOnScreenOnly,
-        )
+        from Quartz import CGImageGetHeight, CGImageGetWidth, CGRectMake
     except (ImportError, AttributeError):
         return None
     try:
-        image = CGWindowListCreateImage(
-            CGRectMake(float(x), float(y), float(w), float(h)),
-            kCGWindowListOptionOnScreenOnly,
-            kCGNullWindowID,
-            kCGWindowImageDefault,
-        )
+        image = screen_image(CGRectMake(float(x), float(y), float(w), float(h)))
     except Exception:
         return None
     if image is None:

@@ -16,6 +16,8 @@ use std::ptr;
 const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
 // i32, matching the declaration in cu_identity.rs (the extern must agree).
 const K_CF_NUMBER_DOUBLE_TYPE: i32 = 13;
+const K_AX_VALUE_CG_POINT_TYPE: u32 = 1;
+const K_AX_VALUE_CG_SIZE_TYPE: u32 = 2;
 
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
@@ -43,6 +45,12 @@ extern "C" {
     fn CFArrayGetCount(the_array: *const c_void) -> isize;
     fn CFArrayGetValueAtIndex(the_array: *const c_void, idx: isize) -> *const c_void;
     static kCFBooleanTrue: *const c_void;
+}
+
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    fn AXValueGetTypeID() -> usize;
+    fn AXValueGetValue(value: *const c_void, the_type: u32, value_ptr: *mut c_void) -> u8;
 }
 
 /// One reference to a CF object, released on drop.
@@ -152,6 +160,48 @@ pub unsafe fn items(cf: *const c_void) -> Vec<Owned> {
         .collect()
 }
 
+/// A CFNumber as a finite double. `None` for any other type.
+///
+/// # Safety
+/// `cf` must be null or a live CF object.
+pub unsafe fn number_value(cf: *const c_void) -> Option<f64> {
+    if cf.is_null() || CFGetTypeID(cf) != CFNumberGetTypeID() {
+        return None;
+    }
+    number_of(cf)
+}
+
+/// `(x, y)` of an AXValue holding a CGPoint, such as `AXPosition`.
+///
+/// # Safety
+/// `cf` must be null or a live CF object.
+pub unsafe fn ax_point(cf: *const c_void) -> Option<(f64, f64)> {
+    ax_pair(cf, K_AX_VALUE_CG_POINT_TYPE)
+}
+
+/// `(width, height)` of an AXValue holding a CGSize, such as `AXSize`.
+///
+/// # Safety
+/// `cf` must be null or a live CF object.
+pub unsafe fn ax_size(cf: *const c_void) -> Option<(f64, f64)> {
+    ax_pair(cf, K_AX_VALUE_CG_SIZE_TYPE)
+}
+
+/// CGPoint and CGSize are both two doubles, so one buffer serves both.
+/// AXValueGetValue refuses a value stored as another type (a CGRect
+/// would not fit), but only an AXValueRef may be passed to it at all.
+unsafe fn ax_pair(cf: *const c_void, kind: u32) -> Option<(f64, f64)> {
+    if cf.is_null() || CFGetTypeID(cf) != AXValueGetTypeID() {
+        return None;
+    }
+    let mut pair = [0.0_f64; 2];
+    if AXValueGetValue(cf, kind, pair.as_mut_ptr().cast()) == 0 {
+        return None;
+    }
+    let [a, b] = pair;
+    (a.is_finite() && b.is_finite()).then_some((a, b))
+}
+
 unsafe fn string_of(cf: *const c_void) -> String {
     let len = CFStringGetLength(cf);
     if len < 0 {
@@ -211,6 +261,17 @@ mod tests {
         fn CFGetRetainCount(cf: *const c_void) -> isize;
         static kCFTypeArrayCallBacks: c_void;
         static kCFBooleanFalse: *const c_void;
+    }
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn AXValueCreate(the_type: u32, value_ptr: *const c_void) -> *const c_void;
+    }
+
+    const K_AX_VALUE_CG_RECT_TYPE: u32 = 3;
+
+    fn ax_value<const N: usize>(kind: u32, fields: [f64; N]) -> Owned {
+        unsafe { Owned::adopt(AXValueCreate(kind, fields.as_ptr().cast())).unwrap() }
     }
 
     fn number(n: f64) -> Owned {
@@ -306,6 +367,54 @@ mod tests {
         unsafe {
             assert!(items(s.0).is_empty());
             assert!(items(ptr::null()).is_empty());
+        }
+    }
+
+    #[test]
+    fn number_value_reads_numbers_only() {
+        let s = cfstring("42").unwrap();
+        unsafe {
+            assert_eq!(number_value(number(42.0).0), Some(42.0));
+            assert_eq!(number_value(s.0), None);
+            assert_eq!(number_value(boolean_true()), None);
+            assert_eq!(number_value(ptr::null()), None);
+        }
+    }
+
+    #[test]
+    fn ax_values_read_back_as_a_point_and_a_size() {
+        let position = ax_value(K_AX_VALUE_CG_POINT_TYPE, [12.5, -40.0]);
+        let size = ax_value(K_AX_VALUE_CG_SIZE_TYPE, [300.0, 22.0]);
+        unsafe {
+            assert_eq!(ax_point(position.0), Some((12.5, -40.0)));
+            assert_eq!(ax_size(size.0), Some((300.0, 22.0)));
+        }
+    }
+
+    #[test]
+    fn only_the_matching_ax_value_type_is_read() {
+        let position = ax_value(K_AX_VALUE_CG_POINT_TYPE, [1.0, 2.0]);
+        let size = ax_value(K_AX_VALUE_CG_SIZE_TYPE, [3.0, 4.0]);
+        // Four doubles: copying it into a point would overrun the buffer.
+        let rect = ax_value(K_AX_VALUE_CG_RECT_TYPE, [1.0, 2.0, 3.0, 4.0]);
+        let s = cfstring("AXPosition").unwrap();
+        unsafe {
+            assert_eq!(ax_size(position.0), None);
+            assert_eq!(ax_point(size.0), None);
+            assert_eq!(ax_point(rect.0), None);
+            assert_eq!(ax_point(s.0), None);
+            assert_eq!(ax_size(number(5.0).0), None);
+            assert_eq!(ax_point(ptr::null()), None);
+        }
+    }
+
+    #[test]
+    fn non_finite_ax_values_are_refused() {
+        let position = ax_value(K_AX_VALUE_CG_POINT_TYPE, [f64::NAN, 2.0]);
+        let size = ax_value(K_AX_VALUE_CG_SIZE_TYPE, [10.0, f64::INFINITY]);
+        unsafe {
+            assert_eq!(ax_point(position.0), None);
+            assert_eq!(ax_size(size.0), None);
         }
     }
 

@@ -10,6 +10,7 @@ pyobjc so the module imports on Windows.
 from __future__ import annotations
 
 import json
+import math
 import sys
 from typing import Any
 
@@ -126,6 +127,8 @@ def _read_element(element: Any) -> dict[str, Any]:
 
 def _local_act(pid: int, element_id: str, action: str, value: str) -> dict[str, Any]:
     target = _element_at(pid, element_id)
+    # Read first: a press can close the element or move it.
+    frame = _frame(target)
     if action == "press":
         _perform(target, "AXPress")
     elif action == "raise":
@@ -140,7 +143,53 @@ def _local_act(pid: int, element_id: str, action: str, value: str) -> dict[str, 
         raise ValueError(
             f"unknown ui action {action!r}; use one of press, set_value, focus, raise, show_menu"
         )
-    return {"ok": True, "pid": pid, "id": element_id, "action": action, "path": "local"}
+    result: dict[str, Any] = {
+        "ok": True,
+        "pid": pid,
+        "id": element_id,
+        "action": action,
+        "path": "local",
+    }
+    if frame is not None:
+        result["frame"] = frame
+    return result
+
+
+def _frame(element: Any) -> dict[str, float] | None:
+    """Where *element* is, in global top-left points (the CGEvent and CGWindow
+    space), so the caller can show the action there. Best effort: ``None``
+    when either attribute is missing or not the AXValue it should be."""
+    try:
+        from ApplicationServices import kAXValueCGPointType, kAXValueCGSizeType
+    except (ImportError, AttributeError):
+        return None
+    position = _ax_pair(_attr(element, "AXPosition"), kAXValueCGPointType, ("x", "y"))
+    size = _ax_pair(_attr(element, "AXSize"), kAXValueCGSizeType, ("width", "height"))
+    if position is None or size is None:
+        return None
+    return {"x": position[0], "y": position[1], "width": size[0], "height": size[1]}
+
+
+def _ax_pair(value: Any, kind: int, fields: tuple[str, str]) -> tuple[float, float] | None:
+    """Two finite numbers out of an AXValue of *kind*. Only an AXValueRef is
+    handed to AXValueGetValue: reading a value as the wrong CF type is what
+    crashed the host (TD-5225)."""
+    if value is None:
+        return None
+    try:
+        from ApplicationServices import AXValueGetTypeID, AXValueGetValue, CFGetTypeID
+    except (ImportError, AttributeError):
+        return None
+    try:
+        if CFGetTypeID(value) != AXValueGetTypeID():
+            return None
+        result = AXValueGetValue(value, kind, None)
+        if not isinstance(result, tuple) or len(result) < 2 or not result[0]:
+            return None
+        pair = (float(getattr(result[1], fields[0])), float(getattr(result[1], fields[1])))
+    except Exception:
+        return None
+    return pair if all(math.isfinite(n) for n in pair) else None
 
 
 def _application(pid: int) -> Any:

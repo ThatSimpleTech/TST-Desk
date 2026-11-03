@@ -146,6 +146,8 @@ unsafe fn element_at(app: *mut c_void, element_id: &str) -> Option<Owned> {
 }
 
 unsafe fn perform(element: *mut c_void, action: &str, value: &str) -> Value {
+    // Read first: a press can close the element or move it.
+    let frame = frame(element);
     let err = match action {
         "press" => perform_named(element, "AXPress"),
         "raise" => perform_named(element, "AXRaise"),
@@ -162,7 +164,31 @@ unsafe fn perform(element: *mut c_void, action: &str, value: &str) -> Value {
     if err != AX_OK {
         return json!({"ok": false, "error": format!("AX {action} refused (error {err})")});
     }
-    json!({"ok": true, "action": action, "path": "host"})
+    done(action, frame)
+}
+
+/// The success reply, with the element's frame when it could be read.
+fn done(action: &str, frame: Option<Value>) -> Value {
+    let mut reply = json!({"ok": true, "action": action, "path": "host"});
+    if let Some(frame) = frame {
+        reply["frame"] = frame;
+    }
+    reply
+}
+
+/// Where the element is, in global top-left points (the CGEvent and
+/// CGWindow space), so the caller can show the action there. Best effort:
+/// `None` when either attribute is missing or not the AXValue it should be.
+unsafe fn frame(element: *mut c_void) -> Option<Value> {
+    let position = attr_copy(element, "AXPosition")?;
+    let size = attr_copy(element, "AXSize")?;
+    frame_of(position.as_ptr(), size.as_ptr())
+}
+
+unsafe fn frame_of(position: *const c_void, size: *const c_void) -> Option<Value> {
+    let (x, y) = cu_cf::ax_point(position)?;
+    let (width, height) = cu_cf::ax_size(size)?;
+    Some(json!({"x": x, "y": y, "width": width, "height": height}))
 }
 
 unsafe fn perform_named(element: *mut c_void, name: &str) -> i32 {
@@ -225,4 +251,56 @@ unsafe fn action_names(element: *mut c_void) -> Vec<String> {
     names.push("set_value".into());
     names.push("focus".into());
     names
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn AXValueCreate(the_type: u32, value_ptr: *const c_void) -> *const c_void;
+    }
+
+    const POINT: u32 = 1;
+    const SIZE: u32 = 2;
+
+    fn ax_value(kind: u32, fields: [f64; 2]) -> Owned {
+        unsafe { Owned::adopt(AXValueCreate(kind, fields.as_ptr().cast())).unwrap() }
+    }
+
+    #[test]
+    fn frame_is_position_and_size_in_points() {
+        let position = ax_value(POINT, [120.0, 48.5]);
+        let size = ax_value(SIZE, [64.0, 22.0]);
+        let got = unsafe { frame_of(position.as_ptr(), size.as_ptr()) };
+        assert_eq!(
+            got,
+            Some(json!({"x": 120.0, "y": 48.5, "width": 64.0, "height": 22.0}))
+        );
+    }
+
+    #[test]
+    fn frame_is_none_when_an_attribute_is_the_wrong_type() {
+        let position = ax_value(POINT, [1.0, 2.0]);
+        let size = ax_value(SIZE, [3.0, 4.0]);
+        let text = cu_cf::cfstring("AXSize").unwrap();
+        unsafe {
+            assert_eq!(frame_of(size.as_ptr(), position.as_ptr()), None);
+            assert_eq!(frame_of(position.as_ptr(), text.as_ptr()), None);
+            assert_eq!(frame_of(position.as_ptr(), std::ptr::null()), None);
+        }
+    }
+
+    #[test]
+    fn success_reply_carries_the_frame_only_when_read() {
+        let frame = json!({"x": 1.0, "y": 2.0, "width": 3.0, "height": 4.0});
+        let with = done("press", Some(frame.clone()));
+        assert_eq!(with["frame"], frame);
+        assert_eq!(with["ok"], true);
+        assert_eq!(with["action"], "press");
+        let without = done("focus", None);
+        assert!(without.get("frame").is_none());
+        assert_eq!(without["ok"], true);
+    }
 }
