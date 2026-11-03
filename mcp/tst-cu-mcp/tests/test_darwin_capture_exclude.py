@@ -147,3 +147,35 @@ def test_the_local_capture_path_uses_it(monkeypatch: pytest.MonkeyPatch) -> None
     assert darwin._cg_capture_png((0, 0, 800, 600)) == b"\x89PNG fake"
     assert encoded == [FROM_ARRAY]
     assert fake.calls == [("from_array", [3, 40, 12, 2])]
+
+
+def test_a_bundled_copy_is_found_by_its_executable_not_its_owner_name() -> None:
+    """TD-5231: inside an app bundle agent-desktop's windows report the app's
+    name as their owner. The app's own window, same owner name, stays."""
+    from tst_cu_mcp.backends.darwin_capture import _owners
+
+    described = [
+        {"kCGWindowNumber": 7, "kCGWindowOwnerName": "TST Desk", "kCGWindowOwnerPID": 501},
+        {"kCGWindowNumber": 8, "kCGWindowOwnerName": "TST Desk", "kCGWindowOwnerPID": 777},
+        {"kCGWindowNumber": 9, "kCGWindowOwnerName": "Finder", "kCGWindowOwnerPID": 300},
+    ]
+    names = {501: "tst-desk", 777: "agent-desktop", 300: "Finder"}
+    asked: list[int] = []
+
+    def process_name(pid: int) -> str:
+        asked.append(pid)
+        return names[pid]
+
+    windows = _owners([7, 8, 9], described, process_name)
+    assert kept_window_ids(windows) == [7, 9]
+    assert sorted(asked) == [300, 501, 777]
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="libproc is macOS")
+def test_process_name_reads_this_process() -> None:
+    import os
+
+    from tst_cu_mcp.backends.darwin_capture import process_name
+
+    assert process_name(os.getpid()) == os.path.basename(os.path.realpath(sys.executable))
+    assert process_name(-1) == ""

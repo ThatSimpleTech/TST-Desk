@@ -13042,6 +13042,25 @@ step 1 and the Mac app since TD-5228; on Windows the binary comes from
 
 ---
 
+### TD-5231 — agent-desktop's cursor works from the packaged app
+**Size:** 2 · **Depends on:** TD-5227, TD-5228
+**Status:** In review 2026-11-03.
+
+Two bugs found in the TD-5227 live check against the packaged build:
+
+1. Two sessions whose first element command ran at the same moment each
+   started their own agent-desktop session. One session's snapshot refs then
+   resolved in the other's namespace, and its action failed with
+   `SNAPSHOT_NOT_FOUND`.
+2. The agent-desktop copy bundled inside TST Desk reports the app's name,
+   "TST Desk", as the owner of its cursor windows. TST Desk's screenshots
+   left out windows by the owner name `agent-desktop`, so the bundled copy's
+   cursors stayed in every screenshot.
+
+**Acceptance criteria:**
+- [x] Starting, turning off and ending agent-desktop's cursor session is serialized: two first commands at once start one session (`test_two_first_commands_at_once_start_one_session`, fails without the lock)
+- [x] A capture leaves out a window whose owning process runs the `agent-desktop` executable, whatever owner name it reports, and keeps TST Desk's own windows (host `cu_capture.rs` and the Python fallback; unit tests on both)
+- [x] Live with the packaged binary: two sessions' clicks land in one agent-desktop session; while the bundled copy's cursor is on screen, the capture drops exactly its window (reported owner "TST Desk", its own pid) and keeps the TST Desk window
 ### TD-5230 — The packaged app's ring and cursors survive the helper's slow start
 **Size:** 1 · **Depends on:** TD-4834, TD-5226, TD-5227
 **Status:** In review 2026-11-03.

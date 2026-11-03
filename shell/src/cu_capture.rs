@@ -5,6 +5,11 @@
 //! agent's cursor in another agent's screenshot. When such a window is on
 //! screen, the image is composed from the on-screen window list without
 //! them; otherwise the plain capture runs unchanged.
+//!
+//! A window is agent-desktop's when its owner name is `agent-desktop` or its
+//! owning process runs an executable of that name. The copy bundled inside
+//! TST Desk reports the app's name as its owner, so the name alone misses it
+//! (TD-5231); the executable check must not catch TST Desk's own windows.
 
 /// The window ids a capture draws: every window in `windows` (id and owner
 /// name, front to back) except agent-desktop's, in the same order.
@@ -72,7 +77,16 @@ mod macos {
         ) -> *mut c_void;
         static kCGWindowNumber: *const c_void;
         static kCGWindowOwnerName: *const c_void;
+        static kCGWindowOwnerPID: *const c_void;
     }
+
+    // libproc, part of libSystem.
+    extern "C" {
+        fn proc_pidpath(pid: i32, buffer: *mut c_void, buffersize: u32) -> i32;
+    }
+
+    const PROC_PIDPATHINFO_MAXSIZE: usize = 4096;
+    const EXCLUDED_EXECUTABLE: &str = "agent-desktop";
 
     #[link(name = "CoreFoundation", kind = "framework")]
     extern "C" {
@@ -139,6 +153,7 @@ mod macos {
     /// gets an empty owner, so it is kept.
     unsafe fn owners(ids: *const c_void) -> Vec<(u32, String)> {
         let mut names: HashMap<u32, String> = HashMap::new();
+        let mut executables: HashMap<i32, bool> = HashMap::new();
         if let Some(described) = Owned::adopt(CGWindowListCreateDescriptionFromArray(ids)) {
             for entry in cu_cf::items(described.as_ptr()) {
                 let entry = entry.as_ptr();
@@ -148,7 +163,18 @@ mod macos {
                 let number = cu_cf::number_value(CFDictionaryGetValue(entry, kCGWindowNumber));
                 if let Some(id) = number.and_then(window_id) {
                     let owner = CFDictionaryGetValue(entry, kCGWindowOwnerName);
-                    names.insert(id, cu_cf::text(owner));
+                    let mut name = cu_cf::text(owner);
+                    let pid = cu_cf::number_value(CFDictionaryGetValue(entry, kCGWindowOwnerPID))
+                        .and_then(owner_pid);
+                    if let Some(pid) = pid {
+                        let bundled = *executables.entry(pid).or_insert_with(|| {
+                            executable_name(pid).as_deref() == Some(EXCLUDED_EXECUTABLE)
+                        });
+                        if bundled {
+                            name = EXCLUDED_EXECUTABLE.to_string();
+                        }
+                    }
+                    names.insert(id, name);
                 }
             }
         }
@@ -182,6 +208,29 @@ mod macos {
         ))
     }
 
+    fn owner_pid(number: f64) -> Option<i32> {
+        let whole = number.fract() == 0.0 && (1.0..=f64::from(i32::MAX)).contains(&number);
+        whole.then_some(number as i32)
+    }
+
+    /// The file name of `pid`'s executable, or `None` when it cannot be read.
+    fn executable_name(pid: i32) -> Option<String> {
+        let mut buffer = vec![0u8; PROC_PIDPATHINFO_MAXSIZE];
+        // SAFETY: the buffer outlives the call and its size is what we pass.
+        let written = unsafe {
+            proc_pidpath(
+                pid,
+                buffer.as_mut_ptr().cast(),
+                PROC_PIDPATHINFO_MAXSIZE as u32,
+            )
+        };
+        let length = usize::try_from(written).ok().filter(|&n| n > 0)?;
+        let path = String::from_utf8_lossy(&buffer[..length.min(buffer.len())]).into_owned();
+        std::path::Path::new(&path)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+    }
+
     fn window_id(number: f64) -> Option<u32> {
         let whole = number.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(&number);
         whole.then_some(number as u32)
@@ -190,6 +239,17 @@ mod macos {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn executable_name_reads_this_process_and_refuses_nonsense() {
+            let own = std::env::current_exe().unwrap();
+            let expected = own.file_name().unwrap().to_string_lossy().into_owned();
+            assert_eq!(executable_name(std::process::id() as i32), Some(expected));
+            assert_eq!(executable_name(-1), None);
+            assert_eq!(owner_pid(0.0), None);
+            assert_eq!(owner_pid(42.5), None);
+            assert_eq!(owner_pid(501.0), Some(501));
+        }
 
         #[test]
         fn window_ids_survive_the_pointer_sized_array() {

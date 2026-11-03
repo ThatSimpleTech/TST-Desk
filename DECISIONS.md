@@ -19826,3 +19826,16 @@ helper answers (the rules controller assumes a lit ring is lit, and would
 need a replay path for nothing the probe does not already give); starting
 the helper only when the overlay is first needed (that is the path that
 failed).
+
+## 2026-11-03 — TD-5231: agent-desktop's windows are found by executable, and its session start is serialized (Class A; amends TD-5227 item 8)
+
+**Decision:** TST Desk's capture treats a window as agent-desktop's when its
+owner name is `agent-desktop` or its owning process (`kCGWindowOwnerPID`,
+resolved with `proc_pidpath`) runs an executable named `agent-desktop`.
+The cursor session's start, turn-off and end run under one asyncio lock.
+
+**Rationale:** the copy bundled inside TST Desk (TD-5228) reports the app's
+name as the owner of its windows, so a name check missed exactly the copy
+TST Desk ships. The executable check must not catch TST Desk's own windows,
+which share that owner name. The lock covers set-up only, never the command,
+so concurrent sessions still act in parallel.

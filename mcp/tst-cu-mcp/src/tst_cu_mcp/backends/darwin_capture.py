@@ -6,11 +6,18 @@ agent's cursor in another agent's screenshot. When such a window is on
 screen, the image is composed from the on-screen window list without them;
 otherwise the plain capture runs unchanged. Mirrors the host's
 ``cu_capture.rs``. Function-local pyobjc so the module imports anywhere.
+
+A window is agent-desktop's when its owner name is ``agent-desktop`` or its
+owning process runs an executable of that name: the copy bundled inside an
+app (TST Desk ships one) reports the app's name as the owner, so the name
+alone misses it (TD-5231).
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import ctypes
+import os
+from collections.abc import Callable, Iterable
 from typing import Any
 
 EXCLUDED_OWNER = "agent-desktop"
@@ -72,18 +79,47 @@ def _kept_on_screen() -> list[int] | None:
     return kept if len(kept) < len(windows) else None
 
 
-def _owners(ids: Iterable[Any], described: Iterable[Any]) -> list[tuple[int, str]]:
-    """``(id, owner name)`` for each id, in the ids' order. A window with no
-    description (it closed meanwhile) gets an empty owner, so it is kept."""
+def process_name(pid: int) -> str:
+    """The file name of *pid*'s executable, or "" when it cannot be read."""
+    try:
+        libproc = ctypes.CDLL("libproc.dylib")
+        buffer = ctypes.create_string_buffer(4096)
+        length = libproc.proc_pidpath(ctypes.c_int(pid), buffer, ctypes.c_uint32(4096))
+    except (OSError, AttributeError):
+        return ""
+    if length <= 0:
+        return ""
+    return os.path.basename(buffer.value.decode("utf-8", "replace"))
+
+
+def _owners(
+    ids: Iterable[Any],
+    described: Iterable[Any],
+    process_name: Callable[[int], str] = process_name,
+) -> list[tuple[int, str]]:
+    """``(id, owner)`` for each id, in the ids' order; the owner reads
+    ``agent-desktop`` when the owning process runs that executable. A window
+    with no description (it closed meanwhile) gets an empty owner, so it is
+    kept."""
     names: dict[int, str] = {}
+    executables: dict[int, str] = {}
     for entry in described:
         getter = getattr(entry, "get", None)
         if getter is None:
             continue
         try:
-            names[int(getter("kCGWindowNumber"))] = str(getter("kCGWindowOwnerName") or "")
+            window_id = int(getter("kCGWindowNumber"))
+            owner = str(getter("kCGWindowOwnerName") or "")
+            raw_pid = getter("kCGWindowOwnerPID")
+            pid = int(raw_pid) if raw_pid is not None else None
         except (TypeError, ValueError):
             continue
+        if pid is not None and pid > 0:
+            if pid not in executables:
+                executables[pid] = process_name(pid)
+            if executables[pid] == EXCLUDED_OWNER:
+                owner = EXCLUDED_OWNER
+        names[window_id] = owner
     windows: list[tuple[int, str]] = []
     for raw in ids:
         try:
