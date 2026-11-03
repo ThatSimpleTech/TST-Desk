@@ -26,6 +26,7 @@ A failure here never fails a tool: the command runs without the cursor.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
@@ -57,6 +58,10 @@ class AxCursor:
         self._enabled: set[str] = set()
         self._overlay_on = False
         self._failed = False
+        # Sessions act concurrently: two first commands at once must start
+        # one agent-desktop session, not two (TD-5231). Only the set-up is
+        # held, never the command itself.
+        self._lock = asyncio.Lock()
 
     @property
     def session_id(self) -> str | None:
@@ -64,6 +69,10 @@ class AxCursor:
 
     async def scope(self, cli: ScopedRunner) -> list[str]:
         """Global flags for the next command; turns the cursor on or off first."""
+        async with self._lock:
+            return await self._scope(cli)
+
+    async def _scope(self, cli: ScopedRunner) -> list[str]:
         agent = current_cu_agent.get() or DEFAULT_AGENT
         wanted = self._wanted()
         if self._session is None:
@@ -74,7 +83,7 @@ class AxCursor:
                 return []
         prefix = ["--session", self._session, "--agent-id", agent.agent_id]
         if not wanted:
-            await self.off(cli)
+            await self._off(cli)
             return prefix
         try:
             if not self._overlay_on:
@@ -95,6 +104,10 @@ class AxCursor:
 
     async def off(self, cli: ScopedRunner) -> None:
         """Remove every agent's cursor (Stop, or a switch turned off)."""
+        async with self._lock:
+            await self._off(cli)
+
+    async def _off(self, cli: ScopedRunner) -> None:
         if self._session is None or not self._overlay_on:
             return
         try:
@@ -106,6 +119,10 @@ class AxCursor:
 
     async def end(self, cli: ScopedRunner) -> None:
         """End the session at shutdown; its cursors go with it."""
+        async with self._lock:
+            await self._end(cli)
+
+    async def _end(self, cli: ScopedRunner) -> None:
         session, self._session = self._session, None
         self._overlay_on = False
         self._enabled.clear()

@@ -234,6 +234,30 @@ class TestAgentDesktopCursor:
             ["session", "end", "run-1"],
         ]
 
+    async def test_two_first_commands_at_once_start_one_session(self) -> None:
+        """TD-5231: two sessions acting at once must share one namespace, or
+        a ref from one session's snapshot is looked up in another."""
+
+        class SlowStart(FakeCli):
+            async def run_with(self, prefix: list[str], command: str, *args: str) -> Any:
+                if command == "session":
+                    await asyncio.sleep(0.05)
+                return await super().run_with(prefix, command, *args)
+
+        cli, cursor = SlowStart(), self._cursor([True])
+
+        async def first(sid: str) -> list[str]:
+            token = current_cu_agent.set(CuAgent(sid))
+            try:
+                return await cursor.scope(cli)
+            finally:
+                current_cu_agent.reset(token)
+
+        a, b = await asyncio.gather(first("aaaa"), first("bbbb"))
+        starts = [argv for argv in cli.argv if argv[:2] == ["session", "start"]]
+        assert len(starts) == 1
+        assert a[:2] == b[:2] == ["--session", "run-1"]
+
     async def test_a_failed_start_runs_without_a_cursor_and_does_not_retry(self) -> None:
         cli, cursor = FakeCli(start_fails=True), self._cursor([True])
         assert await cursor.scope(cli) == []
