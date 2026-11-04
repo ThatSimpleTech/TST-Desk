@@ -5,6 +5,7 @@
 // does not know about Tauri.
 
 import { machineOf } from "./bridged-id";
+import { namedTurnFailureCopy } from "./error-copy";
 import type { DaemonEventUnion, JobEntry } from "./protocol";
 import { redact } from "./redact";
 
@@ -78,13 +79,19 @@ export function noticeFor(event: DaemonEventUnion, nameOf?: MachineNamer): OsNot
 	if (event.type === "turn_complete") {
 		return {
 			title: onWhere(event.failed ? "Turn failed" : "Turn complete", event.session_id, nameOf),
-			body: event.failed
-				? redact(event.error_code ?? "The turn did not finish")
-				: "The agent finished a turn",
+			body: event.failed ? failedTurnBody(event.error_code) : "The agent finished a turn",
 			kind: "turn",
 		};
 	}
 	return null;
+}
+
+/** A failed turn's banner names the cause in the words the window's own
+ *  notice uses (TD-5233). A code with no written copy (and stopped or
+ *  cancelled) stays the code itself, redacted. */
+function failedTurnBody(code: string | null): string {
+	if (code === null) return "The turn did not finish";
+	return namedTurnFailureCopy(code)?.title ?? redact(code);
 }
 
 /** A banner is a glance, not a transcript. The daemon caps a run summary

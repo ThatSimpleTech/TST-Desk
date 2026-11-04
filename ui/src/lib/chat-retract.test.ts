@@ -6,6 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import { createChatState, createChatStore, type ChatDeps } from "./chat-store";
+import { retryLine } from "./chat-retract";
 import type { DaemonEventUnion } from "./protocol";
 import { entryTone } from "./entry-view";
 import { eventToEntry } from "./timeline";
@@ -21,14 +22,14 @@ const delta = (text: string, responseId?: string): DaemonEventUnion =>
   ev({ type: "assistant_delta", delta: text, ...(responseId ? { response_id: responseId } : {}) });
 const thinking = (text: string, responseId: string): DaemonEventUnion =>
   ev({ type: "assistant_reasoning", delta: text, response_id: responseId });
-const retract = (responseId: string): DaemonEventUnion =>
-  ev({ type: "assistant_retract", response_id: responseId, reason: "stream_stalled" });
+const retract = (responseId: string, reason = "stream_stalled"): DaemonEventUnion =>
+  ev({ type: "assistant_retract", response_id: responseId, reason });
 const toolCall = (): DaemonEventUnion =>
   ev({ type: "tool_call", tool_call_id: "c1", name: "echo", arguments: { message: "hi" }, decision_class: "A" });
 const toolResult = (): DaemonEventUnion =>
   ev({ type: "tool_result", tool_call_id: "c1", status: "success", output: "Echo: hi" });
-const turnComplete = (): DaemonEventUnion =>
-  ev({ type: "turn_complete", tokens: 0, cost: 0, tier: "brain", duration: 1, failed: false, error_code: null });
+const turnComplete = (errorCode: string | null = null): DaemonEventUnion =>
+  ev({ type: "turn_complete", tokens: 0, cost: 0, tier: "brain", duration: 1, failed: errorCode !== null, error_code: errorCode });
 
 function bound() {
   const deps: ChatDeps = { send: () => true, attach: () => {}, detach: () => {} };
@@ -144,6 +145,7 @@ describe("a reply withdrawn after a stall", () => {
     const entry = eventToEntry(retract("r1"));
     expect(entry?.kind).toBe("retry");
     expect(entry?.title).toBe("Provider went quiet");
+    expect(entry?.preview).toBe("The partial reply was withdrawn; asking again.");
     expect(entry?.details).toMatchObject({ reason: "stream_stalled", response_id: "r1" });
     if (entry) expect(entryTone(entry)).toBe("warning");
   });
@@ -176,3 +178,58 @@ describe("a reply withdrawn after a stall", () => {
   });
 });
 
+// TD-5233: a reasoning model spent the whole output limit thinking and wrote
+// nothing. The daemon withdraws that thinking and asks once more with a larger
+// limit; if that also ends empty, the turn fails with a line of its own.
+describe("a reply that spent the output limit thinking", () => {
+  const CAP_LINE =
+    "No answer: the model used its whole output limit thinking, including one retry at 16,384 tokens. Raise max_output_tokens for the brain tier (now 4,096) in Settings → Configuration. New chats use the new limit.";
+
+  it("is a timeline entry that says the retry gets a larger limit", () => {
+    const entry = eventToEntry(retract("r1", "output_cap_thinking"));
+    expect(entry?.kind).toBe("retry");
+    expect(entry?.title).toBe("Thinking used the output limit");
+    expect(entry?.preview).toBe("Asking again with a larger output limit.");
+    expect(entry?.details).toMatchObject({ reason: "output_cap_thinking", response_id: "r1" });
+  });
+
+  it("says why on the Working line until the retry's first token", () => {
+    const { state, apply } = bound();
+    apply(thinking("Let me weigh every option", "r1"), retract("r1", "output_cap_thinking"));
+    expect(state.awaitingFirstToken).toBe(true);
+    expect(state.retryingReply).toBe(true);
+    expect(state.retryReason).toBe("output_cap_thinking");
+    expect(retryLine(state.retryReason)).toBe("Out of room to think. Asking again with a larger limit");
+
+    apply(thinking("Shorter.", "r2"));
+    expect(state.awaitingFirstToken).toBe(false);
+    expect(state.retryingReply).toBe(false);
+    expect(state.retryReason).toBeNull();
+  });
+
+  it("keeps the interrupted wording for a stall", () => {
+    const { state, apply } = bound();
+    apply(delta("The fix is", "r1"), retract("r1"));
+    expect(state.retryReason).toBe("stream_stalled");
+    expect(retryLine(state.retryReason)).toBe("Reply interrupted. Asking again");
+    expect(retryLine(null)).toBe("Reply interrupted. Asking again");
+  });
+
+  it("leaves only the retry's thinking and the failure line when the retry is empty too", () => {
+    const { state, apply, reply } = bound();
+    apply(
+      thinking("First pass, far too long", "r1"),
+      retract("r1", "output_cap_thinking"),
+      thinking("Second pass", "r2"),
+      // The failure line carries no response id, so nothing withdraws it.
+      delta(CAP_LINE),
+      turnComplete("output_cap_thinking"),
+    );
+
+    expect(reply().reasoning).toBe("Second pass");
+    expect(reply().text).toBe(CAP_LINE);
+    expect(reply().complete).toBe(true);
+    expect(state.lastTurnError).toBe("output_cap_thinking");
+    expect(state.awaitingFirstToken).toBe(false);
+  });
+});

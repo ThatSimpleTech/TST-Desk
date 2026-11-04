@@ -58,6 +58,9 @@ export interface ChatState {
   /** The current first-token wait is for a reply the daemon withdrew after
    *  the provider went quiet, and is asking for again (TD-5159). */
   retryingReply: boolean;
+  /** The withdrawn reply's `assistant_retract` reason while retrying, else
+   *  null: the Working line words a retry by it (TD-5233). */
+  retryReason: string | null;
   /** Seconds the last turn took, as measured by the daemon on turn_complete.
    *  The UI never times turns itself (AGENTS §6). Cleared on the next send. */
   lastTurnDuration: number | null;
@@ -158,6 +161,7 @@ export function createChatState(): ChatState {
     turnStalled: false,
     awaitingSince: null,
     retryingReply: false,
+    retryReason: null,
     lastTurnDuration: null,
     lastTurnError: null,
     draft: "",
