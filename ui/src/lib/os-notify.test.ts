@@ -47,7 +47,7 @@ function approval(): DaemonEventUnion {
 	} as DaemonEventUnion;
 }
 
-function turn(failed = false): DaemonEventUnion {
+function turn(failed = false, errorCode: string | null = failed ? "auth_failed" : null): DaemonEventUnion {
 	return {
 		type: "turn_complete",
 		session_id: "s1",
@@ -57,7 +57,7 @@ function turn(failed = false): DaemonEventUnion {
 		tier: "brain",
 		duration: 1,
 		failed,
-		error_code: failed ? "auth_failed" : null,
+		error_code: errorCode,
 	} as DaemonEventUnion;
 }
 
@@ -109,6 +109,20 @@ describe("noticeFor", () => {
 	it("describes a finished turn", () => {
 		expect(noticeFor(turn())?.title).toBe("Turn complete");
 		expect(noticeFor(turn(true))?.title).toBe("Turn failed");
+	});
+
+	it("says why a turn failed in the window's words, not the raw code (TD-5233)", () => {
+		expect(noticeFor(turn(true, "output_cap_thinking"))?.body).toBe("Model ran out of room to answer");
+		expect(noticeFor(turn(true, "empty_completion"))?.body).toBe("No answer");
+		expect(noticeFor(turn(true, "auth_failed"))?.body).toBe("API key rejected");
+	});
+
+	it("keeps a code with no written copy as the code, redacted", () => {
+		expect(noticeFor(turn(true, "weird_new_code"))?.body).toBe("weird_new_code");
+		expect(noticeFor(turn(true, "stopped"))?.body).toBe("stopped");
+		expect(noticeFor(turn(true, null))?.body).toBe("The turn did not finish");
+		const key = "sk-or-v1-" + "0".repeat(52); // tst-secret-ok
+		expect(noticeFor(turn(true, `boom ${key}`))?.body).toBe("boom [REDACTED]");
 	});
 
 	it("ignores everything else", () => {
@@ -218,6 +232,15 @@ describe("handleOsEvent", () => {
 		await handleOsEvent(turn());
 		expect(impl.requestPermission).not.toHaveBeenCalled();
 		expect(sent[0]?.title).toBe("Turn complete");
+	});
+
+	it("names the cause of an unfocused failed turn (TD-5233)", async () => {
+		const { impl, sent } = bridge();
+		impl.isPermissionGranted = vi.fn(async () => true);
+		startOsNotify(impl);
+		setWindowFocused(false);
+		await handleOsEvent(turn(true, "output_cap_thinking"));
+		expect(sent[0]).toMatchObject({ title: "Turn failed", body: "Model ran out of room to answer" });
 	});
 
 	it("asks permission only on the first qualifying event", async () => {

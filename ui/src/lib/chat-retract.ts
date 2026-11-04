@@ -12,6 +12,15 @@
 
 import type { ChatMessage } from "./chat-message";
 
+/** The Working line while a withdrawn reply is asked again, by the
+ *  retract's reason; the pane adds the ellipsis. A reply that spent the
+ *  output limit thinking is retried with a larger one, and the line says so
+ *  rather than calling it interrupted (TD-5233). */
+export function retryLine(reason: string | null): string {
+  if (reason === "output_cap_thinking") return "Out of room to think. Asking again with a larger limit";
+  return "Reply interrupted. Asking again";
+}
+
 /** Where one model response began on a row: the lengths it found. */
 export interface ResponseMark {
   id: string;

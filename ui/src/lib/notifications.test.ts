@@ -528,3 +528,59 @@ describe("checkpoint notices", () => {
     expect(report).toContain("[REDACTED]");
   });
 });
+
+describe("a turn that ended with no answer (TD-5233)", () => {
+  // A reasoning model spent the tier's whole output limit thinking. The turn
+  // used to end as "empty_completion" with no copy, so the user read
+  // "unrecognised error ... report it" beside a chat line telling them to
+  // start a new session at 28k of a 256k window.
+  it("a reply that spent the output limit thinking is a banner naming the setting to raise", () => {
+    const spec = turnFailureCopy("output_cap_thinking");
+    expect(spec?.severity).toBe("banner");
+    expect(spec?.title).toBe("Model ran out of room to answer");
+    expect(spec?.body).toContain("max_output_tokens");
+    expect(spec?.body).toContain("Settings → Configuration");
+    expect(spec?.body).not.toContain("unrecognised");
+  });
+
+  it("an empty reply that did not hit the limit is a toast saying to resend", () => {
+    const spec = turnFailureCopy("empty_completion");
+    expect(spec?.severity).toBe("toast");
+    expect(spec?.title).toBe("No answer");
+    expect(spec?.body).toMatch(/resend/i);
+    expect(spec?.body).not.toContain("unrecognised");
+  });
+
+  it("neither sends the user to a new session: the context window is not the cause", () => {
+    for (const code of ["output_cap_thinking", "empty_completion"]) {
+      const spec = turnFailureCopy(code);
+      expect(`${spec?.title} ${spec?.body}`).not.toMatch(/new (session|chat)/i);
+    }
+  });
+
+  it("raises one banner per cause, and a repeat updates it in place", () => {
+    notifyEvent(turnComplete("output_cap_thinking"));
+    notifyEvent(turnComplete("output_cap_thinking"));
+    notifyEvent(turnComplete("output_cap_thinking"));
+    expect(toasts).toHaveLength(0);
+    expect(banners).toHaveLength(1);
+    expect(banners[0].key).toBe("turn:output_cap_thinking");
+    expect(banners[0].title).toBe("Model ran out of room to answer");
+  });
+
+  it("drops the out-of-room banner once a later turn answers, live or replayed", () => {
+    notifyEvent(turnComplete("output_cap_thinking"));
+    notifyEvent(turnComplete(null));
+    expect(banners).toHaveLength(0);
+    // A replay of the same history (chat switch, launch) ends the same way.
+    notifyEvent(turnComplete("output_cap_thinking"));
+    notifyEvent(turnComplete(null));
+    expect(banners).toHaveLength(0);
+  });
+
+  it("keeps other turn banners when a later turn answers", () => {
+    notifyEvent(turnComplete("insufficient_credits"));
+    notifyEvent(turnComplete(null));
+    expect(banners.map((b) => b.key)).toEqual(["turn:insufficient_credits"]);
+  });
+});
