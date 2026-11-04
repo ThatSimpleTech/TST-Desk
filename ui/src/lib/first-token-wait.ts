@@ -5,13 +5,14 @@
 // promising work was happening. So a wait carries a timer, and past the
 // threshold the copy stops claiming and says what is actually known.
 //
-// This module owns the timer and the three state fields the shimmer reads, and
-// nothing else. It knows no protocol — no session id, no events, no wire. The
+// This module owns the timer and the state fields the shimmer reads, and
+// nothing else. It knows no protocol — no session id, no events, no wire (a
+// retry's reason is held as an opaque string for the pane to word). The
 // store decides *when* a wait begins and ends, from turn evidence; this decides
 // what a wait already in progress is worth.
 
 /** The slice of ChatState the wait owns. Everything else on the state is the
- *  store's; nothing here reads or writes past these three fields. */
+ *  store's; nothing here reads or writes past these fields. */
 export interface FirstTokenWaitState {
   awaitingFirstToken: boolean;
   turnStalled: boolean;
@@ -19,6 +20,9 @@ export interface FirstTokenWaitState {
   /** This wait is for a reply the daemon withdrew and is asking for again
    *  (TD-5159), not for a send: the Working line says so. */
   retryingReply: boolean;
+  /** Why that reply was withdrawn, as the daemon named it, so the Working
+   *  line can say what the retry changes (TD-5233). Null when not retrying. */
+  retryReason: string | null;
 }
 
 /** First-token watchdog (TD-1713): a wait this long with no assistant_delta
@@ -29,8 +33,9 @@ export const STALL_TIMEOUT_MS = 25_000;
 
 export interface FirstTokenWait {
   /** Start waiting for the first token, unless a wait is already running.
-   *  `retrying` marks a wait for a withdrawn reply asked again (TD-5159). */
-  begin(retrying?: boolean): void;
+   *  `retryReason` marks a wait for a withdrawn reply asked again, and says
+   *  why it was withdrawn (TD-5159, TD-5233). */
+  begin(retryReason?: string): void;
   /** Stop waiting — the token landed, the turn resolved, or the session the
    *  wait belonged to went away. Drops the stall flag with it. */
   end(): void;
@@ -68,15 +73,19 @@ export function createFirstTokenWait(state: FirstTokenWaitState): FirstTokenWait
     /** Stamps the elapsed basis and arms the watchdog. A wait already in
      *  progress keeps its original stamp — a replayed "running" must not
      *  restart the user's clock. */
-    begin(retrying = false): void {
+    begin(retryReason?: string): void {
       if (state.awaitingFirstToken) {
-        if (retrying) state.retryingReply = true;
+        if (retryReason !== undefined) {
+          state.retryingReply = true;
+          state.retryReason = retryReason;
+        }
         return;
       }
       state.awaitingFirstToken = true;
       state.turnStalled = false;
       state.awaitingSince = Date.now();
-      state.retryingReply = retrying;
+      state.retryingReply = retryReason !== undefined;
+      state.retryReason = retryReason ?? null;
       arm();
     },
 
@@ -85,6 +94,7 @@ export function createFirstTokenWait(state: FirstTokenWaitState): FirstTokenWait
       state.turnStalled = false;
       state.awaitingSince = null;
       state.retryingReply = false;
+      state.retryReason = null;
       clearStallTimer();
     },
 

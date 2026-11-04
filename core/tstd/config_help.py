@@ -120,7 +120,9 @@ _MODEL_HELP: dict[str, str | tuple[str, str]] = {
         TOKENS,
     ),
     "TierConfig.max_output_tokens": (
-        "Sent as max_tokens, and kept free for the answer out of context_window.",
+        "Sent as max_tokens, and kept free for the answer out of context_window. A "
+        "reasoning model's thinking counts against it, so size it for the thinking plus the "
+        "answer: 16k or more for a hosted reasoning model.",
         TOKENS,
     ),
     "TierConfig.vision": "Accept image attachments on turns routed here, and let fs_read "

@@ -18,6 +18,7 @@
 #   context_window   — max context tokens the model supports
 #   max_output_tokens — max tokens the model may generate; sent as
 #                        max_tokens on every turn (TD-5008)
+#                        Thinking counts too: 16k+ for hosted reasoning models
 #   credential        — named API key from the credentials catalog
 #                        below. Omit on a loopback tier for no key
 #                        (TD-1801). An off-box tier with no credential

@@ -19839,3 +19839,70 @@ name as the owner of its windows, so a name check missed exactly the copy
 TST Desk ships. The executable check must not catch TST Desk's own windows,
 which share that owner name. The lock covers set-up only, never the command,
 so concurrent sessions still act in parallel.
+
+## 2026-11-04 — TD-5233: a thinking-only reply at the output cap is asked once more with a larger cap (Class B)
+
+**Decision:** when a turn's model call ends with `finish_reason: length`, no
+text and no tool call, the loop withdraws that response (`assistant_retract`,
+reason `output_cap_thinking`) and asks once more under a new response id with
+a larger `max_tokens`. There is no backoff wait, since the endpoint did not
+fail, but Stop and cancel are checked after the withdrawal.
+
+Protocol (additive, no version bump): `turn_complete.error_code` gains
+`output_cap_thinking`, and `assistant_retract.reason` gains the same string.
+An older window shows the code as an unrecognised error and the retract as
+"Provider went quiet". The spec is silent on both; the TD-5233 criteria set
+them.
+
+1. **The raised cap.** `min(cap × 4, max(32768, cap), room)`, where room is
+   `context_window` minus the prompt estimate minus a margin of
+   `max(1024, context_window / 20)`. It is sent only when it is at least
+   twice the cap; otherwise there is no retry and the turn fails as below.
+   A 4096 cap on a 256k window with a 28k prompt becomes 16384.
+2. **One retry per model call, on its own counter.** The stall, cut-off and
+   reply-guard retries keep their own allowance. `provider_retry.max_retries:
+   0` turns this retry off, as it does the stall retry. Once a call's cap is
+   raised, its later attempts keep it, so a stall retry after the cap retry
+   does not drop back to the tier's cap.
+3. **A refusal does not hide the cause.** If the raised request fails before
+   any output with an error that is not retried, the turn reports the first,
+   empty-at-cap result and a warning names the refusal's code. Only the call
+   right after the cap retry counts as the raised request: a refusal of a
+   later stall or guard retry is that call's own error and is reported as it
+   is. OpenRouter
+   reserves `max_tokens` against the account balance, so a 402 there, or a
+   400 or a context overflow, is caused by the retry itself, and reporting it
+   would replace the real problem. A retryable failure is returned as it is,
+   so the usual retry and backup handling applies.
+4. **No reasoning fields.** No OpenRouter `reasoning` field is sent to limit
+   or drop the thinking. `effort.py` sends reasoning fields only to tiers that
+   opt in, and whether DeepSeek honours them through OpenRouter is unverified.
+5. **No spend-cap check before the retry.** The cap is checked before each
+   model call, not before an in-call retry, as for a stall retry. The 32768
+   ceiling bounds what the one extra request can spend.
+6. **What the chat says.** A turn that still has no answer at the cap fails
+   as `output_cap_thinking`. The line names the cap (and the retry's cap when
+   there was one) and the config entry whose value applied, as its
+   `presets.<preset>.<tier>` path: a backup names its `fallbacks[n]` entry
+   and a remapped computer-use worker names the `local_worker_preset`'s
+   worker, because raising the tier's own value would not change either. It
+   says to raise `max_output_tokens` there in Settings → Configuration. It says new chats use the new limit because an
+   open session keeps the config snapshot it started with. An empty reply that
+   ended any other way stays `empty_completion` and says to resend. Either
+   line suggests a new chat only when the prompt estimate is at or past the
+   compaction point. The lines are short because they enter the conversation
+   and the model reads them on the next turn.
+
+**Rationale:** OpenRouter and most providers count thinking tokens inside
+`max_tokens`, so a reasoning model on a small cap can spend all of it before
+writing a word. The old line blamed the context, which was a tenth full, and
+nothing asked again, so the next turns failed the same way. Four times the
+cap gives the thinking real room on one extra request, and the ceiling and
+margin keep that request bounded and inside the window. Under twice the cap,
+a retry is unlikely to finish where the first did not.
+
+**Rejected:** retrying at the same cap (the model thinks the same way and
+ends the same way); writing a larger cap into the tier's config (that is the
+user's setting, and the line says where to change it); more than one cap
+retry (each is a long, paid call); limiting the thinking with OpenRouter's
+`reasoning` fields (point 4).

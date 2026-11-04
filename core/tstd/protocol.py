@@ -2352,7 +2352,11 @@ class AssistantRetract(DaemonEvent):
     """Withdraw one model response's shown text and thinking (TD-5159).
 
     The provider went quiet partway through the reply (``reason`` is the
-    error code, ``stream_stalled``), and the loop asks again. Every
+    error code, ``stream_stalled``), and the loop asks again. The same
+    goes for a reply the endpoint cut off (``stream_interrupted``,
+    TD-5183), one the reply guard cut (``reply_guarded``, TD-5175), and
+    one that spent the whole output cap thinking and is asked again with
+    a larger cap (``output_cap_thinking``, TD-5233). Every
     ``assistant_delta`` and ``assistant_reasoning`` carrying this
     ``response_id`` is no longer part of the reply: a client removes it,
     and the retry streams under a new id. Nothing else on the row goes:
@@ -2797,7 +2801,11 @@ class TurnComplete(DaemonEvent):
     ``failed`` marks a turn that ended on a provider/keychain error rather
     than a model response; ``error_code`` carries the typed cause (e.g.
     ``auth_failed``, ``rate_limited``, ``missing_api_key``) so clients can
-    show tailored copy (TD-1008).
+    show tailored copy (TD-1008). A reply with no answer fails the turn
+    too: ``output_cap_thinking`` when it spent the whole output cap
+    thinking, after one retry with a larger cap where there was room
+    (TD-5233), and ``empty_completion`` when it ended without writing
+    anything and did not stop at the cap.
     """
 
     type: Literal["turn_complete"] = "turn_complete"

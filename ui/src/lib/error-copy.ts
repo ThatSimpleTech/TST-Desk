@@ -206,13 +206,33 @@ const TURN_ERROR_COPY: Record<string, NoticeSpec> = {
 		title: "Provider went quiet",
 		body: "The provider stopped sending for longer than the tier's stream_idle_timeout. Resend to retry. For a slow local model, raise stream_idle_timeout or read_timeout on the tier in config.yaml.",
 	},
+	// TD-5233: a reasoning model spent the tier's whole max_output_tokens
+	// thinking and wrote no answer, even after the daemon's one retry with a
+	// larger limit. Resending hits the same limit, so a banner. The context
+	// window is not the cause, so neither entry sends the user to a new chat.
+	output_cap_thinking: {
+		severity: "banner",
+		title: "Model ran out of room to answer",
+		body: "The model used its whole output limit (max_output_tokens) thinking and never wrote an answer. TST Desk asks once more with a larger limit when there is room. Raise max_output_tokens for this model in Settings → Configuration; chats started after that use it.",
+	},
+	// The reply ended empty before any limit: the next try may well answer.
+	empty_completion: {
+		severity: "toast",
+		title: "No answer",
+		body: "The model ended its turn without writing anything. Resend to try again; if it keeps happening, try another model.",
+	},
 };
+
+/** The copy written for this code, or null when the table has none. */
+export function namedTurnFailureCopy(errorCode: string): NoticeSpec | null {
+	return TURN_ERROR_COPY[errorCode] ?? null;
+}
 
 /** Copy for a failed turn's typed error code, or null to stay silent.
  *  `cancelled` ends a session. `stopped` ends only the turn (TD-5003). */
 export function turnFailureCopy(errorCode: string | null): NoticeSpec | null {
 	if (errorCode === null || errorCode === "cancelled" || errorCode === "stopped") return null;
-	const known = TURN_ERROR_COPY[errorCode];
+	const known = namedTurnFailureCopy(errorCode);
 	if (known) return known;
 	// Unknown codes still never surface as tracebacks, just as a named code.
 	return {

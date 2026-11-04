@@ -13042,6 +13042,58 @@ step 1 and the Mac app since TD-5228; on Windows the binary comes from
 
 ---
 
+### TD-5233 — A reply that spends the output limit thinking is asked once more, and says so
+**Size:** 3 · **Depends on:** TD-5008, TD-5159
+**Status:** In review 2026-11-04.
+
+A hosted reasoning model on a tier with `max_output_tokens: 4096` spent the
+whole cap thinking. The stream ended with `finish_reason: length`, no text
+and no tool call. The turn failed as `empty_completion`, and the chat line
+said to start a new session if the context was already full, although the
+conversation used about a tenth of its window. Nothing asked again, so the
+next turns failed the same way. The window had no copy for
+`empty_completion`, so a toast also called it an unrecognised error and asked
+for a report. OpenRouter, like most providers, counts thinking tokens inside
+`max_tokens`.
+
+**Acceptance criteria:**
+- [x] When a turn's model call ends at the output cap with only thinking (`finish_reason: length`, no text, no tool call), the daemon withdraws that response with `assistant_retract` (reason `output_cap_thinking`) and asks once more under a new response id, with no backoff wait
+- [x] The retry sends `max_tokens` = min(4 × cap, max(32768, cap), `context_window` − prompt estimate − max(1024, `context_window` / 20)), and only when that is at least twice the cap; otherwise there is no retry (cap 4096, window 262144, prompt 28k: 16384)
+- [x] The cap retry is at most one per model call, on its own counter, apart from the stall, cut-off and reply-guard retries; `provider_retry.max_retries: 0` turns it off
+- [x] Once a call's cap is raised, its later attempts keep it: a stall retry after the cap retry sends the raised cap, with any `reply_guard` `retry_extra_body` still applied
+- [x] A raised request refused before any output with an error that is not retried (a 402 for the balance OpenRouter reserves against `max_tokens`, a 400, a context overflow) leaves the first, empty-at-cap result as the outcome, and a warning names the refusal's code; a retryable failure goes on to the usual retry and backup handling, and a refusal of a later stall or guard retry is that call's own error
+- [x] Stop or cancel after the withdrawal and before the larger request writes any text ends the turn with nothing kept; Stop or cancel when an empty reply comes back ends the turn as stopped or cancelled, not as a failure
+- [x] A turn that still has no answer at the cap fails as `output_cap_thinking`; the chat line says the model used its whole output limit thinking, names the cap (and the retry's cap when there was one) and the config entry whose value applied (`presets.<preset>.<tier>`, a backup's `fallbacks[n]`, or the computer-use `local_worker_preset`'s worker), and says to raise `max_output_tokens` there in Settings → Configuration, where new chats use the new limit
+- [x] An empty reply that did not end at the cap fails as `empty_completion`, with a line saying the model ended its turn without writing anything and to resend
+- [x] Either line says a new chat may help only when the prompt estimate is at or past the compaction point; the new-session advice is gone otherwise
+- [x] A reply cut at the raised cap logs and names the cap that was sent, not the tier's
+- [x] The empty-reply warning in the log names the model, the cap sent, the finish reason, the prompt estimate and the code
+- [x] The window has copy for both codes: a banner for `output_cap_thinking` (cleared once a later turn answers, live or replayed) and a toast for `empty_completion`, the Activity title and preview, and the status line; the OS notification uses the copy's title. Neither shows as an unrecognised error
+- [x] docs/configuration.md, docs/architecture.md and DECISIONS.md updated
+- [x] Tests in core and ui fail on the old code and pass on the new
+
+Done (2026-11-04): `stream_reply` (reply_retry.py) withdraws a reply that
+`thinking_ate_cap` and asks once more on its own counter; `_stream_turn_reply`
+sizes the larger cap with `output_cap.raised_output_cap` and keeps it for the
+call's later attempts. The loop's empty-reply branch handles Stop first, then
+uses `output_cap.empty_reply_failure` and `cap_setting` for the code and the
+line. UI: `error-copy.ts`, `timeline.ts`, `first-token-wait.ts`/`retryLine`,
+`os-notify.ts`, and `notifications.svelte.ts` drops the banner after a turn
+that answers. Tests: `core/tests/test_thinking_cap_retry.py` (45; with the
+retry turned off 10 fail, and each later fix has a test that fails without
+it), `notifications.test.ts`, `chat-retract.test.ts`, `os-notify.test.ts`,
+`chat-pane-retry.test.ts`. Class B entry in DECISIONS.md.
+
+**Not in this story:** the delegate child, which still ends with "Worker
+finished with no summary." for the same failure; the progress check; the
+after-write validator review; memory distillation; the Settings model test
+probe; sending OpenRouter `reasoning` parameters; parsing
+`reasoning_tokens` from usage; a spend-cap check before the retry; machine-aware
+failure copy for a session that runs on a paired computer (every turn code
+points at this computer's Settings today).
+
+---
+
 ### TD-5232 — An element action in full control moves the ring to its display
 **Size:** 1 · **Depends on:** TD-5226, TD-5227
 **Status:** In review 2026-11-03.
