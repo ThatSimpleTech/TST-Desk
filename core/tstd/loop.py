@@ -93,6 +93,7 @@ from .hooks import HOOK_BLOCKED_NOTE, with_hook_context
 from .keychain import KeychainError
 from .local_worker import (
     effective_tier,
+    local_worker_tier,
     mark_cu_tool,
     preset_fast,
     session_is_cu_heavy,
@@ -105,8 +106,11 @@ from .memory_commit import MemoryCommitter
 from .output_cap import (
     LENGTH_FINISH,
     arguments_complete,
+    cap_setting,
     cut_call_reply,
+    empty_reply_failure,
     log_output_cap,
+    raised_output_cap,
     stub_call,
 )
 from .plan_mode import with_plan_note
@@ -156,7 +160,7 @@ from .provider import (
     ToolDefinition as ProviderToolDefinition,
 )
 from .reply_guard import ReplyGuard, user_blocks
-from .reply_retry import GUARDED_CODE, StreamResult, stream_reply
+from .reply_retry import GUARDED_CODE, StreamResult, stream_reply, thinking_ate_cap
 from .router import TierName, TierRouter
 from .session import QueuedUserMessage, Session, SessionEventLog
 from .session_goal import (
@@ -932,6 +936,7 @@ async def _stream_and_parse(
         endpoint_failed,
         collected_reasoning,
         resendable,
+        tier_cfg.max_output_tokens,
     )
 
 
@@ -951,6 +956,9 @@ async def _stream_turn_reply(
 
     A stall after output began is withdrawn from the window and the call
     is made once more under ``provider_retry`` (TD-5159, reply_retry.py).
+    A reply that spent the output cap thinking is asked once more with a
+    larger cap, when the window has room for one (TD-5233); every later
+    attempt of this call keeps the larger cap.
     """
 
     guard_cfg = tier_cfg.reply_guard
@@ -964,15 +972,22 @@ async def _stream_turn_reply(
         else frozenset()
     )
     last_trip: list[str | None] = [None]
+    prompt_tokens, _ = estimate_tokens(messages, counter, tool_definitions)
+    raised = raised_output_cap(tier_cfg.max_output_tokens, tier_cfg.context_window, prompt_tokens)
+    # max_retries 0 turns this off, as it does the stall retry.
+    cap_retries = min(1, config.provider_retry.max_retries) if raised is not None else 0
+    ate_cap = [False]
 
     def attempt(response_id: str) -> Awaitable[StreamResult]:
         cfg = tier_cfg
+        if ate_cap[0] and raised is not None:
+            cfg = cfg.model_copy(update={"max_output_tokens": raised})
         guard = None
         if guard_cfg is not None:
             guard = ReplyGuard(guard_cfg, allowed_blocks=allowed, tools=bool(tool_definitions))
             # After runaway thinking, the retry may answer with thinking off.
             if last_trip[0] == "thinking_cap" and guard_cfg.retry_extra_body:
-                cfg = tier_cfg.model_copy(
+                cfg = cfg.model_copy(
                     update={
                         "extra_body": merge_extra_body(
                             tier_cfg.extra_body or {}, guard_cfg.retry_extra_body
@@ -997,6 +1012,8 @@ async def _stream_turn_reply(
             last_trip[0] = (
                 result.error_msg.rsplit(": ", 1)[-1] if result.error_code == GUARDED_CODE else None
             )
+            if thinking_ate_cap(result):
+                ate_cap[0] = True
             return result
 
         return run()
@@ -1006,6 +1023,8 @@ async def _stream_turn_reply(
         session,
         config.provider_retry,
         guard_retries=guard_cfg.retries if guard_cfg is not None else 0,
+        cap_retries=cap_retries,
+        raised_cap=raised,
     )
 
 
@@ -2845,11 +2864,29 @@ async def agent_loop(
                 break  # exit tool-call loop, wait for next user message
 
             if not tool_calls and not (collected_content or "").strip():
+                # Stop or cancel that lands as the reply ends is not a
+                # failed turn (TD-5233), as in the failure branch above.
+                if session.cancel_requested:
+                    break
+                if session.stop_turn_requested:
+                    await _finish_stopped_turn(session, tier, turn_start, tracker)
+                    break
                 router.record_failure()
-                empty_msg = (
-                    "The model finished without a reply — it spent the "
-                    "turn thinking, or hit the output limit mid-thought. "
-                    "Start a new session if the context is already full."
+                # The context is the cause only near the compaction budget;
+                # otherwise a new chat would not help (TD-5233).
+                prompt_tokens, _ = estimate_tokens(messages, counter, tool_definitions)
+                sent_cap = reply.max_tokens or tier_cfg.max_output_tokens
+                # A backup or a remapped worker has its own entry, and that
+                # is the value that applied.
+                cap_preset = config.active_preset
+                if tier == "worker" and cu_heavy and local_worker_tier(config) is not None:
+                    cap_preset = config.computer_use.local_worker_preset.strip()
+                empty_code, empty_msg = empty_reply_failure(
+                    finish_reason,
+                    setting=cap_setting(tier, cap_preset, backup_chain.position),
+                    cap=tier_cfg.max_output_tokens,
+                    sent=sent_cap,
+                    near_full=prompt_tokens >= budget_threshold(tier_cfg),
                 )
                 messages.append(ChatMessage(role="assistant", content=empty_msg))
                 await session.conversation_changed()
@@ -2866,7 +2903,7 @@ async def agent_loop(
                     turn_start,
                     tracker,
                     failed=True,
-                    error_code="empty_completion",
+                    error_code=empty_code,
                 )
                 log.warning(
                     "turn failed: empty completion",
@@ -2875,7 +2912,11 @@ async def agent_loop(
                             "session_id": session.id,
                             "tier": tier,
                             "turn": router.turn_count,
+                            "model": model_slug,
+                            "max_tokens": sent_cap,
                             "finish_reason": finish_reason,
+                            "prompt_tokens": prompt_tokens,
+                            "error_code": empty_code,
                         }
                     },
                 )
@@ -2889,6 +2930,9 @@ async def agent_loop(
             # A reply stopped at max_output_tokens (TD-5008): cut text is
             # kept; a cut tool call is never run or replayed as sent.
             cut_calls: dict[int, dict[str, str | int]] = {}
+            # A retry after a reply that spent the cap thinking sent a
+            # larger one (TD-5233); a cut there names that figure.
+            reply_cap = reply.max_tokens or tier_cfg.max_output_tokens
             if finish_reason == LENGTH_FINISH:
                 cut_calls = {
                     index: call
@@ -2900,7 +2944,7 @@ async def agent_loop(
                     session_id=session.id,
                     tier=tier,
                     model=model_slug,
-                    max_output_tokens=tier_cfg.max_output_tokens,
+                    max_output_tokens=reply_cap,
                     cut_calls=len(cut_calls),
                 )
 
@@ -2927,8 +2971,7 @@ async def agent_loop(
                 )
                 # Answered now, so the model sees why and retries smaller.
                 messages.extend(
-                    cut_call_reply(str(call["id"]), tier_cfg.max_output_tokens)
-                    for call in cut_calls.values()
+                    cut_call_reply(str(call["id"]), reply_cap) for call in cut_calls.values()
                 )
                 await session.conversation_changed()
 

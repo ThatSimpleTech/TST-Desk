@@ -126,7 +126,13 @@ export function notifyEvent(event: DaemonEventUnion): void {
 			protocolVersion = event.protocol_version;
 			break;
 		case "turn_complete":
-			if (!event.failed) break;
+			if (!event.failed) {
+				// TD-5233: a turn that answered means "ran out of room to answer"
+				// no longer holds. This also keeps a replayed history (a chat
+				// switch, a launch) from leaving it up after a later turn answered.
+				for (const n of [...banners]) if (n.key === "turn:output_cap_thinking") dismiss(n.id);
+				break;
+			}
 			{
 				const spec = turnFailureCopy(event.error_code);
 				if (spec !== null) notify(`turn:${event.error_code}`, spec);

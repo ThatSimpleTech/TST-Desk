@@ -1195,9 +1195,15 @@ withdrawn text above the retried reply; `tst run --output text` has
 already printed it, so it writes a note to stderr, and `--output json`,
 scheduled-run receipts and mailed replies leave it out.
 
+A reply that ends at the tier's `max_output_tokens` with only thinking
+is withdrawn the same way and asked once more with a larger cap, with no
+wait and on its own allowance of one per model call (TD-5233; see "A
+reply that spends the whole cap thinking" under "A tier").
+`max_retries: 0` turns that retry off too.
+
 | Key | Type | Default | Effect |
 |---|---|---|---|
-| `max_retries` | int 0–20 | `3` | Retries after the initial attempt. `0` disables retrying; the first failure ends the turn, and a reply that stalls partway is not asked for again (TD-5159). |
+| `max_retries` | int 0–20 | `3` | Retries after the initial attempt. `0` disables retrying; the first failure ends the turn, and a reply that stalls partway is not asked for again (TD-5159), nor is a reply that spent the output cap thinking (TD-5233). |
 | `initial_delay` | float > 0 | `1.0` | Base delay before the first retry, in seconds. Each subsequent wait doubles. |
 | `max_delay` | float > 0 | `60.0` | Ceiling on any single wait, in seconds. Bounds the worst case when `max_retries` is high. |
 
@@ -1996,7 +2002,7 @@ for a session with the `set_tier` message.
 | `output_price` | float ≥ 0 | *required* | Dollars per **million** completion tokens. |
 | `cache_read_price` | float ≥ 0 | *required* | Dollars per **million** prompt tokens served from cache. |
 | `context_window` | int > 0 | *required* | The compaction budget — see below. |
-| `max_output_tokens` | int > 0 | *required* | Sent as `max_tokens` on the tier's requests, and the answer reservation subtracted from `context_window` — see below. |
+| `max_output_tokens` | int > 0 | *required* | Sent as `max_tokens` on the tier's requests, and the answer reservation subtracted from `context_window` — see below. A turn's reply that spends all of it thinking is asked once more with a larger cap; see "A reply that spends the whole cap thinking" below (TD-5233). |
 | `vision` | bool | `false` | When `true`, PNG/JPEG/GIF/WebP attachments are accepted on user turns routed to this tier (TD-4705), and `fs_read` returns an image file, or PDF page images on request, as an image the model sees (TD-5130). Capability is config — never inferred from the slug in code. |
 | `reasoning_effort` | bool | `false` | When `true`, the picker's effort level (`low`, `medium`, `high`, `xhigh`, `max`) goes out as `reasoning_effort` on this tier's turn requests, and on the requests of delegate and workflow children that run on it (TD-5195). Ultracode is never sent: it is a switch, not a level. Turn it on only for a gateway or provider that supports the field. |
 | `extra_body` | map | none | Extra JSON fields added to every chat request the tier makes: the turn, the progress check, a delegated worker, the after-write review (validator tier), memory distillation (worker tier), and (on the worker tier) the tool-call classifier, DoD polls and judgment calls that run on the worker. They fill in only fields the request did not set itself. For provider-specific settings such as a llama.cpp server's `chat_template_kwargs` — see §3.6. It cannot set `model`, `messages`, `tools`, `tool_choice`, `stream`, `stream_options`, `max_tokens` or `max_completion_tokens`, and its values must be plain JSON; a load error names the problem. Sent as written: never put a key or token here. |
@@ -2042,6 +2048,28 @@ fail the same way. So:
   compaction budget, so on a small window it is a trade. The tool-call classifier, DoD polls
   and judgment calls that run on the worker tier keep their own 8-token cap; on a reasoning
   model, turn their thinking off with `verdict_extra_body` (§3.6).
+
+**A reply that spends the whole cap thinking (TD-5233).** When a turn's reply ends at the cap
+with only thinking (`finish_reason: length`, no text and no tool call), the daemon withdraws it
+(`assistant_retract`, reason `output_cap_thinking`) and sends the same request once more, with
+no wait, at a larger `max_tokens`: four times the cap, at most 32768, and no more than the room
+left in `context_window` after the prompt and a margin of 5% of the window (at least 1024
+tokens). If that is less than twice the cap there is no retry, so a cap above 16384 is never
+raised. A cap of 4096 on a 262144 window with a 28k prompt is asked again at 16384. Later
+attempts of the same model call, such as a retry after a stall, keep the larger cap. If the
+larger request is refused before any output with an error that is not retried (a 402 because
+OpenRouter reserves `max_tokens` against your balance, a 400, a context overflow), the turn
+ends as if there had been no retry and the log names the refusal. Stop before the larger request
+has written anything keeps nothing; once it is writing, Stop keeps what it wrote, as any Stop
+does. A reply that still has no answer fails the turn as `output_cap_thinking`, and the chat
+names the entry whose `max_output_tokens` applied (for example `presets.mine.worker`, or
+`presets.mine.brain.fallbacks[0]` for a backup) and says to raise it in Settings → Configuration. New chats use the new
+limit; an open chat keeps the settings it started with. An empty reply that did not end at the
+cap fails as `empty_completion`, and resending is the fix. Either line suggests a new chat only
+when the conversation has reached the point where it would be compacted. There is one such
+retry per model call, apart from the stall retry, and `provider_retry.max_retries: 0` turns it
+off. The progress check, a delegated worker, the after-write review and memory distillation do
+not retry this way.
 
 **Seeing and steering compaction (TD-5109).** The title bar shows how full the window is, such
 as `12k / 64k`, from the daemon's own estimate of the next request (measured as described
@@ -2509,7 +2537,7 @@ verdict_extra_body:
 A verdict call then sends `chat_template_kwargs: {reasoning_effort: low, enable_thinking:
 false}`; everything else sends `{reasoning_effort: low}`. Nested maps merge key by key, and
 `verdict_extra_body` wins where both set the same key. With `reasoning_effort: low` alone,
-The GPU server's verdicts came back empty with `finish_reason: length`; with `enable_thinking: false`
+the GPU server's verdicts came back empty with `finish_reason: length`; with `enable_thinking: false`
 the classifier answered in 2 tokens. Check your own server's documentation for its switch.
 The same reserved keys and the plain-JSON rule apply. When a verdict comes back empty at its
 cap, the daemon logs one warning per endpoint and model that names `verdict_extra_body`. If
@@ -2597,7 +2625,10 @@ Nothing else moves. A rejected key (401), a bad request, an unknown model (404),
 error or a context overflow would fail the same way anywhere, or needs you, so the turn fails as
 before, before or partway through a reply. So does a reply whose stream just ends partway, with
 no finish and no error (`stream_interrupted`), and one that runs past `total_timeout`
-(`timeout`): Retry on the message resends it (TD-5152).
+(`timeout`): Retry on the message resends it (TD-5152). A reply that spends the whole output
+cap thinking is not an endpoint failure either: it is asked again on the same endpoint with a
+larger cap (TD-5233, "A tier" above). That larger request moves to a backup only by the rules
+above.
 
 Each backup gets its own `provider_retry` budget before the next one is asked. When the last
 backup fails too, the turn fails with that backup's error.

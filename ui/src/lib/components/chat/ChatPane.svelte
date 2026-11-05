@@ -34,6 +34,7 @@
 	import { settings } from "../../settings.svelte.js";
 	import { grok } from "../../grok.svelte.js";
 	import { canSend, formatTurnDuration, showCancel } from "../../chat-store";
+	import { retryLine } from "../../chat-retract";
 	import type { AttachmentDraft } from "../../attachments";
 	import { parseCompactCommand } from "../../context-gauge";
 	import { parsePlanCommand, type PlanCommand } from "../../plan-review";
@@ -210,10 +211,11 @@
 				     we know. Cancel stays live below; the first delta recovers this. -->
 				<span class="stalled">No response yet — the model may be slow or unreachable.</span>
 			{:else if chat.awaitingFirstToken}
-				<!-- TD-5159/TD-5183: the provider went quiet or cut the reply off
-				     partway; the daemon withdrew it and is asking again. -->
+				<!-- TD-5159/TD-5183/TD-5233: the provider went quiet or cut the
+				     reply off partway, or thinking used the output limit; the
+				     daemon withdrew it and is asking again. -->
 				<span class="shimmer"
-					>{chat.retryingReply ? "Reply interrupted. Asking again" : workingVerb(waitElapsedMs)}…</span
+					>{chat.retryingReply ? retryLine(chat.retryReason) : workingVerb(waitElapsedMs)}…</span
 				>
 				{#if waitElapsedMs >= 2000}
 					<span class="elapsed">for {formatTurnDuration(waitElapsedMs / 1000)}</span>

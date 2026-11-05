@@ -178,14 +178,23 @@ function trimEntry(event: ContextCompacted, trigger: keyof typeof TRIM_PREVIEWS)
   };
 }
 
-/** Map one daemon event to a timeline entry, or null when it isn't shown. */
-/** Why the daemon took a half-written reply back (TD-5159, TD-5175, TD-5183). */
+/** Why the daemon took a half-written reply back (TD-5159, TD-5175, TD-5183,
+ *  TD-5233). */
 function retractTitle(reason: string): string {
   if (reason === "stream_interrupted") return "Reply cut off";
   if (reason === "reply_guarded") return "Reply guard cut the reply";
+  if (reason === "output_cap_thinking") return "Thinking used the output limit";
   return "Provider went quiet";
 }
 
+/** What the daemon does next. A reply that spent the output limit thinking
+ *  wrote no answer to withdraw; its retry gets a larger limit (TD-5233). */
+function retractPreview(reason: string): string {
+  if (reason === "output_cap_thinking") return "Asking again with a larger output limit.";
+  return "The partial reply was withdrawn; asking again.";
+}
+
+/** Map one daemon event to a timeline entry, or null when it isn't shown. */
 export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
   switch (event.type) {
     case "tool_call":
@@ -385,7 +394,7 @@ export function eventToEntry(event: DaemonEventUnion): TimelineEntry | null {
         kind: "retry",
         seq: event.seq,
         title: retractTitle(event.reason),
-        preview: "The partial reply was withdrawn; asking again.",
+        preview: retractPreview(event.reason),
         details: { reason: event.reason, response_id: event.response_id },
       };
     case "error":

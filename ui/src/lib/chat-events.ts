@@ -339,12 +339,13 @@ export function applyChatEvent(ctx: ChatEventContext, event: DaemonEventUnion): 
     }
     case "assistant_retract": {
       if (event.session_id !== state.sessionId) return;
-      // The provider went quiet partway through this response (TD-5159):
-      // its text comes off the row, and the daemon is asking again. Until
-      // the retry's first token the Working line says so.
+      // The provider went quiet partway through this response (TD-5159), or
+      // it spent the output limit thinking (TD-5233): its text and thinking
+      // come off the row, and the daemon is asking again. Until the retry's
+      // first token the Working line says so, in the reason's words.
       withdrawResponse(state.messages, event.response_id);
       state.turnState = "running";
-      wait.begin(true);
+      wait.begin(event.reason);
       return;
     }
     case "turn_complete": {
