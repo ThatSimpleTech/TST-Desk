@@ -13082,7 +13082,11 @@ line. UI: `error-copy.ts`, `timeline.ts`, `first-token-wait.ts`/`retryLine`,
 that answers. Tests: `core/tests/test_thinking_cap_retry.py` (45; with the
 retry turned off 10 fail, and each later fix has a test that fails without
 it), `notifications.test.ts`, `chat-retract.test.ts`, `os-notify.test.ts`,
-`chat-pane-retry.test.ts`. Class B entry in DECISIONS.md.
+`chat-pane-retry.test.ts`. Class B entry in DECISIONS.md. Checked live
+against OpenRouter on 2026-11-05 with a reasoning model and a tiny cap.
+A reply that spent 128 tokens thinking was asked again at 512 and answered.
+One that spent 512 and then 2,048 failed with `output_cap_thinking` and the
+line naming the setting.
 
 **Not in this story:** the delegate child, which still ends with "Worker
 finished with no summary." for the same failure; the progress check; the
