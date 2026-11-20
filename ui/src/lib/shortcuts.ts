@@ -13,6 +13,9 @@ export interface ShortcutEvent {
 	shiftKey?: boolean;
 	/** ⌘⌥↑ / ⌘⌥↓ step between sessions (navigation round, 2026-09). */
 	altKey?: boolean;
+	/** The physical key (`Digit1`). Option changes what a digit key types on
+	 *  a Mac, so the model slots read this (TD-5236). */
+	code?: string;
 }
 
 export interface ShortcutContext {
@@ -37,7 +40,8 @@ export type ShortcutAction =
 	| "stop-computer-use"
 	| "prev-session"
 	| "next-session"
-	| "pick-session";
+	| "pick-session"
+	| "pick-model";
 
 /** The 1-based rail slot a ⌘1…⌘9 / Ctrl+1…9 press names, or null. Shift
  *  and Option are excluded so ⌘⇧1-style system combos and the characters
@@ -47,6 +51,17 @@ export function sessionSlot(event: ShortcutEvent): number | null {
 	if (event.shiftKey === true || event.altKey === true) return null;
 	if (!/^[1-9]$/.test(event.key)) return null;
 	return Number(event.key);
+}
+
+/** The 1-based model slot a ⌘⌥1…⌘⌥9 / Ctrl+Alt+1…9 press names, or null
+ *  (TD-5236). Option is what sets it apart from ⌘1…9, the session slots.
+ *  Read from `code`, with `key` for an event that has none: on a Mac,
+ *  Option+1 types "¡". Shift stays out of it. */
+export function modelSlot(event: ShortcutEvent): number | null {
+	if (!(event.metaKey || event.ctrlKey) || event.altKey !== true) return null;
+	if (event.shiftKey === true) return null;
+	const digit = /^Digit([1-9])$/.exec(event.code ?? "")?.[1] ?? event.key;
+	return /^[1-9]$/.test(digit) ? Number(digit) : null;
 }
 
 /** Map a keydown to one app-level action, or null when nothing applies. */
@@ -91,6 +106,9 @@ export function resolveShortcut(
 		if (event.key === "ArrowDown") return "next-session";
 		if (event.key === "ArrowUp") return "prev-session";
 	}
+	// ⌘⌥1…⌘⌥9 — the model in that quick-switch slot (TD-5236). Not over a
+	// modal: the chat it would switch is behind it.
+	if (modelSlot(event) !== null) return context.modalOpen ? null : "pick-model";
 	// ⌘1…⌘9 — straight to a rail slot, counted from the top. The shell
 	// reads the digit back with `sessionSlot`.
 	if (sessionSlot(event) !== null) return "pick-session";

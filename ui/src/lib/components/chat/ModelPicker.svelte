@@ -18,22 +18,13 @@
 		EFFORT_OPTIONS,
 		effortLabel,
 		groupModels,
-		modelDescription,
 		modelLabel,
 	} from "../../effort";
 	import { MODELS_DOC_URL, openDoc } from "../../docs-links";
-	import { engineClash, engineMark } from "../../model-engine";
 	import { openAddModel } from "../../onboarding.svelte.js";
-	import { isBridged } from "../../bridged-id";
-	import {
-		session,
-		setEffort,
-		setFast,
-		setUltracode,
-		switchModel,
-		useForNewChats,
-	} from "../../session-status.svelte.js";
-	import { newSession } from "../../sessions.svelte.js";
+	import ModelRow from "./ModelRow.svelte";
+	import { sectionModels } from "../../model-sections";
+	import { session, setEffort, setFast, setUltracode } from "../../session-status.svelte.js";
 	import { settings } from "../../settings.svelte.js";
 
 	type View = "main" | "effort" | "more" | "teams";
@@ -50,38 +41,11 @@
 			current,
 		}),
 	);
-	const locked = $derived(session.turnActive);
-	// A chat on another computer switches through its hub, which still
-	// refuses while a turn runs (TD-5235 keeps the older verb as it was).
-	const bridged = $derived(isBridged(session.sessionId));
-
-	const BUSY = "Cannot change model while a turn is running";
-	const AFTER_TURN = "Applies when this turn finishes";
-	const NEW_CHAT = "Opens a new chat";
-
-	// TD-5239: a model on another engine than this chat's cannot be switched
-	// to. TD-5235: its row opens a new chat on it instead.
-	function clash(name: string): boolean {
-		return (
-			name !== current && engineClash(name, settings.presetEngines, session.engine) !== null
-		);
-	}
-
-	function held(name: string): boolean {
-		return name !== current && locked && bridged;
-	}
-
-	function hint(name: string): string {
-		if (name === current) return "";
-		const reason = engineClash(name, settings.presetEngines, session.engine);
-		if (reason !== null) return `${NEW_CHAT}. ${reason}`;
-		if (held(name)) return BUSY;
-		return locked ? AFTER_TURN : "";
-	}
-
-	function label(name: string): string {
-		return modelLabel(name, settings.presetLabels);
-	}
+	// TD-5236: the main list in sections (Local, API, Grok, then a model's
+	// own). The daemon says which section each model is in.
+	const sections = $derived(
+		sectionModels(groups.main, settings.presetGroups, settings.pickerGroups),
+	);
 
 	function close(): void {
 		open = false;
@@ -107,24 +71,6 @@
 		void openDoc(MODELS_DOC_URL);
 	}
 
-	// TD-5235: a click moves this chat and makes the model the one new chats
-	// use, so the next new chat does not go back to the old one. A model on
-	// the other engine cannot move this chat, so it opens a new one.
-	function pickModel(name: string): void {
-		if (clash(name)) {
-			useForNewChats(name);
-			newSession(name);
-		} else if (name !== current || name !== settings.activePreset) {
-			switchModel(name, { onlyThisChat: false });
-		}
-		close();
-	}
-
-	function pickOnlyHere(name: string): void {
-		switchModel(name, { onlyThisChat: true });
-		close();
-	}
-
 	// Close on a click outside or Escape (Escape steps back from a submenu first).
 	$effect(() => {
 		if (!open) return;
@@ -148,42 +94,6 @@
 	});
 </script>
 
-{#snippet row(name: string)}
-	<div class="row">
-		<button
-			class="item"
-			type="button"
-			role="menuitemradio"
-			aria-checked={name === current}
-			disabled={held(name)}
-			title={hint(name)}
-			onclick={() => pickModel(name)}
-		>
-			<span class="text">
-				<span class="label"
-					>{label(name)}{#if engineMark(name, settings.presetEngines)}
-						<span class="badge">{engineMark(name, settings.presetEngines)}</span>{/if}</span
-				>
-				{#if clash(name)}
-					<span class="sub">{NEW_CHAT}</span>
-				{:else if modelDescription(name, settings.presetDescriptions)}
-					<span class="sub">{modelDescription(name, settings.presetDescriptions)}</span>
-				{/if}
-			</span>
-			<span class="check" aria-hidden="true">{name === current ? "✓" : ""}</span>
-		</button>
-		{#if name !== current && !clash(name) && !bridged}
-			<button
-				class="only"
-				type="button"
-				aria-label={`Only this chat: ${label(name)}`}
-				title="Use it for this chat and leave the model new chats use as it is"
-				onclick={() => pickOnlyHere(name)}>Only this chat</button
-			>
-		{/if}
-	</div>
-{/snippet}
-
 <span class="picker">
 	<button
 		class="chip"
@@ -193,15 +103,20 @@
 		aria-expanded={open}
 		onclick={toggle}
 	>
-		{settings.hasModel ? chipLabel(current, session.effort, settings.presetLabels) : "Add a model"}{#if settings.hasModel && session.fast}<span class="fast-tag">{" · Fast"}</span>{/if}{#if settings.hasModel && session.ultracode}<span class="ultracode-tag">{" · Ultracode"}</span>{/if}{#if settings.hasModel && session.pendingPreset}<span class="pending-tag">{` → ${label(session.pendingPreset)} after this turn`}</span>{/if}
+		{settings.hasModel ? chipLabel(current, session.effort, settings.presetLabels) : "Add a model"}{#if settings.hasModel && session.fast}<span class="fast-tag">{" · Fast"}</span>{/if}{#if settings.hasModel && session.ultracode}<span class="ultracode-tag">{" · Ultracode"}</span>{/if}{#if settings.hasModel && session.pendingPreset}<span class="pending-tag">{` → ${modelLabel(session.pendingPreset, settings.presetLabels)} after this turn`}</span>{/if}
 		<span class="caret" aria-hidden="true"></span>
 	</button>
 
 	{#if open}
 		<div class="menu" role="menu" aria-label="Model and effort">
 			{#if view === "main"}
-				{#each groups.main as name (name)}
-					{@render row(name)}
+				{#each sections as section (section.title)}
+					{#if section.title}
+						<div class="section" role="presentation">{section.title}</div>
+					{/if}
+					{#each section.names as name (name)}
+						<ModelRow {name} onpicked={close} />
+					{/each}
 				{/each}
 				<div class="rule" role="separator"></div>
 				<button class="item" type="button" role="menuitem" onclick={() => (view = "effort")}>
@@ -296,7 +211,7 @@
 					<p class="hint">Each team gives planning, doing and checking their own models.</p>
 				{/if}
 				{#each view === "teams" ? groups.teams : groups.more as name (name)}
-					{@render row(name)}
+					<ModelRow {name} onpicked={close} />
 				{/each}
 			{/if}
 		</div>
@@ -394,33 +309,10 @@
 		outline-offset: -1px;
 	}
 
-	.row {
-		display: flex;
-		align-items: center;
-	}
-
-	.row .item {
-		flex: 1;
-		min-width: 0;
-	}
-
-	.only {
-		flex: none;
-		font-family: var(--font-sans);
+	.section {
+		padding: var(--space-2) var(--space-2) var(--space-1);
 		font-size: var(--text-xs);
 		color: var(--color-ink-muted);
-		background: transparent;
-		border: none;
-		border-radius: var(--radius-sm);
-		padding: var(--space-1) var(--space-2);
-		cursor: pointer;
-		white-space: nowrap;
-	}
-
-	.only:hover,
-	.only:focus-visible {
-		color: var(--color-ink);
-		background: var(--color-sunken);
 	}
 
 	.pending-tag {

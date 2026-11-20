@@ -13593,3 +13593,42 @@ event log awaits its subscribers before the loop takes its next message,
 which is what makes binding at `turn_complete` safe. Class B entry in
 DECISIONS.md.
 
+---
+
+### TD-5236 — Local, API and Grok sections in the picker, and a shortcut per model
+
+**Size:** 3 · **Depends on:** TD-5235 · **Status:** Done
+
+The picker was one flat list, so a local model, a provider's and Grok read
+as the same kind of thing, and switching always took the mouse. A second
+open window also kept showing the old list and the old default after the
+first one changed them.
+
+- [x] `setup_state.preset_groups` gives every entry a section: its own
+      `group`, else Grok for the Grok engine, Local when every role is served
+      on this computer (after a bound key's host), else API
+      (`test_picker_groups.py::TestTheSectionOfAnEntry`).
+- [x] A server on the local network reads API until the entry says
+      `group: Local` (`test_without_saying_so_a_server_on_the_network_is_api`,
+      `test_an_entry_can_say_its_own`).
+- [x] An entry may have `slot` 1 to 9; two entries with one slot are a load
+      error naming both; a copy does not take its source's slot
+      (`TestSlots`).
+- [x] The picker lists Local, API, Grok, then other sections by name, with
+      no headings when there is one section; each slot shows beside its
+      model (`model-sections.test.ts`).
+- [x] ⌘⌥1…9 / Ctrl+Alt+1…9 does what a click on that model's row does,
+      read off the physical key, not over a modal, and without taking ⌘1…9
+      from the session slots (`model-sections.test.ts`).
+- [x] A model added, relabelled, removed or made the default in one window
+      reaches this computer's other windows unasked; switching only a chat
+      does not (`test_a_change_in_one_window_reaches_the_other`,
+      `test_switching_only_a_chat_tells_no_other_window_about_the_catalog`).
+- [x] `ModelPicker.svelte` is under 400 lines; the row is `ModelRow.svelte`
+      and what a pick does is `model-pick.ts`.
+
+**Notes:** The window never infers a section from a URL: the daemon sends
+it. Other Settings writes to the active entry (a role's model, key or
+window) still reach only the window that made them. Class B entry in
+DECISIONS.md.
+

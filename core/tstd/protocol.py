@@ -3793,6 +3793,13 @@ class SetupState(DaemonEvent):
     # TD-5239: the engine of each preset that names one. A preset left out
     # runs on ``engine``. Additive; an older client shows no mark.
     preset_engines: dict[str, Literal["native", "grok"]] = Field(default_factory=dict)
+    # TD-5236: the picker section of every preset (its own ``group``, else
+    # Grok, Local or API as the daemon reads the entry), the order the
+    # built-in sections come in, and each preset's quick-switch slot, 1 to
+    # 9, for those that have one. Additive; an older client shows one list.
+    preset_groups: dict[str, str] = Field(default_factory=dict)
+    picker_groups: list[str] = Field(default_factory=list)
+    preset_slots: dict[str, int] = Field(default_factory=dict)
     has_model: bool = True
     # TD-804: skip-all approvals. Additive, default off — an older client
     # that ignores the field keeps asking, which is the safe read.

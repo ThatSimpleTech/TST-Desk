@@ -98,6 +98,11 @@ export const settings = $state({
 	teamPresets: [] as string[],
 	// TD-5239: the engine of each model that names one.
 	presetEngines: {} as Record<string, "native" | "grok">,
+	// TD-5236: each model's picker section, the built-in sections in order,
+	// and each model's quick-switch slot. All as the daemon sent them.
+	presetGroups: {} as Record<string, string>,
+	pickerGroups: [] as string[],
+	presetSlots: {} as Record<string, number>,
 	/** False until a model is set up: the first run starts "Add a model". */
 	hasModel: true,
 	activePreset: null as string | null,
@@ -235,6 +240,9 @@ export function resetSettings(): void {
 	settings.presetDescriptions = {};
 	settings.teamPresets = [];
 	settings.presetEngines = {};
+	settings.presetGroups = {};
+	settings.pickerGroups = [];
+	settings.presetSlots = {};
 	settings.hasModel = true;
 	settings.activePreset = null;
 	settings.tierSlugs = {};
@@ -415,6 +423,9 @@ function reduce(event: DaemonEventUnion): void {
 		settings.presetDescriptions = event.preset_descriptions ?? {};
 		settings.teamPresets = event.team_presets ?? [];
 		settings.presetEngines = event.preset_engines ?? {};
+		settings.presetGroups = event.preset_groups ?? {};
+		settings.pickerGroups = event.picker_groups ?? [];
+		settings.presetSlots = event.preset_slots ?? {};
 		settings.hasModel = event.has_model ?? true;
 		settings.activePreset = event.active_preset;
 		// A daemon too old to send the field leaves the model section empty
