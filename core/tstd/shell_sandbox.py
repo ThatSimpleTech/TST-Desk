@@ -452,7 +452,15 @@ def build_plan(
     real_ws = Path(workspace).resolve()
     filter_path = seccomp if seccomp is not None else seccomp_file()
     hidden = hidden_paths(section, home, extra_hidden)
-    around = [p for p in hidden if p.is_dir() and p != real_ws and real_ws.is_relative_to(p)]
+    # Judged on resolved paths, each directory once (TD-5278): the hidden
+    # list holds a symlinked directory under both its names, and the
+    # unresolved one, left for last, would cover the workspace again.
+    around: list[Path] = []
+    for path in hidden:
+        real = path.resolve()
+        contains = real.is_dir() and real != real_ws and real_ws.is_relative_to(real)
+        if contains and real not in around:
+            around.append(real)
     # Outermost first, so an inner one is mounted inside the outer.
     around.sort(key=lambda p: len(p.parts))
     argv = [
@@ -477,8 +485,12 @@ def build_plan(
     argv += ["--bind", str(real_ws), str(real_ws)]
     for pin in _pins(real_ws):
         argv += ["--ro-bind", str(pin), str(pin)]
+    # Once the workspace is bound into it, the mask itself is closed to
+    # writes: nothing can be put beside the workspace or re-moded (TD-5278).
+    for path in around:
+        argv += ["--remount-ro", str(path)]
     for path in hidden:
-        if path in around:
+        if path.resolve() in around:
             continue
         if path.is_dir():
             argv += ["--perms", "0000", "--tmpfs", str(path)]
