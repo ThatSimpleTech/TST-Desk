@@ -13994,3 +13994,34 @@ a worker's cards, keeping keyboard focus on the card being read when a
 second arrives, and an audit row for a child's own tool calls. Class B
 entry in DECISIONS.md.
 
+---
+
+### TD-5269 — One count of calls per model server, across the daemon
+
+**Size:** 3 · **Depends on:** TD-301, TD-5195 · **Status:** Done
+
+The only limit on model calls at once was a semaphore inside one
+`workflow` call. Two chats, a scheduled run and a workflow could all ask
+one local server together, and a single GPU then answers all of them
+slowly or fails some. It is also the first thing children that run
+alongside their parent need.
+
+- [x] `model_concurrency` gives a server on this computer and any other a
+      default number, and a server named by URL its own; nothing is set
+      unless config sets it (`test_endpoint_gate.py::TestWhatConfigGives`).
+- [x] A server is its scheme, host and port: every spelling of this
+      computer on one port is one, whatever the path or key
+      (`TestWhichUrlsAreOneServer`).
+- [x] Calls from every client for one server share the limit, a streamed
+      reply holds its slot until the stream ends, and another server is not
+      held back (`TestTheCountHolds`).
+- [x] A failed call and a cancelled one give their slot back.
+- [x] The daemon gives every client it builds for one server the same
+      gate (`test_the_daemon_gives_clients_for_one_server_one_gate`).
+
+**Notes:** The minimal step from the research note. Not done here: a lane
+that lets a chat's own reply go ahead of background work, a limit on how
+long a call waits for a slot, a line in the doctor, and streaming for
+children so a timed-out child frees the server at once. A chat that is
+open keeps the gate its client was built with until the client is rebuilt.
+

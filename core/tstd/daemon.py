@@ -142,6 +142,7 @@ from .desktop.permissions import (
 from .desktop.protocol import DesktopError
 from .discovery import resolve_tier_slugs
 from .effort import effort_record, read_effort_record
+from .endpoint_gate import EndpointGates
 from .grok_acp import GrokEngineError, find_grok_binary
 from .grok_home import (
     grok_configured_model,
@@ -1194,6 +1195,8 @@ class Daemon:
             known_session=lambda sid: self.session_registry.get(sid) is not None,
         )
         self._slug_snapshot = _snapshot_slugs(self.config)
+        # TD-5269: one count per model server, shared across sessions.
+        self._gates = EndpointGates(self.config.model_concurrency)
         # TD-5185: last model-card refresh per (preset, tier), this run only.
         self._card_results: dict[tuple[str, str], CardResult] = {}
         # A background refresh and a Settings one never write at once (TD-5197).
@@ -1405,12 +1408,17 @@ class Daemon:
         base_url = resolve_base_url(self.config, tier_cfg)
         timeouts = tier_cfg.timeouts()
         if cred_id is None:
-            return ProviderClient(
+            client = ProviderClient(
                 base_url=base_url, api_key=None, timeout=timeouts, retry_config=retry_cfg
             )
-        return await ProviderClient.from_keychain(
-            base_url, provider_name=cred_id, timeout_config=timeouts, retry_config=retry_cfg
-        )
+        else:
+            client = await ProviderClient.from_keychain(
+                base_url, provider_name=cred_id, timeout_config=timeouts, retry_config=retry_cfg
+            )
+        # TD-5269: every client for one server shares that server's count.
+        self._gates.configure(self.config.model_concurrency)
+        client.gate = self._gates.for_url(base_url)
+        return client
 
     async def _brain_client(self) -> ProviderClient:
         """Build a client for the active brain tier."""
