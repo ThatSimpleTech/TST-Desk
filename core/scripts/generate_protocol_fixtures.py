@@ -74,6 +74,7 @@ from tstd.protocol import (
     DeleteJobTemplate,
     DeleteMcpSecret,
     DeleteMcpServer,
+    DeletePreset,
     DeleteSession,
     Deny,
     DenyVerify,
@@ -85,6 +86,7 @@ from tstd.protocol import (
     DiagnosticsReport,
     Drain,
     DrainResult,
+    DuplicatePreset,
     EmailTestResult,
     EndpointModel,
     EndpointModels,
@@ -249,6 +251,7 @@ from tstd.protocol import (
     SetMcpServer,
     SetPlan,
     SetPreset,
+    SetPresetLabel,
     SetRemoteAttach,
     SetSessionPreset,
     SetSessionStar,
@@ -582,6 +585,12 @@ FIXTURES = {
     ),
     "test_model": TestModel(),
     "set_preset": SetPreset(name="tst-default"),
+    # TD-5237: copy, relabel and remove a catalog entry
+    "duplicate_preset": DuplicatePreset(source="tst-default", label="My copy"),
+    "set_preset_label": SetPresetLabel(
+        name="tst-default", label="House model", description="General coding and chat"
+    ),
+    "delete_preset": DeletePreset(name="budget"),
     "set_engine": SetEngine(kind="grok"),
     "set_grok_mode": SetGrokMode(session_id="sess-1", mode="plan"),
     "run_grok_command": RunGrokCommand(session_id="sess-1", name="compact", argument="keep tests"),

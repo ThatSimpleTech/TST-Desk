@@ -425,6 +425,8 @@ test("walks every settings section and its enabled controls", async () => {
 		const content = dialog.locator(".content");
 		await snap(`settings:${section}`, content);
 		if (section === "MCP servers") await saveWalkSecret(dialog);
+		// Before `exercise`: its "Add a model" click reopens Settings elsewhere.
+		if (section === "Model") await walkModelCatalog(dialog);
 		await exercise(page, content);
 		if (section === "MCP servers") await removeWalkServer(dialog);
 		await expect(dialog).toBeVisible();
@@ -610,6 +612,45 @@ async function removeWalkServer(dialog: Locator): Promise<void> {
 	await expect(dialog.getByText("walk", { exact: true })).toHaveCount(0);
 }
 
+/**
+ * "Your models" (TD-5237): copy the first model, give the copy a name, and
+ * remove it, so the catalog ends as it began. `exercise` leaves these rows
+ * alone (CATALOG_ROW): a blind click on Duplicate would add a row per run.
+ */
+async function walkModelCatalog(dialog: Locator): Promise<void> {
+	const list = dialog.getByRole("list", { name: "Your models" });
+	const before = await list.getByRole("listitem").count();
+	expect(before).toBeGreaterThan(0);
+	await list.getByRole("button", { name: /^Duplicate / }).first().click();
+	await expect(list.getByRole("listitem")).toHaveCount(before + 1);
+
+	// Rows are in key order, and a key never changes, so the copy keeps its
+	// place through the rename. Find it by a button: its text runs on into them.
+	const rows = list.getByRole("listitem");
+	let at = -1;
+	for (let i = 0; i <= before; i++) {
+		if ((await rows.nth(i).getByRole("button", { name: /^Duplicate .+ copy$/ }).count()) === 1) at = i;
+	}
+	expect(at).toBeGreaterThanOrEqual(0);
+	const row = rows.nth(at);
+	await row.getByRole("button", { name: /^Rename / }).click();
+	await row.getByRole("textbox", { name: /^New name for / }).fill("Walk copy");
+	await row.getByRole("button", { name: /^Cancel renaming / }).click();
+	await row.getByRole("button", { name: /^Rename / }).click();
+	await row.getByRole("textbox", { name: /^New name for / }).fill("Walk model");
+	await row.getByRole("button", { name: /^Save name for / }).click();
+
+	await expect(row.getByRole("button", { name: "Remove Walk model", exact: true })).toBeVisible();
+	await row.getByRole("button", { name: "Remove Walk model", exact: true }).click();
+	await row.getByRole("button", { name: "Keep Walk model", exact: true }).click();
+	await row.getByRole("button", { name: "Remove Walk model", exact: true }).click();
+	await row.getByRole("button", { name: "Yes, remove Walk model", exact: true }).click();
+	await expect(list.getByRole("listitem")).toHaveCount(before);
+	await expect(dialog.getByRole("alert")).toHaveCount(0);
+}
+
+const CATALOG_ROW = /^(Duplicate|Rename|Remove) .+$/;
+
 const SKIP_CLICK =
 	/^(Close|Sign in with Microsoft|Sign in with Google|Connect GitHub|Disconnect|Send test email|Delete|Remove|Forget|Copy code|Open browser|Try again|How models work)$/;
 
@@ -622,7 +663,7 @@ async function exercise(page: Page, content: Locator): Promise<void> {
 		const name = ((await button.getAttribute("aria-label")) || (await button.innerText()))
 			.replace(/\s+/g, " ")
 			.trim();
-		if (name === "" || SKIP_CLICK.test(name)) continue;
+		if (name === "" || SKIP_CLICK.test(name) || CATALOG_ROW.test(name)) continue;
 		await dismissExtraDialogs(page);
 		await button.click({ timeout: 5_000 });
 		await dismissExtraDialogs(page);

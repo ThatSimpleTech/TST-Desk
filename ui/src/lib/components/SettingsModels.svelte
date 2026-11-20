@@ -16,6 +16,7 @@
 	import { openAddModel } from "../onboarding.svelte.js";
 	import { onMount } from "svelte";
 	import { sendToDaemon } from "../connection-status.svelte.js";
+	import ModelCatalog from "./ModelCatalog.svelte";
 
 	// TD-5197: the daemon refreshes model cards in the background, so the
 	// numbers may have changed since the window last asked. Read them fresh
@@ -85,6 +86,8 @@
 		How models work
 	</button>
 </div>
+
+<ModelCatalog />
 
 {#if settings.hasModel && settings.activePreset}
 	<h3 class="heading">Build a team</h3>

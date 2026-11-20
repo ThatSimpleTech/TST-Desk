@@ -141,8 +141,12 @@ VIEWER_MACHINE_VERBS: frozenset[str] = frozenset({"list_machines"})
 # where keys and tokens are sent, and the phone listener. The narrower pages
 # a phone may use stay open to it; this one, reading included, is the
 # computer's own.
+# ``delete_preset`` (TD-5237) removes a model from the catalog. Copying or
+# relabelling one from a phone is as narrow as ``add_model``; taking one
+# away is done at the computer whose config it is.
 LOOPBACK_VERBS: frozenset[str] = frozenset(
     {
+        "delete_preset",
         "drain",
         "trust_workspace_config",
         "steering_accept",

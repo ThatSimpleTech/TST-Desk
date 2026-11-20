@@ -19839,3 +19839,32 @@ name as the owner of its windows, so a name check missed exactly the copy
 TST Desk ships. The executable check must not catch TST Desk's own windows,
 which share that owner name. The lock covers set-up only, never the command,
 so concurrent sessions still act in parallel.
+
+## 2026-11-20 — TD-5237: three narrow verbs edit the model catalog; rename is the label only (Class B)
+
+**Decision:** Settings → Model copies, relabels and removes catalog entries
+with `duplicate_preset {source, label}`, `set_preset_label {name, label,
+description?}` and `delete_preset {name}`, each acked with `setup_state`.
+The writers live in `core/tstd/preset_write.py`. A copy is written from the
+loaded entry with every role spelled out. "Rename" changes `label` and never
+the entry's key. Every would-be file is loaded with `config_from_data` before
+it is written. `delete_preset` is in `LOOPBACK_VERBS`; the other two are open
+to a paired phone like `add_model`, and none is a machine-peer verb.
+
+**Rationale:** the key is an id other things store: `sessions.json`
+(TD-1721), scheduled-job pins (TD-3812) and
+`computer_use.local_worker_preset`. Changing it would need every one of
+those rewritten in step, for no gain a person can see, since the picker shows
+the label. A copy written from text would repeat the source's anchor names,
+and YAML then rebinds every later alias to the copy; writing it expanded
+keeps the two entries independent, which is the point of copying. Loading
+before writing is what catches the one edit a line-level writer cannot judge
+by itself: removing an entry whose anchor another entry uses.
+
+**Rejected:** one generic "edit preset" verb carrying a whole entry (a
+free-form body is where a secret could ride in; the narrow verbs cannot
+carry one); renaming the key and migrating its references; deleting the keys
+an entry used along with it (a key is shared between entries and is managed
+in Settings → API keys); letting a phone remove a model (it is the
+computer's config, and nothing on a phone needs it).
+
