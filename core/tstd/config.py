@@ -35,6 +35,7 @@ from pydantic import (
 )
 
 from .effort import DEFAULT_EFFORT, LEGACY_ULTRACODE, EffortLevel
+from .endpoint_gate import ModelConcurrencyConfig
 from .hooks_config import HooksConfig
 from .logging import get_logger, user_data_dir
 from .lsp_config import LspConfig
@@ -1740,6 +1741,8 @@ class ModelConfig(BaseModel):
     consult: ConsultConfig = Field(default_factory=ConsultConfig)
     delegate: DelegateConfig = Field(default_factory=DelegateConfig)
     workflow: WorkflowConfig = Field(default_factory=WorkflowConfig)
+    # How many calls one model server answers at once, daemon-wide (TD-5269).
+    model_concurrency: ModelConcurrencyConfig = Field(default_factory=ModelConcurrencyConfig)
     model_refresh: ModelRefreshConfig = Field(default_factory=ModelRefreshConfig)
     shell: ShellConfig = Field(default_factory=ShellConfig)
     provider_retry: ProviderRetryConfig = Field(default_factory=ProviderRetryConfig)

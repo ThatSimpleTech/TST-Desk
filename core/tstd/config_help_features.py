@@ -85,6 +85,13 @@ FEATURE_HELP: dict[str, str | tuple[str, str]] = {
     "CompactionConfig.reinject_files": "Recent files read again after a compaction. 0 brings "
     "none back.",
     "CompactionConfig.reinject_tokens": ("Most those files may take.", TOKENS),
+    "ModelConcurrencyConfig.loopback_default": "Calls at once for a server on this computer. "
+    "Empty is no limit. A single GPU usually wants 1 or 2.",
+    "ModelConcurrencyConfig.remote_default": "Calls at once for any other server. Empty is "
+    "no limit.",
+    "ModelConcurrencyConfig.endpoints": "Servers with a number of their own, by URL.",
+    "EndpointLimit.url": "The server, by URL. Only its scheme, host and port matter.",
+    "EndpointLimit.max_concurrent": "Calls that server answers at once.",
     "DelegateConfig.max_iterations": "Model calls one delegated child may make before it "
     "stops with what it has. The session's caps still bound the total.",
     "ConsultConfig.tiers": "Tiers offered the consult tool. None turns it off.",
