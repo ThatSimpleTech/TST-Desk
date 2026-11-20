@@ -20097,3 +20097,36 @@ phone could know before this story: nothing about servers.
 an error each time it opened there); a fifth `unknown` status (a new state
 for every client to handle, to say what an empty warning already says).
 
+## 2026-11-20 — TD-5276: the MCP page is loopback-only (Class B; removes a phone capability)
+
+**Decision:** `set_mcp_server`, `delete_mcp_server`, `set_mcp_secret` and
+`delete_mcp_secret` join `LOOPBACK_VERBS`. A paired phone, the older remote
+token and another computer are refused with `loopback_only`. Off the
+computer, Settings → MCP servers renders the list read-only. A phone can no
+longer switch a server on or off.
+
+**Rationale:** a stdio server is an argv the daemon spawns at once and at
+every session start, outside the classifier. `peer_policy.check` allows a
+remote non-machine peer anything not listed, and the handler did not look at
+who was asking, so a paired phone could run a command on the computer with
+no confirmation there, and it persisted after the phone was removed. With
+the verb reopened in a test, the command ran. The file's own comment already
+gave "the commands this computer runs (hooks, language and MCP servers, the
+engine)" as the reason the config editor is loopback-only; this makes the
+MCP page agree with it. A server's values go with it: they are that
+command's environment or the headers sent to its host.
+
+**Rejected:** letting a phone change only `enabled` (re-enabling a server
+the person switched off still runs a command, and the rule would have to
+live in the handler, away from the one policy table); a confirm-at-the-
+computer card for a phone's request (a feature with a new event, a pending
+store and UI on both sides, not a fix); leaving the page interactive on a
+phone and relying on the refusal (the page would offer what it cannot do).
+
+**Not decided here:** the other verbs a phone may send that change what the
+computer does or where a key goes (`set_skip_all_approvals`, `shutdown`,
+`set_credential`, `set_email_notify`, `start_autonomy`, the computer-use
+policy verbs, `add_model`). They need the owner's call one by one; an
+explicit phone allowlist with a test that classifies every verb would stop
+the next one being missed.
+

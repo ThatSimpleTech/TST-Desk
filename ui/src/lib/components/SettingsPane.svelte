@@ -257,7 +257,7 @@
 				{:else if settings.section === 'policy'}
 					<PolicyRuleList sessionId={session.sessionId} />
 				{:else if settings.section === 'mcp'}
-					<SettingsMcp />
+					<SettingsMcp canManage={onComputer} />
 				{:else if settings.section === 'email'}
 					<SettingsEmail />
 				{:else if settings.section === 'github'}

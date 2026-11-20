@@ -13821,3 +13821,45 @@ the sandbox on by default.
 comparison; reproduced through `run_shell` before the fix. A workspace
 that *is* a hidden directory is unchanged: still masked.
 
+---
+
+### TD-5276 — Only the computer changes its MCP servers
+
+**Size:** 2 · **Depends on:** TD-4403, TD-5014, TD-5110 · **Status:** Done
+
+A stdio MCP server is a command the daemon runs, now and at every session
+start, and it never meets the classifier. `set_mcp_server` was open to a
+paired phone, and the handler saved and started whatever it was sent. So a
+paired phone, or anyone holding its key or the older remote token, could
+make the computer run a command with nothing shown at the computer, and
+the entry stayed in `config.yaml` after the phone was removed. The config
+editor was already loopback-only for this stated reason; the MCP page had
+been missed.
+
+- [x] `set_mcp_server`, `delete_mcp_server`, `set_mcp_secret` and
+      `delete_mcp_secret` are refused with `loopback_only` for a phone, the
+      older remote token, and another computer, and allowed for this
+      computer's own window (`test_peer_policy.py::test_the_mcp_page_is_loopback_only`).
+- [x] At the socket, a phone's `set_mcp_server` saves nothing, starts
+      nothing, and the command it carried does not run
+      (`test_mcp_peer.py::test_a_phone_cannot_add_a_server`).
+- [x] A phone cannot change a server's command, switch one on or off,
+      remove one, or set or remove a value
+      (`test_a_phone_cannot_change_remove_or_set_a_value_on_one`).
+- [x] A phone still sees the list, and the computer's window still manages
+      it (`test_a_phone_still_sees_the_list`,
+      `test_the_computers_own_window_still_manages_them`).
+- [x] The verbs that make this computer run a command are pinned as
+      loopback-only so a later tidy-up cannot reopen one
+      (`test_verbs_that_make_this_computer_run_a_command_stay_loopback_only`).
+- [x] Off the computer, Settings → MCP servers is the list and one line
+      saying where to make changes, with nothing to press
+      (`mcp-read-only.test.ts`).
+
+**Notes:** With the verb reopened, the socket test's command ran on the
+test machine: the fault was real, not theoretical. Other verbs a phone may
+send that deserve a decision (turning approvals off, `shutdown`, changing
+the host a stored key is sent to, starting an unattended run) are listed
+in the research note and are not changed here. Class B entry in
+DECISIONS.md.
+

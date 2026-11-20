@@ -340,3 +340,40 @@ async def test_a_remote_peer_removing_itself_hears_no_devices_or_address(daemon:
         for field in REMOTE_SETUP_STATE_DROPS:
             assert field not in reply, (kind, field)
     assert [d.name for d in daemon.remote_devices.summaries()] == ["Other phone"]
+
+
+def test_the_mcp_page_is_loopback_only() -> None:
+    """TD-5276: a server is a command this computer runs; only it changes them."""
+    frames = [
+        _msg("set_mcp_server", id="x", transport="stdio", command=["sh", "-c", "id"]),
+        _msg("delete_mcp_server", id="x"),
+        _msg("set_mcp_secret", server_id="x", target="env", name="TOKEN", value="v"),
+        _msg("delete_mcp_secret", server_id="x", target="env", name="TOKEN"),
+    ]
+    self_paired = PeerView(remote=False, machine=True, viewer=False)
+    for frame in frames:
+        assert check(frame, LOOPBACK_PLAIN, bridged=False) is None, frame.type
+        assert check(frame, VIEWER, bridged=False) is None, frame.type
+        for peer in (PHONE_VIEWER, PLAIN_REMOTE, MACHINE, self_paired):
+            refusal = check(frame, peer, bridged=False)
+            assert refusal is not None, (frame.type, peer)
+            assert json.loads(refusal)["code"] == "loopback_only", (frame.type, peer)
+            assert json.loads(refusal)["in_reply_to"] == frame.type
+
+
+def test_verbs_that_make_this_computer_run_a_command_stay_loopback_only() -> None:
+    """A later tidy-up must not reopen any of these to a phone."""
+    runs_a_command = {
+        "set_mcp_server",
+        "delete_mcp_server",
+        "set_mcp_secret",
+        "delete_mcp_secret",
+        "get_config_editor",
+        "set_config_value",
+        "reset_config_value",
+        "trust_workspace_config",
+        "steering_accept",
+        "steering_edit",
+    }
+    assert runs_a_command <= protocol._KNOWN_CLIENT_TYPES
+    assert runs_a_command <= LOOPBACK_VERBS
