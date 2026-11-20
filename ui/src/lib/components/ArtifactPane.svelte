@@ -15,11 +15,11 @@
 		asFencedMarkdown,
 		artifactsEmptyCopy,
 		copyArtifactSource,
-		htmlPreviewSrcdoc,
 		HTML_PREVIEW_SANDBOX,
 		openArtifactInEditor,
 		workspaceOpenPath,
 	} from '../artifacts';
+	import { artifactPreviewSrcdoc, STATIC_PREVIEW_NOTE } from '../artifact-html';
 	import { artifacts, selectArtifact } from '../artifacts.svelte.js';
 	import { machineNameFor } from '../machines.svelte.js';
 	import { staysOnCopy } from '../machines';
@@ -118,11 +118,12 @@
 			{:else if preview.source === null}
 				<EmptyState compact align="start" body="Opening…" />
 			{:else if preview.kind === 'html'}
+				<p class="static-note">{STATIC_PREVIEW_NOTE}</p>
 				<iframe
 					class="html-frame"
 					title={preview.title}
 					sandbox={HTML_PREVIEW_SANDBOX}
-					srcdoc={htmlPreviewSrcdoc(preview.source)}
+					srcdoc={artifactPreviewSrcdoc(preview.source)}
 					use:sandboxFrame
 				></iframe>
 			{:else if preview.kind === 'markdown'}
@@ -268,6 +269,13 @@
 	.md {
 		margin-top: var(--space-6);
 		min-height: 0;
+	}
+
+	.static-note {
+		margin: 0;
+		padding: var(--space-1) var(--space-3);
+		font-size: var(--text-xs);
+		color: var(--color-ink-muted);
 	}
 
 	.html-frame {
