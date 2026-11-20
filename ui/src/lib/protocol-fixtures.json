@@ -815,6 +815,22 @@
     "device_id": "dev_0123456789ab",
     "remove_added": false
   },
+  "preview_mcp_import": {
+    "type": "preview_mcp_import",
+    "text": "{\"mcpServers\": {\"files\": {\"command\": \"uvx\"}}}"
+  },
+  "import_mcp_servers": {
+    "type": "import_mcp_servers",
+    "text": "{\"mcpServers\": {\"files\": {\"command\": \"uvx\"}}}",
+    "servers": [
+      {
+        "source_name": "files",
+        "id": "files",
+        "allow_remote": false,
+        "inputs": {}
+      }
+    ]
+  },
   "set_phone_permission": {
     "type": "set_phone_permission",
     "capability": "mcp_servers",
@@ -2373,6 +2389,37 @@
       "kind": "phone",
       "mcp_servers_added": []
     }
+  },
+  "mcp_import_preview": {
+    "type": "mcp_import_preview",
+    "seq": 1,
+    "servers": [
+      {
+        "source_name": "GitHub",
+        "id": "github",
+        "transport": "stdio",
+        "command": [
+          "npx",
+          "-y",
+          "server-github"
+        ],
+        "url": "",
+        "off_box": false,
+        "exists": false,
+        "values": [
+          {
+            "name": "GITHUB_TOKEN",
+            "target": "env",
+            "disposition": "keychain",
+            "reason": ""
+          }
+        ],
+        "not_imported": [],
+        "notes": [],
+        "refused": ""
+      }
+    ],
+    "error": ""
   },
   "phone_change": {
     "type": "phone_change",
