@@ -34,7 +34,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
-from ..config import ModelConfig, TierConfig, TierName
+from ..config import DEFAULT_CHILD_MAX_ITERATIONS, ModelConfig, TierConfig, TierName
 from ..context import PromptAssembler
 from ..context.tokens import make_token_counter
 from ..effort import with_effort
@@ -111,7 +111,8 @@ if TYPE_CHECKING:  # TD-5161: context.workers imports tools; no cycle at import
 
 log = get_logger("tstd.delegate")
 
-CHILD_MAX_ITERATIONS = 8
+# The default; ``delegate.max_iterations`` in config.yaml is what a child runs with (TD-5265).
+CHILD_MAX_ITERATIONS = DEFAULT_CHILD_MAX_ITERATIONS
 
 
 @dataclass
@@ -559,7 +560,8 @@ async def _child_loop(
     # call id in front keeps their approvals apart.
     prefix = call_id or uuid.uuid4().hex[:12]
 
-    for _ in range(CHILD_MAX_ITERATIONS):
+    child_max = runtime.config.delegate.max_iterations
+    for _ in range(child_max):
         if parent.cancel_requested or parent.stop_turn_requested:
             return stop(
                 "parent cancelled" if parent.cancel_requested else "parent stopped the turn"
@@ -644,7 +646,7 @@ async def _child_loop(
             content = _tool_message_content(r) if r.images else r.output
             messages.append(ChatMessage(role="tool", content=content, tool_call_id=tc.id))
 
-    return stop("iteration cap")
+    return stop(f"the child used all {child_max} of its model calls (delegate.max_iterations)")
 
 
 def _skip_all(dispatcher: ToolDispatcher) -> bool:

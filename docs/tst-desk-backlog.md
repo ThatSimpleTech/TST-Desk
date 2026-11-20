@@ -13763,3 +13763,31 @@ narrower than the truth is worse than none.
       `config.yaml`, and there only a comment; the docs, config and
       outbound-host tests pass.
 
+---
+
+### TD-5265 — A delegated child's call limit is a setting
+
+**Size:** 2 · **Depends on:** TD-4602, TD-5195 · **Status:** Done
+
+A `delegate` child stopped after eight model calls, a constant in the
+code. That suits a lookup and cuts off a child asked to edit a few files
+and run a test, which then returns half a job. Harness documents children
+with their own sessions and a configurable depth; the first step here is
+that the one limit TST Desk has is the person's to set.
+
+- [x] `delegate.max_iterations` (1 to 64, default 8) is how many model
+      calls one child may make; the shipped config sets and explains it
+      (`test_delegate.py::test_a_child_runs_as_many_calls_as_config_allows`,
+      `test_the_shipped_config_sets_the_default_and_documents_it`).
+- [x] With the key absent a child behaves as before: eight calls
+      (`test_a_child_stops_after_eight_calls_by_default`).
+- [x] A child that reaches the limit says so and names the key.
+- [x] The session's own caps still bound the total, whatever the number
+      (`test_a_larger_number_cannot_outrun_the_sessions_own_cap`).
+- [x] Settings → Configuration shows the key with words, and the reference
+      documents it (`test_config_schema.py`, `test_docs_config_reference.py`).
+
+**Notes:** Not in a model's `overrides` (TD-5234) yet: nothing has shown a
+need for it per model. Children that run alongside the parent are a later,
+larger story.
+

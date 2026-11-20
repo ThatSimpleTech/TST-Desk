@@ -85,6 +85,8 @@ FEATURE_HELP: dict[str, str | tuple[str, str]] = {
     "CompactionConfig.reinject_files": "Recent files read again after a compaction. 0 brings "
     "none back.",
     "CompactionConfig.reinject_tokens": ("Most those files may take.", TOKENS),
+    "DelegateConfig.max_iterations": "Model calls one delegated child may make before it "
+    "stops with what it has. The session's caps still bound the total.",
     "ConsultConfig.tiers": "Tiers offered the consult tool. None turns it off.",
     "ConsultConfig.max_per_turn": "Consults one turn may make, delegate children included.",
     "WorkflowConfig.max_parallel": "Workers running at once. Size it to what the worker's "
