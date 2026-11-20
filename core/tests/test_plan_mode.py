@@ -186,6 +186,8 @@ def test_every_builtin_is_decided_and_only_readers_run() -> None:
             "send_file",
             "session_search",
             "shell_job_output",
+            # TD-5254: changes nothing but the session's own Artifacts pane.
+            "show_artifact",
             "task_list",
             "tool_search",
             "web_fetch",

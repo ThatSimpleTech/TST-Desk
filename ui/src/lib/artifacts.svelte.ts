@@ -19,6 +19,11 @@ export interface ArtifactPreview {
 	path: string;
 	kind: ArtifactPreviewKind;
 	source: string | null;
+	/** The artifact's file name when it has one (TD-5254). Text the agent
+	 *  handed over lives at `artifacts/<id>`, which has no extension, so the
+	 *  name is what picks the preview and the highlighting. */
+	name: string | null;
+	caption: string | null;
 }
 
 export const artifacts = $state({
@@ -145,6 +150,11 @@ function reduce(event: DaemonEventUnion): void {
 			caption: event.caption,
 			tool_call_id: event.tool_call_id,
 		});
+		// TD-5254: the agent showed the open artifact again. Read it again,
+		// so the pane is never a stale copy of what the row now names.
+		if (event.artifact_id === artifacts.selectedId && !isSentFile(event)) {
+			selectArtifact(event.artifact_id);
+		}
 		return;
 	}
 	if (event.type === "artifact") {
@@ -173,7 +183,8 @@ function upsert(entry: ArtifactEntry): void {
 }
 
 function beginPreview(event: Artifact): void {
-	const kind = artifactPreviewKind(event.mime, event.path);
+	const name = event.name ?? null;
+	const kind = artifactPreviewKind(event.mime, name ?? event.path);
 	artifacts.preview = {
 		artifactId: event.artifact_id,
 		title: event.title,
@@ -181,6 +192,8 @@ function beginPreview(event: Artifact): void {
 		path: event.path,
 		kind,
 		source: null,
+		name,
+		caption: event.caption ?? null,
 	};
 	const token = ++previewToken;
 	const sessionId = artifacts.sessionId;

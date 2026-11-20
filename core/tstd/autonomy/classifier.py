@@ -754,6 +754,9 @@ PLAN_READ_ONLY_BUILTINS: frozenset[str] = frozenset(
         "ask_user",
         "consult",
         "send_file",
+        # TD-5254: shows text in the Artifacts pane; it changes nothing but
+        # the session's own state, and a draft is worth seeing while planning.
+        "show_artifact",
         "exit_plan_mode",
         # TD-5127: loads deferred MCP definitions; each loaded tool is
         # still judged on its own, so an unlisted one stays refused.
@@ -854,6 +857,28 @@ def _rule_desktop_capture(req: DecisionRequest, _boundary: Boundary) -> bool:
 def _rule_desktop_actuation(req: DecisionRequest, _boundary: Boundary) -> bool:
     """Desktop pointer/keyboard actuation is Class B (TD-3301)."""
     return req.actuates is True
+
+
+def _rule_show_artifact(req: DecisionRequest, boundary: Boundary) -> bool:
+    """``show_artifact`` puts text in the session's Artifacts pane (TD-5254).
+
+    It writes only daemon state under the session's own data dir: an index
+    row, and for given text one capped file whose name the daemon makes.
+    No workspace file, no host. A call with text and no path names no path
+    at all, so without this rule it would fall to the worker classifier and
+    ask every time. Only the builtin matches: an MCP or plugin tool of that
+    name carries provenance and gets no grant. An outside or unsafe path
+    never gets here; the two boundary rules come first.
+    """
+    return (
+        req.tool_name == "show_artifact"
+        and req.provenance is None
+        and not req.is_mutation
+        and not req.writes
+        and not req.hosts
+        and len(req.reads) <= 1
+        and all(is_in_workspace(boundary, p) for p in req.reads)
+    )
 
 
 def _rule_send_file(req: DecisionRequest, boundary: Boundary) -> bool:
@@ -1244,6 +1269,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="send_file of in-workspace files",
         decision_class=DecisionClass.A,
         match=_rule_send_file,
+    ),
+    Rule(
+        id="show-artifact",
+        description="show_artifact of an in-workspace text file, or of text it is given",
+        decision_class=DecisionClass.A,
+        match=_rule_show_artifact,
     ),
     Rule(
         id="steering-proposal",

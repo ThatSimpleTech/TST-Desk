@@ -113,6 +113,9 @@
 					{/if}
 				</div>
 			</header>
+			{#if preview.caption}
+				<p class="caption">{preview.caption}</p>
+			{/if}
 			{#if artifacts.error !== null}
 				<p class="error">{artifacts.error}</p>
 			{:else if preview.source === null}
@@ -129,7 +132,7 @@
 			{:else if preview.kind === 'markdown'}
 				<div class="md"><Markdown text={preview.source} /></div>
 			{:else}
-				<div class="md"><Markdown text={asFencedMarkdown(preview.source, preview.path)} /></div>
+				<div class="md"><Markdown text={asFencedMarkdown(preview.source, preview.name ?? preview.path)} /></div>
 			{/if}
 		{/if}
 	</section>
@@ -229,6 +232,12 @@
 		align-items: flex-start;
 		justify-content: space-between;
 		gap: var(--space-4);
+	}
+
+	.caption {
+		margin: 0 0 var(--space-2);
+		font-size: var(--text-sm);
+		color: var(--color-ink-secondary);
 	}
 
 	.preview-title {

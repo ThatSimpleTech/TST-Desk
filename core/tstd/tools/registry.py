@@ -702,6 +702,7 @@ def create_registry(
     from .send_file import register_send_file_tool
     from .session_search import register_session_search_tool
     from .shell_job_tools import register_shell_job_tools
+    from .show_artifact import register_show_artifact_tool
     from .steering_edit import register_steering_edit_tool
     from .task_list import register_task_list_tool
     from .tool_search import register_tool_search_tool
@@ -721,6 +722,7 @@ def create_registry(
     register_workflow_tool(registry)
     register_consult_tool(registry)
     register_send_file_tool(registry)
+    register_show_artifact_tool(registry)
     register_steering_edit_tool(registry)
     register_task_list_tool(registry)
     register_ask_user_tool(registry)
