@@ -13319,3 +13319,34 @@ check on a real Mac, including the Accessibility permission.
 
 - [ ] Windows: the CLI ships beside `tstd.exe` in the MSI, checked the
       same way.
+
+---
+
+## Epic E54 — Builds: one-click model presets
+
+Scope from the 2026-11-20 discovery pass; the go-ahead to start was relayed
+to the building session the same day. A build is a `presets:` entry that
+carries everything a switch needs: the model per role, the engine, and its
+context settings, so Local, API and Grok are one click each. It extends the
+catalog (TD-1721: "Settings remains the catalog"); it is not a second
+settings document. Unversioned. Stories are added here as they start.
+
+---
+
+### TD-5233 — The session-preset slug test reads no host keychain and no network
+
+**Size:** 1 · **Depends on:** TD-1721, TD-5185 · **Status:** Done
+
+`test_catalog_slug_edit_does_not_rewrite_an_open_session` sends
+`set_tier_slug`, whose handler refreshes the new slug's model card before
+it replies (TD-5185). The test stubbed the config write but not the
+refresh, so it read the developer's real `tst-openrouter` keychain item
+and, with a key there, would have asked the live host with it. Where the
+Secret Service answers slowly the reply took about 5 s against the test's
+2 s wait, and the test failed; CI has no `secret-tool`, so it passed there.
+
+- [x] The test stubs the key read and the model list, and asserts the one
+      list request carried the stub's key
+      (`test_session_preset.py::TestSessionPreset::test_catalog_slug_edit_does_not_rewrite_an_open_session`).
+- [x] The file passes with every non-loopback connect and DNS lookup
+      refused, and spawns no `secret-tool`.

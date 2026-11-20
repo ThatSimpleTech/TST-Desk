@@ -12,8 +12,15 @@ from typing import Any
 import pytest
 from websockets.asyncio.client import connect
 
+from tstd import model_cards
 from tstd.daemon import Daemon
-from tstd.protocol import PROTOCOL_VERSION, AssistantDelta, TierState, UserTurn
+from tstd.protocol import (
+    PROTOCOL_VERSION,
+    AssistantDelta,
+    EndpointModels,
+    TierState,
+    UserTurn,
+)
 from tstd.provider import ChatMessage
 from tstd.session_persist import SessionPersist
 from tstd.session_store import SessionStore
@@ -214,11 +221,27 @@ class TestSessionPreset:
         def _save(preset: str, tier: str, slug: str, path: Path | None = None) -> Path:
             return Path("/tmp/fake-config.yaml")
 
+        # TD-5233: the handler refreshes the new slug's model card before it
+        # replies. Unstubbed, that reads the host keychain's real
+        # ``tst-openrouter`` item (about 5 s where Secret Service is slow,
+        # past _ask's 2 s) and, with a key there, sends it to the live host.
+        asked: list[tuple[str, str | None]] = []
+
+        async def _test_key(name: str = "openrouter") -> str:
+            return "test-key"
+
+        async def _offline(base_url: str, api_key: str | None, **_: Any) -> EndpointModels:
+            asked.append((base_url, api_key))
+            return EndpointModels(base_url=base_url, error="offline in tests")
+
+        monkeypatch.setattr("tstd.daemon.get_api_key", _test_key)
+
         monkeypatch.setattr("tstd.daemon.save_tier_slug", _save)
         monkeypatch.setattr(
             "tstd.daemon.Daemon._reload_user_config",
             lambda self: None,
         )
+        monkeypatch.setattr(model_cards, "list_endpoint_models", _offline)
         with tempfile.TemporaryDirectory() as tmp:
             daemon, task = await _start_daemon(Path(tmp))
             try:
@@ -241,6 +264,8 @@ class TestSessionPreset:
                     },
                 )
                 assert resp["type"] == "setup_state"
+                # One host asked, with the stub's key: nothing left the test.
+                assert [key for _host, key in asked] == ["test-key"]
                 assert sess.config is opened_obj
                 assert sess.config.tier("brain").slug == opened_slug
                 await ws.close()
