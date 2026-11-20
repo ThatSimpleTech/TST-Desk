@@ -5,7 +5,14 @@
 // Kept free of runes and Tauri imports so it unit-tests under vitest's node
 // environment (like timeline.ts). The runes layer lives in approval-store.svelte.ts.
 
-import type { AlwaysAllow, ApprovalRequest, Approve, Deny, PolicyRuleSummary } from './protocol';
+import type {
+  AlwaysAllow,
+  ApprovalRequest,
+  ApprovalWorker,
+  Approve,
+  Deny,
+  PolicyRuleSummary,
+} from './protocol';
 
 /** A pending approval, reduced from the daemon event to what the card shows. */
 export interface PendingApproval {
@@ -18,6 +25,8 @@ export interface PendingApproval {
   reason: string;
   /** Rule the daemon proposes to auto-approve this call forever (TD-803), or null. */
   proposedAlwaysAllow: PolicyRuleSummary | null;
+  /** TD-5268: the child that is asking, or null for the session's own agent. */
+  worker: ApprovalWorker | null;
 }
 
 /** Map an approval_request event to the card's pending-approval shape. */
@@ -31,7 +40,36 @@ export function approvalFromEvent(event: ApprovalRequest): PendingApproval {
     summary: event.summary,
     reason: event.reason,
     proposedAlwaysAllow: event.proposed_always_allow ?? null,
+    worker: event.worker ?? null,
   };
+}
+
+/** The line under a child's card title: which child, doing what, and where
+ *  its files are. "" for the session's own agent (TD-5268). */
+export function workerLine(approval: PendingApproval): string {
+  const worker = approval.worker;
+  if (worker === null) return "";
+  const who =
+    worker.kind === "check"
+      ? "A check"
+      : worker.agent
+        ? `The worker "${worker.agent}"`
+        : worker.kind === "research"
+          ? "A research worker"
+          : "A worker";
+  const what = worker.label ? `, on: ${worker.label}` : "";
+  const where = worker.worktree_branch
+    ? `. It works in a copy of its own (${worker.worktree_branch}), so the paths here are in that copy`
+    : "";
+  return `${who} is asking${what}${where}.`;
+}
+
+/** Whether a finished call takes this card with it: the call itself, or the
+ *  delegate or workflow call whose child was asking (TD-5268). A child's own
+ *  call never reports a result on the session's log, so without this its card
+ *  came back on every reattach. */
+export function settledBy(approval: PendingApproval, toolCallId: string): boolean {
+  return approval.toolCallId === toolCallId || approval.worker?.parent_call_id === toolCallId;
 }
 
 /**

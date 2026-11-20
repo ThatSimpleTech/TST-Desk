@@ -6,7 +6,7 @@
 	// decision they must make: ⏎ approves, Esc denies, from the card itself.
 	import { onMount } from 'svelte';
 	import Icon from './Icon.svelte';
-	import { alwaysAllowLabel, isAlwaysAllowable, isDangerous } from '../approval';
+	import { alwaysAllowLabel, isAlwaysAllowable, isDangerous, workerLine } from '../approval';
 	import { alwaysAllow, approve, canDecide, deny } from '../approval-store.svelte.js';
 	import { approvalWaitCopy } from '../machines';
 	import { machineNameFor } from '../machines.svelte.js';
@@ -94,6 +94,9 @@
 		<span class="head-icon" aria-hidden="true"><Icon name="alert" size={16} /></span>
 		<div class="head-text">
 			<span class="title">{approval.summary}</span>
+			{#if workerLine(approval)}
+				<span class="who" title={approval.worker?.task ?? ''}>{workerLine(approval)}</span>
+			{/if}
 			<span class="meta">
 				<code class="tool">{approval.toolName}</code>
 				<span class="badge badge--{approval.decisionClass}">
@@ -130,7 +133,11 @@
 					bind:checked={remember}
 					aria-label={`Always allow in this workspace: ${ruleLabel}`}
 				/>
-				<span>Always allow this in this workspace</span>
+				<span
+					>{approval.worker === null
+						? 'Always allow this in this workspace'
+						: 'Always allow this in this workspace, for the main agent and every worker'}</span
+				>
 			</label>
 		{/if}
 		<div class="decide">
@@ -203,6 +210,12 @@
 		flex-direction: column;
 		gap: var(--space-1);
 		min-width: 0;
+	}
+
+	.who {
+		font-size: var(--text-sm);
+		color: var(--color-ink-secondary);
+		overflow-wrap: anywhere;
 	}
 
 	.title {

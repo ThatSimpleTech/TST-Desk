@@ -34,6 +34,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
+from ..autonomy import DecisionClass
 from ..config import DEFAULT_CHILD_MAX_ITERATIONS, ModelConfig, TierConfig, TierName
 from ..context import PromptAssembler
 from ..context.tokens import make_token_counter
@@ -46,8 +47,9 @@ from ..output_cap import (
     split_cut_calls,
     stub_call,
 )
+from ..policy import ApprovalOutcome
 from ..prompt_images import cap_prompt_images
-from ..protocol import WorkerStep
+from ..protocol import ApprovalWorker, WorkerStep
 from ..provider import ChatCompletionRequest, ChatMessage, ProviderError, ToolCall
 from ..session import Session
 from ..worktree import SessionWorktree
@@ -160,6 +162,11 @@ class ChildTask:
     tier: TierName | None = None
     source: str = "worker"
     transcript_budget: int = TRANSCRIPT_CHAR_BUDGET
+    # TD-5268: what an approval card says about this child. A workflow sets
+    # all three; a ``delegate`` child is its call, with no number.
+    parent_call_id: str = ""
+    index: int | None = None
+    label: str = ""
 
 
 @dataclass(frozen=True)
@@ -354,6 +361,9 @@ async def run_child_task(parent: Session, spec: ChildTask) -> ChildDone:
             tier=spec.tier,
             source=spec.source,
             transcript_budget=spec.transcript_budget,
+            parent_call_id=spec.parent_call_id,
+            index=spec.index,
+            label=spec.label,
         )
     except HandlerRefusal as e:
         await close_child_tree(own_tree, spec.task, steps)
@@ -427,6 +437,9 @@ async def _child_loop(
     tier: TierName | None = None,
     source: str = "worker",
     transcript_budget: int = TRANSCRIPT_CHAR_BUDGET,
+    parent_call_id: str = "",
+    index: int | None = None,
+    label: str = "",
 ) -> _ChildEnd:
     """:func:`run_worker_child`'s loop, also saying why it stopped early."""
     parent, runtime = bound_runtime(parent, "delegate")
@@ -453,6 +466,23 @@ async def _child_loop(
         names=allow_list,
     )
     child_dispatcher = _child_dispatcher(parent, parent_dispatcher, child_registry, named)
+    _name_the_child(
+        parent,
+        parent_dispatcher,
+        child_dispatcher,
+        ApprovalWorker(
+            id=call_id,
+            parent_call_id=parent_call_id or call_id,
+            via="workflow" if index is not None or source == "check" else "delegate",
+            kind="check" if source == "check" else kind,
+            agent=named.name if named is not None else None,
+            index=index,
+            label=_one_line(label or task, 60),
+            task=_one_line(task, 300),
+            tier=tier or (named.tier if named is not None else "worker"),
+            worktree_branch=worktree.branch if worktree is not None else None,
+        ),
+    )
 
     # TD-5126: a child in its own worktree is told that root, not the parent's.
     assembler = runtime.assembler
@@ -678,6 +708,67 @@ def _child_cap_violation(
             return f"spend cap exceeded: ${tracker.session_cost():.4f} >= ${spend_cap:.2f}"
         return None
     return _cap_violation(parent, tracker, session_start, used, skip_all=False)
+
+
+def _one_line(text: str, limit: int) -> str:
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else flat[: limit - 1].rstrip() + "…"
+
+
+def worker_summary(worker: ApprovalWorker, summary: str) -> str:
+    """*summary* with who is asking in front (TD-5268).
+
+    The card's title, the OS banner, the timeline row and every notify
+    channel show ``summary``, so a viewer that does not know the ``worker``
+    field (an older phone build) still reads which child it is.
+    """
+    if worker.kind == "check":
+        who = f"Check {worker.index}" if worker.index is not None else "Check"
+    elif worker.agent is not None:
+        who = f'Worker "{worker.agent}"'
+    elif worker.index is not None:
+        who = f"Worker {worker.index}"
+    else:
+        who = "Worker"
+    if worker.kind == "research" and worker.agent is None:
+        who += " (research)"
+    where = " in its worktree" if worker.worktree_branch is not None else ""
+    return f"{who}: {summary}{where}"
+
+
+def _name_the_child(
+    parent: Session,
+    parent_dispatcher: ToolDispatcher,
+    child_dispatcher: ToolDispatcher,
+    worker: ApprovalWorker,
+) -> None:
+    """Make the child's approval cards say which child is asking (TD-5268).
+
+    Only when the handler is the parent session's own: a handler a test or
+    another host supplied keeps the six arguments it was written for.
+    """
+    if parent_dispatcher.approval_handler != parent.request_approval:
+        return
+
+    async def ask(
+        tool_call_id: str,
+        tool: Tool,
+        arguments: dict[str, Any],
+        decision_class: DecisionClass,
+        summary: str,
+        reason: str,
+    ) -> ApprovalOutcome:
+        return await parent.request_approval(
+            tool_call_id,
+            tool,
+            arguments,
+            decision_class,
+            worker_summary(worker, summary),
+            reason,
+            worker=worker,
+        )
+
+    child_dispatcher.approval_handler = ask
 
 
 def _child_dispatcher(

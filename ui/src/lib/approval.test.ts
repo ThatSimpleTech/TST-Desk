@@ -46,6 +46,8 @@ describe("approvalFromEvent", () => {
       summary: "Write src/app.py",
       reason: "decision class B requires approval",
       proposedAlwaysAllow: null,
+      // TD-5268: no child is asking.
+      worker: null,
     });
   });
 

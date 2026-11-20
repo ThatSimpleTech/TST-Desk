@@ -1343,7 +1343,8 @@
     "decision_class": "C",
     "summary": "Write to test.txt",
     "reason": "decision class C requires approval",
-    "proposed_always_allow": null
+    "proposed_always_allow": null,
+    "worker": null
   },
   "approval_request_always_allow": {
     "type": "approval_request",
@@ -1362,7 +1363,8 @@
       "args": "npm test",
       "effect": "auto",
       "exact": "npm test"
-    }
+    },
+    "worker": null
   },
   "decision_logged": {
     "type": "decision_logged",
