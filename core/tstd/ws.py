@@ -414,7 +414,12 @@ class WebSocketServer:
                     await conn.send(frame)
 
     async def broadcast(
-        self, payload: str, *, loopback_only: bool = False, audience: Audience = "all"
+        self,
+        payload: str,
+        *,
+        loopback_only: bool = False,
+        audience: Audience = "all",
+        exclude: object | None = None,
     ) -> int:
         """Send one frame to every handshaken client. Returns how many got it.
 
@@ -424,7 +429,9 @@ class WebSocketServer:
         rather than to a session, such as the scheduled-job list.
         *loopback_only* skips remote peers (TD-5014's ``pairing_completed``);
         it is ``audience="loopback"``. ``"viewers"`` reaches viewers only.
-        Machine peers never get a broadcast (TD-5015).
+        Machine peers never get a broadcast (TD-5015). *exclude* is one
+        connection to leave out: the one whose own reply already says it
+        (TD-5236).
 
         A client that closed between the snapshot and the send is skipped,
         not an error: it will re-read the state when it reconnects.
@@ -433,6 +440,8 @@ class WebSocketServer:
         if loopback_only:
             audience = "loopback"
         for conn in list(self._handshaken):
+            if conn is exclude:
+                continue
             peer = self.peer_view(conn)
             if peer.machine or (audience == "viewers" and not peer.viewer):
                 continue

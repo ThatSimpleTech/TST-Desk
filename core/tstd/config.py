@@ -56,6 +56,13 @@ PRESETS: tuple[str, ...] = ()
 # declared preset when the configured name is missing.
 DEFAULT_PRESET = ""
 
+# The picker's built-in sections (TD-5236), in the order it lists them. An
+# entry's own ``group`` may be one of these or a name of the person's own.
+GROUP_LOCAL = "Local"
+GROUP_API = "API"
+GROUP_GROK = "Grok"
+PICKER_GROUPS: tuple[str, ...] = (GROUP_LOCAL, GROUP_API, GROUP_GROK)
+
 # Implicit keychain account for an unbound remote tier (TD-1717).
 DEFAULT_CREDENTIAL_ID = "openrouter"
 RESERVED_CREDENTIAL_IDS = frozenset(
@@ -527,13 +534,19 @@ class Preset(BaseModel):
     label: str | None = Field(default=None, min_length=1, max_length=40)
     description: str | None = Field(default=None, max_length=120)
     picker: Literal["primary", "more", "team"] = "primary"
+    # The picker's section for this entry (TD-5236). None = the daemon says
+    # Grok, Local or API from the entry itself (``ModelConfig.preset_group``).
+    group: str | None = Field(default=None, min_length=1, max_length=20)
+    # A quick-switch slot, 1 to 9 (TD-5236): ⌘⌥<digit> / Ctrl+Alt+<digit>
+    # picks this entry. None = no shortcut. No two entries share one.
+    slot: int | None = Field(default=None, ge=1, le=9)
     # The Fast toggle (TD-5176): None = this model has no fast mode.
     fast: FastConfig | None = None
     # Context settings for chats on this model (TD-5234), laid over the
     # global sections of the same names. None = the global values.
     overrides: PresetOverrides | None = None
 
-    @field_validator("description")
+    @field_validator("description", "group")
     @classmethod
     def _blank_description_is_unset(cls, value: str | None) -> str | None:
         if value is None:
@@ -1787,6 +1800,42 @@ class ModelConfig(BaseModel):
     def has_model(self) -> bool:
         """Whether any model is set up, i.e. the active preset exists."""
         return self.active_preset in self.presets
+
+    @model_validator(mode="after")
+    def _slots_are_not_shared(self) -> ModelConfig:
+        """One shortcut picks one entry (TD-5236)."""
+        taken: dict[int, str] = {}
+        for name, preset in self.presets.items():
+            if preset.slot is None:
+                continue
+            if preset.slot in taken:
+                raise ValueError(
+                    f"presets.{name}.slot: slot {preset.slot} is already "
+                    f"presets.{taken[preset.slot]}'s; give each entry its own"
+                )
+            taken[preset.slot] = name
+        return self
+
+    def preset_group(self, name: str) -> str:
+        """The picker section entry *name* sits in (TD-5236).
+
+        Its own ``group`` when it names one. Otherwise ``Grok`` for an
+        entry on the Grok engine, ``Local`` when every role is served on
+        this computer, and ``API`` for the rest. A server on the local
+        network is not this computer, so it reads ``API`` unless the entry
+        says ``group: Local``: only the person knows it is theirs.
+        """
+        preset = self.presets.get(name)
+        if preset is None:
+            return GROUP_API
+        if preset.group is not None:
+            return preset.group
+        if preset.engine == "grok":
+            return GROUP_GROK
+        tiers = preset.tier_map().values()
+        if tiers and all(is_loopback_url(resolve_base_url(self, tier)) for tier in tiers):
+            return GROUP_LOCAL
+        return GROUP_API
 
     def preset_engine(self, name: str) -> Literal["native", "grok"]:
         """The engine a chat on entry *name* uses: its own, else ``engine.kind`` (TD-5239)."""

@@ -2213,6 +2213,9 @@
       "budget"
     ],
     "preset_engines": {},
+    "preset_groups": {},
+    "picker_groups": [],
+    "preset_slots": {},
     "has_model": true,
     "skip_all_approvals": false,
     "load_global_memory": false,

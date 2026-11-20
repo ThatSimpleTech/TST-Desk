@@ -151,6 +151,8 @@ def duplicate_preset(source: str, name: str, label: str, path: Path | None = Non
     header, end, entry_indent = _presets_block(lines, config_path)
     body = config.presets[source].model_dump(mode="json", exclude_unset=True)
     body.pop("label", None)
+    # A quick-switch slot picks one entry (TD-5236): the copy starts without one.
+    body.pop("slot", None)
     block = [
         f"{' ' * entry_indent}{name}:",
         f"{' ' * (entry_indent * 2)}label: {json.dumps(cleaned)}",

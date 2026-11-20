@@ -120,6 +120,10 @@ _MODEL_HELP: dict[str, str | tuple[str, str]] = {
     "picker unless it is in use.",
     "Preset.description": "One line under the label on the picker: what this model is for.",
     "Preset.picker": "Where the picker lists it: the main list, More models, or Teams.",
+    "Preset.group": "The picker's section for this one. Empty lets TST Desk choose: Grok, "
+    "Local when every role is served on this computer, else API.",
+    "Preset.slot": "A quick-switch slot, 1 to 9: ⌘⌥ and the digit (Ctrl+Alt elsewhere) picks "
+    "this one. Empty is no shortcut. No two share a slot.",
     "Preset.fast": "The model's Fast mode. With this set, the picker shows a Fast switch.",
     "Preset.overrides": "Context settings for chats on this model, in place of the global "
     "ones of the same names. Nothing here changes approvals, shell rules or keys.",

@@ -19995,3 +19995,37 @@ older, session-only verb); having the daemon open the new chat itself on an
 engine clash (the window decides what a click on such a row means, and the
 refusal stays honest for other clients).
 
+## 2026-11-20 — TD-5236: the daemon names each model's picker section; slots use ⌘⌥ digit; catalog changes are broadcast (Class B)
+
+**Decision:** `Preset.group` (free text, up to 20 characters) and
+`Preset.slot` (1 to 9, unique) are new optional keys.
+`ModelConfig.preset_group()` gives every entry a section: its own `group`,
+else `Grok` for the Grok engine, `Local` when every role resolves to a
+loopback URL, else `API`. `setup_state` carries `preset_groups`,
+`picker_groups` (the built-in order) and `preset_slots`. The quick-switch
+chord is ⌘⌥1…9 on macOS and Ctrl+Alt+1…9 elsewhere (owner, 2026-11-20), read
+from `KeyboardEvent.code`. After `add_model`, `set_preset`, `switch_preset`
+with `make_default`, and the four catalog-edit verbs, the daemon broadcasts
+`setup_state` to this computer's other windows, leaving out the connection
+it is answering.
+
+**Rationale:** "Local" cannot be read off a URL by the window: a server on
+the person's own network is theirs, but nothing in the address says so, and
+a bound key can send a loopback-looking role to a provider (TD-1718). So the
+daemon decides, with the conservative default (not loopback means API), and
+the entry can say otherwise. ⌘1…9 already selects a session, so the model
+slots add Option; on a Mac Option changes the character a digit key types,
+which is why the physical key is read. `setup_state` was only ever a reply
+to the asker, so a second window showed a stale list and default; the
+presence refresh (TD-5015) already broadcasts the same event to loopback
+windows, and this reuses that audience. The asker is left out because its
+own reply already carries the state, and a second copy breaks a client that
+pairs one reply with one request.
+
+**Rejected:** inferring the section in the window from the endpoint (the
+window must not derive what it was not sent); treating private-network
+addresses as Local automatically (a corporate gateway on 10.x is not the
+person's own machine); a broadcast to phones as well (a phone asks when it
+shows the list, and `setup_state` for a remote peer is trimmed per
+connection, which a broadcast would bypass); slots without Option (taken).
+
