@@ -225,6 +225,18 @@ consult:
 delegate:
   max_iterations: 8
 
+# How many calls one model server answers at once, across every chat,
+# worker and scheduled run (TD-5269). null is no limit. A single GPU
+# usually wants loopback_default: 1 or 2. endpoints gives one server, by
+# URL, a number of its own:
+#   endpoints:
+#     - url: http://127.0.0.1:8080
+#       max_concurrent: 1
+model_concurrency:
+  loopback_default: null
+  remote_default: null
+  endpoints: []
+
 # The workflow tool (TD-5195), used only while a session's Ultracode switch
 # is on: it runs several workers at once on independent pieces of a job, and
 # each result can be checked before it comes back. max_parallel (1-16) is how

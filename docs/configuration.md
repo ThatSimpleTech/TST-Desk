@@ -117,6 +117,7 @@ with the reason under the field. Line endings stay as the file has them.
 | `compaction` | mapping | see below | How compaction writes its summary and what it brings back (TD-5128): a worker-written structured summary, written ahead in the background, and the recent files read again. Omitted in an older user copy is filled from the shipped file at load, which turns the worker summary on. A config with the block but no `summary` key is `extractive`. |
 | `consult` | mapping | see below | Which tiers get the `consult` tool, which asks the brain or the validator one question mid-task, and how many consults one turn may make (TD-5119). Omitted in an older user copy is filled from the shipped file at load: the worker only, two a turn. |
 | `delegate` | mapping | see below | How many model calls one `delegate` child may make (TD-5265). Omitted in an older user copy defaults to 8, what it was before the key existed. |
+| `model_concurrency` | mapping | no limits | How many calls one model server answers at once, across the whole daemon (TD-5269). Omitted in an older user copy means no limit, as before. |
 | `workflow` | mapping | see below | Limits for the `workflow` tool, which runs workers side by side while a session's Ultracode switch is on (TD-5195). Omitted means the defaults: 3 at once, 8 a call. |
 | `model_refresh` | mapping | see below | Refresh every model's prices, windows and slug spelling in the background (TD-5197). Omitted means on, every 24 hours. |
 | `shell` | mapping | see below | The read-only shell list (TD-5103): commands that run without asking. Omitted in an older user copy means the whole built-in list, on. Config can shrink it or switch it off, never add to it. |
@@ -907,6 +908,36 @@ returns a summary (TD-4602).
 ```yaml
 delegate:
   max_iterations: 8
+```
+
+### `model_concurrency`
+
+One count per model server, shared by every chat, delegated worker,
+workflow task and scheduled run in the daemon (TD-5269). Without it the
+only limit was inside a single `workflow` call, so two chats and a
+scheduled run could all ask one local server at once.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `loopback_default` | int 1 to 64, or null | `null` | Calls at once for a server on this computer. `null` is no limit. A single GPU usually wants 1 or 2. |
+| `remote_default` | int 1 to 64, or null | `null` | The same for any other server. |
+| `endpoints` | list of `url` + `max_concurrent` | `[]` | A server named by URL gets its own number in place of the default for its kind. |
+
+A server is its scheme, host and port: every spelling of this computer
+(`localhost`, `127.0.0.1`, `::1`) on one port is one server, whatever the
+path, model or key. A call waits for a free slot and holds it for one
+request only, a streamed reply until the stream ends; the wait between
+retries is spent without one. `workflow.max_parallel` still caps one
+workflow call; this caps everything together.
+
+<!-- verify: model -->
+```yaml
+model_concurrency:
+  loopback_default: 1
+  remote_default: null
+  endpoints:
+    - url: http://127.0.0.1:11434
+      max_concurrent: 2
 ```
 
 ### `workflow`

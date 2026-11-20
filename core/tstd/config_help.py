@@ -41,6 +41,7 @@ SECTION_TITLES: dict[str, str] = {
     "compaction": "Compaction",
     "consult": "Consult",
     "delegate": "Delegate",
+    "model_concurrency": "Calls at once per model server",
     "workflow": "Workflow",
     "model_refresh": "Model refresh",
     "shell": "Shell",
@@ -68,6 +69,8 @@ _MODEL_HELP: dict[str, str | tuple[str, str]] = {
     "the first one.",
     "ModelConfig.credentials": "Named API keys: the name Settings shows and the host each key "
     "talks to. The keys themselves live in the OS keychain.",
+    "ModelConfig.model_concurrency": "How many calls one model server answers at once, "
+    "across every chat, worker and scheduled run.",
     "ModelConfig.delegate": "Limits for a child the agent delegates part of a task to.",
     "ModelConfig.search": "Where web_search sends queries, and how web_fetch reads pages.",
     "ModelConfig.local_servers": "Model servers on this computer that Add a model's search "

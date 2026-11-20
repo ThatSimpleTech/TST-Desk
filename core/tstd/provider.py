@@ -11,6 +11,7 @@ environment files) — see :mod:`tstd.keychain`.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import random
 import re
@@ -1098,6 +1099,9 @@ class ProviderClient:
         self.timeout = timeout or TimeoutConfig()
         self.retry_config = retry_config or RetryConfig()
 
+        # TD-5269: the count this server's calls share, daemon-wide. None is
+        # no limit. Set by whoever builds the client (``Daemon._build_client``).
+        self.gate: asyncio.Semaphore | None = None
         self._client = client or httpx.AsyncClient(
             timeout=self.timeout.to_httpx_timeout(),
             follow_redirects=True,
@@ -1138,6 +1142,12 @@ class ProviderClient:
         body.pop("stream_options", None)
 
         async def _attempt() -> ChatCompletionResponse | ProviderError:
+            # One slot for this one exchange (TD-5269): the wait before a
+            # retry is spent outside it.
+            async with self._slot():
+                return await _exchange()
+
+        async def _exchange() -> ChatCompletionResponse | ProviderError:
             try:
                 async with asyncio.timeout(self.timeout.total):
                     response = await self._client.post(
@@ -1242,6 +1252,14 @@ class ProviderClient:
         body["stream_options"] = {"include_usage": True}
 
         async def _stream_once() -> AsyncIterator[StreamChunk | ProviderError]:
+            # Held from the request to the stream's end (TD-5269): the server
+            # is busy with this call for that long. Waiting for a slot is not
+            # part of the reply's own time limit.
+            async with self._slot():
+                async for chunk in _stream_exchange():
+                    yield chunk
+
+        async def _stream_exchange() -> AsyncIterator[StreamChunk | ProviderError]:
             started = asyncio.get_running_loop().time()
             try:
                 async with aconnect_sse(
@@ -1617,6 +1635,16 @@ class ProviderClient:
             endpoint_failed=error.retryable,
             resendable=error.retryable,
         )
+
+    @contextlib.asynccontextmanager
+    async def _slot(self) -> AsyncIterator[None]:
+        """Hold one of this server's slots, or nothing when it has no limit (TD-5269)."""
+        gate = self.gate
+        if gate is None:
+            yield
+            return
+        async with gate:
+            yield
 
     def _headers(self) -> dict[str, str]:
         """Build the request headers.
