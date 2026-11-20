@@ -3933,6 +3933,18 @@ class Daemon:
                     "class_c_not_always_allowable",
                     "External imports can never be always-allowed",
                 )
+            # TD-5281: a child's card offers no Always allow, so this is an
+            # older window or a hand-made frame. The person did say yes to
+            # this call, so it runs once; no rule is saved for the workspace.
+            if pending.from_worker:
+                found.resolve_approval(msg.tool_call_id, True)
+                return build_error(
+                    "not_always_allowable",
+                    "Approved once. A worker's request can't be always-allowed: the rule "
+                    "would cover the whole workspace. Add one in Settings → Policy if you "
+                    "want it.",
+                    session_id=found.id,
+                )
             # The narrowest rule, never a blanket grant; None when the
             # call is a class-C decision (TD-803 criterion 4), or a shell
             # command chained from several commands (TD-5101).

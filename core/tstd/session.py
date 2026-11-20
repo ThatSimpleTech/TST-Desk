@@ -150,6 +150,10 @@ class PendingApproval:
     tool: Tool | None
     arguments: dict[str, Any]
     decision_class: DecisionClass
+    #: A delegate or workflow child is asking (TD-5281). Always allow saves
+    #: a rule for the whole workspace, so it is never offered from, nor
+    #: saved for, a child's call.
+    from_worker: bool = False
 
 
 def _same_messages(a: list[ChatMessage], b: list[ChatMessage]) -> bool:
@@ -194,20 +198,6 @@ class EventSubscriber(Protocol):
     """Protocol for event subscribers."""
 
     async def __call__(self, event: DaemonEvent, log: SessionEventLog) -> None: ...
-
-
-def _no_rule_from(worker: ApprovalWorker, tool: Tool) -> bool:
-    """Whether a child's card must not offer Always allow (TD-5268).
-
-    Two cases where the saved rule would not do what the person thinks. A
-    named worker may be asking because of its *own* rule, which a workspace
-    ``auto`` rule cannot override, so it would be saved and the worker
-    would ask again. And a path in a child's own worktree is in a folder
-    that goes when the child finishes: the rule would never match again.
-    """
-    return worker.agent is not None or (
-        worker.worktree_branch is not None and bool(tool.path_fields)
-    )
 
 
 class SessionEventLog:
@@ -916,7 +906,11 @@ class Session:
             return denial
         fut: asyncio.Future[tuple[bool, str | None]] = asyncio.get_running_loop().create_future()
         self._pending_approvals[tool_call_id] = PendingApproval(
-            future=fut, tool=tool, arguments=arguments, decision_class=decision_class
+            future=fut,
+            tool=tool,
+            arguments=arguments,
+            decision_class=decision_class,
+            from_worker=worker is not None,
         )
         # The rule "always allow" would write (TD-803), surfaced on the
         # card so the user sees it before committing to save it.  None for
@@ -930,7 +924,12 @@ class Session:
             proposed = None
         if proposed is not None and not await self._config_writable():
             proposed = None
-        if proposed is not None and worker is not None and _no_rule_from(worker, tool):
+        # Nor on a child's card (TD-5281). The rule is for the whole
+        # workspace: saved from one worker's request it would cover the main
+        # agent and every other worker. A named worker may also be asking
+        # because of its own rule, which a workspace rule cannot lift, and a
+        # path in a child's worktree is in a folder that goes when it ends.
+        if worker is not None:
             proposed = None
         await self.event_log.add(
             ApprovalRequestEvent(

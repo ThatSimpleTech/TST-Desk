@@ -14264,3 +14264,31 @@ in; the audit database stores no separate count of written tokens (the
 cost it stores is right). No adapter seam and no vendor codecs, by the
 owner's decision.
 
+---
+
+### TD-5281 — A child's approval card never offers Always allow
+
+**Size:** 1 · **Depends on:** TD-5268 · **Status:** Done
+
+Always allow saves a rule for the whole workspace. From a child's card
+that meant one worker's request could switch a tool on for the main agent
+and every other worker. TD-5268 withheld it in two cases (a named worker,
+and a path in a child's own worktree) and reworded it for the rest. The
+owner's decision is to hide it on every child's card until a rule can be
+scoped to a worker.
+
+- [x] No child's card carries a proposed rule, whatever the child: plain,
+      named, in its own worktree, or a workflow task
+      (`test_approval_worker.py::test_no_childs_card_offers_it`).
+- [x] The session's own card still offers it, and saving still works
+      (`test_the_sessions_own_card_offers_it`,
+      `test_the_sessions_own_call_still_saves_its_rule`).
+- [x] An `always_allow` frame for a child's call (an older window) approves
+      that one call and saves nothing, answered `not_always_allowable`
+      (`test_a_childs_call_runs_once_and_saves_nothing`).
+
+**Notes:** the card's second wording ("for the main agent and every
+worker") is gone with the case it described. The first version of this
+only cleared the proposal on the card; the verb's handler builds the rule
+again from the parked call, so it had to be told the call is a child's.
+
