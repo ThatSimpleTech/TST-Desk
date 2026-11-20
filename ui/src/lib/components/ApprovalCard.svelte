@@ -133,11 +133,8 @@
 					bind:checked={remember}
 					aria-label={`Always allow in this workspace: ${ruleLabel}`}
 				/>
-				<span
-					>{approval.worker === null
-						? 'Always allow this in this workspace'
-						: 'Always allow this in this workspace, for the main agent and every worker'}</span
-				>
+				<!-- TD-5281: never on a child's card; the daemon proposes no rule for one. -->
+				<span>Always allow this in this workspace</span>
 			</label>
 		{/if}
 		<div class="decide">
