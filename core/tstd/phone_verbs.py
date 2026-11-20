@@ -26,6 +26,9 @@ PHONE_OPT_IN: dict[str, str] = {
     "delete_mcp_server": MCP_SERVERS,
     "set_mcp_secret": MCP_SERVERS,
     "delete_mcp_secret": MCP_SERVERS,
+    # Pasted JSON (TD-5253) is the same act as the Add form, several at once.
+    "preview_mcp_import": MCP_SERVERS,
+    "import_mcp_servers": MCP_SERVERS,
     # Skip-all (TD-5283) persists machine-wide and releases every parked
     # call, Class C included. A phone can already approve call by call;
     # this is the same power with nobody looking at each call.

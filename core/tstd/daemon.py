@@ -173,6 +173,8 @@ from .logging import get_logger, log_directory, redact_structure, setup_logging,
 from .loop import ProviderLike, agent_loop, brain_manifest_config
 from .machine_pairing import DialPolicy
 from .mcp.loader import McpSupervisor
+from .mcp_import import McpImportError, parse_import
+from .mcp_import_apply import Choice, apply_import
 from .mcp_settings import (
     delete_mcp_secret,
     forget_server_secrets,
@@ -325,6 +327,7 @@ from .protocol import (
     GrokSessionEntry,
     GrokSessionList,
     HandshakeError,
+    ImportMcpServers,
     InstructionFileEntry,
     InstructionFiles,
     JobDraftReply,
@@ -349,6 +352,9 @@ from .protocol import (
     ListSessions,
     LogTrimmed,
     McpExcludedToolSummary,
+    McpImportPreview,
+    McpImportServer,
+    McpImportValue,
     McpServerSummary,
     MemoryAccept,
     MemoryEdit,
@@ -371,6 +377,7 @@ from .protocol import (
     PolicyRules,
     PresetReadiness,
     PresetRoles,
+    PreviewMcpImport,
     PreviewRestoreFiles,
     ReadArtifactChunk,
     RefreshModelCards,
@@ -4755,6 +4762,12 @@ class Daemon:
         if isinstance(msg, SetMcpSecret | DeleteMcpSecret):
             return await self._handle_mcp_secret(msg)
 
+        if isinstance(msg, PreviewMcpImport):
+            return self._preview_mcp_import(msg).model_dump_json()
+
+        if isinstance(msg, ImportMcpServers):
+            return await self._handle_import_mcp_servers(msg)
+
         # ── Diagnostics (TD-1104 doctor) ─────────────────────────────
         if isinstance(msg, RunDiagnostics):
             return (await self._diagnostics_report()).model_dump_json()
@@ -6834,6 +6847,78 @@ class Daemon:
             value_summary(msg.server_id, msg.target, msg.name, stored=verb == "store"),
             server_id=msg.server_id,
         )
+        return (await self._setup_state_event()).model_dump_json()
+
+    def _preview_mcp_import(self, msg: PreviewMcpImport) -> McpImportPreview:
+        """What importing the pasted JSON would do (TD-5253). Saves nothing."""
+        try:
+            found = parse_import(msg.text)
+        except McpImportError as e:
+            return McpImportPreview(error=str(e))
+        return McpImportPreview(
+            servers=[
+                McpImportServer(
+                    source_name=server.source_name,
+                    id=server.id,
+                    transport=server.transport,
+                    command=list(server.command),
+                    url=server.url,
+                    off_box=server.off_box,
+                    exists=server.id in self.config.mcp.servers,
+                    values=[
+                        McpImportValue(
+                            name=value.name,
+                            target=value.target,
+                            disposition=value.disposition,
+                            reason=value.reason,
+                        )
+                        for value in server.values
+                    ],
+                    not_imported=list(server.not_imported),
+                    notes=list(server.notes),
+                    refused=server.refused,
+                )
+                for server in found
+            ]
+        )
+
+    async def _handle_import_mcp_servers(self, msg: ImportMcpServers) -> str:
+        """Save the chosen servers: keychain first, then config, then start them."""
+        choices = [
+            Choice(
+                source_name=item.source_name,
+                id=item.id.strip(),
+                allow_remote=item.allow_remote,
+                inputs=item.inputs,
+            )
+            for item in msg.servers
+        ]
+        try:
+            saved = await apply_import(msg.text, choices, self.config.mcp, self.config_path)
+        except KeychainLockedError as e:
+            return build_error("keychain_locked", str(e), in_reply_to=msg.type)
+        except (KeychainError, NotImplementedError) as e:
+            return build_error(
+                "key_store_failed",
+                f"Could not store an MCP server value: {e}",
+                in_reply_to=msg.type,
+            )
+        except (ConfigError, ValidationError) as e:
+            return build_error("bad_request", str(e), in_reply_to=msg.type)
+        finally:
+            self._invalidate_stored_probe()
+        try:
+            self._reload_user_config()
+        except ConfigError as e:
+            return build_error("bad_request", f"Saved, but the config no longer loads: {e}")
+        await self._mcp.reload(self.config.mcp)
+        for server_id, server in saved:
+            log.info("mcp server imported", extra={"extra_fields": {"server_id": server_id}})
+            await self._note_phone_change(
+                MCP_SERVERS,
+                server_saved_summary(server_id, server.command, server.url, existed=False),
+                server_id=server_id,
+            )
         return (await self._setup_state_event()).model_dump_json()
 
     async def _handle_set_email_notify(self, msg: SetEmailNotify) -> str:

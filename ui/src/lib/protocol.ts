@@ -326,6 +326,27 @@ export interface RemoveRemoteDevice extends ClientMessage {
   remove_added?: boolean;
 }
 
+/** Read MCP servers out of pasted JSON (TD-5253). Saves nothing. */
+export interface PreviewMcpImport extends ClientMessage {
+  type: "preview_mcp_import";
+  text: string;
+}
+
+export interface McpImportChoice {
+  source_name: string;
+  id: string;
+  allow_remote?: boolean;
+  /** Values the preview asked for, by name. They go to the keychain. */
+  inputs?: Record<string, string>;
+}
+
+/** Save the chosen servers from the same pasted JSON (TD-5253). */
+export interface ImportMcpServers extends ClientMessage {
+  type: "import_mcp_servers";
+  text: string;
+  servers: McpImportChoice[];
+}
+
 /** Switch what a paired phone may change (TD-5279). Loopback only; a phone
  *  can never send it. No `expires_in_seconds` means until switched off. */
 export interface SetPhonePermission extends ClientMessage {
@@ -1478,6 +1499,8 @@ export type ClientMessageUnion =
   | CancelPairing
   | RemoveRemoteDevice
   | SetPhonePermission
+  | PreviewMcpImport
+  | ImportMcpServers
   | AddMachine
   | RemoveMachine
   | ListMachines
@@ -2551,6 +2574,36 @@ export interface PairingCompleted extends DaemonEvent {
   device: RemoteDeviceSummary;
 }
 
+/** One env var or header in an import preview (TD-5253). Never its value. */
+export interface McpImportValue {
+  name: string;
+  target: "env" | "header";
+  disposition: "keychain" | "literal" | "needs_input";
+  reason?: string;
+}
+
+export interface McpImportServer {
+  source_name: string;
+  id: string;
+  transport: "stdio" | "http";
+  command: string[];
+  url: string;
+  off_box: boolean;
+  exists: boolean;
+  values: McpImportValue[];
+  not_imported: string[];
+  notes: string[];
+  /** Why this server cannot be imported; empty when it can. */
+  refused: string;
+}
+
+/** Reply to preview_mcp_import (TD-5253). `error` set: the text was not readable. */
+export interface McpImportPreview extends DaemonEvent {
+  type: "mcp_import_preview";
+  servers: McpImportServer[];
+  error: string;
+}
+
 /** A paired phone used a phone permission (TD-5279). Loopback windows only. */
 export interface PhoneChange extends DaemonEvent {
   type: "phone_change";
@@ -3513,6 +3566,7 @@ export type DaemonEventUnion =
   | PairingCode
   | PairingCompleted
   | PhoneChange
+  | McpImportPreview
   | MachineList
   | ApiKeyValidated
   | EndpointModels

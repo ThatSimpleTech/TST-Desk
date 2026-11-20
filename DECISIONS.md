@@ -20298,3 +20298,26 @@ same fact as `loopback_only`: do it at the computer); deciding the
 remaining sensitive verbs in the same change (each needs its own
 disclosure and is a behaviour change for phone users).
 
+## 2026-11-20 — TD-5253: MCP servers from pasted JSON, re-parsed by the daemon (Class B)
+
+**Decision:** two verbs, `preview_mcp_import` and `import_mcp_servers`,
+both under the `mcp_servers` phone permission, and one event,
+`mcp_import_preview`, that never carries a value. A pure parser
+(`mcp_import.py`) classifies each value; `mcp_import_apply.py` stores
+secrets first and then writes config, undoing the secrets if the write
+fails. An existing id is refused.
+
+**Rationale:** the result is exactly what the Add form and the token box
+make by hand, so nothing new exists to secure afterwards. The daemon, not
+the window, decides what may be a literal, and defaults to the keychain.
+Parsing the text a second time on import means a doctored preview changes
+nothing. Refusing an existing id avoids deciding which of the old
+server's keychain items survive a replacement.
+
+**Rejected:** putting the verbs in `LOOPBACK_VERBS` as the note first
+said (they are the same act as `set_mcp_server`, which the owner made a
+phone permission); expanding `${VAR}` from the daemon's environment (a
+desktop-launched daemon does not have the shell's variables, and it would
+read secrets from a place the person did not point at); importing SSE
+endpoints as HTTP (the client speaks Streamable HTTP only).
+
