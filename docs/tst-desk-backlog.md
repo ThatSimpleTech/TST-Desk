@@ -13727,3 +13727,39 @@ with "Only this chat" fits a phone's width.
 The ⌘⌥ digit chord has no meaning on a phone; a slot's digit still shows
 beside its model. Class B entry in DECISIONS.md.
 
+---
+
+## Epic E58 — After the Harness comparison
+
+Scope from the 2026-11-20 comparison with DeepSeek Harness
+(`deepseek-harness-comparison.md`, a research note outside this repo) and
+the go-ahead relayed to the building session the same day. Two aims: close
+the gaps that matter where Harness leads (agent-made deliverables, an OS
+sandbox that is on, agent-callable scheduling, one-click MCP bundles,
+longer-lived children), and keep what TST Desk leads on true and visible
+(privacy, guardrails, the scheduler). Unversioned. Stories are added here as
+they start; size 5 and above need approach sign-off first.
+
+---
+
+### TD-5260 — The README and the shipped comments say what the code does
+
+**Size:** 1 · **Depends on:** TD-1410, TD-5136, TD-5185 · **Status:** Done
+
+Three statements had fallen behind the code. The README said the daemon's
+only outbound HTTP is to the configured `base_url`; it also reads search
+pages, refreshes model cards daily, and reaches whatever the user switches
+on. The shipped `config.yaml` said MCP HTTP urls must be loopback; a server
+may set `allow_remote` (TD-5136). `mcp/README.md` said the app would gain
+MCP loading in a later milestone; it has it. A privacy claim that is
+narrower than the truth is worse than none.
+
+- [x] The README's "No telemetry" entry names every kind of host the daemon
+      contacts and the setting that governs each, and says the update check
+      is the packaged app's.
+- [x] The shipped `config.yaml` comment on `mcp` matches TD-5136.
+- [x] `mcp/README.md` describes how the app loads a listed server today.
+- [x] No behaviour changed: the only tracked code file touched is the shipped
+      `config.yaml`, and there only a comment; the docs, config and
+      outbound-host tests pass.
+
