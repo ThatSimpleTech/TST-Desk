@@ -28,10 +28,12 @@ from tstd.peer_policy import (
     LOOPBACK_VERBS,
     MACHINE_PEER_VERBS,
     MACHINE_VERBS,
+    PHONE_OPT_IN,
     PeerView,
     check,
     classify,
 )
+from tstd.phone_permissions import CAPABILITIES
 from tstd.protocol import parse_client_message
 
 # Checked one by one for a way to switch approvals off, widen a rule, or
@@ -70,7 +72,8 @@ NEVER_FOR_MACHINES = frozenset(
 )
 
 VIEWER = PeerView(remote=False, machine=False, viewer=True)
-PHONE_VIEWER = PeerView(remote=True, machine=False, viewer=True)
+PHONE_VIEWER = PeerView(remote=True, machine=False, viewer=True, phone=True)
+PHONE_PLAIN = PeerView(remote=True, machine=False, viewer=False, phone=True)
 MACHINE = PeerView(remote=True, machine=True, viewer=False)
 PLAIN_REMOTE = PeerView(remote=True, machine=False, viewer=False)
 BRIDGED = "s1:mch_0123456789ab"
@@ -90,7 +93,7 @@ def _msg(kind: str, **fields: object) -> protocol.ClientMessage:
         (False, None, [], LOOPBACK_PLAIN),
         (True, "phone", ["machines"], PHONE_VIEWER),
         (True, None, ["machines"], PLAIN_REMOTE),  # the legacy token is no device
-        (True, "phone", [], PLAIN_REMOTE),
+        (True, "phone", [], PHONE_PLAIN),
         (True, "machine", ["machines"], MACHINE),
         (True, "phone", ["machines", "bridge"], MACHINE),
         (False, None, ["bridge"], PeerView(remote=False, machine=True, viewer=False)),
@@ -342,26 +345,82 @@ async def test_a_remote_peer_removing_itself_hears_no_devices_or_address(daemon:
     assert [d.name for d in daemon.remote_devices.summaries()] == ["Other phone"]
 
 
-def test_the_mcp_page_is_loopback_only() -> None:
-    """TD-5276: a server is a command this computer runs; only it changes them."""
-    frames = [
-        _msg("set_mcp_server", id="x", transport="stdio", command=["sh", "-c", "id"]),
-        _msg("delete_mcp_server", id="x"),
-        _msg("set_mcp_secret", server_id="x", target="env", name="TOKEN", value="v"),
-        _msg("delete_mcp_secret", server_id="x", target="env", name="TOKEN"),
-    ]
-    self_paired = PeerView(remote=False, machine=True, viewer=False)
-    for frame in frames:
-        assert check(frame, LOOPBACK_PLAIN, bridged=False) is None, frame.type
-        assert check(frame, VIEWER, bridged=False) is None, frame.type
-        for peer in (PHONE_VIEWER, PLAIN_REMOTE, MACHINE, self_paired):
-            refusal = check(frame, peer, bridged=False)
-            assert refusal is not None, (frame.type, peer)
-            assert json.loads(refusal)["code"] == "loopback_only", (frame.type, peer)
-            assert json.loads(refusal)["in_reply_to"] == frame.type
+MCP_FRAMES = [
+    _msg("set_mcp_server", id="x", transport="stdio", command=["sh", "-c", "id"]),
+    _msg("delete_mcp_server", id="x"),
+    _msg("set_mcp_secret", server_id="x", target="env", name="TOKEN", value="v"),
+    _msg("delete_mcp_secret", server_id="x", target="env", name="TOKEN"),
+]
+SELF_PAIRED = PeerView(remote=False, machine=True, viewer=False)
+GRANTED = frozenset({"mcp_servers"})
 
 
-def test_verbs_that_make_this_computer_run_a_command_stay_loopback_only() -> None:
+def _code(refusal: str | None) -> str | None:
+    return None if refusal is None else json.loads(refusal)["code"]
+
+
+def test_mcp_verbs_need_the_phone_permission() -> None:
+    """TD-5279: a server is a command this computer runs; a phone needs the grant."""
+    for frame in MCP_FRAMES:
+        for phone in (PHONE_VIEWER, PHONE_PLAIN):
+            refusal = check(frame, phone, bridged=False, grants=())
+            assert _code(refusal) == "phone_permission_off", frame.type
+            assert json.loads(refusal or "{}")["in_reply_to"] == frame.type
+            assert "MCP servers" in json.loads(refusal or "{}")["message"]
+            assert check(frame, phone, bridged=False, grants=GRANTED) is None, frame.type
+
+
+def test_a_grant_never_applies_to_the_legacy_token_or_a_machine() -> None:
+    for frame in MCP_FRAMES:
+        # The legacy remote token is no device: nothing switches this on for it.
+        assert _code(check(frame, PLAIN_REMOTE, bridged=False, grants=GRANTED)) == (
+            "phone_permission_off"
+        ), frame.type
+        for machine in (MACHINE, SELF_PAIRED):
+            assert _code(check(frame, machine, bridged=False, grants=GRANTED)) == ("not_allowed"), (
+                frame.type,
+                machine,
+            )
+
+
+def test_the_computer_needs_no_grant() -> None:
+    for frame in MCP_FRAMES:
+        assert check(frame, LOOPBACK_PLAIN, bridged=False, grants=()) is None, frame.type
+        assert check(frame, VIEWER, bridged=False, grants=()) is None, frame.type
+
+
+def test_check_refuses_when_grants_are_not_passed() -> None:
+    """A caller that forgets the argument fails in the safe direction."""
+    for frame in MCP_FRAMES:
+        assert _code(check(frame, PHONE_VIEWER, bridged=False)) == "phone_permission_off"
+
+
+def test_a_grant_for_something_else_opens_nothing() -> None:
+    for frame in MCP_FRAMES:
+        refusal = check(frame, PHONE_VIEWER, bridged=False, grants={"not_this_one"})
+        assert _code(refusal) == "phone_permission_off", frame.type
+
+
+def test_set_phone_permission_is_loopback_only() -> None:
+    """A phone must never grant itself; nor may the legacy token or another computer."""
+    frame = _msg("set_phone_permission", capability="mcp_servers", enabled=True)
+    assert check(frame, LOOPBACK_PLAIN, bridged=False) is None
+    assert check(frame, VIEWER, bridged=False) is None
+    for peer in (PHONE_VIEWER, PHONE_PLAIN, PLAIN_REMOTE, MACHINE, SELF_PAIRED):
+        # Holding every grant changes nothing: it is not a grantable verb.
+        refusal = check(frame, peer, bridged=False, grants=GRANTED | {"set_phone_permission"})
+        assert _code(refusal) == "loopback_only", peer
+
+
+def test_every_opt_in_verb_names_a_known_capability_and_no_other_set() -> None:
+    assert set(PHONE_OPT_IN) <= protocol._KNOWN_CLIENT_TYPES
+    assert set(PHONE_OPT_IN.values()) <= set(CAPABILITIES)
+    # One classification per verb: opt-in is neither computer-only nor a machine verb.
+    assert LOOPBACK_VERBS.isdisjoint(PHONE_OPT_IN)
+    assert MACHINE_PEER_VERBS.isdisjoint(PHONE_OPT_IN)
+
+
+def test_verbs_that_make_this_computer_run_a_command_are_never_open_to_a_phone() -> None:
     """A later tidy-up must not reopen any of these to a phone."""
     runs_a_command = {
         "set_mcp_server",
@@ -376,4 +435,7 @@ def test_verbs_that_make_this_computer_run_a_command_stay_loopback_only() -> Non
         "steering_edit",
     }
     assert runs_a_command <= protocol._KNOWN_CLIENT_TYPES
-    assert runs_a_command <= LOOPBACK_VERBS
+    assert runs_a_command <= LOOPBACK_VERBS | set(PHONE_OPT_IN)
+    # The switch itself has no setting.
+    assert "set_phone_permission" in LOOPBACK_VERBS
+    assert "set_phone_permission" not in PHONE_OPT_IN

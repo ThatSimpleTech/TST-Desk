@@ -12,11 +12,14 @@
 		type McpServerRow,
 		type McpValueRow,
 	} from "../settings.svelte.js";
+	import { originWords, permissionCopy } from "../phone-permissions";
 
-	// TD-5276: a server is a command the computer runs, so only the computer
-	// adds, changes or removes one. Anywhere else (a paired phone, a browser)
-	// the page is the list, and the daemon refuses the rest.
+	// A server is a command the computer runs, so off the computer the page
+	// is the list and nothing else, and the daemon refuses the rest, unless
+	// the computer switched "MCP servers" on for phones (TD-5279). The
+	// caller decides; told nothing, this is the computer's own page.
 	let { canManage = true }: { canManage?: boolean } = $props();
+	const offNote = permissionCopy("mcp_servers")?.offOnPhone ?? "";
 
 	let draftId = $state("");
 	let draftTransport = $state<"stdio" | "http">("stdio");
@@ -110,6 +113,9 @@
 				· {server.url || "(no url)"}
 			{/if}
 		</p>
+		{#if server.originDevice}
+			<p class="meta origin">{originWords(server.originDevice, server.originAt)}</p>
+		{/if}
 		{#each server.excludedTools ?? [] as tool (tool.name)}
 			<p class="excluded">Left out {tool.name}: {tool.reason}</p>
 		{/each}
@@ -237,7 +243,7 @@
 	<button class="btn" type="button" disabled={!canAdd()} onclick={addServer}>Add server</button>
 </div>
 {:else}
-	<p class="hint">Add or change MCP servers in Settings on the computer.</p>
+	<p class="hint">{offNote}</p>
 {/if}
 
 <style>

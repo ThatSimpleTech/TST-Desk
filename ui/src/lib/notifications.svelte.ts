@@ -28,6 +28,7 @@ import {
 	type NoticeSpec,
 } from "./error-copy";
 import { claimedInline } from "./inline-errors";
+import { phoneChangeNotice } from "./phone-permissions";
 import type { DaemonEventUnion } from "./protocol";
 import { redact } from "./redact";
 import { session } from "./session-status.svelte.js";
@@ -154,6 +155,11 @@ export function notifyEvent(event: DaemonEventUnion): void {
 		// a user with a non-git workspace was never told undo was off.
 		case "checkpoint_notice":
 			notify(`checkpoint:${event.code}`, checkpointNoticeCopy(event.code, event.message));
+			break;
+		case "phone_change":
+			// TD-5279: a paired phone changed this computer. One banner per
+			// change, kept until dismissed: nobody may be watching when it lands.
+			notify(`phone:${event.device_name}:${event.summary}`, phoneChangeNotice(event));
 			break;
 		case "error":
 			// A form already showed it, in words for that flow (TD-5015).

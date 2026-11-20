@@ -812,7 +812,14 @@
   },
   "remove_remote_device": {
     "type": "remove_remote_device",
-    "device_id": "dev_0123456789ab"
+    "device_id": "dev_0123456789ab",
+    "remove_added": false
+  },
+  "set_phone_permission": {
+    "type": "set_phone_permission",
+    "capability": "mcp_servers",
+    "enabled": true,
+    "expires_in_seconds": 3600
   },
   "add_machine": {
     "type": "add_machine",
@@ -2299,9 +2306,12 @@
             "stored": false
           }
         ],
-        "headers": []
+        "headers": [],
+        "origin_device": "",
+        "origin_at": ""
       }
     ],
+    "phone_permissions": {},
     "speech_enabled": false,
     "speech_ready": false,
     "email": {
@@ -2360,8 +2370,16 @@
       "paired_at": "2026-10-14T10:41:00Z",
       "last_seen": null,
       "connected": false,
-      "kind": "phone"
+      "kind": "phone",
+      "mcp_servers_added": []
     }
+  },
+  "phone_change": {
+    "type": "phone_change",
+    "seq": 1,
+    "device_name": "Pixel",
+    "capability": "mcp_servers",
+    "summary": "added MCP server 'files': npx files-server"
   },
   "machine_list": {
     "type": "machine_list",

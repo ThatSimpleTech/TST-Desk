@@ -13,6 +13,9 @@
 	let { canManage }: { canManage: boolean } = $props();
 
 	let confirming = $state<string | null>(null);
+	// TD-5279: removing a phone does not undo what it changed. The review
+	// lists the MCP servers it added and offers to take them with it.
+	let alsoRemove = $state(false);
 	let now = $state(Date.now());
 
 	// The daemon pushes presence from here on; this is the first read.
@@ -30,8 +33,17 @@
 		return `Last seen ${relativeWords(device.last_seen, now)}`;
 	}
 
+	function added(device: RemoteDeviceSummary): string[] {
+		return device.mcp_servers_added ?? [];
+	}
+
+	function ask(device: RemoteDeviceSummary): void {
+		alsoRemove = false;
+		confirming = device.id;
+	}
+
 	function remove(device: RemoteDeviceSummary): void {
-		removeRemoteDevice(device.id);
+		removeRemoteDevice(device.id, alsoRemove && added(device).length > 0);
 		confirming = null;
 	}
 </script>
@@ -61,6 +73,16 @@
 					{#if confirming === device.id}
 						<span class="confirm">
 							<span class="confirm-text">It will need to pair again.</span>
+							{#if added(device).length > 0}
+								<span class="confirm-text review">
+									This phone added or changed MCP servers that stay after it is removed:
+									{added(device).join(', ')}.
+								</span>
+								<label class="confirm-text also">
+									<input type="checkbox" bind:checked={alsoRemove} />
+									Also remove these servers
+								</label>
+							{/if}
 							<button class="choice choice--danger" type="button" onclick={() => remove(device)}
 								>Remove</button
 							>
@@ -71,7 +93,7 @@
 							class="choice"
 							type="button"
 							aria-label={`Remove ${device.name}`}
-							onclick={() => (confirming = device.id)}>Remove</button
+							onclick={() => ask(device)}>Remove</button
 						>
 					{/if}
 				{/if}
@@ -142,8 +164,20 @@
 
 	.confirm {
 		display: inline-flex;
+		flex-wrap: wrap;
 		align-items: center;
+		justify-content: flex-end;
 		gap: var(--space-2);
+	}
+
+	.review,
+	.also {
+		flex: 1 1 100%;
+		text-align: right;
+	}
+
+	.review {
+		color: var(--color-warn);
 	}
 
 	.confirm-text {

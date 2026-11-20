@@ -27,6 +27,7 @@ from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlsplit
 
+from .phone_permissions import LABELS, MCP_SERVERS
 from .protocol import ClientMessage, DaemonEvent, ModelFallback, TierState, build_error
 
 DeviceKind = Literal["phone", "machine"]
@@ -144,19 +145,12 @@ VIEWER_MACHINE_VERBS: frozenset[str] = frozenset({"list_machines"})
 # ``delete_preset`` (TD-5237) removes a model from the catalog. Copying or
 # relabelling one from a phone is as narrow as ``add_model``; taking one
 # away is done at the computer whose config it is.
-# The MCP page (TD-5276). A stdio server is a command this computer runs,
-# now and at every session start, and it never meets the classifier. A
-# paired phone could add one with no word from the person at the computer,
-# and it stayed in config.yaml after the phone was removed. So the page is
-# the computer's own, as the commands in the config editor already were: a
-# phone still sees the list in ``setup_state``. A server's values go with
-# it: they are that command's environment, or the headers sent to its host.
+# ``set_phone_permission`` (TD-5279) decides what a phone may change, so a
+# phone never sends it: it could otherwise grant itself. It is the one
+# phone permission with no setting.
 LOOPBACK_VERBS: frozenset[str] = frozenset(
     {
-        "set_mcp_server",
-        "delete_mcp_server",
-        "set_mcp_secret",
-        "delete_mcp_secret",
+        "set_phone_permission",
         "delete_preset",
         "drain",
         "trust_workspace_config",
@@ -178,6 +172,9 @@ class PeerView:
     machine: bool
     viewer: bool
     history: bool = False
+    # A paired phone: remote, with a device record of ``kind: phone``. Not
+    # the legacy remote token, which is no device, and never a machine.
+    phone: bool = False
 
     @property
     def loopback(self) -> bool:
@@ -197,7 +194,29 @@ def classify(remote: bool, device_kind: DeviceKind | None, features: Iterable[st
     machine = device_kind == "machine" or BRIDGE_FEATURE in wanted
     viewer = not machine and VIEWER_FEATURE in wanted and (not remote or device_kind == "phone")
     history = HISTORY_FEATURE in wanted
-    return PeerView(remote=remote, machine=machine, viewer=viewer, history=history)
+    phone = remote and not machine and device_kind == "phone"
+    return PeerView(remote=remote, machine=machine, viewer=viewer, history=history, phone=phone)
+
+
+# What a phone may send only after the computer switched the capability on
+# (TD-5279), verb to capability. The MCP page: a stdio server is a command
+# this computer runs, now and at every session start, and it never meets
+# the classifier. A paired phone could add one with no word from the person
+# at the computer, and it stayed in config.yaml after the phone was
+# removed. A server's values go with it: they are that command's
+# environment, or the headers sent to its host. A phone still sees the list
+# in ``setup_state`` either way.
+PHONE_OPT_IN: dict[str, str] = {
+    "set_mcp_server": MCP_SERVERS,
+    "delete_mcp_server": MCP_SERVERS,
+    "set_mcp_secret": MCP_SERVERS,
+    "delete_mcp_secret": MCP_SERVERS,
+}
+
+
+def required_capability(msg: ClientMessage) -> str | None:
+    """The phone permission *msg* needs from a remote peer, if any."""
+    return PHONE_OPT_IN.get(msg.type)
 
 
 # Loopback names say nothing about where a service lives.
@@ -304,16 +323,32 @@ def message_session_id(msg: ClientMessage) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def check(msg: ClientMessage, peer: PeerView, *, bridged: bool) -> str | None:
+def check(
+    msg: ClientMessage, peer: PeerView, *, bridged: bool, grants: Collection[str] = ()
+) -> str | None:
     """A ready error frame when *peer* may not send *msg*, else None.
 
     *bridged* says the message's ``session_id`` is in the bridged grammar.
-    Forwarding itself is the daemon's call; this only refuses.
+    Forwarding itself is the daemon's call; this only refuses. *grants* are
+    the phone permissions switched on right now (TD-5279); a caller that
+    passes none refuses every opt-in verb from a phone.
     """
     sid = message_session_id(msg)
     if msg.type in LOOPBACK_VERBS and (peer.remote or peer.machine):
         return build_error(
             "loopback_only", "Only the computer itself can do that.", in_reply_to=msg.type
+        )
+    # TD-5279: only a paired phone can use a grant. The legacy remote token
+    # is no device, so nothing switches these on for it; another computer
+    # is refused below as it always was.
+    capability = required_capability(msg)
+    wants_grant = capability is not None and peer.remote and not peer.machine
+    if wants_grant and not (peer.phone and capability in grants):
+        return build_error(
+            "phone_permission_off",
+            f"Turn on '{LABELS[capability or '']}' under Settings, Phones and devices "
+            "on the computer to do this from a phone.",
+            in_reply_to=msg.type,
         )
     # TD-5118: a turn's own allow rules switch approvals off for it, so they
     # come only from ``tst run`` on this computer, for its own sessions; a

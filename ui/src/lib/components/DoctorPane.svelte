@@ -9,10 +9,11 @@
 
 	/** Row status → glyph. The copied text report keeps its own ASCII marks
 	    (STATUS_MARK in the store); these are the pane's visual analog. */
-	const STATUS_ICON: Record<DiagnosticCheck['status'], 'check' | 'x' | 'minus'> = {
+	const STATUS_ICON: Record<DiagnosticCheck['status'], 'check' | 'x' | 'minus' | 'alert'> = {
 		ok: 'check',
 		fail: 'x',
 		skip: 'minus',
+		warn: 'alert',
 	};
 
 	let copied = $state(false);
@@ -168,6 +169,10 @@
 
 	.mark--skip {
 		color: var(--color-ink-secondary);
+	}
+
+	.mark--warn {
+		color: var(--color-warn);
 	}
 
 	.row-body {

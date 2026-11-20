@@ -855,6 +855,9 @@ describe("mcp section", () => {
 				command: ["python", "-m", "some_mcp"],
 				url: "",
 				enabled: true,
+				// TD-5279: no phone touched it.
+				originDevice: "",
+				originAt: "",
 				excludedTools: [],
 				values: [],
 			},

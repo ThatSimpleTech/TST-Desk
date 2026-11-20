@@ -676,6 +676,11 @@ const CATALOG_ROW = /^(Duplicate|Rename|Remove) .+$/;
 // so the walk leaves it alone; grok-on-picker.test.ts presses it.
 const GROK_ADD = /^Add Grok to your models$/;
 
+// A phone permission (TD-5279) is switched on through its disclosure. The
+// walk must not open one and then press whatever button comes next: that
+// could be "Turn on". phone-permissions.test.ts presses each choice.
+const PHONE_PERMISSION = /^Turn (on|off): .+$/;
+
 const SKIP_CLICK =
 	/^(Close|Sign in with Microsoft|Sign in with Google|Connect GitHub|Disconnect|Send test email|Delete|Remove|Forget|Copy code|Open browser|Try again|How models work)$/;
 
@@ -688,7 +693,13 @@ async function exercise(page: Page, content: Locator): Promise<void> {
 		const name = ((await button.getAttribute("aria-label")) || (await button.innerText()))
 			.replace(/\s+/g, " ")
 			.trim();
-		if (name === "" || SKIP_CLICK.test(name) || CATALOG_ROW.test(name) || GROK_ADD.test(name))
+		if (
+			name === "" ||
+			SKIP_CLICK.test(name) ||
+			CATALOG_ROW.test(name) ||
+			GROK_ADD.test(name) ||
+			PHONE_PERMISSION.test(name)
+		)
 			continue;
 		await dismissExtraDialogs(page);
 		await button.click({ timeout: 5_000 });

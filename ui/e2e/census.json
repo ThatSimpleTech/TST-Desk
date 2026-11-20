@@ -243,6 +243,7 @@
 	"settings:Phones and devices": [
 		"Older way: token",
 		"Pair A Phone",
+		"Turn on: Let paired phones add and change MCP servers",
 		"toggle"
 	],
 	"settings:Policy": [
