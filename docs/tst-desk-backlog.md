@@ -14025,3 +14025,33 @@ long a call waits for a slot, a line in the doctor, and streaming for
 children so a timed-out child frees the server at once. A chat that is
 open keeps the gate its client was built with until the client is rebuilt.
 
+---
+
+### TD-5270 — `fs_edit` replaces every occurrence, or several things in one call
+
+**Size:** 2 · **Depends on:** TD-604 · **Status:** Done
+
+Renaming a repeated name cost one `fs_edit` call per occurrence, and three
+changes to one file were three calls. Harness answers that with a patch
+tool; a patch hides its paths inside one string, where the classifier
+cannot see them before a parser runs. Widening the tool that already
+exists adds no tool and keeps one file, named in `path`, per call.
+
+- [x] `replace_all: true` replaces every occurrence and reports how many;
+      none found still fails; without it, more than one is still ambiguous
+      (`test_fs_edit_batch.py::TestReplaceAll`).
+- [x] `edits` (up to 20) applies several replacements in order, each to the
+      text the one before left, and writes the file once
+      (`TestABatch`).
+- [x] If any edit cannot apply, nothing is written and the error names
+      which one (`test_one_edit_that_cannot_apply_leaves_the_file_as_it_was`).
+- [x] Exactly one of the two forms; both, neither, an empty list or too
+      many change nothing (`TestTheTwoForms`).
+- [x] The tool is still judged by its one `path`: a batch on a steering
+      file is still Class C, and a batch is one call, one diff
+      (`TestTheSchemaAndTheGate`).
+- [x] Every existing `fs_edit` test passes unchanged.
+
+**Notes:** The memory-file cap is checked on the final text. The schema
+grew by about 600 characters; no new tool was added.
+

@@ -18,7 +18,9 @@ import asyncio
 import contextlib
 import os
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 def _atomic_write(target: Path, content: str) -> None:
@@ -69,24 +71,92 @@ def _fs_write(path: Path, content: str, append: bool, session: object | None) ->
     return f"wrote {len(content.encode('utf-8'))} bytes; {verb} {path}"
 
 
-def _fs_edit(path: Path, old_string: str, new_string: str, session: object | None) -> str:
+#: Most replacements one ``fs_edit`` call may carry (TD-5270).
+MAX_EDITS = 20
+
+
+@dataclass(frozen=True)
+class Edit:
+    """One replacement: an exact string, its replacement, and whether every
+    occurrence goes or exactly one must exist."""
+
+    old_string: str
+    new_string: str
+    replace_all: bool = False
+
+
+def edits_from_arguments(
+    old_string: str | None,
+    new_string: str | None,
+    replace_all: bool,
+    edits: list[dict[str, Any]] | None,
+) -> list[Edit]:
+    """The call's replacements, from whichever of its two forms it used.
+
+    One pair at the top level, or a list under ``edits``: exactly one of the
+    two. Anything else is the caller's mistake and changes nothing.
+    """
+    single = old_string is not None or new_string is not None
+    if edits is not None and single:
+        raise ValueError("give old_string and new_string, or edits, not both")
+    if edits is None:
+        if old_string is None or new_string is None:
+            raise ValueError("give old_string and new_string, or a list of edits")
+        return [Edit(old_string, new_string, replace_all)]
+    if not edits:
+        raise ValueError("edits is empty — nothing to change")
+    if len(edits) > MAX_EDITS:
+        raise ValueError(f"too many edits: {len(edits)} (at most {MAX_EDITS} in one call)")
+    out: list[Edit] = []
+    for index, item in enumerate(edits, start=1):
+        old, new = item.get("old_string"), item.get("new_string")
+        if not isinstance(old, str) or not old or not isinstance(new, str):
+            raise ValueError(f"edit {index} needs old_string (not empty) and new_string")
+        out.append(Edit(old, new, bool(item.get("replace_all", False))))
+    return out
+
+
+def apply_edits(content: str, edits: list[Edit], where: str) -> tuple[str, list[int]]:
+    """*content* after *edits*, in order, and how many places each changed.
+
+    Each edit sees the text the one before it left. The first that cannot
+    apply stops everything, and names its place in the list when there is
+    more than one, so the caller writes nothing.
+    """
+    counts: list[int] = []
+    for index, edit in enumerate(edits, start=1):
+        which = f"edit {index}: " if len(edits) > 1 else ""
+        found = content.count(edit.old_string)
+        if found == 0:
+            raise ValueError(f"{which}target string not found in '{where}' — nothing was changed")
+        if found > 1 and not edit.replace_all:
+            raise ValueError(
+                f"{which}target string is ambiguous: {found} occurrences in '{where}' — "
+                "include more surrounding context so exactly one matches, or set "
+                "replace_all — nothing was changed"
+            )
+        content = content.replace(edit.old_string, edit.new_string)
+        counts.append(found)
+    return content, counts
+
+
+def _fs_edit(path: Path, edits: list[Edit], session: object | None) -> str:
     if not path.exists():
         raise FileNotFoundError(f"'{path}' does not exist — use fs_write to create it")
     if path.is_dir():
         raise ValueError(f"'{path}' is a directory, not a file")
-    content = path.read_text(encoding="utf-8")
-    count = content.count(old_string)
-    if count == 0:
-        raise ValueError(f"target string not found in '{path}' — nothing was changed")
-    if count > 1:
-        raise ValueError(
-            f"target string is ambiguous: {count} occurrences in '{path}' — "
-            "include more surrounding context so exactly one matches"
-        )
-    proposed = content.replace(old_string, new_string, 1)
+    proposed, counts = apply_edits(path.read_text(encoding="utf-8"), edits, str(path))
     _enforce_memory_cap(path, proposed, session)
+    # One write for the whole call: a batch is one change to the file.
     _atomic_write(path, proposed)
-    return f"edited {path}: replaced 1 occurrence"
+    if len(counts) == 1:
+        return f"edited {path}: replaced {_occurrences(counts[0])}"
+    each = ", ".join(str(n) for n in counts)
+    return f"edited {path}: {len(counts)} edits, replaced {each} ({_occurrences(sum(counts))})"
+
+
+def _occurrences(count: int) -> str:
+    return "1 occurrence" if count == 1 else f"{count} occurrences"
 
 
 async def fs_write(
@@ -97,7 +167,15 @@ async def fs_write(
 
 
 async def fs_edit(
-    session: object, path: str, old_string: str, new_string: str, tool_call_id: str = ""
+    session: object,
+    path: str,
+    old_string: str | None = None,
+    new_string: str | None = None,
+    replace_all: bool = False,
+    edits: list[dict[str, Any]] | None = None,
+    tool_call_id: str = "",
 ) -> str:
-    """Exact single-occurrence string replacement in a file (TD-604)."""
-    return await asyncio.to_thread(_fs_edit, Path(path), old_string, new_string, session)
+    """Exact string replacement in one file (TD-604): one, every occurrence
+    of one, or several in order with nothing written if any fails (TD-5270)."""
+    wanted = edits_from_arguments(old_string, new_string, replace_all, edits)
+    return await asyncio.to_thread(_fs_edit, Path(path), wanted, session)
