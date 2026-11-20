@@ -24,7 +24,8 @@ from tests.test_peer_policy import (
     _code,
     _msg,
 )
-from tstd.peer_policy import check, required_capability
+from tstd.peer_policy import check
+from tstd.phone_verbs import required_capability
 from tstd.policy import load_skip_all
 
 ON = {"type": "set_skip_all_approvals", "enabled": True}
