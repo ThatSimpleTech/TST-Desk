@@ -420,6 +420,7 @@ class WebSocketServer:
         loopback_only: bool = False,
         audience: Audience = "all",
         exclude: object | None = None,
+        remote_payload: str | None = None,
     ) -> int:
         """Send one frame to every handshaken client. Returns how many got it.
 
@@ -431,7 +432,9 @@ class WebSocketServer:
         it is ``audience="loopback"``. ``"viewers"`` reaches viewers only.
         Machine peers never get a broadcast (TD-5015). *exclude* is one
         connection to leave out: the one whose own reply already says it
-        (TD-5236).
+        (TD-5236). *remote_payload*, with ``audience="loopback"``, is what a
+        remote peer gets in place of being skipped: the same state as a
+        remote peer is allowed to see it (TD-5242).
 
         A client that closed between the snapshot and the send is skipped,
         not an error: it will re-read the state when it reconnects.
@@ -445,10 +448,13 @@ class WebSocketServer:
             peer = self.peer_view(conn)
             if peer.machine or (audience == "viewers" and not peer.viewer):
                 continue
+            frame = payload
             if audience == "loopback" and self.peer_is_remote(conn):
-                continue
+                if remote_payload is None:
+                    continue
+                frame = remote_payload
             try:
-                await conn.send(payload)
+                await conn.send(frame)
             except (websockets.exceptions.ConnectionClosed, OSError, RuntimeError):
                 continue
             sent += 1
