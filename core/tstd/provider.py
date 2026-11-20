@@ -15,7 +15,7 @@ import contextlib
 import json
 import random
 import re
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -1255,11 +1255,15 @@ class ProviderClient:
             # Held from the request to the stream's end (TD-5269): the server
             # is busy with this call for that long. Waiting for a slot is not
             # part of the reply's own time limit.
-            async with self._slot():
-                async for chunk in _stream_exchange():
+            # ``aclosing``: when the consumer stops early, or a stall is
+            # returned, the exchange is closed here and now, which is what
+            # hangs up the connection. Left to the garbage collector, the
+            # server would go on generating into a socket nobody reads.
+            async with self._slot(), contextlib.aclosing(_stream_exchange()) as exchange:
+                async for chunk in exchange:
                     yield chunk
 
-        async def _stream_exchange() -> AsyncIterator[StreamChunk | ProviderError]:
+        async def _stream_exchange() -> AsyncGenerator[StreamChunk | ProviderError, None]:
             started = asyncio.get_running_loop().time()
             try:
                 async with aconnect_sse(

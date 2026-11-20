@@ -251,3 +251,23 @@ async def test_the_daemon_gives_clients_for_one_server_one_gate(tmp_path: Path) 
     assert brain.gate is not None and brain.gate is worker.gate
     # Another port on this computer is another server with a count of its own.
     assert other.gate is not None and other.gate is not brain.gate
+
+
+async def test_a_stream_the_reader_abandons_gives_its_slot_back_at_once() -> None:
+    """The reader stops after one chunk: the exchange is closed there and
+    then, so the slot is free and the connection hung up, not left to the
+    garbage collector (found by test_provider_timeouts after TD-5269)."""
+    server = _Server(hold=0.0)
+    gates = EndpointGates(ModelConcurrencyConfig(loopback_default=1))
+    client = server.client()
+    client.gate = gates.for_url(client.base_url)
+    assert client.gate is not None
+    stream = client.chat_completion_stream(_request(stream=True))
+    async for _chunk in stream:
+        assert client.gate.locked()
+        break
+    await stream.aclose()  # type: ignore[attr-defined]
+    assert not client.gate.locked()
+    # And the next call is not left waiting.
+    again = await asyncio.wait_for(client.chat_completion(_request()), 2)
+    assert not isinstance(again, ProviderError)
