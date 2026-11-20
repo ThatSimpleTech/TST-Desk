@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from ..config import SearchConfig
 
 from ..provider import FunctionDefinition, ToolDefinition
+from .write import MAX_EDITS
 
 # ── Side-effect classification ──────────────────────────────────────────
 
@@ -577,7 +578,9 @@ def _register_builtins(registry: ToolRegistry, *, search: SearchConfig | None = 
             "Use it for every change inside an existing file, instead of "
             "sed -i or other shell edits. "
             "Fails if the target string is absent or appears more than once — "
-            "include enough surrounding context to match exactly one place. "
+            "include enough surrounding context to match exactly one place, "
+            "or set replace_all. Several changes to one file go in edits, "
+            "in one call. "
             "For creating or rewriting whole files, use fs_write.",
             parameters={
                 "type": "object",
@@ -595,8 +598,29 @@ def _register_builtins(registry: ToolRegistry, *, search: SearchConfig | None = 
                         "type": "string",
                         "description": "Replacement text (may be empty to delete)",
                     },
+                    "replace_all": {
+                        "type": "boolean",
+                        "description": "Replace every occurrence instead of exactly one",
+                    },
+                    "edits": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": MAX_EDITS,
+                        "description": "Several replacements in this file, applied in "
+                        "order; nothing is written if one fails. Use instead of "
+                        "old_string and new_string.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "old_string": {"type": "string", "minLength": 1},
+                                "new_string": {"type": "string"},
+                                "replace_all": {"type": "boolean"},
+                            },
+                            "required": ["old_string", "new_string"],
+                        },
+                    },
                 },
-                "required": ["path", "old_string", "new_string"],
+                "required": ["path"],
             },
             side_effect_class="ask",
             parallel_safe=False,
