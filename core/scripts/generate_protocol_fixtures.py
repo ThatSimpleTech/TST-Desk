@@ -130,6 +130,7 @@ from tstd.protocol import (
     HookInfo,
     HookRun,
     HooksState,
+    ImportMcpServers,
     InstructionFileEntry,
     InstructionFiles,
     InstructionStack,
@@ -162,6 +163,10 @@ from tstd.protocol import (
     LoosenedSetting,
     MachineList,
     MachineSummary,
+    McpImportChoice,
+    McpImportPreview,
+    McpImportServer,
+    McpImportValue,
     McpServerSummary,
     McpValueSummary,
     MemoryAccept,
@@ -195,6 +200,7 @@ from tstd.protocol import (
     PresetReadiness,
     PresetReady,
     PresetRoles,
+    PreviewMcpImport,
     PreviewRestoreFiles,
     Question,
     QuestionAnswer,
@@ -652,6 +658,12 @@ FIXTURES = {
     "start_pairing": StartPairing(),
     "cancel_pairing": CancelPairing(),
     "remove_remote_device": RemoveRemoteDevice(device_id="dev_0123456789ab"),
+    # Pasted MCP JSON (TD-5253). The text here holds no token.
+    "preview_mcp_import": PreviewMcpImport(text='{"mcpServers": {"files": {"command": "uvx"}}}'),
+    "import_mcp_servers": ImportMcpServers(
+        text='{"mcpServers": {"files": {"command": "uvx"}}}',
+        servers=[McpImportChoice(source_name="files", id="files")],
+    ),
     # What a paired phone may change (TD-5279): on for an hour.
     "set_phone_permission": SetPhonePermission(
         capability="mcp_servers", enabled=True, expires_in_seconds=3600
@@ -1595,6 +1607,16 @@ FIXTURES = {
         device=RemoteDeviceSummary(
             id="dev_0123456789ab", name="Pixel", paired_at="2026-10-14T10:41:00Z"
         )
+    ),
+    "mcp_import_preview": McpImportPreview(
+        servers=[
+            McpImportServer(
+                source_name="GitHub",
+                id="github",
+                command=["npx", "-y", "server-github"],
+                values=[McpImportValue(name="GITHUB_TOKEN", target="env", disposition="keychain")],
+            )
+        ]
     ),
     "phone_change": PhoneChange(
         device_name="Pixel",

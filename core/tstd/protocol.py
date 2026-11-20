@@ -1735,6 +1735,47 @@ class DeleteMcpSecret(ClientMessage):
     name: str = Field(min_length=1)
 
 
+class PreviewMcpImport(ClientMessage):
+    """Read MCP servers out of pasted JSON and say what importing would do (TD-5253).
+
+    ``text`` is the block from a server's README (``mcpServers``, VS Code's
+    ``servers``, or one bare entry; ``//`` comments and trailing commas are
+    allowed). Nothing is saved or started. Answered with
+    ``mcp_import_preview``, which never carries a value. From a paired
+    phone this needs the ``mcp_servers`` phone permission.
+    """
+
+    type: Literal["preview_mcp_import"] = "preview_mcp_import"
+    text: str = Field(min_length=1, max_length=262_144, repr=False)
+
+
+class McpImportChoice(BaseModel):
+    """What the person decided for one previewed server (TD-5253)."""
+
+    source_name: str = Field(min_length=1)
+    id: str = Field(min_length=1)
+    #: Required true for a server on another machine. Off by default.
+    allow_remote: bool = False
+    #: Values the preview asked for, by name. Stored in the keychain.
+    inputs: dict[str, str] = Field(default_factory=dict, repr=False)
+
+
+class ImportMcpServers(ClientMessage):
+    """Save the chosen servers from the same pasted JSON (TD-5253).
+
+    The daemon parses ``text`` again and checks every choice itself. Each
+    token goes to the keychain and ``config.yaml`` gets ``keychain:<entry>``;
+    a server is saved whole or not at all. An id already listed, an
+    off-box server without ``allow_remote``, a missing value or a refused
+    server is ``bad_request`` and nothing is written. Acked with
+    ``setup_state``. Same phone permission as ``set_mcp_server``.
+    """
+
+    type: Literal["import_mcp_servers"] = "import_mcp_servers"
+    text: str = Field(min_length=1, max_length=262_144, repr=False)
+    servers: list[McpImportChoice] = Field(min_length=1, max_length=50)
+
+
 class RunDiagnostics(ClientMessage):
     """Ask the daemon to run the doctor checks (TD-1104 diagnostics).
 
@@ -4005,6 +4046,50 @@ class PairingCode(DaemonEvent):
     expires_at: str
 
 
+class McpImportValue(BaseModel):
+    """One env var or header in an import preview. Never its value."""
+
+    name: str
+    target: Literal["env", "header"]
+    #: ``keychain``: stored as a secret. ``literal``: written to config.yaml
+    #: (short, and not named like a secret). ``needs_input``: type it.
+    disposition: Literal["keychain", "literal", "needs_input"]
+    reason: str = ""
+
+
+class McpImportServer(BaseModel):
+    """One server an import preview found (TD-5253)."""
+
+    source_name: str
+    id: str
+    transport: Literal["stdio", "http"] = "stdio"
+    command: list[str] = Field(default_factory=list)
+    url: str = ""
+    #: On another machine: importing needs the person's explicit tick.
+    off_box: bool = False
+    #: An id already listed; give it another before importing.
+    exists: bool = False
+    values: list[McpImportValue] = Field(default_factory=list)
+    #: Keys of the snippet that are left out, such as ``envFile`` or ``cwd``.
+    not_imported: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    #: Why this server cannot be imported; empty when it can.
+    refused: str = ""
+
+
+class McpImportPreview(DaemonEvent):
+    """Reply to ``preview_mcp_import`` (TD-5253). Connection-scoped, seq 1.
+
+    ``error`` is set, and ``servers`` empty, when the text could not be
+    read; it gives a position, never the text.
+    """
+
+    type: Literal["mcp_import_preview"] = "mcp_import_preview"
+    seq: int = 1
+    servers: list[McpImportServer] = Field(default_factory=list)
+    error: str = ""
+
+
 class PairingCompleted(DaemonEvent):
     """A phone redeemed the code (TD-5014). Broadcast to loopback clients only."""
 
@@ -5158,6 +5243,8 @@ ClientMessageT = Annotated[
     | CancelPairing
     | RemoveRemoteDevice
     | SetPhonePermission
+    | PreviewMcpImport
+    | ImportMcpServers
     | AddMachine
     | RemoveMachine
     | ListMachines
@@ -5248,6 +5335,7 @@ DaemonEventT = Annotated[
     | PairingCode
     | PairingCompleted
     | PhoneChange
+    | McpImportPreview
     | MachineList
     | DrainResult
     | ApiKeyValidated
@@ -5423,6 +5511,8 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "cancel_pairing",
         "remove_remote_device",
         "set_phone_permission",
+        "preview_mcp_import",
+        "import_mcp_servers",
         "add_machine",
         "remove_machine",
         "list_machines",
@@ -5513,6 +5603,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "pairing_code",
         "pairing_completed",
         "phone_change",
+        "mcp_import_preview",
         "machine_list",
         "drain_result",
         "api_key_validated",
@@ -5586,6 +5677,8 @@ _MCP_VALUE_VERBS = frozenset(
         "delete_mcp_server",
         "set_mcp_secret",
         "delete_mcp_secret",
+        "preview_mcp_import",
+        "import_mcp_servers",
         "set_config_value",
         "reset_config_value",
     }

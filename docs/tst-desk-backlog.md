@@ -14429,3 +14429,48 @@ connector sign-ins, `shutdown`, the computer-use stop release, a saved
 key's host, the mail server). Each moves in its own story. The table moved
 out of `peer_policy.py` to keep that file near 400 lines.
 
+---
+
+### TD-5253 — Import MCP servers from pasted JSON
+
+**Size:** 3 · **Depends on:** TD-4403, TD-5110, TD-5136, TD-5279, TD-5284 · **Status:** Done
+
+A server's README gives a block of JSON for some other client. Adding it
+meant retyping `command` and `args` as tokens, one server at a time, and
+each token one at a time. Settings → MCP servers → **Paste JSON** reads
+the block, shows what each server would run, and imports the ones you
+tick, with tokens in the keychain.
+
+- [x] Reads `mcpServers`, VS Code's `servers` and one bare entry, with
+      `//` comments and trailing commas (`test_mcp_import.py`).
+- [x] A value that can be a stored secret goes to the keychain and
+      `config.yaml` gets `keychain:<entry>`; a short value under a name
+      that is not secret-like is a literal; a `${...}` value, a short value
+      under a secret-like name and a short header must be typed.
+- [x] Refused, with the reason: `sse`, `ws`, OAuth, `headersHelper`, an
+      off-box `http://` URL, a `${...}` placeholder in the command or URL,
+      a reserved header name. Left out and listed: `envFile`, `cwd`,
+      `timeout`, sandbox keys, unknown keys.
+- [x] The daemon parses the text again on import and checks every choice;
+      the preview is not trusted. An id already listed is refused, never
+      replaced. A server on another machine needs the tick, off by default.
+- [x] A server is saved whole or not at all, and a failed config write
+      leaves no keychain item
+      (`test_a_failed_config_write_leaves_no_keychain_item`).
+- [x] No preview, error, log line or `setup_state` carries a value
+      (`test_an_import_puts_the_token_in_the_keychain_and_only_a_reference_in_config`,
+      `test_a_parse_error_gives_a_position_and_never_the_text`).
+- [x] From a paired phone both verbs need the `mcp_servers` phone
+      permission, and the computer is told of each server imported.
+- [x] The parser and the apply step import no network, process or file
+      library (`test_the_parser_opens_nothing`).
+- [x] The window drops the pasted text and the typed values once the
+      import is acknowledged, and holds Import back until every ticked
+      server is ready (`mcp-import.test.ts`).
+
+**Not built:** "Import from file…"; replacing an existing server; marking
+a keychain-bound value as a literal, or editing a command's tokens, in the
+preview (edit the pasted text instead); VS Code `inputs` descriptions as
+prompts (an `${input:id}` value is simply asked for by its name); `.mcpb`
+bundles.
+

@@ -13,6 +13,7 @@
 		type McpValueRow,
 	} from "../settings.svelte.js";
 	import { originWords, permissionCopy } from "../phone-permissions";
+	import SettingsMcpImport from "./SettingsMcpImport.svelte";
 
 	// A server is a command the computer runs, so off the computer the page
 	// is the list and nothing else, and the daemon refuses the rest, unless
@@ -242,6 +243,7 @@
 <div class="actions">
 	<button class="btn" type="button" disabled={!canAdd()} onclick={addServer}>Add server</button>
 </div>
+<SettingsMcpImport />
 {:else}
 	<p class="hint">{offNote}</p>
 {/if}
