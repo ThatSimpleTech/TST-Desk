@@ -13791,3 +13791,33 @@ that the one limit TST Desk has is the person's to set.
 need for it per model. Children that run alongside the parent are a later,
 larger story.
 
+---
+
+### TD-5261 — The shell sandbox works in a session's own worktree
+
+**Size:** 2 · **Depends on:** TD-5138, TD-5126 · **Status:** Done
+
+A session in a git repository works in a worktree, and by default the
+worktree is under TST Desk's data dir (TD-5126). The shell sandbox hides
+the data dir (TD-5138) and laid that mask over the workspace bind, so with
+`sandbox: enabled` every command in such a session failed before it ran:
+it could not enter its own folder. The two features are both shipped and
+had not been tried together. It also stands in the way of ever turning
+the sandbox on by default.
+
+- [x] A sandboxed command in a worktree under the data dir runs in it and
+      writes there
+      (`test_shell_sandbox.py::TestRealSandbox::test_a_worktree_inside_the_data_dir_is_still_the_workspace`).
+- [x] The rest of the data dir stays out of reach of that command: its
+      files, its listing, and another session's worktree (same test).
+- [x] A hidden directory that contains the workspace is masked before the
+      workspace bind and can be passed through but not listed; one inside
+      the workspace, or apart from it, is masked last and closed as before
+      (`test_a_hidden_dir_around_the_workspace_is_masked_before_the_bind`,
+      which needs no bubblewrap).
+- [x] Every existing sandbox test passes unchanged.
+
+**Notes:** Found while checking a design note written after the Harness
+comparison; reproduced through `run_shell` before the fix. A workspace
+that *is* a hidden directory is unchanged: still masked.
+
