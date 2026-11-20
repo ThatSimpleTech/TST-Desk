@@ -162,6 +162,14 @@ buttons:
   is refused when another entry reuses part of this one (an anchor), or when
   `computer_use.local_worker_preset` names it; the message says which.
 
+A chat's memory notes are written by the chat's own model. When a chat
+ends, TST Desk asks a model to pick out what is worth remembering, and that
+means sending it the conversation. It asks the model the chat is on at that
+moment, so a chat you kept on a model on your own computer is not sent to a
+provider's server for this. A Grok chat has no model of its own in TST
+Desk, so its notes are written by the model new chats use (or, if that is
+Grok too, the first model in your list).
+
 ## Settings that travel with a model
 
 Some settings suit a model's size and speed rather than your taste: how
