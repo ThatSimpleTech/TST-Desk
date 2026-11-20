@@ -23,6 +23,8 @@
 	import { MODELS_DOC_URL, openDoc } from "../../docs-links";
 	import { openAddModel } from "../../onboarding.svelte.js";
 	import ModelRow from "./ModelRow.svelte";
+	import { onMount } from "svelte";
+	import { askReadiness, watchReadiness } from "../../model-ready.svelte.js";
 	import { sectionModels } from "../../model-sections";
 	import { session, setEffort, setFast, setUltracode } from "../../session-status.svelte.js";
 	import { settings } from "../../settings.svelte.js";
@@ -41,24 +43,24 @@
 			current,
 		}),
 	);
-	// TD-5236: the main list in sections (Local, API, Grok, then a model's
-	// own). The daemon says which section each model is in.
-	const sections = $derived(
-		sectionModels(groups.main, settings.presetGroups, settings.pickerGroups),
-	);
+	// TD-5236: the main list in sections; the daemon says which each model is in.
+	const sections = $derived(sectionModels(groups.main, settings.presetGroups, settings.pickerGroups));
 
 	function close(): void {
 		open = false;
 		view = "main";
 	}
 
+	// TD-5240: opening the picker asks the daemon which models can run now.
+	onMount(watchReadiness);
+
 	function toggle(): void {
-		if (!settings.hasModel) {
-			openAddModel();
-			return;
+		if (!settings.hasModel) openAddModel();
+		else if (open) close();
+		else {
+			open = true;
+			askReadiness();
 		}
-		if (open) close();
-		else open = true;
 	}
 
 	function addModel(): void {

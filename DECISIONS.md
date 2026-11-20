@@ -20029,3 +20029,28 @@ person's own machine); a broadcast to phones as well (a phone asks when it
 shows the list, and `setup_state` for a remote peer is trimmed per
 connection, which a broadcast would bypass); slots without Option (taken).
 
+## 2026-11-20 — TD-5240: readiness is three local checks, asked when the picker opens, and never a gate (Class B)
+
+**Decision:** `check_presets` (no fields) is answered with
+`preset_readiness`: per entry, `ready`, `no_key`, `server_down` or
+`no_grok` and one sentence. A key is checked by keychain presence. A role
+whose resolved URL is loopback is asked for `/models` with no key and a 1.5 s
+limit, and any HTTP reply counts. A provider's server is not contacted. An
+entry on the Grok engine is checked for the CLI only. The window sends it
+each time the picker opens and shows the sentence on the row; it never
+disables the row.
+
+**Rationale:** these are the three causes of "the switch worked and the
+next message failed" that can be known without spending anything or
+sending a key. Asking a provider would be a request to a third party the
+person did not make (directive 3), and a key's presence is what can be
+known without one. Opening the picker is the person's act, which is what
+makes the loopback ask theirs too, as "Find models on this computer" is
+(TD-5180). It is a warning because the check can be wrong in the harmless
+direction: a server that is still loading answers nothing for a moment.
+
+**Rejected:** checking as part of `switch_preset` and refusing the switch
+(a model whose server is starting could not be selected ahead of time);
+probing on a timer (traffic nobody asked for); validating a key with a live
+call (that is the existing Test button's job, on a click).
+

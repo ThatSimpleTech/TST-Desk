@@ -13632,3 +13632,35 @@ it. Other Settings writes to the active entry (a role's model, key or
 window) still reach only the window that made them. Class B entry in
 DECISIONS.md.
 
+---
+
+### TD-5240 — The picker says when a model cannot run yet
+
+**Size:** 3 · **Depends on:** TD-5236, TD-5239 · **Status:** Done
+
+A switch succeeded and the next message then failed: the local server was
+not started, the key was never stored, the Grok CLI was not installed. The
+first sign was a failed turn.
+
+- [x] `check_presets` is answered with `preset_readiness`, one row per
+      entry: `ready`, `no_key`, `server_down` or `no_grok`, and one sentence
+      (`test_preset_ready.py::TestOverTheWire`).
+- [x] A key is checked by presence in the keychain only; a server is asked
+      only when it is on this computer, with no key, and any reply counts
+      as there; an entry on the Grok engine is checked for the CLI and
+      nothing else (`TestTheChecks`, `TestTheProbe`).
+- [x] A provider's server is never contacted
+      (`test_a_providers_server_is_never_asked`,
+      `test_a_url_off_this_computer_is_not_asked_and_carries_no_key`).
+- [x] The first problem a person would fix is the one shown: the engine,
+      then a key, then a server
+      (`test_the_first_problem_a_person_would_fix_is_the_one_shown`).
+- [x] The picker asks each time it opens and shows a model's problem under
+      its name; the model can still be picked (`model-ready.test.ts`).
+- [x] Not a machine-peer verb (`test_another_computers_hub_may_not_send_it`).
+
+**Notes:** A warning, not a gate: a server may be starting, and the turn's
+own error is still the authority. The loopback probe lives in
+`local_servers.py` beside the "Find models on this computer" scan and
+follows its rules. Class B entry in DECISIONS.md.
+
