@@ -39,6 +39,11 @@ export function contentSecurityPolicy(mode: string): NonNullable<KitConfig['csp'
 			// Screen-frame previews arrive as data: URLs via the host reader.
 			'img-src': ['self', 'data:'],
 			'font-src': ['self'],
+			// TD-5266: said outright, not left to default-src. A frame may
+			// hold only this app's own pages; an artifact's srcdoc frame is
+			// not a load. Widening this is a decision, not a fix for a
+			// preview that does not show.
+			'frame-src': ['self'],
 			'object-src': ['none'],
 			'base-uri': ['none'],
 			'form-action': ['none']

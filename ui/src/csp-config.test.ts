@@ -57,6 +57,14 @@ describe("webview CSP (TD-4807)", () => {
     expect(prodD["connect-src"]).toContain("ws://127.0.0.1:*");
   });
 
+  it("names what a frame may hold, in every mode, and it is only the app itself", () => {
+    // TD-5266. The same thing default-src gave it, now pinned: a preview
+    // pane that shows nothing must not be "fixed" by opening this.
+    for (const directives of [prodD, devD, androidD]) {
+      expect(directives["frame-src"]).toEqual(["self"]);
+    }
+  });
+
   it("opens the Vite HMR socket in development only", () => {
     expect(devD["connect-src"]).toContain("ws://localhost:*");
     expect(prodD["connect-src"]).not.toContain("ws://localhost:*");

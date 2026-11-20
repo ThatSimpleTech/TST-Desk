@@ -13863,3 +13863,34 @@ the host a stored key is sent to, starting an unattended run) are listed
 in the research note and are not changed here. Class B entry in
 DECISIONS.md.
 
+---
+
+### TD-5266 — Every frame in the window is sandboxed
+
+**Size:** 1 · **Depends on:** TD-4807 · **Status:** Done
+
+The Grok preview pane showed an HTML file, a PDF or a page the agent chose
+in an `<iframe>` with no `sandbox` attribute. The artifact pane's frame was
+sandboxed; this one had been missed. Today the content policy most likely
+keeps that frame empty in a packaged build, which is why nobody noticed,
+and also why the obvious "fix" for an empty preview (letting frames load
+more) would have turned a latent fault into a live one.
+
+- [x] The Grok preview frame has `sandbox=""`: no scripts, no forms, no
+      popups, an origin of its own.
+- [x] A test reads every component's source and fails on a frame with no
+      `sandbox`, or one that allows scripts with the same origin, top
+      navigation or popups (`iframe-sandbox.test.ts`).
+- [x] `frame-src` is said outright in the one content policy
+      (`vite.config.ts`) as `'self'`, what `default-src` already gave it,
+      and pinned for every mode (`csp-config.test.ts`).
+- [x] `tauri.conf.json` still sets no policy of its own (the existing
+      TD-4807 guard).
+
+**Notes:** Whether the pane is in fact empty in a packaged build, and what
+a frame there can reach on each platform, was not run; the research note
+`fixes/preview-iframe-csp.md` has the checklist. The sandbox is right in
+either case. Showing HTML previews through the artifact pane's `srcdoc`
+path, and deciding what a loopback dev-server preview should be, are
+later steps.
+

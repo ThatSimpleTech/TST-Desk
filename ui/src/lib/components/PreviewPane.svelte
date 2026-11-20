@@ -58,7 +58,11 @@
 				<!-- svelte-ignore a11y_media_has_caption -->
 				<video src={src} controls></video>
 			{:else if (grok.preview.kind === 'html' || grok.preview.kind === 'pdf' || grok.preview.kind === 'url') && src}
-				<iframe title={grok.preview.title || 'Preview'} src={src}></iframe>
+				<!-- TD-5266: what lands here is a file or a page the agent chose.
+				     An empty sandbox means no scripts, no forms, no popups and an
+				     origin of its own, so nothing in the frame can reach the
+				     window, the daemon socket or the host commands. -->
+				<iframe title={grok.preview.title || 'Preview'} src={src} sandbox=""></iframe>
 			{:else}
 				<EmptyState align="start">
 					{grok.preview.path ?? grok.preview.url}
