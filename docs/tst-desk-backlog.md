@@ -14055,3 +14055,29 @@ exists adds no tool and keeps one file, named in `path`, per call.
 **Notes:** The memory-file cap is checked on the final text. The schema
 grew by about 600 characters; no new tool was added.
 
+---
+
+### TD-5277 — Tests that fail when an MCP server key is left off a list
+
+**Size:** 1 · **Depends on:** TD-4403, TD-5105 · **Status:** Done
+
+An MCP server's block is written from a list of keys kept by hand
+(`_mcp_server_lines`), and a Settings save copies the hand-set keys across
+from a second list in the `set_mcp_server` handler. Both lists are complete
+today: this is not a fix. But a key added to `McpServerConfig` and to
+neither list would be dropped by the next Settings save, silently, and no
+test would have said so.
+
+- [x] A table gives every field of the model a value per transport, and
+      fails when the model gains a field it does not name.
+- [x] The writer writes every field and it loads back equal, for stdio and
+      for http.
+- [x] Every field is sent by Settings, bound to the server's address, or
+      carried across a save, and only one of the three.
+- [x] A Settings save changes nothing it did not send; a new address drops
+      what was bound to the old one and keeps the rest
+      (`test_mcp_config_parity.py`).
+
+**Notes:** Tests only; no product code changed. The fuller step in the
+research note, deriving the writer's keys from the model, is not taken.
+
