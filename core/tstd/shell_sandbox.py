@@ -496,6 +496,14 @@ def build_plan(
             argv += ["--perms", "0000", "--tmpfs", str(path)]
         else:
             argv += ["--ro-bind", "/dev/null", str(path)]
+    # TODO(TD-5264): pass --disable-userns once it has been tried on Fedora
+    # or Arch. A command that can make a user namespace of its own inside
+    # the sandbox can undo a read-only bind there. Ubuntu's kernel policy
+    # already refuses that (checked on this project's Linux machine, kernel
+    # 7.0, bubblewrap 0.11.1); distributions that allow unprivileged user
+    # namespaces everywhere do not. The flag needs bubblewrap 0.8 or newer
+    # and a version probe, and nobody has run it where it matters, so it
+    # is left out rather than shipped untested.
     for name in _UNSET_ENV:
         argv += ["--unsetenv", name]
     argv += ["--chdir", workspace, "--", "/bin/sh", "-c", command]
