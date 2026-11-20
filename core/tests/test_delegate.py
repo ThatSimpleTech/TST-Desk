@@ -17,7 +17,7 @@ from tests.test_dispatch import (
 )
 from tstd.autonomy import Boundary, DecisionClass, DecisionClassifier
 from tstd.boundary_config import CapsSection
-from tstd.config import SearchConfig
+from tstd.config import DelegateConfig, SearchConfig
 from tstd.context import PromptAssembler
 from tstd.context.tokens import HeuristicTokenCounter
 from tstd.cost import CostTracker
@@ -475,3 +475,70 @@ async def test_stop_ends_a_delegate_childs_model_call(tmp_path: Path) -> None:
     await parent.stop_turn()
 
     assert await asyncio.wait_for(child, 2) == "Worker stopped: parent stopped the turn."
+
+
+# ── delegate.max_iterations (TD-5265) ───────────────────────────────────
+
+
+def _never_done() -> MockProvider:
+    """A worker that asks for one more read, however often it is called."""
+    read = Script(kind="tool_call", tool_name="fs_read", tool_arguments='{"path": "notes.md"}')
+    return MockProvider(default=read)
+
+
+async def test_a_child_stops_after_eight_calls_by_default(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    parent = Session(str(ws))
+    mock = _never_done()
+    runtime = _bind_runtime(parent, _parent_dispatcher(ws), mock)
+    assert runtime.config.delegate.max_iterations == CHILD_MAX_ITERATIONS == 8
+
+    result = await run_worker_child(parent=parent, task="read forever")
+
+    assert len(mock.calls) == 8
+    assert "all 8 of its model calls (delegate.max_iterations)" in result
+
+
+@pytest.mark.parametrize("limit", [1, 3, 12])
+async def test_a_child_runs_as_many_calls_as_config_allows(tmp_path: Path, limit: int) -> None:
+    ws = _workspace(tmp_path)
+    parent = Session(str(ws))
+    mock = _never_done()
+    runtime = _bind_runtime(parent, _parent_dispatcher(ws), mock)
+    runtime.config = runtime.config.model_copy(
+        update={"delegate": DelegateConfig(max_iterations=limit)}
+    )
+
+    result = await run_worker_child(parent=parent, task="read forever")
+
+    assert len(mock.calls) == limit
+    assert f"all {limit} of its model calls" in result
+
+
+async def test_a_larger_number_cannot_outrun_the_sessions_own_cap(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    parent = Session(str(ws))
+    parent.boundary_config.caps = CapsSection(max_iterations=5)
+    mock = _never_done()
+    runtime = _bind_runtime(parent, _parent_dispatcher(ws), mock)
+    runtime.config = runtime.config.model_copy(
+        update={"delegate": DelegateConfig(max_iterations=40)}
+    )
+
+    result = await run_worker_child(parent=parent, task="read forever")
+
+    assert len(mock.calls) == 5
+    assert "iteration cap exceeded: 5 >= 5" in result
+
+
+@pytest.mark.parametrize("bad", [0, -1, 65])
+def test_the_number_is_one_to_sixty_four(bad: int) -> None:
+    with pytest.raises(ValueError):
+        DelegateConfig(max_iterations=bad)
+
+
+def test_the_shipped_config_sets_the_default_and_documents_it() -> None:
+    from tstd.config import default_config_yaml
+
+    shipped = default_config_yaml()
+    assert "\ndelegate:\n  max_iterations: 8\n" in shipped
