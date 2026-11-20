@@ -13894,3 +13894,34 @@ either case. Showing HTML previews through the artifact pane's `srcdoc`
 path, and deciding what a loopback dev-server preview should be, are
 later steps.
 
+---
+
+### TD-5262 — An HTML artifact preview cannot reach out, even on a click
+
+**Size:** 2 · **Depends on:** TD-3202 · **Status:** Done
+
+The HTML an artifact preview shows is written by a model. The frame ran
+no script and loaded nothing, but a link in it, clicked, could send the
+frame to any address with whatever the model had put in the address; and
+tags such as a refresh or a preconnect are not governed by a document's
+own policy in every webview. Nothing but tests could put HTML in that
+pane until now; an agent tool that can (TD-5254) is next, so this comes
+first.
+
+- [x] Before it is shown, the markup loses everything that navigates,
+      loads, posts or refreshes: links' addresses, `meta`, `link`, `base`,
+      forms and their targets, scripts and handlers, frames, objects, remote
+      images and `srcset` (`artifact-html.test.ts`, a table of 18 hostile
+      inputs).
+- [x] What a person came to see stays: text, headings, tables, inline
+      `data:` images, inline styles, and a whole document's `<style>` blocks.
+- [x] The frame's sandbox and its policy are unchanged, and the policy is
+      still first and present once, whatever the markup says.
+- [x] The pane says "Static preview. Links and scripts are off." above an
+      HTML preview.
+
+**Notes:** A second layer, not a replacement. Whether each webview would
+in fact have followed a clicked link was not run; the fix does not depend
+on the answer. The sanitizer has its own DOMPurify instance, so its rule
+for `src` does not reach markdown or diagrams.
+
