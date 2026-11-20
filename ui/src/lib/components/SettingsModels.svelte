@@ -9,6 +9,9 @@
 		closeSettings,
 		refreshModelCards,
 		saveContextWindow,
+		chooseEditPreset,
+		editTarget,
+		roleView,
 	} from "../settings.svelte.js";
 	import { cardLine, cardNote } from "../model-card";
 	import { modelLabel } from "../effort";
@@ -30,12 +33,23 @@
 
 	// TD-5239: a model that is the Grok engine may have no roles. The daemon
 	// then sends none, and there is nothing for "Build a team" to edit.
+	// TD-5241: the page edits the model chosen here, not only the one new
+	// chats use. Its roles come from the daemon either way.
+	const target = $derived(editTarget());
+	const roles = $derived(roleView());
 	const noRoles = $derived(
 		settings.hasModel &&
-			settings.activePreset !== null &&
-			settings.presetEngines[settings.activePreset] === "grok" &&
-			Object.keys(settings.tierSlugs).length === 0,
+			target !== null &&
+			settings.presetEngines[target] === "grok" &&
+			Object.keys(roles.slugs).length === 0,
 	);
+
+	// What was typed for one model's role is not a draft for another's.
+	function pickEdit(name: string): void {
+		drafts = {};
+		windowDrafts = {};
+		chooseEditPreset(name);
+	}
 
 	// Both are modal: close Settings so the walkthrough is on top.
 	function addModel(): void {
@@ -52,12 +66,12 @@
 	let drafts = $state<Record<string, string>>({});
 
 	function slugValue(tier: string): string {
-		return drafts[tier] ?? settings.tierSlugs[tier] ?? "";
+		return drafts[tier] ?? roles.slugs[tier] ?? "";
 	}
 
 	function commitSlug(tier: string): void {
 		const next = slugValue(tier).trim();
-		if (next === "" || next === settings.tierSlugs[tier]) return;
+		if (next === "" || next === roles.slugs[tier]) return;
 		saveSlug(tier, next);
 	}
 
@@ -65,7 +79,7 @@
 	let windowDrafts = $state<Record<string, string>>({});
 
 	function windowValue(tier: string): string {
-		return windowDrafts[tier] ?? String(settings.tierCards[tier]?.context_window ?? "");
+		return windowDrafts[tier] ?? String(roles.cards[tier]?.context_window ?? "");
 	}
 
 	function commitWindow(tier: string): void {
@@ -98,18 +112,36 @@
 
 <ModelCatalog />
 
+{#if settings.hasModel && target !== null && settings.presets.length > 1}
+	<label class="field">
+		<span class="field-name">Editing</span>
+		<select
+			class="input"
+			aria-label="Model to edit"
+			value={target}
+			onchange={(e) => pickEdit(e.currentTarget.value)}
+		>
+			{#each settings.presets as name (name)}
+				<option value={name}>{modelLabel(name, settings.presetLabels)}</option>
+			{/each}
+		</select>
+	</label>
+	<p class="hint role">
+		Choosing a model here does not switch any chat or the model new chats use.
+	</p>
+{/if}
 {#if noRoles}
 	<p class="hint">
-		{modelLabel(settings.activePreset ?? "", settings.presetLabels)} runs on the Grok CLI, which
-		brings its own model, so there are no roles to set here.
+		{modelLabel(target ?? "", settings.presetLabels)} runs on the Grok CLI, which brings its own
+		model, so there are no roles to set here.
 	</p>
-{:else if settings.hasModel && settings.activePreset}
+{:else if settings.hasModel && target !== null}
 	<h3 class="heading">Build a team</h3>
 	<p class="hint">
 		Every turn has three roles. One model can fill all of them, and that is the normal setup. A
 		team gives each role its own model: worth it when a strong, costly model should plan while a
-		cheaper or local one does the bulk of the work. Edits here change the active model's entry in
-		your config.yaml and apply to new sessions.
+		cheaper or local one does the bulk of the work. Edits here change the entry of the model
+		chosen above in your config.yaml and apply to new sessions.
 	</p>
 	{#each TIERS as tier (tier)}
 		<label class="field">
@@ -134,7 +166,7 @@
 				disabled={settings.savingCredentialTier === tier}
 				onchange={(e) => saveTierCredential(tier, e.currentTarget.value)}
 			>
-				{#if settings.tierLoopback[tier]}
+				{#if roles.loopback[tier]}
 					<option value="">None (no key)</option>
 				{/if}
 				{#each settings.credentials as cred (cred.id)}
@@ -150,7 +182,7 @@
 		{#if credentialHost(selectedCredential(tier))}
 			<p class="hint host">{credentialHost(selectedCredential(tier))}</p>
 		{/if}
-		{#if settings.tierCards[tier]}
+		{#if roles.cards[tier]}
 			<label class="field">
 				<span class="field-name">Context</span>
 				<input
@@ -171,9 +203,9 @@
 				Tokens this role can hold before older turns are summarised. Refresh reads it from the
 				server when the server says what it serves.
 			</p>
-			<p class="hint role card">{cardLine(settings.tierCards[tier])}</p>
-			{#if cardNote(settings.tierCards[tier])}
-				<p class="hint role">{cardNote(settings.tierCards[tier])}</p>
+			<p class="hint role card">{cardLine(roles.cards[tier])}</p>
+			{#if cardNote(roles.cards[tier])}
+				<p class="hint role">{cardNote(roles.cards[tier])}</p>
 			{/if}
 		{/if}
 	{/each}

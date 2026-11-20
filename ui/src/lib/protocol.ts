@@ -921,6 +921,13 @@ export interface SwitchPreset extends ClientMessage {
   make_default?: boolean;
 }
 
+// TD-5241: ask for one model's roles, to edit it in Settings → Model.
+// Read-only. Answered with preset_roles.
+export interface GetPresetRoles extends ClientMessage {
+  type: "get_preset_roles";
+  name: string;
+}
+
 // TD-5240: ask whether each model on the picker can run right now. Sent
 // when the picker opens. Answered with preset_readiness.
 export interface CheckPresets extends ClientMessage {
@@ -1421,6 +1428,7 @@ export type ClientMessageUnion =
   | DuplicatePreset
   | SwitchPreset
   | CheckPresets
+  | GetPresetRoles
   | AddGrokPreset
   | SetPresetLabel
   | DeletePreset
@@ -2593,6 +2601,17 @@ export interface LocalServers extends DaemonEvent {
 }
 
 // TD-5172: reply to test_model.
+/** TD-5241: reply to get_preset_roles. The four maps setup_state carries
+ *  for the active model, for model `preset`. */
+export interface PresetRoles extends DaemonEvent {
+  type: "preset_roles";
+  preset: string;
+  tier_slugs?: Record<string, string | null>;
+  tier_credentials?: Record<string, string | null>;
+  tier_loopback?: Record<string, boolean>;
+  tier_cards?: Record<string, TierCard>;
+}
+
 /** TD-5240: whether one model can run right now. `detail` is one sentence
  *  for the picker's row, empty when ready. */
 export interface PresetReady {
@@ -3447,6 +3466,7 @@ export type DaemonEventUnion =
   | LocalServers
   | ModelTested
   | PresetReadiness
+  | PresetRoles
   | ConfigEditor
   | ConfigValueRejected
   | DiagnosticsReport

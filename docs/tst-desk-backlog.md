@@ -13664,3 +13664,33 @@ own error is still the authority. The loopback probe lives in
 `local_servers.py` beside the "Find models on this computer" scan and
 follows its rules. Class B entry in DECISIONS.md.
 
+---
+
+### TD-5241 — Settings → Model edits the model you choose
+
+**Size:** 2 · **Depends on:** TD-5237, TD-5239 · **Status:** Done
+
+"Build a team" edited the model new chats use and no other. To change a
+second model's context size or key, a person first had to make it the
+default, which also moved every new chat onto it.
+
+- [x] `get_preset_roles {name}` is answered with `preset_roles`: that
+      entry's `tier_slugs`, `tier_credentials`, `tier_loopback` and
+      `tier_cards`, equal to what `setup_state` carries once it is active;
+      empty for an entry with no roles; it changes nothing
+      (`test_preset_roles.py`).
+- [x] Settings → Model has an "Editing" chooser of every model, starting on
+      the active one; choosing another switches no chat and no default
+      (`model-edit.test.ts::Settings → Model`).
+- [x] Every save (a role's model, key, context size, and Refresh) names the
+      chosen model, and a context size is compared with the chosen model's
+      (`model-edit.test.ts::saving a role of the chosen model`).
+- [x] The chosen model's roles are shown only as the daemon sent them: none
+      until its answer arrives; read again after each write; let go when
+      the model is removed or becomes the active one.
+- [x] The UI walk lists the chooser (`e2e/census.json`).
+
+**Notes:** `setup_state` and its meaning are unchanged, so Settings → API
+keys and every older client still read the active model's roles from it.
+Class B entry in DECISIONS.md.
+
