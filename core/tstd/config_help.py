@@ -10,7 +10,17 @@ so a new key cannot ship without words for the editor.
 
 from __future__ import annotations
 
+from pydantic import BaseModel
+
 from .config_help_features import FEATURE_HELP
+from .preset_overrides import (
+    ClearToolResultsOverride,
+    CompactionOverride,
+    ComputerUseOverride,
+    ConsultOverride,
+    SessionOverride,
+    WorkflowOverride,
+)
 
 S = "seconds"
 TOKENS = "tokens"
@@ -109,6 +119,14 @@ _MODEL_HELP: dict[str, str | tuple[str, str]] = {
     "Preset.description": "One line under the label on the picker: what this model is for.",
     "Preset.picker": "Where the picker lists it: the main list, More models, or Teams.",
     "Preset.fast": "The model's Fast mode. With this set, the picker shows a Fast switch.",
+    "Preset.overrides": "Context settings for chats on this model, in place of the global "
+    "ones of the same names. Nothing here changes approvals, shell rules or keys.",
+    "PresetOverrides.session": "What a chat on this model starts with.",
+    "PresetOverrides.clear_tool_results": "Clear stale tool results, for this model.",
+    "PresetOverrides.compaction": "Compaction, for this model.",
+    "PresetOverrides.consult": "The consult tool, for this model.",
+    "PresetOverrides.workflow": "Workflow limits, for this model's server.",
+    "PresetOverrides.computer_use": "The image cap, for this model.",
     "TierConfig.slug": "The model id sent as model. Optional on a loopback endpoint, where "
     "it is read from /v1/models.",
     "TierConfig.base_url": "The OpenAI-compatible endpoint. A bound key's own host wins over this.",
@@ -183,6 +201,20 @@ FIELD_HELP: dict[str, tuple[str, str]] = {
     for key, value in (_MODEL_HELP | FEATURE_HELP).items()
 }
 
+#: A model's override of a global key (TD-5234) says what that key says.
+OVERRIDE_OF: dict[str, tuple[type[BaseModel], str]] = {
+    "SessionOverride": (SessionOverride, "SessionConfig"),
+    "ClearToolResultsOverride": (ClearToolResultsOverride, "ClearToolResultsConfig"),
+    "CompactionOverride": (CompactionOverride, "CompactionConfig"),
+    "ConsultOverride": (ConsultOverride, "ConsultConfig"),
+    "WorkflowOverride": (WorkflowOverride, "WorkflowConfig"),
+    "ComputerUseOverride": (ComputerUseOverride, "ComputerUseConfig"),
+}
+for _name, (_model, _base) in OVERRIDE_OF.items():
+    for _field in _model.model_fields:
+        _text, _unit = FIELD_HELP[f"{_base}.{_field}"]
+        FIELD_HELP[f"{_name}.{_field}"] = (f"{_text} Empty keeps the global value.", _unit)
+
 #: Values the generic editor never shows or writes: names only, with where
 #: each value lives. Their own page stores a value in the keychain (TD-5110).
 SECRET_FIELDS: dict[str, str] = {
@@ -225,7 +257,7 @@ NOT_RESETTABLE: frozenset[str] = frozenset({"ModelConfig.active_preset"})
 
 #: Long text gets a multi-line box.
 MULTILINE_FIELDS: frozenset[str] = frozenset(
-    {"CompactionConfig.summary_prompt", "HookEntry.command"}
+    {"CompactionConfig.summary_prompt", "CompactionOverride.summary_prompt", "HookEntry.command"}
 )
 
 #: The fields a new entry's form asks for, when not just its required ones.

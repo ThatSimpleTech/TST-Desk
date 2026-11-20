@@ -13391,3 +13391,53 @@ Settings → Model, and going back meant typing the old values in again.
 **Notes:** "Rename" is the label only. The key is the id that
 `sessions.json`, scheduled-job pins (TD-3812) and
 `computer_use.local_worker_preset` store. Class B entry in DECISIONS.md.
+
+---
+
+### TD-5234 — A model carries its own context settings
+
+**Size:** 5 · **Depends on:** TD-1721, TD-5237 · **Status:** Done
+**Approach signed off:** 2026-11-20 (owner, relayed by the coordinating session).
+
+A catalog entry said which model each role uses and how big its window is.
+The settings that go with a model's size and speed were global: how
+compaction writes its summary, when stale tool results are cleared, how
+many workers run at once, the effort a chat starts on. Moving between a
+small local model and a large hosted one meant editing them by hand.
+
+- [x] An entry may carry `overrides` with six sections (`session`,
+      `clear_tool_results`, `compaction`, `consult`, `workflow`,
+      `computer_use`); every key has its global key's type and limits
+      (`test_preset_overrides.py::TestTheWhitelist`).
+- [x] Any other section or key, or a value outside the limits, is an error
+      at load that names the entry; approvals, shell rules, MCP servers,
+      hooks, remote attach, notifications, autonomy, keys and the engine
+      cannot be set per model (`test_anything_else_is_an_error_at_load`,
+      `test_a_value_outside_the_global_keys_limits_is_an_error_at_load`).
+- [x] `effective_config` is pure: a key the entry sets wins, every other
+      key keeps its global value, a list replaces whole, and an entry with
+      no `overrides` gives the snapshot a session took before
+      (`TestEffectiveConfig`).
+- [x] A chat opened on an entry, switched to it, or revived on it runs with
+      its settings; a Settings change does not rewrite an open chat
+      (`TestAChatGetsThem`, `TestRevive`).
+- [x] The turn after a switch hands its tools the switched settings
+      (`test_the_next_turn_runs_on_the_switched_settings`).
+- [x] Switching a chat to an entry that names `default_effort` or
+      `default_ultracode` sets the chat's to it; an entry that names
+      neither leaves the chat's own
+      (`test_switching_a_chat_switches_its_settings_and_its_effort`,
+      `test_an_entry_that_names_no_effort_leaves_the_chats_own`).
+- [x] A copy (TD-5237) carries its source's `overrides`
+      (`test_a_copy_carries_its_sources_overrides`).
+- [x] Settings → Configuration shows the new keys with words
+      (`test_config_schema.py`), and both guides document them
+      (`test_docs_config_reference.py`, `test_docs_models_guide.py`).
+
+**Notes:** No protocol change. `project_context` and `embeddings` are left
+global: the first is read per workspace, not per chat. The compaction
+trigger itself is a constant, not a key; a role's `context_window` is what
+moves it, and an entry already carries that. Class B entry in DECISIONS.md.
+TD-5239 adds the engine to the same resolver, and refuses `overrides` on an
+entry with no model of its own.
+

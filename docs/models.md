@@ -128,6 +128,47 @@ buttons:
   is refused when another entry reuses part of this one (an anchor), or when
   `computer_use.local_worker_preset` names it; the message says which.
 
+## Settings that travel with a model
+
+Some settings suit a model's size and speed rather than your taste: how
+compaction writes its summary, when old tool results are cleared, how many
+workers a server can serve at once, the effort a chat starts on. Put them
+under `overrides` in the model's entry and they apply to every chat on
+that model, in place of the global values. Switching a chat to the model
+switches them too.
+
+<!-- verify: model -->
+```yaml
+presets:
+  small-local:
+    label: Small local
+    description: A small model on this computer
+    brain: &small
+      base_url: http://127.0.0.1:8000/v1
+      context_window: 32768
+      max_output_tokens: 4096
+      input_price: 0.0
+      output_price: 0.0
+      cache_read_price: 0.0
+    worker: *small
+    validator: *small
+    overrides:
+      session:
+        default_effort: low
+      compaction:
+        summary: extractive
+      clear_tool_results:
+        keep_recent_tool_results: 2
+      workflow:
+        max_parallel: 1
+```
+
+Only the keys you write change; the rest keep their global values. The
+sections and keys that may appear are listed under `overrides` in
+[configuration.md](configuration.md#a-preset). Approvals, shell rules,
+MCP servers, hooks and keys are not among them: choosing a model never
+changes what the agent is allowed to do.
+
 ## A model on your own computer
 
 Any server that speaks the OpenAI chat API works, such as llama.cpp's
