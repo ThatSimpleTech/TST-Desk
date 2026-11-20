@@ -14081,3 +14081,40 @@ test would have said so.
 **Notes:** Tests only; no product code changed. The fuller step in the
 research note, deriving the writer's keys from the model, is not taken.
 
+---
+
+### TD-5278 — The worktree fix holds for a symlinked data dir, and git's own files stay read-only
+
+**Size:** 2 · **Depends on:** TD-5261 · **Status:** Done
+
+Checking TD-5261 against the research note written after it found one hole
+in the fix and two things it had not shown. The list of hidden paths holds
+a symlinked directory under both its names; TD-5261 compared the names as
+written, so the unresolved one was still masked last, over the workspace.
+A data dir reached through a symlink is common (a home directory on
+another volume). And nothing yet showed that a worktree session's git
+metadata cannot be written from inside, which matters more than it looks:
+a command that can write the worktree's admin directory can plant a
+setting that the person's next `git status` on the host runs.
+
+- [x] A hidden directory that contains the workspace is found by its
+      resolved path and masked once, whichever name the daemon knows it by
+      (`test_a_symlinked_hidden_dir_around_the_workspace_is_masked_once`,
+      and with real bubblewrap
+      `test_a_worktree_under_a_symlinked_hidden_dir_still_works`).
+- [x] Once the workspace is bound into it, that mask is remounted
+      read-only: a command cannot put a file beside the workspace or change
+      the mask's mode (same real test).
+- [x] From inside a worktree session, with real git and real bubblewrap,
+      the worktree's admin directory, its `commondir`, a `config.worktree`,
+      the repository's `config` and its hooks cannot be written, `git add`
+      fails, the repository's metadata is byte-identical afterwards, and the
+      host's git sees an ordinary uncommitted change
+      (`test_a_worktrees_git_metadata_cannot_be_written_from_inside`).
+
+**Notes:** Whether a command inside the sandbox can make a user namespace
+of its own and undo a read-only bind depends on the kernel's policy; on
+this machine it cannot. Turning that off in bubblewrap itself
+(`--disable-userns`) needs a version check and belongs with the sandbox
+backend interface (TD-5264).
+

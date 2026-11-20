@@ -123,11 +123,37 @@ class TestPlan:
         bind = at("--bind", str(ws), str(ws))
         inside = at("--perms", "0000", "--tmpfs", str(ws / "secrets"))
         elsewhere = at("--perms", "0000", "--tmpfs", str(fake_home / ".ssh"))
+        closed = at("--remount-ro", str(data))
         # Around the workspace: first, and passable. Inside it or apart: last, and closed.
-        assert around < bind < inside
+        assert around < bind < closed < inside
         assert bind < elsewhere
-        # Masked once, never a second time over the workspace.
-        assert argv.count(str(data)) == 1
+        # Once as the passable mask and once to close it to writes (TD-5278):
+        # never a second mask over the workspace.
+        assert argv.count(str(data)) == 2
+        closed_masks = [
+            argv[i + 3]
+            for i in range(len(argv) - 3)
+            if argv[i : i + 3] == ["--perms", "0000", "--tmpfs"]
+        ]
+        assert str(data) not in closed_masks
+
+    def test_a_symlinked_hidden_dir_around_the_workspace_is_masked_once(
+        self, tmp_path: Path
+    ) -> None:
+        """TD-5278: the hidden list holds such a directory under both names."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        real_data = (tmp_path / "disk" / "data").resolve()
+        (real_data / "worktrees" / "wt1").mkdir(parents=True)
+        link = tmp_path / "data-link"
+        link.symlink_to(real_data)
+        # The daemon knows its data dir by the link; the workspace is under it.
+        workspace = link / "worktrees" / "wt1"
+        argv = build_plan(str(workspace), "true", ON, home=fake_home, extra_hidden=[link]).argv
+        masks = [argv[i + 1] for i, arg in enumerate(argv) if arg == "--tmpfs"]
+        assert masks.count(str(real_data)) == 1
+        assert str(link) not in masks
+        assert argv.index(str(real_data)) < argv.index("--bind")
 
     def test_masks_come_after_the_workspace_bind(self, fake_home: Path) -> None:
         # The workspace is the home directory itself: the masks must still win.
@@ -358,6 +384,98 @@ class TestRealSandbox:
         finally:
             shutil.rmtree(data / "worktrees", ignore_errors=True)
             (data / "sessions.json").unlink(missing_ok=True)
+
+    async def test_a_worktree_under_a_symlinked_hidden_dir_still_works(self) -> None:
+        """TD-5278: the mask is laid once, under the directory's real name."""
+        # Not under /tmp: the sandbox gives a command a /tmp of its own, and
+        # the link has to be there for the command to come in through it.
+        host_dir = Path(tempfile.mkdtemp(dir="/var/tmp"))
+        try:
+            real_data = host_dir / "disk" / "data"
+            ws = real_data / "worktrees" / "wt1"
+            ws.mkdir(parents=True)
+            (real_data / "secret.txt").write_text("DATA-DIR-SECRET", encoding="utf-8")
+            link = host_dir / "data-link"
+            link.symlink_to(real_data)
+            section = SandboxSection(enabled=True, hidden_paths=[str(link)])
+            out = await run_shell(
+                _session(link / "worktrees" / "wt1", section),
+                "echo in > made.txt && cat made.txt; "
+                f"cat {link}/secret.txt 2>/dev/null || echo NO-DATA; "
+                f"touch {real_data}/planted 2>/dev/null || echo NO-PLANT; "
+                f"chmod 755 {real_data} 2>/dev/null || echo NO-CHMOD",
+            )
+            assert (ws / "made.txt").read_text() == "in\n", out
+            assert "NO-DATA" in out and "DATA-DIR-SECRET" not in out
+            # The mask cannot be written into or opened up from inside.
+            assert "NO-PLANT" in out and "NO-CHMOD" in out
+            assert not (real_data / "planted").exists()
+        finally:
+            shutil.rmtree(host_dir, ignore_errors=True)
+
+    @pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+    async def test_a_worktrees_git_metadata_cannot_be_written_from_inside(
+        self, tmp_path: Path
+    ) -> None:
+        """TD-5278: what git reads later, on the host, stays as it was.
+
+        A writable admin dir is enough for a sandboxed command to plant a
+        ``core.fsmonitor`` or redirect ``commondir``; the person's next
+        ``git status`` outside the sandbox would then run it.
+        """
+        from tstd.logging import user_data_dir
+
+        def git(*args: str, cwd: Path) -> str:
+            done = subprocess.run(
+                ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            return done.stdout.strip()
+
+        repo = tmp_path / "project"
+        repo.mkdir()
+        git("init", "-q", "-b", "main", cwd=repo)
+        (repo / "a.txt").write_text("one\n", encoding="utf-8")
+        git("add", "a.txt", cwd=repo)
+        git("commit", "-q", "-m", "first", cwd=repo)
+        ws = user_data_dir() / "worktrees" / "wt-git"
+        ws.parent.mkdir(parents=True, exist_ok=True)
+        git("worktree", "add", "-q", "-b", "tst/wt/x", str(ws), cwd=repo)
+        admin = Path(git("rev-parse", "--absolute-git-dir", cwd=ws))
+        common = repo / ".git"
+        assert admin.parent == common / "worktrees"
+
+        def snapshot() -> dict[str, bytes]:
+            return {
+                str(path.relative_to(common)): path.read_bytes()
+                for path in sorted(common.rglob("*"))
+                if path.is_file()
+            }
+
+        before = snapshot()
+        try:
+            out = await run_shell(
+                _session(ws, ON),
+                "git status --short >/dev/null 2>&1 && echo STATUS-OK || echo STATUS-FAILED; "
+                "echo two > a.txt; "
+                f"echo '[core]' >> {admin}/config.worktree 2>/dev/null || echo NO-WT-CONFIG; "
+                f"echo /tmp/elsewhere > {admin}/commondir 2>/dev/null || echo NO-COMMONDIR; "
+                f"echo x >> {common}/config 2>/dev/null || echo NO-CONFIG; "
+                f"echo x > {common}/hooks/pre-commit 2>/dev/null || echo NO-HOOK; "
+                "git add a.txt 2>/dev/null && echo ADDED || echo NO-ADD",
+            )
+            # The work itself lands in the worktree.
+            assert (ws / "a.txt").read_text() == "two\n"
+            for refused in ("NO-WT-CONFIG", "NO-COMMONDIR", "NO-CONFIG", "NO-HOOK", "NO-ADD"):
+                assert refused in out, out
+            assert snapshot() == before, "git metadata changed from inside the sandbox"
+            # And the host's git still sees an ordinary, uncommitted change.
+            assert git("status", "--short", cwd=ws).strip() == "M a.txt"
+        finally:
+            shutil.rmtree(user_data_dir() / "worktrees", ignore_errors=True)
 
     async def test_timeout_kills_the_sandboxed_tree(self, tmp_path: Path) -> None:
         ws = tmp_path / "ws"
