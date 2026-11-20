@@ -13957,3 +13957,40 @@ with real servers on macOS, Windows and Linux before it ships, because a
 list that is one variable short stops a server starting; it is a separate
 story. Sandboxing the server process is the containment step.
 
+---
+
+### TD-5268 — An approval card says which child is asking
+
+**Size:** 3 · **Depends on:** TD-4602, TD-5195, TD-803 · **Status:** Done
+
+A `delegate` or `workflow` child's call parks on its parent's session,
+and the card read as if the session's own agent had asked: nothing said
+which of several workers wanted to run a command, that a path was in a
+child's own worktree, or that the request came from a child at all. A
+child's card also came back on every reattach, because the child's call
+never reports a result on the session's log.
+
+- [x] `approval_request` carries an optional `worker`: the child's id,
+      the call that started it, `delegate` or `workflow`, its kind, its
+      name when it has one, a workflow task's number and label, the first
+      300 characters of its task, its tier's name, and its worktree's
+      branch (`test_approval_worker.py::TestTheCard`).
+- [x] A child's `summary` starts with who is asking, so the card title,
+      the OS banner, the timeline and every notify channel say it, an
+      older phone build included (`TestTheSummary`).
+- [x] The session's own cards are unchanged, and an event without the
+      field still parses.
+- [x] No Always allow is offered on a named worker's card, or for a path
+      tool in a child's own worktree: the saved rule would not do what it
+      says (`TestAlwaysAllow`).
+- [x] The card shows a line saying which child is asking, on what, and
+      when its paths are in a copy; the tick box says the rule is for the
+      main agent and every worker (`approval-worker.test.ts`).
+- [x] A child's card goes when the `delegate` or `workflow` call that
+      started it returns (`settledBy`).
+
+**Notes:** The minimal step from the research note. Not done here: grouping
+a worker's cards, keeping keyboard focus on the card being read when a
+second arrives, and an audit row for a child's own tool calls. Class B
+entry in DECISIONS.md.
+

@@ -2595,6 +2595,32 @@ class PolicyRuleSummary(BaseModel):
     exact: str | None = None
 
 
+class ApprovalWorker(BaseModel):
+    """Which child is asking, on a child's approval card (TD-5268).
+
+    A ``delegate`` or ``workflow`` child's call parks on its parent's
+    session, and the card used to read as if the session's own agent had
+    asked. ``id`` is the prefix of the child's tool-call ids;
+    ``parent_call_id`` is the ``delegate`` or ``workflow`` call that started
+    it, so a window can drop the card when that call returns. ``tier`` is
+    the tier's name, never a model slug.
+    """
+
+    id: str
+    parent_call_id: str
+    via: Literal["delegate", "workflow"]
+    kind: Literal["worker", "research", "check"]
+    agent: str | None = None
+    # A workflow task's number, from 1. None for a ``delegate`` child.
+    index: int | None = None
+    label: str = ""
+    task: str = ""
+    tier: str = ""
+    # Set when the child works in a worktree of its own: the paths on the
+    # card are in that copy, not in the session's folder.
+    worktree_branch: str | None = None
+
+
 class ApprovalRequest(DaemonEvent):
     """A request for user approval of a tool call (TD-802).
 
@@ -2620,6 +2646,9 @@ class ApprovalRequest(DaemonEvent):
     summary: str
     reason: str
     proposed_always_allow: PolicyRuleSummary | None = None
+    # TD-5268: the child that is asking. None: the session's own agent.
+    # Additive; an older viewer reads the same thing in ``summary``.
+    worker: ApprovalWorker | None = None
 
 
 class QuestionOption(BaseModel):
