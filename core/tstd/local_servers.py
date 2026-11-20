@@ -75,3 +75,39 @@ async def scan_local_servers(
         if reply.error is None and reply.models
     ]
     return LocalServers(servers=found, checked=[url for _name, url in wanted])
+
+
+async def loopback_answers(
+    urls: Sequence[str], *, client: httpx.AsyncClient | None = None
+) -> dict[str, bool]:
+    """Whether a server answers at each loopback URL (TD-5240).
+
+    The picker's readiness check for a model served on this computer. The
+    same three rules as the scan above: asked only when the person opens
+    the picker, loopback only with no key (an off-box URL is not asked and
+    reads as answering: it is not this function's to judge), and nothing
+    written. Any HTTP reply counts, a refused connection or a timeout does
+    not: this says a server is there, not that the model will run.
+    """
+    wanted = list(dict.fromkeys(url.strip().rstrip("/") for url in urls))
+    local = [url for url in wanted if is_loopback_url(url)]
+    found = {url: True for url in wanted}
+    if not local:
+        return found
+    owned = client is None
+    http = client or httpx.AsyncClient(timeout=SCAN_TIMEOUT, transport=direct_transport(local[0]))
+
+    async def _ask(url: str) -> bool:
+        try:
+            await http.get(f"{url}/models", headers={"Accept": "application/json"})
+        except httpx.HTTPError:
+            return False
+        return True
+
+    try:
+        answers = await asyncio.gather(*(_ask(url) for url in local))
+    finally:
+        if owned:
+            await http.aclose()
+    found.update(dict(zip(local, answers, strict=True)))
+    return found

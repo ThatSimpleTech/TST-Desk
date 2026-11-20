@@ -161,7 +161,7 @@ from .keychain import (
     store_api_key,
 )
 from .line_comments import LineCommentError, build_comments_turn
-from .local_servers import scan_local_servers
+from .local_servers import loopback_answers, scan_local_servers
 from .local_worker import (
     effective_tier,
     last_cu_surface,
@@ -232,6 +232,7 @@ from .preset_apply import (
     no_model_refusal,
     preset_overrides,
 )
+from .preset_ready import check_presets
 from .preset_write import (
     add_grok_preset,
     delete_preset,
@@ -257,6 +258,7 @@ from .protocol import (
     CancelPairing,
     CharterDocument,
     CheckCuPermissions,
+    CheckPresets,
     ClientMessageT,
     CloseWorktree,
     CommandEntry,
@@ -362,6 +364,7 @@ from .protocol import (
     PairingCompleted,
     ParseJob,
     PolicyRules,
+    PresetReadiness,
     PreviewRestoreFiles,
     ReadArtifactChunk,
     RefreshModelCards,
@@ -3706,6 +3709,17 @@ class Daemon:
             return await self._handle_set_session_preset(msg)
         if isinstance(msg, SwitchPreset):
             return await self._handle_switch_preset(msg)
+        if isinstance(msg, CheckPresets):
+            # TD-5240: keys by presence, this computer's servers by a keyless
+            # ask, the Grok CLI by its path. Nothing leaves the machine.
+            _grok_path, grok_found = await asyncio.to_thread(_probe_grok, self.config.engine.binary)
+            readiness = await check_presets(
+                self.config,
+                key_stored=self._credential_is_stored,
+                answers=loopback_answers,
+                grok_found=grok_found,
+            )
+            return PresetReadiness(rows=readiness).model_dump_json()
 
         if isinstance(msg, TrustWorkspaceConfig):
             return await self._handle_trust_workspace_config(msg)

@@ -305,6 +305,12 @@ key per role.
 
 ## When something goes wrong
 
+Each time the picker opens, TST Desk checks what it can without sending a
+key or contacting a provider, and says so under a model's name: **No key
+is stored for …**, **Nothing is answering at 127.0.0.1:…** for a model
+served on this computer, or **The Grok CLI was not found**. It is a
+warning, not a lock: the model can still be picked.
+
 | You see | What to do |
 |---|---|
 | "No model is set up yet" | Add one: picker → **Add a model**, or Settings → Models. |

@@ -106,6 +106,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "endpoint_models", // TD-5172
   "local_servers", // TD-5180
   "model_tested", // TD-5172
+  "preset_readiness", // TD-5240
   "config_editor", // TD-5203
   "config_value_rejected", // TD-5203
   "diagnostics_report", // TD-1104 doctor

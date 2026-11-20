@@ -889,6 +889,19 @@ class SetSessionPreset(ClientMessage):
     name: str = Field(min_length=1)
 
 
+class CheckPresets(ClientMessage):
+    """Ask whether each model on the picker can run right now (TD-5240).
+
+    Sent when the person opens the picker. The daemon looks for each bound
+    key in the keychain (presence only), asks each server on this computer
+    whether it is there, and looks for the Grok CLI for a Grok entry. No
+    key is sent anywhere and no provider is contacted. Answered with
+    ``preset_readiness``.
+    """
+
+    type: Literal["check_presets"] = "check_presets"
+
+
 class SwitchPreset(ClientMessage):
     """One switch: this chat, the model new chats use, or both (TD-5235).
 
@@ -4136,6 +4149,27 @@ class ModelTested(DaemonEvent):
     detail: str = ""
 
 
+class PresetReady(BaseModel):
+    """Whether one catalog entry can run right now (TD-5240)."""
+
+    preset: str
+    # ``no_grok``: on the Grok engine and the CLI is not found. ``no_key``:
+    # a role's key is not in the keychain. ``server_down``: a role is served
+    # on this computer and nothing answers there.
+    status: Literal["ready", "no_key", "server_down", "no_grok"]
+    # One sentence for the picker's row. Empty when ready. Never a key, and
+    # of a URL only the host and port.
+    detail: str = ""
+
+
+class PresetReadiness(DaemonEvent):
+    """Reply to ``check_presets`` (TD-5240): one row per catalog entry."""
+
+    type: Literal["preset_readiness"] = "preset_readiness"
+    seq: int = 1
+    rows: list[PresetReady] = Field(default_factory=list)
+
+
 class ConfigEditor(DaemonEvent):
     """Settings → Configuration's view of config.yaml (TD-5203).
 
@@ -4920,6 +4954,7 @@ ClientMessageT = Annotated[
     | SetPlan
     | SetSessionPreset
     | SwitchPreset
+    | CheckPresets
     | GetInstructionStack
     | GetHooks
     | ListInstructions
@@ -5093,6 +5128,7 @@ DaemonEventT = Annotated[
     | EndpointModels
     | LocalServers
     | ModelTested
+    | PresetReadiness
     | ConfigEditor
     | ConfigValueRejected
     | DiagnosticsReport
@@ -5179,6 +5215,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_plan",
         "set_session_preset",
         "switch_preset",
+        "check_presets",
         "get_instruction_stack",
         "get_hooks",
         "list_instructions",
@@ -5352,6 +5389,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "endpoint_models",
         "local_servers",
         "model_tested",
+        "preset_readiness",
         "config_editor",
         "config_value_rejected",
         "diagnostics_report",
