@@ -7,9 +7,14 @@
 	import { grok, setGrokMode } from "../../grok.svelte.js";
 	import { session, setPlan } from "../../session-status.svelte.js";
 	import { settings } from "../../settings.svelte.js";
+	import { newChatEngine } from "../../model-engine";
 	import ModelPicker from "./ModelPicker.svelte";
 
-	const grokEngine = $derived((session.engine ?? settings.engine) === "grok");
+	// Before a chat reports its engine: the one a new chat would get (TD-5239).
+	const grokEngine = $derived(
+		(session.engine ??
+			newChatEngine(settings.activePreset, settings.presetEngines, settings.engine)) === "grok",
+	);
 
 	const PLAN_HINT =
 		"Plan mode: the agent looks around without changing anything, then shows you a plan. Nothing runs until you approve it.";

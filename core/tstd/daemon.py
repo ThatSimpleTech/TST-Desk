@@ -224,7 +224,12 @@ from .policy import (
     stricter_rule,
 )
 from .port_file import release_port_file
-from .preset_apply import effective_config, preset_overrides
+from .preset_apply import (
+    effective_config,
+    engine_refusal,
+    no_model_refusal,
+    preset_overrides,
+)
 from .preset_write import delete_preset, duplicate_preset, save_preset_label
 from .protocol import (
     AddModel,
@@ -478,7 +483,7 @@ from .remote_devices import (
     pairing_code_event,
 )
 from .rewind_handlers import preview_restore, restore_files
-from .router import TIER_NAMES, TierRouter
+from .router import TierRouter
 from .scheduler.calendar_path import CalendarPathError, require_calendar_file
 from .scheduler.chain import require_chain
 from .scheduler.chat_source import SessionScheduleSource, session_schedule_source
@@ -743,7 +748,7 @@ def _snapshot_slugs(config: ModelConfig) -> dict[str, dict[str, str | None]]:
     this cannot be derived from ``self.config`` later (TD-1703).
     """
     return {
-        name: {tier: getattr(preset, tier).slug for tier in TIER_NAMES}
+        name: {tier: cfg.slug for tier, cfg in preset.tier_map().items()}
         for name, preset in config.presets.items()
     }
 
@@ -1455,14 +1460,16 @@ class Daemon:
         self._clients[cache_key] = handle
         return handle
 
-    async def _ensure_provider(self) -> ProviderLike:
+    async def _ensure_provider(self, config: ModelConfig | None = None) -> ProviderLike:
         """Create the shared provider client on first use.
 
         Distill and doctor stay on the active brain. Session turns pass
         the effective tier into ``get_provider`` so a CU-heavy worker
-        can land on a different URL (TD-3903).
+        can land on a different URL (TD-3903). *config* is the catalog
+        pointed at another entry, for distill when the active one has no
+        model of its own (TD-5239).
         """
-        return await self._client_for(self.config.tier("brain"))
+        return await self._client_for((config or self.config).tier("brain"))
 
     async def _setup_state_event(self) -> SetupState:
         """Current onboarding state (TD-1101): key presence + preset choice.
@@ -1476,10 +1483,15 @@ class Daemon:
         credentials = await self._credential_summaries()
         has_api_key = any(item.stored for item in credentials)
         # An empty catalog is a first run, not an error (TD-5172).
-        tiers = self.config.tiers() if self.config.has_model() else {}
+        # Nor is an active entry that is the Grok engine with no model of its
+        # own (TD-5239): Settings shows no roles for it, not the stand-ins.
+        active = self.config.presets.get(self.config.active_preset)
+        tiers = self.config.tiers() if active is not None and active.has_tiers else {}
         grok_path, grok_ok = _probe_grok(self.config.engine.binary)
         engine_kind = self.config.engine.kind
-        key_required = self.config.requires_api_key() and engine_kind != "grok"
+        # What a new chat would run on: the active entry's engine, else the global one.
+        new_chat_engine = self.config.preset_engine(self.config.active_preset)
+        key_required = self.config.requires_api_key() and new_chat_engine != "grok"
         excluded_by_server = {row.server_id: row.excluded for row in self._mcp.doctor_rows()}
         return SetupState(
             seq=1,
@@ -1502,6 +1514,9 @@ class Daemon:
             team_presets=sorted(
                 name for name, p in self.config.presets.items() if p.picker == "team"
             ),
+            preset_engines={
+                name: p.engine for name, p in sorted(self.config.presets.items()) if p.engine
+            },
             has_model=self.config.has_model(),
             skip_all_approvals=self.skip_all_approvals,
             load_global_memory=self.load_global_memory,
@@ -1920,8 +1935,7 @@ class Daemon:
             )
         bound: list[tuple[str, str]] = []
         for preset_name, preset in self.config.presets.items():
-            for tier_name in ("brain", "worker", "validator"):
-                tier = getattr(preset, tier_name)
+            for tier_name, tier in preset.tier_map().items():
                 if tier.credential == cred_id:
                     bound.append((preset_name, tier_name))
         try:
@@ -1934,8 +1948,8 @@ class Daemon:
                 raise
         if cred_id in self.config.credentials:
             delete_credential_entry(cred_id, self.config_path)
-        for preset_name, tier_name in bound:
-            save_tier_credential(preset_name, tier_name, None, self.config_path)
+        for bound_preset, bound_tier in bound:
+            save_tier_credential(bound_preset, bound_tier, None, self.config_path)
         self._reload_user_config()
 
     def _cu_permissions_session(self, event: DaemonEvent) -> str | None:
@@ -2189,7 +2203,16 @@ class Daemon:
         name = preset or self.config.active_preset
         if name not in self.config.presets:
             return ModelTested(preset=name, ok=False, detail="No model is set up yet.")
-        tier_cfg = apply_credential_host(self.config, self.config.presets[name].brain)
+        brain = self.config.presets[name].brain
+        if brain is None:
+            # TD-5239: a Grok entry with no model of its own.
+            return ModelTested(
+                preset=name,
+                ok=False,
+                detail="This one runs on the Grok CLI, which brings its own model. "
+                "There is no model here to test.",
+            )
+        tier_cfg = apply_credential_host(self.config, brain)
         try:
             client = await self._client_for(tier_cfg)
             response = await client.chat_completion(
@@ -2230,6 +2253,14 @@ class Daemon:
         transport failure means we never got far enough to judge the key.
         """
         fix_key = "Re-enter a valid key: title-bar gear → Provider API key."
+        active = self.config.presets.get(self.config.active_preset)
+        if active is not None and not active.has_tiers:
+            # TD-5239: the Grok CLI brings its own model and sign-in.
+            why = "not checked: the active model runs on the Grok CLI"
+            return [
+                DiagnosticCheck(name="api_key", status="skip", detail=why),
+                DiagnosticCheck(name="provider", status="skip", detail=why),
+            ]
         try:
             err = await self._provider_probe()
         except KeychainError as e:
@@ -4902,10 +4933,24 @@ class Daemon:
         """Park a proposal and emit ``memory_proposal`` when memory changed."""
         if session.turn_in_flight or completed_turn_count(session) < 1:
             return
+        # TD-5239: distill runs on TST Desk's own client whatever engine the
+        # chat used. With the Grok engine active and no model of its own, it
+        # takes the first entry that has one; with none, there is nothing to
+        # run it on and it is skipped.
+        native = self.config.native_default()
+        if native is None:
+            log.info(
+                "distill skipped; no model to run it on",
+                extra={"extra_fields": {"session_id": session.id}},
+            )
+            return
+        config = self.config
+        if native != config.active_preset:
+            config = config.model_copy(update={"active_preset": native})
         try:
-            provider = await self._ensure_provider()
+            provider = await self._ensure_provider(config)
             distill_provider = provider if flight is None else SignalingProvider(provider, flight)
-            emitted = await distill_if_due(session, distill_provider, self.config)
+            emitted = await distill_if_due(session, distill_provider, config)
         except Exception as exc:
             log.warning(
                 "distill skipped; provider failed",
@@ -5123,6 +5168,15 @@ class Daemon:
         the session uses the window's current choice. Neither is written to
         Settings.
         """
+        # TD-5239: the entry names the engine unless the caller did. Checked
+        # before the session exists, so a refusal leaves nothing behind.
+        chosen = self._resolved_preset(self.config.active_preset if preset is None else preset)
+        chosen_engine = self.config.preset_engine(chosen) if engine is None else engine
+        # A caller's engine wins over the entry's (a scheduled pin, TD-3812),
+        # except that TST Desk's own loop cannot run an entry with no model.
+        refusal = no_model_refusal(self.config, chosen, chosen_engine)
+        if refusal is not None:
+            return build_error("engine_mismatch", refusal)
         # Memory templates (TD-2101): plant .tst/memory/ on every session
         # start so an already-opened workspace still gets the files. Never
         # overwrites; config scaffold stays OpenWorkspace-only.
@@ -5143,8 +5197,8 @@ class Daemon:
         await asyncio.to_thread(scaffold_workspace_memory, sess.workspace_path)
         # A scheduled pin names the loop for this session only. The window's
         # active preset and engine stay where Settings left them.
-        sess.engine = self.config.engine.kind if engine is None else engine
-        self._bind_session_preset(sess, self.config.active_preset if preset is None else preset)
+        sess.engine = chosen_engine
+        self._bind_session_preset(sess, chosen)
         await self._session_store.upsert(
             sess.id,
             workspace_path,
@@ -5309,6 +5363,10 @@ class Daemon:
                 "unknown_preset",
                 f"Unknown preset {msg.name!r}; declared: {', '.join(sorted(self.config.presets))}",
             )
+        # TD-5239: a chat keeps the engine it started on.
+        refusal = engine_refusal(self.config, msg.name, found.engine)
+        if refusal is not None:
+            return build_error("engine_mismatch", refusal, session_id=found.id)
         self._bind_session_preset(found, msg.name)
         # TD-5234: one click sets everything the model defines. An effort or
         # Ultracode default the entry itself names applies to this chat now;
@@ -6687,7 +6745,7 @@ class Daemon:
             await notify_autonomy_stop(self.config, message)
 
         sess.autonomy_notify = _notify
-        sess.engine = self.config.engine.kind
+        sess.engine = self.config.preset_engine(self.config.active_preset)
         self._bind_session_preset(sess, self.config.active_preset)
         await self._session_store.upsert(
             sess.id, str(workspace), sess.state, engine=sess.engine, preset=sess.preset

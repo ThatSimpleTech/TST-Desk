@@ -321,7 +321,9 @@ def _tier_at(config: ModelConfig, path: list[PathPart]) -> TierConfig | None:
     preset = config.presets.get(path[1])
     if preset is None:
         return None
-    tier: TierConfig = getattr(preset, str(path[2]))
+    tier: TierConfig | None = getattr(preset, str(path[2]))
+    if tier is None:
+        return None
     if path[3:4] == ["fallbacks"] and len(path) == 5 and isinstance(path[4], int):
         return tier.fallbacks[path[4]] if path[4] < len(tier.fallbacks) else None
     return tier if len(path) == 3 else None

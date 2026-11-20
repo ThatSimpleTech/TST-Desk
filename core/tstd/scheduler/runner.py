@@ -688,4 +688,6 @@ def _pin_block_code(summary: str) -> str:
     """Stable code for a pin that cannot start. The summary stays the receipt."""
     if summary == "grok engine is unavailable":
         return "engine_unavailable"
+    if summary.endswith("it runs only on the grok engine"):
+        return "engine_mismatch"
     return "preset_missing"

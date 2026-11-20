@@ -145,8 +145,12 @@ def targets(config: ModelConfig, preset: str, tier: str | None = None) -> list[C
         raise ConfigError(f"Unknown tier {tier!r}; tiers are: {', '.join(TIER_NAMES)}")
     names = [tier] if tier is not None else list(TIER_NAMES)
     found: list[CardTarget] = []
+    # An ``engine: grok`` entry may name no model (TD-5239): nothing to refresh.
+    own = entry.tier_map()
     for name in names:
-        tier_cfg: TierConfig = getattr(entry, name)
+        if name not in own:
+            continue
+        tier_cfg: TierConfig = own[name]
         found.append(CardTarget(preset, name, None, tier_cfg))
         found.extend(
             CardTarget(preset, name, index, backup)

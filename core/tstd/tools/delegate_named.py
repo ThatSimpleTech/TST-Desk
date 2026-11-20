@@ -73,7 +73,14 @@ def worker_tier(config: ModelConfig, worker: WorkerDefinition) -> tuple[TierName
             f"Error: worker {worker.name!r} names preset {worker.preset!r}, which is not "
             f"configured. Presets: {', '.join(sorted(config.presets))}.",
         )
-    tier_cfg: TierConfig = getattr(preset, worker.tier)
+    tier_cfg: TierConfig | None = getattr(preset, worker.tier)
+    if tier_cfg is None:
+        # TD-5239: an ``engine: grok`` entry with no model of its own.
+        raise HandlerRefusal(
+            "delegate_agent_preset",
+            f"Error: worker {worker.name!r} names preset {worker.preset!r}, which runs on "
+            "the Grok CLI and has no model for a worker. Name a preset that has one.",
+        )
     return worker.tier, tier_cfg
 
 

@@ -22,6 +22,7 @@
 		modelLabel,
 	} from "../../effort";
 	import { MODELS_DOC_URL, openDoc } from "../../docs-links";
+	import { engineClash, engineMark } from "../../model-engine";
 	import { openAddModel } from "../../onboarding.svelte.js";
 	import {
 		session,
@@ -47,6 +48,16 @@
 		}),
 	);
 	const locked = $derived(session.turnActive);
+
+	const BUSY = "Cannot change model while a turn is running";
+
+	// TD-5239: a model on another engine than this chat's cannot be switched to.
+	function blocked(name: string): string {
+		if (name === current) return "";
+		const clash = engineClash(name, settings.presetEngines, session.engine);
+		if (clash !== null) return clash;
+		return locked ? BUSY : "";
+	}
 
 	function close(): void {
 		open = false;
@@ -122,12 +133,15 @@
 						type="button"
 						role="menuitemradio"
 						aria-checked={name === current}
-						disabled={locked && name !== current}
-						title={locked && name !== current ? "Cannot change model while a turn is running" : ""}
+						disabled={blocked(name) !== ""}
+						title={blocked(name)}
 						onclick={() => pickModel(name)}
 					>
 						<span class="text">
-							<span class="label">{modelLabel(name, settings.presetLabels)}</span>
+							<span class="label"
+								>{modelLabel(name, settings.presetLabels)}{#if engineMark(name, settings.presetEngines)}
+									<span class="badge">{engineMark(name, settings.presetEngines)}</span>{/if}</span
+							>
 							{#if modelDescription(name, settings.presetDescriptions)}
 								<span class="sub">{modelDescription(name, settings.presetDescriptions)}</span>
 							{/if}
@@ -233,11 +247,15 @@
 						type="button"
 						role="menuitemradio"
 						aria-checked={name === current}
-						disabled={locked && name !== current}
+						disabled={blocked(name) !== ""}
+						title={blocked(name)}
 						onclick={() => pickModel(name)}
 					>
 						<span class="text">
-							<span class="label">{modelLabel(name, settings.presetLabels)}</span>
+							<span class="label"
+								>{modelLabel(name, settings.presetLabels)}{#if engineMark(name, settings.presetEngines)}
+									<span class="badge">{engineMark(name, settings.presetEngines)}</span>{/if}</span
+							>
 							{#if modelDescription(name, settings.presetDescriptions)}
 								<span class="sub">{modelDescription(name, settings.presetDescriptions)}</span>
 							{/if}

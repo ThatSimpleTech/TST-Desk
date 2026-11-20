@@ -22,7 +22,6 @@ from urllib.parse import urlsplit
 from .config import (
     CREDENTIAL_ID_RE,
     RESERVED_CREDENTIAL_IDS,
-    TIER_NAMES,
     ModelConfig,
     TierConfig,
     apply_credential_host,
@@ -66,8 +65,7 @@ def unknown_key(config: ModelConfig, credential_id: str) -> str | None:
 def every_tier(config: ModelConfig) -> Iterator[TierConfig]:
     """Every tier of every preset, then each one's backups (TD-5120)."""
     for preset in config.presets.values():
-        for name in TIER_NAMES:
-            tier: TierConfig = getattr(preset, name)
+        for tier in preset.tier_map().values():
             yield tier
             yield from tier.fallbacks
 

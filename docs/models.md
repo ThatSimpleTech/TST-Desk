@@ -197,6 +197,28 @@ presets:
     validator: *local_model
 ```
 
+## Grok as one of your models
+
+If you use the Grok CLI, it can sit on the picker beside your models. Its
+entry needs only a label and the engine, because the Grok CLI brings its
+own model and its own sign-in:
+
+<!-- verify: model -->
+```yaml
+presets:
+  grok:
+    label: Grok
+    description: The Grok CLI, with its own model
+    engine: grok
+```
+
+A new chat started while this entry is the active one runs on the Grok
+CLI. A chat keeps the engine it started on, so the picker holds this entry
+for a chat that is already running on a model of yours, and holds your
+models for a chat that is running on Grok: start a new chat to move
+between them. Any other entry may name `engine: native` or `engine: grok`
+too; one that names neither follows Settings → Engine, as before.
+
 ## Teams
 
 Every turn has three roles:

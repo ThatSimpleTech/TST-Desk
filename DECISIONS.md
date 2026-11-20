@@ -19903,3 +19903,39 @@ entry defines); `project_context` and `embeddings` in the list
 endpoint is not a property of the chat model); a separate `builds:` layer
 that points at entries (a second catalog to keep in step).
 
+## 2026-11-20 — TD-5239: an entry names its engine; a Grok entry's roles are optional as a group (Class B)
+
+**Decision:** `Preset.engine` is `native`, `grok` or unset (unset means
+`engine.kind`). `brain`, `worker` and `validator` are optional as a group:
+all three or none, and none only with `engine: grok`. `overrides` and `fast`
+on a Grok entry are a load error. A session's engine is set once, at
+creation: the caller's (a scheduled pin), else the entry's, else the global
+one. `set_session_preset` across engines, or onto an entry with no model
+from a session on TST Desk's own loop, is refused with `engine_mismatch`.
+For an entry with no roles, `ModelConfig.tiers()` returns the empty-catalog
+stand-ins (TD-5172), and every walk over the catalog's roles goes through
+`Preset.tier_map()`, which is empty for it. Work no chat owns (memory
+distill, the doctor's probe) uses `ModelConfig.native_default()`: the active
+entry if it has a model, else the first that does, else it is skipped
+(owner, 2026-11-20: no `helper` key). `setup_state.preset_engines` is the one
+additive wire field; there is no new client message.
+
+**Rationale:** the Grok CLI brings its own model and sign-in, so requiring
+three roles on its entry would mean writing three that are never used. One
+catalog with an optional group keeps one YAML block, one picker list and one
+set of writers. The stand-in path already existed and is already safe: a
+turn that reaches it fails with the "add a model" message before any request
+is built. A session's loop cannot be swapped under a conversation, so the
+engine is fixed and a cross-engine switch is refused rather than half done;
+TD-5235 turns that refusal into "start a new chat on it". Refusing
+`overrides` and `fast` on a Grok entry, rather than ignoring them, keeps a
+setting that does nothing from sitting in the file looking active.
+
+**Rejected:** a separate `builds:` layer pointing at entries (a second
+catalog to keep in step); dummy roles on a Grok entry; a `helper` key naming
+the entry for off-turn work (one more thing to set, and the fallback is
+predictable); changing an open session's engine in place; making
+`setup_state.engine` mean the active entry's engine (Settings → Engine shows
+that field as the global setting, so the window computes a new chat's engine
+from `preset_engines` instead).
+

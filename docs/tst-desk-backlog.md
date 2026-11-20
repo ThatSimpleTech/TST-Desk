@@ -13441,3 +13441,77 @@ moves it, and an entry already carries that. Class B entry in DECISIONS.md.
 TD-5239 adds the engine to the same resolver, and refuses `overrides` on an
 entry with no model of its own.
 
+---
+
+### TD-5239 — A model can name its engine, and a Grok one needs no model of its own
+
+**Size:** 5 · **Depends on:** TD-5234, TD-3812 · **Status:** Done
+**Approach signed off:** 2026-11-20 (owner, relayed by the coordinating session).
+
+Local, API and Grok are meant to be three entries on one picker. The engine
+was a separate, global switch in Settings → Engine, and a catalog entry had
+to name a model for each of three roles, which the Grok CLI does not use.
+
+- [x] An entry may name `engine: native` or `engine: grok`; one that names
+      neither follows `engine.kind`, and a catalog from before loads as it did
+      (`test_preset_engine.py::TestWhatLoads`,
+      `test_the_engine_is_the_entrys_then_the_global_one`).
+- [x] The three roles are all there or all absent, and absent only with
+      `engine: grok`; `overrides` and `fast` on a Grok entry are a load
+      error (`test_what_is_refused`).
+- [x] Everything that walks the catalog's roles skips an entry with none:
+      key checks, backups, model cards, the slug snapshot; an active one
+      gives the stand-in tiers and needs no key
+      (`TestWhatTheRestSees`).
+- [x] A chat takes its engine when it is created: the caller's, else the
+      entry's, else the global one; TST Desk's own loop is never started on
+      an entry with no model (`test_a_chat_opened_on_a_grok_entry_is_a_grok_chat`,
+      `test_the_native_loop_is_never_started_on_an_entry_with_no_model`).
+- [x] Switching an open chat across engines is refused with
+      `engine_mismatch` and changes nothing
+      (`test_a_switch_across_engines_is_refused_and_changes_nothing`,
+      `TestAChatKeepsItsEngine`).
+- [x] A scheduled job's own engine pin wins; an empty one takes the pinned
+      entry's; a job pinned to the native loop on an entry with no model
+      gets a receipt (`TestScheduledPins`).
+- [x] Memory distill runs on the active entry when it has a model, else the
+      first entry that has one, and is skipped when none does; the doctor
+      skips its probe for an active entry with none (`TestDistill`,
+      `test_the_doctor_skips_the_probe_for_an_active_grok_entry`).
+- [x] `setup_state.preset_engines` names the engine of each entry that has
+      one; with an active entry that has no roles, no roles are sent
+      (`test_setup_state_marks_the_grok_entry_and_shows_no_roles_for_it`).
+- [x] The picker marks a Grok entry and holds an entry on another engine
+      than the chat's, with the reason; Settings → Model shows no roles for
+      a Grok entry that has none (`model-engine.test.ts`).
+- [x] The copy, relabel and remove writers (TD-5237) work on an entry with
+      no roles (`TestWriters`).
+
+**Notes:** No new client message. Starting a new chat on an entry from the
+picker, in one click, is TD-5235. Making a Grok entry without editing
+`config.yaml` is TD-5258. Class B entry in DECISIONS.md.
+
+---
+
+### TD-5259 — Memory distill follows the chat's own model
+
+**Size:** 2 · **Depends on:** TD-5239 · **Status:** Not started (idea; do not build without the maintainer's say-so)
+
+Distill at session end and at shutdown runs on the daemon's active entry
+(`_run_distill` hands it the daemon's config, and `_ensure_provider` its
+brain), not on the entry the chat itself used. A chat on a local model can
+so have its conversation sent to a hosted one for distilling, or the other
+way round. TD-5239 kept this as it was and only made it work when the
+active entry has no model.
+
+**Acceptance criteria:**
+- [ ] Distill for a chat on TST Desk's own loop runs on that chat's entry
+- [ ] A chat on the Grok engine, which has no model of its own here, keeps
+      the TD-5239 rule (the active entry, else the first with a model)
+- [ ] A chat whose entry has since been removed falls back the same way
+- [ ] Tests for each case with the mock provider, asserting the endpoint asked
+
+**Notes:** Decide first whether "the chat's entry" means its current one
+or the one most of its turns ran on. Recorded 2026-11-20 at the owner's
+request as a possible later story.
+

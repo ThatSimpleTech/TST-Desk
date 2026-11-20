@@ -125,9 +125,36 @@ def pin_failure_summary(
     """
     if pin.preset is not None and pin.preset not in catalog:
         return f"preset '{pin.preset}' no longer exists"
-    if pin.engine == "grok" and not grok_available:
+    if pin.engine == "native" and not pinned_entry_has_model(pin, catalog):
+        # TD-5239: an entry may be the Grok engine with no model of its own.
+        return NO_MODEL_SUMMARY.format(preset=pin.preset)
+    if pinned_engine(pin, catalog) == "grok" and not grok_available:
         return "grok engine is unavailable"
     return None
+
+
+#: The receipt for a job pinned to TST Desk's own loop on an entry that has no model.
+NO_MODEL_SUMMARY = "preset '{preset}' has no model of its own; it runs only on the grok engine"
+
+
+def pinned_engine(pin: ScheduledPin, catalog: Mapping[str, object]) -> EngineKind | None:
+    """The engine this pin asks for: its own, else its entry's, else None (TD-5239).
+
+    None means neither names one, and the session takes the window's.
+    """
+    if pin.engine is not None:
+        return pin.engine
+    if pin.preset is None:
+        return None
+    named = getattr(catalog.get(pin.preset), "engine", None)
+    return named if named in ("native", "grok") else None
+
+
+def pinned_entry_has_model(pin: ScheduledPin, catalog: Mapping[str, object]) -> bool:
+    """False only for a pinned entry that names no model per role (TD-5239)."""
+    if pin.preset is None:
+        return True
+    return bool(getattr(catalog.get(pin.preset), "has_tiers", True))
 
 
 def grok_cli_available(binary: str) -> bool:
@@ -144,11 +171,12 @@ def grok_cli_available(binary: str) -> bool:
 async def scheduled_run_block(catalog: Mapping[str, object], *, grok_binary: str) -> str | None:
     """The receipt for a pin that cannot start, or None to open the session.
 
-    The Grok probe runs only when the job pinned Grok. A window that is
-    on Grok while the job pinned native is not probed.
+    The Grok probe runs only when the job pinned Grok, itself or through
+    an entry whose engine is Grok (TD-5239). A window that is on Grok while
+    the job pinned native is not probed.
     """
     pin = current_scheduled_pin()
     grok_ok = True
-    if pin.engine == "grok":
+    if pinned_engine(pin, catalog) == "grok":
         grok_ok = await asyncio.to_thread(grok_cli_available, grok_binary)
     return pin_failure_summary(pin, catalog=catalog, grok_available=grok_ok)

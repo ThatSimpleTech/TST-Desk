@@ -2265,6 +2265,8 @@ export interface SetupState extends DaemonEvent {
   // (false on a fresh install: the UI starts "Add a model").
   preset_descriptions?: Record<string, string>;
   team_presets?: string[];
+  /** TD-5239: the engine of each preset that names one. */
+  preset_engines?: Record<string, "native" | "grok">;
   has_model?: boolean;
   // TD-804: skip-all approvals. Additive, default off.
   skip_all_approvals?: boolean;

@@ -28,6 +28,15 @@
 	// team": most people run one model in all three roles and never open it.
 	const TIERS = ["brain", "worker", "validator"] as const;
 
+	// TD-5239: a model that is the Grok engine may have no roles. The daemon
+	// then sends none, and there is nothing for "Build a team" to edit.
+	const noRoles = $derived(
+		settings.hasModel &&
+			settings.activePreset !== null &&
+			settings.presetEngines[settings.activePreset] === "grok" &&
+			Object.keys(settings.tierSlugs).length === 0,
+	);
+
 	// Both are modal: close Settings so the walkthrough is on top.
 	function addModel(): void {
 		closeSettings();
@@ -89,7 +98,12 @@
 
 <ModelCatalog />
 
-{#if settings.hasModel && settings.activePreset}
+{#if noRoles}
+	<p class="hint">
+		{modelLabel(settings.activePreset ?? "", settings.presetLabels)} runs on the Grok CLI, which
+		brings its own model, so there are no roles to set here.
+	</p>
+{:else if settings.hasModel && settings.activePreset}
 	<h3 class="heading">Build a team</h3>
 	<p class="hint">
 		Every turn has three roles. One model can fill all of them, and that is the normal setup. A

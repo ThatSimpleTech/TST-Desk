@@ -3744,6 +3744,9 @@ class SetupState(DaemonEvent):
     # wizard opens on "Add a model". Additive; an older client ignores them.
     preset_descriptions: dict[str, str] = Field(default_factory=dict)
     team_presets: list[str] = Field(default_factory=list)
+    # TD-5239: the engine of each preset that names one. A preset left out
+    # runs on ``engine``. Additive; an older client shows no mark.
+    preset_engines: dict[str, Literal["native", "grok"]] = Field(default_factory=dict)
     has_model: bool = True
     # TD-804: skip-all approvals. Additive, default off — an older client
     # that ignores the field keeps asking, which is the safe read.
