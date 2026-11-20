@@ -208,6 +208,9 @@ async def handle_workflow(
                 isolate_writer=len(plans) >= 2,
                 call_id=f"{base}.{plan.number}",
                 transcript_budget=budget,
+                parent_call_id=base,
+                index=plan.number,
+                label=plan.label,
             )
             outcome = await _run(parent, spec)
             if not check or outcome.failed is not None:
@@ -294,6 +297,9 @@ async def _check(
         tier=tier,
         source="check",
         transcript_budget=budget,
+        parent_call_id=call_id.split(".", 1)[0],
+        index=plan.number,
+        label=plan.label,
     )
     checked = await _run(parent, spec)
     if checked.failed is not None:

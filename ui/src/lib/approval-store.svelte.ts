@@ -16,7 +16,14 @@
 // a bridged session is decided only while its computer is connected, and one
 // already sent comes back if the hub reports it never got there.
 
-import { alwaysAllowMessage, approvalFromEvent, approveMessage, denyMessage, type PendingApproval } from './approval';
+import {
+  alwaysAllowMessage,
+  approvalFromEvent,
+  approveMessage,
+  denyMessage,
+  settledBy,
+  type PendingApproval,
+} from './approval';
 import { isBridged } from './bridged-id';
 import { onDaemonEvent, sendToDaemon } from './connection-status.svelte.js';
 import { sessionMachineUp } from './machines.svelte.js';
@@ -43,6 +50,10 @@ onDaemonEvent((event) => {
     if (boundSessionId === null || event.session_id !== boundSessionId) return;
     sentRemote.delete(event.tool_call_id);
     dismiss(event.tool_call_id);
+    // TD-5268: a child's cards go when the call that started the child returns.
+    for (const card of pending.filter((p) => settledBy(p, event.tool_call_id))) {
+      dismiss(card.toolCallId);
+    }
   } else if (event.type === 'error' && event.code === 'machine_unreachable') {
     if (boundSessionId === null || event.session_id !== boundSessionId) return;
     restoreUndelivered();

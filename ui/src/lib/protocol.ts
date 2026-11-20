@@ -1782,6 +1782,22 @@ export interface PolicyRuleSummary {
   exact?: string | null;
 }
 
+/** TD-5268: which child is asking, on a child's approval card. */
+export interface ApprovalWorker {
+  id: string;
+  parent_call_id: string;
+  via: "delegate" | "workflow";
+  kind: "worker" | "research" | "check";
+  agent?: string | null;
+  /** A workflow task's number, from 1. */
+  index?: number | null;
+  label?: string;
+  task?: string;
+  tier?: string;
+  /** Set when the child works in a worktree of its own. */
+  worktree_branch?: string | null;
+}
+
 export interface ApprovalRequest extends DaemonEvent {
   type: "approval_request";
   session_id: string;
@@ -1792,6 +1808,8 @@ export interface ApprovalRequest extends DaemonEvent {
   summary: string;
   reason: string;
   proposed_always_allow?: PolicyRuleSummary | null;
+  /** TD-5268: the child that is asking; absent for the session's own agent. */
+  worker?: ApprovalWorker | null;
 }
 
 export interface QuestionOption {

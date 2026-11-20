@@ -20130,3 +20130,26 @@ policy verbs, `add_model`). They need the owner's call one by one; an
 explicit phone allowlist with a test that classifies every verb would stop
 the next one being missed.
 
+## 2026-11-20 — TD-5268: an optional `worker` on `approval_request`, and who is asking in the summary (Class B)
+
+**Decision:** `ApprovalRequest` gains `worker: ApprovalWorker | None`,
+filled where a child's dispatcher is built (`_name_the_child`), only when
+the approval handler is the parent session's own. The child's `summary` is
+prefixed with who is asking. `Session.request_approval` takes a
+keyword-only `worker` and withholds the Always-allow proposal for a named
+worker and for a path tool in a child's own worktree.
+
+**Rationale:** the child is deliberately not a registered session, so the
+parent's event is the only place its identity can travel. Putting it in
+`summary` as well as in a field means every surface that already shows the
+summary is correct today, including a phone app built before the field
+existed. Always allow keeps its workspace scope (a per-worker allow would
+be a loosening for one worker, and worker rules are tighten-only), so the
+two cases where a workspace rule would be saved and then not apply are
+simply not offered.
+
+**Rejected:** registering children as sessions to give them cards of their
+own (reverses TD-4602); deriving the child from the tool-call id's prefix
+in the window (the window would be parsing an id format it was never
+promised).
+
