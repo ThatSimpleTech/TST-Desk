@@ -211,6 +211,8 @@ from .notify.slack import schedule as schedule_slack_notify
 from .notify.slack import send as send_slack_notify
 from .notify.telegram import schedule as schedule_telegram_notify
 from .peer_policy import outbound_event, service_hosts
+from .phone_permissions import MCP_SERVERS, utc_now
+from .phone_store import PhoneStore, server_saved_summary, value_summary
 from .plan_review import answer as answer_plan
 from .plan_review import keep_pinned_plan_visible, restore_pinned_plan, restored_plan_mode
 from .policy import (
@@ -365,6 +367,7 @@ from .protocol import (
     OpenWorkspace,
     PairingCompleted,
     ParseJob,
+    PhoneChange,
     PolicyRules,
     PresetReadiness,
     PresetRoles,
@@ -414,6 +417,7 @@ from .protocol import (
     SetLoadGlobalMemory,
     SetMcpSecret,
     SetMcpServer,
+    SetPhonePermission,
     SetPlan,
     SetPreset,
     SetPresetLabel,
@@ -1267,8 +1271,16 @@ class Daemon:
         )
         # TD-5015: paired computers. Only the bridge's links dial, only to
         # paired Tailscale hosts (dial_policy is the tests' seam).
+        # TD-5279: what a paired phone may change. Off unless the person at
+        # this computer switched it on; the hub asks on every message.
+        self.phone_store = PhoneStore(self.data_dir)
+        self._phone_expiry_task: asyncio.Task[None] | None = None
         self.hub = Hub(
-            self.data_dir, self.ws_server, self._handle_list_sessions, policy=dial_policy
+            self.data_dir,
+            self.ws_server,
+            self._handle_list_sessions,
+            policy=dial_policy,
+            phone_grants=self.phone_store.live,
         )
         self._cu_server: Any = None
         # TD-4835: keychain presence cache — see _credential_is_stored.
@@ -1562,7 +1574,11 @@ class Daemon:
             remote_attach_enabled=self.remote_attach_enabled,
             remote_bind=self.ws_server.extra_host,
             remote_port=self.ws_server.port if self.ws_server.extra_host else None,
-            remote_devices=self.remote_devices.summaries(self.ws_server.connected_device_ids()),
+            remote_devices=[
+                device.model_copy(update={"mcp_servers_added": self._servers_added_by(device.id)})
+                for device in self.remote_devices.summaries(self.ws_server.connected_device_ids())
+            ],
+            phone_permissions=self.phone_store.states(),
             credentials=credentials,
             tier_credentials={name: tiers[name].credential for name in tiers},
             tier_loopback={name: is_loopback_url(tiers[name].base_url) for name in tiers},
@@ -1599,8 +1615,11 @@ class Daemon:
                     ],
                     env=await value_summaries(sid, spec.env, self._mcp_secret_is_stored),
                     headers=await value_summaries(sid, spec.headers, self._mcp_secret_is_stored),
+                    origin_device=origin.device_name if origin else "",
+                    origin_at=origin.at if origin else "",
                 )
                 for sid, spec in sorted(self.config.mcp.servers.items())
+                for origin in (self.phone_store.origin_of(sid),)
             ],
             speech_enabled=self.config.speech.enabled,
             speech_ready=self.config.speech.enabled and bool(self.config.speech.base_url),
@@ -2468,6 +2487,11 @@ class Daemon:
                     )
                 )
 
+        # TD-5279: a phone permission left on is worth seeing outside Settings.
+        phone_row = self.phone_store.doctor_row()
+        if phone_row is not None:
+            checks.append(phone_row)
+
         return DiagnosticsReport(seq=1, checks=checks)
 
     # ── Usage and cost (TD-1706) ───────────────────────────────────────
@@ -2677,6 +2701,7 @@ class Daemon:
         if await asyncio.to_thread(cu_stopfile.stop_engaged):
             self.set_computer_use_killed(True, write_file=False)
         self._tasks.append(asyncio.create_task(self._cu_stop_watch(), name="cu-stop-watch"))
+        self._arm_phone_permission_expiry()
         await self._shutdown_event.wait()
 
     async def _shutdown(self) -> None:
@@ -4106,6 +4131,9 @@ class Daemon:
 
         if isinstance(msg, SetRemoteAttach):
             return await self._handle_set_remote_attach(msg)
+
+        if isinstance(msg, SetPhonePermission):
+            return await self._handle_set_phone_permission(msg)
         if isinstance(msg, RotateRemoteToken):
             return await self._handle_rotate_remote_token()
         if isinstance(msg, StartPairing | CancelPairing | RemoveRemoteDevice):
@@ -4679,6 +4707,11 @@ class Daemon:
                 return build_error("bad_request", f"Saved, but the config no longer loads: {e}")
             await self._mcp.reload(self.config.mcp)
             log.info("mcp server saved", extra={"extra_fields": {"server_id": msg.id}})
+            await self._note_phone_change(
+                MCP_SERVERS,
+                server_saved_summary(msg.id, msg.command, msg.url, existed=prior is not None),
+                server_id=msg.id,
+            )
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, DeleteMcpServer):
@@ -4696,6 +4729,9 @@ class Daemon:
                 return build_error("bad_request", f"Saved, but the config no longer loads: {e}")
             await self._mcp.reload(self.config.mcp)
             log.info("mcp server removed", extra={"extra_fields": {"server_id": msg.id}})
+            # Whoever removed it, there is nothing left to attribute.
+            self.phone_store.forget_origin(msg.id)
+            await self._note_phone_change(MCP_SERVERS, f"removed MCP server '{msg.id}'.")
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, SetMcpSecret | DeleteMcpSecret):
@@ -5780,6 +5816,10 @@ class Daemon:
         if isinstance(msg, StartPairing):
             return await self._handle_start_pairing()
         if isinstance(msg, RemoveRemoteDevice):
+            if msg.remove_added:
+                refused = await self._remove_servers_added_by(msg.device_id)
+                if refused is not None:
+                    return refused
             await self._remove_remote_device(msg.device_id, connection)
             return None
         self.pairing.cancel()
@@ -5805,6 +5845,137 @@ class Daemon:
         with contextlib.suppress(websockets.exceptions.ConnectionClosed):
             await connection.send(scrub_wire_json(self.hub.finish(reply, connection)))
         await self.ws_server.close_device(device_id)
+
+    # ── phone permissions (TD-5279) ───────────────────────────────────
+
+    async def _handle_set_phone_permission(self, msg: SetPhonePermission) -> str:
+        """Switch what a paired phone may change. The peer policy let only loopback in."""
+        try:
+            self.phone_store.set(msg.capability, msg.enabled, msg.expires_in_seconds)
+        except ValueError as e:
+            return build_error("bad_request", str(e), in_reply_to=msg.type)
+        except OSError as e:
+            return build_error(
+                "phone_permission_failed",
+                f"Couldn't save the phone permissions file: {e.strerror or e}",
+                in_reply_to=msg.type,
+            )
+        log.info(
+            "phone permission set",
+            extra={
+                "extra_fields": {
+                    "capability": msg.capability,
+                    "enabled": msg.enabled,
+                    "expires_in_seconds": msg.expires_in_seconds,
+                }
+            },
+        )
+        self._arm_phone_permission_expiry()
+        # A phone's pages follow the switch, and so do this computer's other windows.
+        await self._tell_other_windows_the_catalog()
+        return (await self._setup_state_event()).model_dump_json()
+
+    def _arm_phone_permission_expiry(self) -> None:
+        """Tell every window when the soonest timed grant runs out.
+
+        The policy reads the clock on every message, so a grant stops
+        working at its expiry with or without this; this only keeps what
+        the windows show true.
+        """
+        if self._phone_expiry_task is not None:
+            self._phone_expiry_task.cancel()
+            self._phone_expiry_task = None
+        until = self.phone_store.next_expiry()
+        if until is None:
+            return
+
+        async def _wait() -> None:
+            # A task copies the context it was made in: without this the
+            # window that granted would be left out as "already answered".
+            _ANSWERING.set(None)
+            await asyncio.sleep(max(0.0, (until - utc_now()).total_seconds()) + 0.5)
+            self._phone_expiry_task = None
+            log.info("phone permission expired")
+            await self._tell_other_windows_the_catalog()
+            self._arm_phone_permission_expiry()
+
+        self._phone_expiry_task = asyncio.create_task(_wait(), name="phone-permission-expiry")
+        self._tasks.append(self._phone_expiry_task)
+
+    def _servers_added_by(self, device_id: str) -> list[str]:
+        """The MCP servers a device added or changed that are still listed."""
+        return [
+            sid
+            for sid in self.phone_store.servers_from(device_id)
+            if sid in self.config.mcp.servers
+        ]
+
+    def _phone_actor(self) -> tuple[str, str] | None:
+        """``(device id, name)`` when the message being answered came from a paired phone."""
+        connection: Any = _ANSWERING.get()
+        if connection is None or not self.ws_server.peer_view(connection).phone:
+            return None
+        device_id = self.ws_server.device_of(connection)
+        if device_id is None:
+            return None
+        for device in self.remote_devices.summaries():
+            if device.id == device_id:
+                return device_id, device.name
+        return device_id, "A paired phone"
+
+    async def _note_phone_change(
+        self, capability: str, summary: str, *, server_id: str | None = None
+    ) -> None:
+        """A phone used a grant: record where it came from and tell the computer.
+
+        Nothing happens for a change made at the computer. The audit
+        database keys every record to a session and this belongs to none,
+        so the trail is the daemon log, with the device named.
+        """
+        actor = self._phone_actor()
+        if actor is None:
+            return
+        device_id, device_name = actor
+        if server_id is not None:
+            self.phone_store.record_origin(server_id, device_id, device_name)
+        log.warning(
+            "phone used a phone permission",
+            extra={
+                "extra_fields": {
+                    "capability": capability,
+                    "device_id": device_id,
+                    "device_name": device_name,
+                    "summary": summary,
+                }
+            },
+        )
+        event = PhoneChange(device_name=device_name, capability=capability, summary=summary)
+        await self.ws_server.broadcast(scrub_wire_json(event.model_dump_json()), loopback_only=True)
+        # The computer's open Settings page shows the change without a reopen.
+        await self._tell_other_windows_the_catalog()
+
+    async def _remove_servers_added_by(self, device_id: str) -> str | None:
+        """The unpair review's "also remove these". An error frame when a removal fails."""
+        for server_id in self._servers_added_by(device_id):
+            removed = self.config.mcp.servers.get(server_id)
+            try:
+                delete_mcp_server_entry(server_id, self.config_path)
+            except ConfigError as e:
+                return build_error("bad_request", str(e), in_reply_to="remove_remote_device")
+            if removed is not None:
+                await forget_server_secrets(server_id, removed)
+                self._invalidate_stored_probe()
+            self.phone_store.forget_origin(server_id)
+            log.info(
+                "mcp server removed with its phone",
+                extra={"extra_fields": {"server_id": server_id, "device_id": device_id}},
+            )
+        try:
+            self._reload_user_config()
+        except ConfigError as e:
+            return build_error("bad_request", f"Saved, but the config no longer loads: {e}")
+        await self._mcp.reload(self.config.mcp)
+        return None
 
     async def _handle_start_pairing(self) -> str:
         """Mint a code; turn remote attach on first, as the toggle would.
@@ -6618,6 +6789,11 @@ class Daemon:
                     "name": msg.name,
                 }
             },
+        )
+        await self._note_phone_change(
+            MCP_SERVERS,
+            value_summary(msg.server_id, msg.target, msg.name, stored=verb == "store"),
+            server_id=msg.server_id,
         )
         return (await self._setup_state_event()).model_dump_json()
 

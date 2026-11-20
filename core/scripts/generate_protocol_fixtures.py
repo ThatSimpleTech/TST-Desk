@@ -185,6 +185,7 @@ from tstd.protocol import (
     PairingCode,
     PairingCompleted,
     ParseJob,
+    PhoneChange,
     Ping,
     PlanPinned,
     PlanReview,
@@ -255,6 +256,7 @@ from tstd.protocol import (
     SetLoadGlobalMemory,
     SetMcpSecret,
     SetMcpServer,
+    SetPhonePermission,
     SetPlan,
     SetPreset,
     SetPresetLabel,
@@ -650,6 +652,10 @@ FIXTURES = {
     "start_pairing": StartPairing(),
     "cancel_pairing": CancelPairing(),
     "remove_remote_device": RemoveRemoteDevice(device_id="dev_0123456789ab"),
+    # What a paired phone may change (TD-5279): on for an hour.
+    "set_phone_permission": SetPhonePermission(
+        capability="mcp_servers", enabled=True, expires_in_seconds=3600
+    ),
     # Other computers (TD-5015). Loopback only; the code is a placeholder.
     "add_machine": AddMachine(link="tstdesk://pair?h=100.64.1.5&p=39079&c=ABCD2345&n=tower"),
     "add_machine_address": AddMachine(host="100.64.1.5", port=39079, code="ABCD-2345"),
@@ -1589,6 +1595,11 @@ FIXTURES = {
         device=RemoteDeviceSummary(
             id="dev_0123456789ab", name="Pixel", paired_at="2026-10-14T10:41:00Z"
         )
+    ),
+    "phone_change": PhoneChange(
+        device_name="Pixel",
+        capability="mcp_servers",
+        summary="added MCP server 'files': npx files-server",
     ),
     # One connected computer and one self-pair that is unreachable (TD-5015).
     "machine_list": MachineList(

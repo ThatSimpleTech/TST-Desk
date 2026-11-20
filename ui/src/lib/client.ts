@@ -101,6 +101,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "setup_state", // TD-1101 first-run wizard
   "pairing_code", // TD-5014
   "pairing_completed", // TD-5014
+  "phone_change", // TD-5279
   "machine_list", // TD-5015
   "api_key_validated", // TD-1101
   "endpoint_models", // TD-5172

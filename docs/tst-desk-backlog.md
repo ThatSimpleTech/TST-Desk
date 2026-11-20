@@ -13856,6 +13856,11 @@ been missed.
       saying where to make changes, with nothing to press
       (`mcp-read-only.test.ts`).
 
+**Superseded in part by TD-5279:** the owner chose to keep the phone's
+ability as an opt-in. The four verbs are now refused from a phone with
+`phone_permission_off` unless the computer switched "MCP servers" on for
+phones; the default (refused) is what this story shipped.
+
 **Notes:** With the verb reopened, the socket test's command ran on the
 test machine: the fault was real, not theoretical. Other verbs a phone may
 send that deserve a decision (turning approvals off, `shutdown`, changing
@@ -14118,3 +14123,98 @@ this machine it cannot. Turning that off in bubblewrap itself
 (`--disable-userns`) needs a version check and belongs with the sandbox
 backend interface (TD-5264).
 
+---
+
+### TD-5279 — Phone permissions: a paired phone changes MCP servers only if the computer said so
+
+**Size:** 5 (approach signed off by the owner) · **Depends on:** TD-5276, TD-5014, TD-5015 · **Status:** Done (stage 1 of 3)
+
+TD-5276 closed the hole by making the MCP page the computer's own. The
+owner's decision was to keep the phone's ability, but as something the
+person at the computer switches on after reading what it allows. This is
+the framework for that, with the MCP servers as its first capability.
+Every other sensitive thing a phone can send today moves onto the same
+framework one at a time, each default off with its own disclosure; the
+list is in the notes.
+
+- [x] `<data dir>/phone-permissions.yaml` holds the grants. Absent,
+      unreadable, malformed, another version, an unknown capability, an
+      entry that is not exactly `enabled: true`, an unreadable expiry and
+      a past expiry all read as off (`test_phone_permissions.py`).
+- [x] It is no `config.yaml` key: one written into the user config or a
+      workspace's `.tst/config.yaml` does nothing
+      (`test_workspace_config_cannot_grant`).
+- [x] `set_phone_permission` is computer-only. A paired phone, the older
+      remote token and another computer get `loopback_only`, whatever
+      grants are on, so a phone can never grant itself
+      (`test_set_phone_permission_is_loopback_only`,
+      `test_mcp_peer.py::test_a_phone_cannot_grant_itself`).
+- [x] With no grant, a paired phone's `set_mcp_server`,
+      `delete_mcp_server`, `set_mcp_secret` and `delete_mcp_secret` are
+      refused with `phone_permission_off`; nothing is saved, nothing is
+      started and the command it carried does not run
+      (`test_a_phone_cannot_add_an_mcp_server_by_default`,
+      `test_a_phone_cannot_change_remove_or_set_a_value_by_default`).
+- [x] `peer_policy.check` takes the live grants as an argument that
+      defaults to none, so a caller that forgets it refuses
+      (`test_check_refuses_when_grants_are_not_passed`).
+- [x] A grant is for a paired phone only: the older remote token is still
+      refused with it on, and another computer still gets `not_allowed`
+      (`test_a_grant_is_for_paired_phones_only`).
+- [x] After the computer grants, a phone can add a server; each use sends
+      `phone_change` to the computer's windows naming the phone and the
+      command (for a value, its name and never the value), and the
+      computer's open Settings page gets the new list
+      (`test_a_phone_can_add_one_after_the_computer_grants`).
+- [x] Where a server came from is recorded in `<data dir>/mcp-origins.yaml`
+      (not `config.yaml`) and shown on its row as "Added or changed from
+      Pixel 8 on 20 Nov".
+- [x] A grant can be timed ("Turn on for 1 hour", up to seven days over
+      the wire). The policy reads the clock on every message, and every
+      window and phone is sent the new state when it runs out
+      (`test_a_timed_grant_runs_out`,
+      `test_the_windows_are_told_when_a_timed_grant_runs_out`).
+- [x] Turning a grant off stops new changes and removes nothing
+      (`test_turning_the_grant_off_keeps_existing_servers`).
+- [x] Removing a phone lists the MCP servers it added or changed, and
+      "Also remove these servers" takes them with it; the flag from a
+      phone removing itself does nothing
+      (`test_removing_a_device_reports_and_can_remove_what_it_added`,
+      `test_removing_a_device_with_what_it_added`,
+      `test_a_phone_forgetting_itself_cannot_remove_servers`).
+- [x] Doctor shows a warning row while any phone permission is on
+      (`test_doctor_warns_while_a_phone_permission_is_on`); `warn` is a new
+      row status.
+- [x] Settings → Phones and devices, on the computer, has "What paired
+      phones may change". Turning one on opens its disclosure with Keep
+      off, Turn on for 1 hour and Turn on until I turn it off; Keep off and
+      Escape send nothing. The disclosure's words are pinned whole
+      (`phone-permissions.test.ts`).
+- [x] On a phone with the permission off, Settings → MCP servers is the
+      list and the sentence saying where to turn it on; with it on, the
+      page works as on the computer.
+
+**Not built in this stage:**
+
+- The one-time notice after upgrading with a phone already paired
+  ("Paired phones can no longer add or change MCP servers unless you allow
+  it"). It needs a remembered "shown" flag and a place in the window.
+- An audit-database record. Every audit record is keyed to a session and
+  this belongs to none, so the trail is the daemon log line (with the
+  device's id and name) and the origins file.
+- Letting a phone switch an existing server *off* without the permission
+  (it only reduces what runs). It needs a comparison in the handler.
+- The classify-every-verb inventory: a new verb is still open to a phone
+  unless it is listed. That is stage 2, and it should land before any new
+  MCP import verb.
+
+**Notes:** the refusal and the phone's page say "Settings, Phones and
+devices", which is what the section is called; the design note said
+"Settings, Devices". The remaining capabilities, each its own story:
+turning approvals off for every session; adding a model server and
+managing keys; turning computer use on or to full control; starting an
+unattended run; the connector sign-ins; and, with extra-strong disclosure
+because they can send a stored key or password to a host the phone names,
+changing a saved key's host and changing the mail server. `shutdown` and
+releasing the computer-use stop are opt-in too by the owner's decision.
+Only `set_phone_permission` has no setting. Class B entry in DECISIONS.md.

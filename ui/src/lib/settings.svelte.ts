@@ -21,6 +21,7 @@ import type {
 	GooglePhase,
 	MicrosoftPhase,
 	PolicyRuleSummary,
+	PhonePermissionState,
 	RemoteDeviceSummary,
 	TierCard,
 } from "./protocol";
@@ -65,6 +66,9 @@ export type McpServerRow = {
 	command: string[];
 	url: string;
 	enabled: boolean;
+	/** The phone it was last added or changed from, and when (TD-5279). */
+	originDevice?: string;
+	originAt?: string;
 	/** Tools left out at the last load (TD-5104). */
 	excludedTools?: { name: string; reason: string }[];
 	/** Env vars (stdio) or headers (http) by name (TD-5110). Never a value. */
@@ -154,6 +158,8 @@ export const settings = $state({
 	remotePort: null as number | null,
 	/** Paired phones (TD-5014). From setup_state; never a token or hash. */
 	remoteDevices: [] as RemoteDeviceSummary[],
+	/** What a paired phone may change (TD-5279). From setup_state; off when absent. */
+	phonePermissions: {} as Record<string, PhonePermissionState>,
 	/** Agent engine for new sessions. */
 	engine: "native" as "native" | "grok",
 	grokAvailable: false,
@@ -275,6 +281,7 @@ export function resetSettings(): void {
 	settings.remoteBind = null;
 	settings.remotePort = null;
 	settings.remoteDevices = [];
+	settings.phonePermissions = {};
 	settings.engine = "native";
 	settings.grokAvailable = false;
 	settings.grokBinary = null;
@@ -477,6 +484,7 @@ function reduce(event: DaemonEventUnion): void {
 		settings.remoteBind = event.remote_bind ?? null;
 		settings.remotePort = event.remote_port ?? null;
 		settings.remoteDevices = event.remote_devices ?? [];
+		settings.phonePermissions = event.phone_permissions ?? {};
 		settings.engine = event.engine ?? "native";
 		settings.grokAvailable = event.grok_available ?? false;
 		settings.grokBinary = event.grok_binary ?? null;
@@ -502,6 +510,8 @@ function reduce(event: DaemonEventUnion): void {
 			command: row.command ?? [],
 			url: row.url ?? "",
 			enabled: row.enabled ?? true,
+			originDevice: row.origin_device ?? "",
+			originAt: row.origin_at ?? "",
 			excludedTools: row.excluded_tools ?? [],
 			values: [...(row.env ?? []), ...(row.headers ?? [])].map((v) => ({
 				name: v.name,
@@ -816,6 +826,21 @@ export function setVoice(enabled: boolean): void {
 /** Turn remote attach on or off (TD-3603). Acked with setup_state. */
 export function setRemoteAttach(enabled: boolean): void {
 	sendToDaemon({ type: "set_remote_attach", enabled });
+}
+
+/** Switch what a paired phone may change (TD-5279). The daemon takes this
+ *  from the computer's own window only. `null` seconds: until switched off. */
+export function setPhonePermission(
+	capability: string,
+	enabled: boolean,
+	expiresInSeconds: number | null,
+): void {
+	sendToDaemon({
+		type: "set_phone_permission",
+		capability,
+		enabled,
+		...(enabled && expiresInSeconds !== null ? { expires_in_seconds: expiresInSeconds } : {}),
+	});
 }
 
 /** New phone token (TD-5005). Acked with setup_state; the token stays in the file. */

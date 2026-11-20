@@ -24,10 +24,15 @@ Still works as a fallback. On the computer, turn on **Allow remote attach** in S
 
 The shell refuses any host that is not a Tailscale address (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) or a `*.ts.net` name. It does not listen on the network. The UI is served to the WebView on `127.0.0.1` only, on the same port each launch when it is free.
 
-Some things stay with the computer and are refused from a phone: adding, changing or
-removing an MCP server or its token (an MCP server is a command the computer runs), the
-raw Settings → Configuration editor, trusting a workspace's own config, accepting an
-instruction-file edit, and removing a model. The phone shows the MCP list read-only.
+Some things stay with the computer and are refused from a phone: the raw Settings →
+Configuration editor, trusting a workspace's own config, accepting an instruction-file
+edit, and removing a model.
+
+Adding, changing or removing an MCP server or its token is off for phones unless you turn
+it on at the computer (**Settings → Phones and devices → What paired phones may change**).
+An MCP server is a command the computer runs, so read what that switch says before
+turning it on. While it is off the phone shows the MCP list read-only. A phone cannot turn
+it on, and the computer's window is told each time a phone changes a server (TD-5279).
 
 ## Build
 

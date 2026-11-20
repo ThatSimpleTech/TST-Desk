@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 //
-// TD-5276: an MCP stdio server is a command the computer runs, so only the
-// computer adds, changes or removes one. On a paired phone the page is the
-// list and nothing else, and it sends nothing.
+// TD-5276, TD-5279: an MCP stdio server is a command the computer runs. Off
+// the computer the page is the list and nothing else, and it sends nothing,
+// unless the computer switched "MCP servers" on for phones.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
@@ -74,7 +74,9 @@ describe("Settings → MCP servers, off the computer", () => {
 		const root = open(false);
 		expect(root.querySelectorAll("button")).toHaveLength(0);
 		expect(root.querySelectorAll("input")).toHaveLength(0);
-		expect(root.textContent).toContain("Add or change MCP servers in Settings on the computer.");
+		expect(root.textContent).toContain(
+			"Adding or changing MCP servers from a phone is turned off. You can turn it on under Settings, Phones and devices on the computer.",
+		);
 		expect(mocks.sent).toEqual([]);
 	});
 });

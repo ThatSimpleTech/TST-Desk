@@ -63,8 +63,13 @@ export function closePairDialog(): void {
 }
 
 /** Forget one phone. Acked with setup_state, which redraws the list. */
-export function removeRemoteDevice(deviceId: string): void {
-	sendToDaemon({ type: "remove_remote_device", device_id: deviceId });
+export function removeRemoteDevice(deviceId: string, removeAdded = false): void {
+	sendToDaemon({
+		type: "remove_remote_device",
+		device_id: deviceId,
+		// TD-5279: also take away the MCP servers that phone added or changed.
+		...(removeAdded ? { remove_added: true } : {}),
+	});
 }
 
 /** Ask for the device list now. The daemon pushes presence after that, so

@@ -475,6 +475,7 @@ def test_pairing_completed_carries_a_summary_and_no_key() -> None:
         "last_seen",
         "connected",
         "kind",
+        "mcp_servers_added",
     }
 
 
@@ -626,7 +627,15 @@ async def test_pairing_completed_reaches_the_computer_and_not_other_phones(tmp_p
                 assert row["connected"] is True and row["last_seen"] is not None
                 state = await ask(window, {"type": "get_setup_state"})
                 assert state["remote_devices"] == [row]
-                assert set(row) == {"id", "name", "paired_at", "last_seen", "connected", "kind"}
+                assert set(row) == {
+                    "id",
+                    "name",
+                    "paired_at",
+                    "last_seen",
+                    "connected",
+                    "kind",
+                    "mcp_servers_added",
+                }
                 assert reply["token"] not in json.dumps(state)
             (row,) = await presence(window)
             assert row["connected"] is False

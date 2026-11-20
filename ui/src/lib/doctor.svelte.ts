@@ -74,6 +74,7 @@ export const STATUS_MARK: Record<DiagnosticCheck["status"], string> = {
 	ok: "✓",
 	fail: "✗",
 	skip: "–",
+	warn: "!",
 };
 
 /** The pasteable report: one line per check, fix lines indented under fails. */
