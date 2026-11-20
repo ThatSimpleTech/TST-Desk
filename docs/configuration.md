@@ -669,7 +669,9 @@ drop a different prefix than `from_seq`. Zero is a load error, not
 |---|---|---|---|
 | `log_max_events` | int ≥ 1 | `10000` | Maximum events kept in `events.jsonl`. Oldest drop first: past the cap the oldest tenth goes at once, so the window holds 90-100% of it. Attach from a rotated seq gets `log_trimmed` and replays from the earliest kept seq; a window gets the chat's earlier messages from the saved conversation instead (`conversation_history`, TD-5201). A restart adds two events to an idle chat (its loop's start and stop) and logs its wall and tier only when they changed. |
 | `send_file_max_bytes` | int 1..2147483648 | `536870912` | Largest file `send_file` copies into the chat (512 MiB). Bigger is refused with `file_too_large`; nothing is copied. |
-| `send_file_session_max_bytes` | int ≥ 1 | `4294967296` | Total of sent files one session may hold (4 GiB). Past it, `session_quota`. |
+| `send_file_session_max_bytes` | int ≥ 1 | `4294967296` | Total of sent files one session may hold (4 GiB). Past it, `session_quota`. Text given to `show_artifact` counts toward it too (TD-5254). |
+| `artifact_max_bytes` | int 1..2097152 | `2097152` | Most text one artifact shown by `show_artifact` may hold (2 MiB, which is the most the window's preview reads). Bigger is refused with `artifact_too_large` (TD-5254). |
+| `artifact_max_count` | int 1..10000 | `200` | How many artifacts one session keeps in the Artifacts pane. Showing the same file or name again replaces the earlier one and is not counted twice. Past it, `artifact_limit`. |
 | `default_effort` | `low` \| `medium` \| `high` \| `xhigh` \| `max` | `medium` | Reasoning effort a session starts with until the composer's model picker sets one. Sent as `reasoning_effort` to any tier with `reasoning_effort: true`. An older config's `ultracode` (a sixth level before TD-5195) still loads, as `max` with `default_ultracode: true` unless that key is set. |
 | `default_ultracode` | bool | `false` | Whether a new session starts with Ultracode on (TD-5195): the picker's switch, beside Fast, that lets the agent run several workers at once with the `workflow` tool (§2 `workflow`). Works with any effort. Once the picker sets it, a session keeps its own, a restart included. |
 
@@ -3169,7 +3171,7 @@ card or Skip all approvals, so none of them can run a refused call, and it tells
 planning. A call that was already waiting on an approval card when plan mode came on is
 checked again once it is allowed, so a late Allow or Skip all approvals refuses it too
 (TD-5161). Reads (`fs_read`, `fs_list`, `fs_grep`, the GitHub reads, screenshots), web search and
-fetch, `load_skill`, `send_file`, `task_list`, `ask_user`, `consult`, `tool_search` (TD-5127: it
+fetch, `load_skill`, `send_file`, `show_artifact`, `task_list`, `ask_user`, `consult`, `tool_search` (TD-5127: it
 only loads definitions; a loaded MCP tool still needs `read_only_tools`) and `delegate` for research
 still run under the usual rules. The agent ends plan mode with `exit_plan_mode`: its plan
 shows on a card on the window and the phone, where you approve it, edit it and then approve your

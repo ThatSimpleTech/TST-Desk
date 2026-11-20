@@ -48,6 +48,7 @@ from .send_file import send_file
 from .session_search import SessionRecall, register_session_search_handler
 from .shell import OnTimeout, ShellPolicy, run_shell
 from .shell_job_tools import shell_job_output, shell_job_stop
+from .show_artifact import show_artifact
 from .steering_edit import propose_steering_edit
 from .task_list import task_list
 from .tool_search import register_tool_search_handler
@@ -59,6 +60,7 @@ if TYPE_CHECKING:
     # sent_files imports artifacts, which imports this package: type-only here.
     from ..sent_files import SentFiles
     from ..session import Session
+    from ..shown_artifacts import ShownArtifacts
 
 # Handler-level cap on formatted lines.  Dispatch additionally caps the
 # returned string's byte length with its own truncation marker.
@@ -554,6 +556,7 @@ def register_builtin_handlers(
     browser_driver: BrowserDriver | None = None,
     grounding_client: GroundingLocator | None = None,
     sent_files: SentFiles | None = None,
+    shown_artifacts: ShownArtifacts | None = None,
     shell_allowlist: Callable[[], tuple[str, ...] | None] | None = None,
     session_recall: SessionRecall | None = None,
     ax_driver: AccessibilityDriver | None = None,
@@ -613,6 +616,7 @@ def register_builtin_handlers(
     register_workflow_handler(dispatcher)
     dispatcher.register_handler("consult", handle_consult)
     dispatcher.register_handler("send_file", partial(send_file, service=sent_files))
+    dispatcher.register_handler("show_artifact", partial(show_artifact, service=shown_artifacts))
     dispatcher.register_handler("propose_steering_edit", propose_steering_edit)
     dispatcher.register_handler("task_list", task_list)
     dispatcher.register_handler("ask_user", ask_user)

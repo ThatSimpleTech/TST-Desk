@@ -802,6 +802,11 @@ class SessionConfig(BaseModel):
     log_max_events: int = Field(default=DEFAULT_LOG_MAX_EVENTS, ge=1)
     send_file_max_bytes: int = Field(default=536_870_912, ge=1, le=2_147_483_648)
     send_file_session_max_bytes: int = Field(default=4_294_967_296, ge=1)
+    # What ``show_artifact`` may put in the Artifacts pane (TD-5254): the
+    # most text one artifact holds, and how many a session keeps. Two MiB
+    # is the most the window's preview reads, so anything shown opens.
+    artifact_max_bytes: int = Field(default=2_097_152, ge=1, le=2_097_152)
+    artifact_max_count: int = Field(default=200, ge=1, le=10_000)
     # Reasoning effort a session starts with until the picker sets one.
     default_effort: EffortLevel = DEFAULT_EFFORT
     # Whether a new session starts with Ultracode on (TD-5195).

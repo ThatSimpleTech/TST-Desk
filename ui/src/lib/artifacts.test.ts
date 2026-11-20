@@ -316,6 +316,82 @@ describe("open preview", () => {
 	});
 });
 
+describe("shown artifacts (TD-5254)", () => {
+	const shown = {
+		artifact_id: "a1",
+		title: "Tool",
+		mime: "text/plain",
+		path: "artifacts/a1",
+		kind: "artifact" as const,
+		name: "tool.py",
+		size: 12,
+		caption: "A first pass",
+		tool_call_id: "c1",
+	};
+
+	beforeEach(() => {
+		setArtifactSourceReader(async ({ path }) => `source:${path}`);
+		bindArtifacts("s1", "/ws");
+		emit({ type: "artifact_list", seq: 1, session_id: "s1", artifacts: [entry(shown)] });
+		mocks.sent.length = 0;
+	});
+
+	it("the name picks the preview when the path has no extension", async () => {
+		selectArtifact("a1");
+		emit({ type: "artifact", seq: 1, session_id: "s1", ...shown });
+		await flush();
+		expect(artifacts.preview?.kind).toBe("code");
+		expect(artifacts.preview?.name).toBe("tool.py");
+		expect(artifacts.preview?.caption).toBe("A first pass");
+		expect(asFencedMarkdown("x = 1", artifacts.preview?.name ?? "")).toContain("```python");
+
+		emit({ type: "artifact", seq: 1, session_id: "s1", ...shown, name: "page.html" });
+		await flush();
+		expect(artifacts.preview?.kind).toBe("html");
+		emit({ type: "artifact", seq: 1, session_id: "s1", ...shown, name: "notes.md" });
+		await flush();
+		expect(artifacts.preview?.kind).toBe("markdown");
+	});
+
+	it("a row from before names existed still previews by its path", async () => {
+		selectArtifact("a1");
+		emit({
+			type: "artifact",
+			seq: 1,
+			session_id: "s1",
+			artifact_id: "a1",
+			title: "Old",
+			mime: "text/markdown",
+			path: "notes.md",
+		});
+		await flush();
+		expect(artifacts.preview?.kind).toBe("markdown");
+		expect(artifacts.preview?.name).toBeNull();
+		expect(artifacts.preview?.caption).toBeNull();
+	});
+
+	it("showing the open artifact again reads it again, and replaces its row", async () => {
+		selectArtifact("a1");
+		emit({ type: "artifact", seq: 1, session_id: "s1", ...shown });
+		await flush();
+		mocks.sent.length = 0;
+		emit({ type: "artifact_ready", seq: 9, session_id: "s1", ...shown, title: "Tool, revised" });
+		expect(artifacts.items.map((row) => row.title)).toEqual(["Tool, revised"]);
+		expect(mocks.sent).toEqual([{ type: "open_artifact", session_id: "s1", artifact_id: "a1" }]);
+	});
+
+	it("showing some other artifact again does not disturb the open one", async () => {
+		selectArtifact("a1");
+		emit({ type: "artifact", seq: 1, session_id: "s1", ...shown });
+		await flush();
+		mocks.sent.length = 0;
+		emit({ type: "artifact_ready", seq: 9, session_id: "s1", ...shown, artifact_id: "a2" });
+		expect(mocks.sent).toEqual([]);
+		expect(artifacts.preview?.artifactId).toBe("a1");
+		expect(artifacts.items.map((row) => row.artifact_id)).toEqual(["a1", "a2"]);
+	});
+});
+
 describe("sent files (TD-5144)", () => {
 	const LIST = fixtures.artifact_list as Extract<DaemonEventUnion, { type: "artifact_list" }>;
 	const [plain, sent] = LIST.artifacts;

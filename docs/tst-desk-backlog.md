@@ -14346,3 +14346,51 @@ removed.
 The code releases it (`resolve_skippable_approvals`), and the docstring
 now says so.
 
+---
+
+### TD-5254 — The agent can show something to read in the Artifacts pane
+
+**Size:** 3 · **Depends on:** TD-3201, TD-3202, TD-5143, TD-5262 · **Status:** Done
+
+The Artifacts pane could preview markdown, HTML and code, and nothing
+could put anything there: `record_artifact` had no caller but tests. The
+agent could send a file (`send_file`, a card to save) but not say "look at
+this". `show_artifact` is that call. It uses the two doors the store has
+had since TD-3201.
+
+- [x] `path`: a text file in the workspace, shown without a copy, so the
+      pane shows the file as it is now (`test_show_artifact.py`).
+- [x] `content` with `name`: text kept at `sessions/<id>/artifacts/<id>`,
+      owner-only. The name is a label that picks the preview and is never a
+      place on disk: `../../AGENTS.md`, `/etc/passwd`, `CLAUDE.md` and a
+      rules path all write only `artifacts/<id>`
+      (`test_a_name_is_a_label_never_a_place`).
+- [x] Class A by a rule of its own, for the builtin alone; no card in the
+      default mode. A same-named MCP or plugin tool gets no grant; a path
+      outside the workspace is Class C and shows nothing.
+- [x] Text only: a binary, a folder, a FIFO and a missing file are refused,
+      and the refusal names `send_file`.
+- [x] Caps in config: `session.artifact_max_bytes` (2 MiB),
+      `session.artifact_max_count` (200), and given text counts toward
+      `send_file_session_max_bytes`.
+- [x] Showing the same path or name again replaces the row and keeps its
+      id; a sent file is never replaced by a shown one.
+- [x] Allowed in plan mode; not given to delegate or workflow children.
+- [x] A real daemon session runs a scripted call with no card and lists the
+      row (`test_a_daemon_session_shows_with_no_card_and_lists_it`).
+- [x] The window picks the preview and the highlighting from the name when
+      the path has no extension, shows the caption, and reads the open
+      artifact again when the agent shows it again (`artifacts.test.ts`).
+
+**Not built:** a chip in the chat for a shown artifact, and the preview
+beside the chat (note R3); serving artifact bytes from the daemon, so a
+phone can preview (R4: today the preview is the desktop app only); a plain
+line in the pane when a `path` artifact's file has gone (the read error is
+shown as it is); scripted HTML (deferred, needs a spike). The model must
+call the tool to see a change to a `path` artifact picked up by an open
+pane; the pane does not watch the file.
+
+**Notes:** `oneOf` is not in the tool's schema: the two doors are checked
+in the handler, because not every OpenAI-compatible server handles it.
+HTML is shown through TD-5262's static preview.
+
