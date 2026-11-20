@@ -21,7 +21,7 @@ from __future__ import annotations
 import contextlib
 import json
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from pathlib import Path
 from typing import Any
 
@@ -88,8 +88,12 @@ class Hub:
         *,
         policy: DialPolicy | None = None,
         timings: Timings = DEFAULT_TIMINGS,
+        phone_grants: Callable[[], Collection[str]] | None = None,
     ) -> None:
         self._ws = ws_server
+        # TD-5279: the phone permissions switched on right now. Without a
+        # source there are none, so every opt-in verb is refused.
+        self._phone_grants = phone_grants
         self._own_session_list = own_session_list
         self.registry = MachineRegistry(data_dir)
         self.registry.load()
@@ -127,7 +131,8 @@ class Hub:
         peer = self._ws.peer_view(connection)
         sid = message_session_id(msg)
         bridged = sid is not None and is_bridged(sid)
-        refusal = check(msg, peer, bridged=bridged)
+        grants = self._phone_grants() if self._phone_grants is not None else ()
+        refusal = check(msg, peer, bridged=bridged, grants=grants)
         if refusal is not None:
             return refusal
         if msg.type in MACHINE_VERBS:

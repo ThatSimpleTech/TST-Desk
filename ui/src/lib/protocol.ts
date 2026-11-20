@@ -322,6 +322,17 @@ export interface CancelPairing extends ClientMessage {
 export interface RemoveRemoteDevice extends ClientMessage {
   type: "remove_remote_device";
   device_id: string;
+  /** TD-5279: also remove the MCP servers this device added or changed. Computer only. */
+  remove_added?: boolean;
+}
+
+/** Switch what a paired phone may change (TD-5279). Loopback only; a phone
+ *  can never send it. No `expires_in_seconds` means until switched off. */
+export interface SetPhonePermission extends ClientMessage {
+  type: "set_phone_permission";
+  capability: string;
+  enabled: boolean;
+  expires_in_seconds?: number | null;
 }
 
 /** Pair another computer (TD-5015). Loopback only; runs as a task, answered
@@ -1466,6 +1477,7 @@ export type ClientMessageUnion =
   | StartPairing
   | CancelPairing
   | RemoveRemoteDevice
+  | SetPhonePermission
   | AddMachine
   | RemoveMachine
   | ListMachines
@@ -2380,6 +2392,8 @@ export interface SetupState extends DaemonEvent {
   judgments_typesafe_key_stored?: boolean;
   // TD-4403: listed MCP servers. Additive, default empty. Never a secret.
   mcp_servers?: McpServerSummary[];
+  // TD-5279: what a paired phone may change, by capability. Additive.
+  phone_permissions?: Record<string, PhonePermissionState>;
   // TD-4701: hold-to-talk. Additive, default off. The URL never arrives.
   speech_enabled?: boolean;
   speech_ready?: boolean;
@@ -2467,6 +2481,14 @@ export interface RemoteDeviceSummary {
   connected: boolean;
   /** TD-5015: a phone or another computer's hub. Missing = phone. */
   kind?: "phone" | "machine";
+  /** TD-5279: MCP servers this device added or changed that are still listed. */
+  mcp_servers_added?: string[];
+}
+
+/** One phone permission (TD-5279). `enabled` is "may a phone use it right now". */
+export interface PhonePermissionState {
+  enabled: boolean;
+  expires_at?: string | null;
 }
 
 /** A paired computer's link, as the hub reports it (TD-5015). */
@@ -2529,6 +2551,14 @@ export interface PairingCompleted extends DaemonEvent {
   device: RemoteDeviceSummary;
 }
 
+/** A paired phone used a phone permission (TD-5279). Loopback windows only. */
+export interface PhoneChange extends DaemonEvent {
+  type: "phone_change";
+  device_name: string;
+  capability: string;
+  summary: string;
+}
+
 export interface McpServerSummary {
   id: string;
   transport: "stdio" | "http";
@@ -2540,6 +2570,9 @@ export interface McpServerSummary {
   /** TD-5110: env vars (stdio) and headers (http), names only. Additive. */
   env?: McpValueSummary[];
   headers?: McpValueSummary[];
+  /** TD-5279: the phone this server was last added or changed from, and when. */
+  origin_device?: string;
+  origin_at?: string;
 }
 
 /** One env var or header of an MCP server (TD-5110). Never its value.
@@ -2711,10 +2744,11 @@ export interface ApiKeyValidated extends DaemonEvent {
 
 // TD-1104 doctor: one row per check. `skip` means not applicable (no key
 // to validate, no workspace open) — not a failure. `fix` is the concrete
-// remedy, present exactly when status is "fail".
+// remedy, present exactly when status is "fail". `warn` (TD-5279) is a
+// setting that works as chosen and is worth knowing about.
 export interface DiagnosticCheck {
   name: string;
-  status: "ok" | "fail" | "skip";
+  status: "ok" | "fail" | "skip" | "warn";
   detail: string;
   fix?: string | null;
 }
@@ -3478,6 +3512,7 @@ export type DaemonEventUnion =
   | SetupState
   | PairingCode
   | PairingCompleted
+  | PhoneChange
   | MachineList
   | ApiKeyValidated
   | EndpointModels

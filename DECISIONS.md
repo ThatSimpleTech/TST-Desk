@@ -20153,3 +20153,52 @@ own (reverses TD-4602); deriving the child from the tool-call id's prefix
 in the window (the window would be parsing an id format it was never
 promised).
 
+## 2026-11-20 — TD-5279: phone permissions, with MCP servers as the first (Class B; supersedes part of TD-5276)
+
+**Decision:** a paired phone may send `set_mcp_server`, `delete_mcp_server`,
+`set_mcp_secret` and `delete_mcp_secret` only while the capability
+`mcp_servers` is switched on, and it is switched on only by
+`set_phone_permission`, a new verb in `LOOPBACK_VERBS`. The four verbs leave
+`LOOPBACK_VERBS` for a new table, `PHONE_OPT_IN` (verb to capability).
+`peer_policy.check` gains `grants`, defaulting to none, and `PeerView` gains
+`phone`. Without the grant the refusal is `phone_permission_off`. Grants
+live in `<data dir>/phone-permissions.yaml` and may carry an expiry. Each
+use by a phone sends `phone_change` to the computer's windows and records
+the server's origin in `<data dir>/mcp-origins.yaml`. Removing a phone
+offers to remove what it added. Doctor gains a `warn` row status and uses
+it while any phone permission is on.
+
+**Rationale:** this is the owner's decision, relayed by the planning
+session: the ability stays, optional, default off, with the risk stated
+before it is switched on. Three rules make that safe to offer. Only the
+computer can grant, which is why the switch is the one verb with no
+setting. Only a paired phone can use a grant: the older remote token is no
+device, so nothing switches these verbs on for it, and another computer
+stays deny-by-default. And use is visible and leaves a trail. The grants
+are in the data dir, beside `remote-attach.yaml` and `approvals.yaml`, and
+not a `config.yaml` key, so no repository and no config editor can set
+one. Everything about the file fails closed.
+
+**What the default changes for a phone:** nothing since TD-5276 (refused);
+against v0.4.6, a phone can no longer add or change an MCP server until
+the computer allows it.
+
+**Rejected:** a single "trust my phones" switch (one sentence cannot
+disclose six different risks, and the owner asked for this not to be
+built); a permanent never-list for the most dangerous verbs (the owner
+decided every one is opt-in, with stronger words for the two that can
+send a stored secret to a host the phone names); keeping the grant in
+`config.yaml` (the workspace layer and the config editor could then reach
+it); an audit-database record now (every record is keyed to a session;
+the log line and the origins file are the trail until that is designed).
+
+**Wording:** the refusal and the phone's page say "Settings, Phones and
+devices", the section's real name, where the design note said "Settings,
+Devices".
+
+**Still to do, one story each:** the same switch for turning approvals
+off, model and key setup, computer-use control, unattended runs, the
+connector sign-ins, `shutdown`, releasing the computer-use stop, changing
+a saved key's host and changing the mail server; then the inventory that
+makes a new verb start refused for a phone.
+

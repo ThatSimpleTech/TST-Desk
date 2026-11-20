@@ -698,6 +698,28 @@ class RemoveRemoteDevice(ClientMessage):
 
     type: Literal["remove_remote_device"] = "remove_remote_device"
     device_id: str = Field(min_length=1)
+    #: Also remove the MCP servers this device added or changed (TD-5279).
+    #: Honoured from the computer only; a phone forgetting itself leaves them.
+    remove_added: bool = False
+
+
+class SetPhonePermission(ClientMessage):
+    """Switch one phone permission on or off (TD-5279). Loopback only.
+
+    Machine-wide, no session. A phone permission lets a paired phone send
+    verbs that are otherwise refused from one with ``phone_permission_off``
+    (``mcp_servers``: add, change and remove MCP servers and their values).
+    ``expires_in_seconds`` makes the grant run out on its own; absent, it
+    lasts until switched off. Persists
+    ``{user_data_dir}/phone-permissions.yaml``; acked with ``setup_state``.
+    An unknown capability or an expiry over seven days is ``bad_request``.
+    No phone, legacy-token client or other computer may send it.
+    """
+
+    type: Literal["set_phone_permission"] = "set_phone_permission"
+    capability: str = Field(min_length=1)
+    enabled: bool
+    expires_in_seconds: int | None = Field(default=None, ge=1)
 
 
 class AddMachine(ClientMessage):
@@ -3732,6 +3754,10 @@ class McpServerSummary(BaseModel):
     #: Names only (TD-5110). Additive; an older client ignores them.
     env: list[McpValueSummary] = Field(default_factory=list)
     headers: list[McpValueSummary] = Field(default_factory=list)
+    #: The phone this server was last added or changed from, and when
+    #: (TD-5279). Empty for one only the computer has touched.
+    origin_device: str = ""
+    origin_at: str = ""
 
 
 class RemoteDeviceSummary(BaseModel):
@@ -3749,6 +3775,20 @@ class RemoteDeviceSummary(BaseModel):
     # TD-5015: "machine" is another computer's hub. A file entry written
     # before the field reads as a phone.
     kind: Literal["phone", "machine"] = "phone"
+    #: MCP servers this device added or changed that are still listed
+    #: (TD-5279): what removing it would leave behind.
+    mcp_servers_added: list[str] = Field(default_factory=list)
+
+
+class PhonePermissionState(BaseModel):
+    """One phone permission as ``setup_state`` shows it (TD-5279).
+
+    ``enabled`` is whether a phone may use it right now: a grant whose
+    ``expires_at`` has passed reads as off.
+    """
+
+    enabled: bool = False
+    expires_at: str | None = None
 
 
 class EmailNotifyState(BaseModel):
@@ -3921,6 +3961,10 @@ class SetupState(DaemonEvent):
     # TD-4403: listed MCP servers. Additive, default empty. Never a secret;
     # env and headers are names only (TD-5110). An older client ignores it.
     mcp_servers: list[McpServerSummary] = Field(default_factory=list)
+    # TD-5279: what a paired phone may change, by capability. Every known
+    # capability is listed, on or off. A phone reads it too, so its pages
+    # can say why a control is unavailable. Additive, default empty.
+    phone_permissions: dict[str, PhonePermissionState] = Field(default_factory=dict)
     # TD-4701: hold-to-talk. Additive, default off. ``speech_ready`` is
     # enabled plus a configured base_url — the URL itself never leaves
     # the daemon. An older client ignores both fields.
@@ -3964,6 +4008,21 @@ class PairingCompleted(DaemonEvent):
     type: Literal["pairing_completed"] = "pairing_completed"
     seq: int = 1
     device: RemoteDeviceSummary
+
+
+class PhoneChange(DaemonEvent):
+    """A paired phone used a phone permission (TD-5279).
+
+    Broadcast to loopback clients only, each time: the person at the
+    computer is told what a phone changed and which phone. ``summary`` is
+    one sentence without the device's name. Connection-scoped, seq 1.
+    """
+
+    type: Literal["phone_change"] = "phone_change"
+    seq: int = 1
+    device_name: str
+    capability: str
+    summary: str
 
 
 MachineStatus = Literal["connected", "connecting", "unreachable", "refused", "locked", "outdated"]
@@ -4282,10 +4341,12 @@ class DiagnosticCheck(BaseModel):
     ``skip`` means the check did not apply (no key to validate, no
     workspace open) — it is not a failure and should not alarm.  ``fix``
     is the concrete remedy; present exactly when status is ``fail``.
+    ``warn`` (TD-5279) is a setting that works as chosen and is worth
+    knowing about, such as a phone permission left on.
     """
 
     name: str
-    status: Literal["ok", "fail", "skip"]
+    status: Literal["ok", "fail", "skip", "warn"]
     detail: str
     fix: str | None = None
 
@@ -5093,6 +5154,7 @@ ClientMessageT = Annotated[
     | StartPairing
     | CancelPairing
     | RemoveRemoteDevice
+    | SetPhonePermission
     | AddMachine
     | RemoveMachine
     | ListMachines
@@ -5182,6 +5244,7 @@ DaemonEventT = Annotated[
     | SetupState
     | PairingCode
     | PairingCompleted
+    | PhoneChange
     | MachineList
     | DrainResult
     | ApiKeyValidated
@@ -5356,6 +5419,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "start_pairing",
         "cancel_pairing",
         "remove_remote_device",
+        "set_phone_permission",
         "add_machine",
         "remove_machine",
         "list_machines",
@@ -5445,6 +5509,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "setup_state",
         "pairing_code",
         "pairing_completed",
+        "phone_change",
         "machine_list",
         "drain_result",
         "api_key_validated",

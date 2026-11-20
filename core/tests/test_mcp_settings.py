@@ -199,6 +199,9 @@ class TestDaemonAck:
                 "excluded_tools": [],
                 "env": [],
                 "headers": [],
+                # TD-5279: added at the computer, so no phone to name.
+                "origin_device": "",
+                "origin_at": "",
             }
         ]
         row = _servers(path)["example"]

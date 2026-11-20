@@ -371,7 +371,15 @@ def test_summaries_carry_the_connected_flag_and_never_a_hash(tmp_path: Path) -> 
     rows = {s.id: s.model_dump() for s in reg.summaries(connected={a.id})}
     assert rows[a.id]["connected"] is True and rows[b.id]["connected"] is False
     for row in rows.values():
-        assert set(row) == {"id", "name", "paired_at", "last_seen", "connected", "kind"}
+        assert set(row) == {
+            "id",
+            "name",
+            "paired_at",
+            "last_seen",
+            "connected",
+            "kind",
+            "mcp_servers_added",
+        }
 
 
 @pytest.mark.parametrize(

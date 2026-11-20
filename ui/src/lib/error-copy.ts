@@ -298,6 +298,11 @@ export function daemonErrorCopy(code: string, message: string): NoticeSpec {
 			body: `${message} The key you typed is still in the wizard — click Store key again once it's unlocked.`,
 		};
 	}
+	if (code === "phone_permission_off") {
+		// TD-5279: a phone asked for something the computer has not switched
+		// on for phones. The daemon's message names the switch and where it is.
+		return { severity: "toast", title: "Turned off for phones", body: message };
+	}
 	if (code === "session_not_running") {
 		// TD-1711: the send targeted a dead session (tombstone or terminal).
 		// The daemon's message already names the fix (start a new session,

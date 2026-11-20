@@ -37,6 +37,8 @@
 	import CuPolicyPane from './CuPolicyPane.svelte';
 	import SettingsJudgments from './SettingsJudgments.svelte';
 	import PairedDevices from './PairedDevices.svelte';
+	import PhonePermissions from './PhonePermissions.svelte';
+	import { isGranted } from '../phone-permissions';
 	import SettingsMachines from './SettingsMachines.svelte';
 	import PairDeviceDialog from './PairDeviceDialog.svelte';
 	import { openPairDialog } from '../pair-device.svelte.js';
@@ -45,6 +47,9 @@
 	// TD-5014: only the computer itself may pair or remove; the daemon refuses
 	// both from a phone, so a phone viewing Settings gets the list only.
 	const onComputer = isTauri();
+	// TD-5279: off the computer the MCP page is read-only unless the computer
+	// switched it on for phones. setup_state arrives again when that changes.
+	let phoneMayManageMcp = $derived(isGranted(settings.phonePermissions, 'mcp_servers', Date.now()));
 	let showLegacy = $state(false);
 
 	const SECTION_LABEL: Record<SettingsSection, string> = {
@@ -192,6 +197,7 @@
 							<button class="choice" type="button" onclick={openPairDialog}>Pair a phone</button>
 						</div>
 						<PairedDevices canManage={onComputer} />
+						<PhonePermissions />
 					{/if}
 					{#if !onComputer}
 						<p class="hint">Pair or remove phones in Settings on the computer.</p>
@@ -257,7 +263,7 @@
 				{:else if settings.section === 'policy'}
 					<PolicyRuleList sessionId={session.sessionId} />
 				{:else if settings.section === 'mcp'}
-					<SettingsMcp canManage={onComputer} />
+					<SettingsMcp canManage={onComputer || phoneMayManageMcp} />
 				{:else if settings.section === 'email'}
 					<SettingsEmail />
 				{:else if settings.section === 'github'}
