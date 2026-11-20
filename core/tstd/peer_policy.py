@@ -144,8 +144,19 @@ VIEWER_MACHINE_VERBS: frozenset[str] = frozenset({"list_machines"})
 # ``delete_preset`` (TD-5237) removes a model from the catalog. Copying or
 # relabelling one from a phone is as narrow as ``add_model``; taking one
 # away is done at the computer whose config it is.
+# The MCP page (TD-5276). A stdio server is a command this computer runs,
+# now and at every session start, and it never meets the classifier. A
+# paired phone could add one with no word from the person at the computer,
+# and it stayed in config.yaml after the phone was removed. So the page is
+# the computer's own, as the commands in the config editor already were: a
+# phone still sees the list in ``setup_state``. A server's values go with
+# it: they are that command's environment, or the headers sent to its host.
 LOOPBACK_VERBS: frozenset[str] = frozenset(
     {
+        "set_mcp_server",
+        "delete_mcp_server",
+        "set_mcp_secret",
+        "delete_mcp_secret",
         "delete_preset",
         "drain",
         "trust_workspace_config",
