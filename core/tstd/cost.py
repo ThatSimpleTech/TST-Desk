@@ -64,6 +64,49 @@ def billable_cached_tokens(cached: int | None) -> int:
     return cached if cached is not None else 0
 
 
+@dataclass(frozen=True)
+class PromptBill:
+    """One call's prompt side, split the way a provider bills it (TD-5280).
+
+    ``uncached_tokens`` is every prompt token not read from cache, and it
+    includes ``written_tokens``, the ones the provider stored in its cache
+    on this call. ``prompt_cost`` covers all of ``uncached_tokens``: the
+    written ones at the tier's cache-write price, the rest at its input
+    price. Unrounded, so the parts sum to the total before rounding.
+    """
+
+    cached_tokens: int
+    uncached_tokens: int
+    written_tokens: int
+    prompt_cost: float
+    cached_cost: float
+
+
+def prompt_bill(usage: Usage, tier_cfg: TierConfig) -> PromptBill:
+    """Split *usage*'s prompt tokens into what each is charged at.
+
+    A cache write is never counted for more tokens than were left after
+    the cache reads, whatever the provider reported, so a malformed figure
+    cannot make a call cost more than its whole prompt at the write price.
+    With no ``cache_write_price`` on the tier a written token costs the
+    input price, which is what every call cost before the field existed.
+    """
+    cached_tokens = billable_cached_tokens(usage.cached_prompt_tokens)
+    uncached = max(0, usage.prompt_tokens - cached_tokens)
+    written = min(uncached, max(0, usage.cache_write_tokens or 0))
+    write_price = (
+        tier_cfg.input_price if tier_cfg.cache_write_price is None else tier_cfg.cache_write_price
+    )
+    prompt_cost = ((uncached - written) * tier_cfg.input_price + written * write_price) / 1_000_000
+    return PromptBill(
+        cached_tokens=cached_tokens,
+        uncached_tokens=uncached,
+        written_tokens=written,
+        prompt_cost=prompt_cost,
+        cached_cost=cached_tokens * tier_cfg.cache_read_price / 1_000_000,
+    )
+
+
 def compute_call_cost(usage: Usage, tier_cfg: TierConfig) -> float:
     """Compute the dollar cost of a single API call.
 
@@ -74,13 +117,10 @@ def compute_call_cost(usage: Usage, tier_cfg: TierConfig) -> float:
     Returns:
         Cost in dollars.
     """
-    cached_tokens = billable_cached_tokens(usage.cached_prompt_tokens)
-    uncached = max(0, usage.prompt_tokens - cached_tokens)
-    prompt_cost = uncached * tier_cfg.input_price / 1_000_000
-    cached_cost = cached_tokens * tier_cfg.cache_read_price / 1_000_000
+    bill = prompt_bill(usage, tier_cfg)
     completion_cost = usage.completion_tokens * tier_cfg.output_price / 1_000_000
 
-    return round(prompt_cost + cached_cost + completion_cost, 6)
+    return round(bill.prompt_cost + bill.cached_cost + completion_cost, 6)
 
 
 def compute_call_details(usage: Usage, tier_cfg: TierConfig) -> dict[str, float]:
@@ -90,19 +130,13 @@ def compute_call_details(usage: Usage, tier_cfg: TierConfig) -> dict[str, float]
         Dict with keys: uncached_prompt_tokens, prompt_cost, cached_cost,
         completion_cost, total_cost.
     """
-    cached_tokens = billable_cached_tokens(usage.cached_prompt_tokens)
-    uncached = max(0, usage.prompt_tokens - cached_tokens)
+    bill = prompt_bill(usage, tier_cfg)
     return {
-        "uncached_prompt_tokens": uncached,
-        "prompt_cost": round(uncached * tier_cfg.input_price / 1_000_000, 6),
-        "cached_cost": round(cached_tokens * tier_cfg.cache_read_price / 1_000_000, 6),
+        "uncached_prompt_tokens": bill.uncached_tokens,
+        "prompt_cost": round(bill.prompt_cost, 6),
+        "cached_cost": round(bill.cached_cost, 6),
         "completion_cost": round(usage.completion_tokens * tier_cfg.output_price / 1_000_000, 6),
-        "total_cost": round(
-            uncached * tier_cfg.input_price / 1_000_000
-            + cached_tokens * tier_cfg.cache_read_price / 1_000_000
-            + usage.completion_tokens * tier_cfg.output_price / 1_000_000,
-            6,
-        ),
+        "total_cost": compute_call_cost(usage, tier_cfg),
     }
 
 
@@ -262,10 +296,10 @@ class CostTracker:
         """Build a CallRecord for *usage* and compute its dollar cost."""
         tier_cfg = cfg or self._config.tier(tier)
         cost = compute_call_cost(usage, tier_cfg)
-        cached_tokens = billable_cached_tokens(usage.cached_prompt_tokens)
-        uncached = max(0, usage.prompt_tokens - cached_tokens)
-        prompt_cost = round(uncached * tier_cfg.input_price / 1_000_000, 6)
-        cached_cost = round(cached_tokens * tier_cfg.cache_read_price / 1_000_000, 6)
+        bill = prompt_bill(usage, tier_cfg)
+        uncached = bill.uncached_tokens
+        prompt_cost = round(bill.prompt_cost, 6)
+        cached_cost = round(bill.cached_cost, 6)
         completion_cost = round(usage.completion_tokens * tier_cfg.output_price / 1_000_000, 6)
 
         record = CallRecord(

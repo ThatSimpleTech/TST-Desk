@@ -391,6 +391,10 @@ class Usage:
     completion_tokens: int = 0
     cached_prompt_tokens: int | None = None
     total_tokens: int = 0
+    #: Prompt tokens the provider stored in its cache on this call
+    #: (TD-5280), part of ``prompt_tokens``. Some providers charge more
+    #: for these than for plain input. None when the response named none.
+    cache_write_tokens: int | None = None
 
     @classmethod
     def from_api_dict(cls, data: dict[str, Any] | None) -> Usage:
@@ -399,11 +403,15 @@ class Usage:
             return cls()
         details = data.get("prompt_tokens_details")
         cached = details.get("cached_tokens") if isinstance(details, dict) else None
+        written = details.get("cache_write_tokens") if isinstance(details, dict) else None
+        if isinstance(written, bool) or not isinstance(written, int) or written < 0:
+            written = None
         return cls(
             prompt_tokens=data.get("prompt_tokens", 0),
             completion_tokens=data.get("completion_tokens", 0),
             cached_prompt_tokens=cached,
             total_tokens=data.get("total_tokens", 0),
+            cache_write_tokens=written,
         )
 
 

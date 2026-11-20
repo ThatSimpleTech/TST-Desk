@@ -14229,3 +14229,38 @@ because they can send a stored key or password to a host the phone names,
 changing a saved key's host and changing the mail server. `shutdown` and
 releasing the computer-use stop are opt-in too by the owner's decision.
 Only `set_phone_permission` has no setting. Class B entry in DECISIONS.md.
+
+---
+
+### TD-5280 — A cache write is charged at its own price, and Claude through OpenRouter can cache
+
+**Size:** 2 · **Depends on:** TD-5008 · **Status:** Done (one check in the real app outstanding)
+
+The owner decided against native vendor protocols for now and for the two
+cheap fixes that need none. The cost meter charged prompt tokens a
+provider *stores* in its cache as plain input, though Anthropic models
+charge 1.25 times input for them, so it read low. And TST Desk never asked
+for a prompt cache, so Claude models through OpenRouter got none.
+
+- [x] `Usage.cache_write_tokens` is read from
+      `prompt_tokens_details.cache_write_tokens`; anything that is not a
+      plain count is ignored (`test_cache_write_price.py`).
+- [x] A tier may name `cache_write_price`. Written tokens are charged at
+      it, capped at the prompt tokens left after cache reads; the cost
+      breakdown still adds up.
+- [x] A tier that names no write price costs exactly what it did before
+      (`test_no_write_price_charges_a_write_as_plain_input`).
+- [x] `extra_body: {cache_control: {type: ephemeral}}` on a tier goes out
+      as a top-level request field, with no code change
+      (`test_a_prompt_cache_can_be_asked_for_through_extra_body`).
+- [x] `docs/models.md` shows the entry and says how to tell it works;
+      `docs/configuration.md` lists the key.
+- [ ] In the real app, on a Claude model through OpenRouter with that
+      line, the second turn of a chat reports cached tokens. Not run: it
+      needs the owner's OpenRouter key and spends on that account.
+
+**Not built:** the model-card refresh does not fill `cache_write_price`
+in; the audit database stores no separate count of written tokens (the
+cost it stores is right). No adapter seam and no vendor codecs, by the
+owner's decision.
+
