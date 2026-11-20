@@ -73,13 +73,17 @@
 </div>
 
 <style>
+	/* TD-5242: on a phone's narrow menu "Only this chat" drops under the
+	   model's name instead of squeezing it or leaving the menu. */
 	.row {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
+		justify-content: flex-end;
 	}
 
 	.item {
-		flex: 1;
+		flex: 1 1 9rem;
 		min-width: 0;
 		display: flex;
 		align-items: center;

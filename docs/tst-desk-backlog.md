@@ -13694,3 +13694,36 @@ default, which also moved every new chat onto it.
 keys and every older client still read the active model's roles from it.
 Class B entry in DECISIONS.md.
 
+---
+
+### TD-5242 — The model picker on a paired phone
+
+**Size:** 2 · **Depends on:** TD-5236, TD-5240, TD-5241 · **Status:** Done
+
+The phone runs the same window in a WebView, so E54's picker is already
+its picker. What was not known: which of the new verbs a phone may send,
+whether its list follows a change made at the computer, and whether a row
+with "Only this chat" fits a phone's width.
+
+- [x] A phone may send `switch_preset`, `new_session` with `preset`,
+      `check_presets`, `get_preset_roles`, `duplicate_preset`,
+      `set_preset_label` and `add_grok_preset`; only the computer may send
+      `delete_preset`; another computer's hub none of the model-list verbs
+      (`test_models_on_phone.py::TestWhatAPhoneMaySend`).
+- [x] A phone's `setup_state` carries the sections, engines and slots, and
+      still leaves out what a remote peer's always does
+      (`test_a_phone_gets_the_sections_engines_and_slots`).
+- [x] A catalog change made in a window reaches a paired phone, and one
+      made on a phone reaches the window, each with its own view of
+      `setup_state` (`test_a_phone_is_told_when_the_window_changes_the_catalog`,
+      `test_the_window_is_told_when_a_phone_changes_it`).
+- [x] `check_presets` from a phone reports keys and the Grok CLI and does
+      not make the computer ask its model servers
+      (`test_a_phone_never_makes_the_computer_ask_its_model_servers`).
+- [x] At 360 px the picker's menu, and each row's "Only this chat", stay
+      inside the screen (the UI walk, `app-walk.spec.ts`).
+
+**Notes:** No Kotlin changed: the next APK build carries the new window.
+The ⌘⌥ digit chord has no meaning on a phone; a slot's digit still shows
+beside its model. Class B entry in DECISIONS.md.
+

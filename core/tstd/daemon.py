@@ -150,7 +150,7 @@ from .grok_home import (
     open_in_terminal,
 )
 from .grok_loop import grok_loop
-from .hub import NOT_HANDLED, Hub
+from .hub import NOT_HANDLED, Hub, scrub_setup_state
 from .key_hosts import KeyProbe, is_key_id, key_got_past_sign_in, key_probe, key_refusal
 from .keychain import (
     KeychainError,
@@ -3738,10 +3738,18 @@ class Daemon:
             # TD-5240: keys by presence, this computer's servers by a keyless
             # ask, the Grok CLI by its path. Nothing leaves the machine.
             _grok_path, grok_found = await asyncio.to_thread(_probe_grok, self.config.engine.binary)
+            # TD-5242: asking this computer's model servers is for the person
+            # at it (TD-5180's rule for the port scan). A phone still learns
+            # about keys and the Grok CLI; a server it cannot ask reads ready.
+            from_afar = self.ws_server.peer_view(_connection).remote
+
+            async def _not_asked(_urls: list[str]) -> dict[str, bool]:
+                return {}
+
             readiness = await check_presets(
                 self.config,
                 key_stored=self._credential_is_stored,
-                answers=loopback_answers,
+                answers=_not_asked if from_afar else loopback_answers,
                 grok_found=grok_found,
             )
             return PresetReadiness(rows=readiness).model_dump_json()
@@ -5841,14 +5849,17 @@ class Daemon:
 
         ``setup_state`` is otherwise only the reply to whoever asked, so a
         second window kept showing the old list and the old default until
-        it reopened Settings. This computer's own windows only, like the
-        presence refresh above: a phone asks when it needs the list.
+        it reopened Settings. A paired phone shows the same picker, so it
+        is told too (TD-5242), with what a remote peer's ``setup_state``
+        always leaves out left out. Not the connection being answered: its
+        reply already says it.
         """
-        state = await self._setup_state_event()
+        state = scrub_wire_json((await self._setup_state_event()).model_dump_json())
         await self.ws_server.broadcast(
-            scrub_wire_json(state.model_dump_json()),
+            state,
             loopback_only=True,
             exclude=_ANSWERING.get(),
+            remote_payload=scrub_setup_state(state),
         )
 
     def _remember_remote_port(self) -> None:
