@@ -8,9 +8,9 @@ suite, usable from any MCP client. Nothing under `mcp/` is imported by `core/`,
 each job to `core`, `shell` or `ui` with `working-directory`, so this directory is
 outside all of them.
 
-That detachment is deliberate. TST Desk gains MCP extension loading in its v0.8
-milestone; until then these servers are developed and used independently, and the
-app is unaffected by them.
+That detachment is deliberate. TST Desk loads MCP servers you list under `mcp.servers`
+in `config.yaml` (Settings → MCP servers), and one of these can be listed there like any
+other; none is bundled or started by the app.
 
 | Server | Purpose | Platforms |
 |--------|---------|-----------|

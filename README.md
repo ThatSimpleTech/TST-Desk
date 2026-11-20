@@ -181,8 +181,18 @@ directives in [`AGENTS.md`](AGENTS.md) §2 and enforced in code.
   of that socket, and the other half of this repo.
 - **No subscription.** You pay your model provider per token and nobody else. There is no
   billing code in this repository because there is nothing to bill.
-- **No telemetry.** No analytics, no phone-home, no crash reporting. The only outbound HTTP the
-  daemon makes is to the `base_url` you configured: there is exactly one chat client
+- **No telemetry.** No analytics, no phone-home, no crash reporting. Nothing is sent to the
+  authors of TST Desk or to a service of ours, because there is none. Every host the daemon
+  does contact is named in your `config.yaml`:
+  - each model's `base_url`, for chat and, once a day, to re-read that model's price and
+    context size (`model_refresh`; `auto: false` turns it off);
+  - the search pages `web_search` reads (`search.base_url` and its fallbacks) and the pages
+    `web_fetch` opens, under the same approval rules as any other tool call;
+  - what you switch on yourself: notification channels, connectors, and an MCP server you
+    marked `allow_remote`.
+
+  The packaged app, not the daemon, also asks GitHub releases for a newer version when it
+  opens and every four hours ([Updates](#updates)). There is exactly one chat client
   ([`provider.py`](core/tstd/provider.py)), and its endpoint comes from config, never from a
   literal in the source. Model discovery refuses any non-loopback endpoint *before* it sends
   ([`discovery.py`](core/tstd/discovery.py)).
