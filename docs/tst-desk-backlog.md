@@ -13925,3 +13925,35 @@ in fact have followed a clicked link was not run; the fix does not depend
 on the answer. The sanitizer has its own DOMPurify instance, so its rule
 for `src` does not reach markdown or diagrams.
 
+---
+
+### TD-5267 — An MCP server does not get the daemon's secrets from its environment
+
+**Size:** 1 · **Depends on:** TD-4401, TD-5110, TD-605 · **Status:** Done
+
+A stdio MCP server was started with the daemon's whole environment, or
+inherited it outright when it had no values of its own. A key the person
+had exported in their shell profile for some other tool (`OPENAI_API_KEY`,
+`GITHUB_TOKEN`, a database URL with a password) went to every MCP server
+they listed. TD-5110 had made a server's *own* token private to it; the
+daemon's were still shared with all of them.
+
+- [x] A stdio server starts with the scrubbed environment the shell tool
+      uses (`sanitized_env`): no variable whose name looks like a key, token,
+      password or auth setting, none whose value carries a credential in a
+      URL (`test_mcp_secrets.py::TestSpawn::test_a_server_does_not_get_the_daemons_own_secrets`).
+- [x] It applies to a server with values of its own and to one with none.
+- [x] Ordinary variables still pass (`PATH`), and a name a server is given
+      in its own `env` is passed whatever it looks like.
+- [x] A server's own keychain value still reaches only that server
+      (the existing TD-5110 tests).
+
+**Notes:** Hygiene, not containment. It is a deny-list, so an unknown name
+gets through, and it leaves the agent and bus socket variables in place; a
+same-user process can read other things besides. The fuller fix is an
+allow-list per operating system, as the MCP SDKs use, with a per-server
+list of extra names and a working directory. That needs each list tried
+with real servers on macOS, Windows and Linux before it ships, because a
+list that is one variable short stops a server starting; it is a separate
+story. Sandboxing the server process is the containment step.
+

@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import os
 from collections.abc import Mapping
 from typing import Any
 
 from ..logging import get_logger
+from ..tools.shell import sanitized_env
 from .calls import (
     CallTimedOut,
     ToolsChanged,
@@ -93,7 +93,12 @@ class StdioMcpClient:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     limit=STREAM_LIMIT,
-                    env={**os.environ, **self._env} if self._env else None,
+                    # TD-5267: never the daemon's whole environment. A server
+                    # is somebody else's program; it gets the ordinary
+                    # variables it needs to start and none that look like a
+                    # key, a token, a password or a credential in a URL, plus
+                    # what this server was given by name.
+                    env={**sanitized_env(), **self._env},
                 )
             except OSError as e:
                 raise McpError(f"failed to start stdio MCP: {e}") from e

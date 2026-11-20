@@ -238,8 +238,46 @@ class TestSpawn:
             assert await _getenv(dispatcher, "beta", "TD5110_TOKEN") == "<unset>"
             assert await _getenv(dispatcher, "beta", "TD5110_MODE") == "<unset>"
             assert "TD5110_TOKEN" not in os.environ
-            # The child still has the daemon's environment underneath.
+            # The child still has the ordinary variables it needs to start.
             assert await _getenv(dispatcher, "alpha", "PATH") == os.environ["PATH"]
+        finally:
+            await supervisor.aclose()
+
+    async def test_a_server_does_not_get_the_daemons_own_secrets(
+        self,
+        memory_keychain: MemoryKeychain,
+        fake_server: list[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """TD-5267: a key in the daemon's environment is not every server's key."""
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-not-for-a-server")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp-not-for-a-server")
+        monkeypatch.setenv("MYSQL_PWD", "not-for-a-server")
+        monkeypatch.setenv("DATABASE_URL", "postgres://user:hunter2@db.internal/app")
+        monkeypatch.setenv("TD5267_ORDINARY", "fine")
+        config = McpConfig(
+            servers={
+                # One with values of its own, one with none: both are scrubbed.
+                "alpha": McpServerConfig(
+                    transport="stdio", command=fake_server, env={"TD5110_MODE": "plain"}
+                ),
+                "beta": McpServerConfig(transport="stdio", command=fake_server),
+                # A server that is given one of those names, by name, still gets it.
+                "gamma": McpServerConfig(
+                    transport="stdio", command=fake_server, env={"GITHUB_TOKEN": "its-own"}
+                ),
+            }
+        )
+        supervisor, _, dispatcher = await _load(config)
+        try:
+            assert [row.status for row in supervisor.doctor_rows()] == ["ok", "ok", "ok"]
+            for server in ("alpha", "beta"):
+                for name in ("OPENAI_API_KEY", "GITHUB_TOKEN", "MYSQL_PWD", "DATABASE_URL"):
+                    assert await _getenv(dispatcher, server, name) == "<unset>", (server, name)
+                assert await _getenv(dispatcher, server, "TD5267_ORDINARY") == "fine"
+                assert await _getenv(dispatcher, server, "PATH") == os.environ["PATH"]
+            assert await _getenv(dispatcher, "gamma", "GITHUB_TOKEN") == "its-own"
+            assert await _getenv(dispatcher, "gamma", "OPENAI_API_KEY") == "<unset>"
         finally:
             await supervisor.aclose()
 
