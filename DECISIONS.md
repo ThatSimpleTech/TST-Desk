@@ -20054,3 +20054,23 @@ direction: a server that is still loading answers nothing for a moment.
 probing on a timer (traffic nobody asked for); validating a key with a live
 call (that is the existing Test button's job, on a click).
 
+## 2026-11-20 — TD-5241: a read-only `get_preset_roles` for the entry being edited; `setup_state` is unchanged (Class B)
+
+**Decision:** `get_preset_roles {name}` is answered with `preset_roles`,
+which carries for that entry the four maps `setup_state` carries for the
+active one. The Settings store keeps the chosen entry (`editPreset`) and its
+roles (`editRoles`) beside the active entry's, never over them, and every
+write names `editTarget()`. The write verbs already took a `preset`.
+
+**Rationale:** the alternative was to make `setup_state`'s `tier_*` fields
+describe "whichever entry this connection is looking at", which would turn
+a stateless reply into per-connection state and break Settings → API keys
+and older clients, which read those fields as the active entry's. A separate
+read keeps `setup_state` meaning one thing. Showing nothing until the answer
+arrives is the "window never derives what it was not sent" rule: the active
+entry's roles must not appear under another entry's name.
+
+**Rejected:** sending every entry's roles in every `setup_state` (it grows
+with the catalog and is sent on every Settings write); making the entry
+active in order to edit it (that is the behaviour being fixed).
+

@@ -304,6 +304,7 @@ from .protocol import (
     GetConfigEditor,
     GetHooks,
     GetInstructionStack,
+    GetPresetRoles,
     GetSessionJobSource,
     GetSetupState,
     GetUsage,
@@ -365,6 +366,7 @@ from .protocol import (
     ParseJob,
     PolicyRules,
     PresetReadiness,
+    PresetRoles,
     PreviewRestoreFiles,
     ReadArtifactChunk,
     RefreshModelCards,
@@ -1861,11 +1863,14 @@ class Daemon:
         )
         return None
 
-    def _tier_cards(self, tiers: dict[str, TierConfig]) -> dict[str, TierCard]:
-        """The active preset's stored numbers and last refresh, per tier."""
+    def _tier_cards(
+        self, tiers: dict[str, TierConfig], preset: str | None = None
+    ) -> dict[str, TierCard]:
+        """An entry's stored numbers and last refresh, per tier. Default: the active one."""
+        owner = self.config.active_preset if preset is None else preset
         cards: dict[str, TierCard] = {}
         for name, tier in tiers.items():
-            last = self._card_results.get((self.config.active_preset, name))
+            last = self._card_results.get((owner, name))
             cards[name] = TierCard(
                 input_price=tier.input_price,
                 output_price=tier.output_price,
@@ -3709,6 +3714,26 @@ class Daemon:
             return await self._handle_set_session_preset(msg)
         if isinstance(msg, SwitchPreset):
             return await self._handle_switch_preset(msg)
+        if isinstance(msg, GetPresetRoles):
+            # TD-5241: the roles of the entry Settings → Model is editing,
+            # in the shape setup_state gives the active one.
+            entry = self.config.presets.get(msg.name)
+            if entry is None:
+                return build_error(
+                    "unknown_preset",
+                    f"Unknown preset {msg.name!r}; declared: "
+                    f"{', '.join(sorted(self.config.presets))}",
+                )
+            own = entry.tier_map()
+            return PresetRoles(
+                preset=msg.name,
+                tier_slugs=dict(self._slug_snapshot.get(msg.name, {})),
+                tier_credentials={name: tier.credential for name, tier in own.items()},
+                tier_loopback={name: is_loopback_url(tier.base_url) for name, tier in own.items()},
+                tier_cards=self._tier_cards(
+                    {str(name): tier for name, tier in own.items()}, msg.name
+                ),
+            ).model_dump_json()
         if isinstance(msg, CheckPresets):
             # TD-5240: keys by presence, this computer's servers by a keyless
             # ask, the Grok CLI by its path. Nothing leaves the machine.

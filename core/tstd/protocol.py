@@ -889,6 +889,18 @@ class SetSessionPreset(ClientMessage):
     name: str = Field(min_length=1)
 
 
+class GetPresetRoles(ClientMessage):
+    """Ask for one catalog entry's roles, to edit it (TD-5241).
+
+    ``setup_state`` describes the active entry's roles. Settings → Model can
+    edit any entry, so it asks for the one it is showing. Read-only.
+    Answered with ``preset_roles``.
+    """
+
+    type: Literal["get_preset_roles"] = "get_preset_roles"
+    name: str = Field(min_length=1)
+
+
 class CheckPresets(ClientMessage):
     """Ask whether each model on the picker can run right now (TD-5240).
 
@@ -4149,6 +4161,24 @@ class ModelTested(DaemonEvent):
     detail: str = ""
 
 
+class PresetRoles(DaemonEvent):
+    """Reply to ``get_preset_roles`` (TD-5241): one entry's roles.
+
+    The same four maps ``setup_state`` carries for the active entry, for
+    entry ``preset``: each role's model, its bound key, whether it is
+    served on this computer, and its stored numbers. All empty for an
+    entry with no roles (the Grok engine, TD-5239). Never a key's value.
+    """
+
+    type: Literal["preset_roles"] = "preset_roles"
+    seq: int = 1
+    preset: str
+    tier_slugs: dict[str, str | None] = Field(default_factory=dict)
+    tier_credentials: dict[str, str | None] = Field(default_factory=dict)
+    tier_loopback: dict[str, bool] = Field(default_factory=dict)
+    tier_cards: dict[str, TierCard] = Field(default_factory=dict)
+
+
 class PresetReady(BaseModel):
     """Whether one catalog entry can run right now (TD-5240)."""
 
@@ -4955,6 +4985,7 @@ ClientMessageT = Annotated[
     | SetSessionPreset
     | SwitchPreset
     | CheckPresets
+    | GetPresetRoles
     | GetInstructionStack
     | GetHooks
     | ListInstructions
@@ -5129,6 +5160,7 @@ DaemonEventT = Annotated[
     | LocalServers
     | ModelTested
     | PresetReadiness
+    | PresetRoles
     | ConfigEditor
     | ConfigValueRejected
     | DiagnosticsReport
@@ -5216,6 +5248,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_session_preset",
         "switch_preset",
         "check_presets",
+        "get_preset_roles",
         "get_instruction_stack",
         "get_hooks",
         "list_instructions",
@@ -5390,6 +5423,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "local_servers",
         "model_tested",
         "preset_readiness",
+        "preset_roles",
         "config_editor",
         "config_value_rejected",
         "diagnostics_report",

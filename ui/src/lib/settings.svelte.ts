@@ -121,6 +121,11 @@ export const settings = $state({
 	tierLoopback: {} as Record<string, boolean>,
 	/** TD-5185: stored prices and limits per tier, and the last card refresh. */
 	tierCards: {} as Record<string, TierCard>,
+	// TD-5241: the model Settings → Model is editing when it is not the one
+	// new chats use, and that model's roles as the daemon gave them
+	// (`preset_roles`). Null: the page edits the active model, above.
+	editPreset: null as string | null,
+	editRoles: null as RoleView | null,
 	/** A model-card refresh is in flight; cleared by setup_state or an error. */
 	refreshingCards: false,
 	// TD-5189: the tier whose context window is being saved.
@@ -253,6 +258,8 @@ export function resetSettings(): void {
 	settings.tierCredentials = {};
 	settings.tierLoopback = {};
 	settings.tierCards = {};
+	settings.editPreset = null;
+	settings.editRoles = null;
 	settings.refreshingCards = false;
 	settings.savingWindowTier = null;
 	settings.savingCredentialTier = null;
@@ -416,6 +423,14 @@ function reduce(event: DaemonEventUnion): void {
 		settings.refreshingCards = false;
 		settings.savingWindowTier = null;
 	}
+	if (event.type === "preset_roles" && event.preset === settings.editPreset) {
+		settings.editRoles = {
+			slugs: event.tier_slugs ?? {},
+			credentials: event.tier_credentials ?? {},
+			loopback: event.tier_loopback ?? {},
+			cards: event.tier_cards ?? {},
+		};
+	}
 	if (event.type === "setup_state") {
 		settings.presets = event.presets;
 		settings.presetLabels = event.preset_labels ?? {};
@@ -443,6 +458,15 @@ function reduce(event: DaemonEventUnion): void {
 		settings.savingWindowTier = null;
 		settings.savingTier = null;
 		settings.savingCredentialTier = null;
+		// TD-5241: setup_state describes the active model. One being edited
+		// that is not it is read again, or let go if it has been removed.
+		if (settings.editPreset !== null) {
+			const gone = !settings.presets.includes(settings.editPreset);
+			if (gone || settings.editPreset === settings.activePreset) {
+				settings.editPreset = null;
+				settings.editRoles = null;
+			} else sendToDaemon({ type: "get_preset_roles", name: settings.editPreset });
+		}
 		settings.skipAllApprovals = event.skip_all_approvals ?? false;
 		settings.loadGlobalMemory = event.load_global_memory ?? false;
 		settings.coworkerEnabled = event.coworker_enabled ?? true;
@@ -584,12 +608,54 @@ export function setEngine(kind: "native" | "grok"): void {
  * save, and saving would pin a model the user meant to leave floating.
  */
 export function isDiscovered(tier: string): boolean {
-	return settings.tierSlugs[tier] === null;
+	return roleView().slugs[tier] === null;
+}
+
+/** One model's roles: each one's model, bound key, whether it is served on
+ *  this computer, and its stored numbers. */
+export interface RoleView {
+	slugs: Record<string, string | null>;
+	credentials: Record<string, string | null>;
+	loopback: Record<string, boolean>;
+	cards: Record<string, TierCard>;
+}
+
+const NO_ROLES: RoleView = { slugs: {}, credentials: {}, loopback: {}, cards: {} };
+
+/** TD-5241: the model Settings → Model edits: the chosen one, else the one
+ *  new chats use. */
+export function editTarget(): string | null {
+	return settings.editPreset ?? settings.activePreset;
+}
+
+/** The roles of the model being edited. Empty while the daemon's answer for
+ *  a chosen model is still on its way: nothing is shown that was not sent. */
+export function roleView(): RoleView {
+	if (settings.editPreset === null) {
+		return {
+			slugs: settings.tierSlugs,
+			credentials: settings.tierCredentials,
+			loopback: settings.tierLoopback,
+			cards: settings.tierCards,
+		};
+	}
+	return settings.editRoles ?? NO_ROLES;
+}
+
+/** Choose the model Settings → Model edits. The active one needs no ask. */
+export function chooseEditPreset(name: string): void {
+	settings.editRoles = null;
+	if (name === settings.activePreset || !settings.presets.includes(name)) {
+		settings.editPreset = null;
+		return;
+	}
+	settings.editPreset = name;
+	sendToDaemon({ type: "get_preset_roles", name });
 }
 
 /** Persist a tier's slug. No-ops on a blank value or with no active preset. */
 export function saveSlug(tier: string, slug: string): void {
-	const preset = settings.activePreset;
+	const preset = editTarget();
 	const trimmed = slug.trim();
 	if (preset === null || trimmed === "") return;
 	settings.savingTier = tier;
@@ -599,7 +665,7 @@ export function saveSlug(tier: string, slug: string): void {
 
 /** TD-5185: re-read the active preset's prices and limits from each host. */
 export function refreshModelCards(): void {
-	const preset = settings.activePreset;
+	const preset = editTarget();
 	if (preset === null || settings.refreshingCards) return;
 	settings.refreshingCards = true;
 	const sent = sendToDaemon({ type: "refresh_model_cards", preset });
@@ -609,9 +675,9 @@ export function refreshModelCards(): void {
 /** TD-5189: set a tier's context window by hand. Ignores a non-number or
  *  an unchanged value; the daemon refuses one too small for the reply. */
 export function saveContextWindow(tier: string, window: number): void {
-	const preset = settings.activePreset;
+	const preset = editTarget();
 	if (preset === null || !Number.isInteger(window) || window < 1024) return;
-	if (settings.tierCards[tier]?.context_window === window) return;
+	if (roleView().cards[tier]?.context_window === window) return;
 	settings.savingWindowTier = tier;
 	const sent = sendToDaemon({ type: "set_tier_context_window", preset, tier, context_window: window });
 	if (!sent) settings.savingWindowTier = null;
@@ -625,7 +691,7 @@ export function credentialHost(credentialId: string): string | null {
 
 /** Persist a tier's named key. Empty string unbinds. */
 export function saveTierCredential(tier: string, credential: string): void {
-	const preset = settings.activePreset;
+	const preset = editTarget();
 	if (preset === null) return;
 	settings.savingCredentialTier = tier;
 	const sent = sendToDaemon({
@@ -639,9 +705,10 @@ export function saveTierCredential(tier: string, credential: string): void {
 
 /** Selected catalog id for the picker: bound, else implicit openrouter on remote. */
 export function selectedCredential(tier: string): string {
-	const bound = settings.tierCredentials[tier];
+	const roles = roleView();
+	const bound = roles.credentials[tier];
 	if (bound) return bound;
-	if (settings.tierLoopback[tier]) return "";
+	if (roles.loopback[tier]) return "";
 	return "openrouter";
 }
 
