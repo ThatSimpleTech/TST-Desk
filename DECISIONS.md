@@ -19961,3 +19961,37 @@ and a model and makes the new entry active); allowing several Grok entries
 (they would be the same thing twice on the picker; a copy can still be made
 with Duplicate).
 
+## 2026-11-20 — TD-5235: `switch_preset` for the chat, the default or both; a mid-turn switch waits for `turn_complete` (Class B)
+
+**Decision:** `switch_preset {name, session_id?, make_default}` is the
+picker's verb. It validates everything first, writes the default first (the
+one step that can still fail), then switches the chat. A chat with a turn
+running stores the name in `Session.pending_preset`; the daemon binds it in
+`_on_session_event` when that session's `turn_complete` arrives, and
+`tier_state.pending_preset` tells the window. A chat with no live loop has
+the name recorded. `new_session` takes an optional `preset`. A picker click
+sends `make_default: true`; "Only this chat" sends false (owner,
+2026-11-20). `set_session_preset` and `set_preset` are unchanged. A pending
+switch is not persisted.
+
+**Rationale:** the complaint was that new chats went back to the old model,
+so the plain click sets both and the narrower act is the secondary one. One
+verb means "both" cannot half-apply. Binding at `turn_complete` is safe
+because `SessionEventLog.add` awaits its subscribers, in registration
+order, before it returns to the loop: the session's own subscriber has
+already lowered the open-turn count, and the loop has not yet taken the
+next message, so that message, a queued one included, runs on the new
+entry while the turn that was running keeps the config it started with.
+Waiting for the session to be idle instead would never fire while messages
+are queued. A chat's engine cannot change (TD-5239), so the other engine's
+entries are reached by a new chat, which `new_session.preset` makes one
+message.
+
+**Rejected:** changing `set_session_preset` to queue mid-turn (older
+clients and the phone rely on the refusal); persisting a pending switch
+(a field on the session record for a rare case); a machine-peer
+`switch_preset` (it can write this computer's config; a hub keeps the
+older, session-only verb); having the daemon open the new chat itself on an
+engine clash (the window decides what a click on such a row means, and the
+refusal stays honest for other clients).
+

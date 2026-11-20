@@ -75,6 +75,9 @@ export const session = $state({
   engine: null as "native" | "grok" | null,
   /** Preset this session opened with (TD-1720). Empty until tier_state. */
   preset: "" as string,
+  /** TD-5235: a model picked while a turn runs; it applies when the turn
+   *  completes. Null when nothing is waiting. */
+  pendingPreset: null as string | null,
   /** Tier → hostname:port the daemon will call (TD-1720). */
   hosts: {} as Record<string, string>,
   /** Tiers on a backup endpoint this turn → its 1-based position (TD-5120).
@@ -133,6 +136,7 @@ export function resetSession(): void {
   session.fastNote = "";
   session.ultracode = false;
   session.ultracodeAvailable = false;
+  session.pendingPreset = null;
   session.vision = false;
   session.turnActive = false;
   session.context = null;
@@ -191,6 +195,7 @@ export function ingestEvent(event: DaemonEventUnion): void {
       session.tierOverride = event.override ?? null;
       session.modelSlugs = event.model_slugs;
       session.preset = event.preset ?? "";
+      session.pendingPreset = event.pending_preset ?? null;
       session.hosts = event.hosts ?? {};
       session.fallbacks = event.fallbacks ?? {};
       session.planMode = event.plan ?? false;
@@ -293,6 +298,7 @@ export function focusSession(
   session.fastNote = "";
   session.ultracode = false;
   session.ultracodeAvailable = false;
+  session.pendingPreset = null;
   session.vision = false;
   session.turnActive = false;
   session.context = null;
@@ -361,6 +367,29 @@ export function setUltracode(on: boolean): void {
 export function setSessionPreset(name: string): void {
   if (session.sessionId === null) return;
   client?.setSessionPreset(session.sessionId, name);
+}
+
+/** TD-5235: the picker's click. This chat moves to `name`, and unless
+ *  `onlyThisChat`, new chats use it too. A chat on another computer keeps
+ *  the older verb, which its hub forwards; that computer's default is its own. */
+export function switchModel(name: string, opts: { onlyThisChat: boolean }): void {
+  const sessionId = session.sessionId;
+  if (sessionId === null) return;
+  if (isBridged(sessionId)) {
+    client?.setSessionPreset(sessionId, name);
+    return;
+  }
+  client?.send({
+    type: "switch_preset",
+    name,
+    session_id: sessionId,
+    make_default: !opts.onlyThisChat,
+  });
+}
+
+/** TD-5235: make `name` the model new chats use, leaving every open chat alone. */
+export function useForNewChats(name: string): void {
+  client?.send({ type: "switch_preset", name, make_default: true });
 }
 
 /** Display name for the workspace row: basename of the path. */

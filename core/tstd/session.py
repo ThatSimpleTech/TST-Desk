@@ -525,6 +525,9 @@ class Session:
         # entry, not a fork written back to Settings.
         self.preset: str = ""
         self.config: ModelConfig | None = None
+        # TD-5235: an entry asked for while a turn was running. The daemon
+        # binds it when that turn completes. Not kept across a restart.
+        self.pending_preset: str | None = None
         # TD-2603: machine-wide opt-in. The daemon stamps this on open
         # and when the Settings toggle flips.
         self.load_global_memory = False

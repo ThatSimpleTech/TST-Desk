@@ -655,6 +655,9 @@ export interface SearchSessions extends ClientMessage {
 export interface NewSession extends ClientMessage {
   type: "new_session";
   session_id: string;
+  /** TD-5235: the catalog entry the new chat opens on, with its engine.
+   *  Omitted: the model new chats use. */
+  preset?: string | null;
 }
 
 /** File a session away, or restore it (TD-1715). Filing, never killing: an
@@ -905,6 +908,17 @@ export interface SetPresetLabel extends ClientMessage {
   name: string;
   label: string;
   description?: string | null;
+}
+
+// TD-5235: one switch. `session_id` switches that chat (now, or when its
+// running turn completes); `make_default` also makes it the model new chats
+// use. Checked whole before anything changes. Acked with setup_state when
+// the default changed, else session_list.
+export interface SwitchPreset extends ClientMessage {
+  type: "switch_preset";
+  name: string;
+  session_id?: string | null;
+  make_default?: boolean;
 }
 
 // TD-5258: put the Grok CLI on the model list as an entry that is
@@ -1399,6 +1413,7 @@ export type ClientMessageUnion =
   | TestModel
   | SetPreset
   | DuplicatePreset
+  | SwitchPreset
   | AddGrokPreset
   | SetPresetLabel
   | DeletePreset
@@ -1875,6 +1890,8 @@ export interface TierState extends DaemonEvent {
   model_slugs: Record<string, string>;
   /** Preset this session opened with. Omitted by older daemons. */
   preset?: string;
+  /** TD-5235: a switch waiting for the running turn to complete. */
+  pending_preset?: string | null;
   /** Tier → hostname:port the client will call. Omitted by older daemons. */
   hosts?: Record<string, string>;
   /** Plan mode (brain lock). Omitted by older daemons — treat as off. */

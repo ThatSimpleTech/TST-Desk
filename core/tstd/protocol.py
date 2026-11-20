@@ -889,6 +889,32 @@ class SetSessionPreset(ClientMessage):
     name: str = Field(min_length=1)
 
 
+class SwitchPreset(ClientMessage):
+    """One switch: this chat, the model new chats use, or both (TD-5235).
+
+    ``session_id`` names the chat to switch; ``make_default`` also (or only)
+    makes ``name`` the model new chats use. Everything is checked before
+    anything changes, so "both" never half-applies. For the chat:
+
+    - idle: switched now, with the entry's context settings and any effort
+      it names (TD-5234);
+    - a turn running: kept as pending and applied when that turn completes,
+      so the next turn runs on it. ``tier_state.pending_preset`` says so.
+      A later switch replaces it; one back to the chat's own model cancels;
+    - no live loop (restored with no conversation): the name is recorded.
+
+    A chat keeps its engine (TD-5239), so an entry on another engine is
+    refused with ``engine_mismatch``; ``new_session`` with ``preset``
+    starts a chat on it instead. Acked with ``setup_state`` when the
+    default changed, else ``session_list``.
+    """
+
+    type: Literal["switch_preset"] = "switch_preset"
+    name: str = Field(min_length=1)
+    session_id: str | None = None
+    make_default: bool = False
+
+
 class GetInstructionStack(ClientMessage):
     """Request the current instruction stack for a session."""
 
@@ -1117,6 +1143,9 @@ class NewSession(ClientMessage):
 
     type: Literal["new_session"] = "new_session"
     session_id: str
+    # TD-5235: the catalog entry the new chat opens on, with that entry's
+    # engine. None is the model new chats use, as before.
+    preset: str | None = None
 
 
 class ArchiveSession(ClientMessage):
@@ -2758,6 +2787,9 @@ class TierState(DaemonEvent):
     # tier name → configured model slug, "brain"/"worker"/"validator".
     model_slugs: dict[str, str] = Field(default_factory=dict)
     preset: str = ""
+    # TD-5235: a switch asked for while a turn was running. It applies when
+    # that turn completes. None when nothing is waiting. Additive.
+    pending_preset: str | None = None
     # tier name → hostname:port the provider client will call.
     hosts: dict[str, str] = Field(default_factory=dict)
     # Plan mode (TD-4603): when true, every completion is brain until
@@ -4880,6 +4912,7 @@ ClientMessageT = Annotated[
     | SetUltracode
     | SetPlan
     | SetSessionPreset
+    | SwitchPreset
     | GetInstructionStack
     | GetHooks
     | ListInstructions
@@ -5138,6 +5171,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_ultracode",
         "set_plan",
         "set_session_preset",
+        "switch_preset",
         "get_instruction_stack",
         "get_hooks",
         "list_instructions",

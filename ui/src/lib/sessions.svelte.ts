@@ -425,7 +425,7 @@ export function boundTurn(): BoundTurn {
  *  anchor works. With no rows at all (fresh install) there is nothing to
  *  anchor on, so the wired directory picker runs instead of silently
  *  no-op'ing — the chosen path goes through new_session_in_workspace. */
-export function newSession(): boolean {
+export function newSession(preset?: string): boolean {
 	if (pendingNewAnchor() !== null) return false;
 	// A bound session on another computer grows there; unbound, the fallback
 	// anchor is this computer's own newest row (TD-5015).
@@ -443,7 +443,12 @@ export function newSession(): boolean {
 	// A computer that isn't connected can't answer; the chat pane already
 	// says it isn't reachable.
 	if (!sessionMachineUp(anchor)) return false;
-	if (!sendToDaemon({ type: "new_session", session_id: anchor })) return false;
+	// TD-5235: on a named model, with its engine, when the picker asks for one.
+	const message =
+		preset === undefined
+			? ({ type: "new_session", session_id: anchor } as const)
+			: ({ type: "new_session", session_id: anchor, preset } as const);
+	if (!sendToDaemon(message)) return false;
 	setPendingNew(anchor);
 	return true;
 }

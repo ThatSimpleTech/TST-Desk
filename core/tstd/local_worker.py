@@ -157,6 +157,7 @@ def tier_state_event(session: Session, config: ModelConfig) -> TierState:
         override=session.router.override,
         model_slugs=slugs,
         preset=config.active_preset,
+        pending_preset=session.pending_preset,
         hosts=hosts,
         plan=session.router.plan_mode,
         vision=tier_cfg.vision,

@@ -281,6 +281,7 @@ from tstd.protocol import (
     StopCheck,
     StopCheckItem,
     SubmitLineComments,
+    SwitchPreset,
     TaskList,
     TaskListItem,
     TestEmail,
@@ -592,6 +593,8 @@ FIXTURES = {
         name="tst-default", label="House model", description="General coding and chat"
     ),
     "delete_preset": DeletePreset(name="budget"),
+    # TD-5235: this chat, the model new chats use, or both
+    "switch_preset": SwitchPreset(name="budget", session_id="sess-1", make_default=True),
     # TD-5258: put the Grok CLI on the model list
     "add_grok_preset": AddGrokPreset(),
     "set_engine": SetEngine(kind="grok"),

@@ -30,6 +30,8 @@ function fakeClient(): ProtocolClient {
 			sent.push({ type: "set_ultracode", session_id: sessionId, on }),
 		setSessionPreset: (sessionId: string, name: string) =>
 			sent.push({ type: "set_session_preset", session_id: sessionId, name }),
+		// TD-5235: the picker's click goes out as one switch_preset.
+		send: (msg: unknown) => (sent.push(msg), true),
 	} as unknown as ProtocolClient;
 }
 
@@ -110,7 +112,10 @@ describe("model picker", () => {
 		await click(item("More models"));
 		expect(texts(".item")).toEqual(["Claude Opus", "Grok"]);
 		await click(item("Grok"));
-		expect(sent).toEqual([{ type: "set_session_preset", session_id: "s1", name: "sub-grok" }]);
+		// TD-5235: a click moves this chat and the model new chats use.
+		expect(sent).toEqual([
+			{ type: "switch_preset", name: "sub-grok", session_id: "s1", make_default: true },
+		]);
 	});
 
 	it("shows Teams only when a team exists", async () => {
