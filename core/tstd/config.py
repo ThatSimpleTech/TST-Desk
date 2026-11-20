@@ -40,6 +40,7 @@ from .logging import get_logger, user_data_dir
 from .lsp_config import LspConfig
 from .mcp_values import coerce_map
 from .net import is_loopback_url as is_loopback_url
+from .preset_overrides import PresetOverrides, merged_sections
 from .provider import TimeoutConfig
 from .shell_read_only import READ_ONLY_ENTRIES
 
@@ -520,6 +521,9 @@ class Preset(BaseModel):
     picker: Literal["primary", "more", "team"] = "primary"
     # The Fast toggle (TD-5176): None = this model has no fast mode.
     fast: FastConfig | None = None
+    # Context settings for chats on this model (TD-5234), laid over the
+    # global sections of the same names. None = the global values.
+    overrides: PresetOverrides | None = None
 
     @field_validator("description")
     @classmethod
@@ -1710,6 +1714,21 @@ class ModelConfig(BaseModel):
             if data.get("local_servers") is None and "local_servers" in data:
                 data = {**data, "local_servers": []}
         return data
+
+    @model_validator(mode="after")
+    def _preset_overrides_fit(self) -> ModelConfig:
+        """An entry's ``overrides`` must merge with the global sections (TD-5234).
+
+        Each key has its own limits already. This catches what only the
+        merged section can show, at load, where the message names the entry,
+        instead of at the moment a chat switches to it.
+        """
+        for name, preset in self.presets.items():
+            try:
+                merged_sections(self, preset.overrides)
+            except ValueError as e:
+                raise ValueError(f"presets.{name}.overrides: {e}") from e
+        return self
 
     @model_validator(mode="after")
     def _active_preset_falls_back(self) -> ModelConfig:

@@ -19868,3 +19868,38 @@ an entry used along with it (a key is shared between entries and is managed
 in Settings → API keys); letting a phone remove a model (it is the
 computer's config, and nothing on a phone needs it).
 
+## 2026-11-20 — TD-5234: a model's `overrides` are a six-section whitelist, merged in one resolver (Class B)
+
+**Decision:** a catalog entry may carry `overrides` for six global sections:
+`session` (`default_effort`, `default_ultracode` only), `clear_tool_results`,
+`compaction`, `consult`, `workflow`, and `computer_use` (`max_prompt_images`
+only). `preset_apply.effective_config(config, name)` is the one place they
+are applied, and `_bind_session_preset` is its one caller for sessions. The
+merge is per key, one level deep: a key the entry sets wins, an unset or
+null key keeps the global value, a list replaces the global list whole.
+Each merged section is rebuilt by the global section's own model, and every
+entry is merged once at load so a bad value fails there. Switching a chat
+to an entry that names an effort or Ultracode default sets the chat's to it
+(owner, 2026-11-20); an entry that names neither leaves the chat's own. No
+protocol message or field is added.
+
+**Rationale:** a session already holds a snapshot of the config it runs
+with, and each turn re-reads the snapshot for clearing, consult, the image
+cap, the workflow limits and the summarizer. Applying the overrides where
+that snapshot is taken reaches all of them with no change at the call
+sites, and keeps the TD-1721 rule that an open chat is not rewritten by a
+Settings edit. The whitelist is what suits a model's size and speed.
+Everything that decides what the agent may do is left out, so choosing a
+model can never loosen the trust surface. The override models repeat each
+key's limits (so the editor shows them and a bad value names its key), and
+a test pins each one to the global key it overrides.
+
+**Rejected:** a free-form override of any top-level key (it would let a
+catalog entry carry `policy`, `shell` or `mcp`); deep or list merging (a
+model that wants no excluded tools could not say so); applying the entry's
+effort only to new chats (the owner wants one click to set everything the
+entry defines); `project_context` and `embeddings` in the list
+(`project_context.token_budget` is read per workspace, and the embeddings
+endpoint is not a property of the chat model); a separate `builds:` layer
+that points at entries (a second catalog to keep in step).
+

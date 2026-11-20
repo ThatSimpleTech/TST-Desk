@@ -224,6 +224,7 @@ from .policy import (
     stricter_rule,
 )
 from .port_file import release_port_file
+from .preset_apply import effective_config, preset_overrides
 from .preset_write import delete_preset, duplicate_preset, save_preset_label
 from .protocol import (
     AddModel,
@@ -4693,7 +4694,8 @@ class Daemon:
         level, ultracode = read_effort_record(record.effort if record is not None else None)
         if sess.router is None:
             sess.router = TierRouter()
-        session_cfg = self.config.session
+        # A row with no stored effort starts where its model says (TD-5234).
+        session_cfg = _session_model_config(sess, self.config).session
         sess.router.set_effort(level if level is not None else session_cfg.default_effort)
         sess.router.set_ultracode(ultracode if level is not None else session_cfg.default_ultracode)
         sess.loaded_mcp_tools[:] = await asyncio.to_thread(
@@ -4959,8 +4961,10 @@ class Daemon:
         router = sess.router
         if router is None:
             router = TierRouter()
-            router.set_effort(self.config.session.default_effort)
-            router.set_ultracode(self.config.session.default_ultracode)
+            # The chat's own snapshot: its model may set what a chat starts on (TD-5234).
+            starts_with = _session_model_config(sess, self.config).session
+            router.set_effort(starts_with.default_effort)
+            router.set_ultracode(starts_with.default_ultracode)
         sess.router = router
 
         # TD-5113: every config load below goes through the trust gate.
@@ -5197,7 +5201,8 @@ class Daemon:
         """
         chosen = self._resolved_preset(name)
         sess.preset = chosen
-        sess.config = self.config.model_copy(update={"active_preset": chosen})
+        # TD-5234: the entry's own context settings ride on the snapshot.
+        sess.config = effective_config(self.config, chosen)
         # /compact between turns uses the new preset's worker too.
         if sess.compaction_summarizer is not None:
             sess.compaction_summarizer.rebind(sess.config.compaction, sess.config.tier("worker"))
@@ -5305,6 +5310,16 @@ class Daemon:
                 f"Unknown preset {msg.name!r}; declared: {', '.join(sorted(self.config.presets))}",
             )
         self._bind_session_preset(found, msg.name)
+        # TD-5234: one click sets everything the model defines. An effort or
+        # Ultracode default the entry itself names applies to this chat now;
+        # one it leaves to the global setting does not touch the chat's own.
+        chosen = preset_overrides(self.config, found.preset)
+        starts_with = chosen.session if chosen is not None else None
+        if starts_with is not None:
+            if starts_with.default_effort is not None:
+                found.router.set_effort(starts_with.default_effort)
+            if starts_with.default_ultracode is not None:
+                found.router.set_ultracode(starts_with.default_ultracode)
         await self._session_store.set_preset(found.id, found.preset)
         await found.event_log.add(
             tier_state_event(found, _session_model_config(found, self.config))
