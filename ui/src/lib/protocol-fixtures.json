@@ -638,6 +638,21 @@
     "type": "set_preset",
     "name": "tst-default"
   },
+  "duplicate_preset": {
+    "type": "duplicate_preset",
+    "source": "tst-default",
+    "label": "My copy"
+  },
+  "set_preset_label": {
+    "type": "set_preset_label",
+    "name": "tst-default",
+    "label": "House model",
+    "description": "General coding and chat"
+  },
+  "delete_preset": {
+    "type": "delete_preset",
+    "name": "budget"
+  },
   "set_engine": {
     "type": "set_engine",
     "kind": "grok"

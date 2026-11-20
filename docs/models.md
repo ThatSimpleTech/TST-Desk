@@ -110,6 +110,24 @@ An entry with no `label` is left out of the picker, unless a chat is
 already using it. To move an entry under **More models**, add
 `picker: more`.
 
+## Keep more than one
+
+Settings → Model lists every model you have added, each with three
+buttons:
+
+- **Duplicate** writes a copy with its own entry in `config.yaml`. Change
+  the copy (its models, keys or context size under **Build a team**, or by
+  hand) and the original stays as it was. A copy spells out all three roles
+  in full, so it never shares a YAML anchor with the entry it came from.
+- **Rename** changes the label you see in the picker. The entry's key in
+  `config.yaml` stays the same, because chats and scheduled jobs remember a
+  model by that key.
+- **Remove** takes the entry out of `config.yaml`. It deletes no key, and a
+  chat that is already using the model keeps it until you switch that chat.
+  If it was the model new chats use, the first one left takes over. Remove
+  is refused when another entry reuses part of this one (an anchor), or when
+  `computer_use.local_worker_preset` names it; the message says which.
+
 ## A model on your own computer
 
 Any server that speaks the OpenAI chat API works, such as llama.cpp's

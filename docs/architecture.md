@@ -648,6 +648,9 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `reset_config_value` | — | Put one key back: a key at a fixed place to what the packaged `config.yaml` has (else its built-in default), a key inside a list item or map entry to its built-in default by removing its line. A path that ends at a list item or map entry removes it. Acked and refused like `set_config_value`. Loopback only. |
 | `delete_api_key` | — | Remove an API key from the OS keychain. Only an API key's id, never another keychain item (TD-5182). |
 | `set_preset` | — | Choose the active model preset. |
+| `duplicate_preset` | — | Settings → Model, "Duplicate": copy the `source` entry under a new `label`. The daemon derives the new key and writes every role out in full, so the copy shares no YAML anchor with the original. The active entry does not change. Acked with `setup_state` (TD-5237). |
+| `set_preset_label` | — | Settings → Model, "Rename": a new `label` (and `description`, when sent) for one entry. The entry's key never changes. Acked with `setup_state` (TD-5237). |
+| `delete_preset` | — | Settings → Model, "Remove": take one entry out of the catalog. This computer's window only. Refused while `computer_use.local_worker_preset` names it or another entry reuses part of it. Removing the active entry makes the first one left active; an open chat keeps the model it opened with. No key is deleted. Acked with `setup_state` (TD-5237). |
 | `set_engine` | — | Choose the agent engine for new sessions (`native` or `grok`). Acked with `setup_state`. |
 | `set_grok_mode` | yes | Switch the live Grok ACP session mode. |
 | `run_grok_command` | yes | Enqueue `/{name} {argument}` as the next Grok prompt. Refused with `session_busy` while the session restores files or closes its worktree (TD-5161). |

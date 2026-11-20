@@ -224,6 +224,7 @@ from .policy import (
     stricter_rule,
 )
 from .port_file import release_port_file
+from .preset_write import delete_preset, duplicate_preset, save_preset_label
 from .protocol import (
     AddModel,
     AddPin,
@@ -263,6 +264,7 @@ from .protocol import (
     DeleteJobTemplate,
     DeleteMcpSecret,
     DeleteMcpServer,
+    DeletePreset,
     DeleteSession,
     Deny,
     DenyVerify,
@@ -274,6 +276,7 @@ from .protocol import (
     DiagnosticsReport,
     Drain,
     DrainResult,
+    DuplicatePreset,
     EmailNotifyState,
     EndpointModels,
     EndSession,
@@ -393,6 +396,7 @@ from .protocol import (
     SetMcpServer,
     SetPlan,
     SetPreset,
+    SetPresetLabel,
     SetRemoteAttach,
     SetSessionPreset,
     SetSessionStar,
@@ -2148,6 +2152,35 @@ class Daemon:
         self.config = self.config.model_copy(update={"active_preset": name})
         self._slug_snapshot = _snapshot_slugs(self.config)
         log.info("model added", extra={"extra_fields": {"preset": name}})
+        return (await self._setup_state_event()).model_dump_json()
+
+    async def _handle_catalog_edit(
+        self, msg: DuplicatePreset | SetPresetLabel | DeletePreset
+    ) -> str:
+        """Copy, relabel or remove one catalog entry; ack with setup_state (TD-5237).
+
+        The catalog changes for new chats and for the next switch. A chat
+        that is open keeps the snapshot it holds, a removed entry's included
+        (TD-1721), and no key is touched.
+        """
+        try:
+            if isinstance(msg, DuplicatePreset):
+                made = preset_name_for(msg.label, set(self.config.presets))
+                duplicate_preset(msg.source, made, msg.label, self.config_path)
+                fields = {"action": "duplicate", "preset": made, "source": msg.source}
+            elif isinstance(msg, SetPresetLabel):
+                save_preset_label(msg.name, msg.label, msg.description, self.config_path)
+                fields = {"action": "label", "preset": msg.name}
+            else:
+                delete_preset(msg.name, self.config_path)
+                fields = {"action": "delete", "preset": msg.name}
+            self._reload_user_config()
+        except ConfigError as e:
+            return build_error("bad_request", str(e))
+        if isinstance(msg, DeletePreset):
+            for key in [k for k in self._card_results if k[0] == msg.name]:
+                del self._card_results[key]
+        log.info("model catalog edited", extra={"extra_fields": fields})
         return (await self._setup_state_event()).model_dump_json()
 
     async def _test_model(self, preset: str | None) -> ModelTested:
@@ -4423,6 +4456,9 @@ class Daemon:
                 extra={"extra_fields": {"preset": msg.name}},
             )
             return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, DuplicatePreset | SetPresetLabel | DeletePreset):
+            return await self._handle_catalog_edit(msg)
 
         if isinstance(msg, SetTierSlug):
             try:

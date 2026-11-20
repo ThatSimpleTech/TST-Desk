@@ -1328,6 +1328,47 @@ class SetPreset(ClientMessage):
     name: str = Field(min_length=1)
 
 
+class DuplicatePreset(ClientMessage):
+    """Copy one catalog entry as a new one (TD-5237).
+
+    Settings' "Duplicate". The copy gets ``label`` and a key the daemon
+    derives from it; every role is written out in full, so it shares
+    nothing with ``source``. The active entry does not change. Narrow: a
+    name and a label cannot carry a secret. Acked with ``setup_state``.
+    """
+
+    type: Literal["duplicate_preset"] = "duplicate_preset"
+    source: str = Field(min_length=1)
+    label: str = Field(min_length=1, max_length=40)
+
+
+class SetPresetLabel(ClientMessage):
+    """Give one catalog entry a new label (TD-5237).
+
+    Settings' "Rename". The entry's key is its permanent id (sessions and
+    scheduled jobs store it) and never changes. ``description`` omitted
+    keeps the stored one; empty removes it. Acked with ``setup_state``.
+    """
+
+    type: Literal["set_preset_label"] = "set_preset_label"
+    name: str = Field(min_length=1)
+    label: str = Field(min_length=1, max_length=40)
+    description: str | None = Field(default=None, max_length=120)
+
+
+class DeletePreset(ClientMessage):
+    """Remove one catalog entry (TD-5237).
+
+    Refused while ``computer_use.local_worker_preset`` names it or another
+    entry reuses part of it. Removing the active entry makes the first one
+    left active. A chat already on it keeps the model it opened with until
+    it is switched. No key is deleted. Acked with ``setup_state``.
+    """
+
+    type: Literal["delete_preset"] = "delete_preset"
+    name: str = Field(min_length=1)
+
+
 class SetEngine(ClientMessage):
     """Pick the agent engine for new sessions (native TST loop or Grok ACP)."""
 
@@ -4861,6 +4902,9 @@ ClientMessageT = Annotated[
     | AddModel
     | TestModel
     | SetPreset
+    | DuplicatePreset
+    | SetPresetLabel
+    | DeletePreset
     | SetEngine
     | SetGrokMode
     | RunGrokCommand
@@ -5116,6 +5160,9 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "test_model",
         "delete_api_key",
         "set_preset",
+        "duplicate_preset",
+        "set_preset_label",
+        "delete_preset",
         "set_engine",
         "set_grok_mode",
         "run_grok_command",

@@ -13350,3 +13350,44 @@ Secret Service answers slowly the reply took about 5 s against the test's
       (`test_session_preset.py::TestSessionPreset::test_catalog_slug_edit_does_not_rewrite_an_open_session`).
 - [x] The file passes with every non-loopback connect and DNS lookup
       refused, and spawns no `secret-tool`.
+
+---
+
+### TD-5237 — Duplicate, rename and remove a model in Settings
+
+**Size:** 3 · **Depends on:** TD-5172 · **Status:** Done
+
+The walkthrough could add a model and nothing could copy, relabel or
+remove one, so trying a variation (another context size, another key, a
+different model per role) meant overwriting the entry already there in
+Settings → Model, and going back meant typing the old values in again.
+
+- [x] `duplicate_preset` writes a copy of an entry under a new label and a
+      key derived from it, every role spelled out, sharing no YAML anchor
+      with its source; the active entry does not change
+      (`test_preset_write.py::TestDuplicate`, `TestOverTheWire`).
+- [x] `set_preset_label` changes an entry's label, and its description
+      when sent; the key never changes and only those lines change
+      (`TestLabel`).
+- [x] `delete_preset` removes an entry; the active one moving to the first
+      left; the last one leaving `presets: {}`; an open chat keeps the model
+      it opened with (`TestDelete`,
+      `test_delete_moves_active_and_an_open_chat_keeps_its_model`).
+- [x] A removal is refused, and nothing written, when another entry reuses
+      part of the entry or `computer_use.local_worker_preset` names it
+      (`test_an_entry_another_one_borrows_from_is_refused`,
+      `test_the_computer_use_helper_model_is_refused`).
+- [x] Every would-be file is loaded as the daemon loads it before it is
+      written; a refusal leaves the file byte-identical
+      (`test_refusals_write_nothing`).
+- [x] No key is written or deleted; another computer's hub may send none
+      of the three, and only this computer's window may remove
+      (`test_no_key_is_written_by_a_copy`,
+      `test_another_computer_may_send_none_of_them_and_only_this_one_may_delete`).
+- [x] Settings → Model lists every model with Duplicate, Rename and Remove;
+      Remove asks first; a refusal shows the daemon's reason
+      (`model-catalog.test.ts`; the UI walk copies, renames and removes one).
+
+**Notes:** "Rename" is the label only. The key is the id that
+`sessions.json`, scheduled-job pins (TD-3812) and
+`computer_use.local_worker_preset` store. Class B entry in DECISIONS.md.

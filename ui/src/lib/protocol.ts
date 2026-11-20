@@ -890,6 +890,30 @@ export interface SetPreset extends ClientMessage {
   name: string;
 }
 
+// TD-5237: copy a catalog entry under a new label. The daemon derives the
+// new entry's key and writes every role out in full. Acked with setup_state.
+export interface DuplicatePreset extends ClientMessage {
+  type: "duplicate_preset";
+  source: string;
+  label: string;
+}
+
+// TD-5237: a new label for an entry. Its key never changes. `description`
+// omitted keeps the stored one; empty removes it. Acked with setup_state.
+export interface SetPresetLabel extends ClientMessage {
+  type: "set_preset_label";
+  name: string;
+  label: string;
+  description?: string | null;
+}
+
+// TD-5237: remove a catalog entry. This computer's window only. A chat
+// already on it keeps its model until switched. Acked with setup_state.
+export interface DeletePreset extends ClientMessage {
+  type: "delete_preset";
+  name: string;
+}
+
 /** Pick native TST loop or Grok Build ACP for new sessions. */
 export interface SetEngine extends ClientMessage {
   type: "set_engine";
@@ -1366,6 +1390,9 @@ export type ClientMessageUnion =
   | AddModel
   | TestModel
   | SetPreset
+  | DuplicatePreset
+  | SetPresetLabel
+  | DeletePreset
   | SetEngine
   | SetGrokMode
   | RunGrokCommand
