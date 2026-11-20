@@ -14292,3 +14292,26 @@ worker") is gone with the case it described. The first version of this
 only cleared the proposal on the card; the verb's handler builds the rule
 again from the parked call, so it had to be told the call is a child's.
 
+---
+
+### TD-5282 — A new install limits a local model to two calls at once
+
+**Size:** 1 · **Depends on:** TD-5269 · **Status:** Done
+
+TD-5269 added the count of calls per model server and left it off, so an
+upgrade changed nothing. A single GPU asked by two chats, their workers
+and a scheduled run answers all of them slowly, and the slow ones time out
+and are sent again. The owner's decision: two at once for a model on this
+computer, for new installs only.
+
+- [x] The `config.yaml` a new install starts with says
+      `loopback_default: 2`; a provider's server stays unlimited
+      (`test_endpoint_gate.py::TestNewInstallDefault`).
+- [x] A config file from before the section existed still has no limit:
+      the section is not one the loader fills in from the shipped file
+      (`test_an_older_config_file_gets_no_limit`).
+
+**Not built:** Doctor telling an existing user with a local model that
+they have no limit; the turn-first queue and the queue timeout from the
+research note.
+
