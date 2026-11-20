@@ -910,6 +910,26 @@ class CompactionConfig(BaseModel):
     reinject_tokens: int = Field(default=6_000, ge=0)
 
 
+# How many model calls one delegated child may make unless config says more
+# (TD-5265). The number TD-4602 shipped with, and still the default.
+DEFAULT_CHILD_MAX_ITERATIONS = 8
+
+
+class DelegateConfig(BaseModel):
+    """Limits for a ``delegate`` child (TD-5265).
+
+    ``max_iterations`` is how many model calls one child may make before it
+    stops with what it has. Eight suits a lookup; a child that edits several
+    files and runs a test needs more. The session's own ``caps`` still
+    bound the total: a child's calls count against the same iteration,
+    spend and time caps as its parent's.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_iterations: int = Field(default=DEFAULT_CHILD_MAX_ITERATIONS, ge=1, le=64)
+
+
 def _default_consult_tiers() -> list[TierName]:
     return ["worker"]
 
@@ -1718,6 +1738,7 @@ class ModelConfig(BaseModel):
     clear_tool_results: ClearToolResultsConfig = Field(default_factory=ClearToolResultsConfig)
     compaction: CompactionConfig = Field(default_factory=CompactionConfig)
     consult: ConsultConfig = Field(default_factory=ConsultConfig)
+    delegate: DelegateConfig = Field(default_factory=DelegateConfig)
     workflow: WorkflowConfig = Field(default_factory=WorkflowConfig)
     model_refresh: ModelRefreshConfig = Field(default_factory=ModelRefreshConfig)
     shell: ShellConfig = Field(default_factory=ShellConfig)

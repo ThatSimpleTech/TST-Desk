@@ -116,6 +116,7 @@ with the reason under the field. Line endings stay as the file has them.
 | `clear_tool_results` | mapping | see below | Clear stale tool results before whole turns are compacted (TD-5115). Omitted in an older user copy is filled from the shipped file at load, which turns it on. |
 | `compaction` | mapping | see below | How compaction writes its summary and what it brings back (TD-5128): a worker-written structured summary, written ahead in the background, and the recent files read again. Omitted in an older user copy is filled from the shipped file at load, which turns the worker summary on. A config with the block but no `summary` key is `extractive`. |
 | `consult` | mapping | see below | Which tiers get the `consult` tool, which asks the brain or the validator one question mid-task, and how many consults one turn may make (TD-5119). Omitted in an older user copy is filled from the shipped file at load: the worker only, two a turn. |
+| `delegate` | mapping | see below | How many model calls one `delegate` child may make (TD-5265). Omitted in an older user copy defaults to 8, what it was before the key existed. |
 | `workflow` | mapping | see below | Limits for the `workflow` tool, which runs workers side by side while a session's Ultracode switch is on (TD-5195). Omitted means the defaults: 3 at once, 8 a call. |
 | `model_refresh` | mapping | see below | Refresh every model's prices, windows and slug spelling in the background (TD-5197). Omitted means on, every 24 hours. |
 | `shell` | mapping | see below | The read-only shell list (TD-5103): commands that run without asking. Omitted in an older user copy means the whole built-in list, on. Config can shrink it or switch it off, never add to it. |
@@ -891,6 +892,21 @@ active_preset: local
 consult:
   tiers: [worker, brain]
   max_per_turn: 3
+```
+
+### `delegate`
+
+A `delegate` child is a worker the agent hands part of a task to; it
+returns a summary (TD-4602).
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `max_iterations` | int, 1 to 64 | `8` | Model calls one child may make. A child that reaches it stops and returns what it has, saying it used them all. Eight suits a lookup; raise it for children that edit several files and run a test. A child's calls count against the session's own `caps` (iterations, spend, time) together with its parent's and its siblings', so a larger number here cannot outrun them. |
+
+<!-- verify: model -->
+```yaml
+delegate:
+  max_iterations: 8
 ```
 
 ### `workflow`

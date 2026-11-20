@@ -219,6 +219,12 @@ consult:
   tiers: [worker]
   max_per_turn: 2
 
+# A delegate child (TD-5265): how many model calls one may make before it
+# stops with what it has. Its calls also count against the session's own
+# caps, so a larger number here cannot outrun them.
+delegate:
+  max_iterations: 8
+
 # The workflow tool (TD-5195), used only while a session's Ultracode switch
 # is on: it runs several workers at once on independent pieces of a job, and
 # each result can be checked before it comes back. max_parallel (1-16) is how

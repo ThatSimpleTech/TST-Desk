@@ -40,6 +40,7 @@ SECTION_TITLES: dict[str, str] = {
     "clear_tool_results": "Clear stale tool results",
     "compaction": "Compaction",
     "consult": "Consult",
+    "delegate": "Delegate",
     "workflow": "Workflow",
     "model_refresh": "Model refresh",
     "shell": "Shell",
@@ -67,6 +68,7 @@ _MODEL_HELP: dict[str, str | tuple[str, str]] = {
     "the first one.",
     "ModelConfig.credentials": "Named API keys: the name Settings shows and the host each key "
     "talks to. The keys themselves live in the OS keychain.",
+    "ModelConfig.delegate": "Limits for a child the agent delegates part of a task to.",
     "ModelConfig.search": "Where web_search sends queries, and how web_fetch reads pages.",
     "ModelConfig.local_servers": "Model servers on this computer that Add a model's search "
     "asks for their models. Loopback only; no key is sent.",
