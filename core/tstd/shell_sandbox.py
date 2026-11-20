@@ -397,6 +397,11 @@ def _pins(real_ws: Path) -> list[Path]:
     return out
 
 
+# The mode of a mask over a directory the workspace is inside (TD-5261):
+# search only, so the path to the workspace resolves and nothing is listed.
+_PASS_THROUGH = "0111"
+
+
 def hidden_paths(
     section: SandboxSection, home: Path | None = None, extra: Sequence[Path] = ()
 ) -> list[Path]:
@@ -435,10 +440,21 @@ def build_plan(
     Order matters: bwrap applies mounts in sequence, so the workspace bind
     comes after the read-only root and the masks come last, which keeps
     ``~/.ssh`` covered even when the workspace is the home directory.
+
+    A hidden directory that *contains* the workspace is the other way round
+    (TD-5261): a session's worktree lives under TST Desk's data dir by
+    default, and a mask laid over the workspace bind left every command
+    unable to enter its own folder. Such a directory is masked first, with
+    a tmpfs that can be passed through but not listed, and the workspace is
+    then bound into it. Everything else that was in it is still gone.
     *seccomp* defaults to ``seccomp_file()``.
     """
     real_ws = Path(workspace).resolve()
     filter_path = seccomp if seccomp is not None else seccomp_file()
+    hidden = hidden_paths(section, home, extra_hidden)
+    around = [p for p in hidden if p.is_dir() and p != real_ws and real_ws.is_relative_to(p)]
+    # Outermost first, so an inner one is mounted inside the outer.
+    around.sort(key=lambda p: len(p.parts))
     argv = [
         bwrap,
         "--die-with-parent",
@@ -455,13 +471,15 @@ def build_plan(
         "/proc",
         "--tmpfs",
         "/tmp",
-        "--bind",
-        str(real_ws),
-        str(real_ws),
     ]
+    for path in around:
+        argv += ["--perms", _PASS_THROUGH, "--tmpfs", str(path)]
+    argv += ["--bind", str(real_ws), str(real_ws)]
     for pin in _pins(real_ws):
         argv += ["--ro-bind", str(pin), str(pin)]
-    for path in hidden_paths(section, home, extra_hidden):
+    for path in hidden:
+        if path in around:
+            continue
         if path.is_dir():
             argv += ["--perms", "0000", "--tmpfs", str(path)]
         else:
