@@ -91,7 +91,8 @@
 	import { startShellJobs } from '../shell-jobs-store.svelte.js';
 	import { startGoals } from '../goal-store.svelte.js';
 	import { startVoice } from '../voice.svelte.js';
-	import { resolveShortcut, sessionSlot } from '../shortcuts';
+	import { modelSlot, resolveShortcut, sessionSlot } from '../shortcuts';
+	import { pickSlot } from '../model-pick';
 	import { sessionIdAtSlot, stepSessionId } from '../rail';
 	import { sessionOrderAcross } from '../machines';
 	import { machines } from '../machines.svelte.js';
@@ -140,6 +141,7 @@
 				ctrlKey: event.ctrlKey,
 				shiftKey: event.shiftKey,
 				altKey: event.altKey,
+				code: event.code,
 			},
 			{
 				workspaceMenuOpen: workspaces.menuOpen,
@@ -177,6 +179,17 @@
 			});
 			const id = slot === null ? null : sessionIdAtSlot(sessionOrder(), slot);
 			if (id !== null) selectRow(id);
+		} else if (action === 'pick-model') {
+			// TD-5236: the same as a click on that model's row in the picker.
+			const slot = modelSlot({
+				key: event.key,
+				code: event.code,
+				metaKey: event.metaKey,
+				ctrlKey: event.ctrlKey,
+				shiftKey: event.shiftKey,
+				altKey: event.altKey,
+			});
+			if (slot !== null) pickSlot(slot);
 		} else openSettings();
 	}
 

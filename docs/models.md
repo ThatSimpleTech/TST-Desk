@@ -24,6 +24,40 @@ Click it to open the picker:
 
 Before any model is set up, the chip itself reads **Add a model**.
 
+With models of more than one kind, the main list is in sections: **Local**
+(served on this computer), **API** (a provider's server) and **Grok**.
+TST Desk reads the section off each entry; `group:` in the entry sets it by
+hand, which is how a server elsewhere on your own network gets under
+Local, or how you make a section of your own.
+
+Give an entry `slot: 1` (up to 9) and ⌘⌥1 on macOS, or Ctrl+Alt+1
+elsewhere, picks it from anywhere in the window, exactly as a click on its
+row would. The digit shows beside the model in the picker.
+
+<!-- verify: model -->
+```yaml
+presets:
+  house:
+    label: House server
+    description: The GPU box on my network
+    group: Local
+    slot: 1
+    brain: &house
+      slug: house/model
+      base_url: http://192.168.1.20:8000/v1
+      credential: my-provider
+      context_window: 65536
+      max_output_tokens: 8192
+      input_price: 0.0
+      output_price: 0.0
+      cache_read_price: 0.0
+    worker: *house
+    validator: *house
+credentials:
+  my-provider:
+    name: My provider
+```
+
 Next to the chip, **Plan** turns on plan mode: the agent looks around
 without changing anything, then shows you a plan. Nothing runs until you
 approve it.

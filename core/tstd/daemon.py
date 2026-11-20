@@ -18,6 +18,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -54,6 +55,7 @@ from .card_write import save_tier_values
 from .chat_history import restorable_history
 from .config import (
     DEFAULT_CREDENTIAL_ID,
+    PICKER_GROUPS,
     ConfigError,
     CredentialConfig,
     JudgmentsConfig,
@@ -935,6 +937,9 @@ def _shipped_typesafe_base_url() -> str:
     return url.strip() if isinstance(url, str) else ""
 
 
+#: The connection whose message is being handled, or None outside a handler.
+_ANSWERING: ContextVar[object | None] = ContextVar("tstd_answering", default=None)
+
 #: The line under the label of the entry "Add Grok to your models" writes (TD-5258).
 GROK_PRESET_DESCRIPTION = "The Grok CLI, with its own model"
 
@@ -1527,6 +1532,11 @@ class Daemon:
             ),
             preset_engines={
                 name: p.engine for name, p in sorted(self.config.presets.items()) if p.engine
+            },
+            preset_groups={name: self.config.preset_group(name) for name in self.config.presets},
+            picker_groups=list(PICKER_GROUPS),
+            preset_slots={
+                name: p.slot for name, p in sorted(self.config.presets.items()) if p.slot
             },
             has_model=self.config.has_model(),
             skip_all_approvals=self.skip_all_approvals,
@@ -2178,6 +2188,7 @@ class Daemon:
         self.config = self.config.model_copy(update={"active_preset": name})
         self._slug_snapshot = _snapshot_slugs(self.config)
         log.info("model added", extra={"extra_fields": {"preset": name}})
+        await self._tell_other_windows_the_catalog()
         return (await self._setup_state_event()).model_dump_json()
 
     async def _handle_catalog_edit(
@@ -2220,6 +2231,7 @@ class Daemon:
             for key in [k for k in self._card_results if k[0] == msg.name]:
                 del self._card_results[key]
         log.info("model catalog edited", extra={"extra_fields": fields})
+        await self._tell_other_windows_the_catalog()
         return (await self._setup_state_event()).model_dump_json()
 
     async def _test_model(self, preset: str | None) -> ModelTested:
@@ -3230,7 +3242,14 @@ class Daemon:
         Broadcast and replay carry log events, already scrubbed at
         insertion, so they do not pass through here.
         """
-        reply = await self._dispatch_message(raw, _connection)
+        # The connection being answered, for a handler that tells the other
+        # windows what this one's reply already says (TD-5236). A handler
+        # runs in its connection's own task, so this is that task's value.
+        token = _ANSWERING.set(_connection)
+        try:
+            reply = await self._dispatch_message(raw, _connection)
+        finally:
+            _ANSWERING.reset(token)
         if reply is None:
             return None
         # TD-5015: a viewer's session_list carries every computer's rows;
@@ -4522,6 +4541,7 @@ class Daemon:
                 "active preset changed",
                 extra={"extra_fields": {"preset": msg.name}},
             )
+            await self._tell_other_windows_the_catalog()
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, DuplicatePreset | SetPresetLabel | DeletePreset | AddGrokPreset):
@@ -5467,6 +5487,7 @@ class Daemon:
         if found is not None:
             await self._switch_chat(found, msg.name)
         if msg.make_default:
+            await self._tell_other_windows_the_catalog()
             return (await self._setup_state_event()).model_dump_json()
         return await self._handle_list_sessions()
 
@@ -5775,6 +5796,21 @@ class Daemon:
         """
         state = await self._setup_state_event()
         await self.ws_server.broadcast(scrub_wire_json(state.model_dump_json()), loopback_only=True)
+
+    async def _tell_other_windows_the_catalog(self) -> None:
+        """A model was added, changed, removed or made the default (TD-5236).
+
+        ``setup_state`` is otherwise only the reply to whoever asked, so a
+        second window kept showing the old list and the old default until
+        it reopened Settings. This computer's own windows only, like the
+        presence refresh above: a phone asks when it needs the list.
+        """
+        state = await self._setup_state_event()
+        await self.ws_server.broadcast(
+            scrub_wire_json(state.model_dump_json()),
+            loopback_only=True,
+            exclude=_ANSWERING.get(),
+        )
 
     def _remember_remote_port(self) -> None:
         """Save the bound port so the next start reuses it (TD-5005).

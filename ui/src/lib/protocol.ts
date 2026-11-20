@@ -2293,6 +2293,11 @@ export interface SetupState extends DaemonEvent {
   team_presets?: string[];
   /** TD-5239: the engine of each preset that names one. */
   preset_engines?: Record<string, "native" | "grok">;
+  /** TD-5236: every preset's picker section, the order the built-in
+   *  sections come in, and each preset's quick-switch slot (1 to 9). */
+  preset_groups?: Record<string, string>;
+  picker_groups?: string[];
+  preset_slots?: Record<string, number>;
   has_model?: boolean;
   // TD-804: skip-all approvals. Additive, default off.
   skip_all_approvals?: boolean;
