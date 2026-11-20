@@ -19,6 +19,7 @@ from tstd.peer_policy import FORWARDED_VERBS
 from tstd.protocol import (
     CHUNK_MAX,
     PROTOCOL_VERSION,
+    AddGrokPreset,
     AddMachine,
     AddModel,
     AddPin,
@@ -591,6 +592,8 @@ FIXTURES = {
         name="tst-default", label="House model", description="General coding and chat"
     ),
     "delete_preset": DeletePreset(name="budget"),
+    # TD-5258: put the Grok CLI on the model list
+    "add_grok_preset": AddGrokPreset(),
     "set_engine": SetEngine(kind="grok"),
     "set_grok_mode": SetGrokMode(session_id="sess-1", mode="plan"),
     "run_grok_command": RunGrokCommand(session_id="sess-1", name="compact", argument="keep tests"),

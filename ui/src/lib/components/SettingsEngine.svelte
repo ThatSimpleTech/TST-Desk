@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { grok } from "../grok.svelte.js";
 	import { settings, setEngine } from "../settings.svelte.js";
+	import GrokOnPicker from "./GrokOnPicker.svelte";
 
 	const ENGINES = [
 		{
@@ -51,6 +52,8 @@
 		</p>
 	{/if}
 {/if}
+
+<GrokOnPicker />
 
 {#if grok.extensions.length > 0}
 	<h2 class="sub">Grok CLI extensions</h2>

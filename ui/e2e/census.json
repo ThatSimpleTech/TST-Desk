@@ -200,6 +200,7 @@
 		"toggle"
 	],
 	"settings:Engine": [
+		"Add Grok to your models",
 		"Grok Build Spawns your installed grok CLI over ACP. The CLI stays the engine — this window is a viewer. Auth stays in ~/.grok.",
 		"TST native The built-in three-tier loop. Uses your OpenAI-compatible presets and keys."
 	],

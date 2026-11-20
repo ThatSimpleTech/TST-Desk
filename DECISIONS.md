@@ -19939,3 +19939,25 @@ predictable); changing an open session's engine in place; making
 that field as the global setting, so the window computes a new chat's engine
 from `preset_engines` instead).
 
+## 2026-11-20 — TD-5258: one narrow verb puts Grok on the model list (Class B)
+
+**Decision:** `add_grok_preset {label?}` writes one catalog entry that is a
+label, a fixed description and `engine: grok`, and is acked with
+`setup_state`. The daemon refuses it with `grok_unavailable` when the Grok
+CLI is not found and with `bad_request` when an entry already names the Grok
+engine. It does not write `active_preset`. Settings → Engine always renders
+the button and disables it, with the reason, when the CLI is missing.
+
+**Rationale:** the entry has nothing to choose but its name, so the verb
+carries nothing else and cannot carry a key or a URL. Checking for the CLI
+in the daemon keeps a client from adding an entry that could only fail.
+Leaving the active model alone matches `duplicate_preset`: adding to the
+list and choosing from it are separate acts. A button that appears only
+where the CLI is installed would make the UI walk's census differ between a
+developer's machine and CI.
+
+**Rejected:** reusing `add_model` with an engine field (it requires a URL
+and a model and makes the new entry active); allowing several Grok entries
+(they would be the same thing twice on the picker; a copy can still be made
+with Duplicate).
+

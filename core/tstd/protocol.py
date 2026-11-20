@@ -1356,6 +1356,20 @@ class SetPresetLabel(ClientMessage):
     description: str | None = Field(default=None, max_length=120)
 
 
+class AddGrokPreset(ClientMessage):
+    """Put the Grok CLI on the model list (TD-5258).
+
+    Settings → Engine, "Add Grok to your models". Writes one catalog entry
+    that is ``engine: grok`` and names no model or key (TD-5239). Refused
+    when the Grok CLI is not found on this computer, or an entry already
+    names the Grok engine. The model new chats use does not change. Acked
+    with ``setup_state``.
+    """
+
+    type: Literal["add_grok_preset"] = "add_grok_preset"
+    label: str = Field(default="Grok", min_length=1, max_length=40)
+
+
 class DeletePreset(ClientMessage):
     """Remove one catalog entry (TD-5237).
 
@@ -4906,6 +4920,7 @@ ClientMessageT = Annotated[
     | TestModel
     | SetPreset
     | DuplicatePreset
+    | AddGrokPreset
     | SetPresetLabel
     | DeletePreset
     | SetEngine
@@ -5164,6 +5179,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "delete_api_key",
         "set_preset",
         "duplicate_preset",
+        "add_grok_preset",
         "set_preset_label",
         "delete_preset",
         "set_engine",

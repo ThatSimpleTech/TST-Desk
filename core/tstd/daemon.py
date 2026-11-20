@@ -230,8 +230,14 @@ from .preset_apply import (
     no_model_refusal,
     preset_overrides,
 )
-from .preset_write import delete_preset, duplicate_preset, save_preset_label
+from .preset_write import (
+    add_grok_preset,
+    delete_preset,
+    duplicate_preset,
+    save_preset_label,
+)
 from .protocol import (
+    AddGrokPreset,
     AddModel,
     AddPin,
     AlwaysAllow,
@@ -926,6 +932,10 @@ def _shipped_typesafe_base_url() -> str:
     judgments = data.get("judgments") if isinstance(data, dict) else None
     url = judgments.get("typesafe_base_url") if isinstance(judgments, dict) else None
     return url.strip() if isinstance(url, str) else ""
+
+
+#: The line under the label of the entry "Add Grok to your models" writes (TD-5258).
+GROK_PRESET_DESCRIPTION = "The Grok CLI, with its own model"
 
 
 def _probe_grok(configured: str) -> tuple[Path | None, bool]:
@@ -2170,9 +2180,9 @@ class Daemon:
         return (await self._setup_state_event()).model_dump_json()
 
     async def _handle_catalog_edit(
-        self, msg: DuplicatePreset | SetPresetLabel | DeletePreset
+        self, msg: DuplicatePreset | SetPresetLabel | DeletePreset | AddGrokPreset
     ) -> str:
-        """Copy, relabel or remove one catalog entry; ack with setup_state (TD-5237).
+        """Copy, relabel, remove or add-Grok for the catalog; ack with setup_state (TD-5237).
 
         The catalog changes for new chats and for the next switch. A chat
         that is open keeps the snapshot it holds, a removed entry's included
@@ -2186,6 +2196,19 @@ class Daemon:
             elif isinstance(msg, SetPresetLabel):
                 save_preset_label(msg.name, msg.label, msg.description, self.config_path)
                 fields = {"action": "label", "preset": msg.name}
+            elif isinstance(msg, AddGrokPreset):
+                # TD-5258: an entry for an engine that is not here would only
+                # ever fail, so it is not offered until the CLI is found.
+                _path, found = await asyncio.to_thread(_probe_grok, self.config.engine.binary)
+                if not found:
+                    return build_error(
+                        "grok_unavailable",
+                        "The Grok CLI was not found on this computer. Install Grok Build "
+                        "and run `grok login`, or set engine.binary in config.yaml.",
+                    )
+                made = preset_name_for(msg.label, set(self.config.presets))
+                add_grok_preset(made, msg.label, GROK_PRESET_DESCRIPTION, self.config_path)
+                fields = {"action": "add_grok", "preset": made}
             else:
                 delete_preset(msg.name, self.config_path)
                 fields = {"action": "delete", "preset": msg.name}
@@ -4489,7 +4512,7 @@ class Daemon:
             )
             return (await self._setup_state_event()).model_dump_json()
 
-        if isinstance(msg, DuplicatePreset | SetPresetLabel | DeletePreset):
+        if isinstance(msg, DuplicatePreset | SetPresetLabel | DeletePreset | AddGrokPreset):
             return await self._handle_catalog_edit(msg)
 
         if isinstance(msg, SetTierSlug):

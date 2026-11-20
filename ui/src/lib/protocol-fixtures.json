@@ -653,6 +653,10 @@
     "type": "delete_preset",
     "name": "budget"
   },
+  "add_grok_preset": {
+    "type": "add_grok_preset",
+    "label": "Grok"
+  },
   "set_engine": {
     "type": "set_engine",
     "kind": "grok"

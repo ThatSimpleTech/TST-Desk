@@ -907,6 +907,14 @@ export interface SetPresetLabel extends ClientMessage {
   description?: string | null;
 }
 
+// TD-5258: put the Grok CLI on the model list as an entry that is
+// `engine: grok` and names no model or key. Refused when the CLI is not
+// found or an entry already names the Grok engine. Acked with setup_state.
+export interface AddGrokPreset extends ClientMessage {
+  type: "add_grok_preset";
+  label?: string;
+}
+
 // TD-5237: remove a catalog entry. This computer's window only. A chat
 // already on it keeps its model until switched. Acked with setup_state.
 export interface DeletePreset extends ClientMessage {
@@ -1391,6 +1399,7 @@ export type ClientMessageUnion =
   | TestModel
   | SetPreset
   | DuplicatePreset
+  | AddGrokPreset
   | SetPresetLabel
   | DeletePreset
   | SetEngine
