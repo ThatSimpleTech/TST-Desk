@@ -9,6 +9,7 @@ event a window would get.
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
@@ -194,16 +195,107 @@ class TestAlwaysAllow:
     def _worker(self, **over: Any) -> ApprovalWorker:
         return ApprovalWorker(id="c", parent_call_id="c", via="delegate", kind="worker", **over)
 
-    async def test_the_sessions_own_card_and_a_plain_childs_offer_it(self, tmp_path: Path) -> None:
+    async def test_the_sessions_own_card_offers_it(self, tmp_path: Path) -> None:
         assert await self._proposal(tmp_path, None) is not None
 
-    async def test_a_plain_child_offers_it_too(self, tmp_path: Path) -> None:
-        assert await self._proposal(tmp_path, self._worker()) is not None
+    async def test_no_childs_card_offers_it(self, tmp_path: Path) -> None:
+        """TD-5281: the rule is for the whole workspace, so never from a child."""
+        workers = (
+            self._worker(),
+            self._worker(agent="db-migrator"),
+            self._worker(worktree_branch="tst/wt/x"),
+            ApprovalWorker(id="c", parent_call_id="c", via="workflow", kind="worker", index=2),
+        )
+        for number, worker in enumerate(workers):
+            home = tmp_path / str(number)
+            home.mkdir()
+            assert await self._proposal(home, worker) is None, worker
 
-    async def test_a_named_workers_card_does_not(self, tmp_path: Path) -> None:
-        # Its own rule may be why it asked, and a workspace rule cannot lift that.
-        assert await self._proposal(tmp_path, self._worker(agent="db-migrator")) is None
 
-    async def test_a_path_in_a_childs_own_worktree_does_not(self, tmp_path: Path) -> None:
-        # The folder goes when the child finishes: the rule would never match again.
-        assert await self._proposal(tmp_path, self._worker(worktree_branch="tst/wt/x")) is None
+class TestAlwaysAllowVerb:
+    """A frame that asks anyway (an older window) saves no workspace rule (TD-5281)."""
+
+    async def test_a_childs_call_runs_once_and_saves_nothing(self, tmp_path: Path) -> None:
+        from tests.test_add_model import _ask, _stop
+        from tests.test_models_on_phone import _seeded
+        from tstd.autonomy.classifier import DecisionClass
+
+        daemon, task, ws = await _seeded(tmp_path)
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        try:
+            opened = await _ask(
+                ws, {"type": "open_workspace", "path": str(workspace)}, "session_state"
+            )
+            sess = daemon.session_registry.get(opened["session_id"])
+            assert sess is not None
+            if sess.state != "running":
+                await sess.set_state("running")
+            tool = _parent_dispatcher(workspace).registry.require("fs_write")
+            worker = ApprovalWorker(id="c", parent_call_id="c", via="delegate", kind="worker")
+            asking = asyncio.create_task(
+                sess.request_approval(
+                    "child-1",
+                    tool,
+                    {"path": "notes.md", "content": "x"},
+                    DecisionClass.B,
+                    "A worker asks: Write notes.md",
+                    "B",
+                    worker=worker,
+                )
+            )
+            card = await _first_card(sess)
+            assert card.proposed_always_allow is None
+            before = daemon.config_path.read_text(encoding="utf-8")
+            frame = {"type": "always_allow", "session_id": sess.id, "tool_call_id": "child-1"}
+            reply = await _ask(ws, frame, "policy_rules")
+            assert reply["type"] == "error" and reply["code"] == "not_always_allowable"
+            assert reply["message"].startswith("Approved once.")
+            # The person said yes to this call, so it runs; nothing else is allowed.
+            outcome = await asyncio.wait_for(asking, 5)
+            assert outcome.approved is True
+            assert not (workspace / ".tst" / "config.yaml").exists() or (
+                "notes.md" not in (workspace / ".tst" / "config.yaml").read_text(encoding="utf-8")
+            )
+            assert daemon.config_path.read_text(encoding="utf-8") == before
+            assert [r for r in sess.policy.rules if r.effect == "auto"] == []
+        finally:
+            await _stop(task, ws)
+
+    async def test_the_sessions_own_call_still_saves_its_rule(self, tmp_path: Path) -> None:
+        from tests.test_add_model import _ask, _stop
+        from tests.test_models_on_phone import _seeded
+        from tstd.autonomy.classifier import DecisionClass
+
+        daemon, task, ws = await _seeded(tmp_path)
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        try:
+            opened = await _ask(
+                ws, {"type": "open_workspace", "path": str(workspace)}, "session_state"
+            )
+            sess = daemon.session_registry.get(opened["session_id"])
+            assert sess is not None
+            if sess.state != "running":
+                await sess.set_state("running")
+            tool = _parent_dispatcher(workspace).registry.require("fs_write")
+            asking = asyncio.create_task(
+                sess.request_approval(
+                    "own-1",
+                    tool,
+                    {"path": "notes.md", "content": "x"},
+                    DecisionClass.B,
+                    "Write notes.md",
+                    "B",
+                )
+            )
+            card = await _first_card(sess)
+            assert card.proposed_always_allow is not None
+            frame = {"type": "always_allow", "session_id": sess.id, "tool_call_id": "own-1"}
+            # A saved rule has no reply of its own: the call simply goes ahead.
+            await ws.send(json.dumps(frame))
+            outcome = await asyncio.wait_for(asking, 5)
+            assert outcome.approved is True
+            assert [r.tool for r in sess.policy.rules if r.effect == "auto"] == ["fs_write"]
+        finally:
+            await _stop(task, ws)

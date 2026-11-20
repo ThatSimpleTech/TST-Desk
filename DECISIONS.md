@@ -20220,3 +20220,20 @@ bookkeeping, and is wrong the moment a person moves a chat off a server on
 purpose); applying the entry's context overrides to distill (distill has
 its own settings and none of the six override sections govern it).
 
+## 2026-11-20 — TD-5281: Always allow is never offered from, nor saved for, a child's call (Class B; narrows TD-5268)
+
+**Decision:** `request_approval` proposes no rule when a `worker` is given,
+and marks the parked call `from_worker`. The `always_allow` handler, which
+rebuilds the rule from the parked call, approves a child's call once and
+answers `not_always_allowable` without saving.
+
+**Rationale:** the owner's decision. The rule is workspace-wide; rules
+cannot yet be scoped to one worker, so the honest options were a loud
+label (TD-5268) or no button. Withholding only the card's proposal would
+have left the verb able to save the rule from an older window.
+
+**Rejected:** refusing the frame and leaving the call parked (the person
+did say yes to this call, and the handler's own pattern for a rule it
+cannot save is "approved once"); a per-worker rule now (worker rules are
+tighten-only; a loosening one is a design of its own).
+
