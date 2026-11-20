@@ -13,6 +13,11 @@
 		type McpValueRow,
 	} from "../settings.svelte.js";
 
+	// TD-5276: a server is a command the computer runs, so only the computer
+	// adds, changes or removes one. Anywhere else (a paired phone, a browser)
+	// the page is the list, and the daemon refuses the rest.
+	let { canManage = true }: { canManage?: boolean } = $props();
+
 	let draftId = $state("");
 	let draftTransport = $state<"stdio" | "http">("stdio");
 	let draftCommand = $state<string[]>([""]);
@@ -114,14 +119,17 @@
 					{valueLabel(server)}
 					{value.name} · {valueState(value)}
 				</p>
+				{#if canManage}
 				<button
 					class="btn btn--danger"
 					type="button"
 					aria-label={`Remove ${value.name} from ${server.id}`}
 					onclick={() => deleteMcpSecret(server.id, value.name)}>Remove</button
 				>
+				{/if}
 			</div>
 		{/each}
+		{#if canManage}
 		<label class="field">
 			<span class="field-name">{server.transport === "stdio" ? "Env var" : "Header"}</span>
 			<input
@@ -164,9 +172,13 @@
 				>Remove</button
 			>
 		</div>
+		{:else}
+			<p class="meta state">{server.enabled ? "On" : "Off"}</p>
+		{/if}
 	</div>
 {/each}
 
+{#if canManage}
 <p class="hint">Add a server — id is a lowercase slug.</p>
 <label class="field">
 	<span class="field-name">Id</span>
@@ -224,6 +236,9 @@
 <div class="actions">
 	<button class="btn" type="button" disabled={!canAdd()} onclick={addServer}>Add server</button>
 </div>
+{:else}
+	<p class="hint">Add or change MCP servers in Settings on the computer.</p>
+{/if}
 
 <style>
 	.hint {

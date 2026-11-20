@@ -24,6 +24,11 @@ Still works as a fallback. On the computer, turn on **Allow remote attach** in S
 
 The shell refuses any host that is not a Tailscale address (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) or a `*.ts.net` name. It does not listen on the network. The UI is served to the WebView on `127.0.0.1` only, on the same port each launch when it is free.
 
+Some things stay with the computer and are refused from a phone: adding, changing or
+removing an MCP server or its token (an MCP server is a command the computer runs), the
+raw Settings → Configuration editor, trusting a workspace's own config, accepting an
+instruction-file edit, and removing a model. The phone shows the MCP list read-only.
+
 ## Build
 
 Needs JDK 17+, the Android SDK (platform 35, build-tools 35), and the UI's `npm` dependencies.
