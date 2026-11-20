@@ -27,7 +27,7 @@ from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlsplit
 
-from .phone_permissions import LABELS, MCP_SERVERS
+from .phone_permissions import APPROVAL_SWITCHES, LABELS, MCP_SERVERS
 from .protocol import ClientMessage, DaemonEvent, ModelFallback, TierState, build_error
 
 DeviceKind = Literal["phone", "machine"]
@@ -211,12 +211,28 @@ PHONE_OPT_IN: dict[str, str] = {
     "delete_mcp_server": MCP_SERVERS,
     "set_mcp_secret": MCP_SERVERS,
     "delete_mcp_secret": MCP_SERVERS,
+    # Skip-all (TD-5283) persists machine-wide and releases every parked
+    # call, Class C included. A phone can already approve call by call;
+    # this is the same power with nobody looking at each call.
+    "set_skip_all_approvals": APPROVAL_SWITCHES,
 }
+
+
+def _only_tightens(msg: ClientMessage) -> bool:
+    """A message that can only narrow what runs needs no permission.
+
+    Read off the message's own fields, so the rule stays in this pure
+    table. Turning skip-all *off* brings the approval prompts back.
+    """
+    return msg.type == "set_skip_all_approvals" and getattr(msg, "enabled", True) is False
 
 
 def required_capability(msg: ClientMessage) -> str | None:
     """The phone permission *msg* needs from a remote peer, if any."""
-    return PHONE_OPT_IN.get(msg.type)
+    capability = PHONE_OPT_IN.get(msg.type)
+    if capability is None or _only_tightens(msg):
+        return None
+    return capability
 
 
 # Loopback names say nothing about where a service lives.

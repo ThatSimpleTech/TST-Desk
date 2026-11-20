@@ -99,7 +99,8 @@ async def test_a_phone_cannot_add_an_mcp_server_by_default(
         assert not marker.exists(), "a phone made this computer run a command"
         # And the phone is told the switch is off, so its page can say why.
         state = await _fresh(phone, {"type": "get_setup_state"})
-        assert state["phone_permissions"] == {"mcp_servers": {"enabled": False, "expires_at": None}}
+        assert state["phone_permissions"]["mcp_servers"] == {"enabled": False, "expires_at": None}
+        assert not any(p["enabled"] for p in state["phone_permissions"].values())
     finally:
         await phone.close()
         await _stop(task, ws)

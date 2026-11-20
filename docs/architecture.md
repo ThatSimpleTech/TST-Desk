@@ -493,8 +493,8 @@ not listed against it, with two lists against it. `LOOPBACK_VERBS` are the compu
 and have no setting. `PHONE_OPT_IN` (TD-5279) maps a verb to a *phone permission*: the verb
 is refused with `phone_permission_off` unless the person at the computer switched that
 capability on with `set_phone_permission`, which is itself in `LOOPBACK_VERBS` so a phone
-can never grant itself. Today the one capability is `mcp_servers` (the four MCP server
-verbs). A grant applies to paired phones only, never to the legacy `remote-token` and
+can never grant itself. The capabilities are `mcp_servers` (the four MCP server verbs) and `approval_switches`
+(`set_skip_all_approvals` with `enabled: true`; a message that only tightens needs none). A grant applies to paired phones only, never to the legacy `remote-token` and
 never to a machine peer; it may carry an expiry; and it lives in
 `{user_data_dir}/phone-permissions.yaml`, which no config file sets. `Hub.intercept` passes
 the live grants to `peer_policy.check`, whose default is none.
@@ -588,7 +588,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `revoke_policy_rule` | yes | Remove one saved rule, identified by `(tool, args)`. |
 | `set_spend_cap` | yes | Set or clear the workspace's session spend budget (`caps.spend_usd` in `.tst/config.yaml`). Null removes it and the built-in $25 pause applies; a number replaces that pause. Acked with `boundary_update`. |
 | `trust_workspace_config` | yes | Trust or decline the workspace's `.tst/config.yaml` when it loosens anything, naming the `sha256` the card showed (TD-5113). A file that changed since is refused with `workspace_config_changed` and re-announced. The decision is stored per workspace in the data dir and applies to every live session there; acked with their `boundary_update`. It also covers the same bytes in the session's project folder and its worktrees, and a trust runs a `worktree.setup` it was holding in that session (TD-5126). Only this computer's own window may send it (`loopback_only` otherwise). |
-| `set_skip_all_approvals` | — | Turn skip-all (dangerously skip permissions) on or off. Machine-wide; every ask including shell and Class C runs as auto; caps do not pause; `never` still refuses. Acked with `setup_state`. |
+| `set_skip_all_approvals` | — | Turn skip-all (dangerously skip permissions) on or off. Machine-wide; every ask including shell and Class C runs as auto; caps do not pause; `never` still refuses. Acked with `setup_state`. Turning it **on** from a paired phone is the phone permission `approval_switches`: refused with `phone_permission_off` unless the computer switched it on, and when a phone does, the computer's windows get `phone_change`. Turning it off is open to a phone (TD-5283). |
 | `set_load_global_memory` | — | Turn global memory on or off. Machine-wide; off never reads `~/.tstdesk/memory/`. Acked with `setup_state` (TD-2603). |
 | `set_coworker` | — | Turn coworker mode on or off. Machine-wide; persists `{user_data_dir}/coworker.yaml`. Acked with `setup_state` (TD-2905). |
 | `set_voice` | — | Turn hold-to-talk dictation on or off. Machine-wide; persists `{user_data_dir}/voice.yaml`. Default off. Acked with `setup_state` (TD-4701). |

@@ -40,6 +40,24 @@ export const PHONE_PERMISSIONS: PhonePermissionCopy[] = [
 			"Adding or changing MCP servers from a phone is turned off. You can turn it on under " +
 			"Settings, Phones and devices on the computer.",
 	},
+	{
+		capability: "approval_switches",
+		title: "Let paired phones turn approvals off",
+		lead:
+			"With this on, a paired phone can turn off approval prompts for every session on this " +
+			"computer. Commands and file changes then run without anyone confirming them, " +
+			"including ones outside the project folder.",
+		points: [
+			"The setting stays on until someone turns it off, even after the phone is removed.",
+			"A phone can already approve one request at a time. This is the same power with nobody looking at each request.",
+			"A phone can always turn approval prompts back on; that needs no permission.",
+		],
+		advice:
+			"Leave this off unless you run long jobs you trust and need to unblock them while away.",
+		offOnPhone:
+			"Turning approvals off from a phone is turned off. You can turn it on under " +
+			"Settings, Phones and devices on the computer.",
+	},
 ];
 
 export function permissionCopy(capability: string): PhonePermissionCopy | undefined {

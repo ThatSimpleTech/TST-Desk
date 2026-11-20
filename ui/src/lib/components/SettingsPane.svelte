@@ -49,7 +49,10 @@
 	const onComputer = isTauri();
 	// TD-5279: off the computer the MCP page is read-only unless the computer
 	// switched it on for phones. setup_state arrives again when that changes.
-	let phoneMayManageMcp = $derived(isGranted(settings.phonePermissions, 'mcp_servers', Date.now()));
+	function phoneMay(capability: string): boolean {
+		return isGranted(settings.phonePermissions, capability, Date.now());
+	}
+	let phoneMayManageMcp = $derived(phoneMay('mcp_servers'));
 	let showLegacy = $state(false);
 
 	const SECTION_LABEL: Record<SettingsSection, string> = {
@@ -261,7 +264,10 @@
 				{:else if settings.section === 'budget'}
 					<SettingsBudget />
 				{:else if settings.section === 'policy'}
-					<PolicyRuleList sessionId={session.sessionId} />
+					<PolicyRuleList
+						sessionId={session.sessionId}
+						canSkipAll={onComputer || phoneMay('approval_switches')}
+					/>
 				{:else if settings.section === 'mcp'}
 					<SettingsMcp canManage={onComputer || phoneMayManageMcp} />
 				{:else if settings.section === 'email'}
