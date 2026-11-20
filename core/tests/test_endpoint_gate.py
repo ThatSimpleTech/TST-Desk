@@ -104,11 +104,12 @@ class TestWhatConfigGives:
         with pytest.raises(ConfigError, match="model_concurrency"):
             load_config(path)
 
-    def test_the_shipped_config_sets_no_limit(self, tmp_path: Path) -> None:
+    def test_the_shipped_config_limits_only_this_computers_servers(self, tmp_path: Path) -> None:
+        # TD-5282: two for a model served here; a provider's server is not limited.
         path = tmp_path / "config.yaml"
         path.write_text(catalog_config_yaml(), encoding="utf-8")
         section = load_config(path).model_concurrency
-        assert section.loopback_default is None and section.remote_default is None
+        assert section.loopback_default == 2 and section.remote_default is None
         assert section.endpoints == []
 
 
@@ -235,7 +236,7 @@ async def test_the_daemon_gives_clients_for_one_server_one_gate(tmp_path: Path) 
     from tstd.daemon import Daemon
 
     text = catalog_config_yaml().replace(
-        "\nmodel_concurrency:\n  loopback_default: null\n",
+        "\nmodel_concurrency:\n  loopback_default: 2\n",
         "\nmodel_concurrency:\n  loopback_default: 1\n",
         1,
     )
@@ -271,3 +272,42 @@ async def test_a_stream_the_reader_abandons_gives_its_slot_back_at_once() -> Non
     # And the next call is not left waiting.
     again = await asyncio.wait_for(client.chat_completion(_request()), 2)
     assert not isinstance(again, ProviderError)
+
+
+class TestNewInstallDefault:
+    """TD-5282: a new install limits a local model to two calls; an old one is unchanged."""
+
+    def test_the_shipped_config_limits_a_local_server_to_two(self) -> None:
+        import yaml
+
+        from tstd.config import default_config_yaml
+
+        shipped = yaml.safe_load(default_config_yaml())["model_concurrency"]
+        assert shipped == {"loopback_default": 2, "remote_default": None, "endpoints": []}
+        limits = ModelConcurrencyConfig.model_validate(shipped)
+        gates = EndpointGates(limits)
+        local = gates.for_url("http://127.0.0.1:8080/v1")
+        assert local is not None and local._value == 2
+        # Any spelling of this computer, any port: each server has its own two.
+        assert gates.for_url("http://localhost:8080/v1") is local
+        other = gates.for_url("http://127.0.0.1:11434/v1")
+        assert other is not None and other is not local and other._value == 2
+        # A provider's server is not limited.
+        assert gates.for_url("https://api.example.test/v1") is None
+
+    def test_an_older_config_file_gets_no_limit(self, tmp_path: Path) -> None:
+        """The section is not one the loader fills in from the shipped file."""
+        from tests.catalog_helpers import catalog_config_yaml
+        from tstd.config import FILLED_FROM_SHIPPED, load_config
+
+        assert "model_concurrency" not in FILLED_FROM_SHIPPED
+        text = catalog_config_yaml()
+        start = text.index("\nmodel_concurrency:")
+        end = text.index("\n\n", start + 1)
+        older = text[:start] + text[end:]
+        assert "model_concurrency" not in older.replace("# ", "")
+        path = tmp_path / "config.yaml"
+        path.write_text(older, encoding="utf-8")
+        limits = load_config(path).model_concurrency
+        assert limits.loopback_default is None and limits.remote_default is None
+        assert EndpointGates(limits).for_url("http://127.0.0.1:8080/v1") is None

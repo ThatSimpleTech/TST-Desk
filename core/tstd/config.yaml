@@ -229,14 +229,17 @@ delegate:
   max_iterations: 8
 
 # How many calls one model server answers at once, across every chat,
-# worker and scheduled run (TD-5269). null is no limit. A single GPU
-# usually wants loopback_default: 1 or 2. endpoints gives one server, by
-# URL, a number of its own:
+# worker and scheduled run (TD-5269). null is no limit. A model served on
+# this computer gets 2 (TD-5282): one GPU answering five requests at once
+# answers all of them slowly, and some time out and are sent again. Raise
+# it if your server is built for more, or set null for no limit. A config
+# file written before this section existed has no limit, as before.
+# endpoints gives one server, by URL, a number of its own:
 #   endpoints:
 #     - url: http://127.0.0.1:8080
 #       max_concurrent: 1
 model_concurrency:
-  loopback_default: null
+  loopback_default: 2
   remote_default: null
   endpoints: []
 
