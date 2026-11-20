@@ -20074,3 +20074,26 @@ entry's roles must not appear under another entry's name.
 with the catalog and is sent on every Settings write); making the entry
 active in order to edit it (that is the behaviour being fixed).
 
+## 2026-11-20 — TD-5242: a phone hears catalog changes; it cannot remove a model or have this computer's servers asked (Class B)
+
+**Decision:** the catalog broadcast (TD-5236) also reaches remote
+non-machine peers, with `setup_state` passed through `scrub_setup_state`
+exactly as a remote peer's own reply is. `WebSocketServer.broadcast` takes
+`remote_payload` for that. `check_presets` from a remote peer skips the
+loopback ask and reports those servers as ready. `delete_preset` stays
+loopback-only (TD-5237); the other model verbs are open to a phone.
+
+**Rationale:** a phone shows the same picker, so a list that does not
+follow the computer is the same fault a second window had. The scrub keeps
+the one rule about what a remote peer may see in one place. TD-5180 decided
+that probing this computer's model ports is started by the person at it;
+`check_presets` asks only configured servers rather than scanning, but from
+a phone the same rule is kept to the letter, and a key's presence and the
+Grok CLI are still worth telling. Reporting an unasked server as ready,
+rather than unknown, keeps the wire's four statuses and matches what a
+phone could know before this story: nothing about servers.
+
+**Rejected:** refusing `check_presets` from a phone (the picker would raise
+an error each time it opened there); a fifth `unknown` status (a new state
+for every client to handle, to say what an empty warning already says).
+

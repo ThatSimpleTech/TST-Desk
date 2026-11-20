@@ -119,6 +119,25 @@ async function walkModelBar(): Promise<void> {
 	await models.filter({ hasText: "Main" }).first().click();
 	await expect(picker).toHaveText(/^Main Medium\s*$/);
 
+	// TD-5242: the phone runs this window in a WebView. At a phone's width
+	// the menu, and each row's "Only this chat", stay on the screen.
+	await page.setViewportSize({ width: 360, height: 740 });
+	await picker.click();
+	const frame = await menu.boundingBox();
+	expect(frame).not.toBeNull();
+	expect(frame!.x).toBeGreaterThanOrEqual(0);
+	expect(frame!.x + frame!.width).toBeLessThanOrEqual(360);
+	const onlyHere = menu.getByRole("button", { name: /^Only this chat: / });
+	expect(await onlyHere.count()).toBeGreaterThan(0);
+	for (const button of await onlyHere.all()) {
+		const box = await button.boundingBox();
+		expect(box).not.toBeNull();
+		expect(box!.x).toBeGreaterThanOrEqual(frame!.x);
+		expect(box!.x + box!.width).toBeLessThanOrEqual(frame!.x + frame!.width + 0.5);
+	}
+	await page.keyboard.press("Escape");
+	await page.setViewportSize({ width: 1280, height: 800 });
+
 	// Effort: pick Max, the chip follows the daemon's tier_state, then back to Medium.
 	await picker.click();
 	await menu.getByRole("menuitem", { name: /^Effort/ }).click();

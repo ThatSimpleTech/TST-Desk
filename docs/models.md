@@ -313,6 +313,13 @@ is stored for …**, **Nothing is answering at 127.0.0.1:…** for a model
 served on this computer, or **The Grok CLI was not found**. It is a
 warning, not a lock: the model can still be picked.
 
+On a paired phone the picker is the same one: the sections, **Only this
+chat**, a switch that waits for the reply, and **Opens a new chat** all
+work there, and the phone's list follows a change made at the computer.
+Two things stay with the computer: removing a model, and asking the model
+servers on the computer whether they are running, so on a phone a local
+model's row only warns about a missing key.
+
 | You see | What to do |
 |---|---|
 | "No model is set up yet" | Add one: picker → **Add a model**, or Settings → Models. |
