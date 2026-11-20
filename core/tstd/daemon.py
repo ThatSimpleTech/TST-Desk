@@ -211,7 +211,7 @@ from .notify.slack import schedule as schedule_slack_notify
 from .notify.slack import send as send_slack_notify
 from .notify.telegram import schedule as schedule_telegram_notify
 from .peer_policy import outbound_event, service_hosts
-from .phone_permissions import MCP_SERVERS, utc_now
+from .phone_permissions import APPROVAL_SWITCHES, MCP_SERVERS, utc_now
 from .phone_store import PhoneStore, server_saved_summary, value_summary
 from .plan_review import answer as answer_plan
 from .plan_review import keep_pinned_plan_visible, restore_pinned_plan, restored_plan_mode
@@ -4098,6 +4098,11 @@ class Daemon:
             if msg.enabled:
                 for session in await self.session_registry.list_sessions():
                     session.resolve_skippable_approvals()
+                # TD-5283: from a phone this is a phone permission in use.
+                await self._note_phone_change(
+                    APPROVAL_SWITCHES,
+                    "turned approval prompts off for every session on this computer.",
+                )
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, SetLoadGlobalMemory):

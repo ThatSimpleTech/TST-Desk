@@ -13,11 +13,17 @@
 	import { machineNameFor } from '../machines.svelte.js';
 	import { settings, revokeRule, setLoadGlobalMemory, setSkipAllApprovals } from '../settings.svelte.js';
 
+	import { permissionCopy } from '../phone-permissions';
+
 	interface Props {
 		/** The attached session, or null when no workspace is open. */
 		sessionId: string | null;
+		/** False on a phone the computer has not let turn approvals off
+		 *  (TD-5283). Turning them back on is always allowed. */
+		canSkipAll?: boolean;
 	}
-	let { sessionId }: Props = $props();
+	let { sessionId, canSkipAll = true }: Props = $props();
+	const skipAllOffNote = permissionCopy('approval_switches')?.offOnPhone ?? '';
 	// TD-5015: another computer's workspace keeps its own rules.
 	let remoteName = $derived(machineNameFor(sessionId));
 </script>
@@ -38,10 +44,15 @@
 		type="button"
 		role="switch"
 		aria-checked={settings.skipAllApprovals}
+		disabled={!settings.skipAllApprovals && !canSkipAll}
 		onclick={() => setSkipAllApprovals(!settings.skipAllApprovals)}
 		>{settings.skipAllApprovals ? 'On' : 'Off'}</button
 	>
 </div>
+{#if !settings.skipAllApprovals && !canSkipAll}
+	<!-- TD-5283: a phone turns this on only if the computer allowed it. -->
+	<p class="hint off-note">{skipAllOffNote}</p>
+{/if}
 
 <div class="skip-all">
 	<div>

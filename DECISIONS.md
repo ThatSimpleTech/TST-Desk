@@ -20237,3 +20237,24 @@ did say yes to this call, and the handler's own pattern for a rule it
 cannot save is "approved once"); a per-worker rule now (worker rules are
 tighten-only; a loosening one is a design of its own).
 
+## 2026-11-20 — TD-5283: turning approvals off from a phone is a phone permission (Class B; removes a phone default)
+
+**Decision:** `set_skip_all_approvals` joins `PHONE_OPT_IN` under a new
+capability, `approval_switches`. `required_capability` returns none for a
+message that only tightens (`enabled: false`), so a phone can always bring
+the prompts back. A phone's use sends `phone_change`.
+
+**Rationale:** the owner's decision that every standing change a phone can
+make is opt-in, one capability at a time, each with its own disclosure. A
+phone can already approve call by call; skip-all is the same power with
+nobody looking at each call, and it outlives the phone.
+
+**What changes for a phone:** it can no longer turn approvals off until
+the computer allows it. It can still approve and deny each call, and turn
+approvals back on.
+
+**Rejected:** putting the on/off distinction in the handler (the message's
+own field decides it, so it belongs in the one pure table); one capability
+for "approvals and autonomy" together (two different risks in one
+sentence).
+
