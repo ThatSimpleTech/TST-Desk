@@ -565,6 +565,7 @@ from .session_persist import LoadedSession, SessionPersist
 from .session_search_handler import search_sessions_reply
 from .session_stars import load_session_stars, save_session_stars
 from .session_store import SessionStore
+from .shown_artifacts import ShownArtifacts
 from .shutdown_budget import (
     ShutdownBudget,
     install_posix_shutdown_signals,
@@ -5237,6 +5238,9 @@ class Daemon:
         sent_files = SentFiles(self._artifacts, self.config.session)
         # send_file re-checks with the guard that judged its paths (TD-5143).
         sent_files.bind_guard(lambda: tool_dispatcher.path_guard)
+        # TD-5254: show_artifact, with the same wall and the live caps.
+        shown_artifacts = ShownArtifacts(self._artifacts, lambda: self.config.session)
+        shown_artifacts.bind_guard(lambda: tool_dispatcher.path_guard)
         register_builtin_handlers(
             tool_dispatcher,
             # Read per call: a live move (TD-1715) reloads boundary_config.
@@ -5245,6 +5249,7 @@ class Daemon:
             browser_driver=self.browser_driver,
             grounding_client=GroundingClient.from_config(self.config.computer_use.grounding),
             sent_files=sent_files,
+            shown_artifacts=shown_artifacts,
             session_recall=SessionRecall(self._session_index, self._session_store.records),
             ax_driver=self.ax_driver,
         )

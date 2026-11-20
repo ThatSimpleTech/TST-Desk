@@ -20258,3 +20258,25 @@ own field decides it, so it belongs in the one pure table); one capability
 for "approvals and autonomy" together (two different risks in one
 sentence).
 
+## 2026-11-20 — TD-5254: a model tool for the Artifacts pane (Class B; ends TD-3201's "no model tool")
+
+**Decision:** a builtin `show_artifact` with two modes, a workspace text
+file by path (no copy) or text with a name (kept in the session's data
+dir). `ArtifactStore.record` gains `name`, `caption`, `tool_call_id`,
+an upsert that keeps the row's id, a count cap and the session quota. A
+static classifier rule `show-artifact` puts the builtin in Class A; it is
+on the plan-mode list; children do not get it.
+
+**Rationale:** TD-3201 rejected "a model tool this story", not for good;
+its own docstring expects a later caller. Class A because the call writes
+only the session's own data dir, capped, and the name of the file written
+is the daemon's. A call with text names no path, so without a rule it
+would fall to the worker classifier and ask every time. This is the
+reasoning already recorded for `send_file`.
+
+**Rejected:** copying a `path` artifact on every call (that is
+`send_file`, and it breaks "open in editor"); `oneOf` in the schema
+(gateways differ); letting the name be a path under the session dir (a
+label can never then be a traversal); offering it to children (only the
+session's own agent publishes to its pane).
+

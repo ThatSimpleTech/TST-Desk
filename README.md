@@ -222,6 +222,13 @@ directives in [`AGENTS.md`](AGENTS.md) §2 and enforced in code.
   original. The copy is your file verbatim; it is not redacted, and it never goes to a log or
   the audit database. Limits: 512 MiB per file and 4 GiB per session
   (`session.send_file_max_bytes`, `session.send_file_session_max_bytes`).
+- **What the agent shows in the Artifacts pane is text it was allowed to read, or text it
+  wrote.** `show_artifact` either points at a text file inside the workspace (no copy is made)
+  or keeps text the agent hands over under `<user data dir>/sessions/<session id>/artifacts/`,
+  owner-only, under a name the daemon makes. It writes nowhere else and contacts no host. An
+  HTML artifact is shown as a static picture of itself: no scripts, no links, no remote
+  images. Limits: 2 MiB per artifact and 200 per session
+  (`session.artifact_max_bytes`, `session.artifact_max_count`).
 - **The agent cannot rewrite its own rules.** `AGENTS.md`, `CLAUDE.md` and `.tst/rules/**` are
   refused by the filesystem tool itself ([`tools/boundary.py`](core/tstd/tools/boundary.py)),
   ahead of the workspace check and ahead of any approval — so no `writable_paths` grant can open

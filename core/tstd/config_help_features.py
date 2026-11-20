@@ -53,6 +53,14 @@ FEATURE_HELP: dict[str, str | tuple[str, str]] = {
         "Largest file send_file may copy into the chat (at most 2 GiB).",
         BYTES,
     ),
+    "SessionConfig.artifact_max_bytes": (
+        "Most text one artifact shown by show_artifact may hold (at most 2 MiB).",
+        BYTES,
+    ),
+    "SessionConfig.artifact_max_count": (
+        "How many artifacts one session keeps in the Artifacts pane.",
+        "artifacts",
+    ),
     "SessionConfig.send_file_session_max_bytes": (
         "Total of sent files one session may hold.",
         BYTES,

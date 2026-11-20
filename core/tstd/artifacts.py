@@ -17,6 +17,7 @@ writes it; ``open_sent_file`` is the only door the chunk reader uses.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -133,12 +134,25 @@ class ArtifactStore:
         *,
         path: str | None = None,
         content: bytes | None = None,
+        name: str | None = None,
+        caption: str | None = None,
+        tool_call_id: str | None = None,
+        upsert: bool = False,
+        max_count: int | None = None,
+        max_session_bytes: int | None = None,
     ) -> ArtifactRecord:
         """Store an artifact under the workspace wall or the session persist dir.
 
         ``content`` writes bytes to ``artifacts/<id>`` in the session dir.
         ``path`` registers a workspace path (relative) or an absolute path
         already inside the session persist dir. Pass exactly one.
+
+        ``upsert`` (TD-5254) replaces an earlier ``artifact`` row for the
+        same thing and keeps its id, so a revised artifact is one row in
+        the pane: the same workspace path, or the same ``name`` for
+        content. ``max_count`` caps this session's ``artifact`` rows and
+        ``max_session_bytes`` everything the session stores, sent files
+        included; a replacement is counted once.
         """
         session_id = _safe_session_id(session_id)
         if (path is None) == (content is None):
@@ -150,30 +164,71 @@ class ArtifactStore:
 
         self._persist.prepare(session_id)
         persist_dir = self._persist.dir_for(session_id)
-        artifact_id = uuid.uuid4().hex
-
-        if content is not None:
-            dest = persist_dir / _BYTES_DIR / artifact_id
-            self._write_bytes(dest, persist_dir, content)
-            stored_path = f"{_BYTES_DIR}/{artifact_id}"
-            location: Literal["workspace", "session"] = "session"
-        else:
-            assert path is not None
+        location: Literal["workspace", "session"] = "session"
+        stored_path = ""
+        if path is not None:
             location, stored_path = self._classify_path(path, workspace, persist_dir)
 
-        record = ArtifactRecord(
-            id=artifact_id,
-            session_id=session_id,
-            mime=mime.strip(),
-            path=stored_path,
-            title=title.strip(),
-            location=location,
-        )
         with self._lock:
             records = self._load(session_id)
-            records.append(record)
+            prior = self._prior(records, location, stored_path, name) if upsert else None
+            shown = [r for r in records if r.kind == "artifact"]
+            if prior is None and max_count is not None and len(shown) >= max_count:
+                raise ArtifactError(
+                    "artifact_limit",
+                    f"This session already shows {max_count} artifacts, the most it keeps.",
+                )
+            artifact_id = prior.id if prior is not None else uuid.uuid4().hex
+            size: int | None = None
+            digest: str | None = None
+            if content is not None:
+                held = sum(r.size or 0 for r in records if r is not prior)
+                if max_session_bytes is not None and held + len(content) > max_session_bytes:
+                    raise ArtifactError(
+                        "session_quota",
+                        "This session has no room left for stored files and artifacts.",
+                    )
+                self._write_bytes(persist_dir / _BYTES_DIR / artifact_id, persist_dir, content)
+                stored_path = f"{_BYTES_DIR}/{artifact_id}"
+                size = len(content)
+                digest = hashlib.sha256(content).hexdigest()
+            record = ArtifactRecord(
+                id=artifact_id,
+                session_id=session_id,
+                mime=mime.strip(),
+                path=stored_path,
+                title=title.strip(),
+                location=location,
+                name=name,
+                size=size,
+                sha256=digest,
+                caption=caption,
+                tool_call_id=tool_call_id,
+            )
+            if prior is None:
+                records.append(record)
+            else:
+                records[records.index(prior)] = record
             self._save(session_id, records)
         return record
+
+    @staticmethod
+    def _prior(
+        records: list[ArtifactRecord],
+        location: Literal["workspace", "session"],
+        stored_path: str,
+        name: str | None,
+    ) -> ArtifactRecord | None:
+        """The ``artifact`` row a new one replaces, if any (TD-5254)."""
+        for row in records:
+            if row.kind != "artifact" or row.location != location:
+                continue
+            # A session row a path points at keeps the path as its key.
+            if stored_path and row.path == stored_path:
+                return row
+            if not stored_path and name is not None and row.name == name:
+                return row
+        return None
 
     def bytes_dir(self, session_id: str) -> Path:
         """``sessions/<id>/artifacts``, where ``sent_file`` copies live (TD-5143)."""
