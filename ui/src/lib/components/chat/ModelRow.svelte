@@ -13,6 +13,7 @@
 		pickModel,
 		pickOnlyHere,
 	} from "../../model-pick";
+	import { problemWith } from "../../model-ready.svelte.js";
 	import { session } from "../../session-status.svelte.js";
 	import { settings } from "../../settings.svelte.js";
 
@@ -22,6 +23,8 @@
 	const mark = $derived(engineMark(name, settings.presetEngines));
 	const slot = $derived(settings.presetSlots[name] ?? null);
 	const description = $derived(modelDescription(name, settings.presetDescriptions));
+	// TD-5240: what would stop this model running, as the daemon last said.
+	const problem = $derived(problemWith(name));
 </script>
 
 <div class="row">
@@ -42,7 +45,9 @@
 				>{label}{#if mark}
 					<span class="badge">{mark}</span>{/if}</span
 			>
-			{#if opensNewChat(name)}
+			{#if problem}
+				<span class="sub sub--problem">{problem}</span>
+			{:else if opensNewChat(name)}
 				<span class="sub">{NEW_CHAT}</span>
 			{:else if description}
 				<span class="sub">{description}</span>
@@ -117,6 +122,11 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.sub--problem {
+		color: var(--color-warn);
+		white-space: normal;
 	}
 
 	.badge {

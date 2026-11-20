@@ -921,6 +921,12 @@ export interface SwitchPreset extends ClientMessage {
   make_default?: boolean;
 }
 
+// TD-5240: ask whether each model on the picker can run right now. Sent
+// when the picker opens. Answered with preset_readiness.
+export interface CheckPresets extends ClientMessage {
+  type: "check_presets";
+}
+
 // TD-5258: put the Grok CLI on the model list as an entry that is
 // `engine: grok` and names no model or key. Refused when the CLI is not
 // found or an entry already names the Grok engine. Acked with setup_state.
@@ -1414,6 +1420,7 @@ export type ClientMessageUnion =
   | SetPreset
   | DuplicatePreset
   | SwitchPreset
+  | CheckPresets
   | AddGrokPreset
   | SetPresetLabel
   | DeletePreset
@@ -2586,6 +2593,20 @@ export interface LocalServers extends DaemonEvent {
 }
 
 // TD-5172: reply to test_model.
+/** TD-5240: whether one model can run right now. `detail` is one sentence
+ *  for the picker's row, empty when ready. */
+export interface PresetReady {
+  preset: string;
+  status: "ready" | "no_key" | "server_down" | "no_grok";
+  detail?: string;
+}
+
+/** TD-5240: reply to check_presets, one row per model. */
+export interface PresetReadiness extends DaemonEvent {
+  type: "preset_readiness";
+  rows: PresetReady[];
+}
+
 export interface ModelTested extends DaemonEvent {
   type: "model_tested";
   seq: number;
@@ -3425,6 +3446,7 @@ export type DaemonEventUnion =
   | EndpointModels
   | LocalServers
   | ModelTested
+  | PresetReadiness
   | ConfigEditor
   | ConfigValueRejected
   | DiagnosticsReport

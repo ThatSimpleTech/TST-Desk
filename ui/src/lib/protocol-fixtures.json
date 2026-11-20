@@ -653,6 +653,9 @@
     "type": "delete_preset",
     "name": "budget"
   },
+  "check_presets": {
+    "type": "check_presets"
+  },
   "switch_preset": {
     "type": "switch_preset",
     "name": "budget",
@@ -2451,6 +2454,22 @@
     "ok": true,
     "reply": "I am working.",
     "detail": ""
+  },
+  "preset_readiness": {
+    "type": "preset_readiness",
+    "seq": 1,
+    "rows": [
+      {
+        "preset": "tst-default",
+        "status": "ready",
+        "detail": ""
+      },
+      {
+        "preset": "local",
+        "status": "server_down",
+        "detail": "Nothing is answering at 127.0.0.1:11434. Start the model server."
+      }
+    ]
   },
   "config_editor": {
     "type": "config_editor",

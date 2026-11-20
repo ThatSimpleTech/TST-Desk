@@ -50,6 +50,7 @@ from tstd.protocol import (
     CharterDocument,
     CheckCuPermissions,
     CheckpointNotice,
+    CheckPresets,
     CloseWorktree,
     CommandEntry,
     CommandList,
@@ -189,6 +190,8 @@ from tstd.protocol import (
     PlanReviewed,
     PolicyRules,
     PolicyRuleSummary,
+    PresetReadiness,
+    PresetReady,
     PreviewRestoreFiles,
     Question,
     QuestionAnswer,
@@ -593,6 +596,7 @@ FIXTURES = {
         name="tst-default", label="House model", description="General coding and chat"
     ),
     "delete_preset": DeletePreset(name="budget"),
+    "check_presets": CheckPresets(),
     # TD-5235: this chat, the model new chats use, or both
     "switch_preset": SwitchPreset(name="budget", session_id="sess-1", make_default=True),
     # TD-5258: put the Grok CLI on the model list
@@ -1637,6 +1641,17 @@ FIXTURES = {
         error="The server refused the key. Check it and try again.",
     ),
     "model_tested": ModelTested(preset="tst-default", ok=True, reply="I am working."),
+    # TD-5240: whether each model on the picker can run right now
+    "preset_readiness": PresetReadiness(
+        rows=[
+            PresetReady(preset="tst-default", status="ready"),
+            PresetReady(
+                preset="local",
+                status="server_down",
+                detail="Nothing is answering at 127.0.0.1:11434. Start the model server.",
+            ),
+        ]
+    ),
     # TD-5203: a two-model slice of the editor's schema, and an edit's ack.
     "config_editor": ConfigEditor(
         root="ModelConfig",
