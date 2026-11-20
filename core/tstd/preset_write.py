@@ -1,4 +1,4 @@
-"""Copy, relabel and remove catalog entries in the user's ``config.yaml`` (TD-5237).
+"""Copy, relabel, remove and add-Grok for the catalog in the user's ``config.yaml`` (TD-5237).
 
 The walkthrough could only add a model, so the way to try a variation was
 to overwrite the one entry already there. These three writers let Settings
@@ -262,5 +262,57 @@ def delete_preset(name: str, path: Path | None = None) -> Path:
     )
     if name in loaded.presets:
         raise ConfigError(f"Could not remove {name!r}: the file declares it more than once")
+    _atomic_write(config_path, text)
+    return config_path
+
+
+def add_grok_preset(name: str, label: str, description: str, path: Path | None = None) -> Path:
+    """Add an entry that is the Grok engine and nothing else (TD-5258).
+
+    ``label``, ``description`` and ``engine: grok``: the Grok CLI brings
+    its own model and sign-in, so the entry names no roles and no key
+    (TD-5239). It lands after the last entry, or opens the catalog when
+    there is none. ``active_preset`` is not written.
+
+    Raises ``ConfigError`` when *name* is taken or not a slug, or an entry
+    already names the Grok engine: one is enough for the picker.
+    """
+    if not CREDENTIAL_ID_RE.match(name):
+        raise ConfigError(f"preset name {name!r} must be a lowercase slug [a-z][a-z0-9-]{{0,31}}")
+    cleaned = _clean_label(label)
+    config_path = ensure_user_config(path)
+    config = load_config(config_path)
+    if name in config.presets:
+        raise ConfigError(f"A preset named {name!r} already exists")
+    existing = next((n for n, p in config.presets.items() if p.engine == "grok"), None)
+    if existing is not None:
+        shown = config.presets[existing].label or existing
+        raise ConfigError(f"Grok is already one of your models ({shown})")
+
+    lines = config_path.read_text(encoding="utf-8").split("\n")
+    header = _find_key(lines, 0, len(lines), "presets", 0)
+    block = [f"  {name}:", f"    label: {json.dumps(cleaned)}"]
+    if description.strip():
+        block.append(f"    description: {json.dumps(description.strip())}")
+    block.append("    engine: grok")
+    if header < 0:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines += ["presets:", *block, ""]
+    elif lines[header].split(":", 1)[1].split("#", 1)[0].strip() == "{}":
+        # The shipped empty catalog.
+        lines[header] = "presets:"
+        lines[header + 1 : header + 1] = block
+    else:
+        _header, end, entry_indent = _presets_block(lines, config_path)
+        pad = " " * (entry_indent - 2)
+        at = _content_end(lines, header, end)
+        lines[at:at] = [pad + line for line in block] if pad else block
+
+    text = "\n".join(lines)
+    loaded = _checked(text, config_path, "Could not add Grok")
+    added = loaded.presets.get(name)
+    if added is None or added.engine != "grok":
+        raise ConfigError("Could not add Grok: the entry did not load")
     _atomic_write(config_path, text)
     return config_path

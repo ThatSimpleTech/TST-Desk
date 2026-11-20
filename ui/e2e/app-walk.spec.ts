@@ -651,6 +651,12 @@ async function walkModelCatalog(dialog: Locator): Promise<void> {
 
 const CATALOG_ROW = /^(Duplicate|Rename|Remove) .+$/;
 
+// "Add Grok to your models" (TD-5258) is held where the Grok CLI is not
+// installed, which is CI, and live on a developer's machine that has it. A
+// click there would add an entry the Model section's census does not expect,
+// so the walk leaves it alone; grok-on-picker.test.ts presses it.
+const GROK_ADD = /^Add Grok to your models$/;
+
 const SKIP_CLICK =
 	/^(Close|Sign in with Microsoft|Sign in with Google|Connect GitHub|Disconnect|Send test email|Delete|Remove|Forget|Copy code|Open browser|Try again|How models work)$/;
 
@@ -663,7 +669,8 @@ async function exercise(page: Page, content: Locator): Promise<void> {
 		const name = ((await button.getAttribute("aria-label")) || (await button.innerText()))
 			.replace(/\s+/g, " ")
 			.trim();
-		if (name === "" || SKIP_CLICK.test(name) || CATALOG_ROW.test(name)) continue;
+		if (name === "" || SKIP_CLICK.test(name) || CATALOG_ROW.test(name) || GROK_ADD.test(name))
+			continue;
 		await dismissExtraDialogs(page);
 		await button.click({ timeout: 5_000 });
 		await dismissExtraDialogs(page);

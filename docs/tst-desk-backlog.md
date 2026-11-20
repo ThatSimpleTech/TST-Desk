@@ -13515,3 +13515,33 @@ active entry has no model.
 or the one most of its turns ran on. Recorded 2026-11-20 at the owner's
 request as a possible later story.
 
+---
+
+### TD-5258 — Add Grok to your models from Settings → Engine
+
+**Size:** 2 · **Depends on:** TD-5239 · **Status:** Done
+
+After TD-5239 a Grok entry could sit on the picker, but only someone who
+edited `config.yaml` could put it there.
+
+- [x] `add_grok_preset` writes one entry that is a label, a description and
+      `engine: grok`, after the last entry or into the empty shipped
+      catalog; the rest of the file and `active_preset` are not changed
+      (`test_add_grok_preset.py::TestTheWriter`).
+- [x] It is refused when the Grok CLI is not found on this computer, and
+      when an entry already names the Grok engine; a refusal writes nothing
+      (`test_it_is_refused_where_the_grok_cli_is_not_found`,
+      `test_a_second_ask_is_refused`, `test_once_is_enough`).
+- [x] Acked with `setup_state`, which lists the entry and its engine
+      (`test_it_adds_the_entry_and_leaves_the_active_model`).
+- [x] Settings → Engine has "Add Grok to your models": one message on a
+      click, held with the reason where the CLI is missing, replaced by a
+      line once Grok is on the list, and the daemon's reason shown on a
+      refusal (`grok-on-picker.test.ts`).
+- [x] The UI walk lists the button and does not press it
+      (`e2e/census.json`, `GROK_ADD` in `app-walk.spec.ts`).
+
+**Notes:** The button is always rendered, so the walk's census is the same
+on a machine with the Grok CLI and one without. Class B entry in
+DECISIONS.md.
+

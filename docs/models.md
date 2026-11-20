@@ -212,6 +212,9 @@ presets:
     engine: grok
 ```
 
+Settings → Engine → **Add Grok to your models** writes this entry for you
+once the Grok CLI is installed; by hand it is the four lines above.
+
 A new chat started while this entry is the active one runs on the Grok
 CLI. A chat keeps the engine it started on, so the picker holds this entry
 for a chat that is already running on a model of yours, and holds your
