@@ -20280,3 +20280,21 @@ reasoning already recorded for `send_file`.
 label can never then be a traversal); offering it to children (only the
 session's own agent publishes to its pane).
 
+## 2026-11-20 — TD-5284: a phone is refused any verb nobody placed for it (Class B)
+
+**Decision:** `PHONE_OPEN` is an explicit list. `check` refuses a remote
+non-machine peer any verb that is not in `PHONE_OPEN`, `PHONE_OPT_IN` or
+`MACHINE_VERBS` (`LOOPBACK_VERBS` are refused earlier), with
+`loopback_only`. A test partitions every client message type.
+
+**Rationale:** default-open is how `set_mcp_server` reached a phone. The
+machine-peer policy has been default-closed since TD-5015 with a test
+that walks every type; this is the same rule for the other kind of remote
+peer. The list was generated from what was open the day before, so the
+change is to the default for future verbs only.
+
+**Rejected:** a new refusal code for "not placed" (to a phone it is the
+same fact as `loopback_only`: do it at the computer); deciding the
+remaining sensitive verbs in the same change (each needs its own
+disclosure and is a behaviour change for phone users).
+

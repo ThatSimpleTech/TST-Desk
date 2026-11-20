@@ -28,12 +28,12 @@ from tstd.peer_policy import (
     LOOPBACK_VERBS,
     MACHINE_PEER_VERBS,
     MACHINE_VERBS,
-    PHONE_OPT_IN,
     PeerView,
     check,
     classify,
 )
 from tstd.phone_permissions import CAPABILITIES
+from tstd.phone_verbs import HANDSHAKE_FRAMES, PHONE_OPEN, PHONE_OPT_IN
 from tstd.protocol import parse_client_message
 
 # Checked one by one for a way to switch approvals off, widen a rule, or
@@ -439,3 +439,66 @@ def test_verbs_that_make_this_computer_run_a_command_are_never_open_to_a_phone()
     # The switch itself has no setting.
     assert "set_phone_permission" in LOOPBACK_VERBS
     assert "set_phone_permission" not in PHONE_OPT_IN
+
+
+def test_every_client_type_is_placed_for_a_phone_exactly_once() -> None:
+    """TD-5284: a new verb starts refused for a phone until someone places it."""
+    sets = {
+        "LOOPBACK_VERBS": set(LOOPBACK_VERBS),
+        "PHONE_OPT_IN": set(PHONE_OPT_IN),
+        "PHONE_OPEN": set(PHONE_OPEN),
+        "MACHINE_VERBS": set(MACHINE_VERBS),
+        "HANDSHAKE_FRAMES": set(HANDSHAKE_FRAMES),
+    }
+    placed: dict[str, str] = {}
+    for name, verbs in sets.items():
+        for verb in verbs:
+            assert verb not in placed, f"{verb} is in both {placed.get(verb)} and {name}"
+            placed[verb] = name
+    known = set(protocol._KNOWN_CLIENT_TYPES)
+    assert known - set(placed) == set(), "place these for a phone in tstd/phone_verbs.py"
+    assert set(placed) - known == set(), "these are not client message types any more"
+    assert set(PHONE_OPT_IN.values()) <= set(CAPABILITIES)
+
+
+def test_a_verb_nobody_placed_is_refused_from_a_phone(monkeypatch: pytest.MonkeyPatch) -> None:
+    """What the inventory is for: forgetting to list a verb fails closed."""
+    from tstd import peer_policy
+
+    frame = _msg("list_sessions")
+    assert check(frame, PHONE_VIEWER, bridged=False) is None
+    monkeypatch.setattr(peer_policy, "PHONE_OPEN", PHONE_OPEN - {"list_sessions"})
+    for peer in (PHONE_VIEWER, PHONE_PLAIN, PLAIN_REMOTE):
+        assert _code(check(frame, peer, bridged=False, grants=GRANTED)) == "loopback_only", peer
+    # The computer itself is not a phone, and another computer keeps its own list.
+    assert check(frame, LOOPBACK_PLAIN, bridged=False) is None
+    assert check(frame, VIEWER, bridged=False) is None
+    assert check(frame, MACHINE, bridged=False) is None
+
+
+def test_the_inventory_changed_nothing_the_day_it_was_written() -> None:
+    """Every verb a phone could send before is still open, opt-in or a machine verb."""
+    for verb in protocol._KNOWN_CLIENT_TYPES - HANDSHAKE_FRAMES - LOOPBACK_VERBS:
+        assert verb in PHONE_OPEN or verb in PHONE_OPT_IN or verb in MACHINE_VERBS, verb
+
+
+def test_no_verb_that_runs_a_command_or_grants_is_open_to_a_phone() -> None:
+    never_open = {
+        "set_phone_permission",
+        "set_mcp_server",
+        "delete_mcp_server",
+        "set_mcp_secret",
+        "delete_mcp_secret",
+        "get_config_editor",
+        "set_config_value",
+        "reset_config_value",
+        "trust_workspace_config",
+        "steering_accept",
+        "steering_edit",
+        "drain",
+        "delete_preset",
+        "scan_local_servers",
+        "set_skip_all_approvals",
+    }
+    assert never_open <= protocol._KNOWN_CLIENT_TYPES
+    assert never_open.isdisjoint(PHONE_OPEN)
