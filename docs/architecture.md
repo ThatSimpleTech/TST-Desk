@@ -488,8 +488,10 @@ exactly what it saw before.
 | Machine peer | A device whose record says `kind: machine`, or any hello with `"bridge"` (the hub always sends it) | Deny by default: only `MACHINE_PEER_VERBS`, own sessions only, no broadcasts. A bridged id is `bridged_session`; any other verb is `not_allowed`. Never a viewer, so it never forwards. |
 | Everyone else | The CLI, the legacy `remote-token`, an old client | Own rows only, no `machine_list`: unchanged. |
 
-A paired phone (a remote peer whose device record says `kind: phone`) may send anything
-not listed against it, with two lists against it. `LOOPBACK_VERBS` are the computer's own
+Every client verb is placed for a phone in `core/tstd/phone_verbs.py` (TD-5284): `PHONE_OPEN` is
+what a phone may send with no setting, and a verb in none of the sets is refused from a phone
+or the legacy token with `loopback_only`, so a new verb starts closed to phones until someone
+places it (a test fails until then). Two lists stand against a phone. `LOOPBACK_VERBS` are the computer's own
 and have no setting. `PHONE_OPT_IN` (TD-5279) maps a verb to a *phone permission*: the verb
 is refused with `phone_permission_off` unless the person at the computer switched that
 capability on with `set_phone_permission`, which is itself in `LOOPBACK_VERBS` so a phone

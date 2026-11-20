@@ -14394,3 +14394,38 @@ pane; the pane does not watch the file.
 in the handler, because not every OpenAI-compatible server handles it.
 HTML is shown through TD-5262's static preview.
 
+---
+
+### TD-5284 — Every verb is placed for a phone, and a new one starts refused
+
+**Size:** 2 · **Depends on:** TD-5279 · **Status:** Done (phone permissions, stage 2)
+
+A paired phone could send any verb nobody had listed against it, which is
+how the MCP page was missed. The policy for another computer was already
+the other way round: refused unless listed. Phones now work the same way.
+
+- [x] `core/tstd/phone_verbs.py` lists the 128 verbs a phone may send with
+      no setting (`PHONE_OPEN`), beside `PHONE_OPT_IN`.
+- [x] `peer_policy.check` refuses a verb in none of the sets from a paired
+      phone or the older remote token with `loopback_only`
+      (`test_a_verb_nobody_placed_is_refused_from_a_phone`).
+- [x] A test fails when a client message type is in no set, or in two
+      (`test_every_client_type_is_placed_for_a_phone_exactly_once`).
+- [x] The list is exactly what a phone could send the day before: nothing
+      a phone does today changed
+      (`test_the_inventory_changed_nothing_the_day_it_was_written`).
+- [x] The verbs that run a command or grant are pinned as never open
+      (`test_no_verb_that_runs_a_command_or_grants_is_open_to_a_phone`).
+
+**Not built:** the one-time notice on the computer after an upgrade with a
+phone already paired. It needs a remembered "shown" flag and an
+acknowledgement; until it exists the release note has to say it. Also not
+here: recording which phone created a scheduled job or an always-allow
+rule, for the unpair review.
+
+**Notes:** `PHONE_OPEN` still holds verbs that are waiting to become
+permissions (model and key setup, computer-use control, unattended runs,
+connector sign-ins, `shutdown`, the computer-use stop release, a saved
+key's host, the mail server). Each moves in its own story. The table moved
+out of `peer_policy.py` to keep that file near 400 lines.
+

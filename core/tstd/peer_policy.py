@@ -27,7 +27,8 @@ from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlsplit
 
-from .phone_permissions import APPROVAL_SWITCHES, LABELS, MCP_SERVERS
+from .phone_permissions import LABELS
+from .phone_verbs import PHONE_OPEN, PHONE_OPT_IN, required_capability
 from .protocol import ClientMessage, DaemonEvent, ModelFallback, TierState, build_error
 
 DeviceKind = Literal["phone", "machine"]
@@ -198,41 +199,9 @@ def classify(remote: bool, device_kind: DeviceKind | None, features: Iterable[st
     return PeerView(remote=remote, machine=machine, viewer=viewer, history=history, phone=phone)
 
 
-# What a phone may send only after the computer switched the capability on
-# (TD-5279), verb to capability. The MCP page: a stdio server is a command
-# this computer runs, now and at every session start, and it never meets
-# the classifier. A paired phone could add one with no word from the person
-# at the computer, and it stayed in config.yaml after the phone was
-# removed. A server's values go with it: they are that command's
-# environment, or the headers sent to its host. A phone still sees the list
-# in ``setup_state`` either way.
-PHONE_OPT_IN: dict[str, str] = {
-    "set_mcp_server": MCP_SERVERS,
-    "delete_mcp_server": MCP_SERVERS,
-    "set_mcp_secret": MCP_SERVERS,
-    "delete_mcp_secret": MCP_SERVERS,
-    # Skip-all (TD-5283) persists machine-wide and releases every parked
-    # call, Class C included. A phone can already approve call by call;
-    # this is the same power with nobody looking at each call.
-    "set_skip_all_approvals": APPROVAL_SWITCHES,
-}
-
-
-def _only_tightens(msg: ClientMessage) -> bool:
-    """A message that can only narrow what runs needs no permission.
-
-    Read off the message's own fields, so the rule stays in this pure
-    table. Turning skip-all *off* brings the approval prompts back.
-    """
-    return msg.type == "set_skip_all_approvals" and getattr(msg, "enabled", True) is False
-
-
-def required_capability(msg: ClientMessage) -> str | None:
-    """The phone permission *msg* needs from a remote peer, if any."""
-    capability = PHONE_OPT_IN.get(msg.type)
-    if capability is None or _only_tightens(msg):
-        return None
-    return capability
+def placed_for_a_phone(kind: str) -> bool:
+    """Whether a verb has been given a place in the phone inventory."""
+    return kind in PHONE_OPEN or kind in PHONE_OPT_IN or kind in MACHINE_VERBS
 
 
 # Loopback names say nothing about where a service lives.
@@ -365,6 +334,11 @@ def check(
             f"Turn on '{LABELS[capability or '']}' under Settings, Phones and devices "
             "on the computer to do this from a phone.",
             in_reply_to=msg.type,
+        )
+    # TD-5284: a verb nobody has placed for a phone is not open to one.
+    if peer.remote and not peer.machine and not placed_for_a_phone(msg.type):
+        return build_error(
+            "loopback_only", "Only the computer itself can do that.", in_reply_to=msg.type
         )
     # TD-5118: a turn's own allow rules switch approvals off for it, so they
     # come only from ``tst run`` on this computer, for its own sessions; a
