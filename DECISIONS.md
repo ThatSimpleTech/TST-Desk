@@ -20202,3 +20202,21 @@ connector sign-ins, `shutdown`, releasing the computer-use stop, changing
 a saved key's host and changing the mail server; then the inventory that
 makes a new verb start refused for a phone.
 
+## 2026-11-20 — TD-5259: memory distill runs on the chat's own entry (Class B)
+
+**Decision:** `_run_distill` picks its model with `_distill_entry(session)`:
+the entry the chat is on when distill runs, if the chat is on TST Desk's
+own loop and that entry still exists and names a model; otherwise the
+TD-5239 rule (the active entry when it names a model, else the first that
+does, else skip).
+
+**Rationale:** distill sends the conversation to a model server. Sending
+it to the daemon's active entry meant a chat the person had put on a local
+model could be sent to a hosted one, with nothing on screen saying so. The
+chat's own entry is the one place its text was already going.
+
+**Rejected:** the entry most of the chat's turns ran on (needs per-turn
+bookkeeping, and is wrong the moment a person moves a chat off a server on
+purpose); applying the entry's context overrides to distill (distill has
+its own settings and none of the six override sections govern it).
+

@@ -13495,25 +13495,36 @@ picker, in one click, is TD-5235. Making a Grok entry without editing
 
 ### TD-5259 — Memory distill follows the chat's own model
 
-**Size:** 2 · **Depends on:** TD-5239 · **Status:** Not started (idea; do not build without the maintainer's say-so)
+**Size:** 2 · **Depends on:** TD-5239 · **Status:** Done
 
-Distill at session end and at shutdown runs on the daemon's active entry
-(`_run_distill` hands it the daemon's config, and `_ensure_provider` its
-brain), not on the entry the chat itself used. A chat on a local model can
-so have its conversation sent to a hosted one for distilling, or the other
-way round. TD-5239 kept this as it was and only made it work when the
-active entry has no model.
+Distill at session end and at shutdown ran on the daemon's active entry
+(`_run_distill` handed it the daemon's config, and `_ensure_provider` its
+brain), not on the entry the chat itself used. A chat on a local model
+could so have its conversation sent to a hosted one for distilling, or the
+other way round. TD-5239 kept this as it was and only made it work when
+the active entry has no model. The owner asked for it to be built.
 
 **Acceptance criteria:**
-- [ ] Distill for a chat on TST Desk's own loop runs on that chat's entry
-- [ ] A chat on the Grok engine, which has no model of its own here, keeps
+- [x] Distill for a chat on TST Desk's own loop runs on that chat's entry,
+      and the client is the one made for that entry's server
+      (`test_distill_entry.py::test_a_chat_on_another_entry_is_distilled_by_that_entry`)
+- [x] Changing the active entry does not move another chat's distill
+      (`test_the_active_entry_changing_does_not_move_another_chats_distill`)
+- [x] A chat on the Grok engine, which has no model of its own here, keeps
       the TD-5239 rule (the active entry, else the first with a model)
-- [ ] A chat whose entry has since been removed falls back the same way
-- [ ] Tests for each case with the mock provider, asserting the endpoint asked
+      (`test_a_grok_chat_keeps_the_active_entry`)
+- [x] A chat whose entry has since been removed falls back the same way
+      (`test_a_chat_whose_entry_was_removed_falls_back`)
+- [x] With no model anywhere it is still skipped
+      (`test_no_model_anywhere_is_still_skipped`)
+- [x] Tests for each case with the mock provider, asserting the entry and
+      the server address the client was made for
 
-**Notes:** Decide first whether "the chat's entry" means its current one
-or the one most of its turns ran on. Recorded 2026-11-20 at the owner's
-request as a possible later story.
+**Notes:** "The chat's entry" is the one it is on when distill runs, not
+the one most of its turns ran on: the latest choice of where the chat goes
+is the one respected, and it needs no per-turn bookkeeping. The entry's
+own context overrides (TD-5234) are not applied to distill; it reads the
+catalog pointed at that entry, as it did for the active one.
 
 ---
 
