@@ -100,6 +100,35 @@ class TestPlan:
         assert f"--bind {ws.resolve()} {ws.resolve()}" in joined
         assert argv[-3:] == ["/bin/sh", "-c", "make"]
 
+    def test_a_hidden_dir_around_the_workspace_is_masked_before_the_bind(
+        self, tmp_path: Path
+    ) -> None:
+        """TD-5261: a worktree under the data dir, the default place for one.
+
+        Runs everywhere, bubblewrap or not: it reads the order of the plan.
+        """
+        fake_home = tmp_path / "home"
+        (fake_home / ".ssh").mkdir(parents=True)
+        data = tmp_path / "data"
+        ws = data / "worktrees" / "wt1"
+        ws.mkdir(parents=True)
+        (ws / "secrets").mkdir()
+        section = SandboxSection(enabled=True, hidden_paths=[str(ws / "secrets")])
+        argv = build_plan(str(ws), "true", section, home=fake_home, extra_hidden=[data]).argv
+
+        def at(*run: str) -> int:
+            return next(i for i in range(len(argv)) if tuple(argv[i : i + len(run)]) == run)
+
+        around = at("--perms", "0111", "--tmpfs", str(data))
+        bind = at("--bind", str(ws), str(ws))
+        inside = at("--perms", "0000", "--tmpfs", str(ws / "secrets"))
+        elsewhere = at("--perms", "0000", "--tmpfs", str(fake_home / ".ssh"))
+        # Around the workspace: first, and passable. Inside it or apart: last, and closed.
+        assert around < bind < inside
+        assert bind < elsewhere
+        # Masked once, never a second time over the workspace.
+        assert argv.count(str(data)) == 1
+
     def test_masks_come_after_the_workspace_bind(self, fake_home: Path) -> None:
         # The workspace is the home directory itself: the masks must still win.
         argv = build_plan(str(fake_home), "true", ON, home=fake_home).argv
@@ -294,6 +323,41 @@ class TestRealSandbox:
             assert not marker.exists()
         finally:
             shutil.rmtree(host_dir, ignore_errors=True)
+
+    async def test_a_worktree_inside_the_data_dir_is_still_the_workspace(self) -> None:
+        """TD-5261: a session's worktree lives under the data dir by default.
+
+        The data dir is one of the hidden paths, and its mask used to land
+        on top of the workspace bind, so every command failed to enter its
+        own folder.
+        """
+        from tstd.logging import user_data_dir
+
+        data = user_data_dir()
+        ws = data / "worktrees" / "wt1"
+        ws.mkdir(parents=True)
+        (data / "sessions.json").write_text("DATA-DIR-SECRET", encoding="utf-8")
+        (data / "worktrees" / "other").mkdir()
+        (data / "worktrees" / "other" / "theirs.txt").write_text("theirs", encoding="utf-8")
+        try:
+            out = await run_shell(
+                _session(ws, ON),
+                "echo in > made.txt && cat made.txt; "
+                f"cat {data}/sessions.json 2>/dev/null || echo NO-DATA; "
+                f"ls {data} 2>/dev/null || echo NO-LIST; "
+                f"cat {data}/worktrees/other/theirs.txt 2>/dev/null || echo NO-SIBLING",
+            )
+            assert shell_sandbox.SANDBOX_NOTE in out
+            assert (ws / "made.txt").read_text() == "in\n"
+            assert "in\n" in out
+            # The rest of the data dir stays out of reach: its files, its
+            # listing, and another session's worktree.
+            assert "NO-DATA" in out and "DATA-DIR-SECRET" not in out
+            assert "NO-LIST" in out
+            assert "NO-SIBLING" in out and "theirs" not in out
+        finally:
+            shutil.rmtree(data / "worktrees", ignore_errors=True)
+            (data / "sessions.json").unlink(missing_ok=True)
 
     async def test_timeout_kills_the_sandboxed_tree(self, tmp_path: Path) -> None:
         ws = tmp_path / "ws"
