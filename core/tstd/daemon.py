@@ -5079,11 +5079,7 @@ class Daemon:
         """Park a proposal and emit ``memory_proposal`` when memory changed."""
         if session.turn_in_flight or completed_turn_count(session) < 1:
             return
-        # TD-5239: distill runs on TST Desk's own client whatever engine the
-        # chat used. With the Grok engine active and no model of its own, it
-        # takes the first entry that has one; with none, there is nothing to
-        # run it on and it is skipped.
-        native = self.config.native_default()
+        native = self._distill_entry(session)
         if native is None:
             log.info(
                 "distill skipped; no model to run it on",
@@ -5107,6 +5103,27 @@ class Daemon:
             return
         self._pending_memory[session.id] = emitted
         await session.event_log.add(emitted.event)
+
+    def _distill_entry(self, session: Session) -> str | None:
+        """The catalog entry whose model distills *session*, or None.
+
+        A chat on TST Desk's own loop is distilled by the entry it is on now
+        (TD-5259): its conversation goes to the model server it was already
+        going to, so a chat kept on a local model is not sent to a hosted
+        one for this, nor the other way round. "Now" is the entry at the
+        moment of distilling, not the one most turns ran on: the person's
+        latest choice of where this chat goes is the one to respect.
+
+        A chat on the Grok engine has no model of its own here, and a chat
+        whose entry has since been removed has none either. Both keep the
+        TD-5239 rule: the active entry when it names a model, else the
+        first that does; with none there is nothing to run it on.
+        """
+        if session.engine != "grok":
+            entry = self.config.presets.get(session.preset)
+            if entry is not None and entry.has_tiers:
+                return session.preset
+        return self.config.native_default()
 
     async def _distill_live_sessions(self, flight: ProviderFlight | None = None) -> None:
         """Graceful quit: distill every live idle session that had a turn."""
