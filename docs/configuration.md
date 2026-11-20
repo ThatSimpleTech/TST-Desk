@@ -2048,6 +2048,7 @@ for a session with the `set_tier` message.
 | `input_price` | float ≥ 0 | *required* | Dollars per **million** prompt tokens that were not served from cache. |
 | `output_price` | float ≥ 0 | *required* | Dollars per **million** completion tokens. |
 | `cache_read_price` | float ≥ 0 | *required* | Dollars per **million** prompt tokens served from cache. |
+| `cache_write_price` | float ≥ 0 | unset | Dollars per **million** prompt tokens the provider stores in its cache on a call, when it charges more for those than `input_price` (1.25 times input on Anthropic models). Counted from the response's `prompt_tokens_details.cache_write_tokens`. Unset charges them at `input_price`, which is what the meter did before this key existed (TD-5280). The model-card refresh does not fill it in; set it by hand from the provider's price list. |
 | `context_window` | int > 0 | *required* | The compaction budget — see below. |
 | `max_output_tokens` | int > 0 | *required* | Sent as `max_tokens` on the tier's requests, and the answer reservation subtracted from `context_window` — see below. |
 | `vision` | bool | `false` | When `true`, PNG/JPEG/GIF/WebP attachments are accepted on user turns routed to this tier (TD-4705), and `fs_read` returns an image file, or PDF page images on request, as an image the model sees (TD-5130). Capability is config — never inferred from the slug in code. |

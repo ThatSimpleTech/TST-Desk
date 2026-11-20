@@ -144,6 +144,11 @@ _MODEL_HELP: dict[str, str | tuple[str, str]] = {
     "TierConfig.input_price": ("Dollars per million prompt tokens not served from cache.", USD),
     "TierConfig.output_price": ("Dollars per million completion tokens.", USD),
     "TierConfig.cache_read_price": ("Dollars per million prompt tokens served from cache.", USD),
+    "TierConfig.cache_write_price": (
+        "Dollars per million prompt tokens the provider stores in its cache. "
+        "Leave unset to charge them as plain input.",
+        USD,
+    ),
     "TierConfig.context_window": (
         "The compaction budget. Keep it no larger than the server actually serves.",
         TOKENS,

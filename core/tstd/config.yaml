@@ -15,6 +15,9 @@
 #   input_price      — $ per million input tokens (prompt)
 #   output_price     — $ per million output tokens (completion)
 #   cache_read_price — $ per million input tokens read from cache
+#   cache_write_price — optional: $ per million input tokens the provider
+#                      stores in its cache, when it charges more than
+#                      input_price for them. Unset = input_price.
 #   context_window   — max context tokens the model supports
 #   max_output_tokens — max tokens the model may generate; sent as
 #                        max_tokens on every turn (TD-5008)
