@@ -95,21 +95,13 @@ describe("the model picker", () => {
 		expect(row(menu, "Local").querySelector(".badge")).toBeNull();
 	});
 
-	it("holds the Grok model for a chat on TST Desk's own loop, and says why", async () => {
+	it("says the Grok model opens a new chat for a chat on TST Desk's own loop", async () => {
 		const menu = await openPicker();
 		const grok = row(menu, "Grok Build");
-		expect(grok.disabled).toBe(true);
-		expect(grok.title).toContain("start a new chat");
-		expect(row(menu, "API").disabled).toBe(false);
+		// TD-5235: no longer held. It cannot move this chat, so it opens one.
+		expect(grok.disabled).toBe(false);
+		expect(grok.title).toContain("Opens a new chat");
+		expect(grok.querySelector(".sub")?.textContent).toBe("Opens a new chat");
 		expect(row(menu, "API").title).toBe("");
-	});
-
-	it("still holds every other model while a turn runs", async () => {
-		const menu = await openPicker();
-		session.turnActive = true;
-		flushSync();
-		expect(row(menu, "API").disabled).toBe(true);
-		expect(row(menu, "API").title).toBe("Cannot change model while a turn is running");
-		expect(row(menu, "Local").disabled).toBe(false);
 	});
 });

@@ -13545,3 +13545,51 @@ edited `config.yaml` could put it there.
 on a machine with the Grok CLI and one without. Class B entry in
 DECISIONS.md.
 
+---
+
+### TD-5235 — One click switches this chat and the model new chats use
+
+**Size:** 5 · **Depends on:** TD-5234, TD-5239, TD-5258 · **Status:** Done
+**Approach signed off:** 2026-11-20 (owner, relayed by the coordinating session).
+
+The picker changed only the open chat, so the next new chat went back to
+the old model; nothing in the window could change that default. A switch
+was refused while a reply was being written, and for a model on the other
+engine there was nothing to click at all.
+
+- [x] `switch_preset {name, session_id?, make_default}` switches a chat,
+      the model new chats use, or both; an open chat that was not named is
+      never rewritten (`test_switch_preset.py::TestTheThreeSwitches`).
+- [x] Everything is checked first: an unknown entry, an unknown session, an
+      engine clash or nothing asked for changes neither the chat nor the
+      default (`TestNothingHalfApplies`).
+- [x] Asked for while a turn runs, the switch is held, `tier_state` names
+      it as `pending_preset`, and it applies when that turn completes; the
+      running turn asks only its own model and the next one the new model
+      (`test_it_is_held_then_applied_when_the_turn_completes`).
+- [x] A message queued behind the running turn runs on the new model
+      (`test_a_message_queued_behind_the_turn_runs_on_the_new_model`).
+- [x] A later switch replaces a pending one; one back to the chat's own
+      model cancels it; an entry removed meanwhile is dropped
+      (`test_a_later_switch_replaces_it_and_one_back_cancels_it`,
+      `test_an_entry_removed_meanwhile_is_dropped`).
+- [x] A chat with no live loop has the name recorded instead of a refusal
+      (`test_a_chat_with_no_loop_has_the_name_recorded`).
+- [x] `new_session` with `preset` opens a chat on that entry with its
+      engine, and without it behaves as before (`TestANewChatOnAnEntry`).
+- [x] `set_session_preset` is unchanged: it still refuses mid-turn and for
+      a chat with no loop (`test_the_old_verb_still_refuses`).
+- [x] Not a machine-peer verb
+      (`test_another_computers_hub_may_not_send_it`).
+- [x] The picker: a click moves the chat and the default; "Only this chat"
+      moves the chat alone; a pick mid-turn is allowed and the chip shows
+      what is waiting; a model on the other engine opens a new chat on it;
+      a chat on another computer keeps the older verb
+      (`model-switch.test.ts`).
+
+**Notes:** A pending switch is not kept across a daemon restart (owner,
+2026-11-20): the chip then shows the old model, which is the truth. The
+event log awaits its subscribers before the loop takes its next message,
+which is what makes binding at `turn_complete` safe. Class B entry in
+DECISIONS.md.
+

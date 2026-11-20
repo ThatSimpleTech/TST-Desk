@@ -430,6 +430,7 @@ from .protocol import (
     SteeringReject,
     StopTurn,
     SubmitLineComments,
+    SwitchPreset,
     TestEmail,
     TestModel,
     TierCard,
@@ -3143,6 +3144,8 @@ class Daemon:
             # restart re-sorted the rail by revive order (TD-5201).
             used = event.state != "running" and event.reason != SHUTDOWN_REASON
             await self._session_store.update_state(event.session_id, event.state, touch=used)
+        elif isinstance(event, TurnComplete) and isinstance(session_id, str):
+            await self._apply_pending_preset(session_id)
         elif isinstance(event, UserTurn):
             # A turn is use: the rail's newest-first order, quick entry and
             # `tst run --continue` all read updated_at as "used last", and a
@@ -3314,8 +3317,15 @@ class Daemon:
                     "session_not_found",
                     f"Session {msg.session_id!r} not found",
                 )
-            # The folder, not the anchor's worktree (TD-5126).
-            return await self._start_session(anchor.project_path)
+            if msg.preset is not None and msg.preset not in self.config.presets:
+                return build_error(
+                    "unknown_preset",
+                    f"Unknown preset {msg.preset!r}; declared: "
+                    f"{', '.join(sorted(self.config.presets))}",
+                )
+            # The folder, not the anchor's worktree (TD-5126). TD-5235: on
+            # the entry asked for, with its engine, when one is named.
+            return await self._start_session(anchor.project_path, preset=msg.preset)
 
         if isinstance(msg, UserMessage):
             # Every refusal names in_reply_to, so the window can tell a
@@ -3675,6 +3685,8 @@ class Daemon:
 
         if isinstance(msg, SetSessionPreset):
             return await self._handle_set_session_preset(msg)
+        if isinstance(msg, SwitchPreset):
+            return await self._handle_switch_preset(msg)
 
         if isinstance(msg, TrustWorkspaceConfig):
             return await self._handle_trust_workspace_config(msg)
@@ -5390,7 +5402,17 @@ class Daemon:
         refusal = engine_refusal(self.config, msg.name, found.engine)
         if refusal is not None:
             return build_error("engine_mismatch", refusal, session_id=found.id)
-        self._bind_session_preset(found, msg.name)
+        await self._apply_session_preset(found, msg.name)
+        return await self._handle_list_sessions()
+
+    async def _apply_session_preset(self, found: Session, name: str) -> None:
+        """Point a live, idle-or-between-turns chat at entry *name* and say so.
+
+        The one path a chat's model changes by: ``set_session_preset``,
+        ``switch_preset``, and a pending switch when its turn completes.
+        """
+        assert found.router is not None
+        self._bind_session_preset(found, name)
         # TD-5234: one click sets everything the model defines. An effort or
         # Ultracode default the entry itself names applies to this chat now;
         # one it leaves to the global setting does not touch the chat's own.
@@ -5407,14 +5429,92 @@ class Daemon:
         )
         log.info(
             "session preset set",
-            extra={
-                "extra_fields": {
-                    "session_id": found.id,
-                    "preset": found.preset,
-                }
-            },
+            extra={"extra_fields": {"session_id": found.id, "preset": found.preset}},
         )
+
+    async def _handle_switch_preset(self, msg: SwitchPreset) -> str:
+        """This chat, the model new chats use, or both, in one step (TD-5235)."""
+        if msg.session_id is None and not msg.make_default:
+            return build_error(
+                "bad_request", "Nothing to switch: name a session, make_default, or both"
+            )
+        if msg.name not in self.config.presets:
+            return build_error(
+                "unknown_preset",
+                f"Unknown preset {msg.name!r}; declared: {', '.join(sorted(self.config.presets))}",
+            )
+        found: Session | None = None
+        if msg.session_id is not None:
+            found = self.session_registry.get(msg.session_id)
+            if found is None:
+                return build_error("session_not_found", f"Session {msg.session_id!r} not found")
+            # A chat with no loop never runs, so no engine can clash with it.
+            if found.router is not None:
+                refusal = engine_refusal(self.config, msg.name, found.engine)
+                if refusal is not None:
+                    return build_error("engine_mismatch", refusal, session_id=found.id)
+        # Everything is checked. The default goes first: it is the one step
+        # that can still fail (a config that will not save), and then the
+        # chat has not been touched either.
+        if msg.make_default and msg.name != self.config.active_preset:
+            try:
+                save_active_preset(msg.name, self.config_path)
+            except ConfigError as e:
+                return build_error("bad_request", str(e))
+            self.config = self.config.model_copy(update={"active_preset": msg.name})
+            self._slug_snapshot = _snapshot_slugs(self.config)
+            log.info("active preset changed", extra={"extra_fields": {"preset": msg.name}})
+        if found is not None:
+            await self._switch_chat(found, msg.name)
+        if msg.make_default:
+            return (await self._setup_state_event()).model_dump_json()
         return await self._handle_list_sessions()
+
+    async def _switch_chat(self, found: Session, name: str) -> None:
+        """Switch one chat now, hold the switch for its turn's end, or record it."""
+        if found.router is None:
+            # Restored with no conversation: there is no loop to rebind.
+            found.preset = name
+            await self._session_store.set_preset(found.id, name)
+            return
+        if found.turn_in_flight:
+            # Back to its own model cancels a switch that was waiting.
+            found.pending_preset = None if name == found.preset else name
+            await found.event_log.add(
+                tier_state_event(found, _session_model_config(found, self.config))
+            )
+            log.info(
+                "session preset pending",
+                extra={"extra_fields": {"session_id": found.id, "preset": name}},
+            )
+            return
+        found.pending_preset = None
+        if name != found.preset:
+            await self._apply_session_preset(found, name)
+
+    async def _apply_pending_preset(self, session_id: str) -> None:
+        """A turn completed: bind the switch that was waiting for it (TD-5235).
+
+        The event log awaits its subscribers before the loop takes the next
+        message, so the next turn, a queued one included, runs on the new
+        entry. An entry removed meanwhile, or one whose engine no longer
+        suits, is dropped, and the chip is told nothing is waiting.
+        """
+        found = self.session_registry.get(session_id)
+        if found is None or found.pending_preset is None or found.router is None:
+            return
+        name, found.pending_preset = found.pending_preset, None
+        gone = name not in self.config.presets
+        if gone or engine_refusal(self.config, name, found.engine) is not None:
+            log.info(
+                "pending session preset dropped",
+                extra={"extra_fields": {"session_id": found.id, "preset": name, "gone": gone}},
+            )
+            await found.event_log.add(
+                tier_state_event(found, _session_model_config(found, self.config))
+            )
+            return
+        await self._apply_session_preset(found, name)
 
     async def _handle_set_effort(self, msg: SetEffort) -> str | None:
         """Pick the session's reasoning effort and ack with ``tier_state``.
