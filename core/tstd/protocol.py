@@ -539,8 +539,11 @@ class SetSkipAllApprovals(ClientMessage):
     """Turn skip-all approvals on or off (TD-804).
 
     Machine-wide, no session.  The daemon answers with a refreshed
-    ``setup_state`` so the toggle is honest after restart.  Class C and
-    ``never`` rules are unaffected.
+    ``setup_state`` so the toggle is honest after restart.  On releases
+    every parked call, Class C included; a ``never`` rule still refuses.
+    From a paired phone, turning it on is the phone permission
+    ``approval_switches`` (``phone_permission_off`` without it, TD-5283);
+    turning it off is open to a phone.
     """
 
     type: Literal["set_skip_all_approvals"] = "set_skip_all_approvals"

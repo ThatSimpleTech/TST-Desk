@@ -36,10 +36,16 @@ import yaml
 # The closed set. A capability is added here together with its verbs in
 # ``peer_policy.PHONE_OPT_IN`` and its own disclosure in Settings, Phones and devices.
 MCP_SERVERS: Final = "mcp_servers"
-CAPABILITIES: Final[tuple[str, ...]] = (MCP_SERVERS,)
+# Turning approval prompts off for every session (TD-5283). Turning them
+# back on needs nothing: that only tightens.
+APPROVAL_SWITCHES: Final = "approval_switches"
+CAPABILITIES: Final[tuple[str, ...]] = (MCP_SERVERS, APPROVAL_SWITCHES)
 
 # What the refusal and the Doctor row call each one.
-LABELS: Final[Mapping[str, str]] = {MCP_SERVERS: "MCP servers"}
+LABELS: Final[Mapping[str, str]] = {
+    MCP_SERVERS: "MCP servers",
+    APPROVAL_SWITCHES: "Turning approvals off",
+}
 
 # A timed grant is for "while I am out", not a second way to say forever.
 MAX_EXPIRY_SECONDS: Final = 7 * 24 * 60 * 60

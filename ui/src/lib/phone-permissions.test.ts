@@ -19,6 +19,7 @@ vi.mock("./connection-status.svelte.js", () => ({
 import PhonePermissions from "./components/PhonePermissions.svelte";
 import PairedDevices from "./components/PairedDevices.svelte";
 import SettingsMcp from "./components/SettingsMcp.svelte";
+import PolicyRuleList from "./components/PolicyRuleList.svelte";
 import DoctorPane from "./components/DoctorPane.svelte";
 import { settings, type McpServerRow } from "./settings.svelte.js";
 import { doctor, buildDoctorReport } from "./doctor.svelte.js";
@@ -86,6 +87,31 @@ describe("the words", () => {
 				"Adding or changing MCP servers from a phone is turned off. You can turn it on under " +
 				"Settings, Phones and devices on the computer.",
 		});
+	});
+
+	it("the approvals disclosure says what it lets a phone do, in full", () => {
+		expect(permissionCopy("approval_switches")).toEqual({
+			capability: "approval_switches",
+			title: "Let paired phones turn approvals off",
+			lead:
+				"With this on, a paired phone can turn off approval prompts for every session on this " +
+				"computer. Commands and file changes then run without anyone confirming them, " +
+				"including ones outside the project folder.",
+			points: [
+				"The setting stays on until someone turns it off, even after the phone is removed.",
+				"A phone can already approve one request at a time. This is the same power with nobody looking at each request.",
+				"A phone can always turn approval prompts back on; that needs no permission.",
+			],
+			advice:
+				"Leave this off unless you run long jobs you trust and need to unblock them while away.",
+			offOnPhone:
+				"Turning approvals off from a phone is turned off. You can turn it on under " +
+				"Settings, Phones and devices on the computer.",
+		});
+	});
+
+	it("lists exactly the permissions the daemon knows", () => {
+		expect(PHONE_PERMISSIONS.map((p) => p.capability)).toEqual(["mcp_servers", "approval_switches"]);
 	});
 
 	it("every permission has a full disclosure", () => {
@@ -285,6 +311,50 @@ describe("removing a phone", () => {
 		press(root, "Keep");
 		press(root, "Remove Tablet");
 		expect(root.querySelector<HTMLInputElement>('input[type="checkbox"]')?.checked).toBe(false);
+	});
+});
+
+describe("Settings → Policy, the skip-all switch", () => {
+	function skipSwitch(root: ParentNode): HTMLButtonElement {
+		const found = root.querySelector<HTMLButtonElement>('button[role="switch"]');
+		if (!found) throw new Error("no switch");
+		return found;
+	}
+
+	it("on a phone without the permission it cannot be turned on, and says where to allow it", () => {
+		settings.skipAllApprovals = false;
+		const root = show(PolicyRuleList, { sessionId: null, canSkipAll: false });
+		const button = skipSwitch(root);
+		expect(button.disabled).toBe(true);
+		button.click();
+		flushSync();
+		expect(mocks.sent).toEqual([]);
+		expect(root.textContent).toContain(
+			"Turning approvals off from a phone is turned off. You can turn it on under Settings, Phones and devices on the computer.",
+		);
+	});
+
+	it("a phone can always turn approvals back on", () => {
+		settings.skipAllApprovals = true;
+		const root = show(PolicyRuleList, { sessionId: null, canSkipAll: false });
+		const button = skipSwitch(root);
+		expect(button.disabled).toBe(false);
+		expect(root.textContent).not.toContain("from a phone is turned off");
+		button.click();
+		flushSync();
+		expect(mocks.sent).toEqual([{ type: "set_skip_all_approvals", enabled: false }]);
+		settings.skipAllApprovals = false;
+	});
+
+	it("on the computer, and on a phone that was allowed, it works as before", () => {
+		settings.skipAllApprovals = false;
+		const root = show(PolicyRuleList, { sessionId: null });
+		const button = skipSwitch(root);
+		expect(button.disabled).toBe(false);
+		expect(root.textContent).not.toContain("from a phone is turned off");
+		button.click();
+		flushSync();
+		expect(mocks.sent).toEqual([{ type: "set_skip_all_approvals", enabled: true }]);
 	});
 });
 

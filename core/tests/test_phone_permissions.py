@@ -26,7 +26,9 @@ def test_absent_file_means_everything_off(tmp_path: Path) -> None:
     assert perms.load_grants(tmp_path) == {}
     store = PhoneStore(tmp_path)
     assert store.live() == frozenset()
-    assert {name: s.enabled for name, s in store.states().items()} == {"mcp_servers": False}
+    states = store.states()
+    assert set(states) == set(perms.CAPABILITIES)
+    assert not any(state.enabled for state in states.values())
     assert store.doctor_row() is None
 
 
@@ -84,19 +86,18 @@ def test_a_grant_round_trips_and_lists_every_capability(tmp_path: Path) -> None:
     perms.save_grants(tmp_path, grants)
     assert perms.load_grants(tmp_path) == grants
     on_disk = yaml.safe_load(perms.permissions_path(tmp_path).read_text(encoding="utf-8"))
-    assert on_disk == {
-        "version": 1,
-        "grants": {
-            "mcp_servers": {
-                "enabled": True,
-                "granted_at": "2026-11-20T18:00:00Z",
-                "expires_at": None,
-            }
-        },
+    assert on_disk["version"] == 1
+    assert set(on_disk["grants"]) == set(perms.CAPABILITIES)
+    assert on_disk["grants"]["mcp_servers"] == {
+        "enabled": True,
+        "granted_at": "2026-11-20T18:00:00Z",
+        "expires_at": None,
     }
+    others = [g for name, g in on_disk["grants"].items() if name != "mcp_servers"]
+    assert all(g == {"enabled": False} for g in others)
     perms.save_grants(tmp_path, perms.changed(grants, "mcp_servers", False, None, NOW))
     off = yaml.safe_load(perms.permissions_path(tmp_path).read_text(encoding="utf-8"))
-    assert off["grants"] == {"mcp_servers": {"enabled": False}}
+    assert all(g == {"enabled": False} for g in off["grants"].values())
     assert perms.load_grants(tmp_path) == {}
 
 
@@ -236,3 +237,12 @@ def test_the_notice_names_the_command_and_never_a_value() -> None:
     assert value_summary("web", "header", "Authorization", stored=False) == (
         "removed the value of header 'Authorization' of MCP server 'web'."
     )
+
+
+def test_one_grant_does_not_switch_on_another(tmp_path: Path) -> None:
+    for name in perms.CAPABILITIES:
+        store = PhoneStore(tmp_path / name)
+        store.set(name, True, None)
+        assert store.live() == {name}
+        assert [n for n, s in store.states().items() if s.enabled] == [name]
+        assert perms.LABELS[name] in (store.doctor_row() or object()).detail  # type: ignore[union-attr]

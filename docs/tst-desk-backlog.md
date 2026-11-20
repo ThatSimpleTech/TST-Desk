@@ -14315,3 +14315,34 @@ computer, for new installs only.
 they have no limit; the turn-first queue and the queue timeout from the
 research note.
 
+---
+
+### TD-5283 — A paired phone turns approvals off only if the computer said so
+
+**Size:** 2 · **Depends on:** TD-5279 · **Status:** Done
+
+The second phone permission. Skip-all persists machine-wide and releases
+every parked call, Class C included. A phone could switch it on with
+nothing shown at the computer, and it stayed on after the phone was
+removed.
+
+- [x] `set_skip_all_approvals` with `enabled: true` from a paired phone is
+      refused with `phone_permission_off` unless the computer switched
+      `approval_switches` on; the MCP permission does not cover it
+      (`test_phone_approval_switch.py`).
+- [x] Turning approvals back *on* (`enabled: false`) needs nothing, from a
+      phone or the older token: it only tightens. The rule reads the
+      message's own field, so it stays in the pure policy table.
+- [x] After the computer grants, a phone can; the computer's windows are
+      told which phone did it and get the new state.
+- [x] Never the older remote token, never another computer.
+- [x] Settings → Phones and devices lists it with its own disclosure
+      (pinned whole in `phone-permissions.test.ts`).
+- [x] On a phone without the permission, the switch under Settings →
+      Policy cannot be turned on and says where to allow it; turning it
+      off always works.
+
+**Notes:** the protocol docstring said Class C is unaffected by skip-all.
+The code releases it (`resolve_skippable_approvals`), and the docstring
+now says so.
+
