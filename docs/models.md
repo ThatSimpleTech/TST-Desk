@@ -239,6 +239,53 @@ presets:
     validator: *local_model
 ```
 
+## Prompt caching for Claude models through OpenRouter
+
+A long chat sends the same opening (the tools, the instructions, the
+earlier messages) on every turn. A provider that caches it charges about a
+tenth of the input price for the part it has seen before. OpenAI models
+through OpenRouter cache on their own. Claude models cache only when the
+request asks, and TST Desk asks only if the entry says so. One line under
+each role does it:
+
+<!-- verify: model -->
+```yaml
+presets:
+  claude-via-openrouter:
+    label: Claude (OpenRouter)
+    description: Hosted, with prompt caching on
+    brain: &claude
+      slug: anthropic/model-name
+      base_url: https://openrouter.ai/api/v1
+      credential: openrouter
+      context_window: 200000
+      max_output_tokens: 8192
+      input_price: 3.0
+      output_price: 15.0
+      cache_read_price: 0.3
+      cache_write_price: 3.75
+      extra_body:
+        cache_control:
+          type: ephemeral
+    worker: *claude
+    validator: *claude
+```
+
+`extra_body` is added to every request the role makes, so `cache_control`
+goes out as a top-level field, which is where OpenRouter reads it for
+Claude models. Storing a prompt in the cache costs more than plain input
+(1.25 times on Claude models), and `cache_write_price` is how the cost
+meter knows: without it a cache write is counted at `input_price` and the
+meter reads a little low. Take both cache prices from the provider's own
+price list for the model you use.
+
+To see that it is working, send two messages in one chat on that entry.
+The second turn's cost line should show cached tokens. If it never does,
+the model or the route does not support it and the line can come out.
+
+A Claude key used directly (not through OpenRouter) on its
+OpenAI-compatible address gets no prompt caching from TST Desk today.
+
 ## Grok as one of your models
 
 If you use the Grok CLI, it can sit on the picker beside your models. Its

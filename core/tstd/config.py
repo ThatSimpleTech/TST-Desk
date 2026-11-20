@@ -265,6 +265,11 @@ class TierConfig(BaseModel):
     input_price: float = Field(ge=0)
     output_price: float = Field(ge=0)
     cache_read_price: float = Field(ge=0)
+    # What the provider charges to store prompt tokens in its cache
+    # (TD-5280), when that differs from plain input: 1.25 times input on
+    # Anthropic models. Unset means "the input price", which is what the
+    # meter charged before the field existed.
+    cache_write_price: float | None = Field(default=None, ge=0)
     context_window: int = Field(gt=0)
     max_output_tokens: int = Field(gt=0)
     # When true, PNG/JPEG/GIF/WebP attachments are accepted on user turns
