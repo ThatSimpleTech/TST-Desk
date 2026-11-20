@@ -506,11 +506,19 @@ class FastConfig(BaseModel):
 
 
 class Preset(BaseModel):
-    """A complete set of tier configurations."""
+    """One entry of the model catalog: a model per role, or the Grok engine.
 
-    brain: TierConfig
-    worker: TierConfig
-    validator: TierConfig
+    A native entry names all three roles. An entry with ``engine: grok``
+    runs chats on the Grok CLI, which brings its own model, so it may
+    leave the three roles out (TD-5239): all three, or none.
+    """
+
+    brain: TierConfig | None = None
+    worker: TierConfig | None = None
+    validator: TierConfig | None = None
+    # Which agent loop a chat on this entry uses (TD-5239). None = the
+    # global ``engine.kind``, what every entry meant before.
+    engine: Literal["native", "grok"] | None = None
     # How the composer's model picker shows this preset (TD-5172): the name
     # on the list and chip, a one-line ``description`` shown under it, and
     # where it sits: the main list (``primary``), "More models" (``more``),
@@ -531,6 +539,40 @@ class Preset(BaseModel):
         if value is None:
             return None
         return value.strip() or None
+
+    @model_validator(mode="after")
+    def _roles_and_engine_agree(self) -> Preset:
+        named = [name for name in TIER_NAMES if getattr(self, name) is not None]
+        if named and len(named) != len(TIER_NAMES):
+            missing = ", ".join(name for name in TIER_NAMES if name not in named)
+            raise ValueError(f"name all three roles or none of them; missing: {missing}")
+        if not named and self.engine != "grok":
+            raise ValueError(
+                "brain, worker and validator are required. Only an entry with "
+                "`engine: grok` may leave them out: the Grok CLI brings its own model"
+            )
+        if self.engine == "grok":
+            # Both act on TST Desk's own loop, which a Grok chat does not run.
+            # Refused, not ignored: a setting that does nothing must not sit
+            # in the file looking as if it were in force.
+            for key in ("overrides", "fast"):
+                if getattr(self, key) is not None:
+                    raise ValueError(f"`{key}` does nothing on an `engine: grok` entry; remove it")
+        return self
+
+    @property
+    def has_tiers(self) -> bool:
+        """Whether this entry names a model per role (a Grok entry may not)."""
+        return self.brain is not None
+
+    def tier_map(self) -> dict[TierName, TierConfig]:
+        """The entry's own roles; empty for an entry with none."""
+        found: dict[TierName, TierConfig] = {}
+        for name in TIER_NAMES:
+            tier: TierConfig | None = getattr(self, name)
+            if tier is not None:
+                found[name] = tier
+        return found
 
 
 class CredentialConfig(BaseModel):
@@ -1746,12 +1788,18 @@ class ModelConfig(BaseModel):
         """Whether any model is set up, i.e. the active preset exists."""
         return self.active_preset in self.presets
 
+    def preset_engine(self, name: str) -> Literal["native", "grok"]:
+        """The engine a chat on entry *name* uses: its own, else ``engine.kind`` (TD-5239)."""
+        preset = self.presets.get(name)
+        if preset is not None and preset.engine is not None:
+            return preset.engine
+        return self.engine.kind
+
     @model_validator(mode="after")
     def _bound_credentials_exist(self) -> ModelConfig:
         known = set(self.credentials) | {DEFAULT_CREDENTIAL_ID}
         for preset_name, preset in self.presets.items():
-            for tier_name in TIER_NAMES:
-                tier = getattr(preset, tier_name)
+            for tier_name, tier in preset.tier_map().items():
                 bound = [(f"presets.{preset_name}.{tier_name}", tier.credential)]
                 bound += [
                     (f"presets.{preset_name}.{tier_name}.fallbacks[{i}]", backup.credential)
@@ -1771,8 +1819,8 @@ class ModelConfig(BaseModel):
         return [
             f"presets.{preset_name}.{tier_name}.fallbacks[{i}]"
             for preset_name, preset in self.presets.items()
-            for tier_name in TIER_NAMES
-            for i, backup in enumerate(getattr(preset, tier_name).fallbacks)
+            for tier_name, tier in preset.tier_map().items()
+            for i, backup in enumerate(tier.fallbacks)
             if backup.credential == credential_id
         ]
 
@@ -1789,9 +1837,25 @@ class ModelConfig(BaseModel):
         that only reads windows or prices keeps working on a first run.
         """
         preset = self.presets.get(self.active_preset)
-        if preset is None:
+        # An ``engine: grok`` entry may name no model (TD-5239). It gets the
+        # same stand-ins: a Grok chat never asks TST Desk's router for one.
+        own = preset.tier_map() if preset is not None else {}
+        if not own:
             return {name: _no_model_tier() for name in TIER_NAMES}
-        return {name: preset.__getattribute__(name) for name in TIER_NAMES}
+        return own
+
+    def native_default(self) -> str | None:
+        """The entry whose model does work no chat owns, or None (TD-5239).
+
+        Memory distill and the doctor's probe run on TST Desk's own client
+        whatever engine a chat used. They take the active entry when it
+        names a model, else the first entry that does. None means there is
+        no such model, and that work is skipped.
+        """
+        active = self.presets.get(self.active_preset)
+        if active is not None and active.has_tiers:
+            return self.active_preset
+        return next((name for name, entry in self.presets.items() if entry.has_tiers), None)
 
     def requires_api_key(self) -> bool:
         """Whether the active preset will send at least one key (TD-1801, TD-1717).

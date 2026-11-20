@@ -1969,13 +1969,16 @@ Hold-to-talk dictation (TD-4701). The Settings toggle is off by default and live
 
 ### A preset
 
-Every preset declares all three tiers. Omitting one is a load error naming it.
+Every preset declares all three tiers. Omitting one is a load error naming it. The one
+exception is a preset with `engine: grok` (TD-5239): the Grok CLI brings its own model, so
+it may leave all three out. It is all three or none.
 
 | Key | Type | Effect |
 |---|---|---|
 | `brain` | tier | Planning turns. The router opens every session here for the first two turns, and escalates back to it after three consecutive worker failures. |
 | `worker` | tier | Token-heavy execution — edits, and the tool-call classifier. Where turns land once the lead turns are spent. |
 | `validator` | tier | Reviewing diffs and tests. Interactive mode may call it once after a write turn (`autonomy.verify`, TD-4204). Autonomy supervision is a later story. |
+| `engine` | `native` \| `grok` | Which agent loop a chat on this preset uses (TD-5239): TST Desk's own three-tier loop, or the installed Grok CLI. Default: none, which means the `engine.kind` setting, as before. A chat takes its engine when it is created and keeps it: switching an open chat to a preset that names the other engine is refused with `engine_mismatch`, and so is a chat on TST Desk's own loop switching to a preset with no tiers. A scheduled job's own `engine` pin wins over the preset's; a job that pins none takes the preset's. With `grok`, `overrides` and `fast` are a load error: both act on TST Desk's own loop. While the active preset has no tiers, memory distill runs on the first preset that has them, and is skipped when none does. |
 | `label` | string | The name the composer's model picker, its chip and the account row show for this preset. A preset with no label is left out of the picker (unless it is the current one). Default: none. |
 | `description` | string, up to 120 characters | One line under the label in the picker: what this model is for. Default: none. |
 | `picker` | `primary` \| `more` \| `team` | `primary` puts the preset on the picker's main list; `more` puts it under "More models"; `team` (a preset whose tiers use different models) puts it under "Teams", a submenu shown only when one exists. Default `primary`. |

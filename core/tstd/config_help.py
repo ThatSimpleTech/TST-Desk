@@ -114,6 +114,8 @@ _MODEL_HELP: dict[str, str | tuple[str, str]] = {
     "Preset.brain": "Plans and talks to you. A session opens on it for its first turns.",
     "Preset.worker": "Runs the steps: edits, the tool-call classifier, compaction and summaries.",
     "Preset.validator": "Reviews diffs and tests, including the review after writes.",
+    "Preset.engine": "Which agent loop a chat on this one uses: TST Desk's own, or the Grok "
+    "CLI. Empty uses the Engine setting. With grok, the three roles may be left out.",
     "Preset.label": "The name on the model picker. A model with no label is left off the "
     "picker unless it is in use.",
     "Preset.description": "One line under the label on the picker: what this model is for.",
@@ -252,8 +254,11 @@ NOT_REMOVABLE: dict[str, str] = {
     "their keychain values.",
 }
 
-#: Keys with no Reset: the picker sets them.
-NOT_RESETTABLE: frozenset[str] = frozenset({"ModelConfig.active_preset"})
+#: Keys with no Reset. The picker sets the active model. A model's three
+#: roles are all there or all absent (TD-5239), so one is never reset alone.
+NOT_RESETTABLE: frozenset[str] = frozenset(
+    {"ModelConfig.active_preset", "Preset.brain", "Preset.worker", "Preset.validator"}
+)
 
 #: Long text gets a multi-line box.
 MULTILINE_FIELDS: frozenset[str] = frozenset(
