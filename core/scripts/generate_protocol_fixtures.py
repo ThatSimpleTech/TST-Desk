@@ -104,6 +104,7 @@ from tstd.protocol import (
     GetConfigEditor,
     GetHooks,
     GetInstructionStack,
+    GetPresetRoles,
     GetSessionJobSource,
     GetSetupState,
     GetUsage,
@@ -192,6 +193,7 @@ from tstd.protocol import (
     PolicyRuleSummary,
     PresetReadiness,
     PresetReady,
+    PresetRoles,
     PreviewRestoreFiles,
     Question,
     QuestionAnswer,
@@ -597,6 +599,8 @@ FIXTURES = {
     ),
     "delete_preset": DeletePreset(name="budget"),
     "check_presets": CheckPresets(),
+    # TD-5241: the roles of the entry Settings → Model is editing
+    "get_preset_roles": GetPresetRoles(name="budget"),
     # TD-5235: this chat, the model new chats use, or both
     "switch_preset": SwitchPreset(name="budget", session_id="sess-1", make_default=True),
     # TD-5258: put the Grok CLI on the model list
@@ -1641,6 +1645,12 @@ FIXTURES = {
         error="The server refused the key. Check it and try again.",
     ),
     "model_tested": ModelTested(preset="tst-default", ok=True, reply="I am working."),
+    "preset_roles": PresetRoles(
+        preset="budget",
+        tier_slugs={"brain": "vendor/model-a", "worker": None},
+        tier_credentials={"brain": "openrouter", "worker": None},
+        tier_loopback={"brain": False, "worker": True},
+    ),
     # TD-5240: whether each model on the picker can run right now
     "preset_readiness": PresetReadiness(
         rows=[

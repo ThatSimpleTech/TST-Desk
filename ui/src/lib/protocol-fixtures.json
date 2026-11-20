@@ -656,6 +656,10 @@
   "check_presets": {
     "type": "check_presets"
   },
+  "get_preset_roles": {
+    "type": "get_preset_roles",
+    "name": "budget"
+  },
   "switch_preset": {
     "type": "switch_preset",
     "name": "budget",
@@ -2454,6 +2458,24 @@
     "ok": true,
     "reply": "I am working.",
     "detail": ""
+  },
+  "preset_roles": {
+    "type": "preset_roles",
+    "seq": 1,
+    "preset": "budget",
+    "tier_slugs": {
+      "brain": "vendor/model-a",
+      "worker": null
+    },
+    "tier_credentials": {
+      "brain": "openrouter",
+      "worker": null
+    },
+    "tier_loopback": {
+      "brain": false,
+      "worker": true
+    },
+    "tier_cards": {}
   },
   "preset_readiness": {
     "type": "preset_readiness",

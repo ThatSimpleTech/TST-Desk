@@ -300,8 +300,10 @@ credentials:
     name: My provider
 ```
 
-Settings → Models → **Build a team** edits the active entry's model and
-key per role.
+Settings → Model → **Build a team** edits a model's roles: the model, key
+and context size of each. **Editing**, above it, chooses which of your
+models that is. It starts on the one new chats use, and choosing another
+there switches no chat and changes no default.
 
 ## When something goes wrong
 
