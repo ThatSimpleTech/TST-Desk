@@ -14474,3 +14474,33 @@ preview (edit the pasted text instead); VS Code `inputs` descriptions as
 prompts (an `${input:id}` value is simply asked for by its name); `.mcpb`
 bundles.
 
+---
+
+### TD-5293 — `read_text_file` no longer takes the caller's word for the workspace
+
+**Size:** 1 · **Depends on:** TD-3202 · **Status:** Done
+
+The shell's `read_text_file` command reads a UTF-8 file of up to 2 MiB
+when it sits under "the workspace", and the workspace was an argument. A
+caller is whatever script runs in the webview, so a caller that passed `/`
+could read any text file the user can. Nothing in the app does that; the
+check simply was not one.
+
+- [x] A workspace is a root only when it is exactly a folder the daemon
+      recorded as a session's workspace or worktree in
+      `{data_dir}/sessions.json`. Not a parent of one, not a child
+      (`read_text::tests::a_workspace_the_daemon_never_recorded_is_no_root`,
+      `a_sessions_worktree_folder_is_a_root_too`).
+- [x] No record, an unreadable one or a malformed one allows no workspace
+      (`no_record_or_a_broken_one_allows_no_workspace`).
+- [x] The session-dir root is unchanged
+      (`the_session_dir_root_does_not_depend_on_the_record`).
+- [x] `cargo clippy -- -D warnings` and `cargo test --lib` pass on Linux
+      (139 tests).
+
+**Not checked:** macOS and Windows builds; the packaged app (a preview of
+a workspace artifact right after a session is first opened depends on the
+daemon having written `sessions.json`, which it does when the session is
+created). Other shell commands that act on a caller's path (`open_path`)
+were not reviewed here.
+
