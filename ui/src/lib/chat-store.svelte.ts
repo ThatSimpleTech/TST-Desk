@@ -23,6 +23,7 @@ import { bindMemoryProposal } from "./memory-proposal-store.svelte.js";
 import { bindPlanReviews } from "./plan-review-store.svelte.js";
 import { bindReviewComments } from "./review-comments.svelte.js";
 import { bindQuestions } from "./question-store.svelte.js";
+import { bindScheduleProposal } from "./schedule-proposal-store.svelte.js";
 import { bindSteeringProposal } from "./steering-proposal-store.svelte.js";
 import { bindSession } from "./timeline-store.svelte.js";
 import { focusSession } from "./session-status.svelte.js";
@@ -47,6 +48,7 @@ const store = createChatStore(
       bindReviewComments(sessionId);
       bindMemoryProposal(sessionId);
       bindSteeringProposal(sessionId);
+      bindScheduleProposal(sessionId);
     },
     // A bind nobody clicked (TD-5201): the title bar and the task strip follow
     // the pane. Before, they kept the chat it had left, and at startup they

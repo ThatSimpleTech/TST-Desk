@@ -76,6 +76,7 @@ PHONE_OPEN: frozenset[str] = frozenset(
         "delete_api_key",
         "delete_credential",
         "delete_job",
+        "dismiss_schedule_proposal",
         "delete_job_template",
         "delete_session",
         "deny",

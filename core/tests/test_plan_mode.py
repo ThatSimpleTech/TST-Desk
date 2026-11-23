@@ -183,6 +183,8 @@ def test_every_builtin_is_decided_and_only_readers_run() -> None:
             "github_list_repos",
             "github_pull_checks",
             "load_skill",
+            # TD-5263: reads this workspace's jobs. schedule_propose is not here.
+            "schedule_list",
             "send_file",
             "session_search",
             "shell_job_output",

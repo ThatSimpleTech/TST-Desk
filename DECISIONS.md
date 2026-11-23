@@ -20321,3 +20321,29 @@ desktop-launched daemon does not have the shell's variables, and it would
 read secrets from a place the person did not point at); importing SSE
 endpoints as HTTP (the client speaks Streamable HTTP only).
 
+## 2026-11-23 — TD-5263: scheduling from chat is a proposal the person saves (Class B)
+
+**Decision:** two builtins, `schedule_propose` (parks a draft, emits
+`schedule_proposal`) and `schedule_list` (this workspace's jobs), one
+client verb `dismiss_schedule_proposal`, and two optional `save_job`
+fields, `proposal_id` + `proposal_session_id`. The daemon checks the
+proposal is open on that session, forces the job's workspace to that
+session's project and stamps `origin: agent` and `origin_session_id`. A
+job with that origin ignores skip-all (its asks park) unless the person
+sets `allow_skip_all` on it. Open proposals live in memory and expire on
+restart. Unattended sessions (child, autonomy, scheduled run,
+deny-and-continue) are refused, not parked.
+
+**Rationale:** an approval prompt is not consent when skip-all or an
+unattended run answers it; a card whose Save only the window can send is.
+Stamping origin in the daemon means a client cannot launder a job into
+the person's own, and carrying origin through `apply_job_edit` means a
+pause or edit cannot either. Skip-all is the one setting that would make
+the run looser than the chat that proposed it.
+
+**Rejected:** `schedule_create` / `schedule_edit` as direct writes (the
+consent would only be a prompt sentence); a separate one-proposal-per-turn
+counter (the cap of three open proposals already bounds it, and a turn
+boundary is not something the tool can see without new session state);
+parking proposals from unattended runs for their summary (nobody is there
+to save them, and a job that proposes jobs is self-perpetuation).

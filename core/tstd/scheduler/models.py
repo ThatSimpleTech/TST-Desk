@@ -216,6 +216,13 @@ class Job(BaseModel):
     # ``last_status`` and ``last_session_id``; these two are not on the wire.
     parked_session_id: str | None = None
     parked_started_at: str | None = None
+    # TD-5263: who wrote the job. ``agent`` is one the person saved from the
+    # agent's proposal card; the daemon sets it, never a client. Such a job
+    # does not run under skip-all unless ``allow_skip_all`` is set: its
+    # asks park for the person instead. Old rows are the person's own.
+    origin: Literal["user", "agent"] = "user"
+    origin_session_id: str | None = None
+    allow_skip_all: bool = False
 
     @field_validator("id")
     @classmethod

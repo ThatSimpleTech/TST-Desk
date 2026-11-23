@@ -17,6 +17,7 @@
 		runJob,
 		saveEdit,
 		scheduled,
+		setAllowSkipAll,
 		setDraftField,
 		setParseText,
 	} from '../scheduled.svelte.js';
@@ -94,6 +95,17 @@
 							class:card-waiting={jobWaiting(row)}
 						>
 							<span class="card-name">{row.instruction}</span>
+							{#if row.origin === 'agent'}
+								<span class="card-origin">Proposed by the agent</span>
+								<label class="card-tick">
+									<input
+										type="checkbox"
+										checked={row.allow_skip_all ?? false}
+										onchange={(e) => setAllowSkipAll(row.id, e.currentTarget.checked)}
+									/>
+									Run with my skip-all setting
+								</label>
+							{/if}
 							<span class="card-meta">{jobMeta(row, undefined, scheduled.items)}</span>
 							<span class="card-path">{row.workspace}</span>
 							<span
@@ -247,6 +259,20 @@
 </div>
 
 <style>
+	.card-origin {
+		font-size: var(--text-xs);
+		font-weight: var(--weight-semibold);
+		color: var(--color-ink-secondary);
+	}
+
+	.card-tick {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		font-size: var(--text-xs);
+		color: var(--color-ink-secondary);
+	}
+
 	.pane {
 		display: flex;
 		height: 100%;

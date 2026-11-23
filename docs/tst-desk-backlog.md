@@ -14504,3 +14504,47 @@ daemon having written `sessions.json`, which it does when the session is
 created). Other shell commands that act on a caller's path (`open_path`)
 were not reviewed here.
 
+---
+
+### TD-5263 — The agent proposes a scheduled job; only you save it
+
+"Run the dependency check every weekday at 8" said in a chat could only be
+answered with "open the Scheduled pane". `schedule_propose` drafts the job
+on a card in the chat and `schedule_list` reads this workspace's jobs. The
+agent cannot create, change or delete a job: the person's Save on the card,
+sent from their own window, is the only writer, so no approval setting can
+make the agent schedule itself.
+
+- [x] `schedule_propose` writes nothing: no job and no file until Save
+      (`test_a_proposal_is_a_card_and_nothing_else`, and with skip-all on
+      in `test_only_the_persons_save_creates_the_job_and_the_daemon_marks_it`).
+- [x] The model gives only the instruction, a cadence or one time, and a
+      zone; `workspace`, `deliver_to`, `preset`, `engine`, `then` and
+      `email_to` are refused by schema. The job is for the proposing
+      session's project whatever the save says.
+- [x] Refused from a delegated child, an autonomy run, a scheduled run, a
+      `--on-ask deny-and-continue` run and plan mode; at most 3 open
+      proposals per chat; nothing more often than every 15 minutes; a
+      secret-shaped instruction is refused.
+- [x] Both tools are Class A by a rule that fires only for the builtins
+      (`schedule-proposal`); an MCP or plugin tool of the same name gets
+      no grant. `schedule_list` is allowed in plan mode and shows only this
+      workspace's jobs, at most 50, each cut to 200 characters.
+- [x] The daemon, not the client, marks a saved job `origin: agent`; a
+      forged, stale or reused proposal id, or one aimed at an existing job,
+      is `proposal_not_found` and saves nothing.
+- [x] An agent-proposed job does not run under skip-all: its asks park for
+      the person, unless they tick "Run with my skip-all setting" on that
+      job. Pausing or editing the job keeps its origin.
+- [x] A restart expires open proposals in the log, once.
+- [x] The card shows the whole instruction, when in words, the next runs
+      and the workspace, with Save, Edit and Dismiss
+      (`schedule-proposal-component.test.ts`). The Scheduled pane marks
+      the job "Proposed by the agent" with the skip-all tick.
+
+**Size:** 5 · **Depends on:** TD-3805, TD-5140 · **Status:** Done
+
+**Notes:** Design in the 2026-11-20 tool catalog note (section 4.2),
+approved in the build order. "One proposal per turn" from that note is
+covered by the open-proposal cap instead; see DECISIONS.md. No new host,
+so `test_outbound_hosts.py` is unchanged.

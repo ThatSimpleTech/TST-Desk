@@ -229,6 +229,11 @@ directives in [`AGENTS.md`](AGENTS.md) §2 and enforced in code.
   HTML artifact is shown as a static picture of itself: no scripts, no links, no remote
   images. Limits: 2 MiB per artifact and 200 per session
   (`session.artifact_max_bytes`, `session.artifact_max_count`).
+- **The agent cannot schedule itself.** `schedule_propose` puts a proposed job on a card in the
+  chat and saves nothing; only your Save creates it, in that chat's own project. A job saved this
+  way is marked "Proposed by the agent" and does not run under Skip all approvals unless you tick
+  that on the job. A delegated task or an unattended run cannot propose one, and the agent can list
+  only the current workspace's jobs (`schedule_list`).
 - **The agent cannot rewrite its own rules.** `AGENTS.md`, `CLAUDE.md` and `.tst/rules/**` are
   refused by the filesystem tool itself ([`tools/boundary.py`](core/tstd/tools/boundary.py)),
   ahead of the workspace check and ahead of any approval — so no `writable_paths` grant can open

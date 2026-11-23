@@ -138,6 +138,11 @@ def apply_job_edit(
             then=new_then,
             skip_calendar=new_calendar,
             skip_match=new_match,
+            # TD-5263: who wrote the job is not the edit's to change; dropping
+            # it would let an agent-proposed job run under skip-all.
+            origin=existing.origin,
+            origin_session_id=existing.origin_session_id,
+            allow_skip_all=existing.allow_skip_all,
             # The receipt belongs to the run, not to this edit.
             last_run=existing.last_run,
             last_status=existing.last_status,

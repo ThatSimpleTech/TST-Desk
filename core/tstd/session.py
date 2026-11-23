@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     from .cost import CostTracker
     from .fallback import TurnBackups
     from .router import TierName, TierRouter
+    from .scheduler.proposals import ParkedSchedule
     from .steering_proposals import ParkedSteering
     from .tools.registry import Tool
 
@@ -507,6 +508,9 @@ class Session:
         # the user decides on the card. In memory only; nothing accepts one
         # but a user message (not skip-all, not an autonomy run).
         self.steering_proposals: dict[str, ParkedSteering] = {}
+        # TD-5263: scheduled jobs the agent proposed, until the person saves
+        # or dismisses each on its card. In memory only, like the above.
+        self.schedule_proposals: dict[str, ParkedSchedule] = {}
         # TD-4602: 0 = user-visible parent; 1 = transient worker child.
         # Children are not registered, persisted, or revived.
         self.delegate_depth: int = 0
@@ -566,6 +570,9 @@ class Session:
         # it cannot start background shell jobs. Cleared when the run
         # returns, so a person who carries on in the window is not refused.
         self.scheduled_run = False
+        # TD-5263: set for the run of a job the agent proposed. Skip-all
+        # does not apply to this session; its asks park for the person.
+        self.ignores_skip_all = False
         self.charter: Charter | None = None
         self.autonomy_turns = 0
         self.autonomy_class_c = False

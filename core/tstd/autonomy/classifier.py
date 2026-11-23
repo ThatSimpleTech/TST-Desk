@@ -757,6 +757,8 @@ PLAN_READ_ONLY_BUILTINS: frozenset[str] = frozenset(
         # TD-5254: shows text in the Artifacts pane; it changes nothing but
         # the session's own state, and a draft is worth seeing while planning.
         "show_artifact",
+        # TD-5263: reading the job list is a read; proposing one is not here.
+        "schedule_list",
         "exit_plan_mode",
         # TD-5127: loads deferred MCP definitions; each loaded tool is
         # still judged on its own, so an unlisted one stays refused.
@@ -919,6 +921,26 @@ def _rule_steering_proposal(req: DecisionRequest, boundary: Boundary) -> bool:
         and not req.writes
         and not req.hosts
         and is_in_workspace(boundary, req.reads[0])
+    )
+
+
+def _rule_schedule_tools(req: DecisionRequest, _boundary: Boundary) -> bool:
+    """``schedule_propose`` and ``schedule_list`` change nothing (TD-5263).
+
+    The first parks a draft for a card; only the person's Save creates the
+    job, through their own window, never through a tool. The second reads
+    the daemon's record of this workspace's jobs. An approval card in front
+    of a proposal card would be two prompts for one decision. Only the
+    builtins match: no provenance, no path, no host.
+    """
+    return (
+        req.tool_name in ("schedule_propose", "schedule_list")
+        and req.provenance is None
+        and req.side_effect_class == "auto"
+        and not req.is_mutation
+        and not req.reads
+        and not req.writes
+        and not req.hosts
     )
 
 
@@ -1281,6 +1303,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="propose_steering_edit parks a diff for the user; writes nothing",
         decision_class=DecisionClass.A,
         match=_rule_steering_proposal,
+    ),
+    Rule(
+        id="schedule-proposal",
+        description="schedule_propose parks a draft for the user; schedule_list reads the jobs",
+        decision_class=DecisionClass.A,
+        match=_rule_schedule_tools,
     ),
     Rule(
         id="task-list",

@@ -1929,6 +1929,14 @@ class SaveJob(ClientMessage):
 
     type: Literal["save_job"] = "save_job"
     id: str | None = None
+    # TD-5263: this save answers the agent's proposal on a card. The daemon
+    # checks the proposal is open on that session, then marks the job as
+    # agent-proposed itself; a client cannot assert that. Both or neither.
+    proposal_id: str | None = None
+    proposal_session_id: str | None = None
+    # TD-5263: an agent-proposed job runs under skip-all only when the
+    # person ticks this on that job. None keeps the stored value.
+    allow_skip_all: bool | None = None
     workspace: str | None = None
     instruction: str | None = None
     # On an update, None keeps the stored value and "" clears it (TD-3810).
@@ -2047,6 +2055,18 @@ class ListJobTemplates(ClientMessage):
     """
 
     type: Literal["list_job_templates"] = "list_job_templates"
+
+
+class DismissScheduleProposal(ClientMessage):
+    """Dismiss the agent's schedule proposal; nothing is scheduled (TD-5263).
+
+    Answered on the session's log with ``schedule_proposal_decision``. An
+    id that is not open is ``proposal_not_found``.
+    """
+
+    type: Literal["dismiss_schedule_proposal"] = "dismiss_schedule_proposal"
+    session_id: str
+    proposal_id: str = Field(min_length=1)
 
 
 class SaveJobTemplate(ClientMessage):
@@ -3402,6 +3422,42 @@ class SteeringFileDiff(BaseModel):
     diff: str
     before: str | None = None
     after: str | None = None
+
+
+class ScheduleProposal(DaemonEvent):
+    """The agent proposed a scheduled job; nothing is scheduled yet (TD-5263).
+
+    The card shows ``instruction`` whole, when it would run and the
+    ``workspace``, which is the proposing session's project and never the
+    model's choice. Only the person's Save creates the job, by sending
+    ``save_job`` with this ``proposal_id``. ``next_runs`` are the next few
+    times it would run, UTC.
+    """
+
+    type: Literal["schedule_proposal"] = "schedule_proposal"
+    session_id: str
+    proposal_id: str
+    tool_call_id: str = ""
+    workspace: str
+    instruction: str
+    cadence: str | None = None
+    next_run: str | None = None
+    timezone: str | None = None
+    next_runs: list[str] = Field(default_factory=list)
+
+
+class ScheduleProposalDecision(DaemonEvent):
+    """How a schedule proposal ended (TD-5263).
+
+    ``saved`` carries the job's id. ``dismissed`` scheduled nothing.
+    ``expired`` is the daemon's: a restart dropped the open proposal.
+    """
+
+    type: Literal["schedule_proposal_decision"] = "schedule_proposal_decision"
+    session_id: str
+    proposal_id: str
+    decision: Literal["saved", "dismissed", "expired"]
+    job_id: str | None = None
 
 
 class SteeringProposal(DaemonEvent):
@@ -4905,6 +4961,10 @@ class JobEntry(BaseModel):
     # Separate from ``last_status``.
     last_delivery: Literal["ok", "failed"] | None = None
     last_delivery_error: str | None = None
+    # TD-5263: ``agent`` is a job the person saved from the agent's
+    # proposal card. It ignores skip-all unless ``allow_skip_all``.
+    origin: Literal["user", "agent"] = "user"
+    allow_skip_all: bool = False
     # Not persisted. It mirrors the daemon's in-flight set, so a restart
     # cannot show a turn that is no longer happening (TD-3809).
     running: bool = False
@@ -5257,6 +5317,7 @@ ClientMessageT = Annotated[
     | ListJobRuns
     | ListJobTemplates
     | SaveJobTemplate
+    | DismissScheduleProposal
     | DeleteJobTemplate
     | GetSessionJobSource
     | Transcribe
@@ -5328,6 +5389,8 @@ DaemonEventT = Annotated[
     | AutonomySummary
     | MemoryProposal
     | SteeringProposal
+    | ScheduleProposal
+    | ScheduleProposalDecision
     | SteeringDecision
     | SessionList
     | PolicyRules
@@ -5525,6 +5588,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "list_job_runs",
         "list_job_templates",
         "save_job_template",
+        "dismiss_schedule_proposal",
         "delete_job_template",
         "get_session_job_source",
         "transcribe",
@@ -5596,6 +5660,8 @@ _KNOWN_EVENT_TYPES = frozenset(
         "autonomy_summary",
         "memory_proposal",
         "steering_proposal",
+        "schedule_proposal",
+        "schedule_proposal_decision",
         "steering_decision",
         "session_list",
         "policy_rules",

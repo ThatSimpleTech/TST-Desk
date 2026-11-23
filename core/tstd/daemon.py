@@ -295,6 +295,7 @@ from .protocol import (
     Detach,
     DiagnosticCheck,
     DiagnosticsReport,
+    DismissScheduleProposal,
     Drain,
     DrainResult,
     DuplicatePreset,
@@ -524,6 +525,8 @@ from .scheduler.models import (
 )
 from .scheduler.park import drop_parked, follow_parked, revive_parked
 from .scheduler.pin import require_known_preset
+from .scheduler.proposals import expire_restored as expire_restored_schedule
+from .scheduler.proposals import settle as settle_schedule
 from .scheduler.runner import (
     InFlight,
     RecordingDeliver,
@@ -1097,6 +1100,8 @@ def _job_entry(job: Job, *, running: bool = False) -> JobEntry:
         email_to=job.email_to,
         last_delivery=job.last_delivery,
         last_delivery_error=job.last_delivery_error,
+        origin=job.origin,
+        allow_skip_all=job.allow_skip_all,
         running=running,
     )
 
@@ -2992,6 +2997,7 @@ class Daemon:
                 sess.event_log.replace(loaded.events)
                 # TD-5140: a replay-only session holds no proposal either.
                 await expire_restored_steering(sess, loaded.events)
+                await expire_restored_schedule(sess, loaded.events)
                 await self._seal_cut_review(sess, loaded.events)
             if final_state != record.state:
                 await self._session_store.update_state(record.session_id, final_state, touch=False)
@@ -4105,7 +4111,8 @@ class Daemon:
             save_skip_all(self.data_dir, msg.enabled)
             if msg.enabled:
                 for session in await self.session_registry.list_sessions():
-                    session.resolve_skippable_approvals()
+                    if not session.ignores_skip_all:
+                        session.resolve_skippable_approvals()
                 # TD-5283: from a phone this is a phone permission in use.
                 await self._note_phone_change(
                     APPROVAL_SWITCHES,
@@ -4405,6 +4412,17 @@ class Daemon:
 
         if isinstance(msg, SaveJob):
             return await self._handle_save_job(msg)
+
+        if isinstance(msg, DismissScheduleProposal):
+            found = self.session_registry.get(msg.session_id)
+            if found is None or await settle_schedule(found, msg.proposal_id, "dismissed") is None:
+                return build_error(
+                    "proposal_not_found",
+                    "That proposal is no longer open.",
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
+                )
+            return None
 
         if isinstance(msg, DeleteJob):
             return await self._handle_delete_job(msg)
@@ -4923,6 +4941,8 @@ class Daemon:
         restore_pinned_plan(sess, loaded.events)
         # TD-5140: open steering proposals lived in the old process's memory.
         await expire_restored_steering(sess, loaded.events)
+        # TD-5263: and schedule proposals.
+        await expire_restored_schedule(sess, loaded.events)
         # TD-5137: so did its background shell jobs.
         await sess.shell_jobs.expire_restored(loaded.events)
         await self._seal_cut_review(sess, loaded.events)
@@ -5244,7 +5264,8 @@ class Daemon:
             accessibility=self.ax_driver is not None,
         )
         tool_dispatcher = ToolDispatcher(tool_registry)
-        tool_dispatcher.skip_all_fn = lambda: self.skip_all_approvals
+        # TD-5263: not for the run of a job the agent proposed.
+        tool_dispatcher.skip_all_fn = lambda: self.skip_all_approvals and not sess.ignores_skip_all
         tool_dispatcher.autonomy_fn = lambda: sess.autonomy
         tool_dispatcher.on_class_c = sess.mark_class_c
         sess.persist_dir = self._session_persist.dir_for(sess.id)
@@ -5264,6 +5285,7 @@ class Daemon:
             sent_files=sent_files,
             shown_artifacts=shown_artifacts,
             session_recall=SessionRecall(self._session_index, self._session_store.records),
+            data_dir=self.data_dir,
             ax_driver=self.ax_driver,
         )
         from .tools.plugins import bind_plugin_handlers
@@ -5282,8 +5304,8 @@ class Daemon:
                 await grok_loop(
                     s,
                     binary=self.config.engine.binary,
-                    yolo=self.skip_all_approvals,
-                    skip_all_fn=lambda: self.skip_all_approvals,
+                    yolo=self.skip_all_approvals and not s.ignores_skip_all,
+                    skip_all_fn=lambda: self.skip_all_approvals and not s.ignores_skip_all,
                     cu_command=self.config.computer_use.command,
                 )
 
@@ -6671,10 +6693,28 @@ class Daemon:
         return await self._job_list_event()
 
     async def _handle_save_job(self, msg: SaveJob) -> str:
+        # TD-5263: a save that answers the agent's proposal. The proposal
+        # must be open on the session it names and must be for a new job;
+        # the origin is stamped here, never taken from the client.
+        proposer: Session | None = None
+        if msg.proposal_id is not None or msg.proposal_session_id is not None:
+            proposer = self.session_registry.get(msg.proposal_session_id or "")
+            if (
+                proposer is None
+                or msg.proposal_id not in proposer.schedule_proposals
+                or msg.id is not None
+            ):
+                return build_error(
+                    "proposal_not_found",
+                    "That proposal is no longer open. Nothing was scheduled.",
+                    in_reply_to=msg.type,
+                )
         try:
-            await asyncio.to_thread(self._save_job_record, msg)
+            job = await asyncio.to_thread(self._save_job_record, msg, proposer)
         except JobValidationError as exc:
             return build_error("job_invalid", str(exc))
+        if proposer is not None and msg.proposal_id is not None:
+            await settle_schedule(proposer, msg.proposal_id, "saved", job.id)
         return await self._job_list_event()
 
     async def _handle_delete_job(self, msg: DeleteJob) -> str:
@@ -7038,8 +7078,15 @@ class Daemon:
             jobs=[_job_entry(job, running=job.id in self._in_flight) for job in jobs]
         ).model_dump_json()
 
-    def _save_job_record(self, msg: SaveJob) -> Job:
-        """Persist a draft or an update. Does not run the job."""
+    def _save_job_record(self, msg: SaveJob, proposer: Session | None = None) -> Job:
+        """Persist a draft or an update. Does not run the job.
+
+        *proposer* is the session whose open proposal this save answers
+        (TD-5263). The job is then for that session's own project whatever
+        the message says, and is marked as agent-proposed.
+        """
+        if proposer is not None:
+            msg = msg.model_copy(update={"workspace": proposer.project_path})
         existing = get_job(self.data_dir, msg.id) if msg.id else None
         if existing is not None:
             job = apply_job_edit(
@@ -7068,6 +7115,8 @@ class Daemon:
             # refuse to pause a row whose file was hand-edited into a loop.
             if msg.then is not None:
                 require_chain(list_jobs(self.data_dir), job)
+            if msg.allow_skip_all is not None:
+                job = job.model_copy(update={"allow_skip_all": msg.allow_skip_all})
             return save_job(self.data_dir, job)
         job = validate_draft(
             JobDraft(
@@ -7103,6 +7152,10 @@ class Daemon:
             except CalendarPathError as exc:
                 raise JobValidationError(str(exc)) from None
         require_chain(list_jobs(self.data_dir), job)
+        if proposer is not None:
+            job = job.model_copy(update={"origin": "agent", "origin_session_id": proposer.id})
+        if msg.allow_skip_all is not None:
+            job = job.model_copy(update={"allow_skip_all": msg.allow_skip_all})
         return save_job(self.data_dir, job)
 
     def _known_workspaces(self) -> set[str]:
