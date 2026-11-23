@@ -14585,3 +14585,35 @@ approved in the build order; the user-level default is TD-5295.
 into the package as the note proposed: moving it would churn every import
 for no change in behaviour. `--disable-userns` is still TD-5264; on a host
 that allows the nested namespace the level is now reported partial instead.
+
+---
+
+### TD-5295 — The sandbox can be on for every workspace, and a repo cannot quietly turn it off
+
+The sandbox was a per-workspace opt-in, so it could not be on by default,
+and a repository was the thing that decided how strong it was. The daemon's
+config now has a `sandbox:` section with `default` (`off`, `on`,
+`require`), `on_partial` (`ask`, `refuse`), `auto_allow` and
+`hidden_paths`. The shipped default stays `off` (the owner chose to wait
+for the full version before default-on). R1 of the sandboxing note, second
+half.
+
+- [x] A workspace that says nothing follows the user's default; what it
+      says wins; auto-run is on when either asks; hidden paths add up
+      (`test_sandbox_defaults.py::TestMerge`).
+- [x] Under `on` or `require`, `enabled: false`, a non-empty `exclude` and
+      `auto_allow: true` in a workspace file are loosenings that wait for
+      trust, and an untrusted one leaves the sandbox on (`TestTrust`).
+      Under `off` nothing changes from TD-5138.
+- [x] `default` and `on_partial` are not accepted in a workspace file.
+- [x] In a partial sandbox a command that would have run unasked asks,
+      naming the gap; `on_partial: refuse` and `require` refuse it
+      (`TestPartial`, through the dispatcher).
+- [x] A bare YAML `off` / `on` reads as the word, not a boolean.
+- [x] Config help and §`sandbox` in `configuration.md` cover every key.
+
+**Size:** 3 · **Depends on:** TD-5294 · **Status:** Done
+
+**Notes:** `writable_paths` and `backend` from the note are left out: there
+is one backend, and extra writable roots need their own review of what a
+command could plant there. Left for a later story if they are wanted.

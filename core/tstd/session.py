@@ -54,7 +54,7 @@ from .worktree import SessionWorktree
 
 if TYPE_CHECKING:
     from .compaction_model import CompactionSummarizer
-    from .config import ModelConfig
+    from .config import ModelConfig, SandboxDefaults
     from .context.memory_loader import MemoryLoad
     from .cost import CostTracker
     from .fallback import TurnBackups
@@ -445,6 +445,8 @@ class Session:
         # before the first config load; None (library use) gates nothing.
         # ``config_view`` is the read the boundary was last loaded from.
         self.trust_store: TrustStore | None = None
+        # TD-5295: the user-level sandbox settings; None off the daemon.
+        self.sandbox_defaults: SandboxDefaults | None = None
         self.config_view: WorkspaceConfigView | None = None
         # TD-5139: the language-server problems this session's model was
         # last told, per (server, file), so a write reports only new ones.

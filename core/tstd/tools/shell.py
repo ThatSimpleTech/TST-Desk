@@ -19,8 +19,9 @@ workspace as the working directory.  Three safety rails surround it:
   (TD-5116): a systemd user scope where one works, else ``RLIMIT_AS``,
   and Podman's ``--memory`` in a container.  A command killed for going
   over says so in its result (``shell_memory.py``).
-- **Sandbox (opt-in).**  With ``sandbox.enabled`` in the workspace config
-  an interactive command runs under bubblewrap: writes fenced to the
+- **Sandbox.**  With ``sandbox.enabled`` in the workspace config, or the
+  user-level ``sandbox.default`` (TD-5295), an interactive command runs under
+  bubblewrap: writes fenced to the
   workspace and a private ``/tmp``, no network, keys unreadable
   (TD-5138, ``shell_sandbox.py``).
 - **``allowed_commands`` allowlist.**  When configured, each top-level

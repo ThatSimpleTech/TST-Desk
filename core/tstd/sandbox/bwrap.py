@@ -44,18 +44,19 @@ class BwrapBackend:
                 "none",
                 Enforcement.NONE,
                 unavailable="the shell sandbox needs Linux (bubblewrap) for now; "
-                "turn sandbox.enabled off here",
+                "turn the sandbox off here (sandbox.enabled, or sandbox.default)",
             )
         if not seccomp_supported():
             return self._none(
                 f"the shell sandbox supports x86_64 and aarch64, not {platform.machine()}; "
-                "turn sandbox.enabled off here"
+                "turn the sandbox off here (sandbox.enabled, or sandbox.default)"
             )
         found = shutil.which(self._bwrap)
         if found is None:
             return self._none(
                 "bubblewrap is not installed; install it (apt install bubblewrap / "
-                "dnf install bubblewrap) or turn sandbox.enabled off"
+                "dnf install bubblewrap) or turn the sandbox off "
+                "(sandbox.enabled, or sandbox.default)"
             )
         base = [found, "--die-with-parent", "--unshare-all", "--ro-bind", "/", "/"]
         base += ["--dev", "/dev", "--proc", "/proc", "--"]
@@ -65,7 +66,7 @@ class BwrapBackend:
             return self._none(
                 f"bubblewrap is installed but could not start a sandbox here ({said}); "
                 "check that unprivileged user namespaces are allowed, or turn "
-                "sandbox.enabled off"
+                "the sandbox off (sandbox.enabled, or sandbox.default)"
             )
         nested = _run([*base, "/bin/sh", "-c", _NESTED])
         if nested is None or nested.returncode == 127:

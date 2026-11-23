@@ -45,6 +45,7 @@ SECTION_TITLES: dict[str, str] = {
     "workflow": "Workflow",
     "model_refresh": "Model refresh",
     "shell": "Shell",
+    "sandbox": "Shell sandbox",
     "provider_retry": "Provider retries",
     "scheduler": "Scheduler",
     "worktree": "Worktrees",
@@ -91,6 +92,18 @@ _MODEL_HELP: dict[str, str | tuple[str, str]] = {
     "ModelConfig.model_refresh": "Refresh every model's prices, windows and slug spelling in "
     "the background.",
     "ModelConfig.shell": "The read-only shell list: commands that run without asking.",
+    "ModelConfig.sandbox": "The shell sandbox for every workspace on this computer (Linux).",
+    "SandboxDefaults.default": (
+        "off: only a workspace that turns it on is sandboxed. on: every shell command is. "
+        "require: the same, and a partial sandbox refuses instead of asking."
+    ),
+    "SandboxDefaults.on_partial": (
+        "Where the sandbox only partly holds: ask before each command, or refuse it."
+    ),
+    "SandboxDefaults.auto_allow": (
+        "Inside a full sandbox, a command that would ask runs without asking."
+    ),
+    "SandboxDefaults.hidden_paths": "More paths no sandboxed command may read.",
     "ModelConfig.provider_retry": "How long to keep retrying a provider failure that can be "
     "retried (429, 5xx, a dropped connection).",
     "ModelConfig.scheduler": "How long one scheduled turn may run, and the base wait for tst run.",

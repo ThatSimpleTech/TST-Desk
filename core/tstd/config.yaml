@@ -287,6 +287,18 @@ shell:
       - grep
       - find
 
+# The shell sandbox for every workspace on this computer (TD-5295). Linux
+# only for now (bubblewrap). off: only a workspace whose .tst/config.yaml
+# says `sandbox: enabled: true` is sandboxed. on: every interactive shell
+# command is; a workspace file that turns it off or excludes a command
+# waits for your trust. require: the same, and where the sandbox only
+# partly holds (Doctor says which), commands are refused instead of asked.
+sandbox:
+  default: "off"   # off | on | require
+  on_partial: ask   # ask | refuse, for a partial sandbox
+  auto_allow: false # inside a full sandbox, a command that would ask runs
+  hidden_paths: []  # more paths no sandboxed command may read
+
 # How stubbornly to retry a retryable provider failure (429, 5xx, transport).
 # The defaults spend 4 attempts in roughly 8 seconds — fine for a blip, and
 # too short for a gateway that answers "temporarily rate-limited upstream,

@@ -1158,6 +1158,29 @@ outright, add a `shell` rule too, such as
 `{ tool: shell, args: "*.env*", effect: never }`, which refuses any command
 whose text mentions `.env`.
 
+### `sandbox`
+
+The shell sandbox for every workspace on this computer (TD-5295). Linux only for now
+(bubblewrap); what it does and how strongly it holds are in §4.13. A workspace's own
+`sandbox:` section in `.tst/config.yaml` sits over this one. It may always tighten (turn the
+sandbox on, hide more paths). With `default` `on` or `require`, a workspace file that turns the
+sandbox off, excludes a command or turns on auto-run waits for your trust (§4.8), because
+otherwise a command that runs without asking would run on the host.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `default` | `off` \| `on` \| `require` | `off` | `off`: only a workspace that says `enabled: true` is sandboxed. `on`: every interactive shell command is, unless the workspace (trusted) says otherwise. `require`: the same, and where the sandbox only partly holds a sandboxed command is refused. Off Linux, `on` and `require` refuse every sandboxed command, never run it on the host. |
+| `on_partial` | `ask` \| `refuse` | `ask` | Where the sandbox only partly holds (Doctor's `sandbox` row says which promise is missing): `ask` puts a command that would have run unasked on an approval card that names the gap; `refuse` refuses it. |
+| `auto_allow` | bool | `false` | Inside a full sandbox, a command that would otherwise ask runs without asking, for every workspace. Same limits as the workspace key (§4.13). |
+| `hidden_paths` | list of paths | `[]` | Added to the built-in list of paths no sandboxed command may read, for every workspace. |
+
+<!-- verify: model -->
+```yaml
+sandbox:
+  default: "on"
+  on_partial: ask
+```
+
 ### `provider_retry`
 
 How stubbornly a retryable provider failure (429, 5xx, transport) is

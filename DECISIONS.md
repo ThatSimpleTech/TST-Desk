@@ -20368,3 +20368,26 @@ without letting it skip an ask.
 no behaviour change); passing `--disable-userns` (TD-5264, untested where it
 matters); a `fail` Doctor row when the sandbox cannot run (it is off by
 default, so that is not a fault of this computer).
+
+## 2026-11-23 — TD-5295: a user-level sandbox default under the workspace's section (Class B)
+
+**Decision:** `sandbox:` in the daemon's config (`SandboxDefaults`:
+`default`, `on_partial`, `auto_allow`, `hidden_paths`). The workspace
+section's `enabled` becomes `bool | None`, None meaning "follow the
+default", and `shell_sandbox.effective` merges the two on every boundary
+reload. The trust store carries the user's default so `find_loosened` can
+judge a repo's `enabled: false` and `exclude` against it. A partial
+sandbox turns an `auto` into `ask`, or anything into `never` under
+`require` or `on_partial: refuse`, in the dispatcher's sandbox step, after
+the gate.
+
+**Rationale:** a per-repo opt-in cannot be on by default, and a repository
+must not decide how strong the user's sandbox is. Under the default off a
+repo's `exclude` stays harmless (an excluded command asks), so nothing that
+works today starts asking for trust.
+
+**Rejected:** a separate config file for the user-level keys (the daemon's
+config already has the trust-free, user-owned place); `writable_paths` now
+(a writable root outside the workspace is where a command would plant
+something that runs later); shipping `default: on` (owner decision 2026-11:
+wait for macOS and the network allowlist).

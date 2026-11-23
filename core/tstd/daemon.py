@@ -1265,7 +1265,7 @@ class Daemon:
         self.skip_all_approvals = load_skip_all(self.data_dir)
         # TD-5113: per-workspace trust in repo-supplied config. Same rule:
         # the decisions live here, never in the workspace.
-        self.workspace_trust = TrustStore(self.data_dir)
+        self.workspace_trust = TrustStore(self.data_dir, self.config.sandbox.default)
         self.load_global_memory = load_global_memory(self.data_dir)
         self.coworker_enabled = load_coworker(self.data_dir)
         self.voice_enabled = load_voice(self.data_dir)
@@ -1796,6 +1796,8 @@ class Daemon:
         # back to what the loader chose.
         keep = live if live in loaded.presets else loaded.active_preset
         self.config = loaded.model_copy(update={"active_preset": keep})
+        # TD-5295: the trust card judges a repo's sandbox against this.
+        self.workspace_trust.sandbox_default = self.config.sandbox.default
         self._slug_snapshot = _snapshot_slugs(self.config)
         self._drop_provider_clients()
 
@@ -3026,6 +3028,7 @@ class Daemon:
             # a move still reload its wall: gated too, or a loosening file
             # read as trusted (TD-5158).
             sess.trust_store = self.workspace_trust
+            sess.sandbox_defaults = self.config.sandbox
             if loaded is not None and loaded.events:
                 sess.event_log.replace(loaded.events)
                 # TD-5140: a replay-only session holds no proposal either.
@@ -5261,6 +5264,7 @@ class Daemon:
 
         # TD-5113: every config load below goes through the trust gate.
         sess.trust_store = self.workspace_trust
+        sess.sandbox_defaults = self.config.sandbox
         await self._follow_project_config(sess)
         error = reload_session_boundary(sess, sess.workspace_path)
         if error is not None:

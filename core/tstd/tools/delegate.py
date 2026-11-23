@@ -499,6 +499,7 @@ async def _child_loop(
     child.config = parent.config
     child.policy = parent.policy
     child.trust_store = parent.trust_store
+    child.sandbox_defaults = parent.sandbox_defaults
     child.config_view = parent.config_view
     # TD-5134: the parent's hooks, whose runs land on the parent's audited log.
     child.hooks = parent.hooks

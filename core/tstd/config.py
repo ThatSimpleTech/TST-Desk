@@ -1011,6 +1011,45 @@ class ShellConfig(BaseModel):
     read_only: ShellReadOnlyConfig = Field(default_factory=ShellReadOnlyConfig)
 
 
+class SandboxDefaults(BaseModel):
+    """The shell sandbox's user-level settings (TD-5295).
+
+    A workspace's own ``sandbox:`` section may tighten these. Turning the
+    sandbox off, excluding a command or turning on auto-run there is a
+    loosening that waits for the trust card. ``on_partial`` and ``default``
+    are not accepted in a workspace file at all.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # off: only a workspace that says ``enabled: true`` is sandboxed.
+    # on: every interactive shell command is, unless the workspace says otherwise
+    # (trusted). require: the same, and a partial sandbox refuses instead of asking.
+    default: Literal["off", "on", "require"] = "off"
+    # A sandboxed command where the sandbox is only partial: ask, naming the gaps,
+    # or refuse.
+    on_partial: Literal["ask", "refuse"] = "ask"
+    auto_allow: bool = False
+    hidden_paths: list[str] = Field(default_factory=list, max_length=100)
+
+    @field_validator("default", mode="before")
+    @classmethod
+    def _yaml_off(cls, v: Any) -> Any:
+        # YAML reads a bare ``off`` / ``on`` as a boolean.
+        if v is False:
+            return "off"
+        if v is True:
+            return "on"
+        return v
+
+    @field_validator("hidden_paths")
+    @classmethod
+    def _non_empty(cls, v: list[str]) -> list[str]:
+        if any(not item.strip() for item in v):
+            raise ValueError("entries must be non-empty strings")
+        return [item.strip() for item in v]
+
+
 class EmbeddingsConfig(BaseModel):
     """Local embeddings sidecar (TD-2202, TD-2204).
 
@@ -1755,6 +1794,7 @@ class ModelConfig(BaseModel):
     model_concurrency: ModelConcurrencyConfig = Field(default_factory=ModelConcurrencyConfig)
     model_refresh: ModelRefreshConfig = Field(default_factory=ModelRefreshConfig)
     shell: ShellConfig = Field(default_factory=ShellConfig)
+    sandbox: SandboxDefaults = Field(default_factory=SandboxDefaults)
     provider_retry: ProviderRetryConfig = Field(default_factory=ProviderRetryConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     worktree: WorktreeConfig = Field(default_factory=WorktreeConfig)
