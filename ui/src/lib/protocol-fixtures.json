@@ -1372,6 +1372,7 @@
     "summary": "Write to test.txt",
     "reason": "decision class C requires approval",
     "proposed_always_allow": null,
+    "sandbox": null,
     "worker": null
   },
   "approval_request_always_allow": {
@@ -1392,6 +1393,7 @@
       "effect": "auto",
       "exact": "npm test"
     },
+    "sandbox": null,
     "worker": null
   },
   "decision_logged": {

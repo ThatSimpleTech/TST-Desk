@@ -3810,7 +3810,25 @@ Inside the sandbox:
   (`$XDG_RUNTIME_DIR`: the D-Bus socket the Secret Service keychain answers on, and the ssh
   and gpg agents) are covered by an empty, unreadable folder. A file such as `~/.netrc` reads
   as empty.
-- The command's result says `ran in the shell sandbox` under the exit code.
+- The command's result says `ran in the shell sandbox (bwrap, full)` under the exit code: the
+  backend, and how strongly it holds here (TD-5294).
+
+**How strongly it holds (TD-5294).** TD-5294 tries the sandbox for real when the daemon starts,
+again whenever Doctor opens, and again after bubblewrap itself fails to start a command. Installing
+bubblewrap needs no restart. It reports one of three levels:
+
+- `full`: every promise above holds.
+- `partial`: it runs, but one promise does not hold here, and it says which. Today this is a host
+  where a command inside the sandbox can make a user namespace of its own that maps root, which can
+  undo a read-only bind (Ubuntu's kernel policy refuses that; some distributions allow it).
+  Commands still run in it, but `auto_allow` never lets one skip its ask.
+- `none`: it cannot run here, and the reason says how to fix that. A command that would be
+  sandboxed is refused.
+
+Doctor has a `sandbox` row with the level and every gap. An approval card for a shell command has
+one line saying what the command would run in: "Runs in the sandbox (bwrap, full)", a partial
+level with the promises it does not hold, or "Runs on your computer, outside the sandbox" when the
+sandbox is off for this workspace or the command is excluded.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|

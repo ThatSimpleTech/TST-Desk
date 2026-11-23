@@ -14548,3 +14548,40 @@ make the agent schedule itself.
 approved in the build order. "One proposal per turn" from that note is
 covered by the open-proposal cap instead; see DECISIONS.md. No new host,
 so `test_outbound_hosts.py` is unchanged.
+
+### TD-5294 — The sandbox says how strongly it holds, and only a full one skips an ask
+
+One Linux module wired into the shell tool could not say what it enforced:
+the result note was a fixed sentence, a host where bubblewrap ran but a
+nested user namespace could undo its binds looked the same as one where it
+could not, and `auto_allow` trusted both. The sandbox is now one backend
+interface (`core/tstd/sandbox/`) whose level is a fact it reports after
+trying, not a promise. The design is R1 of the 2026-11-20 sandboxing note,
+approved in the build order; the user-level default is TD-5295.
+
+- [x] A backend reports `full`, `partial` (with the promises it does not
+      hold, each in a sentence) or `none` (with the fix), by running a real
+      sandbox, not by reading a version (`test_sandbox_backend.py::TestProbe`).
+      Bubblewrap is partial when a command inside can map root in a user
+      namespace of its own, or when that cannot be checked.
+- [x] The probe runs once off the event loop at start, again when Doctor
+      opens and again after bubblewrap itself fails to start a command
+      (`TestCache`, `test_doctor_row`).
+- [x] `auto_allow` promotes only under `full`; a promised call is refused if
+      the level dropped before it ran (`test_a_partial_sandbox_never_skips_the_ask`,
+      `test_a_promised_run_is_refused_once_the_sandbox_is_weaker`).
+- [x] The result note names the backend and level, and any gap.
+- [x] Doctor has a `sandbox` row; an approval card for a shell call has one
+      line saying what it runs in, including "outside the sandbox"
+      (`test_the_approval_card_carries_it_for_a_shell_call`, `approval.test.ts`).
+- [x] CI sets `TST_REQUIRE_SANDBOX=1`, so the real-run sandbox tests fail
+      instead of skipping when the runner cannot start bubblewrap.
+- [x] The bubblewrap argv is unchanged (every existing plan test passes as
+      it was).
+
+**Size:** 5 · **Depends on:** TD-5138, TD-5261 · **Status:** Done
+
+**Notes:** The argv builder stays in `shell_sandbox.py` rather than moving
+into the package as the note proposed: moving it would churn every import
+for no change in behaviour. `--disable-userns` is still TD-5264; on a host
+that allows the nested namespace the level is now reported partial instead.

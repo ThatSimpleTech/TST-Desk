@@ -511,6 +511,9 @@ from .remote_devices import (
 )
 from .rewind_handlers import preview_restore, restore_files
 from .router import TierRouter
+from .sandbox import Enforcement
+from .sandbox import current_status as sandbox_status
+from .sandbox import reprobe as sandbox_reprobe
 from .scheduler.calendar_path import CalendarPathError, require_calendar_file
 from .scheduler.chain import require_chain
 from .scheduler.chat_source import SessionScheduleSource, session_schedule_source
@@ -919,6 +922,30 @@ def _win_parent_alive(pid: int) -> bool:
     except Exception:
         # Degrade to "alive" so a watchdog bug never spuriously kills us.
         return True
+
+
+def _check_sandbox() -> DiagnosticCheck:
+    """The shell sandbox's backend and level, probed afresh (TD-5294).
+
+    Machine-level and off by default, so "cannot run here" is a skip that
+    says why, not a failure; a workspace that turns it on is refused per
+    command with the same reason.
+    """
+    status = sandbox_reprobe()
+    if status.enforcement is Enforcement.FULL:
+        return DiagnosticCheck(
+            name="sandbox", status="ok", detail=f"{status.backend}: full, every promise held"
+        )
+    if status.enforcement is Enforcement.PARTIAL:
+        return DiagnosticCheck(
+            name="sandbox",
+            status="warn",
+            detail=f"{status.backend}: partial. {status.gap_text()}. "
+            "Commands still run in it, but none runs without asking",
+        )
+    return DiagnosticCheck(
+        name="sandbox", status="skip", detail=f"cannot run here: {status.unavailable}"
+    )
 
 
 def _check_git() -> DiagnosticCheck:
@@ -2465,6 +2492,7 @@ class Daemon:
             )
 
         checks.append(await asyncio.to_thread(_check_git))
+        checks.append(await asyncio.to_thread(_check_sandbox))
         checks.append(
             await asyncio.to_thread(_check_grok, self.config.engine.binary, self.config.engine.kind)
         )
@@ -2714,6 +2742,11 @@ class Daemon:
         if await asyncio.to_thread(cu_stopfile.stop_engaged):
             self.set_computer_use_killed(True, write_file=False)
         self._tasks.append(asyncio.create_task(self._cu_stop_watch(), name="cu-stop-watch"))
+        # TD-5294: probe the sandbox once off the loop, so the first shell
+        # call and approval card read a cached answer.
+        self._tasks.append(
+            asyncio.create_task(asyncio.to_thread(sandbox_status), name="sandbox-probe")
+        )
         self._arm_phone_permission_expiry()
         await self._shutdown_event.wait()
 

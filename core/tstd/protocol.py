@@ -2707,6 +2707,22 @@ class ApprovalWorker(BaseModel):
     worktree_branch: str | None = None
 
 
+class ApprovalSandbox(BaseModel):
+    """What a shell command on an approval card would run in (TD-5294).
+
+    ``level`` ``none`` with ``outside`` true: the sandbox is off for this
+    workspace or the command is excluded, so it runs on the computer.
+    ``level`` ``none`` without it: the sandbox applies but cannot run here,
+    so the command is refused. ``line`` is the card's own sentence.
+    """
+
+    level: Literal["full", "partial", "none"]
+    backend: str
+    outside: bool = False
+    gaps: list[str] = Field(default_factory=list)
+    line: str
+
+
 class ApprovalRequest(DaemonEvent):
     """A request for user approval of a tool call (TD-802).
 
@@ -2732,6 +2748,9 @@ class ApprovalRequest(DaemonEvent):
     summary: str
     reason: str
     proposed_always_allow: PolicyRuleSummary | None = None
+    # TD-5294: for a shell call, what it would run in. None: not a shell
+    # call, or an autonomy run (its own container).
+    sandbox: ApprovalSandbox | None = None
     # TD-5268: the child that is asking. None: the session's own agent.
     # Additive; an older viewer reads the same thing in ``summary``.
     worker: ApprovalWorker | None = None

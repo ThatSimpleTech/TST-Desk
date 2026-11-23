@@ -76,6 +76,7 @@ from ..proc_lifecycle import (
     retain_subprocess_transport,
 )
 from ..protocol import ShellOutput
+from ..sandbox import Enforcement, current_status, reprobe
 from ..session import Session
 from ..shell_read_only import run_env
 from . import shell_memory
@@ -572,6 +573,12 @@ def _sandbox_for(session: Session, command: str, tool_call_id: str) -> bool:
     reason = shell_sandbox.unavailable_reason() if sandboxed else None
     if reason is not None:
         raise ValueError(f"refused: {reason}")
+    # TD-5294: a run promised to a full sandbox does not go ahead in a weaker one.
+    if promised and current_status().enforcement is not Enforcement.FULL:
+        raise ValueError(
+            "refused: this command was allowed to run without asking because the sandbox "
+            "held every promise, and it no longer does; run it again to be asked"
+        )
     return sandboxed
 
 
@@ -860,7 +867,7 @@ async def _run_foreground(
                     await task
 
     if adopted:
-        adopted_note = shell_sandbox.SANDBOX_NOTE if sandboxed else ""
+        adopted_note = shell_sandbox.note() if sandboxed else ""
         return _format_result(header, None, out, err, adopted_note)
     # A cancelled process may have no returncode; -9 is the conventional
     # "killed by SIGKILL" sentinel (SIGKILL itself is absent on Windows).
@@ -872,7 +879,11 @@ async def _run_foreground(
     wrote = writes_workspace_files(command, session.workspace_path, mount=mount)
     # A command this tool killed (timeout, cancel, stop) already says why.
     memory = "" if header else await shell_memory.cap_note(cap, exit_code, err.tail)
-    sandbox = shell_sandbox.SANDBOX_NOTE if sandboxed else ""
+    sandbox = shell_sandbox.note() if sandboxed else ""
+    if sandboxed and exit_code != 0 and err.tail.lstrip().startswith("bwrap:"):
+        # bubblewrap itself failed, not the command: what it can do here may
+        # have changed, so the next card and Doctor say so (TD-5294).
+        await asyncio.to_thread(reprobe)
     notes = "\n".join(
         n for n in (sandbox, *guard_notes, memory, SHELL_WRITE_NOTE if wrote else "") if n
     )

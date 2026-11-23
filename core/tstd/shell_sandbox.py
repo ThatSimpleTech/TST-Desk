@@ -37,9 +37,7 @@ import hashlib
 import os
 import platform
 import shlex
-import shutil
 import struct
-import sys
 import tempfile
 import time
 from collections.abc import Sequence
@@ -51,6 +49,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .logging import user_data_dir
 from .policy_shell import split_command
+from .sandbox import BackendStatus, Enforcement, current_status
 
 if TYPE_CHECKING:
     from .autonomy.classifier import DecisionClass
@@ -95,8 +94,8 @@ _UNSET_ENV: tuple[str, ...] = (
 MAX_EXCLUDES = 100
 MAX_HIDDEN = 100
 
-SANDBOX_NOTE = (
-    "ran in the shell sandbox: writes reach only the workspace and a private /tmp, "
+_WALLS = (
+    "writes reach only the workspace and a private /tmp, "
     "no network or host sockets; .git and steering files are read-only"
 )
 AUTO_REASON = "runs inside the shell sandbox (sandbox.auto_allow)"
@@ -143,20 +142,22 @@ def applies(section: SandboxSection, command: str, *, autonomy: bool) -> bool:
 
 
 def unavailable_reason() -> str | None:
-    """Why this host cannot run the sandbox, or None when it can."""
-    if not sys.platform.startswith("linux"):
-        return "the shell sandbox needs Linux (bubblewrap); turn sandbox.enabled off here"
-    if _seccomp_arch() is None:
-        return (
-            f"the shell sandbox supports x86_64 and aarch64, not {platform.machine()}; "
-            "turn sandbox.enabled off here"
-        )
-    if shutil.which("bwrap") is None:
-        return (
-            "the shell sandbox is on but bubblewrap is not installed; install it "
-            "(apt install bubblewrap / dnf install bubblewrap) or turn sandbox.enabled off"
-        )
-    return None
+    """Why this host cannot run the sandbox, or None when it can (TD-5294: probed)."""
+    return current_status().unavailable
+
+
+def seccomp_supported() -> bool:
+    """Whether the AF_UNIX filter can be built for this machine."""
+    return _seccomp_arch() is not None
+
+
+def note(status: BackendStatus | None = None) -> str:
+    """The line a sandboxed result carries: what it ran in, and how strongly."""
+    status = status or current_status()
+    text = f"ran in the shell sandbox ({status.backend}, {status.enforcement.value}): {_WALLS}"
+    if status.gaps:
+        text += f"; partial: {status.gap_text()}"
+    return text
 
 
 def promote(
@@ -184,7 +185,8 @@ def promote(
         return None
     if not split_command(command).complete or not applies(section, command, autonomy=False):
         return None
-    if unavailable_reason() is not None:
+    # TD-5294: only a sandbox that holds every promise may skip the ask.
+    if current_status().enforcement is not Enforcement.FULL:
         return None
     return PolicyDecision("auto", AUTO_REASON, None)
 

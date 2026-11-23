@@ -48,7 +48,19 @@ describe("approvalFromEvent", () => {
       proposedAlwaysAllow: null,
       // TD-5268: no child is asking.
       worker: null,
+      // TD-5294: not a shell call.
+      sandbox: null,
     });
+  });
+
+  it("carries what a shell call would run in (TD-5294)", () => {
+    const sandbox = {
+      level: "partial" as const,
+      backend: "bwrap",
+      gaps: ["pins: nested namespaces"],
+      line: "Runs in the sandbox (bwrap, partial: pins not enforced)",
+    };
+    expect(approvalFromEvent(request({ tool_name: "shell", sandbox })).sandbox).toEqual(sandbox);
   });
 
   it("carries the daemon's proposed always-allow rule when present", () => {
