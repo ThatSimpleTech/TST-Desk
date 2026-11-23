@@ -14694,3 +14694,46 @@ computer with nobody watching.
 
 **Notes:** fields sent with a pause take effect only when the job is
 resumed, which needs the permission from a phone.
+
+---
+
+### TD-5299 — A delegated child can run in the background, for the rest of the turn
+
+A `delegate` call blocked the agent until the child finished, so a slow
+piece (run the suite and fix what fails, research an API) held everything
+else up. `delegate` now takes `background: true`: the child starts as a
+task the session owns and the call returns at once. The child belongs to
+its turn (owner decision row 17: scoped to the turn, one level, no agent
+teams). Design: section 4.3 of the 2026-11-20 sub-tasks note.
+
+- [x] A background call returns before the child's first model call, and
+      the parent keeps working (`test_delegate_background.py`).
+- [x] A settled worker's summary reaches the parent model as a note at the
+      next tool-batch boundary; when the parent stops calling tools with a
+      worker alive, the turn waits with no model call and then hands it the
+      note (`test_the_turn_waits_for_its_worker_and_hears_the_note`, through
+      the real loop).
+- [x] More than `delegate.background.max_running` wait in a queue;
+      `max_per_turn` refuses past it.
+- [x] Stop, cancel and the end of the turn end every worker;
+      `delegate_stop` (and the window's Stop, `worker_stop`) end one, and
+      its sibling runs on. A stopped writer leaves no worktree folder.
+- [x] A writer always gets its own worktree; where there can be none the
+      call is refused with a hint to run it in the foreground.
+- [x] Each worker has its own call, time and spend ceiling and honours the
+      session's caps even under skip-all.
+- [x] Refused from a child, an autonomy run, a scheduled run and a
+      deny-and-continue run. A child cannot call `delegate_output` or
+      `delegate_stop`; both are Class A only as builtins and allowed in
+      plan mode.
+- [x] A restart marks live workers `interrupted`, commits what a worker's
+      worktree held to its branch and removes the folder, re-runs nothing,
+      and the next turn is told.
+- [x] The Plan pane lists workers with Stop and a settled worker's steps
+      (`workers-store.test.ts`).
+
+**Size:** 5 · **Depends on:** TD-4602, TD-5195, TD-5268, TD-5269 · **Status:** Done
+
+**Notes:** the optional per-worker `check` from the design note and
+steering a running child (4.4) are not in this story. A child's card is
+tagged by TD-5268 and its worker shows `awaiting_approval` while it waits.

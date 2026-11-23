@@ -104,6 +104,8 @@ const KNOWN_EVENT_TYPES = new Set([
   "phone_change", // TD-5279
   "schedule_proposal", // TD-5263
   "schedule_proposal_decision",
+  "worker_jobs", // TD-5299
+  "worker_result",
   "mcp_import_preview", // TD-5253
   "machine_list", // TD-5015
   "api_key_validated", // TD-1101

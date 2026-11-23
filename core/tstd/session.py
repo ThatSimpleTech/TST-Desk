@@ -42,13 +42,17 @@ from .protocol import (
     ShellJobInfo,
     TaskListItem,
     ToolResult,
+    WorkerJobInfo,
+    WorkerResult,
 )
 from .protocol import SessionState as SessionStateEvent
 from .protocol import ShellJobs as ShellJobsEvent
+from .protocol import WorkerJobs as WorkerJobsEvent
 from .provider import ChatMessage
 from .questions import PendingQuestion, resolve_all
 from .shell_jobs import ShellJobs
 from .task_list import follow_branch
+from .worker_jobs import WorkerJobs
 from .workspace_trust import TrustStore, WorkspaceConfigView
 from .worktree import SessionWorktree
 
@@ -407,6 +411,11 @@ class Session:
         # TD-5137: background shell jobs. The session owns them, so ending
         # it (``cancel``) kills them; each change logs ``shell_jobs``.
         self.shell_jobs = ShellJobs(self._log_shell_jobs)
+        # TD-5299: background ``delegate`` workers, which belong to the turn
+        # that started them. Cancel and Stop end them; each change logs
+        # ``worker_jobs``. ``steer_arrived`` wakes a turn waiting on them.
+        self.workers = WorkerJobs(self._log_workers, self._log_worker_result)
+        self.steer_arrived = asyncio.Event()
         # TD-5124: the goal ``/goal`` set, checked when the model ends a
         # turn until a check passes; rebuilt from the log on revive. And
         # how many checks have judged it, for ``/goal`` on its own.
@@ -786,11 +795,18 @@ class Session:
         await self.close_cu_session()
         # The session ended, so its background jobs end with it (TD-5137).
         await self.shell_jobs.stop_all()
+        await self.workers.stop_all("the session was cancelled")
         # Wake a loop parked in wait_for_resume so it observes cancellation.
         self._resume_event.set()
 
     async def _log_shell_jobs(self, jobs: list[ShellJobInfo]) -> None:
         await self.event_log.add(ShellJobsEvent(session_id=self.id, jobs=jobs, seq=1))
+
+    async def _log_workers(self, workers: list[WorkerJobInfo]) -> None:
+        await self.event_log.add(WorkerJobsEvent(session_id=self.id, workers=workers, seq=1))
+
+    async def _log_worker_result(self, result: WorkerResult) -> None:
+        await self.event_log.add(result.model_copy(update={"session_id": self.id}))
 
     async def stop_turn(self) -> None:
         """Abort the in-flight turn. The session and its transcript stay.
@@ -957,8 +973,14 @@ class Session:
         )
         if self._state != "awaiting_approval":
             await self.set_state("awaiting_approval", reason=reason)
-
-        return await self._await_approval_resolution(tool_call_id, fut)
+        if worker is None:
+            return await self._await_approval_resolution(tool_call_id, fut)
+        # TD-5299: a background worker shows as waiting on its card.
+        await self.workers.asking(worker.id, True)
+        try:
+            return await self._await_approval_resolution(tool_call_id, fut)
+        finally:
+            await self.workers.asking(worker.id, False)
 
     def _approval_sandbox(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         """What a shell call on this card would run in (TD-5294)."""
@@ -1280,6 +1302,7 @@ class Session:
             # A message with its own run rules (TD-5118) never steers: the
             # running turn keeps its own, so the rules would not apply.
             queued = replace(queued, steer_into=self._steer_turn)
+            self.steer_arrived.set()
         self._open_turns += 1
         try:
             async with self._queue_lock:

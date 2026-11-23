@@ -227,6 +227,14 @@ consult:
 # caps, so a larger number here cannot outrun them.
 delegate:
   max_iterations: 8
+  # A worker started with background: true (TD-5299). The turn waits for
+  # it; it stops at its own limits and always honours the session's caps.
+  background:
+    max_running: 2     # at once per session; more wait in a queue
+    max_per_turn: 8
+    max_iterations: 24
+    max_minutes: 30
+    max_usd: 5.0       # and never more than its share of what the session cap leaves
 
 # How many calls one model server answers at once, across every chat,
 # worker and scheduled run (TD-5269). null is no limit. A model served on

@@ -9,6 +9,8 @@
 	import { pinnedPlanFor, taskListFor } from '../task-list-store.svelte.js';
 	import { jobStateLabel, shellJobsFor } from '../shell-jobs-store.svelte.js';
 	import Markdown from './chat/Markdown.svelte';
+	import WorkersList from './WorkersList.svelte';
+	import { workersFor } from '../workers-store.svelte.js';
 
 	let comment = $state('');
 
@@ -30,9 +32,14 @@
 	// this only lists what its newest `shell_jobs` event says.
 	let jobs = $derived(shellJobsFor(session.sessionId));
 	let runningJobs = $derived(jobs.filter((job) => job.status === 'running').length);
+	// TD-5299: background delegate workers.
+	let workerCount = $derived(workersFor(session.sessionId).length);
 </script>
 
 <div class="plan">
+	{#if session.sessionId !== null}
+		<WorkersList sessionId={session.sessionId} />
+	{/if}
 	{#if jobs.length > 0}
 		<section class="native" aria-label="Background jobs">
 			<p class="progress">Background jobs · {runningJobs} running</p>
@@ -63,7 +70,7 @@
 	{:else if remoteName !== null}
 		<EmptyState align="start" body={staysOnCopy(remoteName)} />
 	{:else if !hasPlan}
-		{#if jobs.length === 0}
+		{#if jobs.length === 0 && workerCount === 0}
 			<EmptyState
 				align="start"
 				body="The agent's task list lands here as it works, and so does a plan you approve to end plan mode. In Grok's plan mode the plan lands here too: approve it to start implementing, or type a revision note first."

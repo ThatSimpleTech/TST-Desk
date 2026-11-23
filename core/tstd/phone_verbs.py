@@ -204,6 +204,7 @@ PHONE_OPEN: frozenset[str] = frozenset(
         "transcribe",
         "user_message",
         "validate_api_key",
+        "worker_stop",
     }
 )
 

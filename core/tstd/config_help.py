@@ -73,6 +73,17 @@ _MODEL_HELP: dict[str, str | tuple[str, str]] = {
     "ModelConfig.model_concurrency": "How many calls one model server answers at once, "
     "across every chat, worker and scheduled run.",
     "ModelConfig.delegate": "Limits for a child the agent delegates part of a task to.",
+    "DelegateConfig.background": (
+        "Limits for a child started in the background. The turn waits for it."
+    ),
+    "DelegateBackgroundConfig.max_running": "Background children running at once in a chat.",
+    "DelegateBackgroundConfig.max_per_turn": "Background children one turn may start.",
+    "DelegateBackgroundConfig.max_iterations": "Model calls one background child may make.",
+    "DelegateBackgroundConfig.max_minutes": "Minutes one background child may run.",
+    "DelegateBackgroundConfig.max_usd": (
+        "Dollars one background child may spend, and never more than its share of "
+        "what the spend cap leaves."
+    ),
     "ModelConfig.search": "Where web_search sends queries, and how web_fetch reads pages.",
     "ModelConfig.local_servers": "Model servers on this computer that Add a model's search "
     "asks for their models. Loopback only; no key is sent.",

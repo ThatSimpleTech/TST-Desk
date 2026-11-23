@@ -768,6 +768,9 @@ PLAN_READ_ONLY_BUILTINS: frozenset[str] = frozenset(
         # TD-5137: reads a background job's buffer. ``shell_job_stop`` is not
         # here: it kills a process, and planning changes nothing.
         "shell_job_output",
+        # TD-5299: a background worker's record; stopping one ends work, too.
+        "delegate_output",
+        "delegate_stop",
     }
     | LSP_READ_TOOLS
     | GITHUB_READ_TOOLS
@@ -993,6 +996,26 @@ def _rule_session_search(req: DecisionRequest, _boundary: Boundary) -> bool:
     """
     return (
         req.tool_name == "session_search"
+        and req.provenance is None
+        and req.side_effect_class == "auto"
+        and req.actuates is None
+        and not req.is_mutation
+        and not req.reads
+        and not req.writes
+        and not req.hosts
+    )
+
+
+def _rule_delegate_job(req: DecisionRequest, _boundary: Boundary) -> bool:
+    """``delegate_output`` / ``delegate_stop`` on the session's own workers (TD-5299).
+
+    The worker was started by a ``delegate`` call that was classified like
+    any other: reading it reads the daemon's record, and stopping it ends
+    only work this session started. No path, host or write. Only the
+    builtins match.
+    """
+    return (
+        req.tool_name in ("delegate_output", "delegate_stop")
         and req.provenance is None
         and req.side_effect_class == "auto"
         and req.actuates is None
@@ -1339,6 +1362,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="session_search reads the local index of this workspace's earlier sessions",
         decision_class=DecisionClass.A,
         match=_rule_session_search,
+    ),
+    Rule(
+        id="delegate-job",
+        description="delegate_output and delegate_stop touch only this session's own workers",
+        decision_class=DecisionClass.A,
+        match=_rule_delegate_job,
     ),
     Rule(
         id="shell-job",

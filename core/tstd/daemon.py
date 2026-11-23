@@ -473,6 +473,7 @@ from .protocol import (
     UserTurn,
     ValidateApiKey,
     VerifyResult,
+    WorkerStop,
     build_error,
     parse_client_message,
     scrub_wire_json,
@@ -619,6 +620,7 @@ from .voice import (
     transcribe_audio,
     voice_has_endpoint,
 )
+from .worker_restore import restore_workers
 from .workspace_pins import load_workspace_pins, save_workspace_pins
 from .workspace_trust import (
     TrustStore,
@@ -4465,6 +4467,19 @@ class Daemon:
         if isinstance(msg, SaveJob):
             return await self._handle_save_job(msg)
 
+        if isinstance(msg, WorkerStop):
+            found = self.session_registry.get(msg.session_id)
+            if found is None or not await found.workers.stop(
+                msg.worker_id, "stopped from the window"
+            ):
+                return build_error(
+                    "worker_not_found",
+                    "That worker is not running.",
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
+                )
+            return None
+
         if isinstance(msg, DismissScheduleProposal):
             found = self.session_registry.get(msg.session_id)
             if found is None or await settle_schedule(found, msg.proposal_id, "dismissed") is None:
@@ -5008,6 +5023,8 @@ class Daemon:
         await expire_restored_schedule(sess, loaded.events)
         # TD-5137: so did its background shell jobs.
         await sess.shell_jobs.expire_restored(loaded.events)
+        # TD-5299: and its background workers.
+        await restore_workers(sess, loaded.events)
         await self._seal_cut_review(sess, loaded.events)
         await self._emit_working_context(sess, config_source(sess), unless_logged=True)
         log.info(

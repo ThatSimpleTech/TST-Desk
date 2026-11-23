@@ -15,6 +15,7 @@ the session.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal
 
 from ..context.tokens import HeuristicTokenCounter, TokenCounter
@@ -177,3 +178,17 @@ class TranscriptRecorder:
                 truncated=len(kept) < len(text),
             )
         )
+
+
+@dataclass(frozen=True)
+class WorkerLimits:
+    """A background worker's own ceilings, fixed at spawn (TD-5299).
+
+    The session's caps still bound it, and are checked even under
+    skip-all: a background worker is the nearest thing an interactive
+    session has to an unattended run.
+    """
+
+    max_calls: int
+    max_usd: float
+    deadline: float  # time.monotonic()

@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
@@ -64,6 +65,7 @@ from .delegate_child import (
     WORKER_CHILD_TOOLS,
     DelegateKind,
     TranscriptRecorder,
+    WorkerLimits,
     cap_worker_summary,
     child_preamble,
     resolve_kind,
@@ -167,6 +169,14 @@ class ChildTask:
     parent_call_id: str = ""
     index: int | None = None
     label: str = ""
+    # TD-5299: a background worker's worktree (opened at spawn, so a writer
+    # that cannot have one is refused there), its own ceilings, the list
+    # its steps go to as it runs, and a callback after each model call
+    # with that call's cost.
+    opened: SessionWorktree | None = None
+    limits: WorkerLimits | None = None
+    steps: list[WorkerStep] | None = None
+    progress: Callable[[float], Awaitable[None]] | None = None
 
 
 @dataclass(frozen=True)
@@ -207,7 +217,10 @@ def register_delegate_tools(registry: ToolRegistry) -> None:
                 "worktree: true runs the child in its own git worktree from "
                 "the last commit (your uncommitted edits are not in it); "
                 "its changes come back on a branch for you to merge. "
-                "agent runs a named worker the user defined instead of a kind."
+                "agent runs a named worker the user defined instead of a kind. "
+                "background: true starts the child and returns at once so you can keep "
+                "working; its result arrives as a note when it finishes, and a child "
+                "that writes gets its own worktree. Use it for slow pieces, not to wait on."
             ),
             parameters={
                 "type": "object",
@@ -242,6 +255,18 @@ def register_delegate_tools(registry: ToolRegistry) -> None:
                             "Default false: it works in your files."
                         ),
                     },
+                    "background": {
+                        "type": "boolean",
+                        "description": (
+                            "Start the child and return its id at once (TD-5299). Keep "
+                            "working; its result arrives as a note when it finishes."
+                        ),
+                    },
+                    "label": {
+                        "type": "string",
+                        "maxLength": 60,
+                        "description": "A short name for a background child.",
+                    },
                 },
                 "required": ["task"],
             },
@@ -258,6 +283,12 @@ def register_delegate_handlers(dispatcher: ToolDispatcher) -> None:
     if dispatcher.registry.get("delegate") is None:
         raise KeyError("delegate tool must be registered before its handler")
     dispatcher.register_handler("delegate", handle_delegate)
+    # TD-5299: imported here, the background module imports this one.
+    from .delegate_background import delegate_output, delegate_stop
+
+    for name, handler in (("delegate_output", delegate_output), ("delegate_stop", delegate_stop)):
+        if dispatcher.registry.get(name) is not None:
+            dispatcher.register_handler(name, handler)
 
 
 def worker_child_registry(
@@ -292,21 +323,26 @@ async def handle_delegate(
     kind: str | None = None,
     worktree: bool | str = False,
     agent: str | None = None,
+    background: bool = False,
+    label: str = "",
     tool_call_id: str = "",
 ) -> HandlerOutput:
     """``delegate`` handler — run a one-level worker, research or named child."""
     parent, _runtime = bound_runtime(session, "delegate")
-    done = await run_child_task(
-        parent,
-        ChildTask(
-            task=task,
-            context=context,
-            kind=kind,
-            agent=agent,
-            worktree=worktree,
-            call_id=tool_call_id,
-        ),
+    spec = ChildTask(
+        task=task,
+        context=context,
+        kind=kind,
+        agent=agent,
+        worktree=worktree,
+        call_id=tool_call_id,
+        label=label,
     )
+    if background:
+        from .delegate_background import spawn
+
+        return HandlerOutput(text=await spawn(parent, spec))
+    done = await run_child_task(parent, spec)
     return HandlerOutput(text=done.summary, transcript=done.steps)
 
 
@@ -346,8 +382,12 @@ async def run_child_task(parent: Session, spec: ChildTask) -> ChildDone:
         worker_tier(runtime.config, named)
     resolved = resolve_kind(spec.kind, plan_mode=plan_mode)
     writes = named.writes if named is not None else resolved == "worker"
-    steps: list[WorkerStep] = []
-    own_tree = await open_child_tree(parent, spec.worktree, forced=spec.isolate_writer and writes)
+    steps: list[WorkerStep] = spec.steps if spec.steps is not None else []
+    own_tree = spec.opened
+    if own_tree is None:
+        own_tree = await open_child_tree(
+            parent, spec.worktree, forced=spec.isolate_writer and writes
+        )
     try:
         end = await _child_loop(
             parent=parent,
@@ -364,6 +404,8 @@ async def run_child_task(parent: Session, spec: ChildTask) -> ChildDone:
             parent_call_id=spec.parent_call_id,
             index=spec.index,
             label=spec.label,
+            limits=spec.limits,
+            progress=spec.progress,
         )
     except HandlerRefusal as e:
         await close_child_tree(own_tree, spec.task, steps)
@@ -440,6 +482,8 @@ async def _child_loop(
     parent_call_id: str = "",
     index: int | None = None,
     label: str = "",
+    limits: WorkerLimits | None = None,
+    progress: Callable[[float], Awaitable[None]] | None = None,
 ) -> _ChildEnd:
     """:func:`run_worker_child`'s loop, also saying why it stopped early."""
     parent, runtime = bound_runtime(parent, "delegate")
@@ -591,17 +635,24 @@ async def _child_loop(
     # call id in front keeps their approvals apart.
     prefix = call_id or uuid.uuid4().hex[:12]
 
-    child_max = runtime.config.delegate.max_iterations
+    child_max = runtime.config.delegate.max_iterations if limits is None else limits.max_calls
+    spent = 0.0
     for _ in range(child_max):
         if parent.cancel_requested or parent.stop_turn_requested:
             return stop(
                 "parent cancelled" if parent.cancel_requested else "parent stopped the turn"
             )
+        if limits is not None:
+            # TD-5299: a background worker's own ceilings.
+            if time.monotonic() >= limits.deadline:
+                return stop("worker time limit (delegate.background.max_minutes)")
+            if spent >= limits.max_usd:
+                return stop(f"worker spend ceiling (${limits.max_usd:.2f})")
         # The count is every child's calls, not this child's alone (TD-5195).
         used = runtime.iterations + runtime.child_calls
-        violation = _child_cap_violation(
-            parent, tracker, runtime.session_start, used, _skip_all(parent_dispatcher)
-        )
+        # A background worker honours every session cap, skip-all or not.
+        skip_all = limits is None and _skip_all(parent_dispatcher)
+        violation = _child_cap_violation(parent, tracker, runtime.session_start, used, skip_all)
         if violation is not None:
             return stop(violation)
         runtime.child_calls += 1
@@ -623,9 +674,13 @@ async def _child_loop(
             )
         if isinstance(resp, ProviderError):
             return stop(resp.message)
+        cost = 0.0
         if resp.usage is not None:
-            tracker.record(acting, resp.usage, worker_cfg, source=source)
+            cost = tracker.record(acting, resp.usage, worker_cfg, source=source)
             await parent.event_log.add(tracker.emit_cost_update(parent.id))
+        spent += cost
+        if progress is not None:
+            await progress(cost)
 
         tool_calls = resp.message.tool_calls or []
         content = resp.message.content or ""
@@ -677,7 +732,8 @@ async def _child_loop(
             content = _tool_message_content(r) if r.images else r.output
             messages.append(ChatMessage(role="tool", content=content, tool_call_id=tc.id))
 
-    return stop(f"the child used all {child_max} of its model calls (delegate.max_iterations)")
+    key = "delegate.max_iterations" if limits is None else "delegate.background.max_iterations"
+    return stop(f"the child used all {child_max} of its model calls ({key})")
 
 
 def _skip_all(dispatcher: ToolDispatcher) -> bool:

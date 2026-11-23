@@ -174,6 +174,7 @@ from .tools.consult import offered_tools
 from .tools.delegate_named import with_named_workers, with_worker_mentions
 from .tools.dispatch import build_decision_request, canonicalize_path_fields
 from .tools.tool_search import TOOL_SEARCH_NAME
+from .worker_turn import inject_worker_notes, owes_the_turn, wait_for_workers
 from .workspace_trust import trusted_imports
 from .worktree_config import config_home, refresh_config
 
@@ -608,9 +609,13 @@ async def _emit_turn_complete(
 ) -> None:
     """Emit a ``turn_complete`` event with cost and duration.
 
+    TD-5299: no background worker outlives its turn; any still alive here
+    (the turn failed or paused out) is stopped first.
+
     ``failed``/``error_code`` make a failed turn machine-visible so the UI
     can key tailored copy off the provider's typed code (TD-1008).
     """
+    await session.workers.stop_all("the turn ended")
     duration = time.time() - turn_start
     await session.event_log.add(
         TurnComplete(
@@ -1961,7 +1966,11 @@ async def agent_loop(
             return
         tools_version = tool_registry.version
         # A child cannot delegate or run a workflow (TD-5195): one level only.
-        unusable = {"delegate", "workflow"} if session.delegate_depth >= 1 else set()
+        unusable = (
+            {"delegate", "workflow", "delegate_output", "delegate_stop"}
+            if session.delegate_depth >= 1
+            else set()
+        )
         if tool_dispatcher is None or not tool_dispatcher.has_handler(TOOL_SEARCH_NAME):
             unusable.add(TOOL_SEARCH_NAME)
         all_tool_definitions = [
@@ -2104,6 +2113,9 @@ async def agent_loop(
         # TD-5112: a message sent from here to turn_complete joins this
         # turn at its next tool-batch boundary.
         session.open_steering(queued.id)
+        # TD-5299: a fresh count of background workers for this turn.
+        session.workers.begin_turn()
+        session.steer_arrived.clear()
         # TD-5134: user_prompt hooks see the message before anything acts
         # on it; a block keeps it out of the conversation.
         if session.config is not None:
@@ -2674,6 +2686,9 @@ async def agent_loop(
                     claude_global_fallback=config.steering.claude_global_fallback,
                 )
                 last_batch = []
+                session.steer_arrived.clear()
+                # TD-5299: a background worker that settled meanwhile.
+                steered += await inject_worker_notes(session, messages)
                 if session.loaded_skills != skills_before:
                     # A /skill in the steer: the prompt was assembled at
                     # 2b, before it loaded, so the call that reads the
@@ -3008,6 +3023,26 @@ async def agent_loop(
 
             # 2h. No tool calls (or no dispatcher): the model ended the
             #     turn. The done-check may send it back to work (TD-5124).
+            #     TD-5299: not while a background worker is alive or its
+            #     note is owed. Wait for it with no model call, then go on.
+            if owes_the_turn(session):
+                await wait_for_workers(session)
+                if session.cancel_requested:
+                    break
+                if session.stop_turn_requested:
+                    await _finish_stopped_turn(session, tier, turn_start, tracker)
+                    break
+                session.steer_arrived.clear()
+                joined = await inject_steers(
+                    session,
+                    messages,
+                    step=turn_step,
+                    after_tool_call_ids=[],
+                    claude_global_fallback=config.steering.claude_global_fallback,
+                )
+                joined += await inject_worker_notes(session, messages)
+                if joined:
+                    continue
             checked = await stop_check.at_turn_end(messages)
             if checked == "retry":
                 continue
