@@ -19,8 +19,9 @@ workspace as the working directory.  Three safety rails surround it:
   (TD-5116): a systemd user scope where one works, else ``RLIMIT_AS``,
   and Podman's ``--memory`` in a container.  A command killed for going
   over says so in its result (``shell_memory.py``).
-- **Sandbox (opt-in).**  With ``sandbox.enabled`` in the workspace config
-  an interactive command runs under bubblewrap: writes fenced to the
+- **Sandbox.**  With ``sandbox.enabled`` in the workspace config, or the
+  user-level ``sandbox.default`` (TD-5295), an interactive command runs under
+  bubblewrap: writes fenced to the
   workspace and a private ``/tmp``, no network, keys unreadable
   (TD-5138, ``shell_sandbox.py``).
 - **``allowed_commands`` allowlist.**  When configured, each top-level
@@ -76,6 +77,7 @@ from ..proc_lifecycle import (
     retain_subprocess_transport,
 )
 from ..protocol import ShellOutput
+from ..sandbox import Enforcement, current_status, reprobe
 from ..session import Session
 from ..shell_read_only import run_env
 from . import shell_memory
@@ -572,6 +574,12 @@ def _sandbox_for(session: Session, command: str, tool_call_id: str) -> bool:
     reason = shell_sandbox.unavailable_reason() if sandboxed else None
     if reason is not None:
         raise ValueError(f"refused: {reason}")
+    # TD-5294: a run promised to a full sandbox does not go ahead in a weaker one.
+    if promised and current_status().enforcement is not Enforcement.FULL:
+        raise ValueError(
+            "refused: this command was allowed to run without asking because the sandbox "
+            "held every promise, and it no longer does; run it again to be asked"
+        )
     return sandboxed
 
 
@@ -860,7 +868,7 @@ async def _run_foreground(
                     await task
 
     if adopted:
-        adopted_note = shell_sandbox.SANDBOX_NOTE if sandboxed else ""
+        adopted_note = shell_sandbox.note() if sandboxed else ""
         return _format_result(header, None, out, err, adopted_note)
     # A cancelled process may have no returncode; -9 is the conventional
     # "killed by SIGKILL" sentinel (SIGKILL itself is absent on Windows).
@@ -872,7 +880,11 @@ async def _run_foreground(
     wrote = writes_workspace_files(command, session.workspace_path, mount=mount)
     # A command this tool killed (timeout, cancel, stop) already says why.
     memory = "" if header else await shell_memory.cap_note(cap, exit_code, err.tail)
-    sandbox = shell_sandbox.SANDBOX_NOTE if sandboxed else ""
+    sandbox = shell_sandbox.note() if sandboxed else ""
+    if sandboxed and exit_code != 0 and err.tail.lstrip().startswith("bwrap:"):
+        # bubblewrap itself failed, not the command: what it can do here may
+        # have changed, so the next card and Doctor say so (TD-5294).
+        await asyncio.to_thread(reprobe)
     notes = "\n".join(
         n for n in (sandbox, *guard_notes, memory, SHELL_WRITE_NOTE if wrote else "") if n
     )

@@ -1158,6 +1158,29 @@ outright, add a `shell` rule too, such as
 `{ tool: shell, args: "*.env*", effect: never }`, which refuses any command
 whose text mentions `.env`.
 
+### `sandbox`
+
+The shell sandbox for every workspace on this computer (TD-5295). Linux only for now
+(bubblewrap); what it does and how strongly it holds are in §4.13. A workspace's own
+`sandbox:` section in `.tst/config.yaml` sits over this one. It may always tighten (turn the
+sandbox on, hide more paths). With `default` `on` or `require`, a workspace file that turns the
+sandbox off, excludes a command or turns on auto-run waits for your trust (§4.8), because
+otherwise a command that runs without asking would run on the host.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `default` | `off` \| `on` \| `require` | `off` | `off`: only a workspace that says `enabled: true` is sandboxed. `on`: every interactive shell command is, unless the workspace (trusted) says otherwise. `require`: the same, and where the sandbox only partly holds a sandboxed command is refused. Off Linux, `on` and `require` refuse every sandboxed command, never run it on the host. |
+| `on_partial` | `ask` \| `refuse` | `ask` | Where the sandbox only partly holds (Doctor's `sandbox` row says which promise is missing): `ask` puts a command that would have run unasked on an approval card that names the gap; `refuse` refuses it. |
+| `auto_allow` | bool | `false` | Inside a full sandbox, a command that would otherwise ask runs without asking, for every workspace. Same limits as the workspace key (§4.13). |
+| `hidden_paths` | list of paths | `[]` | Added to the built-in list of paths no sandboxed command may read, for every workspace. |
+
+<!-- verify: model -->
+```yaml
+sandbox:
+  default: "on"
+  on_partial: ask
+```
+
 ### `provider_retry`
 
 How stubbornly a retryable provider failure (429, 5xx, transport) is
@@ -3810,7 +3833,25 @@ Inside the sandbox:
   (`$XDG_RUNTIME_DIR`: the D-Bus socket the Secret Service keychain answers on, and the ssh
   and gpg agents) are covered by an empty, unreadable folder. A file such as `~/.netrc` reads
   as empty.
-- The command's result says `ran in the shell sandbox` under the exit code.
+- The command's result says `ran in the shell sandbox (bwrap, full)` under the exit code: the
+  backend, and how strongly it holds here (TD-5294).
+
+**How strongly it holds (TD-5294).** TD-5294 tries the sandbox for real when the daemon starts,
+again whenever Doctor opens, and again after bubblewrap itself fails to start a command. Installing
+bubblewrap needs no restart. It reports one of three levels:
+
+- `full`: every promise above holds.
+- `partial`: it runs, but one promise does not hold here, and it says which. Today this is a host
+  where a command inside the sandbox can make a user namespace of its own that maps root, which can
+  undo a read-only bind (Ubuntu's kernel policy refuses that; some distributions allow it).
+  Commands still run in it, but `auto_allow` never lets one skip its ask.
+- `none`: it cannot run here, and the reason says how to fix that. A command that would be
+  sandboxed is refused.
+
+Doctor has a `sandbox` row with the level and every gap. An approval card for a shell command has
+one line saying what the command would run in: "Runs in the sandbox (bwrap, full)", a partial
+level with the promises it does not hold, or "Runs on your computer, outside the sandbox" when the
+sandbox is off for this workspace or the command is excluded.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|

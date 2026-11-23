@@ -48,8 +48,9 @@ jobs:
           enable-cache: true
 
       - name: Install bubblewrap
-        # The shell sandbox tests (TD-5138) run a real bwrap; they skip
-        # themselves where the runner cannot start one.
+        # The shell sandbox tests (TD-5138) run a real bwrap. Elsewhere they
+        # skip where the host cannot start one; here TST_REQUIRE_SANDBOX
+        # makes that a failure, so they cannot quietly stop running (TD-5294).
         run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends bubblewrap
 
       - name: Sync dependencies
@@ -72,6 +73,7 @@ jobs:
         run: uv run pytest -q --tb=short
         env:
           PYTHONUTF8: "1"
+          TST_REQUIRE_SANDBOX: "1"
 
       # TD-5163: tracked files carry no maintainer-private strings. The list
       # is a repository secret; fork PRs don't get it and skip. Everywhere

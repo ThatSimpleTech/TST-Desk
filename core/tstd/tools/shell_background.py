@@ -110,7 +110,7 @@ async def start_job(session: Session, command: str, *, sandboxed: bool = False) 
     )
     job.watcher = asyncio.create_task(_watch(session, job, proc, work, guard), name=job.job_id)
     await session.shell_jobs.add(job)
-    sandbox = f"\n{shell_sandbox.SANDBOX_NOTE}" if sandboxed else ""
+    sandbox = f"\n{shell_sandbox.note()}" if sandboxed else ""
     return (
         f"started background job {job.job_id} (pid {proc.pid}).\n"
         f"Read its output with shell_job_output job_id={job.job_id}; "

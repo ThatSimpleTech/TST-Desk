@@ -11,17 +11,19 @@ Acceptance criteria:
 
 The plan and gate tests run everywhere. The ones that run a real ``bwrap``
 skip where the host cannot start one (no bubblewrap, or user namespaces
-refused).
+refused), unless ``TST_REQUIRE_SANDBOX=1`` says they must run (TD-5294).
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import socket
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +34,8 @@ from tstd.autonomy import AmbiguousClassifier, Boundary, DecisionClassifier
 from tstd.autonomy.classifier import DecisionClass
 from tstd.boundary_config import BoundaryConfig
 from tstd.policy import ApprovalOutcome, PolicyConfig, PolicyDecision, PolicyRule
+from tstd.sandbox import BackendStatus, Enforcement, set_backend
+from tstd.sandbox import bwrap as sandbox_bwrap
 from tstd.session import Session
 from tstd.shell_sandbox import SandboxSection, build_plan, excluded, promote
 from tstd.tools import ToolDispatcher, create_registry, register_builtin_handlers, run_shell
@@ -54,7 +58,34 @@ def _bwrap_works() -> bool:
     return done.returncode == 0
 
 
-needs_bwrap = pytest.mark.skipif(not _bwrap_works(), reason="bubblewrap cannot run here")
+# TD-5294: CI sets this so the real-run tests fail instead of quietly skipping.
+_REQUIRED = os.environ.get("TST_REQUIRE_SANDBOX") == "1"
+needs_bwrap = pytest.mark.skipif(
+    not _REQUIRED and not _bwrap_works(), reason="bubblewrap cannot run here"
+)
+
+
+class _Fixed:
+    name = "fake"
+
+    def __init__(self, level: Enforcement) -> None:
+        self.level = level
+
+    def probe(self) -> BackendStatus:
+        gaps = (("pins", "test"),) if self.level is Enforcement.PARTIAL else ()
+        why = "not here" if self.level is Enforcement.NONE else None
+        return BackendStatus("fake", self.level, gaps=gaps, unavailable=why)
+
+
+def _use(level: Enforcement) -> None:
+    set_backend(_Fixed(level))
+
+
+@pytest.fixture(autouse=True)
+def _real_backend_after() -> Iterator[None]:
+    yield
+    set_backend(None)
+
 
 ON = SandboxSection(enabled=True)
 AUTO = SandboxSection(enabled=True, auto_allow=True, exclude=["docker *", "git push*"])
@@ -260,7 +291,7 @@ class TestGuard:
 
 class TestPromote:
     def test_class_default_ask_becomes_auto(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(shell_sandbox, "unavailable_reason", lambda: None)
+        _use(Enforcement.FULL)
         got = promote(AUTO, "npm test", ASK, DecisionClass.B, autonomy=False)
         assert got is not None and got.effect == "auto"
         assert "sandbox" in got.reason
@@ -296,12 +327,21 @@ class TestPromote:
         klass: DecisionClass,
         autonomy: bool,
     ) -> None:
-        monkeypatch.setattr(shell_sandbox, "unavailable_reason", lambda: None)
+        _use(Enforcement.FULL)
         assert promote(section, command, decision, klass, autonomy=autonomy) is None
 
     def test_no_bubblewrap_means_no_auto_run(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(shell_sandbox.shutil, "which", lambda _name: None)
+        monkeypatch.setattr(sandbox_bwrap.shutil, "which", lambda _name: None)
+        set_backend(None)
+        assert shell_sandbox.unavailable_reason() is not None
         assert promote(AUTO, "npm test", ASK, DecisionClass.B, autonomy=False) is None
+
+    def test_a_partial_sandbox_never_skips_the_ask(self) -> None:
+        """TD-5294: auto_allow needs every promise held, not most of them."""
+        _use(Enforcement.PARTIAL)
+        assert promote(AUTO, "npm test", ASK, DecisionClass.B, autonomy=False) is None
+        _use(Enforcement.FULL)
+        assert promote(AUTO, "npm test", ASK, DecisionClass.B, autonomy=False) is not None
 
     def test_exclude_matches_any_reading(self) -> None:
         assert excluded(AUTO, "cd sub; docker build .")
@@ -342,7 +382,7 @@ class TestRealSandbox:
                 f"echo in > made.txt; echo t > {marker} && cat {marker}; "
                 f"echo out > {outside} || echo BLOCKED",
             )
-            assert shell_sandbox.SANDBOX_NOTE in out
+            assert shell_sandbox.note() in out
             assert (ws / "made.txt").read_text() == "in\n"
             assert "BLOCKED" in out and not outside.exists()
             assert "t\n" in out
@@ -373,7 +413,7 @@ class TestRealSandbox:
                 f"ls {data} 2>/dev/null || echo NO-LIST; "
                 f"cat {data}/worktrees/other/theirs.txt 2>/dev/null || echo NO-SIBLING",
             )
-            assert shell_sandbox.SANDBOX_NOTE in out
+            assert shell_sandbox.note() in out
             assert (ws / "made.txt").read_text() == "in\n"
             assert "in\n" in out
             # The rest of the data dir stays out of reach: its files, its
@@ -598,7 +638,7 @@ class TestRealSandbox:
                 f"echo out > {outside} || echo BLOCKED; echo evil > AGENTS.md",
                 background=True,
             )
-            assert shell_sandbox.SANDBOX_NOTE in started
+            assert shell_sandbox.note() in started
             job = session.shell_jobs.get("job-1")
             assert job is not None
             for _ in range(200):
@@ -627,7 +667,7 @@ class TestRealSandbox:
                 on_timeout="background",
             )
             assert "moved to background job job-1" in out
-            assert shell_sandbox.SANDBOX_NOTE in out
+            assert shell_sandbox.note() in out
             job = session.shell_jobs.get("job-1")
             assert job is not None
             for _ in range(200):
@@ -647,7 +687,7 @@ class TestRealSandbox:
         outside = tmp_path / "outside.txt"
         section = SandboxSection(enabled=True, exclude=["echo host*"])
         out = await run_shell(_session(ws, section), f"echo host > {outside}")
-        assert shell_sandbox.SANDBOX_NOTE not in out
+        assert shell_sandbox.note() not in out
         assert outside.read_text() == "host\n"
 
 
@@ -662,7 +702,8 @@ class TestRefusals:
     async def test_no_bubblewrap_refuses_instead_of_running_on_host(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(shell_sandbox.shutil, "which", lambda _name: None)
+        monkeypatch.setattr(sandbox_bwrap.shutil, "which", lambda _name: None)
+        set_backend(None)
         with pytest.raises(ValueError, match="bubblewrap"):
             await run_shell(_session(tmp_path, ON), "touch made.txt")
         assert not (tmp_path / "made.txt").exists()
@@ -706,7 +747,7 @@ class TestGateEndToEnd:
         assert result.status == "success", result.output
         assert asked == []
         assert (tmp_path / "made.txt").exists()
-        assert shell_sandbox.SANDBOX_NOTE in result.output
+        assert shell_sandbox.note() in result.output
 
     async def test_excluded_command_asks_and_runs_outside(self, tmp_path: Path) -> None:
         asked: list[str] = []
@@ -717,7 +758,7 @@ class TestGateEndToEnd:
             "c2", "shell", {"command": "touch made.txt"}, session
         )
         assert asked == ["touch made.txt"]
-        assert shell_sandbox.SANDBOX_NOTE not in result.output
+        assert shell_sandbox.note() not in result.output
 
     async def test_without_auto_allow_it_still_asks(self, tmp_path: Path) -> None:
         asked: list[str] = []
@@ -725,4 +766,4 @@ class TestGateEndToEnd:
             "c3", "shell", {"command": "touch made.txt"}, _session(tmp_path, ON)
         )
         assert asked == ["touch made.txt"]
-        assert shell_sandbox.SANDBOX_NOTE in result.output
+        assert shell_sandbox.note() in result.output

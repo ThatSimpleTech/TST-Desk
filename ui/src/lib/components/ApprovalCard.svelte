@@ -123,6 +123,15 @@
 			</details>
 		{/if}
 		<p class="reason">{approval.reason}</p>
+		{#if approval.sandbox}
+			<p
+				class="sandbox"
+				class:sandbox--weak={approval.sandbox.level !== 'full'}
+				title={(approval.sandbox.gaps ?? []).join('\n')}
+			>
+				{approval.sandbox.line}
+			</p>
+		{/if}
 	</div>
 
 	<footer class="actions">
@@ -207,6 +216,16 @@
 		flex-direction: column;
 		gap: var(--space-1);
 		min-width: 0;
+	}
+
+	.sandbox {
+		margin: 0;
+		font-size: var(--text-xs);
+		color: var(--color-ink-secondary);
+	}
+
+	.sandbox--weak {
+		color: var(--color-warn);
 	}
 
 	.who {

@@ -41,6 +41,7 @@ from .boundary_config import BoundaryConfig, boundary_from_mapping, workspace_co
 from .config import ConfigError
 from .host_memory import default_shell_memory_mb
 from .policy import approved_imports_from_mapping, policy_from_mapping
+from .shell_sandbox import SandboxSection
 
 TRUST_FILE = "workspace_trust.yaml"
 
@@ -129,7 +130,9 @@ def _raised(key: str, value: float, default: float) -> list[Loosened]:
     return []
 
 
-def _boundary_loosened(path: Path, data: dict[str, Any]) -> list[Loosened]:
+def _boundary_loosened(
+    path: Path, data: dict[str, Any], sandbox_default: str = "off"
+) -> list[Loosened]:
     try:
         cfg = boundary_from_mapping(path, data)
     except ConfigError:
@@ -161,11 +164,28 @@ def _boundary_loosened(path: Path, data: dict[str, Any]) -> list[Loosened]:
     # as it names one.
     for check in cfg.stop_check.checks:
         out.append(Loosened("stop_check.checks", check, "none"))
-    # A repo that turns on auto-run in its own sandbox would run commands
-    # without asking (TD-5138). ``enabled`` and ``exclude`` alone never loosen:
-    # an excluded command still goes through the normal gate.
-    if cfg.sandbox.enabled and cfg.sandbox.auto_allow:
+    out += _sandbox_loosened(cfg.sandbox, sandbox_default)
+    return out
+
+
+def _sandbox_loosened(section: SandboxSection, default: str) -> list[Loosened]:
+    """A repo's ``sandbox:`` against the user's ``sandbox.default`` (TD-5295).
+
+    Auto-run in a sandbox that is on runs commands without asking
+    (TD-5138). With the default off, ``enabled`` and ``exclude`` never
+    loosen: an excluded command still goes through the normal gate. With
+    it on, a Class A command runs unasked, so turning the sandbox off or
+    excluding a command would put it on the host, and that waits for trust.
+    """
+    out: list[Loosened] = []
+    on_by_default = default != "off"
+    enabled = section.enabled if section.enabled is not None else on_by_default
+    if enabled and section.auto_allow:
         out.append(Loosened("sandbox.auto_allow", "true", "false (each command asks)"))
+    if on_by_default and section.enabled is False:
+        out.append(Loosened("sandbox.enabled", "false", f"true (sandbox.default: {default})"))
+    if on_by_default and section.exclude:
+        out.append(Loosened("sandbox.exclude", ", ".join(section.exclude), "none (all sandboxed)"))
     return out
 
 
@@ -205,7 +225,9 @@ def _imports_loosened(path: Path, data: dict[str, Any]) -> list[Loosened]:
     ]
 
 
-def find_loosened(path: Path, data: dict[str, Any]) -> list[Loosened]:
+def find_loosened(
+    path: Path, data: dict[str, Any], *, sandbox_default: str = "off"
+) -> list[Loosened]:
     """Every setting in *data* that is looser than the packaged defaults.
 
     Judged on the same validated models the loaders apply, so a section
@@ -214,7 +236,7 @@ def find_loosened(path: Path, data: dict[str, Any]) -> list[Loosened]:
     counts.
     """
     out = _policy_loosened(path, data)
-    out += _boundary_loosened(path, data)
+    out += _boundary_loosened(path, data, sandbox_default)
     out += _imports_loosened(path, data)
     for key in _UNREAD_LOOSENING_KEYS:
         value = data.get(key)
@@ -265,7 +287,8 @@ def read_view(workspace: str | Path, store: TrustStore | None) -> WorkspaceConfi
         return WorkspaceConfigView(path, None, None, (), "none")
     digest = hashlib.sha256(raw).hexdigest()
     data = _parse(path, raw)
-    loosened = tuple(find_loosened(path, data)) if data is not None else ()
+    default = store.sandbox_default if store is not None else "off"
+    loosened = tuple(find_loosened(path, data, sandbox_default=default)) if data is not None else ()
     state: TrustState = "none"
     if loosened:
         state = "trusted" if store is None else store.state_for(workspace, digest)
@@ -304,9 +327,12 @@ class TrustStore:
     asks again, which fails closed.
     """
 
-    def __init__(self, data_dir: str | Path) -> None:
+    def __init__(self, data_dir: str | Path, sandbox_default: str = "off") -> None:
         self.path = Path(data_dir) / TRUST_FILE
         self._lock = threading.Lock()
+        # TD-5295: the user-level ``sandbox.default``. Under on or require,
+        # a workspace that turns the sandbox off or excludes a command loosens.
+        self.sandbox_default = sandbox_default
 
     def _load(self) -> dict[str, dict[str, str]]:
         try:

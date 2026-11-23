@@ -511,6 +511,9 @@ from .remote_devices import (
 )
 from .rewind_handlers import preview_restore, restore_files
 from .router import TierRouter
+from .sandbox import Enforcement
+from .sandbox import current_status as sandbox_status
+from .sandbox import reprobe as sandbox_reprobe
 from .scheduler.calendar_path import CalendarPathError, require_calendar_file
 from .scheduler.chain import require_chain
 from .scheduler.chat_source import SessionScheduleSource, session_schedule_source
@@ -921,6 +924,30 @@ def _win_parent_alive(pid: int) -> bool:
         return True
 
 
+def _check_sandbox() -> DiagnosticCheck:
+    """The shell sandbox's backend and level, probed afresh (TD-5294).
+
+    Machine-level and off by default, so "cannot run here" is a skip that
+    says why, not a failure; a workspace that turns it on is refused per
+    command with the same reason.
+    """
+    status = sandbox_reprobe()
+    if status.enforcement is Enforcement.FULL:
+        return DiagnosticCheck(
+            name="sandbox", status="ok", detail=f"{status.backend}: full, every promise held"
+        )
+    if status.enforcement is Enforcement.PARTIAL:
+        return DiagnosticCheck(
+            name="sandbox",
+            status="warn",
+            detail=f"{status.backend}: partial. {status.gap_text()}. "
+            "Commands still run in it, but none runs without asking",
+        )
+    return DiagnosticCheck(
+        name="sandbox", status="skip", detail=f"cannot run here: {status.unavailable}"
+    )
+
+
 def _check_git() -> DiagnosticCheck:
     """git reachable on PATH (TD-1104). Runs in a worker thread."""
     path = shutil.which("git")
@@ -1238,7 +1265,7 @@ class Daemon:
         self.skip_all_approvals = load_skip_all(self.data_dir)
         # TD-5113: per-workspace trust in repo-supplied config. Same rule:
         # the decisions live here, never in the workspace.
-        self.workspace_trust = TrustStore(self.data_dir)
+        self.workspace_trust = TrustStore(self.data_dir, self.config.sandbox.default)
         self.load_global_memory = load_global_memory(self.data_dir)
         self.coworker_enabled = load_coworker(self.data_dir)
         self.voice_enabled = load_voice(self.data_dir)
@@ -1769,6 +1796,8 @@ class Daemon:
         # back to what the loader chose.
         keep = live if live in loaded.presets else loaded.active_preset
         self.config = loaded.model_copy(update={"active_preset": keep})
+        # TD-5295: the trust card judges a repo's sandbox against this.
+        self.workspace_trust.sandbox_default = self.config.sandbox.default
         self._slug_snapshot = _snapshot_slugs(self.config)
         self._drop_provider_clients()
 
@@ -2465,6 +2494,7 @@ class Daemon:
             )
 
         checks.append(await asyncio.to_thread(_check_git))
+        checks.append(await asyncio.to_thread(_check_sandbox))
         checks.append(
             await asyncio.to_thread(_check_grok, self.config.engine.binary, self.config.engine.kind)
         )
@@ -2714,6 +2744,11 @@ class Daemon:
         if await asyncio.to_thread(cu_stopfile.stop_engaged):
             self.set_computer_use_killed(True, write_file=False)
         self._tasks.append(asyncio.create_task(self._cu_stop_watch(), name="cu-stop-watch"))
+        # TD-5294: probe the sandbox once off the loop, so the first shell
+        # call and approval card read a cached answer.
+        self._tasks.append(
+            asyncio.create_task(asyncio.to_thread(sandbox_status), name="sandbox-probe")
+        )
         self._arm_phone_permission_expiry()
         await self._shutdown_event.wait()
 
@@ -2993,6 +3028,7 @@ class Daemon:
             # a move still reload its wall: gated too, or a loosening file
             # read as trusted (TD-5158).
             sess.trust_store = self.workspace_trust
+            sess.sandbox_defaults = self.config.sandbox
             if loaded is not None and loaded.events:
                 sess.event_log.replace(loaded.events)
                 # TD-5140: a replay-only session holds no proposal either.
@@ -5228,6 +5264,7 @@ class Daemon:
 
         # TD-5113: every config load below goes through the trust gate.
         sess.trust_store = self.workspace_trust
+        sess.sandbox_defaults = self.config.sandbox
         await self._follow_project_config(sess)
         error = reload_session_boundary(sess, sess.workspace_path)
         if error is not None:

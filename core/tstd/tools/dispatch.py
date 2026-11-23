@@ -46,6 +46,7 @@ from ..policy import (
 )
 from ..protocol import AfterWriteRun, RunPermissions, WorkerStep
 from ..protocol import DecisionLogged as DecisionLoggedEvent
+from ..sandbox import current_status
 from ..session import Session
 from .boundary import PathGuard, RefusalError, windows_unsafe_reason
 from .desktop import peel_screenshot_png
@@ -911,6 +912,20 @@ class ToolDispatcher:
         """
         if name != "shell" or not isinstance(session, Session):
             return decision
+        command = arguments.get("command")
+        section = session.boundary_config.sandbox
+        if (
+            not session.autonomy
+            and isinstance(command, str)
+            and shell_sandbox.applies(section, command, autonomy=False)
+        ):
+            # TD-5295: a partial sandbox refuses under require or
+            # on_partial: refuse, and otherwise asks where it would not have.
+            weaker = shell_sandbox.partial_decision(
+                session.sandbox_defaults, decision, current_status()
+            )
+            if weaker is not None:
+                return weaker
         promoted = shell_sandbox.promote(
             session.boundary_config.sandbox,
             arguments.get("command"),

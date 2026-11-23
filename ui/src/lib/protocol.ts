@@ -1859,6 +1859,17 @@ export interface ApprovalRequest extends DaemonEvent {
   proposed_always_allow?: PolicyRuleSummary | null;
   /** TD-5268: the child that is asking; absent for the session's own agent. */
   worker?: ApprovalWorker | null;
+  /** TD-5294: what a shell call would run in. Absent: not a shell call. */
+  sandbox?: ApprovalSandbox | null;
+}
+
+/** TD-5294: `outside` is true when the command runs on the computer, not in the sandbox. */
+export interface ApprovalSandbox {
+  level: "full" | "partial" | "none";
+  backend: string;
+  outside?: boolean;
+  gaps?: string[];
+  line: string;
 }
 
 export interface QuestionOption {

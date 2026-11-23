@@ -54,7 +54,7 @@ from .worktree import SessionWorktree
 
 if TYPE_CHECKING:
     from .compaction_model import CompactionSummarizer
-    from .config import ModelConfig
+    from .config import ModelConfig, SandboxDefaults
     from .context.memory_loader import MemoryLoad
     from .cost import CostTracker
     from .fallback import TurnBackups
@@ -445,6 +445,8 @@ class Session:
         # before the first config load; None (library use) gates nothing.
         # ``config_view`` is the read the boundary was last loaded from.
         self.trust_store: TrustStore | None = None
+        # TD-5295: the user-level sandbox settings; None off the daemon.
+        self.sandbox_defaults: SandboxDefaults | None = None
         self.config_view: WorkspaceConfigView | None = None
         # TD-5139: the language-server problems this session's model was
         # last told, per (server, file), so a write reports only new ones.
@@ -949,6 +951,7 @@ class Session:
                 reason=reason,
                 proposed_always_allow=rule_summary(proposed) if proposed is not None else None,
                 worker=worker,
+                sandbox=self._approval_sandbox(tool.name, arguments),
                 seq=1,
             )
         )
@@ -956,6 +959,29 @@ class Session:
             await self.set_state("awaiting_approval", reason=reason)
 
         return await self._await_approval_resolution(tool_call_id, fut)
+
+    def _approval_sandbox(self, tool_name: str, arguments: dict[str, Any]) -> Any:
+        """What a shell call on this card would run in (TD-5294)."""
+        from . import shell_sandbox
+        from .protocol import ApprovalSandbox
+        from .sandbox import cached_status
+        from .sandbox.backend import approval_view
+
+        command = arguments.get("command")
+        if tool_name != "shell" or self.autonomy or not isinstance(command, str):
+            return None
+        applies = shell_sandbox.applies(self.boundary_config.sandbox, command, autonomy=False)
+        view = approval_view(cached_status(), applies=applies)
+        if view is None:
+            return None
+        level, backend, outside, gaps, line = view
+        return ApprovalSandbox(
+            level=level,  # type: ignore[arg-type]
+            backend=backend,
+            outside=outside,
+            gaps=gaps,
+            line=line,
+        )
 
     async def enter_awaiting(self, reason: str) -> None:
         """Park the session on the person: an approval or a question (TD-5121).

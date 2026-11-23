@@ -145,6 +145,7 @@ class TestWithoutWorkspace:
                 "api_key",
                 "provider",
                 "git",
+                "sandbox",
                 "grok_cli",
                 "workspace",
                 "steering",

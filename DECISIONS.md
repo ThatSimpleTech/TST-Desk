@@ -20347,3 +20347,47 @@ counter (the cap of three open proposals already bounds it, and a turn
 boundary is not something the tool can see without new session state);
 parking proposals from unattended runs for their summary (nobody is there
 to save them, and a job that proposes jobs is self-perpetuation).
+
+## 2026-11-23 — TD-5294: the sandbox reports a probed level (Class B)
+
+**Decision:** `core/tstd/sandbox/` holds a `SandboxBackend` protocol whose
+`probe()` returns a `BackendStatus` (backend, `full` / `partial` / `none`,
+gaps keyed by a fixed promise list, and the reason it cannot run). The
+status is cached per process, probed off the loop at start, again on Doctor
+and after bubblewrap fails to start. Promotion under `auto_allow` needs
+`full`. `ApprovalRequest` gains an optional `sandbox` object for shell calls.
+
+**Rationale:** auto-approval is only safe when every promise holds, and the
+person approving should see what a command runs in. A functional probe is
+honest where a version check is not: Ubuntu refuses the nested namespace
+that can undo a bind, other distributions allow it, and both ship the same
+bubblewrap. Reporting that as `partial` keeps the sandbox usable there
+without letting it skip an ask.
+
+**Rejected:** moving the argv builder into the package now (import churn,
+no behaviour change); passing `--disable-userns` (TD-5264, untested where it
+matters); a `fail` Doctor row when the sandbox cannot run (it is off by
+default, so that is not a fault of this computer).
+
+## 2026-11-23 — TD-5295: a user-level sandbox default under the workspace's section (Class B)
+
+**Decision:** `sandbox:` in the daemon's config (`SandboxDefaults`:
+`default`, `on_partial`, `auto_allow`, `hidden_paths`). The workspace
+section's `enabled` becomes `bool | None`, None meaning "follow the
+default", and `shell_sandbox.effective` merges the two on every boundary
+reload. The trust store carries the user's default so `find_loosened` can
+judge a repo's `enabled: false` and `exclude` against it. A partial
+sandbox turns an `auto` into `ask`, or anything into `never` under
+`require` or `on_partial: refuse`, in the dispatcher's sandbox step, after
+the gate.
+
+**Rationale:** a per-repo opt-in cannot be on by default, and a repository
+must not decide how strong the user's sandbox is. Under the default off a
+repo's `exclude` stays harmless (an excluded command asks), so nothing that
+works today starts asking for trust.
+
+**Rejected:** a separate config file for the user-level keys (the daemon's
+config already has the trust-free, user-owned place); `writable_paths` now
+(a writable root outside the workspace is where a command would plant
+something that runs later); shipping `default: on` (owner decision 2026-11:
+wait for macOS and the network allowlist).

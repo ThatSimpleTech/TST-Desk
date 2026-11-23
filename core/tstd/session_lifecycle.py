@@ -36,6 +36,7 @@ from .protocol import ConfigTrust, LoosenedSetting, build_error
 from .session import Session, SessionRegistry
 from .session_persist import SessionPersist
 from .session_store import SessionStore
+from .shell_sandbox import effective as effective_sandbox
 from .workspace_trust import WorkspaceConfigView, read_view
 
 log = get_logger("tstd.session_lifecycle")
@@ -282,6 +283,8 @@ def reload_session_boundary(
     if session.charter is not None:
         cfg.boundary = session.charter.boundary
         cfg.caps = _charter_caps(session.charter.caps, cfg.caps)
+    # TD-5295: the user's sandbox defaults under the workspace's own section.
+    cfg.sandbox = effective_sandbox(cfg.sandbox, session.sandbox_defaults)
     session.boundary_config = cfg
     return error
 

@@ -402,9 +402,12 @@ class TestAutonomyShell:
 
 class TestInteractiveDoesNotNeedAContainer:
     def test_loop_and_session_do_not_import_sandbox(self) -> None:
+        # The autonomy container, not the shell sandbox (TD-5294), which
+        # interactive sessions do use.
         for name in ("loop.py", "session.py"):
             text = (CORE / name).read_text(encoding="utf-8")
-            assert "sandbox" not in text, f"{name} must not mention the sandbox"
+            for container in _CONTAINER_NAMES:
+                assert container not in text, f"{name} must not reach the autonomy container"
 
     def test_daemon_sandbox_is_only_the_start_button(self) -> None:
         text = (CORE / "daemon.py").read_text(encoding="utf-8")
@@ -414,8 +417,19 @@ class TestInteractiveDoesNotNeedAContainer:
         next_def = rest.find("\n    async def ", 1)
         body = rest if next_def == -1 else rest[:next_def]
         before = text[:start]
-        assert "sandbox" not in before
+        for container in _CONTAINER_NAMES:
+            assert container not in before
         assert "run_autonomy_start" in body
+
+
+# Every way code could name the autonomy container module.
+_CONTAINER_NAMES = (
+    "autonomy.sandbox",
+    "autonomy import sandbox",
+    "SandboxExec",
+    "sandbox_start_error",
+    "podman",
+)
 
 
 # ── Config surface ───────────────────────────────────────────────────────

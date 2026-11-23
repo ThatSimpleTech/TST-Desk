@@ -207,4 +207,5 @@ class TestInteractiveUnchanged:
             text = (CORE / name).read_text(encoding="utf-8")
             assert "start_autonomy" not in text
             assert "run_autonomy_start" not in text
-            assert "sandbox" not in text
+            # The autonomy container; the shell sandbox is interactive (TD-5294).
+            assert "autonomy.sandbox" not in text and "autonomy import sandbox" not in text

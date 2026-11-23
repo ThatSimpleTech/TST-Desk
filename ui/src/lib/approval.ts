@@ -8,6 +8,7 @@
 import type {
   AlwaysAllow,
   ApprovalRequest,
+  ApprovalSandbox,
   ApprovalWorker,
   Approve,
   Deny,
@@ -27,6 +28,8 @@ export interface PendingApproval {
   proposedAlwaysAllow: PolicyRuleSummary | null;
   /** TD-5268: the child that is asking, or null for the session's own agent. */
   worker: ApprovalWorker | null;
+  /** TD-5294: what a shell call would run in, or null. */
+  sandbox: ApprovalSandbox | null;
 }
 
 /** Map an approval_request event to the card's pending-approval shape. */
@@ -41,6 +44,7 @@ export function approvalFromEvent(event: ApprovalRequest): PendingApproval {
     reason: event.reason,
     proposedAlwaysAllow: event.proposed_always_allow ?? null,
     worker: event.worker ?? null,
+    sandbox: event.sandbox ?? null,
   };
 }
 

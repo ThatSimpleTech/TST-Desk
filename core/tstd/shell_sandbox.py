@@ -37,9 +37,7 @@ import hashlib
 import os
 import platform
 import shlex
-import shutil
 import struct
-import sys
 import tempfile
 import time
 from collections.abc import Sequence
@@ -51,9 +49,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .logging import user_data_dir
 from .policy_shell import split_command
+from .sandbox import BackendStatus, Enforcement, current_status
 
 if TYPE_CHECKING:
     from .autonomy.classifier import DecisionClass
+    from .config import SandboxDefaults
     from .policy import PolicyDecision
 
 # Paths under the home directory a sandboxed command must not read:
@@ -95,8 +95,8 @@ _UNSET_ENV: tuple[str, ...] = (
 MAX_EXCLUDES = 100
 MAX_HIDDEN = 100
 
-SANDBOX_NOTE = (
-    "ran in the shell sandbox: writes reach only the workspace and a private /tmp, "
+_WALLS = (
+    "writes reach only the workspace and a private /tmp, "
     "no network or host sockets; .git and steering files are read-only"
 )
 AUTO_REASON = "runs inside the shell sandbox (sandbox.auto_allow)"
@@ -111,7 +111,9 @@ class SandboxSection(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = False
+    # None: follow the user-level ``sandbox.default`` (TD-5295). Merged into a
+    # bool by ``effective`` before anything reads it.
+    enabled: bool | None = None
     auto_allow: bool = False
     exclude: list[str] = Field(default_factory=list, max_length=MAX_EXCLUDES)
     hidden_paths: list[str] = Field(default_factory=list, max_length=MAX_HIDDEN)
@@ -122,6 +124,51 @@ class SandboxSection(BaseModel):
         if any(not item.strip() for item in v):
             raise ValueError("entries must be non-empty strings")
         return [item.strip() for item in v]
+
+
+def effective(section: SandboxSection, defaults: SandboxDefaults | None) -> SandboxSection:
+    """The workspace's section over the user's defaults (TD-5295).
+
+    A workspace that says nothing follows the default; what it does say
+    wins, which is why turning it off there waits for trust when the
+    default is on. Auto-run is on when either asks for it; hidden paths
+    add up.
+    """
+    if defaults is None:
+        # Off the daemon: nothing to merge; None already reads as off.
+        return section
+    enabled = section.enabled if section.enabled is not None else defaults.default != "off"
+    return section.model_copy(
+        update={
+            "enabled": enabled,
+            "auto_allow": section.auto_allow or defaults.auto_allow,
+            # Deduped, so merging an already merged section changes nothing.
+            "hidden_paths": list(dict.fromkeys([*defaults.hidden_paths, *section.hidden_paths])),
+        }
+    )
+
+
+def partial_decision(
+    defaults: SandboxDefaults | None,
+    decision: PolicyDecision,
+    status: BackendStatus,
+) -> PolicyDecision | None:
+    """For a command that will run in a partial sandbox: refuse, or ask
+    naming the gaps where it would have run unasked (TD-5295). None: leave
+    the decision as it is."""
+    from .policy import PolicyDecision
+
+    if status.enforcement is not Enforcement.PARTIAL or decision.effect == "never":
+        return None
+    gaps = status.gap_text()
+    refuse = defaults is not None and (
+        defaults.default == "require" or defaults.on_partial == "refuse"
+    )
+    if refuse:
+        return PolicyDecision("never", f"the shell sandbox only partly holds here: {gaps}", None)
+    if decision.effect == "auto":
+        return PolicyDecision("ask", f"the shell sandbox only partly holds here: {gaps}", None)
+    return None
 
 
 def excluded(section: SandboxSection, command: str) -> bool:
@@ -139,24 +186,26 @@ def excluded(section: SandboxSection, command: str) -> bool:
 
 def applies(section: SandboxSection, command: str, *, autonomy: bool) -> bool:
     """True when *command* must run inside the sandbox."""
-    return section.enabled and not autonomy and not excluded(section, command)
+    return bool(section.enabled) and not autonomy and not excluded(section, command)
 
 
 def unavailable_reason() -> str | None:
-    """Why this host cannot run the sandbox, or None when it can."""
-    if not sys.platform.startswith("linux"):
-        return "the shell sandbox needs Linux (bubblewrap); turn sandbox.enabled off here"
-    if _seccomp_arch() is None:
-        return (
-            f"the shell sandbox supports x86_64 and aarch64, not {platform.machine()}; "
-            "turn sandbox.enabled off here"
-        )
-    if shutil.which("bwrap") is None:
-        return (
-            "the shell sandbox is on but bubblewrap is not installed; install it "
-            "(apt install bubblewrap / dnf install bubblewrap) or turn sandbox.enabled off"
-        )
-    return None
+    """Why this host cannot run the sandbox, or None when it can (TD-5294: probed)."""
+    return current_status().unavailable
+
+
+def seccomp_supported() -> bool:
+    """Whether the AF_UNIX filter can be built for this machine."""
+    return _seccomp_arch() is not None
+
+
+def note(status: BackendStatus | None = None) -> str:
+    """The line a sandboxed result carries: what it ran in, and how strongly."""
+    status = status or current_status()
+    text = f"ran in the shell sandbox ({status.backend}, {status.enforcement.value}): {_WALLS}"
+    if status.gaps:
+        text += f"; partial: {status.gap_text()}"
+    return text
 
 
 def promote(
@@ -184,7 +233,8 @@ def promote(
         return None
     if not split_command(command).complete or not applies(section, command, autonomy=False):
         return None
-    if unavailable_reason() is not None:
+    # TD-5294: only a sandbox that holds every promise may skip the ask.
+    if current_status().enforcement is not Enforcement.FULL:
         return None
     return PolicyDecision("auto", AUTO_REASON, None)
 
