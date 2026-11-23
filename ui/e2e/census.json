@@ -247,6 +247,7 @@
 		"Turn on: Let paired phones add and change MCP servers",
 		"Turn on: Let paired phones turn approvals off",
 		"Turn on: Let paired phones add models and keys",
+		"Turn on: Let paired phones change computer use",
 		"toggle"
 	],
 	"settings:Policy": [

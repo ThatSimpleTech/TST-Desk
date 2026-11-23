@@ -75,6 +75,22 @@ export const PHONE_PERMISSIONS: PhonePermissionCopy[] = [
 			"Adding models and keys from a phone is turned off. You can turn it on under " +
 			"Settings, Phones and devices on the computer.",
 	},
+	{
+		capability: "computer_use",
+		title: "Let paired phones change computer use",
+		lead:
+			"With this on, a paired phone can turn computer use on, give it full control of the " +
+			"screen, change which apps it may use, and hide the glow and cursor that show it is " +
+			"running. The agent can then move this computer's pointer and type with nobody watching.",
+		points: [
+			"A phone can always turn computer use off, show every indicator, or press Stop.",
+			"No phone can release a Stop, even with this on. Only the computer can.",
+		],
+		advice: "Leave this off unless you start computer-use tasks while away from the computer.",
+		offOnPhone:
+			"Changing computer use from a phone is turned off. You can turn it on under " +
+			"Settings, Phones and devices on the computer.",
+	},
 ];
 
 export function permissionCopy(capability: string): PhonePermissionCopy | undefined {

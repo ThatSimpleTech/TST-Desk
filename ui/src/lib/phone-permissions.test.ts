@@ -119,11 +119,20 @@ describe("the words", () => {
 		);
 	});
 
+	it("the computer-use disclosure says a phone can never release a Stop (TD-5297)", () => {
+		const copy = permissionCopy("computer_use");
+		expect(copy?.title).toBe("Let paired phones change computer use");
+		expect(copy?.points).toContain(
+			"No phone can release a Stop, even with this on. Only the computer can.",
+		);
+	});
+
 	it("lists exactly the permissions the daemon knows", () => {
 		expect(PHONE_PERMISSIONS.map((p) => p.capability)).toEqual([
 			"mcp_servers",
 			"approval_switches",
 			"models_and_keys",
+			"computer_use",
 		]);
 	});
 

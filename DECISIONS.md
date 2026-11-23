@@ -20407,3 +20407,19 @@ the phone (TD-5242).
 **Rejected:** putting `delete_api_key` / `delete_credential` behind it (they
 remove a destination rather than add one); disabling every model form on
 the phone now (the refusal toast already names the switch).
+
+## 2026-11-23 — TD-5297: computer use is a phone permission; releasing a stop never is (Class B)
+
+**Decision:** capability `computer_use` over `set_cu_policy` and
+`set_cu_indicators`, with the tightening forms (off; every indicator on)
+open. A new `never_from_a_phone` rule in `phone_verbs`, checked first in
+`peer_policy.check`, refuses `set_cu_kill` with `killed: false` from any
+remote peer that is not a computer.
+
+**Rationale:** the owner's list puts releasing the stop under "never" and
+"not now" for a phone that engaged it, since that needs the engaging
+device recorded. A rule read off the message keeps it in the pure policy
+table, like the tightening forms.
+
+**Rejected:** recording which device engaged the stop so it could release
+it (owner row 7: not now).
