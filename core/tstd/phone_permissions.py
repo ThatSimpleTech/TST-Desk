@@ -42,10 +42,14 @@ APPROVAL_SWITCHES: Final = "approval_switches"
 # Adding a model or a key, or pointing a key at a host (TD-5296): the
 # conversation and the key then go wherever that entry says.
 MODELS_AND_KEYS: Final = "models_and_keys"
+# Turning computer use on or changing how it runs (TD-5297). Turning it
+# off, engaging the stop and turning every indicator on need nothing.
+COMPUTER_USE: Final = "computer_use"
 CAPABILITIES: Final[tuple[str, ...]] = (
     MCP_SERVERS,
     APPROVAL_SWITCHES,
     MODELS_AND_KEYS,
+    COMPUTER_USE,
 )
 
 # What the refusal and the Doctor row call each one.
@@ -53,6 +57,7 @@ LABELS: Final[Mapping[str, str]] = {
     MCP_SERVERS: "MCP servers",
     APPROVAL_SWITCHES: "Turning approvals off",
     MODELS_AND_KEYS: "Adding models and keys",
+    COMPUTER_USE: "Computer use settings",
 }
 
 # A timed grant is for "while I am out", not a second way to say forever.

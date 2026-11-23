@@ -28,7 +28,7 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 from .phone_permissions import LABELS
-from .phone_verbs import PHONE_OPEN, PHONE_OPT_IN, required_capability
+from .phone_verbs import PHONE_OPEN, PHONE_OPT_IN, never_from_a_phone, required_capability
 from .protocol import ClientMessage, DaemonEvent, ModelFallback, TierState, build_error
 
 DeviceKind = Literal["phone", "machine"]
@@ -320,6 +320,11 @@ def check(
     """
     sid = message_session_id(msg)
     if msg.type in LOOPBACK_VERBS and (peer.remote or peer.machine):
+        return build_error(
+            "loopback_only", "Only the computer itself can do that.", in_reply_to=msg.type
+        )
+    # TD-5297: some acts are the computer's whatever a phone was granted.
+    if peer.remote and not peer.machine and never_from_a_phone(msg):
         return build_error(
             "loopback_only", "Only the computer itself can do that.", in_reply_to=msg.type
         )

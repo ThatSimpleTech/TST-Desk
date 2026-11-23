@@ -14646,3 +14646,29 @@ shown at the computer, and it stayed after the phone was removed.
 phones" toast, which names the switch; the forms are not disabled on the
 phone. Moving a saved key to another host stays a "never" for phones in the
 owner's list and is a separate story.
+
+---
+
+### TD-5297 — A paired phone changes computer use only if the computer said so
+
+**Size:** 2 · **Depends on:** TD-5279, TD-5284 · **Status:** Done
+
+The fourth phone permission (owner decision row 4). Computer use moves
+this computer's pointer and types on its keyboard; a phone could turn it
+on, give it full control or hide its indicators with nobody at the
+computer.
+
+- [x] `set_cu_policy` that turns it on (or changes it while on) and
+      `set_cu_indicators` that hides any indicator are refused from a
+      paired phone with `phone_permission_off` unless the computer switched
+      `computer_use` on (`test_phone_computer_use.py`).
+- [x] Turning it off, every indicator on, and engaging the stop need
+      nothing.
+- [x] Releasing the stop (`set_cu_kill` with `killed: false`) is
+      `loopback_only` from any phone, granted or not (owner decision row 5).
+- [x] After the grant a phone can, and the computer is told.
+- [x] Settings → Phones and devices has its disclosure.
+
+**Notes:** `set_cu_policy` with `enabled: false` may carry other fields;
+they take effect only when someone turns it on again, which needs the
+permission from a phone.

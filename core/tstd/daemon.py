@@ -213,7 +213,13 @@ from .notify.slack import schedule as schedule_slack_notify
 from .notify.slack import send as send_slack_notify
 from .notify.telegram import schedule as schedule_telegram_notify
 from .peer_policy import outbound_event, service_hosts
-from .phone_permissions import APPROVAL_SWITCHES, MCP_SERVERS, MODELS_AND_KEYS, utc_now
+from .phone_permissions import (
+    APPROVAL_SWITCHES,
+    COMPUTER_USE,
+    MCP_SERVERS,
+    MODELS_AND_KEYS,
+    utc_now,
+)
 from .phone_store import PhoneStore, server_saved_summary, value_summary
 from .plan_review import answer as answer_plan
 from .plan_review import keep_pinned_plan_visible, restore_pinned_plan, restored_plan_mode
@@ -4218,6 +4224,11 @@ class Daemon:
             await asyncio.to_thread(self._mirror_overlay_prefs)
             if self.ax_driver is not None and not self._agent_cursor_wanted():
                 await self.ax_driver.cursor_off()
+            if not (msg.glow and msg.agent_cursor and msg.show_on_real_display):
+                # TD-5297: from a phone this is a phone permission in use.
+                await self._note_phone_change(
+                    COMPUTER_USE, "changed what shows on screen while computer use runs."
+                )
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, SetCuPolicy):
@@ -4230,6 +4241,10 @@ class Daemon:
                 allowed_apps=self.cu_policy.allowed_apps,
             )
             save_cu_policy(self.cu_policy)
+            if msg.enabled:
+                await self._note_phone_change(
+                    COMPUTER_USE, f"turned computer use on ({msg.mode.replace('_', ' ')})."
+                )
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, SetEmailNotify):

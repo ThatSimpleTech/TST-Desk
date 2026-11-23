@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from .phone_permissions import (
     APPROVAL_SWITCHES,
+    COMPUTER_USE,
     MCP_SERVERS,
     MODELS_AND_KEYS,
 )
@@ -45,6 +46,11 @@ PHONE_OPT_IN: dict[str, str] = {
     "set_api_key": MODELS_AND_KEYS,
     "set_credential": MODELS_AND_KEYS,
     "set_tier_credential": MODELS_AND_KEYS,
+    # TD-5297: computer use moves this computer's pointer and types on its
+    # keyboard. Turning it off and turning every indicator on only tighten;
+    # engaging the stop stays open, and releasing it is never a phone's.
+    "set_cu_policy": COMPUTER_USE,
+    "set_cu_indicators": COMPUTER_USE,
 }
 
 
@@ -62,7 +68,7 @@ PHONE_OPT_IN: dict[str, str] = {
 # This list is what a phone could already send the day it was written; it
 # changes nothing by itself. Several entries are waiting to move to
 # ``PHONE_OPT_IN``, one capability at a time (the model and key verbs
-# moved in TD-5296; computer-use control, starting an unattended run, the connector
+# moved in TD-5296, computer-use control in TD-5297; starting an unattended run, the connector
 # sign-ins, ``shutdown``, releasing the computer-use stop, changing a saved
 # key's host and changing the mail server). Some are refused or narrowed
 # for a remote peer by their own handler (``start_pairing``,
@@ -159,9 +165,7 @@ PHONE_OPEN: frozenset[str] = frozenset(
         "send_queued",
         "set_branch",
         "set_coworker",
-        "set_cu_indicators",
         "set_cu_kill",
-        "set_cu_policy",
         "set_effort",
         "set_email_notify",
         "set_engine",
@@ -206,9 +210,27 @@ def _only_tightens(msg: ClientMessage) -> bool:
     """A message that can only narrow what runs needs no permission.
 
     Read off the message's own fields, so the rule stays in this pure
-    table. Turning skip-all *off* brings the approval prompts back.
+    table. Turning skip-all *off* brings the approval prompts back;
+    turning computer use off stops it; every indicator on shows more.
     """
-    return msg.type == "set_skip_all_approvals" and getattr(msg, "enabled", True) is False
+    if msg.type in ("set_skip_all_approvals", "set_cu_policy"):
+        return getattr(msg, "enabled", True) is False
+    if msg.type == "set_cu_indicators":
+        return all(
+            getattr(msg, name, False) is True
+            for name in ("glow", "agent_cursor", "show_on_real_display")
+        )
+    return False
+
+
+def never_from_a_phone(msg: ClientMessage) -> bool:
+    """What no grant opens to a phone (owner decision, 2026-11).
+
+    Releasing the computer-use stop: whoever engaged it may have had a
+    reason, and a phone that released it could set the pointer moving
+    again with nobody at the computer. Engaging it stays open.
+    """
+    return msg.type == "set_cu_kill" and getattr(msg, "killed", True) is False
 
 
 def required_capability(msg: ClientMessage) -> str | None:
