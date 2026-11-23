@@ -15,6 +15,7 @@ from .phone_permissions import (
     COMPUTER_USE,
     MCP_SERVERS,
     MODELS_AND_KEYS,
+    UNATTENDED_RUNS,
 )
 from .protocol import ClientMessage
 
@@ -51,6 +52,13 @@ PHONE_OPT_IN: dict[str, str] = {
     # engaging the stop stays open, and releasing it is never a phone's.
     "set_cu_policy": COMPUTER_USE,
     "set_cu_indicators": COMPUTER_USE,
+    # TD-5298: a run nobody watches. An autonomy run works to its charter
+    # with nobody there; Run now starts a job's turn at once; a saved job
+    # runs later, in a session nobody opened. Pausing a job only tightens,
+    # and deleting one stays open.
+    "start_autonomy": UNATTENDED_RUNS,
+    "run_job": UNATTENDED_RUNS,
+    "save_job": UNATTENDED_RUNS,
 }
 
 
@@ -66,11 +74,12 @@ PHONE_OPT_IN: dict[str, str] = {
 # - here: open to a phone.
 #
 # This list is what a phone could already send the day it was written; it
-# changes nothing by itself. Several entries are waiting to move to
-# ``PHONE_OPT_IN``, one capability at a time (the model and key verbs
-# moved in TD-5296, computer-use control in TD-5297; starting an unattended run, the connector
-# sign-ins, ``shutdown``, releasing the computer-use stop, changing a saved
-# key's host and changing the mail server). Some are refused or narrowed
+# changed nothing by itself. Entries move to ``PHONE_OPT_IN`` one capability
+# at a time: the model and key verbs (TD-5296), computer-use control
+# (TD-5297) and starting an unattended run (TD-5298) have; releasing the
+# computer-use stop is refused outright (``never_from_a_phone``). Still
+# here and waiting: the connector sign-ins, ``shutdown``, changing a saved
+# key's host and changing the mail server. Some are refused or narrowed
 # for a remote peer by their own handler (``start_pairing``,
 # ``remove_remote_device``); being here only means the policy passes them on.
 PHONE_OPEN: frozenset[str] = frozenset(
@@ -155,10 +164,8 @@ PHONE_OPEN: frozenset[str] = frozenset(
         "rotate_remote_token",
         "run_diagnostics",
         "run_grok_command",
-        "run_job",
         "run_verify",
         "save_charter",
-        "save_job",
         "save_job_template",
         "save_memory",
         "search_sessions",
@@ -187,7 +194,6 @@ PHONE_OPEN: frozenset[str] = frozenset(
         "set_voice",
         "set_workspace_pin",
         "shutdown",
-        "start_autonomy",
         "start_pairing",
         "steering_reject",
         "stop_turn",
@@ -211,10 +217,15 @@ def _only_tightens(msg: ClientMessage) -> bool:
 
     Read off the message's own fields, so the rule stays in this pure
     table. Turning skip-all *off* brings the approval prompts back;
-    turning computer use off stops it; every indicator on shows more.
+    turning computer use off stops it; every indicator on shows more;
+    pausing a job stops its runs.
     """
     if msg.type in ("set_skip_all_approvals", "set_cu_policy"):
         return getattr(msg, "enabled", True) is False
+    if msg.type == "save_job":
+        # Pausing an existing job. Other fields sent with the pause take
+        # effect only when someone resumes it, which needs the permission.
+        return getattr(msg, "id", None) is not None and getattr(msg, "paused", False) is True
     if msg.type == "set_cu_indicators":
         return all(
             getattr(msg, name, False) is True

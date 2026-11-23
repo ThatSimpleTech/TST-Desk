@@ -45,11 +45,15 @@ MODELS_AND_KEYS: Final = "models_and_keys"
 # Turning computer use on or changing how it runs (TD-5297). Turning it
 # off, engaging the stop and turning every indicator on need nothing.
 COMPUTER_USE: Final = "computer_use"
+# Starting a run nobody watches: autonomy, Run now, or saving a scheduled
+# job (TD-5298). Pausing or deleting a job needs nothing.
+UNATTENDED_RUNS: Final = "unattended_runs"
 CAPABILITIES: Final[tuple[str, ...]] = (
     MCP_SERVERS,
     APPROVAL_SWITCHES,
     MODELS_AND_KEYS,
     COMPUTER_USE,
+    UNATTENDED_RUNS,
 )
 
 # What the refusal and the Doctor row call each one.
@@ -58,6 +62,7 @@ LABELS: Final[Mapping[str, str]] = {
     APPROVAL_SWITCHES: "Turning approvals off",
     MODELS_AND_KEYS: "Adding models and keys",
     COMPUTER_USE: "Computer use settings",
+    UNATTENDED_RUNS: "Starting unattended runs",
 }
 
 # A timed grant is for "while I am out", not a second way to say forever.

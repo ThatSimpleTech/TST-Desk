@@ -127,12 +127,21 @@ describe("the words", () => {
 		);
 	});
 
+	it("the unattended-runs disclosure says pausing stays open (TD-5298)", () => {
+		const copy = permissionCopy("unattended_runs");
+		expect(copy?.title).toBe("Let paired phones start unattended runs");
+		expect(copy?.points).toContain(
+			"A phone can always pause or delete a scheduled job; that needs no permission.",
+		);
+	});
+
 	it("lists exactly the permissions the daemon knows", () => {
 		expect(PHONE_PERMISSIONS.map((p) => p.capability)).toEqual([
 			"mcp_servers",
 			"approval_switches",
 			"models_and_keys",
 			"computer_use",
+			"unattended_runs",
 		]);
 	});
 

@@ -14672,3 +14672,25 @@ computer.
 **Notes:** `set_cu_policy` with `enabled: false` may carry other fields;
 they take effect only when someone turns it on again, which needs the
 permission from a phone.
+
+---
+
+### TD-5298 — A paired phone starts unattended runs only if the computer said so
+
+**Size:** 2 · **Depends on:** TD-5279, TD-5284, TD-5263 · **Status:** Done
+
+The fifth phone permission and the last of owner decision row 4. An
+autonomy run, Run now and a saved scheduled job each start work on the
+computer with nobody watching.
+
+- [x] `start_autonomy`, `run_job` and `save_job` from a paired phone are
+      refused with `phone_permission_off` unless the computer switched
+      `unattended_runs` on (`test_phone_unattended_runs.py`). That includes
+      saving the agent's schedule proposal card from a phone.
+- [x] Pausing an existing job and deleting one need nothing.
+- [x] After the grant a phone can, and the computer is told; a pause tells
+      nobody.
+- [x] Settings → Phones and devices has its disclosure.
+
+**Notes:** fields sent with a pause take effect only when the job is
+resumed, which needs the permission from a phone.
