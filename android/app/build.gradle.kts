@@ -33,8 +33,8 @@ android {
         applicationId = "com.thatsimpletech.tstdesk"
         minSdk = 26
         targetSdk = 35
-        versionCode = 24
-        versionName = "0.4.6"
+        versionCode = 27
+        versionName = "0.5.0"
     }
 
     buildTypes {
