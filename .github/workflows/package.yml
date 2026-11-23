@@ -8,7 +8,15 @@ name: Package
 # tstdesk-v* tag.
 on:
   workflow_dispatch:
-  workflow_call: # TD-1303 release.yml reuses this matrix
+    inputs:
+      platform:
+        # TD-5300: one leg is enough to check a one-platform fix, and the
+        # full matrix is about 200 Linux-equivalent minutes.
+        description: "One platform to build, or all"
+        type: choice
+        default: all
+        options: [all, macos-arm64, macos-x86_64, linux-x86_64, linux-aarch64, windows-x86_64]
+  workflow_call: # TD-1303 release.yml reuses this matrix (always all of it)
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -20,23 +28,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.pick.outputs.include }}
+    steps:
+      - id: pick
+        env:
+          WANT: ${{ inputs.platform || 'all' }}
+        run: |
+          # runner label drives both the Tauri target and the PyInstaller
+          # sidecar triple; artifact names follow tauri's bundle layout.
+          # macos-15-intel: x86_64-apple-darwin (macos-13 retired Dec 2025);
+          # ubuntu-24.04-arm: aarch64-unknown-linux-gnu (TD-4902).
+          all='[
+            {"os":"macos-latest","platform":"macos-arm64"},
+            {"os":"macos-15-intel","platform":"macos-x86_64"},
+            {"os":"ubuntu-latest","platform":"linux-x86_64"},
+            {"os":"ubuntu-24.04-arm","platform":"linux-aarch64"},
+            {"os":"windows-latest","platform":"windows-x86_64"}
+          ]'
+          picked=$(echo "$all" | jq -c --arg want "$WANT" 'map(select($want == "all" or .platform == $want))')
+          echo "include=$picked" >> "$GITHUB_OUTPUT"
+
   bundle:
+    needs: plan
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # runner label drives both the Tauri target and the PyInstaller
-          # sidecar triple; artifact names follow tauri's bundle layout.
-          - os: macos-latest # aarch64-apple-darwin
-            platform: macos-arm64
-          - os: macos-15-intel # x86_64-apple-darwin (macos-13 retired Dec 2025)
-            platform: macos-x86_64
-          - os: ubuntu-latest # x86_64-unknown-linux-gnu
-            platform: linux-x86_64
-          - os: ubuntu-24.04-arm # aarch64-unknown-linux-gnu (TD-4902)
-            platform: linux-aarch64
-          - os: windows-latest # x86_64-pc-windows-msvc
-            platform: windows-x86_64
+        include: ${{ fromJSON(needs.plan.outputs.include) }}
     runs-on: ${{ matrix.os }}
     # A macos leg once ran 24h before the platform stopped it, on a private
     # repo where macOS minutes bill at 10x.  No workflow here had any timeout
@@ -181,19 +201,37 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $sidecar = Get-ChildItem shell/target/release/bundle/msi -Recurse -Filter tstd.exe -ErrorAction SilentlyContinue
-          if (-not $sidecar) {
-            # MSI is an installer database; check the raw exe-sibling layout
-            # tauri stages next to the release binary instead.
-            $sidecar = Get-Item shell/target/release/tstd.exe
-          }
+          # TD-5300: test what ships. The MSI is extracted with an
+          # administrative install (msiexec /a), which writes its files and
+          # registers nothing, and the tstd.exe inside it is the one run. The
+          # NSIS setup is installed silently into a temp folder to show it
+          # carries the sidecar too. The staged copy beside tst-desk.exe in
+          # target/release is not what users get, and on some runs it is not
+          # there at all (0.5.0).
+          $msi = Get-ChildItem shell/target/release/bundle/msi/*.msi | Select-Object -First 1
+          if (-not $msi) { throw "no MSI was built" }
+          $msiOut = Join-Path $env:RUNNER_TEMP "msi-extract"
+          $run = Start-Process msiexec.exe -ArgumentList "/a `"$($msi.FullName)`" /qn TARGETDIR=`"$msiOut`"" -Wait -PassThru
+          if ($run.ExitCode -ne 0) { throw "msiexec /a exited $($run.ExitCode)" }
+          $sidecar = Get-ChildItem $msiOut -Recurse -Filter tstd.exe | Select-Object -First 1
+          if (-not $sidecar) { throw "the MSI carries no tstd.exe" }
+          $app = Get-ChildItem $sidecar.DirectoryName -Filter tst-desk.exe
+          if (-not $app) { throw "tstd.exe is not beside tst-desk.exe in the MSI" }
+          "MSI sidecar: $($sidecar.FullName) ($($sidecar.Length) bytes)"
+          $setup = Get-ChildItem shell/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          if (-not $setup) { throw "no NSIS setup was built" }
+          $nsisOut = Join-Path $env:RUNNER_TEMP "nsis-install"
+          # /D must come last and unquoted.
+          $run = Start-Process $setup.FullName -ArgumentList "/S /D=$nsisOut" -Wait -PassThru
+          if ($run.ExitCode -ne 0) { throw "the NSIS setup exited $($run.ExitCode)" }
+          if (-not (Test-Path (Join-Path $nsisOut "tstd.exe"))) { throw "the NSIS install has no tstd.exe" }
+          "NSIS sidecar: $(Join-Path $nsisOut 'tstd.exe')"
           $data = New-Item -ItemType Directory -Path (Join-Path $env:TEMP ([guid]::NewGuid()))
           $proc = Start-Process $sidecar.FullName -ArgumentList "--data-dir `"$data`" --log-level INFO" -PassThru
           $deadline = (Get-Date).AddSeconds(30)
           while (-not (Test-Path (Join-Path $data "port.json")) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 100 }
           Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
           if (-not (Test-Path (Join-Path $data "port.json"))) { throw "bundled sidecar did not serve" }
-          Get-ChildItem shell/target/release/bundle/msi/*.msi
           # TD-1301 AC: relaunch with PATH reduced to System32 so no Python
           # install is reachable; the bundled runtime must serve anyway.
           $data2 = New-Item -ItemType Directory -Path (Join-Path $env:TEMP ([guid]::NewGuid()))
@@ -215,4 +253,5 @@ jobs:
             shell/target/release/bundle/appimage/*.AppImage
             shell/target/release/bundle/deb/*.deb
             shell/target/release/bundle/msi/*.msi
+            shell/target/release/bundle/nsis/*-setup.exe
           if-no-files-found: error
