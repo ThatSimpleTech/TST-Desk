@@ -58,6 +58,23 @@ export const PHONE_PERMISSIONS: PhonePermissionCopy[] = [
 			"Turning approvals off from a phone is turned off. You can turn it on under " +
 			"Settings, Phones and devices on the computer.",
 	},
+	{
+		capability: "models_and_keys",
+		title: "Let paired phones add models and keys",
+		lead:
+			"With this on, a paired phone can add a model, save an API key, and choose which " +
+			"server a key is sent to. Your conversations, and the key itself, then go to the " +
+			"server that entry names.",
+		points: [
+			"What a phone adds stays on this computer after the phone is removed.",
+			"A phone can always switch between the models already here; that needs no permission.",
+			"The key a phone saves goes to the system keychain, never to a file.",
+		],
+		advice: "Leave this off unless you set up new models while away from the computer.",
+		offOnPhone:
+			"Adding models and keys from a phone is turned off. You can turn it on under " +
+			"Settings, Phones and devices on the computer.",
+	},
 ];
 
 export function permissionCopy(capability: string): PhonePermissionCopy | undefined {

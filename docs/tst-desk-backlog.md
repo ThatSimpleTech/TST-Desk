@@ -14617,3 +14617,32 @@ half.
 **Notes:** `writable_paths` and `backend` from the note are left out: there
 is one backend, and extra writable roots need their own review of what a
 command could plant there. Left for a later story if they are wanted.
+
+---
+
+### TD-5296 — A paired phone adds models and keys only if the computer said so
+
+**Size:** 2 · **Depends on:** TD-5279, TD-5284 · **Status:** Done
+
+The third phone permission (owner decision row 4, one at a time). A new
+model entry names the host a conversation is sent to, and a key or a key's
+host decides where that key goes. A phone could do either with nothing
+shown at the computer, and it stayed after the phone was removed.
+
+- [x] `add_model`, `set_api_key`, `set_credential` and `set_tier_credential`
+      from a paired phone are refused with `phone_permission_off` unless the
+      computer switched `models_and_keys` on; no other permission covers it;
+      never the older token, never another computer
+      (`test_phone_models_and_keys.py`).
+- [x] The picker and what adds no host stay open to a phone:
+      `switch_preset`, `duplicate_preset`, `add_grok_preset`,
+      `validate_api_key` (TD-5242 unchanged).
+- [x] After the computer grants, a phone can, and the computer's windows
+      are told which phone did what (`phone_change`).
+- [x] Settings → Phones and devices lists it with its own disclosure
+      (`phone-permissions.test.ts`, census).
+
+**Notes:** a phone's refused Save shows the daemon's own "Turned off for
+phones" toast, which names the switch; the forms are not disabled on the
+phone. Moving a saved key to another host stays a "never" for phones in the
+owner's list and is a separate story.

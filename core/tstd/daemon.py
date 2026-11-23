@@ -213,7 +213,7 @@ from .notify.slack import schedule as schedule_slack_notify
 from .notify.slack import send as send_slack_notify
 from .notify.telegram import schedule as schedule_telegram_notify
 from .peer_policy import outbound_event, service_hosts
-from .phone_permissions import APPROVAL_SWITCHES, MCP_SERVERS, utc_now
+from .phone_permissions import APPROVAL_SWITCHES, MCP_SERVERS, MODELS_AND_KEYS, utc_now
 from .phone_store import PhoneStore, server_saved_summary, value_summary
 from .plan_review import answer as answer_plan
 from .plan_review import keep_pinned_plan_visible, restore_pinned_plan, restored_plan_mode
@@ -4509,6 +4509,8 @@ class Daemon:
                 "api key stored in keychain",
                 extra={"extra_fields": {"credential": cred_id}},
             )
+            # TD-5296: from a phone this is a phone permission in use.
+            await self._note_phone_change(MODELS_AND_KEYS, f"saved the API key '{cred_id}'.")
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, ValidateApiKey):
@@ -4522,7 +4524,12 @@ class Daemon:
             return (await scan_local_servers(self.config.local_servers)).model_dump_json()
 
         if isinstance(msg, AddModel):
-            return await self._handle_add_model(msg)
+            added = await self._handle_add_model(msg)
+            if json.loads(added).get("type") == "setup_state":
+                await self._note_phone_change(
+                    MODELS_AND_KEYS, f"added the model '{msg.label}' ({msg.slug})."
+                )
+            return added
 
         if isinstance(msg, TestModel):
             return (await self._test_model(msg.preset)).model_dump_json()
@@ -4553,6 +4560,7 @@ class Daemon:
             except ConfigError as e:
                 return build_error("bad_request", str(e))
             self._invalidate_stored_probe()
+            await self._note_phone_change(MODELS_AND_KEYS, f"changed the API key '{msg.name}'.")
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, DeleteCredential):
@@ -4579,6 +4587,9 @@ class Daemon:
             log.info(
                 "tier credential changed",
                 extra={"extra_fields": {"preset": msg.preset, "tier": msg.tier}},
+            )
+            await self._note_phone_change(
+                MODELS_AND_KEYS, f"changed which key the model '{msg.preset}' uses."
             )
             return (await self._setup_state_event()).model_dump_json()
 
