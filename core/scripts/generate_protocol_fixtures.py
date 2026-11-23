@@ -319,7 +319,11 @@ from tstd.protocol import (
     ValidateApiKey,
     VerifyResult,
     VerifyStarted,
+    WorkerJobInfo,
+    WorkerJobs,
+    WorkerResult,
     WorkerStep,
+    WorkerStop,
     WorktreeState,
     build_hello_ack,
     build_pair_ok,
@@ -670,6 +674,7 @@ FIXTURES = {
     "dismiss_schedule_proposal": DismissScheduleProposal(
         session_id="sess-1", proposal_id="sp_0123456789ab"
     ),
+    "worker_stop": WorkerStop(session_id="sess-1", worker_id="w-1"),
     # What a paired phone may change (TD-5279): on for an hour.
     "set_phone_permission": SetPhonePermission(
         capability="mcp_servers", enabled=True, expires_in_seconds=3600
@@ -1637,6 +1642,35 @@ FIXTURES = {
     ),
     "schedule_proposal_decision": ScheduleProposalDecision(
         session_id="sess-1", seq=8, proposal_id="sp_0123456789ab", decision="saved", job_id="job-1"
+    ),
+    # A background worker running and one settled (TD-5299).
+    "worker_jobs": WorkerJobs(
+        session_id="sess-1",
+        seq=9,
+        workers=[
+            WorkerJobInfo(
+                worker_id="w-1",
+                label="fix the date parser",
+                kind="worker",
+                task="Fix the date parser and run its tests.",
+                state="running",
+                calls=3,
+                cost_usd=0.0123,
+                started_at=1795400000.0,
+                branch="tst/child-1",
+                worktree_path="/work/.worktrees/child-1",
+                last_step="pytest tests/test_dates.py",
+            )
+        ],
+    ),
+    "worker_result": WorkerResult(
+        session_id="sess-1",
+        seq=10,
+        worker_id="w-1",
+        state="done",
+        summary="Fixed the parser; 12 tests pass.",
+        transcript=[WorkerStep(kind="reply", text="Fixed the parser; 12 tests pass.")],
+        branch="tst/child-1",
     ),
     "phone_change": PhoneChange(
         device_name="Pixel",

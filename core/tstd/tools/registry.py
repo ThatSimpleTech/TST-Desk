@@ -696,6 +696,7 @@ def create_registry(
     from .browser import register_browser_tools
     from .consult import register_consult_tool
     from .delegate import register_delegate_tools
+    from .delegate_background import register_delegate_job_tools
     from .desktop import register_desktop_tools
     from .exit_plan import register_exit_plan_tool
     from .plugins import load_plugins
@@ -719,6 +720,7 @@ def create_registry(
     register_browser_tools(registry, candidate_selection=candidate_selection)
     register_skill_tools(registry)
     register_delegate_tools(registry)
+    register_delegate_job_tools(registry)
     # TD-5195: always listed; it refuses while Ultracode is off.
     register_workflow_tool(registry)
     register_consult_tool(registry)

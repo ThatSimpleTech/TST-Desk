@@ -90,6 +90,7 @@
 	import { startGrok } from '../grok.svelte.js';
 	import { startTaskLists } from '../task-list-store.svelte.js';
 	import { startShellJobs } from '../shell-jobs-store.svelte.js';
+	import { startWorkers } from '../workers-store.svelte.js';
 	import { startGoals } from '../goal-store.svelte.js';
 	import { startVoice } from '../voice.svelte.js';
 	import { modelSlot, resolveShortcut, sessionSlot } from '../shortcuts';
@@ -251,6 +252,7 @@
 		const offGrok = startGrok();
 		const offTaskLists = startTaskLists();
 		const offShellJobs = startShellJobs();
+		const offWorkers = startWorkers();
 		const offGoals = startGoals();
 		const offVoice = startVoice();
 		let offUpdates = () => {};
@@ -299,6 +301,7 @@
 			offGrok();
 			offTaskLists();
 			offShellJobs();
+			offWorkers();
 			offGoals();
 			offVoice();
 			offUpdates();

@@ -169,6 +169,9 @@ def test_every_builtin_is_decided_and_only_readers_run() -> None:
             "ask_user",
             "browser_screenshot",
             "consult",
+            # TD-5299: a background worker's record, and ending one.
+            "delegate_output",
+            "delegate_stop",
             "desktop_screenshot",
             "exit_plan_mode",
             "fs_grep",

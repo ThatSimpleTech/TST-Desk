@@ -2057,6 +2057,17 @@ class ListJobTemplates(ClientMessage):
     type: Literal["list_job_templates"] = "list_job_templates"
 
 
+class WorkerStop(ClientMessage):
+    """Stop one background worker of a session (TD-5299). Its siblings run on.
+
+    An id that is not running is ``worker_not_found``.
+    """
+
+    type: Literal["worker_stop"] = "worker_stop"
+    session_id: str
+    worker_id: str = Field(min_length=1)
+
+
 class DismissScheduleProposal(ClientMessage):
     """Dismiss the agent's schedule proposal; nothing is scheduled (TD-5263).
 
@@ -3162,6 +3173,63 @@ class ShellJobs(DaemonEvent):
     type: Literal["shell_jobs"] = "shell_jobs"
     session_id: str
     jobs: list[ShellJobInfo] = Field(default_factory=list, max_length=64)
+
+
+WorkerState = Literal[
+    "queued", "running", "awaiting_approval", "done", "failed", "stopped", "interrupted"
+]
+
+
+class WorkerJobInfo(BaseModel):
+    """One background ``delegate`` worker, as the window lists it (TD-5299).
+
+    A worker belongs to the turn that started it: the turn does not end
+    while one is alive. ``interrupted`` is set only when a daemon restart
+    ended it. ``started_at`` and ``ended_at`` are Unix seconds.
+    """
+
+    worker_id: str = Field(min_length=1, max_length=16)
+    label: str = Field(max_length=80)
+    kind: str
+    agent: str | None = None
+    task: str = Field(max_length=300)
+    state: WorkerState = "queued"
+    stopped: str | None = None
+    calls: int = 0
+    cost_usd: float = 0.0
+    started_at: float
+    ended_at: float | None = None
+    branch: str | None = None
+    worktree_path: str | None = None
+    last_step: str = Field(default="", max_length=200)
+
+
+class WorkerJobs(DaemonEvent):
+    """The session's background workers, after any of them changed (TD-5299).
+
+    Each event carries the whole list, so the newest one is the truth.
+    """
+
+    type: Literal["worker_jobs"] = "worker_jobs"
+    session_id: str
+    workers: list[WorkerJobInfo] = Field(default_factory=list, max_length=64)
+
+
+class WorkerResult(DaemonEvent):
+    """A background worker settled: its summary and its steps, for the window.
+
+    The parent model is given the summary as a note; the steps never reach
+    it, as with a foreground ``delegate`` (TD-5299).
+    """
+
+    type: Literal["worker_result"] = "worker_result"
+    session_id: str
+    worker_id: str
+    state: WorkerState
+    summary: str
+    transcript: list[WorkerStep] = Field(default_factory=list)
+    branch: str | None = None
+    stopped: str | None = None
 
 
 class WorktreeState(DaemonEvent):
@@ -5337,6 +5405,7 @@ ClientMessageT = Annotated[
     | ListJobTemplates
     | SaveJobTemplate
     | DismissScheduleProposal
+    | WorkerStop
     | DeleteJobTemplate
     | GetSessionJobSource
     | Transcribe
@@ -5410,6 +5479,8 @@ DaemonEventT = Annotated[
     | SteeringProposal
     | ScheduleProposal
     | ScheduleProposalDecision
+    | WorkerJobs
+    | WorkerResult
     | SteeringDecision
     | SessionList
     | PolicyRules
@@ -5608,6 +5679,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "list_job_templates",
         "save_job_template",
         "dismiss_schedule_proposal",
+        "worker_stop",
         "delete_job_template",
         "get_session_job_source",
         "transcribe",
@@ -5681,6 +5753,8 @@ _KNOWN_EVENT_TYPES = frozenset(
         "steering_proposal",
         "schedule_proposal",
         "schedule_proposal_decision",
+        "worker_jobs",
+        "worker_result",
         "steering_decision",
         "session_list",
         "policy_rules",

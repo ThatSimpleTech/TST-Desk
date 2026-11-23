@@ -836,6 +836,11 @@
     "session_id": "sess-1",
     "proposal_id": "sp_0123456789ab"
   },
+  "worker_stop": {
+    "type": "worker_stop",
+    "session_id": "sess-1",
+    "worker_id": "w-1"
+  },
   "set_phone_permission": {
     "type": "set_phone_permission",
     "capability": "mcp_servers",
@@ -2450,6 +2455,48 @@
     "proposal_id": "sp_0123456789ab",
     "decision": "saved",
     "job_id": "job-1"
+  },
+  "worker_jobs": {
+    "type": "worker_jobs",
+    "seq": 9,
+    "session_id": "sess-1",
+    "workers": [
+      {
+        "worker_id": "w-1",
+        "label": "fix the date parser",
+        "kind": "worker",
+        "agent": null,
+        "task": "Fix the date parser and run its tests.",
+        "state": "running",
+        "stopped": null,
+        "calls": 3,
+        "cost_usd": 0.0123,
+        "started_at": 1795400000.0,
+        "ended_at": null,
+        "branch": "tst/child-1",
+        "worktree_path": "/work/.worktrees/child-1",
+        "last_step": "pytest tests/test_dates.py"
+      }
+    ]
+  },
+  "worker_result": {
+    "type": "worker_result",
+    "seq": 10,
+    "session_id": "sess-1",
+    "worker_id": "w-1",
+    "state": "done",
+    "summary": "Fixed the parser; 12 tests pass.",
+    "transcript": [
+      {
+        "kind": "reply",
+        "text": "Fixed the parser; 12 tests pass.",
+        "tool": null,
+        "status": null,
+        "truncated": false
+      }
+    ],
+    "branch": "tst/child-1",
+    "stopped": null
   },
   "phone_change": {
     "type": "phone_change",

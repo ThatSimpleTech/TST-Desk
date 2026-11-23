@@ -906,10 +906,31 @@ returns a summary (TD-4602).
 |---|---|---|---|
 | `max_iterations` | int, 1 to 64 | `8` | Model calls one child may make. A child that reaches it stops and returns what it has, saying it used them all. Eight suits a lookup; raise it for children that edit several files and run a test. A child's calls count against the session's own `caps` (iterations, spend, time) together with its parent's and its siblings', so a larger number here cannot outrun them. |
 
+**In the background (TD-5299).** `delegate` with `background: true` starts the child and
+returns at once, so the agent keeps working. The child belongs to the turn that started it: the
+turn does not end while one is alive. When one finishes, its summary reaches the agent as a note
+before its next step; if the agent has nothing left to do, the turn waits for the child without
+calling the model. Stop ends every child. A child that can write always gets its own git worktree
+(a workspace with no commit refuses it and says to run it in the foreground). The Plan pane lists
+each child with Stop; `delegate_output` and `delegate_stop` let the agent read and end one. A
+background child always honours the session's caps, even with approvals skipped, and stops at its
+own limits under `background`:
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `background.max_running` | int, 1 to 8 | `2` | Children running at once in one chat. More wait in a queue and start when one finishes. |
+| `background.max_per_turn` | int, 1 to 32 | `8` | Children one turn may start; past it the call is refused. |
+| `background.max_iterations` | int, 1 to 64 | `24` | Model calls one background child may make. |
+| `background.max_minutes` | int, 1 to 240 | `30` | Minutes one background child may run. |
+| `background.max_usd` | number above 0 | `5.0` | Dollars one background child may spend. It also never gets more than its share (`max_running`) of what the session's spend cap has left when it starts. |
+
 <!-- verify: model -->
 ```yaml
 delegate:
   max_iterations: 8
+  background:
+    max_running: 2
+    max_usd: 5.0
 ```
 
 ### `model_concurrency`

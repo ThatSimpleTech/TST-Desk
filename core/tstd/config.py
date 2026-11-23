@@ -926,6 +926,24 @@ class CompactionConfig(BaseModel):
 DEFAULT_CHILD_MAX_ITERATIONS = 8
 
 
+class DelegateBackgroundConfig(BaseModel):
+    """Limits for a ``delegate`` child started with ``background: true`` (TD-5299).
+
+    A background worker belongs to its turn: the turn waits for it. Each
+    worker has its own call, time and spend ceiling, and always honours
+    the session's caps, skip-all or not. ``max_running`` is how many run at
+    once in one session; more wait their turn in a queue.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_running: int = Field(default=2, ge=1, le=8)
+    max_per_turn: int = Field(default=8, ge=1, le=32)
+    max_iterations: int = Field(default=24, ge=1, le=64)
+    max_minutes: int = Field(default=30, ge=1, le=240)
+    max_usd: float = Field(default=5.0, gt=0)
+
+
 class DelegateConfig(BaseModel):
     """Limits for a ``delegate`` child (TD-5265).
 
@@ -939,6 +957,7 @@ class DelegateConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     max_iterations: int = Field(default=DEFAULT_CHILD_MAX_ITERATIONS, ge=1, le=64)
+    background: DelegateBackgroundConfig = Field(default_factory=DelegateBackgroundConfig)
 
 
 def _default_consult_tiers() -> list[TierName]:

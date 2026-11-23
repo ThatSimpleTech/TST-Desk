@@ -20436,3 +20436,34 @@ nothing until it is signed by `start_autonomy`; deleting a job stops runs.
 **Rejected:** a separate permission for editing jobs (one switch is what
 the owner's list names); comparing a pause's other fields with the stored
 job (it would need the store in the pure policy table).
+
+## 2026-11-23 — TD-5299: background delegates, scoped to the turn (Class B)
+
+**Decision:** `delegate` gains `background` and `label`. A background
+child is a `WorkerJob` on the parent session (`worker_jobs.py`), run as a
+task through the same `run_child_task` as a foreground child. The loop
+puts each settled worker's note in at the tool-batch boundary a steer
+joins, and at turn end waits (no model call) while a worker is alive or
+its note is owed. `_emit_turn_complete` stops any worker still alive, so
+none outlives its turn. Two events (`worker_jobs`, `worker_result`), one
+client verb (`worker_stop`, open to a phone since it only stops), and two
+Class A builtins (`delegate_output`, `delegate_stop`). Defaults:
+`max_running` 2, `max_per_turn` 8, `max_iterations` 24, `max_minutes` 30,
+`max_usd` 5.0 and never more than a `max_running` share of what the spend
+cap has left.
+
+**Rationale:** scoping to the turn keeps approvals, caps, Stop and the
+session state machine as they are (owner decision row 17). This revises
+two records on purpose. TD-4602 rejected timeline events for child steps:
+a background call's `tool_result` returns at spawn, so the transcript
+needs `worker_result` to ride on. TD-5195 rejected a model fan-out with
+`delegate`: the shared limit, forced worktrees, prefixed call ids and Stop
+answer each fault it listed. A background worker honours the session caps
+even under skip-all, which is stricter than a foreground child, because it
+is the closest an interactive session comes to an unattended run.
+
+**Rejected:** workers that outlive the turn (design 4.8, later); refusing
+at capacity instead of queueing (a small model handles "it starts when a
+slot frees" better than "try again"); starting a writer from the latest
+checkpoint instead of `HEAD` (it would need the checkpoint code reviewed;
+the spawn note says uncommitted edits are not in the child's worktree).

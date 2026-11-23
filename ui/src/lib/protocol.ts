@@ -347,6 +347,13 @@ export interface ImportMcpServers extends ClientMessage {
   servers: McpImportChoice[];
 }
 
+/** Stop one background worker (TD-5299). Its siblings run on. */
+export interface WorkerStop extends ClientMessage {
+  type: "worker_stop";
+  session_id: string;
+  worker_id: string;
+}
+
 /** Dismiss the agent's schedule proposal (TD-5263). Nothing is scheduled. */
 export interface DismissScheduleProposal extends ClientMessage {
   type: "dismiss_schedule_proposal";
@@ -1513,6 +1520,7 @@ export type ClientMessageUnion =
   | RemoveRemoteDevice
   | SetPhonePermission
   | DismissScheduleProposal
+  | WorkerStop
   | PreviewMcpImport
   | ImportMcpServers
   | AddMachine
@@ -3192,6 +3200,52 @@ export interface ShellJobs extends DaemonEvent {
   jobs: ShellJobInfo[];
 }
 
+export type WorkerState =
+  | "queued"
+  | "running"
+  | "awaiting_approval"
+  | "done"
+  | "failed"
+  | "stopped"
+  | "interrupted";
+
+/** One background `delegate` worker (TD-5299). It belongs to the turn that started it. */
+export interface WorkerJobInfo {
+  worker_id: string;
+  label: string;
+  kind: string;
+  agent?: string | null;
+  task: string;
+  state: WorkerState;
+  stopped?: string | null;
+  calls: number;
+  cost_usd: number;
+  started_at: number;
+  ended_at?: number | null;
+  branch?: string | null;
+  worktree_path?: string | null;
+  last_step: string;
+}
+
+/** The session's background workers after one changed. The newest event is the list. */
+export interface WorkerJobs extends DaemonEvent {
+  type: "worker_jobs";
+  session_id: string;
+  workers: WorkerJobInfo[];
+}
+
+/** A background worker settled: its summary and steps, for the window only. */
+export interface WorkerResult extends DaemonEvent {
+  type: "worker_result";
+  session_id: string;
+  worker_id: string;
+  state: WorkerState;
+  summary: string;
+  transcript: WorkerStep[];
+  branch?: string | null;
+  stopped?: string | null;
+}
+
 /** A session's worktree changed: made, set up, or closed (TD-5126). */
 export interface WorktreeState extends DaemonEvent {
   type: "worktree_state";
@@ -3620,6 +3674,8 @@ export type DaemonEventUnion =
   | PhoneChange
   | ScheduleProposal
   | ScheduleProposalDecision
+  | WorkerJobs
+  | WorkerResult
   | McpImportPreview
   | MachineList
   | ApiKeyValidated
