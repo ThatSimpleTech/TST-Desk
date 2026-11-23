@@ -110,8 +110,21 @@ describe("the words", () => {
 		});
 	});
 
+	it("the models disclosure says where the conversation and the key go (TD-5296)", () => {
+		const copy = permissionCopy("models_and_keys");
+		expect(copy?.title).toBe("Let paired phones add models and keys");
+		expect(copy?.lead).toContain("the key itself, then go to the server that entry names");
+		expect(copy?.points).toContain(
+			"A phone can always switch between the models already here; that needs no permission.",
+		);
+	});
+
 	it("lists exactly the permissions the daemon knows", () => {
-		expect(PHONE_PERMISSIONS.map((p) => p.capability)).toEqual(["mcp_servers", "approval_switches"]);
+		expect(PHONE_PERMISSIONS.map((p) => p.capability)).toEqual([
+			"mcp_servers",
+			"approval_switches",
+			"models_and_keys",
+		]);
 	});
 
 	it("every permission has a full disclosure", () => {

@@ -10,7 +10,11 @@ checking is in ``peer_policy.check``.
 
 from __future__ import annotations
 
-from .phone_permissions import APPROVAL_SWITCHES, MCP_SERVERS
+from .phone_permissions import (
+    APPROVAL_SWITCHES,
+    MCP_SERVERS,
+    MODELS_AND_KEYS,
+)
 from .protocol import ClientMessage
 
 # What a phone may send only after the computer switched the capability on
@@ -33,6 +37,14 @@ PHONE_OPT_IN: dict[str, str] = {
     # call, Class C included. A phone can already approve call by call;
     # this is the same power with nobody looking at each call.
     "set_skip_all_approvals": APPROVAL_SWITCHES,
+    # TD-5296: a new model entry names a host the conversation goes to, and
+    # a key or a key's host decides where that key is sent. Choosing among
+    # the models already on the computer (the picker, TD-5242) stays open,
+    # and so do a copy of one and a local Grok entry: neither adds a host.
+    "add_model": MODELS_AND_KEYS,
+    "set_api_key": MODELS_AND_KEYS,
+    "set_credential": MODELS_AND_KEYS,
+    "set_tier_credential": MODELS_AND_KEYS,
 }
 
 
@@ -49,8 +61,8 @@ PHONE_OPT_IN: dict[str, str] = {
 #
 # This list is what a phone could already send the day it was written; it
 # changes nothing by itself. Several entries are waiting to move to
-# ``PHONE_OPT_IN``, one capability at a time (the model and key verbs,
-# computer-use control, starting an unattended run, the connector
+# ``PHONE_OPT_IN``, one capability at a time (the model and key verbs
+# moved in TD-5296; computer-use control, starting an unattended run, the connector
 # sign-ins, ``shutdown``, releasing the computer-use stop, changing a saved
 # key's host and changing the mail server). Some are refused or narrowed
 # for a remote peer by their own handler (``start_pairing``,
@@ -58,7 +70,6 @@ PHONE_OPT_IN: dict[str, str] = {
 PHONE_OPEN: frozenset[str] = frozenset(
     {
         "add_grok_preset",
-        "add_model",
         "add_pin",
         "always_allow",
         "answer_question",
@@ -76,13 +87,13 @@ PHONE_OPEN: frozenset[str] = frozenset(
         "delete_api_key",
         "delete_credential",
         "delete_job",
-        "dismiss_schedule_proposal",
         "delete_job_template",
         "delete_session",
         "deny",
         "deny_verify",
         "design_hit_test",
         "detach",
+        "dismiss_schedule_proposal",
         "duplicate_preset",
         "end_session",
         "export_usage",
@@ -146,10 +157,8 @@ PHONE_OPEN: frozenset[str] = frozenset(
         "save_memory",
         "search_sessions",
         "send_queued",
-        "set_api_key",
         "set_branch",
         "set_coworker",
-        "set_credential",
         "set_cu_indicators",
         "set_cu_kill",
         "set_cu_policy",
@@ -169,7 +178,6 @@ PHONE_OPEN: frozenset[str] = frozenset(
         "set_spend_cap",
         "set_tier",
         "set_tier_context_window",
-        "set_tier_credential",
         "set_tier_slug",
         "set_ultracode",
         "set_voice",

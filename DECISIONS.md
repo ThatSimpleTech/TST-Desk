@@ -20391,3 +20391,19 @@ config already has the trust-free, user-owned place); `writable_paths` now
 (a writable root outside the workspace is where a command would plant
 something that runs later); shipping `default: on` (owner decision 2026-11:
 wait for macOS and the network allowlist).
+
+## 2026-11-23 — TD-5296: models and keys are a phone permission (Class B)
+
+**Decision:** new capability `models_and_keys` over `add_model`,
+`set_api_key`, `set_credential` and `set_tier_credential`. Duplicating a
+model, adding the local Grok entry, switching models and validating a typed
+key stay open.
+
+**Rationale:** the line is "does this send the conversation or a key to a
+host nobody at the computer chose". A copy of an existing entry and the
+local Grok entry add no host; switching among existing models was built for
+the phone (TD-5242).
+
+**Rejected:** putting `delete_api_key` / `delete_credential` behind it (they
+remove a destination rather than add one); disabling every model form on
+the phone now (the refusal toast already names the switch).
