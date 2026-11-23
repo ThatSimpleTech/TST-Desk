@@ -20423,3 +20423,16 @@ table, like the tightening forms.
 
 **Rejected:** recording which device engaged the stop so it could release
 it (owner row 7: not now).
+
+## 2026-11-23 — TD-5298: starting unattended runs is a phone permission (Class B)
+
+**Decision:** capability `unattended_runs` over `start_autonomy`, `run_job`
+and `save_job`, with a pause of an existing job (`id` and `paused: true`)
+read as tightening. `save_charter` and `delete_job` stay open.
+
+**Rationale:** each verb starts work nobody watches. A charter on disk runs
+nothing until it is signed by `start_autonomy`; deleting a job stops runs.
+
+**Rejected:** a separate permission for editing jobs (one switch is what
+the owner's list names); comparing a pause's other fields with the stored
+job (it would need the store in the pure policy table).

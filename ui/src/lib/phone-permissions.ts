@@ -91,6 +91,22 @@ export const PHONE_PERMISSIONS: PhonePermissionCopy[] = [
 			"Changing computer use from a phone is turned off. You can turn it on under " +
 			"Settings, Phones and devices on the computer.",
 	},
+	{
+		capability: "unattended_runs",
+		title: "Let paired phones start unattended runs",
+		lead:
+			"With this on, a paired phone can start an autonomous run, run a scheduled job now, " +
+			"and create or change scheduled jobs. Those runs work on this computer with nobody " +
+			"watching them.",
+		points: [
+			"A job a phone saves keeps running on its schedule after the phone is removed.",
+			"A phone can always pause or delete a scheduled job; that needs no permission.",
+		],
+		advice: "Leave this off unless you start or schedule work while away from the computer.",
+		offOnPhone:
+			"Starting unattended runs from a phone is turned off. You can turn it on under " +
+			"Settings, Phones and devices on the computer.",
+	},
 ];
 
 export function permissionCopy(capability: string): PhonePermissionCopy | undefined {

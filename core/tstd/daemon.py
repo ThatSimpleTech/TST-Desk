@@ -218,6 +218,7 @@ from .phone_permissions import (
     COMPUTER_USE,
     MCP_SERVERS,
     MODELS_AND_KEYS,
+    UNATTENDED_RUNS,
     utc_now,
 )
 from .phone_store import PhoneStore, server_saved_summary, value_summary
@@ -6778,6 +6779,8 @@ class Daemon:
             return build_error("job_invalid", str(exc))
         if proposer is not None and msg.proposal_id is not None:
             await settle_schedule(proposer, msg.proposal_id, "saved", job.id)
+        if not (msg.id is not None and msg.paused is True):
+            await self._note_phone_change(UNATTENDED_RUNS, f"saved the scheduled job {job.id}.")
         return await self._job_list_event()
 
     async def _handle_delete_job(self, msg: DeleteJob) -> str:
@@ -6884,6 +6887,7 @@ class Daemon:
             )
             return build_error(started, detail)
         self._tasks.append(asyncio.create_task(self._finish_manual_run(started)))
+        await self._note_phone_change(UNATTENDED_RUNS, f"ran the scheduled job {msg.job_id} now.")
         return await self._job_list_event()
 
     async def _finish_manual_run(self, job: Job) -> None:
@@ -7359,6 +7363,10 @@ class Daemon:
         session_id: str | None = None
         if result.ready and result.charter is not None:
             session_id = await self._launch_autonomy_run(root, result.charter)
+            # TD-5298: from a phone this is a phone permission in use.
+            await self._note_phone_change(
+                UNATTENDED_RUNS, f"started an unattended run in {root.name}."
+            )
         return AutonomyStart(
             workspace_path=str(root),
             ready=result.ready,
