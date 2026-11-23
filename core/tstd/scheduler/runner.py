@@ -587,6 +587,8 @@ async def run_turn_on_daemon(host: SessionHost, workspace: Path, message: str) -
     # TD-5137: nobody watches this turn, so it cannot start background
     # shell jobs that would outlive the run. Cleared on return.
     session.scheduled_run = True
+    # TD-5263: read by the daemon's skip-all hooks for this session.
+    session.ignores_skip_all = pin.ignore_skip_all
     try:
         return await _await_scheduled_turn(host, session_id, session, message)
     finally:

@@ -86,6 +86,7 @@ from tstd.protocol import (
     Detach,
     DiagnosticCheck,
     DiagnosticsReport,
+    DismissScheduleProposal,
     Drain,
     DrainResult,
     DuplicatePreset,
@@ -236,6 +237,8 @@ from tstd.protocol import (
     SaveJobTemplate,
     SaveMemory,
     ScanLocalServers,
+    ScheduleProposal,
+    ScheduleProposalDecision,
     ScreenFrame,
     SearchSessions,
     SendQueued,
@@ -663,6 +666,9 @@ FIXTURES = {
     "import_mcp_servers": ImportMcpServers(
         text='{"mcpServers": {"files": {"command": "uvx"}}}',
         servers=[McpImportChoice(source_name="files", id="files")],
+    ),
+    "dismiss_schedule_proposal": DismissScheduleProposal(
+        session_id="sess-1", proposal_id="sp_0123456789ab"
     ),
     # What a paired phone may change (TD-5279): on for an hour.
     "set_phone_permission": SetPhonePermission(
@@ -1617,6 +1623,20 @@ FIXTURES = {
                 values=[McpImportValue(name="GITHUB_TOKEN", target="env", disposition="keychain")],
             )
         ]
+    ),
+    "schedule_proposal": ScheduleProposal(
+        session_id="sess-1",
+        seq=7,
+        proposal_id="sp_0123456789ab",
+        tool_call_id="call_1",
+        workspace="/work/proj",
+        instruction="Run the dependency check and list what is out of date.",
+        cadence="0 8 * * 1-5",
+        timezone="Europe/London",
+        next_runs=["2026-11-23T08:00:00Z"],
+    ),
+    "schedule_proposal_decision": ScheduleProposalDecision(
+        session_id="sess-1", seq=8, proposal_id="sp_0123456789ab", decision="saved", job_id="job-1"
     ),
     "phone_change": PhoneChange(
         device_name="Pixel",

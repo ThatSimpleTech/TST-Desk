@@ -196,6 +196,16 @@ export function pauseJob(jobId: string): boolean {
 	return sendToDaemon(saveFromJob(job, !job.paused));
 }
 
+/** TD-5263: let an agent-proposed job run under skip-all, or not. Keeps its pause. */
+export function setAllowSkipAll(jobId: string, allowed: boolean): boolean {
+	const job = scheduled.items.find((row) => row.id === jobId);
+	if (job === undefined) return false;
+	ensureStarted();
+	scheduled.loading = true;
+	scheduled.error = null;
+	return sendToDaemon({ ...saveFromJob(job, job.paused), allow_skip_all: allowed });
+}
+
 export function deleteScheduledJob(jobId: string): boolean {
 	if (!scheduled.items.some((row) => row.id === jobId)) return false;
 	ensureStarted();

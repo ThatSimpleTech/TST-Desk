@@ -831,6 +831,11 @@
       }
     ]
   },
+  "dismiss_schedule_proposal": {
+    "type": "dismiss_schedule_proposal",
+    "session_id": "sess-1",
+    "proposal_id": "sp_0123456789ab"
+  },
   "set_phone_permission": {
     "type": "set_phone_permission",
     "capability": "mcp_servers",
@@ -2421,6 +2426,29 @@
     ],
     "error": ""
   },
+  "schedule_proposal": {
+    "type": "schedule_proposal",
+    "seq": 7,
+    "session_id": "sess-1",
+    "proposal_id": "sp_0123456789ab",
+    "tool_call_id": "call_1",
+    "workspace": "/work/proj",
+    "instruction": "Run the dependency check and list what is out of date.",
+    "cadence": "0 8 * * 1-5",
+    "next_run": null,
+    "timezone": "Europe/London",
+    "next_runs": [
+      "2026-11-23T08:00:00Z"
+    ]
+  },
+  "schedule_proposal_decision": {
+    "type": "schedule_proposal_decision",
+    "seq": 8,
+    "session_id": "sess-1",
+    "proposal_id": "sp_0123456789ab",
+    "decision": "saved",
+    "job_id": "job-1"
+  },
   "phone_change": {
     "type": "phone_change",
     "seq": 1,
@@ -3143,6 +3171,9 @@
   "save_job": {
     "type": "save_job",
     "id": null,
+    "proposal_id": null,
+    "proposal_session_id": null,
+    "allow_skip_all": null,
     "workspace": "/home/user/project",
     "instruction": "summarize the inbox",
     "cadence": "every 1 hour",
@@ -3234,6 +3265,8 @@
         "email_to": null,
         "last_delivery": null,
         "last_delivery_error": null,
+        "origin": "user",
+        "allow_skip_all": false,
         "running": false
       }
     ]

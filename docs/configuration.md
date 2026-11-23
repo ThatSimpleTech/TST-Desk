@@ -3166,12 +3166,12 @@ then runs on the brain tier, and the agent may only read: the classifier refuses
 `fs_edit`, memory writes, `shell` commands that are not entirely on the read-only list
 (`shell.read_only`; with the list off, every shell command), MCP tools not in their server's
 `read_only_tools`, plugin tools, desktop and browser actuation, the GitHub write tools,
-`propose_steering_edit`, `delegate` with `kind: worker`, and any other tool not known to only read. The refusal comes first, before your `policy` rules, an approval
+`propose_steering_edit`, `schedule_propose`, `delegate` with `kind: worker`, and any other tool not known to only read. The refusal comes first, before your `policy` rules, an approval
 card or Skip all approvals, so none of them can run a refused call, and it tells the agent it is
 planning. A call that was already waiting on an approval card when plan mode came on is
 checked again once it is allowed, so a late Allow or Skip all approvals refuses it too
 (TD-5161). Reads (`fs_read`, `fs_list`, `fs_grep`, the GitHub reads, screenshots), web search and
-fetch, `load_skill`, `send_file`, `show_artifact`, `task_list`, `ask_user`, `consult`, `tool_search` (TD-5127: it
+fetch, `load_skill`, `send_file`, `show_artifact`, `schedule_list`, `task_list`, `ask_user`, `consult`, `tool_search` (TD-5127: it
 only loads definitions; a loaded MCP tool still needs `read_only_tools`) and `delegate` for research
 still run under the usual rules. The agent ends plan mode with `exit_plan_mode`: its plan
 shows on a card on the window and the phone, where you approve it, edit it and then approve your

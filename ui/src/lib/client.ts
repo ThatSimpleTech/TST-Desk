@@ -102,6 +102,8 @@ const KNOWN_EVENT_TYPES = new Set([
   "pairing_code", // TD-5014
   "pairing_completed", // TD-5014
   "phone_change", // TD-5279
+  "schedule_proposal", // TD-5263
+  "schedule_proposal_decision",
   "mcp_import_preview", // TD-5253
   "machine_list", // TD-5015
   "api_key_validated", // TD-1101

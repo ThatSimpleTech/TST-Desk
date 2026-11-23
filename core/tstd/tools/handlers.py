@@ -43,6 +43,7 @@ from .exit_plan import exit_plan_mode
 from .read_notebook import render_notebook
 from .read_pdf import PDF_MAX_PAGE_IMAGES, PDF_MAX_PAGES, PagesError, looks_like_pdf, read_pdf
 from .results import DEFAULT_MAX_RESULT_CHARS, HandlerOutput, ToolImage
+from .schedule_tools import schedule_list, schedule_propose
 from .search import DEFAULT_MAX_RESULTS, STOPPED, glob_crosses_folders, glob_matcher, grep
 from .send_file import send_file
 from .session_search import SessionRecall, register_session_search_handler
@@ -560,6 +561,7 @@ def register_builtin_handlers(
     shell_allowlist: Callable[[], tuple[str, ...] | None] | None = None,
     session_recall: SessionRecall | None = None,
     ax_driver: AccessibilityDriver | None = None,
+    data_dir: Path | None = None,
 ) -> None:
     """Register the built-in tool handlers on *dispatcher*.
 
@@ -618,6 +620,9 @@ def register_builtin_handlers(
     dispatcher.register_handler("send_file", partial(send_file, service=sent_files))
     dispatcher.register_handler("show_artifact", partial(show_artifact, service=shown_artifacts))
     dispatcher.register_handler("propose_steering_edit", propose_steering_edit)
+    # TD-5263: the job list is read from the daemon's own data dir.
+    dispatcher.register_handler("schedule_propose", schedule_propose)
+    dispatcher.register_handler("schedule_list", partial(schedule_list, data_dir=data_dir))
     dispatcher.register_handler("task_list", task_list)
     dispatcher.register_handler("ask_user", ask_user)
     dispatcher.register_handler("exit_plan_mode", exit_plan_mode)

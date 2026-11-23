@@ -347,6 +347,13 @@ export interface ImportMcpServers extends ClientMessage {
   servers: McpImportChoice[];
 }
 
+/** Dismiss the agent's schedule proposal (TD-5263). Nothing is scheduled. */
+export interface DismissScheduleProposal extends ClientMessage {
+  type: "dismiss_schedule_proposal";
+  session_id: string;
+  proposal_id: string;
+}
+
 /** Switch what a paired phone may change (TD-5279). Loopback only; a phone
  *  can never send it. No `expires_in_seconds` means until switched off. */
 export interface SetPhonePermission extends ClientMessage {
@@ -1260,6 +1267,12 @@ export interface ListJobs extends ClientMessage {
 export interface SaveJob extends ClientMessage {
   type: "save_job";
   id?: string | null;
+  /** TD-5263: this save answers the agent's proposal card. Both or neither;
+   *  the daemon checks it is open and marks the job agent-proposed itself. */
+  proposal_id?: string | null;
+  proposal_session_id?: string | null;
+  /** TD-5263: an agent-proposed job runs under skip-all only when ticked. Omitted keeps it. */
+  allow_skip_all?: boolean | null;
   workspace?: string | null;
   instruction?: string | null;
   /** On an update, omitted keeps the stored value and `""` clears it. */
@@ -1499,6 +1512,7 @@ export type ClientMessageUnion =
   | CancelPairing
   | RemoveRemoteDevice
   | SetPhonePermission
+  | DismissScheduleProposal
   | PreviewMcpImport
   | ImportMcpServers
   | AddMachine
@@ -2604,6 +2618,29 @@ export interface McpImportPreview extends DaemonEvent {
   error: string;
 }
 
+/** The agent proposed a scheduled job (TD-5263). Nothing is scheduled until
+ *  the person saves it; `workspace` is the session's project, not the model's choice. */
+export interface ScheduleProposal extends DaemonEvent {
+  type: "schedule_proposal";
+  session_id: string;
+  proposal_id: string;
+  tool_call_id?: string;
+  workspace: string;
+  instruction: string;
+  cadence?: string | null;
+  next_run?: string | null;
+  timezone?: string | null;
+  next_runs?: string[];
+}
+
+export interface ScheduleProposalDecision extends DaemonEvent {
+  type: "schedule_proposal_decision";
+  session_id: string;
+  proposal_id: string;
+  decision: "saved" | "dismissed" | "expired";
+  job_id?: string | null;
+}
+
 /** A paired phone used a phone permission (TD-5279). Loopback windows only. */
 export interface PhoneChange extends DaemonEvent {
   type: "phone_change";
@@ -3297,6 +3334,10 @@ export interface JobEntry {
   last_status: "ok" | "failed" | "missed" | "waiting" | "skipped" | null;
   last_summary: string | null;
   last_session_id: string | null;
+  /** TD-5263: `agent` is a job saved from the agent's proposal card. */
+  origin?: "user" | "agent";
+  /** TD-5263: such a job ignores skip-all unless this is set. */
+  allow_skip_all?: boolean;
   /** Mail outcome of the last fire. Null unless that fire was email (TD-3820). */
   last_delivery?: "ok" | "failed" | null;
   last_delivery_error?: string | null;
@@ -3566,6 +3607,8 @@ export type DaemonEventUnion =
   | PairingCode
   | PairingCompleted
   | PhoneChange
+  | ScheduleProposal
+  | ScheduleProposalDecision
   | McpImportPreview
   | MachineList
   | ApiKeyValidated

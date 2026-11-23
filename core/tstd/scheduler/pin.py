@@ -44,6 +44,8 @@ class ScheduledPin:
     preset: str | None = None
     engine: EngineKind | None = None
     max_run: int | None = None
+    # TD-5263: a job the agent proposed does not run under skip-all.
+    ignore_skip_all: bool = False
 
 
 # None, not a shared ScheduledPin(): ContextVar defaults must not be a
@@ -53,7 +55,14 @@ _PIN: ContextVar[ScheduledPin | None] = ContextVar("tstd_scheduled_pin", default
 
 def bind_scheduled_pin(job: Job) -> Token[ScheduledPin | None]:
     """Bind *job*'s pin for the current task. Reset with the token."""
-    return _PIN.set(ScheduledPin(preset=job.preset, engine=job.engine, max_run=job.max_run))
+    return _PIN.set(
+        ScheduledPin(
+            preset=job.preset,
+            engine=job.engine,
+            max_run=job.max_run,
+            ignore_skip_all=job.origin == "agent" and not job.allow_skip_all,
+        )
+    )
 
 
 def reset_scheduled_pin(token: Token[ScheduledPin | None]) -> None:

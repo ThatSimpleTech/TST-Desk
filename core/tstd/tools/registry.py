@@ -699,6 +699,7 @@ def create_registry(
     from .desktop import register_desktop_tools
     from .exit_plan import register_exit_plan_tool
     from .plugins import load_plugins
+    from .schedule_tools import register_schedule_tools
     from .send_file import register_send_file_tool
     from .session_search import register_session_search_tool
     from .shell_job_tools import register_shell_job_tools
@@ -724,6 +725,7 @@ def create_registry(
     register_send_file_tool(registry)
     register_show_artifact_tool(registry)
     register_steering_edit_tool(registry)
+    register_schedule_tools(registry)
     register_task_list_tool(registry)
     register_ask_user_tool(registry)
     register_exit_plan_tool(registry)
