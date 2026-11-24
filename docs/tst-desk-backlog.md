@@ -14779,3 +14779,24 @@ row just read "Off" again.
 - [x] Switching a timed grant off by hand sends no lapse.
 
 **Size:** 2 · **Depends on:** TD-5279 · **Status:** Done
+
+### TD-5303 — A chat whose model entry is gone is distilled only on this computer
+
+Owner decision #9: memory distill follows the chat's own model, so a local
+chat never sends its conversation to a hosted model. TD-5259 did this for a
+chat whose entry still exists. Checked at runtime, one case was still open:
+a chat whose entry had been removed fell back to the active entry, so a chat
+kept on a local model (the test catalog's `vllm`) was distilled on the
+active hosted entry. Nothing records where that chat's conversation went.
+
+- [x] A chat whose entry is gone, or that names none, is distilled only by
+      an entry whose roles and backups all call a server on this computer:
+      the active entry if it is one, else the first
+      (`test_a_chat_whose_entry_was_removed_stays_on_this_computer`).
+- [x] With no such entry it is skipped
+      (`test_a_chat_with_no_entry_is_skipped_when_no_model_is_local`).
+- [x] An entry with a hosted backup is not local
+      (`test_a_local_entry_with_a_hosted_backup_is_not_local`).
+- [x] A chat on an entry of its own, and a Grok chat, are unchanged.
+
+**Size:** 1 · **Depends on:** TD-5259 · **Status:** Done

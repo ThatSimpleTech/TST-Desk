@@ -5252,16 +5252,20 @@ class Daemon:
         moment of distilling, not the one most turns ran on: the person's
         latest choice of where this chat goes is the one to respect.
 
-        A chat on the Grok engine has no model of its own here, and a chat
-        whose entry has since been removed has none either. Both keep the
-        TD-5239 rule: the active entry when it names a model, else the
-        first that does; with none there is nothing to run it on.
+        A chat on the Grok engine has no model of its own here: it keeps
+        the TD-5239 rule, the active entry when it names a model, else the
+        first that does. A chat whose entry has since been removed (or that
+        never named one) is distilled only by a model on this computer
+        (TD-5303): nothing says where its conversation went, and it may
+        have been kept on a local model, so it is never sent to a hosted
+        one for this. With no such model it is skipped.
         """
-        if session.engine != "grok":
-            entry = self.config.presets.get(session.preset)
-            if entry is not None and entry.has_tiers:
-                return session.preset
-        return self.config.native_default()
+        if session.engine == "grok":
+            return self.config.native_default()
+        entry = self.config.presets.get(session.preset)
+        if entry is not None and entry.has_tiers:
+            return session.preset
+        return self.config.local_default()
 
     async def _distill_live_sessions(self, flight: ProviderFlight | None = None) -> None:
         """Graceful quit: distill every live idle session that had a turn."""

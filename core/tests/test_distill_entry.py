@@ -1,4 +1,4 @@
-"""Memory distill runs on the chat's own model (TD-5259).
+"""Memory distill runs on the chat's own model (TD-5259, TD-5303).
 
 Distill used to take the daemon's active entry whatever the chat was on,
 so a chat kept on a local model had its conversation sent to a hosted one
@@ -137,9 +137,10 @@ async def test_a_grok_chat_keeps_the_active_entry(
         await _stop(task, ws)
 
 
-async def test_a_chat_whose_entry_was_removed_falls_back(
+async def test_a_chat_whose_entry_was_removed_stays_on_this_computer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """TD-5303: before, this local chat went to the active entry, a hosted one."""
     daemon, task, ws, workspace = await _seeded(tmp_path, monkeypatch)
     try:
         seen = _watch(daemon, monkeypatch)
@@ -149,10 +150,48 @@ async def test_a_chat_whose_entry_was_removed_falls_back(
         assert gone["type"] == "setup_state", gone
         assert "vllm" not in daemon.config.presets
         sess.preset = "vllm"
+        assert daemon.config.active_preset == "tst-default"
         await daemon._run_distill(sess)
-        assert seen == [_where(daemon, "tst-default")]
+        # The active entry is hosted, so the first local one runs it.
+        assert seen == [_where(daemon, "local")]
+        assert seen[0][1].startswith("http://127.0.0.1:")
     finally:
         await _stop(task, ws)
+
+
+async def test_a_chat_with_no_entry_is_skipped_when_no_model_is_local(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    daemon, task, ws, workspace = await _seeded(tmp_path, monkeypatch)
+    try:
+        seen = _watch(daemon, monkeypatch)
+        sess = await _chat(daemon, ws, workspace)
+        for name in ("local", "vllm"):
+            done = await _ask(ws, {"type": "delete_preset", "name": name}, "setup_state")
+            assert done["type"] == "setup_state", done
+        sess.preset = "gone"
+        await daemon._run_distill(sess)
+        assert seen == []
+        # A chat on a hosted entry of its own is still distilled there.
+        daemon._bind_session_preset(sess, "budget")
+        await daemon._run_distill(sess)
+        assert seen == [_where(daemon, "budget")]
+    finally:
+        await _stop(task, ws)
+
+
+def test_a_local_entry_with_a_hosted_backup_is_not_local(tmp_path: Path) -> None:
+    from tests.test_preset_engine import _config
+
+    config = _config(tmp_path)
+    assert config.local_default() == "local"
+    brain = config.presets["local"].brain
+    assert brain is not None
+    hosted = brain.model_copy(update={"base_url": "https://models.example.com/v1"})
+    brain.fallbacks = [hosted]
+    assert config.local_default() == "vllm"
+    config.active_preset = "vllm"
+    assert config.local_default() == "vllm"
 
 
 async def test_no_model_anywhere_is_still_skipped(

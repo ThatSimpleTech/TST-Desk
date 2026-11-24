@@ -20522,3 +20522,26 @@ reported as a lapse.
 **Rejected:** telling the phone too (its pages already follow `setup_state`,
 and the event names nothing a phone needs); a new shorter preset in the
 dialog (one hour is the owner's own example and is already there).
+
+## 2026-11-24 — TD-5303: a chat with no entry is distilled only on this computer (Class B)
+
+**Decision:** `_distill_entry` keeps TD-5259 for a chat whose entry exists
+and TD-5239 for a Grok chat. A chat whose entry was removed, or that names
+none, now uses `ModelConfig.local_default()`: the active entry if every role
+and backup resolves to a loopback server, else the first such entry, else
+none, and distill is skipped.
+
+**Found at runtime:** on main, `test_a_chat_whose_entry_was_removed_falls_back`
+asserted that a chat on `vllm` (127.0.0.1:8000), once that entry was deleted,
+was distilled on `tst-default`, which resolves to a hosted server.
+
+**Rationale:** the owner's rule is that a local chat never sends its
+conversation to a hosted model. Once the entry is gone nothing says where
+the chat went, so the only target safe for every chat is this computer. A
+hosted chat in that state loses one distill at most; a local chat sent to a
+hosted model cannot be undone.
+
+**Rejected:** recording the servers each chat's turns used, so a removed
+entry could fall back to one the chat already reached. It needs per-turn
+bookkeeping that is persisted across restarts, for a rare case; a skipped
+distill is cheap.

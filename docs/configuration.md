@@ -3937,6 +3937,13 @@ memory placeholder.
 A file at `memory.max_lines` (default 200, see §4.8) is distilled, not appended forever. The
 agent tools refuse a write that would go over, or that would replace a file already at the cap.
 
+Distill runs at the end of a chat and at shutdown, on the model entry the chat is on at that
+moment (TD-5259), so its conversation goes only to the server it was already going to. A chat
+whose entry has since been removed is distilled only by an entry whose models, backups
+included, are all on this computer: the active one if it is, else the first such entry, else
+not at all (TD-5303). A chat on the Grok engine uses the active entry, or the first with a
+model.
+
 ---
 
 ## 6. When a config is wrong
