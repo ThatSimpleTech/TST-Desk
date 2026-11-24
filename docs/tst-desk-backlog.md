@@ -14800,3 +14800,35 @@ active hosted entry. Nothing records where that chat's conversation went.
 - [x] A chat on an entry of its own, and a Grok chat, are unchanged.
 
 **Size:** 1 · **Depends on:** TD-5259 · **Status:** Done
+
+### TD-5304 — A stdio MCP server's environment is an allow-list
+
+Owner decision #8, stage 2 (stage 1 was TD-5267's scrub). The scrub was a
+deny-list: a variable whose name nobody thought of still went to every
+server. A server now gets an allow-list, and names what else it needs.
+
+- [x] A stdio server gets the MCP SDKs' own list for its operating system
+      (the TypeScript SDK's `DEFAULT_INHERITED_ENV_VARS`, read from the
+      package), plus locale, time zone, temp folder and a password-free
+      proxy; an exported shell function is never passed
+      (`test_mcp_child_env.py`).
+- [x] `mcp.servers.<id>.inherit_env` names more of the daemon's variables
+      for that server, passed whatever they look like; its own `env` is
+      set last. Windows names match in any case.
+- [x] A server not naming a variable does not get it, ordinary-looking or
+      not (`test_mcp_secrets.py::TestSpawn`).
+- [x] The Settings form keeps the list while the command stays the same,
+      and drops it with a new command, transport or host
+      (`test_mcp_config_parity.py`).
+- [x] A server that fails to start says to look at `inherit_env`.
+- [x] Real servers start under it on Linux: a Python server launched with
+      `uv run`, and a Node server on the official TypeScript SDK, which saw
+      only the allow-listed names.
+
+**Size:** 3 · **Depends on:** TD-5267, TD-5277 · **Status:** Done
+
+**Notes:** macOS and Windows were not tried with real servers: CI runs on
+Linux, and the bundle runs build without MCP servers. The base list is the
+SDKs' own for those systems, the environment SDK-based clients already
+start servers with there. The computer-use MCP driver (`desktop/`) is the
+product's own process and keeps its own environment.

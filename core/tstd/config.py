@@ -1646,8 +1646,12 @@ class McpServerConfig(BaseModel):
     #: Hard cap on one call, however much progress it reports.  None
     #: keeps 600 s.
     max_call_seconds: float | None = Field(default=None, gt=0)
-    #: Extra env for a stdio child, on top of the daemon's own (TD-5110).
+    #: A stdio child's own values (TD-5110), set last.
     env: dict[str, str] = Field(default_factory=dict)
+    #: Names of the daemon's own environment variables this stdio server
+    #: needs beyond the ordinary ones every server gets (TD-5304). Passed
+    #: as they are, whatever they look like: the person named them here.
+    inherit_env: list[str] = Field(default_factory=list)
     #: Extra headers on every request to an http server (TD-5110).
     headers: dict[str, str] = Field(default_factory=dict)
     #: The server's tools, by the name the server gives them, that only
@@ -1672,6 +1676,21 @@ class McpServerConfig(BaseModel):
         if any(not n for n in names):
             raise ValueError("read_only_tools has an empty tool name")
         return names
+
+    @field_validator("inherit_env", mode="before")
+    @classmethod
+    def _inherit_names(cls, value: Any) -> list[str]:
+        from .mcp.child_env import NAME_RE
+
+        if value is None:
+            return []
+        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+            raise ValueError("inherit_env must be a list of environment variable names")
+        names = [v.strip() for v in value]
+        bad = [n for n in names if not NAME_RE.fullmatch(n)]
+        if bad:
+            raise ValueError(f"inherit_env has a name that is not a variable name: {bad[0]!r}")
+        return list(dict.fromkeys(names))
 
     @field_validator("env", mode="before")
     @classmethod

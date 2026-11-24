@@ -35,6 +35,7 @@ EVERY_FIELD: dict[str, dict[str, Any]] = {
         "startup_timeout_seconds": 45.0,
         "max_call_seconds": 900.0,
         "env": {"LOG_LEVEL": "debug", "API_TOKEN": "keychain:token"},
+        "inherit_env": ["JAVA_HOME", "NODE_OPTIONS"],
         "headers": {},
         "read_only_tools": ["list_files", "read_file"],
         "allow_remote": False,
@@ -48,6 +49,7 @@ EVERY_FIELD: dict[str, dict[str, Any]] = {
         "startup_timeout_seconds": 45.0,
         "max_call_seconds": 900.0,
         "env": {},
+        "inherit_env": [],
         "headers": {"Authorization": "keychain:bearer", "X-Team": "tools"},
         "read_only_tools": ["search"],
         "allow_remote": True,
@@ -58,7 +60,8 @@ EVERY_FIELD: dict[str, dict[str, Any]] = {
 # dropped when the transport or host changes, and what is carried across a
 # Settings save untouched. Every field is in exactly one.
 SENT_BY_SETTINGS = {"transport", "command", "url", "enabled"}
-BOUND_TO_THE_HOST = {"allow_remote", "env", "headers"}
+# ``inherit_env`` is bound tighter still: to the command (TD-5304).
+BOUND_TO_THE_HOST = {"allow_remote", "env", "headers", "inherit_env"}
 CARRIED = {"timeout_seconds", "startup_timeout_seconds", "max_call_seconds", "read_only_tools"}
 
 
@@ -160,5 +163,34 @@ async def test_a_new_address_drops_what_was_bound_to_the_old_one_and_keeps_the_r
             assert getattr(after, name) == getattr(default, name), name
         for name in CARRIED:
             assert getattr(after, name) == getattr(spec, name), name
+    finally:
+        await _stop(task, ws)
+
+
+async def test_a_new_command_drops_the_inherited_names(tmp_path: Path) -> None:
+    """TD-5304: the names were chosen for one program; another does not get them."""
+    data = tmp_path / "data"
+    data.mkdir()
+    path = _config(data)
+    spec = McpServerConfig(**EVERY_FIELD["stdio"])
+    save_mcp_server("walk", spec, path)
+    _daemon, task, ws = await _start(data, MockProvider(default=Script(kind="text")))
+    try:
+        reply = await _ask(
+            ws,
+            {
+                "type": "set_mcp_server",
+                "id": "walk",
+                "transport": "stdio",
+                "command": ["true", "--other"],
+                "url": "",
+                "enabled": False,
+            },
+            "setup_state",
+        )
+        assert reply["type"] == "setup_state", reply
+        after = load_config(path).mcp.servers["walk"]
+        assert after.inherit_env == []
+        assert after.env == spec.env
     finally:
         await _stop(task, ws)
