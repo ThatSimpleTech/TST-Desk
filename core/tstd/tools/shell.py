@@ -77,7 +77,7 @@ from ..proc_lifecycle import (
     retain_subprocess_transport,
 )
 from ..protocol import ShellOutput
-from ..sandbox import Enforcement, current_status, reprobe
+from ..sandbox import Enforcement, current_status, egress, reprobe
 from ..session import Session
 from ..shell_read_only import run_env
 from . import shell_memory
@@ -593,6 +593,7 @@ def _open_shell_process(
     command: str,
     cap: ShellMemoryCap | None = None,
     sandboxed: bool = False,
+    tool_call_id: str = "",
 ) -> Awaitable[asyncio.subprocess.Process]:
     """Host shell for interactive sessions; container argv when autonomous.
 
@@ -605,27 +606,42 @@ def _open_shell_process(
         # hooks pinned off (TD-5103). The container needs none of this.
         env.update(run_env(command, env, Path(session.workspace_path)))
         text = command
+        channel: egress.Channel | None = None
+        pass_fds: tuple[int, ...] = ()
         if sandboxed:
+            section = session.boundary_config.sandbox
+            if shell_sandbox.network_allowed(section):
+                # TD-5306: the one way out, to boundary.network's hosts.
+                channel = egress.open_channel(
+                    session.id, tool_call_id, session.boundary_config.allowed_hosts
+                )
+            if channel is not None:
+                env.update(channel.env)
+                pass_fds = (channel.child_fd,)
             # Session state lives at <data dir>/sessions/<id>: hide that root.
             persist = session.persist_dir
             plan = shell_sandbox.build_plan(
                 session.workspace_path,
                 command,
-                session.boundary_config.sandbox,
+                section,
                 extra_hidden=[persist.parent.parent] if persist is not None else [],
+                bridge=channel.bridge if channel is not None else (),
+                pass_fds=pass_fds,
             )
             text = plan.shell_text()
-        return asyncio.create_subprocess_shell(
+        spawn = asyncio.create_subprocess_shell(
             shell_memory.host_command(cap, text),
             cwd=session.workspace_path,
             env=env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
+            pass_fds=pass_fds,
             # OR is a no-op off Windows: both flags are 0 there.
             # CREATE_NO_WINDOW stops cmd.exe flashing a console per call.
             creationflags=_CREATE_NEW_PROCESS_GROUP | _CREATE_NO_WINDOW,
         )
+        return spawn if channel is None else _with_channel(spawn, channel)
     from ..autonomy.sandbox import SandboxError, autonomy_shell_argv
 
     cfg = session.config
@@ -653,6 +669,30 @@ def _open_shell_process(
         start_new_session=True,
         creationflags=_CREATE_NEW_PROCESS_GROUP,
     )
+
+
+def sandbox_note(session: Session) -> str:
+    """The sandbox line for this session's result: with the network or without."""
+    boundary = session.boundary_config
+    network = shell_sandbox.network_allowed(boundary.sandbox) and bool(boundary.allowed_hosts)
+    return shell_sandbox.note(network=network)
+
+
+async def _with_channel(
+    spawn: Awaitable[asyncio.subprocess.Process], channel: egress.Channel
+) -> asyncio.subprocess.Process:
+    """Start the command, then drop the daemon's copy of its channel end.
+
+    The grant then lasts exactly as long as something inside the sandbox
+    holds the other end (TD-5306).
+    """
+    try:
+        proc = await spawn
+    except BaseException:
+        channel.close()
+        raise
+    channel.started()
+    return proc
 
 
 async def run_shell(
@@ -696,12 +736,14 @@ async def run_shell(
     if background:
         from .shell_background import start_job
 
-        return await start_job(session, command, sandboxed=sandboxed)
+        return await start_job(session, command, sandboxed=sandboxed, tool_call_id=tool_call_id)
 
     # Guarded names a bind cannot pin (missing, symlinked) are checked after.
     guard = shell_sandbox.guard_snapshot(session.workspace_path) if sandboxed else None
     cap = await shell_memory.plan_cap(session, sanitized_env())
-    proc = await spawn_shell(session, command, cap, sandboxed=sandboxed, guard=guard)
+    proc = await spawn_shell(
+        session, command, cap, sandboxed=sandboxed, guard=guard, tool_call_id=tool_call_id
+    )
     return await _run_foreground(
         session,
         command,
@@ -723,6 +765,7 @@ async def spawn_shell(
     *,
     sandboxed: bool = False,
     guard: shell_sandbox.GuardSnapshot | None = None,
+    tool_call_id: str = "",
 ) -> asyncio.subprocess.Process:
     """Start *command*, killing it again if this task is cancelled mid-spawn.
 
@@ -737,7 +780,9 @@ async def spawn_shell(
     # and losing the handle would orphan the whole process group (TD-605
     # AC2; the TestCancel flake family).  On cancellation, wait for the
     # spawn to settle, kill the group, and let cancellation propagate.
-    spawn = asyncio.ensure_future(_open_shell_process(session, command, cap, sandboxed))
+    spawn = asyncio.ensure_future(
+        _open_shell_process(session, command, cap, sandboxed, tool_call_id)
+    )
     try:
         proc = await asyncio.shield(spawn)
     except asyncio.CancelledError:
@@ -873,7 +918,7 @@ async def _run_foreground(
                     await task
 
     if adopted:
-        adopted_note = shell_sandbox.note() if sandboxed else ""
+        adopted_note = sandbox_note(session) if sandboxed else ""
         return _format_result(header, None, out, err, adopted_note)
     # A cancelled process may have no returncode; -9 is the conventional
     # "killed by SIGKILL" sentinel (SIGKILL itself is absent on Windows).
@@ -885,7 +930,7 @@ async def _run_foreground(
     wrote = writes_workspace_files(command, session.workspace_path, mount=mount)
     # A command this tool killed (timeout, cancel, stop) already says why.
     memory = "" if header else await shell_memory.cap_note(cap, exit_code, err.tail)
-    sandbox = shell_sandbox.note() if sandboxed else ""
+    sandbox = sandbox_note(session) if sandboxed else ""
     if sandboxed and exit_code != 0 and err.tail.lstrip().startswith("bwrap:"):
         # bubblewrap itself failed, not the command: what it can do here may
         # have changed, so the next card and Doctor say so (TD-5294).

@@ -32,6 +32,7 @@ from .shell import (
     _kill_process_group_offloaded,
     _Route,
     _StreamCapture,
+    sandbox_note,
     sanitized_env,
     spawn_shell,
 )
@@ -84,7 +85,9 @@ async def _watch(
     await session.shell_jobs.finished(job, proc.returncode)
 
 
-async def start_job(session: Session, command: str, *, sandboxed: bool = False) -> str:
+async def start_job(
+    session: Session, command: str, *, sandboxed: bool = False, tool_call_id: str = ""
+) -> str:
     """Start *command* as a background job and return the job id line.
 
     *sandboxed* runs it in the interactive shell sandbox (TD-5138).
@@ -94,7 +97,9 @@ async def start_job(session: Session, command: str, *, sandboxed: bool = False) 
         raise HandlerRefusal("shell_job_refused", refusal)
     guard = shell_sandbox.guard_snapshot(session.workspace_path) if sandboxed else None
     cap = await shell_memory.plan_cap(session, sanitized_env())
-    proc = await spawn_shell(session, command, cap, sandboxed=sandboxed, guard=guard)
+    proc = await spawn_shell(
+        session, command, cap, sandboxed=sandboxed, guard=guard, tool_call_id=tool_call_id
+    )
     stdout, stderr = proc.stdout, proc.stderr
     if stdout is None or stderr is None:  # pragma: no cover — PIPE guarantees both
         retain_subprocess_transport(proc)
@@ -110,7 +115,7 @@ async def start_job(session: Session, command: str, *, sandboxed: bool = False) 
     )
     job.watcher = asyncio.create_task(_watch(session, job, proc, work, guard), name=job.job_id)
     await session.shell_jobs.add(job)
-    sandbox = f"\n{shell_sandbox.note()}" if sandboxed else ""
+    sandbox = f"\n{sandbox_note(session)}" if sandboxed else ""
     return (
         f"started background job {job.job_id} (pid {proc.pid}).\n"
         f"Read its output with shell_job_output job_id={job.job_id}; "

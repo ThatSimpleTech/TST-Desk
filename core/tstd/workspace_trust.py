@@ -184,6 +184,9 @@ def _sandbox_loosened(section: SandboxSection, default: str) -> list[Loosened]:
         out.append(Loosened("sandbox.auto_allow", "true", "false (each command asks)"))
     if on_by_default and section.enabled is False:
         out.append(Loosened("sandbox.enabled", "false", f"true (sandbox.default: {default})"))
+    if section.network == "allowlist":
+        # TD-5306: a sandboxed command could reach boundary.network's hosts.
+        out.append(Loosened("sandbox.network", "allowlist", "deny (no network)"))
     if on_by_default and section.exclude:
         out.append(Loosened("sandbox.exclude", ", ".join(section.exclude), "none (all sandboxed)"))
     return out

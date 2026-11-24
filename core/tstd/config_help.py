@@ -115,6 +115,10 @@ _MODEL_HELP: dict[str, str | tuple[str, str]] = {
         "Inside a full sandbox, a command that would ask runs without asking."
     ),
     "SandboxDefaults.hidden_paths": "More paths no sandboxed command may read.",
+    "SandboxDefaults.network": (
+        "deny: no network in the sandbox. allowlist: only a workspace's boundary.network "
+        "hosts, through the sandbox proxy."
+    ),
     "ModelConfig.provider_retry": "How long to keep retrying a provider failure that can be "
     "retried (429, 5xx, a dropped connection).",
     "ModelConfig.scheduler": "How long one scheduled turn may run, and the base wait for tst run.",
