@@ -213,6 +213,7 @@ from .notify.slack import schedule as schedule_slack_notify
 from .notify.slack import send as send_slack_notify
 from .notify.telegram import schedule as schedule_telegram_notify
 from .peer_policy import outbound_event, service_hosts
+from .phone_never import never_refusal
 from .phone_permissions import (
     APPROVAL_SWITCHES,
     COMPUTER_USE,
@@ -1330,6 +1331,7 @@ class Daemon:
             self._handle_list_sessions,
             policy=dial_policy,
             phone_grants=self.phone_store.live,
+            phone_never=lambda msg: never_refusal(msg, self.config),
         )
         self._cu_server: Any = None
         # TD-4835: keychain presence cache — see _credential_is_stored.

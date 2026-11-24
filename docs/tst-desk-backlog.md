@@ -14737,3 +14737,26 @@ teams). Design: section 4.3 of the 2026-11-20 sub-tasks note.
 **Notes:** the optional per-worker `check` from the design note and
 steering a running child (4.4) are not in this story. A child's card is
 tagged by TD-5268 and its worker shows `awaiting_approval` while it waits.
+
+### TD-5301 — What no phone permission opens
+
+A paired phone acts as the person, but some acts belong to the computer
+whatever the phone was granted (owner decision #5). Checked against a
+running daemon first: a phone could point the mail server elsewhere with no
+grant, so the saved password went there on the next send; with "Adding
+models and keys" on it could move a saved key's host; and it could shut the
+daemon down.
+
+- [x] A phone cannot release a computer-use stop or send `shutdown`, with
+      any grant (`test_phone_never.py`).
+- [x] A phone cannot change or clear a saved key's host so the key reaches
+      another server, nor bind a key saved without a host to a model
+      elsewhere, with any grant; renaming a key, saving a new one with its
+      own host, and binding within the servers it already reaches stay open.
+- [x] A phone cannot change the SMTP server without typing the password in
+      the same message; with it, the change goes through.
+- [x] The computer itself does each of these as before.
+- [x] The refusal is the same with or without a grant, and the phone sees
+      why.
+
+**Size:** 3 · **Depends on:** TD-5182, TD-5279, TD-5296, TD-5297 · **Status:** Done

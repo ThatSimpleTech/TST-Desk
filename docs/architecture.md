@@ -501,6 +501,17 @@ never to a machine peer; it may carry an expiry; and it lives in
 `{user_data_dir}/phone-permissions.yaml`, which no config file sets. `Hub.intercept` passes
 the live grants to `peer_policy.check`, whose default is none.
 
+Some acts no grant opens (owner decision #5, TD-5301). They are refused with `loopback_only`
+from any phone or the legacy token, granted or not, and `Hub.intercept` asks before the
+permission check so the answer is the same either way: releasing the computer-use stop;
+`shutdown`; sending a saved key to a server it does not already go to (`set_credential`
+changing or clearing an existing key's host, or `set_tier_credential` binding a key saved
+without a host to a model on another server); and `set_email_notify` naming another SMTP
+server without a typed password, since the saved one would go there. The first two are read
+off the message (`phone_verbs.never_from_a_phone`); the rest are read against the live config
+(`core/tstd/phone_never.py`). A phone can still save a new key with its own host, or move the
+mail server by typing the password.
+
 `MACHINE_PEER_VERBS` is the session verbs a hub needs (list, attach, detach, send, stop, the
 approval answers, verify, new and fork, branch, tier, plan, effort, Fast and Ultracode
 (`set_effort`, `set_fast`, `set_ultracode`), preset, rename, star, archive,
@@ -595,7 +606,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_coworker` | — | Turn coworker mode on or off. Machine-wide; persists `{user_data_dir}/coworker.yaml`. Acked with `setup_state` (TD-2905). |
 | `set_voice` | — | Turn hold-to-talk dictation on or off. Machine-wide; persists `{user_data_dir}/voice.yaml`. Default off. Acked with `setup_state` (TD-4701). |
 | `transcribe` | — | Hold-to-talk audio. POSTs a clip to `voice.base_url` or `speech.base_url`. Refused when dictation is off or no endpoint is configured. Acked with `transcript`. Not a tool (TD-4701). |
-| `set_email_notify` | — | Save email settings for scheduled-job email (TD-3820, TD-4853, TD-4854). `method` is `smtp`, `microsoft`, or `google`. `password` is written to the keychain account `tst-smtp-password` and is not stored in config. `google_client_secret` is written to `tst-google-client-secret`. Empty or omitted leaves the stored secret alone. Acked with `setup_state`. |
+| `set_email_notify` | — | Save email settings for scheduled-job email (TD-3820, TD-4853, TD-4854). `method` is `smtp`, `microsoft`, or `google`. `password` is written to the keychain account `tst-smtp-password` and is not stored in config. `google_client_secret` is written to `tst-google-client-secret`. Empty or omitted leaves the stored secret alone. Acked with `setup_state`. From a phone, an SMTP `host` other than the saved one needs `password` typed with it, or it is `loopback_only` (TD-5301). |
 | `test_email` | — | Send one short sample report to `to` using the saved method, SMTP, Microsoft Graph, or Gmail (TD-3820, TD-3821, TD-4853, TD-4854). The sample uses the same newsletter renderer as a scheduled report. Acked with `email_test_result`. |
 | `github_connect` | — | Start GitHub device-flow sign-in (TD-4852). Acked with `github_status`. The device code stays in the daemon; the reply carries the user code and verification URL only. |
 | `github_disconnect` | — | Delete the GitHub keychain item (TD-4852). Acked with `github_status`. |
@@ -641,7 +652,7 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `steering_edit` | yes | Write an agent-proposed steering edit with the user's own `content` (Edit, then Save). Same checks as `steering_accept`; empty content is refused (`steering_edit_empty`), and so is content the session log's secret scrub would change (`steering_secret_shaped`), since the logged diff must show what was written. Loopback only (TD-5140). |
 | `steering_reject` | yes | Reject an agent-proposed steering edit. Writes nothing; logged as a `steering_decision` (TD-5140). Not a machine-peer verb. |
 | `end_session` | yes | Run distill for this session (TD-2302). Not a kill. |
-| `shutdown` | — | Ask the daemon to shut down cleanly. Sent by the supervising host. |
+| `shutdown` | — | Ask the daemon to shut down cleanly. Sent by the supervising host. `loopback_only` from any phone, granted or not (TD-5301). |
 | `drain` | — | Before a restart: wait up to `timeout_s` for open turns, then refuse every verb that starts a turn (`user_message`, `send_queued`, `submit_line_comments`, `fork_from`, `run_grok_command`, `approve_grok_plan`, `start_autonomy`, `run_job`) with `daemon_draining` (and `in_reply_to`, the refused verb) for `hold_s` more. Due jobs wait too; approve, deny, stop and resume still pass. `0`/`0` releases, and a release, a later drain or shutdown ends a drain's wait early. Loopback only (`loopback_only` for a phone or a paired computer). Answered with `drain_result`. Sent by `tst drain` (TD-5023). |
 | `list_sessions` | — | Ask for the current session list. A viewer's list also carries every paired computer's cached rows, answered from the cache without dialing (TD-5015). |
 | `search_sessions` | — | Search what this computer's sessions said: `query` (up to 500 characters) and `limit` (1–200, default 50). Answered with `session_search_results` from the local full-text index, `session_index.db` in the data dir (TD-5129). Nothing leaves the computer. |
@@ -678,9 +689,9 @@ Every message in `ClientMessageT`. "Session" says whether the message carries a 
 | `set_tier_slug` | — | Set the model slug for one tier of one preset, then refresh that tier's prices and limits from its model card (TD-5185). |
 | `refresh_model_cards` | — | Settings' Refresh from servers: re-read each tier's (and backup's) model card from the server it calls, with the key it sends, and write the matched prices and limits to config.yaml (TD-5185). A served window (vLLM `max_model_len`, llama.cpp `meta.n_ctx`, LiteLLM `/model/info` `max_input_tokens`) is taken on loopback too (TD-5189). Acked with `setup_state`. |
 | `set_tier_context_window` | — | Settings' Context field: write one tier's `context_window` (more than twice its `max_output_tokens`, else `bad_request`) to config.yaml (TD-5189). Acked with `setup_state`. |
-| `set_credential` | — | Create or rename a named API key without touching the secret (TD-1717). Optional `base_url` sets or clears the host that key talks to (TD-1722). From a paired phone this is the phone permission `models_and_keys` (`phone_permission_off` without it, TD-5296). |
+| `set_credential` | — | Create or rename a named API key without touching the secret (TD-1717). Optional `base_url` sets or clears the host that key talks to (TD-1722). From a paired phone this is the phone permission `models_and_keys` (`phone_permission_off` without it, TD-5296); changing or clearing an existing key's host so it would go to another server is `loopback_only` from a phone even with it (TD-5301). |
 | `delete_credential` | — | Remove a named key, its secret, and tier bindings (TD-1717). |
-| `set_tier_credential` | — | Bind a named API key to one tier of one preset (TD-1717). That key's `base_url` is the host the tier calls when set (TD-1718). From a paired phone this is the phone permission `models_and_keys` (`phone_permission_off` without it, TD-5296). |
+| `set_tier_credential` | — | Bind a named API key to one tier of one preset (TD-1717). That key's `base_url` is the host the tier calls when set (TD-1718). From a paired phone this is the phone permission `models_and_keys` (`phone_permission_off` without it, TD-5296); binding a key saved without a host to a model on a server it does not already go to is `loopback_only` from a phone even with it (TD-5301). |
 | `set_mcp_server` | — | Create or replace one listed MCP server (id, transport, command argv and/or url, enabled). No `env` or `headers` field; the server's existing ones are kept, unless the transport changes, which drops them and deletes their keychain items (TD-5110). A hand-set `allow_remote` is kept the same way, and dropped with a transport change (TD-5136). A url on another host or port drops the headers (deleting their items) and `allow_remote` too (TD-5161). Acked with `setup_state` (TD-4403). A stdio server is a command the computer runs from then on, so this and the three verbs below are a phone permission (TD-5279): a paired phone is refused with `phone_permission_off` unless the computer switched `mcp_servers` on with `set_phone_permission`, the legacy `remote-token` is always refused that way, and another computer gets `not_allowed`. A phone still sees the list in `setup_state`. When a phone does change a server, the computer's windows get `phone_change` and the server's `origin_device` / `origin_at` say which phone and when. |
 | `delete_mcp_server` | — | Remove one listed MCP server by id, and delete the keychain items its `env` / `headers` named (TD-5110). Unknown id is a typed error. Acked with `setup_state` (TD-4403). |
 | `set_mcp_secret` | — | Store one env var (stdio) or header (http) of a listed MCP server (`server_id`, `target`, `name`, `value`) in the keychain item `tst-mcp.<server_id>.<entry>`; `config.yaml` gets only `keychain:<entry>`. The value never appears in any event, log or audit record. Acked with `setup_state` (TD-5110). |

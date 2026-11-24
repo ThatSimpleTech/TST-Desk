@@ -69,6 +69,7 @@ export const PHONE_PERMISSIONS: PhonePermissionCopy[] = [
 			"What a phone adds stays on this computer after the phone is removed.",
 			"A phone can always switch between the models already here; that needs no permission.",
 			"The key a phone saves goes to the system keychain, never to a file.",
+			"No phone can send a key already saved here to another server, even with this on. It has to type the key for that server.",
 		],
 		advice: "Leave this off unless you set up new models while away from the computer.",
 		offOnPhone:

@@ -20467,3 +20467,39 @@ at capacity instead of queueing (a small model handles "it starts when a
 slot frees" better than "try again"); starting a writer from the latest
 checkpoint instead of `HEAD` (it would need the checkpoint code reviewed;
 the spawn note says uncommitted edits are not in the child's worktree).
+
+## 2026-11-24 — TD-5301: what no phone permission opens (Class B)
+
+**Decision:** four acts are refused from a paired phone (or the legacy
+token) whatever it was granted, with `loopback_only` and no switch:
+releasing the computer-use stop (TD-5297), `shutdown`, sending a saved key
+to a server it does not already go to, and pointing the mail server
+elsewhere without typing the password. The two read off the message stay
+in `phone_verbs.never_from_a_phone`. The two that depend on what is saved
+live in `core/tstd/phone_never.py`, which `Hub.intercept` asks before the
+permission check, through a callable the daemon passes with its live
+config, so `peer_policy.check` stays a pure table.
+
+"Another server" reuses TD-5182's rule (`key_hosts.key_refusal`): a key's
+own host, or, for a key saved without one, the URLs of the models it is
+bound to, with a server on this computer allowed. `set_credential` is
+refused when it changes or clears an existing key's host so the key would
+reach a new origin; `set_tier_credential` when it binds a host-less key to
+a model elsewhere. A new key (no id yet) and `set_api_key` (the phone types
+the key) are not a move. For mail, any SMTP host other than the saved one,
+compared case-blind, needs `password` in the same message.
+
+**Found at runtime before the change** (a live test daemon, a paired phone):
+`set_email_notify` with a new host and no password was accepted with no
+grant; `set_credential` moved the saved OpenRouter key's host once
+`models_and_keys` was on; `shutdown` stopped the daemon. `add_model` reusing
+a saved key at another URL was already refused for every client (TD-5182).
+
+**Rationale:** each sends something the person saved at the computer (a
+key, a password) somewhere they never chose, or leaves the computer out of
+reach; none is undone by revoking the phone. Asking before the grant check
+gives the same answer with or without a grant.
+
+**Rejected:** a sixth capability for these (the owner chose "never"); and
+refusing every `set_credential` with a `base_url`, which would also block
+saving a new key with its own host.
