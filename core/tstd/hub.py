@@ -38,6 +38,7 @@ from .protocol import (
     ListMachines,
     ReconnectMachine,
     RemoveMachine,
+    build_error,
     scrub_wire_json,
 )
 from .ws import WebSocketServer
@@ -89,11 +90,15 @@ class Hub:
         policy: DialPolicy | None = None,
         timings: Timings = DEFAULT_TIMINGS,
         phone_grants: Callable[[], Collection[str]] | None = None,
+        phone_never: Callable[[ClientMessage], str | None] | None = None,
     ) -> None:
         self._ws = ws_server
         # TD-5279: the phone permissions switched on right now. Without a
         # source there are none, so every opt-in verb is refused.
         self._phone_grants = phone_grants
+        # TD-5301: what no grant opens to a phone, read against the live
+        # config. Asked first, so the answer does not depend on a grant.
+        self._phone_never = phone_never
         self._own_session_list = own_session_list
         self.registry = MachineRegistry(data_dir)
         self.registry.load()
@@ -131,6 +136,10 @@ class Hub:
         peer = self._ws.peer_view(connection)
         sid = message_session_id(msg)
         bridged = sid is not None and is_bridged(sid)
+        if peer.remote and not peer.machine and self._phone_never is not None:
+            never = self._phone_never(msg)
+            if never is not None:
+                return build_error("loopback_only", never, session_id=sid, in_reply_to=msg.type)
         grants = self._phone_grants() if self._phone_grants is not None else ()
         refusal = check(msg, peer, bridged=bridged, grants=grants)
         if refusal is not None:

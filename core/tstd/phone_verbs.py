@@ -76,10 +76,11 @@ PHONE_OPT_IN: dict[str, str] = {
 # This list is what a phone could already send the day it was written; it
 # changed nothing by itself. Entries move to ``PHONE_OPT_IN`` one capability
 # at a time: the model and key verbs (TD-5296), computer-use control
-# (TD-5297) and starting an unattended run (TD-5298) have; releasing the
-# computer-use stop is refused outright (``never_from_a_phone``). Still
-# here and waiting: the connector sign-ins, ``shutdown``, changing a saved
-# key's host and changing the mail server. Some are refused or narrowed
+# (TD-5297) and starting an unattended run (TD-5298) have. Some acts are
+# refused outright whatever a phone was granted (TD-5301, ``phone_never``):
+# releasing the computer-use stop, ``shutdown``, sending a saved key to
+# another server and changing the mail server without the password. Still
+# here and waiting: the connector sign-ins. Some are refused or narrowed
 # for a remote peer by their own handler (``start_pairing``,
 # ``remove_remote_device``); being here only means the policy passes them on.
 PHONE_OPEN: frozenset[str] = frozenset(
@@ -236,12 +237,17 @@ def _only_tightens(msg: ClientMessage) -> bool:
 
 
 def never_from_a_phone(msg: ClientMessage) -> bool:
-    """What no grant opens to a phone (owner decision, 2026-11).
+    """What no grant opens to a phone, read off the message alone.
 
     Releasing the computer-use stop: whoever engaged it may have had a
     reason, and a phone that released it could set the pointer moving
-    again with nobody at the computer. Engaging it stays open.
+    again with nobody at the computer. Engaging it stays open. Shutting the
+    daemon down (TD-5301): nothing on a phone can start it again, so the
+    computer would be out of reach until someone sat down at it. The
+    rules that depend on what is saved are in ``phone_never``.
     """
+    if msg.type == "shutdown":
+        return True
     return msg.type == "set_cu_kill" and getattr(msg, "killed", True) is False
 
 
