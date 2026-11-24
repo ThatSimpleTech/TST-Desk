@@ -66,7 +66,9 @@ class _LiveServer:
 def _stdio_fix(server_id: str) -> str:
     return (
         f"Check that mcp.servers.{server_id}.command is a working argv "
-        "and the process speaks MCP JSON-RPC on stdio."
+        "and the process speaks MCP JSON-RPC on stdio. A server gets only the "
+        "ordinary environment variables; if it needs one of yours, name it in "
+        f"mcp.servers.{server_id}.inherit_env."
     )
 
 
@@ -279,6 +281,7 @@ class McpSupervisor:
                 max_call_seconds=spec.max_call_seconds or MAX_CALL_SECONDS,
                 startup_timeout=self._startup_timeout(spec),
                 env=env,
+                inherit=spec.inherit_env,
             )
             return await self._handshake(server_id, client, spec)
         except Exception as e:

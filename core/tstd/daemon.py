@@ -4821,6 +4821,13 @@ class Daemon:
                     # Nor env or headers (TD-5110): only set_mcp_secret edits
                     # those. A new transport cannot use the old ones.
                     env=dict(prior.env) if prior and kept else {},
+                    # The names a stdio server inherits (TD-5304) are hand-set
+                    # like the opt-in, and only for the command they were for.
+                    inherit_env=(
+                        list(prior.inherit_env)
+                        if prior and kept and prior.command == msg.command
+                        else []
+                    ),
                     headers=dict(prior.headers) if prior and kept else {},
                 )
                 save_mcp_server(msg.id, spec, self.config_path)

@@ -205,6 +205,11 @@ class ShellPolicy:
     max_stream_chars: int = 20_000
 
 
+def credential_in_url(value: str) -> bool:
+    """True when *value* embeds ``user:password@`` before a host (TD-4805)."""
+    return _CREDENTIAL_URL_VALUE_RE.search(value) is not None
+
+
 def sanitized_env() -> dict[str, str]:
     """The daemon environment with secret-shaped variables removed.
 
@@ -221,7 +226,7 @@ def sanitized_env() -> dict[str, str]:
             continue
         if name not in _AUTH_NAME_EXEMPT and _AUTH_NAME_RE.search(name):
             continue
-        if _CREDENTIAL_URL_VALUE_RE.search(value):
+        if credential_in_url(value):
             continue
         env[name] = value
     return env

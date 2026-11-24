@@ -20545,3 +20545,28 @@ hosted model cannot be undone.
 entry could fall back to one the chat already reached. It needs per-turn
 bookkeeping that is persisted across restarts, for a rare case; a skipped
 distill is cheap.
+
+## 2026-11-24 — TD-5304: an allow-list environment for stdio MCP servers (Class B)
+
+**Decision:** `tstd/mcp/child_env.py` builds a stdio server's environment
+from the MCP SDKs' default list for the operating system (copied from the
+TypeScript SDK's `DEFAULT_INHERITED_ENV_VARS`: POSIX `HOME LOGNAME PATH SHELL
+TERM USER`, and 18 Windows names), plus `LANG`, `LANGUAGE`, `LC_*`, `TMPDIR`,
+`TZ` (Windows `TMP`, `TZ`) and the four proxy variables in either case when
+the value has no password. Values starting with `()` are dropped, as the SDKs
+do. A new per-server `inherit_env` list adds named variables, unfiltered;
+`env` is set last. The Settings save carries `inherit_env` only while the
+transport, host and command are unchanged.
+
+**Rationale:** the owner asked for the allow-list after the TD-5267 scrub.
+The SDK list is what every SDK-based client already starts servers with, so
+a server that works elsewhere has what it needs to start here. Locale and
+proxies are added because a server that fetches or prints text without them
+fails in ways that are hard to trace to the environment. Naming is per
+server because the need is per program; a name chosen for one command is
+dropped when the command changes.
+
+**Rejected:** a global `mcp.inherit_env` (one server's need would go to
+all); keeping the scrub as a mode switch (two behaviours to support for one
+safety property); filtering named variables through the scrub (the person
+named them for this server).

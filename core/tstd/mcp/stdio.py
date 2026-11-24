@@ -5,11 +5,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from ..logging import get_logger
-from ..tools.shell import sanitized_env
 from .calls import (
     CallTimedOut,
     ToolsChanged,
@@ -20,6 +19,7 @@ from .calls import (
     tool_call_params,
     watch_call,
 )
+from .child_env import child_env
 from .era import PROBE_TIMEOUT, Negotiated, negotiate, rpc_error
 from .errors import McpError
 from .jsonrpc import (
@@ -45,9 +45,10 @@ class StdioMcpClient:
     ``on_tools_changed`` (TD-5136). Calls may overlap.
 
     Stderr is drained so a chatty server cannot fill the pipe and stall.
-    The child inherits the daemon environment plus ``env``, this server's
-    own values (TD-5110). ``env`` goes to this child's spawn and nowhere
-    else: never ``os.environ``, so no other child sees it.
+    The child gets the allow-listed part of the daemon environment, the
+    names in ``inherit`` (TD-5304), then ``env``, this server's own values
+    (TD-5110). ``env`` goes to this child's spawn and nowhere else: never
+    ``os.environ``, so no other child sees it.
     """
 
     def __init__(
@@ -58,11 +59,13 @@ class StdioMcpClient:
         max_call_seconds: float = MAX_CALL_SECONDS,
         startup_timeout: float | None = None,
         env: Mapping[str, str] | None = None,
+        inherit: Sequence[str] = (),
     ) -> None:
         if not command:
             raise McpError("stdio MCP command must be a non-empty argv")
         self._command = command
         self._env = dict(env or {})
+        self._inherit = list(inherit)
         self._timeout = timeout
         self._max_call = max(max_call_seconds, timeout)
         # The handshake (probe, initialize, tools/list) answers in its own
@@ -93,12 +96,11 @@ class StdioMcpClient:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     limit=STREAM_LIMIT,
-                    # TD-5267: never the daemon's whole environment. A server
-                    # is somebody else's program; it gets the ordinary
-                    # variables it needs to start and none that look like a
-                    # key, a token, a password or a credential in a URL, plus
-                    # what this server was given by name.
-                    env={**sanitized_env(), **self._env},
+                    # TD-5267, TD-5304: never the daemon's whole environment.
+                    # A server is somebody else's program; it gets the
+                    # ordinary variables a program needs to start, the ones
+                    # it names in inherit_env, and its own values.
+                    env=child_env(self._inherit, self._env),
                 )
             except OSError as e:
                 raise McpError(f"failed to start stdio MCP: {e}") from e

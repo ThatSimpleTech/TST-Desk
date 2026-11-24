@@ -266,18 +266,28 @@ class TestSpawn:
                 "gamma": McpServerConfig(
                     transport="stdio", command=fake_server, env={"GITHUB_TOKEN": "its-own"}
                 ),
+                # TD-5304: and one that names the daemon's own, by name, gets those.
+                "delta": McpServerConfig(
+                    transport="stdio",
+                    command=fake_server,
+                    inherit_env=["TD5267_ORDINARY", "GITHUB_TOKEN"],
+                ),
             }
         )
         supervisor, _, dispatcher = await _load(config)
         try:
-            assert [row.status for row in supervisor.doctor_rows()] == ["ok", "ok", "ok"]
+            assert [row.status for row in supervisor.doctor_rows()] == ["ok"] * 4
             for server in ("alpha", "beta"):
                 for name in ("OPENAI_API_KEY", "GITHUB_TOKEN", "MYSQL_PWD", "DATABASE_URL"):
                     assert await _getenv(dispatcher, server, name) == "<unset>", (server, name)
-                assert await _getenv(dispatcher, server, "TD5267_ORDINARY") == "fine"
+                # TD-5304: an allow-list, so an ordinary name nobody listed stays too.
+                assert await _getenv(dispatcher, server, "TD5267_ORDINARY") == "<unset>"
                 assert await _getenv(dispatcher, server, "PATH") == os.environ["PATH"]
             assert await _getenv(dispatcher, "gamma", "GITHUB_TOKEN") == "its-own"
             assert await _getenv(dispatcher, "gamma", "OPENAI_API_KEY") == "<unset>"
+            assert await _getenv(dispatcher, "delta", "TD5267_ORDINARY") == "fine"
+            assert await _getenv(dispatcher, "delta", "GITHUB_TOKEN") == "ghp-not-for-a-server"
+            assert await _getenv(dispatcher, "delta", "OPENAI_API_KEY") == "<unset>"
         finally:
             await supervisor.aclose()
 

@@ -479,6 +479,8 @@ def _mcp_server_lines(server_id: str, spec: McpServerConfig) -> list[str]:
     # TD-5123: also hand-set; Settings has no field for it.
     if spec.read_only_tools:
         block.append(f"      read_only_tools: {json.dumps(list(spec.read_only_tools))}")
+    if spec.inherit_env:
+        block.append(f"      inherit_env: {json.dumps(list(spec.inherit_env))}")
     # TD-5136: the off-box opt-in is hand-set too.
     if spec.allow_remote:
         block.append("      allow_remote: true")

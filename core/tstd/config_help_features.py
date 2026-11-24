@@ -263,7 +263,9 @@ FEATURE_HELP: dict[str, str | tuple[str, str]] = {
     "McpServerConfig.timeout_seconds": ("Longest silence in a tool call. Not set: 30.", S),
     "McpServerConfig.startup_timeout_seconds": ("Time for each handshake step. Not set: 8.", S),
     "McpServerConfig.max_call_seconds": ("Hard cap on one tool call. Not set: 600.", S),
-    "McpServerConfig.env": "Extra environment for a stdio server.",
+    "McpServerConfig.env": "This stdio server's own environment values.",
+    "McpServerConfig.inherit_env": "Your environment variables this stdio server needs, by "
+    "name. Others are not passed, except PATH, HOME and the like.",
     "McpServerConfig.headers": "Extra headers on every request to an http server.",
     "McpServerConfig.read_only_tools": "This server's tools that only read; plan mode lets "
     "only these run.",
