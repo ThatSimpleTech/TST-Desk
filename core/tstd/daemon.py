@@ -525,9 +525,10 @@ from .remote_devices import (
 )
 from .rewind_handlers import preview_restore, restore_files
 from .router import TierRouter
-from .sandbox import Enforcement
+from .sandbox import Enforcement, egress
 from .sandbox import current_status as sandbox_status
 from .sandbox import reprobe as sandbox_reprobe
+from .sandbox.proxy import EgressDecision
 from .scheduler.calendar_path import CalendarPathError, require_calendar_file
 from .scheduler.chain import require_chain
 from .scheduler.chat_source import SessionScheduleSource, session_schedule_source
@@ -2708,6 +2709,7 @@ class Daemon:
             # Audit writer before revive so restored loops can record calls.
             self._audit_writer = AuditWriter(AuditStore(audit_db_path(self.data_dir)))
             self._audit_writer.start()
+            self._record_sandbox_egress()
 
             # Rehydrate sessions from the registry plus any persisted
             # transcript. A session with a conversation snapshot is revived
@@ -2737,11 +2739,23 @@ class Daemon:
             extra={"extra_fields": {"uptime": f"{self.state.uptime:.1f}s"}},
         )
 
+    def _record_sandbox_egress(self) -> None:
+        """Every sandbox proxy allow and deny goes to this daemon's audit log (TD-5306)."""
+        writer = self._audit_writer
+        if writer is None:
+            return
+
+        async def record(decision: EgressDecision) -> None:
+            writer.record_network_egress(decision)
+
+        egress.set_recorder(record)
+
     async def _serve(self) -> None:
         """Main serving loop — start subsystems and wait for shutdown."""
         if self._audit_writer is None:
             self._audit_writer = AuditWriter(AuditStore(audit_db_path(self.data_dir)))
             self._audit_writer.start()
+            self._record_sandbox_egress()
         await self.ws_server.start()
         self._remember_remote_port()
         if sys.platform == "darwin":

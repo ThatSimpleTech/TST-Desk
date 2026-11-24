@@ -43,7 +43,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -99,6 +99,11 @@ _WALLS = (
     "writes reach only the workspace and a private /tmp, "
     "no network or host sockets; .git and steering files are read-only"
 )
+_WALLS_NETWORK = (
+    "writes reach only the workspace and a private /tmp, network only to the hosts on "
+    "boundary.network through the sandbox proxy, no host sockets; .git and steering "
+    "files are read-only"
+)
 AUTO_REASON = "runs inside the shell sandbox (sandbox.auto_allow)"
 
 
@@ -114,6 +119,10 @@ class SandboxSection(BaseModel):
     # None: follow the user-level ``sandbox.default`` (TD-5295). Merged into a
     # bool by ``effective`` before anything reads it.
     enabled: bool | None = None
+    # TD-5306: deny cuts the network off; allowlist lets a command reach the
+    # hosts on ``boundary.network`` through the egress proxy. None: follow the
+    # user-level ``sandbox.network``. A workspace's allowlist waits for trust.
+    network: Literal["deny", "allowlist"] | None = None
     auto_allow: bool = False
     exclude: list[str] = Field(default_factory=list, max_length=MAX_EXCLUDES)
     hidden_paths: list[str] = Field(default_factory=list, max_length=MAX_HIDDEN)
@@ -138,9 +147,11 @@ def effective(section: SandboxSection, defaults: SandboxDefaults | None) -> Sand
         # Off the daemon: nothing to merge; None already reads as off.
         return section
     enabled = section.enabled if section.enabled is not None else defaults.default != "off"
+    network = section.network if section.network is not None else defaults.network
     return section.model_copy(
         update={
             "enabled": enabled,
+            "network": network,
             "auto_allow": section.auto_allow or defaults.auto_allow,
             # Deduped, so merging an already merged section changes nothing.
             "hidden_paths": list(dict.fromkeys([*defaults.hidden_paths, *section.hidden_paths])),
@@ -199,10 +210,16 @@ def seccomp_supported() -> bool:
     return _seccomp_arch() is not None
 
 
-def note(status: BackendStatus | None = None) -> str:
+def network_allowed(section: SandboxSection) -> bool:
+    """True when a sandboxed command may reach the allow-listed hosts (TD-5306)."""
+    return section.network == "allowlist"
+
+
+def note(status: BackendStatus | None = None, *, network: bool = False) -> str:
     """The line a sandboxed result carries: what it ran in, and how strongly."""
     status = status or current_status()
-    text = f"ran in the shell sandbox ({status.backend}, {status.enforcement.value}): {_WALLS}"
+    walls = _WALLS_NETWORK if network else _WALLS
+    text = f"ran in the shell sandbox ({status.backend}, {status.enforcement.value}): {walls}"
     if status.gaps:
         text += f"; partial: {status.gap_text()}"
     return text
@@ -328,6 +345,8 @@ class SandboxPlan:
     argv: list[str]
     unset_env: tuple[str, ...] = _UNSET_ENV
     seccomp: Path | None = None
+    #: Descriptors the host shell must pass in: the egress channel (TD-5306).
+    pass_fds: tuple[int, ...] = ()
 
     def shell_text(self) -> str:
         """The line the host shell ``exec``s, so the spawned pid stays the
@@ -484,6 +503,8 @@ def build_plan(
     home: Path | None = None,
     extra_hidden: Sequence[Path] = (),
     seccomp: Path | None = None,
+    bridge: Sequence[str] = (),
+    pass_fds: tuple[int, ...] = (),
 ) -> SandboxPlan:
     """The ``bwrap`` argv that runs *command* in *workspace*.
 
@@ -497,7 +518,8 @@ def build_plan(
     unable to enter its own folder. Such a directory is masked first, with
     a tmpfs that can be passed through but not listed, and the workspace is
     then bound into it. Everything else that was in it is still gone.
-    *seccomp* defaults to ``seccomp_file()``.
+    *seccomp* defaults to ``seccomp_file()``. *bridge* is the egress
+    bridge's argv (TD-5306): it runs first and execs the command.
     """
     real_ws = Path(workspace).resolve()
     filter_path = seccomp if seccomp is not None else seccomp_file()
@@ -556,5 +578,5 @@ def build_plan(
     # is left out rather than shipped untested.
     for name in _UNSET_ENV:
         argv += ["--unsetenv", name]
-    argv += ["--chdir", workspace, "--", "/bin/sh", "-c", command]
-    return SandboxPlan(argv, seccomp=filter_path)
+    argv += ["--chdir", workspace, "--", *bridge, "/bin/sh", "-c", command]
+    return SandboxPlan(argv, seccomp=filter_path, pass_fds=pass_fds)

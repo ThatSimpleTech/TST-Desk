@@ -1048,6 +1048,9 @@ class SandboxDefaults(BaseModel):
     # A sandboxed command where the sandbox is only partial: ask, naming the gaps,
     # or refuse.
     on_partial: Literal["ask", "refuse"] = "ask"
+    # TD-5306: deny (no network at all) or allowlist (the hosts on a
+    # workspace's ``boundary.network``, through the sandbox's egress proxy).
+    network: Literal["deny", "allowlist"] = "deny"
     auto_allow: bool = False
     hidden_paths: list[str] = Field(default_factory=list, max_length=100)
 

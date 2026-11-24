@@ -261,6 +261,10 @@ _OUTBOUND_CAPABLE = {
         "TD-5305: the sandbox egress proxy; it dials only a host the person put on "
         "boundary.network, for a command they ran, and names no host itself"
     ),
+    "sandbox/egress.py": (
+        "TD-5306: socket pairs between the daemon and a sandboxed command's bridge; it "
+        "dials nothing itself (the proxy does, to boundary.network's hosts only)"
+    ),
     "net.py": (
         "TD-5181: builds a proxy-free transport for a caller's loopback URL; it sends "
         "nothing itself and has no destination of its own"

@@ -14857,3 +14857,31 @@ default; nothing uses this proxy until TD-5306 adds the setting.
 - [x] No outside host is contacted by the tests.
 
 **Size:** 5 · **Depends on:** TD-5138, TD-5294 · **Status:** Done
+
+### TD-5306 — A sandboxed command reaches boundary.network's hosts, and nothing else
+
+Second of the two R3 PRs (sandboxing.md), after TD-5305's proxy. Behind a
+setting; the network stays fully off by default.
+
+- [x] `sandbox.network: deny | allowlist`, user level and per workspace;
+      `deny` by default; a workspace's own setting wins; a repo-shipped
+      `allowlist` is a loosening that waits for trust.
+- [x] With `allowlist`, a sandboxed command reaches a listed host through
+      the proxy, and the allow is audited with its tool call
+      (`test_sandbox_network.py`, real bubblewrap).
+- [x] An unlisted host answers 403 naming `boundary.network`.
+- [x] With the proxy variables removed, a command has no route out: not to
+      the allowed address, not to the host's loopback, not to the internet
+      (the owner's condition).
+- [x] The grant ends when the sandbox does, foreground or background.
+- [x] `deny`, or no hosts listed, sets no proxy and grants nothing.
+- [x] The seccomp filter is unchanged: the bridge reaches the daemon over a
+      socket pair handed in before the start, with descriptor passing.
+- [x] The result line says which walls held ("network only to the hosts on
+      boundary.network").
+
+**Size:** 5 · **Depends on:** TD-5305 · **Status:** Done
+
+**Notes:** Linux only; macOS (Seatbelt) is R2 and not tested in CI. Tools
+that ignore proxy variables, and SSH, cannot connect; that is documented,
+not solved. The packaged app runs the bridge on the system's `python3`.

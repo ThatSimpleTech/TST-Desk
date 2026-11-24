@@ -20596,3 +20596,33 @@ without parsing every later request on a kept-alive connection.
 **Rejected:** wildcard host entries (the list's meaning stays the same as
 the classifier's `network-new-host` rule); a TCP listener on the host for
 Linux (R3: "not TCP at all on the host side").
+
+## 2026-11-24 — TD-5306: the sandbox network bridge (Class B)
+
+**Decision:** design R3's first Linux option, keeping the seccomp filter as
+it is. Per command, the daemon makes a token grant and a socket pair, and
+the sandbox's first process is a stdlib bridge (`egress.BRIDGE_SOURCE`, run
+with `python -I -S -c`): it binds `127.0.0.1:3128` inside the command's own
+network namespace, forks a relay, and execs `/bin/sh -c <command>`. The
+relay asks the daemon over the inherited socket for one connected socket
+per client connection (`SCM_RIGHTS`) and pipes the two. The daemon closes
+its copy of the command's end once the command starts, so the serve loop
+ends, and the grant is revoked, when the last process in the sandbox goes.
+The proxy URL with the token travels in the host shell's environment, never
+on a command line. Setting: `sandbox.network: deny | allowlist`, deny by
+default, at both levels; a workspace `allowlist` is a trust loosening.
+
+**Checked on this machine before building it:** inside `bwrap
+--unshare-all` with the product's filter, loopback is up, a direct connect
+fails with ENETUNREACH, `socket(AF_UNIX)` is refused, and a socket passed
+over an inherited pair carries traffic.
+
+**Rationale:** nothing listens on the host, the filter keeps refusing host
+sockets, and no helper binary is needed. Tying the grant's life to the
+socket rather than to the process objects covers foreground, background
+and a timed-out command turned job without new lifecycle code.
+
+**Rejected:** a helper binary that installs the filter after the bridge is
+up (R3's second option; R7 territory); a TCP listener on the host; running
+the bridge on the frozen sidecar (a onefile binary cannot run a script, and
+unpacking it per command is slow), so the packaged app needs `python3`.

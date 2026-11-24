@@ -255,7 +255,11 @@ class TestShellResult:
     ) -> None:
         # The container is not started here: the note is read from the text.
         def fake_open(
-            session: Session, command: str, cap: object = None, sandboxed: bool = False
+            session: Session,
+            command: str,
+            cap: object = None,
+            sandboxed: bool = False,
+            tool_call_id: str = "",
         ) -> Awaitable[asyncio.subprocess.Process]:
             return asyncio.create_subprocess_shell(
                 "exit 0",
