@@ -30,6 +30,7 @@ import {
 	originWords,
 	permissionCopy,
 	phoneChangeNotice,
+	phoneLapseNotice,
 	stateWords,
 } from "./phone-permissions";
 
@@ -386,6 +387,33 @@ describe("Settings → Policy, the skip-all switch", () => {
 		button.click();
 		flushSync();
 		expect(mocks.sent).toEqual([{ type: "set_skip_all_approvals", enabled: true }]);
+	});
+});
+
+describe("when a timed permission runs out (TD-5302)", () => {
+	const event = {
+		type: "phone_permission_lapsed",
+		seq: 1,
+		capability: "models_and_keys",
+		label: "Adding models and keys",
+		expired_at: "2026-11-20T19:00:00Z",
+	} as const;
+
+	it("the computer's window keeps one banner saying which one and where to turn it on", () => {
+		const notice = phoneLapseNotice(event);
+		expect(notice.severity).toBe("banner");
+		expect(notice.title).toBe("A phone permission ran out");
+		expect(notice.body).toMatch(/^Adding models and keys is off again for paired phones at /);
+		expect(notice.body).toContain("Settings, Phones and devices");
+		notifyEvent(event as DaemonEventUnion);
+		notifyEvent(event as DaemonEventUnion);
+		expect(toasts).toHaveLength(0);
+		expect(banners).toHaveLength(1);
+	});
+
+	it("an unreadable time still names the permission", () => {
+		const body = phoneLapseNotice({ ...event, expired_at: "soon" }).body;
+		expect(body.startsWith("Adding models and keys is off again for paired phones.")).toBe(true);
 	});
 });
 

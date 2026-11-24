@@ -28,7 +28,7 @@ import {
 	type NoticeSpec,
 } from "./error-copy";
 import { claimedInline } from "./inline-errors";
-import { phoneChangeNotice } from "./phone-permissions";
+import { phoneChangeNotice, phoneLapseNotice } from "./phone-permissions";
 import type { DaemonEventUnion } from "./protocol";
 import { redact } from "./redact";
 import { session } from "./session-status.svelte.js";
@@ -160,6 +160,10 @@ export function notifyEvent(event: DaemonEventUnion): void {
 			// TD-5279: a paired phone changed this computer. One banner per
 			// change, kept until dismissed: nobody may be watching when it lands.
 			notify(`phone:${event.device_name}:${event.summary}`, phoneChangeNotice(event));
+			break;
+		case "phone_permission_lapsed":
+			// TD-5302: a timed grant ran out. Phones lost it at that moment.
+			notify(`phone-lapse:${event.capability}:${event.expired_at}`, phoneLapseNotice(event));
 			break;
 		case "error":
 			// A form already showed it, in words for that flow (TD-5015).

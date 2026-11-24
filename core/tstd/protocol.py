@@ -4256,6 +4256,22 @@ class PhoneChange(DaemonEvent):
     summary: str
 
 
+class PhonePermissionLapsed(DaemonEvent):
+    """A timed phone permission ran out (TD-5302).
+
+    Broadcast to loopback clients only, once per grant, when the daemon's
+    expiry timer fires. The policy already refuses at the expiry instant;
+    this tells the person at the computer that it happened. ``label`` is
+    the permission's name as Settings shows it. Connection-scoped, seq 1.
+    """
+
+    type: Literal["phone_permission_lapsed"] = "phone_permission_lapsed"
+    seq: int = 1
+    capability: str
+    label: str
+    expired_at: str
+
+
 MachineStatus = Literal["connected", "connecting", "unreachable", "refused", "locked", "outdated"]
 
 
@@ -5488,6 +5504,7 @@ DaemonEventT = Annotated[
     | PairingCode
     | PairingCompleted
     | PhoneChange
+    | PhonePermissionLapsed
     | McpImportPreview
     | MachineList
     | DrainResult
@@ -5762,6 +5779,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "pairing_code",
         "pairing_completed",
         "phone_change",
+        "phone_permission_lapsed",
         "mcp_import_preview",
         "machine_list",
         "drain_result",

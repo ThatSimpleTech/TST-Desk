@@ -4,7 +4,7 @@
 // permission on, and a softer sentence here would be a weaker warning.
 
 import type { NoticeSpec } from "./error-copy";
-import type { PhoneChange, PhonePermissionState } from "./protocol";
+import type { PhoneChange, PhonePermissionLapsed, PhonePermissionState } from "./protocol";
 
 export interface PhonePermissionCopy {
 	capability: string;
@@ -156,6 +156,19 @@ export function originWords(device: string | undefined, at: string | undefined):
  * not a toast: the person may be away from the screen when it happens, and
  * it stays until they dismiss it.
  */
+/** What the computer's window shows when a timed phone permission runs out. */
+export function phoneLapseNotice(event: PhonePermissionLapsed): NoticeSpec {
+	const at = new Date(event.expired_at);
+	const time = Number.isNaN(at.getTime())
+		? ""
+		: ` at ${at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+	return {
+		severity: "banner",
+		title: "A phone permission ran out",
+		body: `${event.label} is off again for paired phones${time}. Turn it on under Settings, Phones and devices if you still need it.`,
+	};
+}
+
 export function phoneChangeNotice(event: PhoneChange): NoticeSpec {
 	return {
 		severity: "banner",
