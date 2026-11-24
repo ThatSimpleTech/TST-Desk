@@ -222,6 +222,9 @@ from .phone_permissions import (
     UNATTENDED_RUNS,
     utc_now,
 )
+from .phone_permissions import (
+    LABELS as PHONE_LABELS,
+)
 from .phone_store import PhoneStore, server_saved_summary, value_summary
 from .plan_review import answer as answer_plan
 from .plan_review import keep_pinned_plan_visible, restore_pinned_plan, restored_plan_mode
@@ -383,6 +386,8 @@ from .protocol import (
     PairingCompleted,
     ParseJob,
     PhoneChange,
+    PhonePermissionLapsed,
+    PhonePermissionState,
     PolicyRules,
     PresetReadiness,
     PresetRoles,
@@ -6045,6 +6050,7 @@ class Daemon:
         until = self.phone_store.next_expiry()
         if until is None:
             return
+        before = self.phone_store.states()
 
         async def _wait() -> None:
             # A task copies the context it was made in: without this the
@@ -6052,12 +6058,34 @@ class Daemon:
             _ANSWERING.set(None)
             await asyncio.sleep(max(0.0, (until - utc_now()).total_seconds()) + 0.5)
             self._phone_expiry_task = None
-            log.info("phone permission expired")
+            await self._tell_phone_permissions_lapsed(before)
             await self._tell_other_windows_the_catalog()
             self._arm_phone_permission_expiry()
 
         self._phone_expiry_task = asyncio.create_task(_wait(), name="phone-permission-expiry")
         self._tasks.append(self._phone_expiry_task)
+
+    async def _tell_phone_permissions_lapsed(self, before: dict[str, PhonePermissionState]) -> None:
+        """TD-5302: each timed grant that was on and is off now, to the computer's windows.
+
+        Only a lapse: a grant switched off by hand re-arms the timer first,
+        so it is never in *before* when this runs.
+        """
+        live = self.phone_store.live()
+        for capability, state in before.items():
+            if not state.enabled or state.expires_at is None or capability in live:
+                continue
+            label = PHONE_LABELS.get(capability, capability)
+            log.info(
+                "phone permission expired",
+                extra={"extra_fields": {"capability": capability, "expired_at": state.expires_at}},
+            )
+            event = PhonePermissionLapsed(
+                capability=capability, label=label, expired_at=state.expires_at
+            )
+            await self.ws_server.broadcast(
+                scrub_wire_json(event.model_dump_json()), loopback_only=True
+            )
 
     def _servers_added_by(self, device_id: str) -> list[str]:
         """The MCP servers a device added or changed that are still listed."""

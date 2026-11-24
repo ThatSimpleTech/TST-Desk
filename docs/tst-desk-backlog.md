@@ -14760,3 +14760,22 @@ daemon down.
       why.
 
 **Size:** 3 · **Depends on:** TD-5182, TD-5279, TD-5296, TD-5297 · **Status:** Done
+
+### TD-5302 — The computer is told when a timed phone permission runs out
+
+Owner decision #6: a phone permission can be granted for a limited time,
+the daemon enforces the expiry, and the computer sees it lapse. TD-5279
+already had "Turn on for 1 hour" (up to seven days through the protocol),
+kept the expiry in `phone-permissions.yaml`, and had the policy read the
+clock on every message. What was missing was the last part: the Settings
+row just read "Off" again.
+
+- [x] A grant with an expiry is honoured until then and refused from the
+      first message after, on the daemon's clock, with no window open
+      (`test_phone_grant_lapse.py`, a three-second grant over the wire).
+- [x] When it runs out the computer's windows get `phone_permission_lapsed`,
+      once, and show a banner naming the permission and where to turn it on
+      again; a phone is not sent it.
+- [x] Switching a timed grant off by hand sends no lapse.
+
+**Size:** 2 · **Depends on:** TD-5279 · **Status:** Done

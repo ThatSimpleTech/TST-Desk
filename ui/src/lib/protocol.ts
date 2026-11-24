@@ -2668,6 +2668,14 @@ export interface PhoneChange extends DaemonEvent {
   summary: string;
 }
 
+/** A timed phone permission ran out (TD-5302). Loopback windows only. */
+export interface PhonePermissionLapsed extends DaemonEvent {
+  type: "phone_permission_lapsed";
+  capability: string;
+  label: string;
+  expired_at: string;
+}
+
 export interface McpServerSummary {
   id: string;
   transport: "stdio" | "http";
@@ -3672,6 +3680,7 @@ export type DaemonEventUnion =
   | PairingCode
   | PairingCompleted
   | PhoneChange
+  | PhonePermissionLapsed
   | ScheduleProposal
   | ScheduleProposalDecision
   | WorkerJobs

@@ -2505,6 +2505,13 @@
     "capability": "mcp_servers",
     "summary": "added MCP server 'files': npx files-server"
   },
+  "phone_permission_lapsed": {
+    "type": "phone_permission_lapsed",
+    "seq": 1,
+    "capability": "models_and_keys",
+    "label": "Adding models and keys",
+    "expired_at": "2026-11-20T19:00:00Z"
+  },
   "machine_list": {
     "type": "machine_list",
     "seq": 1,

@@ -192,6 +192,7 @@ from tstd.protocol import (
     PairingCompleted,
     ParseJob,
     PhoneChange,
+    PhonePermissionLapsed,
     Ping,
     PlanPinned,
     PlanReview,
@@ -1676,6 +1677,11 @@ FIXTURES = {
         device_name="Pixel",
         capability="mcp_servers",
         summary="added MCP server 'files': npx files-server",
+    ),
+    "phone_permission_lapsed": PhonePermissionLapsed(
+        capability="models_and_keys",
+        label="Adding models and keys",
+        expired_at="2026-11-20T19:00:00Z",
     ),
     # One connected computer and one self-pair that is unreachable (TD-5015).
     "machine_list": MachineList(

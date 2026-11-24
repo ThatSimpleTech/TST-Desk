@@ -20503,3 +20503,22 @@ gives the same answer with or without a grant.
 **Rejected:** a sixth capability for these (the owner chose "never"); and
 refusing every `set_credential` with a `base_url`, which would also block
 saving a new key with its own host.
+
+## 2026-11-24 — TD-5302: a lapse event for timed phone permissions (Class B)
+
+**Decision:** a new loopback-only event `phone_permission_lapsed`
+(`capability`, `label`, `expired_at`), sent once per grant by the existing
+expiry timer, which now snapshots the grants when it is armed and, when it
+fires, reports each one that was on with an expiry and is no longer live.
+The window shows it as a banner, like `phone_change`.
+
+**Rationale:** expiry was already enforced (TD-5279: the policy reads the
+clock on every message, so the timer only keeps windows current). The owner
+asked that the computer *see* it lapse; a banner survives the person being
+away when it happens. Re-arming on every change means a grant switched off
+by hand is gone from the snapshot before the timer fires, so it is never
+reported as a lapse.
+
+**Rejected:** telling the phone too (its pages already follow `setup_state`,
+and the event names nothing a phone needs); a new shorter preset in the
+dialog (one hour is the owner's own example and is already there).
