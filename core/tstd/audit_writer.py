@@ -43,6 +43,7 @@ from .protocol import (
     UserTurn,
 )
 from .protocol import ToolCall as ToolCallEvent
+from .sandbox.proxy import EgressDecision
 from .session import EventSubscriber, Session, SessionEventLog
 
 if TYPE_CHECKING:
@@ -187,6 +188,23 @@ class AuditWriter:
                 cost=rec.cost,
                 cache_hit=rec.cache_hit,
                 decision_class=rec.decision_class.value,
+            ),
+        )
+
+    def record_network_egress(self, decision: EgressDecision) -> None:
+        """Enqueue one egress proxy allow or deny (TD-5305). Never blocks."""
+        d = decision
+        self._enqueue(
+            d.session_id,
+            lambda: self._store.append_network_egress(
+                session_id=d.session_id,
+                tool_call_id=d.tool_call_id,
+                host=d.host,
+                port=d.port,
+                address=d.address,
+                verdict=d.verdict,
+                reason=d.reason,
+                ts=d.ts,
             ),
         )
 

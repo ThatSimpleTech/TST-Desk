@@ -14832,3 +14832,28 @@ Linux, and the bundle runs build without MCP servers. The base list is the
 SDKs' own for those systems, the environment SDK-based clients already
 start servers with there. The computer-use MCP driver (`desktop/`) is the
 product's own process and keeps its own environment.
+
+### TD-5305 — The sandbox's egress proxy and its audit rows
+
+Owner decision on the full sandbox (brief section 4), design sandboxing.md
+R3, first of two PRs: the proxy and the audit, before the bridge that puts
+a sandboxed command in front of it (TD-5306). Network stays fully off by
+default; nothing uses this proxy until TD-5306 adds the setting.
+
+- [x] `CONNECT host:port` and plain `http://` requests to a listed host are
+      relayed; anything else is answered 400 (`test_sandbox_proxy.py`).
+- [x] A host not on the grant's list is 403; a bare entry allows ports 80
+      and 443 only; an IP literal is refused unless listed.
+- [x] The proxy resolves the name itself and refuses loopback (including
+      IPv4-mapped), link-local, and this computer's own addresses, and an
+      answer list with any of them; it dials only the address it checked.
+- [x] A missing, wrong or revoked token is 407 with `Proxy-Authenticate`,
+      and dials nothing; one command's token does not carry another's grant.
+- [x] Plain HTTP goes upstream without `Proxy-Authorization` and with
+      `Connection: close`.
+- [x] Every allow and deny is a `network_egress` audit row with the tool
+      call id (schema v8); an audit failure neither opens nor hangs the
+      connection.
+- [x] No outside host is contacted by the tests.
+
+**Size:** 5 · **Depends on:** TD-5138, TD-5294 · **Status:** Done

@@ -246,6 +246,25 @@ CREATE TABLE hook_runs (
 CREATE INDEX idx_hook_runs_session ON hook_runs(session_id, ts);
 """
 
+# v8 records every connection a sandboxed command asked the egress proxy
+# for (TD-5305): the host and port it named, the address dialled, allow or
+# deny, and why, keyed to the tool call that ran the command. No traffic
+# and no URL path is kept: the proxy sees only the host and port.
+_SCHEMA_V8 = """
+CREATE TABLE network_egress (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(session_id),
+    tool_call_id TEXT NOT NULL,
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL,
+    address TEXT NOT NULL,
+    verdict TEXT NOT NULL CHECK(verdict IN ('allow', 'deny')),
+    reason TEXT NOT NULL,
+    ts REAL NOT NULL
+);
+CREATE INDEX idx_network_egress_session ON network_egress(session_id, ts);
+"""
+
 # Ordered migration steps; index + 1 is the schema version that step
 # produces. Every release that changes the schema appends one entry.
 MIGRATIONS: tuple[str, ...] = (
@@ -256,6 +275,7 @@ MIGRATIONS: tuple[str, ...] = (
     _SCHEMA_V5,
     _SCHEMA_V6,
     _SCHEMA_V7,
+    _SCHEMA_V8,
 )
 
 
@@ -614,6 +634,35 @@ class AuditStore:
                 redact_secrets(reason),
                 redact_secrets(context),
                 duration_ms,
+                ts or time.time(),
+            ),
+        )
+        self._conn.commit()
+        return int(cur.lastrowid or 0)
+
+    def append_network_egress(
+        self,
+        session_id: str,
+        tool_call_id: str,
+        host: str,
+        port: int,
+        address: str,
+        verdict: str,
+        reason: str,
+        ts: float | None = None,
+    ) -> int:
+        """Record one egress proxy decision (TD-5305), scrubbed."""
+        cur = self._conn.execute(
+            "INSERT INTO network_egress (session_id, tool_call_id, host, port, address,"
+            " verdict, reason, ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                session_id,
+                tool_call_id,
+                redact_secrets(host),
+                port,
+                address,
+                verdict,
+                redact_secrets(reason),
                 ts or time.time(),
             ),
         )

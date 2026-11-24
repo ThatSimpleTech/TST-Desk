@@ -20570,3 +20570,29 @@ dropped when the command changes.
 all); keeping the scrub as a mode switch (two behaviours to support for one
 safety property); filtering named variables through the scrub (the person
 named them for this server).
+
+## 2026-11-24 — TD-5305: the sandbox egress proxy (Class B)
+
+**Decision:** `core/tstd/sandbox/proxy.py`, built as sandboxing.md R3 has
+it (signed off ahead of the work): an asyncio HTTP proxy for `CONNECT` and
+plain `http://`, no SOCKS, no TLS interception, no new dependency. It has
+no listener; the daemon will hand it connections (TD-5306, over a socket
+pair from inside the network namespace). Per-command `ProxyGrant`s carry a
+random token, checked from Basic `Proxy-Authorization` (password part).
+Host rules: exact names from `boundary.network`, case-blind, trailing dot
+ignored; a bare entry is ports 80 and 443, `host:port` names a port; an IP
+literal must itself be listed. The proxy resolves and checks every answer
+(loopback, IPv4-mapped loopback, link-local, unspecified, multicast,
+reserved, own addresses) and dials the first checked address. Plain HTTP is
+one request per connection. Decisions go to a new append-only audit table,
+`network_egress` (schema v8).
+
+**Rationale:** the owner signed off on R3 as written. Ports default to the
+web ones because a host entry today means "the agent may fetch from it";
+opening every port on it would widen what an existing list allows. One
+request per plain-HTTP connection is what keeps the host check honest
+without parsing every later request on a kept-alive connection.
+
+**Rejected:** wildcard host entries (the list's meaning stays the same as
+the classifier's `network-new-host` rule); a TCP listener on the host for
+Linux (R3: "not TCP at all on the host side").
