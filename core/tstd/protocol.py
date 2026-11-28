@@ -5032,6 +5032,10 @@ class CuKillState(DaemonEvent):
     type: Literal["cu_kill_state"] = "cu_kill_state"
     seq: int = 1
     killed: bool
+    # CU-05: Stop held in TST Desk, but the machine-wide stop-file could not
+    # be written, so other agents on this computer may not have stopped. None
+    # when the file is in place (or the switch is off).
+    file_error: str | None = None
 
 
 class CuSession(DaemonEvent):

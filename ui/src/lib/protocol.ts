@@ -3140,6 +3140,8 @@ export interface ScreenFrame extends DaemonEvent {
 export interface CuKillState extends DaemonEvent {
   type: "cu_kill_state";
   killed: boolean;
+  /** CU-05: Stop held here, but the machine-wide stop-file could not be written. */
+  file_error?: string | null;
 }
 
 /** Computer-use episode open/close (TD-3407). Glow follows this tag. */
