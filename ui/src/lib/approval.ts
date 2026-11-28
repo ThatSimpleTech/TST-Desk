@@ -30,6 +30,18 @@ export interface PendingApproval {
   worker: ApprovalWorker | null;
   /** TD-5294: what a shell call would run in, or null. */
   sandbox: ApprovalSandbox | null;
+  /** APPROVE-03: the diff a write would make, from the daemon, or null. */
+  diff: string | null;
+}
+
+/** "New file, N lines" or "Changes N lines", for a write card's diff (APPROVE-03). */
+export function diffHeadline(diff: string): string {
+  const lines = diff.split("\n");
+  const added = lines.filter((l) => l.startsWith("+") && !l.startsWith("+++")).length;
+  const removed = lines.filter((l) => l.startsWith("-") && !l.startsWith("---")).length;
+  const plural = (n: number): string => `${n} ${n === 1 ? "line" : "lines"}`;
+  if (lines.some((l) => l.startsWith("@@ -0,0 "))) return `New file, ${plural(added)}`;
+  return added + removed === 0 ? "No change" : `Changes ${plural(added + removed)}`;
 }
 
 /** Map an approval_request event to the card's pending-approval shape. */
@@ -45,6 +57,7 @@ export function approvalFromEvent(event: ApprovalRequest): PendingApproval {
     proposedAlwaysAllow: event.proposed_always_allow ?? null,
     worker: event.worker ?? null,
     sandbox: event.sandbox ?? null,
+    diff: event.diff ?? null,
   };
 }
 

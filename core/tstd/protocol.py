@@ -2759,6 +2759,9 @@ class ApprovalRequest(DaemonEvent):
     tool_call_id: str
     tool_name: str
     arguments: dict[str, Any]
+    # APPROVE-03: for fs_write and fs_edit, the unified diff the call would
+    # write, computed before it is parked. None when it cannot be known.
+    diff: str | None = None
     decision_class: Literal["A", "B", "C"]
     summary: str
     reason: str

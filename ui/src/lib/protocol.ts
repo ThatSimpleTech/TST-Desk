@@ -1861,6 +1861,8 @@ export interface ApprovalRequest extends DaemonEvent {
   tool_call_id: string;
   tool_name: string;
   arguments: Record<string, unknown>;
+  /** APPROVE-03: for fs_write and fs_edit, the diff the call would write. */
+  diff?: string | null;
   decision_class: "A" | "B" | "C";
   summary: string;
   reason: string;
