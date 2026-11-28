@@ -8,6 +8,7 @@ mod cu_capture;
 mod cu_cf;
 pub mod cu_identity;
 pub mod daemon;
+mod open_check;
 mod quick_entry;
 mod read_text;
 mod received_files;
@@ -71,9 +72,11 @@ fn get_daemon_info(state: tauri::State<DaemonHandle>) -> Option<serde_json::Valu
 /// always one argv element — nothing to inject, no quoting to get right.
 #[tauri::command]
 fn open_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    // PKG-12: checked here, at call time; the window has no open-path grant.
+    let real = open_check::openable(&path)?;
     app.opener()
-        .open_path(path, None::<&str>)
-        .map_err(|e| format!("open failed: {e}"))
+        .open_path(real.to_string_lossy(), None::<&str>)
+        .map_err(|e| format!("Could not open {}: {e}", real.display()))
 }
 
 /// Palette / menu **Quit TST Desk** (TD-2903). Same path as Cmd+Q.

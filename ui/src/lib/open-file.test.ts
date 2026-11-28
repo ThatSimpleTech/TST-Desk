@@ -1,25 +1,33 @@
-// open-file wrapper tests (TD-1201).
+// @vitest-environment jsdom
+//
+// open-file wrapper tests (TD-1201, PKG-12). Every file open goes through the
+// host's open_path command, which checks the path; the window holds no
+// open-path grant of its own. This used to mock the opener plugin, which is
+// how a permission that allowed nothing passed for three releases.
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@tauri-apps/plugin-opener", () => ({
-	openPath: vi.fn(async () => {}),
-}));
+const core = vi.hoisted(() => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => core);
 
-import { openPath } from "@tauri-apps/plugin-opener";
-import { isTauri, openInEditor } from "./open-file";
+import { isTauri, openInEditor, openSessionPath } from "./open-file";
+import { clearNotifications, toasts } from "./notifications.svelte.js";
 
 function withShell(): void {
-	(globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+	(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
 }
 
+beforeEach(() => {
+	clearNotifications();
+	core.invoke.mockReset();
+});
+
 afterEach(() => {
-	delete (globalThis as { window?: unknown }).window;
-	vi.mocked(openPath).mockClear();
+	delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
 });
 
 describe("isTauri", () => {
-	it("is false without a window (node/test env)", () => {
+	it("is false outside the shell", () => {
 		expect(isTauri()).toBe(false);
 	});
 
@@ -32,18 +40,41 @@ describe("isTauri", () => {
 describe("openInEditor", () => {
 	it("no-ops outside the shell", async () => {
 		expect(await openInEditor("/ws/AGENTS.md")).toBe(false);
-		expect(openPath).not.toHaveBeenCalled();
+		expect(core.invoke).not.toHaveBeenCalled();
 	});
 
-	it("opens via the opener plugin inside the shell", async () => {
+	it("asks the host's open_path inside the shell", async () => {
 		withShell();
+		core.invoke.mockResolvedValue(undefined);
 		expect(await openInEditor("/ws/AGENTS.md")).toBe(true);
-		expect(openPath).toHaveBeenCalledWith("/ws/AGENTS.md");
+		expect(core.invoke).toHaveBeenCalledWith("open_path", { path: "/ws/AGENTS.md" });
+		expect(toasts).toHaveLength(0);
 	});
 
-	it("returns false when the shell open fails", async () => {
+	it("a refusal is shown with the host's own sentence, not swallowed", async () => {
 		withShell();
-		vi.mocked(openPath).mockRejectedValueOnce(new Error("no handler"));
-		expect(await openInEditor("/ws/AGENTS.md")).toBe(false);
+		core.invoke.mockRejectedValue(
+			"setup.sh is a program or launcher, so it is not opened from here. Open its folder instead.",
+		);
+		expect(await openInEditor("/ws/setup.sh")).toBe(false);
+		expect(toasts.map((t) => [t.title, t.body])).toEqual([
+			[
+				"Couldn't open the file",
+				"setup.sh is a program or launcher, so it is not opened from here. Open its folder instead.",
+			],
+		]);
+	});
+
+	it("a failure with no message still says which file", async () => {
+		withShell();
+		core.invoke.mockRejectedValue(new Error("x"));
+		expect(await openInEditor("/ws/a.md")).toBe(false);
+		expect(toasts[0].body).toBe("Could not open /ws/a.md.");
+	});
+
+	it("never opens another computer's path", async () => {
+		withShell();
+		expect(await openSessionPath("s1:mch_0123456789ab", "/elsewhere/x.md")).toBe(false);
+		expect(core.invoke).not.toHaveBeenCalled();
 	});
 });
