@@ -265,8 +265,12 @@ jobs:
           (cd core && uv run python scripts/make_startup_fixture.py "$DATA" --sessions 300 --turns 60 --files 200)
           LOG="$DATA/logs/host.log"
           OUT="$RUNNER_TEMP/gate-app.log"
+          (cd "$RUNNER_TEMP" && "$AI" --appimage-extract >/dev/null)
+          # A desktop session always has a session bus. Without one, the
+          # single-instance plugin waits about 30 s on D-Bus before the
+          # host starts, which is not what a user sees.
           START=$(date +%s.%N)
-          APPIMAGE_EXTRACT_AND_RUN=1 xvfb-run -a timeout 90 "$AI" >"$OUT" 2>&1 &
+          dbus-run-session -- xvfb-run -a timeout 90 "$RUNNER_TEMP/squashfs-root/AppRun" >"$OUT" 2>&1 &
           APP=$!
           # Watch for up to 60 s so a miss reports how long it really took.
           ELAPSED=""
@@ -278,7 +282,7 @@ jobs:
             sleep 0.1
           done
           kill "$APP" 2>/dev/null || true
-          pkill -f "appimage_extracted|\.mount_|/tstd" 2>/dev/null || true
+          pkill -f "squashfs-root" 2>/dev/null || true
           echo "connected after: ${ELAPSED:-never (60 s)}"
           ls -la "$DATA" "$DATA/logs" 2>/dev/null || true
           tail -20 "$LOG" 2>/dev/null || true
