@@ -165,7 +165,9 @@ class TestAppendIsAWrite:
         restarted.append_event(SID, _delta(3))
         loaded = restarted.load(SID)
         assert loaded is not None
-        assert [e.seq for e in loaded.events] == [1, 3]
+        # ERR2B-05: the cut line stands as a placeholder at its seq.
+        assert [e.seq for e in loaded.events] == [1, 2, 3]
+        assert loaded.events[1].type == "event_unreadable"
 
     def test_a_failed_rotation_is_tried_again_on_the_next_append(
         self,
