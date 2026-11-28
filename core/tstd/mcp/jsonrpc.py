@@ -172,6 +172,33 @@ def flatten_root_combinators(schema: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+_REF_KEYS = ("$ref", "$dynamicRef", "$recursiveRef")
+
+
+def refuse_outside_refs(schema: Any) -> None:
+    """Raise ``UnusableSchema`` for a reference to anything but the schema itself (SUPPLY-02).
+
+    jsonschema resolves an unknown reference by opening its URI, an http(s)
+    host or a ``file://`` path, with no timeout and before the call reaches
+    the classifier or an approval card. A server's schema may only point
+    inside itself (``#/...``).
+    """
+    stack: list[Any] = [schema]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            for key in _REF_KEYS:
+                ref = node.get(key)
+                if isinstance(ref, str) and not ref.startswith("#"):
+                    raise UnusableSchema(
+                        f"refers to a schema outside itself ({key}: {ref[:80]}), "
+                        "which TST Desk does not fetch"
+                    )
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+
+
 def check_remote_tool(server_id: str, tool: McpRemoteTool) -> McpRemoteTool | ExcludedTool:
     """Make *tool* safe for a strict endpoint, or say why it is left out.
 
@@ -187,6 +214,7 @@ def check_remote_tool(server_id: str, tool: McpRemoteTool) -> McpRemoteTool | Ex
         return ExcludedTool(name=tool.name, reason=why)
     try:
         schema = normalize_input_schema(flatten_root_combinators(tool.parameters))
+        refuse_outside_refs(schema)
         validator_for(schema).check_schema(schema)
         json.dumps(schema)
     except UnusableSchema as e:
