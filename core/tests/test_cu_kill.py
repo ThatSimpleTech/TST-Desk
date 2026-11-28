@@ -11,7 +11,6 @@ import json
 from pathlib import Path
 
 from tests.test_desktop_tools import _dispatcher
-from tstd.autonomy import DecisionClass
 from tstd.daemon import Daemon
 from tstd.desktop import MockDesktopDriver
 from tstd.protocol import CuKillState, CuSession, parse_daemon_event
