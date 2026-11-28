@@ -28,6 +28,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PrivateAttr,
     ValidationError,
     ValidationInfo,
     field_validator,
@@ -1813,6 +1814,14 @@ class JudgmentsConfig(BaseModel):
 class ModelConfig(BaseModel):
     """Top-level model configuration loaded from config.yaml."""
 
+    # UPGRADE-02: keys this build does not know (a newer build's settings,
+    # or a typo), ignored at load and named in the window. Dotted paths.
+    _unknown_keys: list[str] = PrivateAttr(default_factory=list)
+
+    @property
+    def unknown_keys(self) -> list[str]:
+        return list(self._unknown_keys)
+
     # Empty is a valid catalog (TD-5172): a new install has no model yet,
     # and the first-run walkthrough adds one.
     presets: dict[str, Preset] = Field(default_factory=dict)
@@ -2238,16 +2247,76 @@ def config_from_data(data: dict[str, Any], source: Path) -> ModelConfig:
 
     _merge_shipped_credential_hosts(data, _shipped())
 
-    try:
-        config = ModelConfig.model_validate(data)
-    except ValidationError as e:
-        # Convert pydantic errors into actionable messages naming the key.
-        details = "; ".join(
-            f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}" for err in e.errors()
-        )
-        raise ConfigError(f"Invalid model configuration in {source}: {details}") from e
+    # UPGRADE-02: a key this build does not know is ignored and named, not
+    # a refusal to start; every key it does know keeps its full validation.
+    # The file itself is never changed here, so the key survives.
+    candidate: dict[str, Any] = data
+    unknown: list[str] = []
+    for _ in range(_MAX_UNKNOWN_PASSES):
+        try:
+            config = ModelConfig.model_validate(candidate)
+        except ValidationError as e:
+            errors = e.errors()
+            extras = [err for err in errors if _ignorable(err["loc"], err["type"])]
+            if len(extras) < len(errors):
+                raise _config_error(e, source) from e
+            stripped = copy.deepcopy(candidate)
+            if not all(_drop_path(stripped, err["loc"]) for err in extras):
+                raise _config_error(e, source) from e
+            unknown += [".".join(str(p) for p in err["loc"]) for err in extras]
+            candidate = stripped
+            continue
+        config._unknown_keys = unknown
+        if unknown:
+            _config_log.warning(
+                "config.yaml has keys this version does not know; they are ignored",
+                extra={"extra_fields": {"keys": unknown}},
+            )
+        return config
+    raise ConfigError(f"Invalid model configuration in {source}: too many unknown keys")
 
-    return config
+
+_MAX_UNKNOWN_PASSES = 8
+
+
+#: Sections where an ignored, misspelt off switch would leave something on
+#: that the person meant to turn off (TD-5160), so an unknown key there stays
+#: an error at load.
+STRICT_SECTIONS = frozenset({"shell", "sandbox", "policy", "remote"})
+
+
+def _ignorable(loc: tuple[int | str, ...], kind: str) -> bool:
+    """An unknown key a newer build may have written, not a refusal on purpose.
+
+    A preset's ``overrides`` is a whitelist (what one model entry may change);
+    a key outside it stays an error, so nobody believes it applied. So does
+    one under a :data:`STRICT_SECTIONS` section.
+    """
+    if kind != "extra_forbidden" or "overrides" in loc:
+        return False
+    return not (loc and loc[0] in STRICT_SECTIONS)
+
+
+def _config_error(e: ValidationError, source: Path) -> ConfigError:
+    """Pydantic errors as an actionable message naming each key."""
+    details = "; ".join(
+        f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}" for err in e.errors()
+    )
+    return ConfigError(f"Invalid model configuration in {source}: {details}")
+
+
+def _drop_path(data: Any, loc: tuple[int | str, ...]) -> bool:
+    """Remove the key at *loc* from nested dicts and lists; False when it is not there."""
+    node = data
+    for part in loc[:-1]:
+        try:
+            node = node[part]
+        except (KeyError, IndexError, TypeError):
+            return False
+    if loc and isinstance(node, dict) and loc[-1] in node:
+        del node[loc[-1]]
+        return True
+    return False
 
 
 @lru_cache(maxsize=1)

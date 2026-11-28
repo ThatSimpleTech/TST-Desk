@@ -29,6 +29,7 @@ import {
 	storeRecoveredNotice,
 	eventUnreadableNotice,
 	configBrokenNotice,
+	unknownConfigKeysNotice,
 } from "./error-copy";
 import { claimedInline } from "./inline-errors";
 import { phoneChangeNotice, phoneLapseNotice } from "./phone-permissions";
@@ -122,6 +123,8 @@ function startToastTimer(id: number): void {
  */
 /** Chats this window has already told about unreadable history (ERR2B-05). */
 const unreadableTold = new Set<string>();
+/** Whether this window has named config.yaml's unknown keys yet (UPGRADE-02). */
+let unknownKeysTold = false;
 
 export function notifyEvent(event: DaemonEventUnion): void {
 	recentEvents.push({ type: event.type, seq: "seq" in event ? event.seq : null });
@@ -183,6 +186,11 @@ export function notifyEvent(event: DaemonEventUnion): void {
 				notify("config:broken", configBrokenNotice(event.config_running_on ?? "defaults"));
 			} else if (shown) {
 				dismiss(shown.id);
+			}
+			// UPGRADE-02: once per window, so a typo in config.yaml is never silent.
+			if (!unknownKeysTold && event.config_unknown_keys && event.config_unknown_keys.length > 0) {
+				unknownKeysTold = true;
+				notify("config:unknown_keys", unknownConfigKeysNotice(event.config_unknown_keys));
 			}
 			break;
 		}
