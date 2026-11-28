@@ -57,7 +57,7 @@ SECRET_PATTERNS: list[re.Pattern[str]] = [
 
 # The user info of a URL (``https://user:pass@host`` or ``https://token@host``)
 # is a credential on every output path (LIVE2-01).
-_URL_USERINFO = re.compile(r"(?i)\b((?:https?|wss?|ftp)://)[^\s/?#@\"'<>]+@")
+_URL_USERINFO = re.compile(r"(?i)\b((?:https?|wss?|ftp)://)([^\s/?#@:\"'<>]+)(:[^\s/?#@\"'<>]*)?@")
 # A URL's query string: search words, share links, signed parameters. Cut
 # from the log only (LIVE2-01): redact_secrets also cleans what the agent
 # reads, where a link without its query would be a different link.
@@ -154,7 +154,15 @@ def redact_secrets(text: str) -> str:
             text = text.replace(known, REDACTED)
     for pattern in SECRET_PATTERNS:
         text = pattern.sub(REDACTED, text)
-    return _URL_USERINFO.sub(lambda m: f"{m.group(1)}{REDACTED}@", text)
+    return _URL_USERINFO.sub(_masked_userinfo, text)
+
+
+def _masked_userinfo(match: re.Match[str]) -> str:
+    """``user:password@`` keeps the user; a bare ``token@`` is all secret."""
+    scheme, user, password = match.group(1), match.group(2), match.group(3)
+    if password is None:
+        return f"{scheme}{REDACTED}@"
+    return f"{scheme}{user}:{REDACTED}@"
 
 
 def _for_log(value: Any) -> Any:

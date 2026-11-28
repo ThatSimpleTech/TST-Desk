@@ -89,7 +89,7 @@ def test_any_log_line_loses_its_url_queries(log_file: Path) -> None:
 
 def test_user_info_is_redacted_everywhere_but_queries_only_in_the_log() -> None:
     assert redact_secrets("clone https://user:pass@git.example/r.git") == (
-        f"clone https://{REDACTED}@git.example/r.git"
+        f"clone https://user:{REDACTED}@git.example/r.git"
     )
     assert redact_secrets("https://tok123@host.example/") == f"https://{REDACTED}@host.example/"
     # What the agent reads keeps its links whole.
