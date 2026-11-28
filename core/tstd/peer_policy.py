@@ -161,6 +161,8 @@ LOOPBACK_VERBS: frozenset[str] = frozenset(
         "get_config_editor",
         "set_config_value",
         "reset_config_value",
+        # SETMODEL-04: putting config.yaml's last copy back is the computer's call.
+        "restore_last_good_config",
     }
 )
 
