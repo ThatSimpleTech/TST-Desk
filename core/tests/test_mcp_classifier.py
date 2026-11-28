@@ -205,7 +205,8 @@ def test_builtin_and_desktop_are_not_mcp_provenance(tmp_path: Path) -> None:
     capture = _static(tmp_path).classify(
         DecisionRequest(tool_name="screenshot", actuates=False, side_effect_class="auto")
     )
-    assert capture.decision_class is DecisionClass.A
+    # CU-07: a capture that is not the agent's own browser page asks first.
+    assert capture.decision_class is DecisionClass.B
     assert capture.rule is not None
     assert capture.rule.id == "desktop-capture"
 

@@ -886,8 +886,17 @@ def _rule_cap_exceeded(req: DecisionRequest, boundary: Boundary) -> bool:
 
 
 def _rule_desktop_capture(req: DecisionRequest, _boundary: Boundary) -> bool:
-    """A desktop capture tool cannot actuate (TD-3301)."""
-    return req.actuates is False
+    """A capture cannot actuate (TD-3301), but it shows the screen (CU-07).
+
+    Every capture but the agent's own browser page's, so an MCP server's
+    ``<server>__screenshot`` asks too.
+    """
+    return req.actuates is False and not req.tool_name.startswith("browser_")
+
+
+def _rule_page_capture(req: DecisionRequest, _boundary: Boundary) -> bool:
+    """A capture of the agent's own browser page only (TD-3301): no screen in it."""
+    return req.actuates is False and req.tool_name.startswith("browser_")
 
 
 def _rule_desktop_actuation(req: DecisionRequest, _boundary: Boundary) -> bool:
@@ -1375,11 +1384,19 @@ RULE_TABLE: tuple[Rule, ...] = (
         match=_rule_shell_read_only,
         allowed_by=_read_only_entries,
     ),
+    # CU-07: a whole-screen capture sends the desktop to the chat's model, so
+    # it asks like any other act; Always allow remembers the person's yes.
     Rule(
         id="desktop-capture",
-        description="desktop capture cannot actuate",
-        decision_class=DecisionClass.A,
+        description="desktop capture sends the screen to the model",
+        decision_class=DecisionClass.B,
         match=_rule_desktop_capture,
+    ),
+    Rule(
+        id="page-capture",
+        description="a capture of the agent's own browser page cannot actuate",
+        decision_class=DecisionClass.A,
+        match=_rule_page_capture,
     ),
     Rule(
         id="desktop-actuation",

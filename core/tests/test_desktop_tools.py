@@ -234,13 +234,14 @@ class TestScreenFrame:
 
 
 class TestScreenshotClassA:
-    async def test_screenshot_is_a_without_approval(self, tmp_path: Path) -> None:
+    async def test_screenshot_asks_first(self, tmp_path: Path) -> None:
+        # CU-07: a whole-screen capture is Class B, approved like any act.
         driver = MockDesktopDriver()
         worker: list[str] = []
-        dispatcher, _ = _dispatcher(tmp_path, driver, approve=False, worker_log=worker)
+        dispatcher, _ = _dispatcher(tmp_path, driver, worker_log=worker)
         result = await dispatcher.dispatch("c1", "desktop_screenshot", {})
         assert result.status == "success"
-        assert result.decision_class is DecisionClass.A
+        assert result.decision_class is DecisionClass.B
         assert worker == []
         body = json.loads(result.output)
         assert "png_base64" not in body
@@ -343,8 +344,10 @@ class TestKillSwitch:
         assert click.status == "error"
         assert click.error_code == "cu_killed"
         assert driver.actuations == []
+        # The driver's own latch blocks actuation; the daemon's gate (CU-07)
+        # closes capture too, which test_cu_kill covers end to end.
         assert shot.status == "success"
-        assert shot.decision_class is DecisionClass.A
+        assert shot.decision_class is DecisionClass.B
         assert [name for name, _ in driver.calls] == ["screenshot"]
 
     def test_daemon_api_delegates(self, tmp_path: Path) -> None:

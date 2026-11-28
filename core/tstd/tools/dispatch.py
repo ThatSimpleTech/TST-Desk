@@ -19,7 +19,7 @@ from jsonschema import ValidationError as SchemaError
 from jsonschema.validators import validator_for
 from referencing import Registry
 
-from .. import shell_sandbox
+from .. import cu_gate, shell_sandbox
 from ..after_write import WRITE_TOOLS, run_after_write
 from ..autonomy import (
     AmbiguousClassifier,
@@ -389,6 +389,17 @@ class ToolDispatcher:
                 status="error",
                 output=validation_error,
                 error_code="invalid_arguments",
+            )
+
+        # CU-01 / CU-07: computer use switched off, or stopped, runs nothing,
+        # capture included, whatever the model still asks for.
+        if cu_gate.is_desktop_tool(name) and (why := cu_gate.closed_reason()) is not None:
+            return ToolResult(
+                tool_call_id=tool_call_id,
+                name=name,
+                status="error",
+                output=f"Refused: {why}. Do not try other desktop tools; tell the person.",
+                error_code="computer_use_closed",
             )
 
         # 3. Execute handler

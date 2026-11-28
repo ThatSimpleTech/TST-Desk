@@ -5024,9 +5024,9 @@ class CuKillState(DaemonEvent):
 
     Connection-scoped with ``seq`` fixed at 1: the flag is process-wide,
     not a fact in any session's event log. Replaying it from a session
-    log would desync every other viewer. Capture still runs when
-    ``killed`` is true. ``killed=true`` also clears Screen-pane glow
-    and cursor (TD-3402).
+    log would desync every other viewer. Capture stops too when
+    ``killed`` is true (CU-07). ``killed=true`` also clears Screen-pane
+    glow and cursor (TD-3402).
     """
 
     type: Literal["cu_kill_state"] = "cu_kill_state"

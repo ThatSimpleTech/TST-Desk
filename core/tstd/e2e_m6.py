@@ -226,9 +226,10 @@ def _verify_desktop(
     )
     _check(
         result,
-        "screenshot class A",
+        # CU-07: a whole-screen capture asks first, like any other act.
+        "screenshot class B",
         shot is not None
-        and shot[0].get("decision_class") == "A"
+        and shot[0].get("decision_class") == "B"
         and shot[1].get("status") == "success",
         f"n={len(shots)}",
     )
@@ -259,7 +260,8 @@ def _verify_desktop(
     _check(
         result,
         "clicks through classifier",
-        classified and len(approvals) == 2 and error is None,
+        # Two clicks and the screenshot (CU-07).
+        classified and len(approvals) == 3 and error is None,
         f"approvals={len(approvals)}",
     )
     _check(

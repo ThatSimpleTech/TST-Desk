@@ -28,7 +28,7 @@ import websockets.exceptions
 from pydantic import ValidationError
 from pydantic_core import PydanticSerializationError
 
-from . import cu_stopfile, fast_switch, keychain_mcp
+from . import cu_gate, cu_stopfile, fast_switch, keychain_mcp
 from .artifacts import ArtifactError, ArtifactRecord, ArtifactStore, artifact_ready_for, to_entry
 from .attachment_handlers import Extractions
 from .attachments import (
@@ -1304,6 +1304,9 @@ class Daemon:
         self._audit_writer: AuditWriter | None = None
         # CU-05: why the last Stop could not write the stop-file, or None.
         self._cu_file_error: str | None = None
+
+        # CU-01 / CU-07: Off and Stop close the desktop tools.
+        cu_gate.bind(self._cu_closed_reason)
         # LIVE2-08: per chat, turns already distilled, and entries its turns ran on.
         self._distilled_turns: dict[str, int] = {}
         self._turn_entries: dict[str, set[str]] = {}
@@ -1436,7 +1439,7 @@ class Daemon:
         self._cu_killed = False
 
     def set_computer_use_killed(self, killed: bool, *, write_file: bool = True) -> None:
-        """Stop or resume desktop actuation. Capture still works (TD-3301).
+        """Stop or resume computer use, capture included (CU-07).
 
         TD-5223: also creates or removes the tst-cu-mcp stop-file, so Stop
         halts every agent on the machine, not only this daemon's drivers.
@@ -1464,6 +1467,14 @@ class Daemon:
             return
         self._cu_file_error = None
         log.info("computer-use stop-file %s: %s", "created" if killed else "removed", path)
+
+    def _cu_closed_reason(self) -> str | None:
+        """Why the daemon's own desktop tools may not run now, or None."""
+        if self._cu_killed:
+            return "computer use is stopped (Stop CU)"
+        if not self.cu_policy.enabled:
+            return "computer use is switched off in Settings"
+        return None
 
     def _agent_cursor_wanted(self) -> bool:
         """Each agent's real-display cursor: both switches on and not stopped."""
@@ -2864,6 +2875,7 @@ class Daemon:
                 self._shutdown_budget.finish()
                 remove_posix_shutdown_signals()
                 remove_windows_console_shutdown()
+                cu_gate.unbind()
                 if folder_trust_bound() is self.folder_trust:
                     bind_folder_trust(None)
 
