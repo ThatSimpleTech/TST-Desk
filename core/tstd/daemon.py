@@ -4224,6 +4224,9 @@ class Daemon:
                     APPROVAL_SWITCHES,
                     "turned approval prompts off for every session on this computer.",
                 )
+            # APPROVE-05: every window and phone shows the switch as it is,
+            # not only the one that flipped it.
+            await self._tell_other_windows_the_catalog()
             return (await self._setup_state_event()).model_dump_json()
 
         if isinstance(msg, SetLoadGlobalMemory):

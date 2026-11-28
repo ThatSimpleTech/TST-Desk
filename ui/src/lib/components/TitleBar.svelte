@@ -8,7 +8,7 @@
 	// The picker and the meter own their own markup and styles in
 	// WorkspacePicker/CostMeter; what stays here is the row itself.
 	import { session, type SessionIndicator } from '../session-status.svelte.js';
-	import { settings } from '../settings.svelte.js';
+	import { openSettings, settings } from '../settings.svelte.js';
 	import { grok } from '../grok.svelte.js';
 	import { formatUsd } from '../cost-format.js';
 	import ContextGauge from './ContextGauge.svelte';
@@ -67,6 +67,15 @@
 <div class="titlebar">
 	<WorkspacePicker {pickDirectory} />
 	<CuKillSwitch />
+	{#if settings.skipAllApprovals}
+		<!-- APPROVE-05: while approvals are off it says so, everywhere. -->
+		<button
+			class="approvals-off"
+			type="button"
+			title="Every command and file change runs without asking. Open the setting."
+			onclick={() => openSettings('policy')}>Approvals are off</button
+		>
+	{/if}
 
 	{#if session.sessionId !== null}
 		{#if (session.engine ?? settings.engine) === 'grok'}
@@ -101,6 +110,17 @@
 </div>
 
 <style>
+	.approvals-off {
+		font-size: var(--text-xs);
+		font-weight: var(--weight-medium);
+		color: var(--color-err);
+		background: transparent;
+		border: 1px solid var(--color-err);
+		border-radius: var(--radius-full);
+		padding: var(--space-1) var(--space-3);
+		cursor: pointer;
+	}
+
 	.titlebar {
 		display: flex;
 		align-items: center;

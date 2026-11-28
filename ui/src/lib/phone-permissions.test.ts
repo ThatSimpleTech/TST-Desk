@@ -378,13 +378,21 @@ describe("Settings → Policy, the skip-all switch", () => {
 		settings.skipAllApprovals = false;
 	});
 
-	it("on the computer, and on a phone that was allowed, it works as before", () => {
+	it("on the computer, and on a phone that was allowed, it works as before", async () => {
 		settings.skipAllApprovals = false;
 		const root = show(PolicyRuleList, { sessionId: null });
 		const button = skipSwitch(root);
 		expect(button.disabled).toBe(false);
 		expect(root.textContent).not.toContain("from a phone is turned off");
 		button.click();
+		flushSync();
+		// APPROVE-05: it asks first; the confirm arms after ARM_MS.
+		expect(mocks.sent).toEqual([]);
+		await new Promise((r) => setTimeout(r, 420));
+		flushSync();
+		const confirm = root.querySelector('[role="alertdialog"] button')!;
+		confirm.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+		confirm.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
 		flushSync();
 		expect(mocks.sent).toEqual([{ type: "set_skip_all_approvals", enabled: true }]);
 	});
