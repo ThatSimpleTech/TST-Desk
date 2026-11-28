@@ -396,6 +396,11 @@ export function daemonErrorCopy(code: string, message: string): NoticeSpec {
 		// nothing in this chat can run until it points at a real folder.
 		return { severity: "banner", title: "This chat's folder is gone", body: message };
 	}
+	if (code === "data_read_only") {
+		// UPGRADE-02: a newer version's data folder. The daemon's sentence
+		// names the version; the banner from setup_state is already up.
+		return { severity: "toast", title: "Not saved: update TST Desk", body: message };
+	}
 	if (code === "workspace_not_found") {
 		// TD-1103: the user tried to open a path that doesn't exist (usually
 		// from the recents menu — the folder was moved or deleted). The fix
@@ -446,6 +451,15 @@ export function unknownConfigKeysNotice(keys: string[]): NoticeSpec {
     severity: "toast",
     title: "Some config.yaml settings are ignored",
     body: `This version does not know ${shown}. A newer version may use them; otherwise check for a typo. Doctor lists them.`,
+  };
+}
+
+/** UPGRADE-02: this data folder was written by a newer version; read-only here. */
+export function newerDataNotice(version: string): NoticeSpec {
+  return {
+    severity: "banner",
+    title: "Your data was written by a newer TST Desk",
+    body: `Data was written by ${version}. Update TST Desk to keep working; nothing will be changed until then. You can still read and copy your chats.`,
   };
 }
 

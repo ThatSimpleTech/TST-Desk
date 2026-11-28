@@ -39,6 +39,7 @@ import yaml
 
 from .boundary_config import BoundaryConfig, boundary_from_mapping, workspace_config_path
 from .config import ConfigError
+from .data_version import read_only
 from .host_memory import default_shell_memory_mb
 from .policy import approved_imports_from_mapping, policy_from_mapping
 from .shell_sandbox import SandboxSection
@@ -364,6 +365,8 @@ class TrustStore:
 
     def record(self, workspace: str | Path, sha256: str, decision: Decision) -> None:
         """Store *decision* for *workspace*'s config with hash *sha256*."""
+        if read_only() is not None:  # UPGRADE-02: a newer version's folder
+            return
         with self._lock:
             records = self._load()
             records[_key(workspace)] = {"sha256": sha256, "decision": decision}

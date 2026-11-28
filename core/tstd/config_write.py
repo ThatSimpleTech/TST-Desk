@@ -40,6 +40,7 @@ from .config import (
     load_config,
 )
 from .config_recovery import remember_good
+from .data_version import read_only
 
 
 def save_active_preset(name: str, path: Path | None = None) -> Path:
@@ -111,6 +112,8 @@ def _atomic_write(config_path: Path, text: str, *, newline: str | None = None) -
     leaves a torn config behind. *newline* is ``open``'s: ``""`` writes the
     text's own line endings, for a caller that read the file byte for byte.
     """
+    if read_only() is not None:  # UPGRADE-02: a newer version's folder
+        return
     fd, tmp_name = tempfile.mkstemp(dir=config_path.parent, prefix=config_path.name, suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline=newline) as f:

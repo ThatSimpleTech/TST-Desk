@@ -14,6 +14,7 @@ from typing import Any
 
 import yaml
 
+from .data_version import read_only
 from .logging import get_logger
 
 log = get_logger("tstd.memory_pref")
@@ -40,6 +41,8 @@ def load_global_memory(data_dir: str | Path) -> bool:
 
 def save_global_memory(data_dir: str | Path, enabled: bool) -> None:
     """Persist the toggle atomically in the user data dir."""
+    if read_only() is not None:  # UPGRADE-02: a newer version's folder
+        return
     path = load_global_path(data_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".memory.", suffix=".tmp")

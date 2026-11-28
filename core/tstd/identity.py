@@ -15,6 +15,7 @@ import secrets
 import tempfile
 from pathlib import Path
 
+from .data_version import guard_write
 from .logging import get_logger
 
 log = get_logger("tstd.identity")
@@ -54,6 +55,7 @@ def load_or_mint_machine_id(data_dir: Path) -> str:
 
 
 def _write_atomic(path: Path, value: str) -> None:
+    guard_write("_write_atomic")
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".machine-id.", suffix=".tmp")
     try:

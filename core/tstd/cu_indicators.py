@@ -23,6 +23,8 @@ from typing import Any
 
 import yaml
 
+from .data_version import read_only
+
 
 @dataclass(frozen=True)
 class CuIndicatorPrefs:
@@ -69,6 +71,8 @@ def load_cu_indicators(data_dir: str | Path) -> CuIndicatorPrefs:
 
 def save_cu_indicators(data_dir: str | Path, prefs: CuIndicatorPrefs) -> None:
     """Persist prefs atomically in the user data dir."""
+    if read_only() is not None:  # UPGRADE-02: a newer version's folder
+        return
     path = cu_indicators_path(data_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".cu-indicators.", suffix=".tmp")

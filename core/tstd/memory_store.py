@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .data_version import guard_write, read_only
+
 MEMORY_DIRNAME = Path(".tst") / "memory"
 
 #: The three files spec §5 names. Distill or the user may add others;
@@ -118,6 +120,7 @@ def check_memory_write(
 
 def replace_memory_file(path: Path, content: str, max_lines: int) -> None:
     """Distill (E23) write: may replace a file at cap; still cannot exceed it."""
+    guard_write("replace_memory_file")
     check_memory_write(path, content, max_lines, replace_at_cap=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
@@ -161,6 +164,8 @@ def scaffold_workspace_memory(workspace: str | Path) -> list[Path]:
     (or a user-edited file) is left alone. Returns the paths written —
     empty when everything already existed.
     """
+    if read_only() is not None:  # UPGRADE-02: a newer version's folder
+        return []
     root = memory_dir(workspace)
     root.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []

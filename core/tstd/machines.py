@@ -34,6 +34,7 @@ from typing import Any
 
 import yaml
 
+from .data_version import read_only
 from .identity import MACHINE_ID_RE
 from .keychain import machine_key_account as machine_key_account
 from .logging import get_logger
@@ -220,6 +221,8 @@ class MachineRegistry:
             )
 
     def _set_aside(self) -> None:
+        if read_only() is not None:  # UPGRADE-02: a newer version's folder
+            return
         target = self._path.with_name(f"{COMPUTERS_FILE}.corrupt-{int(self._clock())}")
         try:
             os.replace(self._path, target)
@@ -235,6 +238,8 @@ class MachineRegistry:
         )
 
     def _write(self, records: Iterable[MachineRecord]) -> None:
+        if read_only() is not None:  # UPGRADE-02: a newer version's folder
+            return
         if self._unavailable:
             raise MachinesUnavailableError(f"{self._path.name} could not be read")
         payload = {

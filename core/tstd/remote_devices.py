@@ -39,6 +39,7 @@ from urllib.parse import quote
 import segno
 import yaml
 
+from .data_version import read_only
 from .logging import get_logger
 from .protocol import PairingCode, RemoteDeviceSummary
 
@@ -375,6 +376,8 @@ class RemoteDeviceRegistry:
         self._unavailable = False
 
     def _set_aside(self) -> None:
+        if read_only() is not None:  # UPGRADE-02: a newer version's folder
+            return
         target = self._path.with_name(f"{REMOTE_DEVICES_FILE}.corrupt-{int(self._clock())}")
         try:
             os.replace(self._path, target)
@@ -394,6 +397,8 @@ class RemoteDeviceRegistry:
         self._write(self._devices.values())
 
     def _write(self, devices: Iterable[_Device]) -> None:
+        if read_only() is not None:  # UPGRADE-02: a newer version's folder
+            return
         if self._unavailable:
             raise RegistryUnavailableError(f"{self._path.name} could not be read")
         payload = {

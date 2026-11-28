@@ -24,6 +24,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from ..data_version import read_only
 from ..logging import get_logger, redact_secrets
 from .grace import parse_grace
 from .models import JobValidationError, normalize_cadence
@@ -260,6 +261,8 @@ def _dump(row: TemplateView) -> dict[str, Any]:
 
 
 def _write(data_dir: Path, rows: list[TemplateView]) -> None:
+    if read_only() is not None:  # UPGRADE-02: a newer version's folder
+        return
     path = templates_path(data_dir)
     text = json.dumps(
         {"version": _ENVELOPE_VERSION, "templates": [_dump(row) for row in rows]},

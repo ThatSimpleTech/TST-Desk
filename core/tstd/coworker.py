@@ -18,6 +18,8 @@ from typing import Any
 
 import yaml
 
+from .data_version import read_only
+
 
 def coworker_path(data_dir: str | Path) -> Path:
     """Path of the user-data file that holds the coworker bit."""
@@ -44,6 +46,8 @@ def load_coworker(data_dir: str | Path) -> bool:
 
 def save_coworker(data_dir: str | Path, enabled: bool) -> None:
     """Persist coworker mode atomically in the user data dir."""
+    if read_only() is not None:  # UPGRADE-02: a newer version's folder
+        return
     path = coworker_path(data_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".coworker.", suffix=".tmp")

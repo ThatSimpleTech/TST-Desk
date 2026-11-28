@@ -24,6 +24,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
+from ..data_version import read_only
 from ..logging import get_logger
 from .models import (
     DeliveryStatus,
@@ -360,6 +361,8 @@ def _read_runs(path: Path) -> list[JobRun]:
 
 
 def _write_runs(path: Path, runs: list[JobRun]) -> None:
+    if read_only() is not None:  # UPGRADE-02: a newer version's folder
+        return
     text = "".join(run.model_dump_json() + "\n" for run in runs)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".history.", suffix=".tmp")

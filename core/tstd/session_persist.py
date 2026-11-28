@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from .config import DEFAULT_LOG_MAX_EVENTS
+from .data_version import read_only
 from .logging import get_logger
 from .protocol import DaemonEvent, EventUnreadable, HandshakeError, parse_daemon_event
 from .provider import ChatMessage, FunctionCall, MessageContent, ToolCall
@@ -55,6 +56,8 @@ def _replace_with(path: Path, text: str) -> None:
     creates the file 0600 in the same syscall: no world-readable instant.
     A failed write removes its own temp file before the error goes up.
     """
+    if read_only() is not None:  # UPGRADE-02: a newer version's folder
+        return
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
         try:
@@ -284,6 +287,8 @@ class SessionPersist:
         append lands out of seq order, or when the window must be trimmed;
         a trim goes a tenth below the cap so the next one is far off.
         """
+        if read_only() is not None:  # UPGRADE-02: a newer version's folder
+            return AppendResult(earliest_seq=1, trimmed=False)
         path = self.dir_for(session_id)
         path.mkdir(parents=True, exist_ok=True)
         events_path = path / _EVENTS

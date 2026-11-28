@@ -25,6 +25,7 @@ from typing import Any, Literal
 
 import yaml
 
+from ..data_version import read_only
 from ..protocol import CuPermissions
 from .permissions_linux import LINUX_FLAG_NAME, build_linux_cu_permissions
 
@@ -127,6 +128,8 @@ def load_shown(data_dir: str | Path, platform: str = "macos") -> bool:
 
 def mark_shown(data_dir: str | Path, platform: str = "macos") -> None:
     """Stamp the first-run flag atomically in the user data dir."""
+    if read_only() is not None:  # UPGRADE-02: a newer version's folder
+        return
     path = flag_path(data_dir, platform)
     path.parent.mkdir(parents=True, exist_ok=True)
     prefix = _FLAG_PREFIXES[normalize_cu_platform(platform)]

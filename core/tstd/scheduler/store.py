@@ -17,6 +17,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from ..data_version import read_only
 from ..logging import get_logger
 from ..store_recovery import Recovery, keep_backup, read_backup, set_aside
 from .history import delete_history
@@ -211,6 +212,8 @@ def _rows_from_envelope(raw: Any) -> list[Any] | None:
 
 
 def _write_jobs(data_dir: Path, jobs: list[Job]) -> None:
+    if read_only() is not None:  # UPGRADE-02: a newer version's folder
+        return
     path = jobs_path(data_dir)
     ids = {job.id for job in jobs}
     carried = [row for row in _UNREADABLE.get(str(data_dir), []) if row.get("id") not in ids]

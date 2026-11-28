@@ -30,6 +30,7 @@ import {
 	eventUnreadableNotice,
 	configBrokenNotice,
 	unknownConfigKeysNotice,
+	newerDataNotice,
 } from "./error-copy";
 import { claimedInline } from "./inline-errors";
 import { phoneChangeNotice, phoneLapseNotice } from "./phone-permissions";
@@ -192,6 +193,8 @@ export function notifyEvent(event: DaemonEventUnion): void {
 				unknownKeysTold = true;
 				notify("config:unknown_keys", unknownConfigKeysNotice(event.config_unknown_keys));
 			}
+			// UPGRADE-02: standing for as long as this version runs on the folder.
+			if (event.data_written_by) notify("data:newer", newerDataNotice(event.data_written_by));
 			break;
 		}
 		case "store_recovered":
