@@ -20829,3 +20829,35 @@ A static rule in `autonomy/destructive.py`, like the redirect table, not model
 judgment. Unplaceable targets (`~`, `$VAR`) count as outside: the error can
 only withhold Always allow, never grant it. Class C still asks under the
 default `class_c_default: ask`.
+
+## 2026-11-28 — TD-5333: unreadable job rows are carried, not dropped (Class B)
+
+`job_list` gains `unreadable`. The rows are kept in memory from the last read
+and appended unchanged to every write, so a newer build's job survives this
+one. They are not shown or run; the pane says how many there are.
+
+## 2026-11-28 — TD-5335: holes in a chat's log are filled with `event_unreadable` (Class B)
+
+A new session event made only on load, at the seq of the line that could not
+be read. Chosen over renumbering, which would have moved every seq another
+record points at (forks, line comments, edits).
+
+## 2026-11-28 — TD-5336: config.yaml has a last-good copy and a restore verb (Class B)
+
+`config.yaml.last-good` beside the file, refreshed by every good load and
+landed write; `restore_last_good_config` (loopback only) and two
+`setup_state` fields. The broken file is never changed at start, because the
+person may want to fix it by hand.
+
+## 2026-11-28 — TD-5337: unknown config keys are warnings, except where a typo loosens safety (Class B)
+
+Manager's call. Strict stays for a preset's `overrides` (a whitelist) and the
+`shell`, `sandbox`, `policy` and `remote` sections, where an ignored, misspelt
+off switch would leave something on (TD-5160's `shell.read_only.enable`).
+
+## 2026-11-28 — TD-5338: a newer data folder is read-only, refused at the protocol chokepoint (Class B)
+
+Manager's call (read-only over refusing to start). Two layers: the dispatcher
+refuses every client message outside `READ_ONLY_MESSAGES`, and every
+data-folder writer skips. `data_version.json` holds `format` (raised only
+when an older build would misread a store) and `written_by`.

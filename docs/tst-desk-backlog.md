@@ -15311,3 +15311,100 @@ reach a paired phone's card, one tap from the installer, unasked.
       for app and installer suffixes in any case.
 
 **Size:** 1 · **Status:** Done
+
+### TD-5331 — A damaged computer-use policy reads as Off and is kept
+
+Inspection finding CU-20 (medium). A YAML error, a non-mapping file or a value
+the loader did not understand read as "enabled, nothing denied", and the next
+Settings change wrote that over the file.
+
+- [x] Only a missing or empty file is a fresh install; anything else unclear
+      reads as Off with a reason, shown in Settings (`cu_policy_damaged`).
+- [x] The next save keeps the damaged file as `config.yaml.damaged-<stamp>`.
+
+**Size:** 1 · **Status:** Done
+
+### TD-5332 — A chat whose folder is gone runs nothing and recreates nothing
+
+Inspection finding ERRORS-02 (high). With the folder moved, `fs_write`
+recreated the old path and wrote into an empty ghost folder.
+
+- [x] `user_message` to such a chat is refused (`workspace_missing`); every
+      path tool and the shell are refused too when the root vanishes mid-turn.
+- [x] The window shows a standing banner.
+
+**Size:** 2 · **Status:** Done
+
+**Notes:** the sidebar does not mark such a chat yet.
+
+### TD-5333 — A scheduled job this version cannot read is kept, not erased
+
+Inspection finding ARTSCHED-32 (high). An invalid row vanished from the list
+and the next save removed it from disk.
+
+- [x] Such rows are written back unchanged by every save; `job_list` carries
+      the count (`unreadable`) and the Scheduled pane states it.
+
+**Size:** 1 · **Depends on:** TD-5315 · **Status:** Done
+
+### TD-5334 — A damaged or unwritable audit.db never stops the daemon
+
+Inspection finding ERR2B-06 (high). Garbage, a cut file or a read-only folder
+ended the process before it bound a port.
+
+- [x] A damaged file is kept as `audit.db.damaged-<stamp>` and a new log is
+      started; a read-only folder keeps this run's log in memory.
+- [x] `store_recovered` names it (`audit`, `memory_only`); banner and Doctor row.
+
+**Size:** 2 · **Depends on:** TD-5315 · **Status:** Done
+
+### TD-5335 — An unreadable line in a chat's log leaves no hole in the replay
+
+Inspection finding ERR2B-05 (high). A dropped line left a seq hole, and the
+window re-attached about 90 times a second for ever.
+
+- [x] Each unreadable line loads as an `event_unreadable` at its seq, keeping
+      its type when the line still names one; the window says so once per chat.
+
+**Size:** 2 · **Status:** Done
+
+**Notes:** a lost `turn_complete` can still leave an earlier turn looking unfinished.
+
+### TD-5336 — A config.yaml that no longer loads never stops the start
+
+Inspection finding SETMODEL-04 (high). A typo or a zero-byte file made the
+sidecar exit, with no backup and no way back.
+
+- [x] Every good load and every landed write keeps `config.yaml.last-good`.
+- [x] A file that does not load runs on that copy, or on the shipped defaults,
+      and is left as it is; Settings shows the error and can restore the copy
+      (`restore_last_good_config`), keeping the broken one aside.
+
+**Size:** 3 · **Status:** Done
+
+### TD-5337 — A config.yaml key this version does not know is ignored and named
+
+Inspection finding UPGRADE-02 (high), part 1. One key a newer build wrote
+stopped an older daemon from starting.
+
+- [x] An unknown key is ignored and named in `setup_state`, a Doctor row and a
+      toast at start; known keys keep full validation; writes keep it verbatim.
+- [x] A preset's `overrides` and the shell, sandbox, policy and remote
+      sections stay strict.
+
+**Size:** 2 · **Status:** Done
+
+### TD-5338 — A data folder a newer version wrote is opened read-only
+
+Inspection finding UPGRADE-02 (high), part 2. An older build opened newer data
+and wrote over what it could not read.
+
+- [x] `data_version.json` names the folder's format and its last version; a
+      newer format makes this build read-only: changes are refused
+      (`data_read_only`), every data-folder writer is skipped, no scheduled
+      job or quit distill runs, and the audit log stays in memory.
+- [x] A banner says which version wrote the data and to update.
+- [x] A test drives a newer stamp through a start, a send attempt and a quit,
+      and no store file's content or mtime changes.
+
+**Size:** 3 · **Status:** Done
