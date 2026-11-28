@@ -5,7 +5,7 @@
 // this file spies on it so the chat store does not have to come along.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mount, tick, unmount } from "svelte";
+import { flushSync, mount, tick, unmount } from "svelte";
 import type { ClientMessageUnion, DaemonEventUnion, JobEntry, JobRunEntry } from "./protocol";
 
 const mocks = vi.hoisted(() => ({
@@ -28,11 +28,20 @@ vi.mock("./connection-status.svelte.js", () => ({
 	},
 }));
 
+async function settle(): Promise<void> {
+	await new Promise((r) => setTimeout(r, 0));
+	flushSync();
+}
+
 vi.mock("./sessions.svelte.js", () => ({
 	selectRow: (sessionId: string) => {
 		mocks.selectRow(sessionId);
 	},
 	sessions: mocks.sessions,
+	// ARTSCHED-01: the pane asks the daemon before calling a session gone;
+	// here the mocked rows stand in for the daemon's fresh list.
+	findOrFetchSession: async (sessionId: string) =>
+		mocks.sessions.rows.some((row: { sessionId: string }) => row.sessionId === sessionId),
 }));
 
 import ScheduledHistory from "./components/ScheduledHistory.svelte";
@@ -146,6 +155,7 @@ describe("scheduled history disclosure (TD-3811)", () => {
 
 		mocks.sessions.rows = [{ sessionId: "sess-1" }];
 		button("Open session").click();
+		await settle();
 		await tick();
 		expect(mocks.selectRow).toHaveBeenCalledTimes(1);
 		expect(mocks.selectRow).toHaveBeenCalledWith("sess-1");
@@ -167,6 +177,7 @@ describe("scheduled history disclosure (TD-3811)", () => {
 		await tick();
 		expect(document.body.textContent).not.toContain("null");
 		button("Open session").click();
+		await settle();
 		await tick();
 		expect(mocks.selectRow).not.toHaveBeenCalled();
 		expect(document.body.textContent).toContain(sessionMissingCopy());

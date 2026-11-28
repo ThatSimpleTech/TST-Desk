@@ -181,11 +181,57 @@ export function refresh(): void {
 	listInFlight = sendToDaemon({ type: "list_sessions" });
 }
 
+/** How long a lookup waits for the daemon's fresh list before giving up. */
+export const LOOKUP_TIMEOUT_MS = 3000;
+
+/**
+ * True when *sessionId* is a session the daemon has, asking it when the
+ * rail's list does not name it (ARTSCHED-01). A scheduled run opens its own
+ * session and only `job_list` was pushed after it, so "Open session" on a
+ * run (even one parked on an approval) read the stale list and said the
+ * session no longer existed. Only the daemon's own answer can say that.
+ */
+export async function findOrFetchSession(
+	sessionId: string,
+	timeoutMs: number = LOOKUP_TIMEOUT_MS,
+): Promise<boolean> {
+	const listed = (): boolean => sessions.rows.some((row) => row.sessionId === sessionId);
+	if (listed()) return true;
+	return new Promise((resolve) => {
+		let done = false;
+		const finish = (found: boolean): void => {
+			if (done) return;
+			done = true;
+			off();
+			clearTimeout(timer);
+			resolve(found);
+		};
+		const off = onEvent((event) => {
+			// Read after the reducer ran: it is registered first.
+			if (event.type === "session_list") queueMicrotask(() => finish(listed()));
+		});
+		const timer = setTimeout(() => finish(listed()), timeoutMs);
+		if (!sendToDaemon({ type: "list_sessions" })) finish(false);
+	});
+}
+
 function requestRefreshIfIdle(): void {
 	if (!listInFlight) refresh();
 }
 
 function reduce(event: DaemonEventUnion): void {
+	// ARTSCHED-01: a run opened a session the rail has not been told about,
+	// so its row (and a waiting badge) appear without a reconnect.
+	if (event.type === "job_list") {
+		const unknown = event.jobs.some(
+			(job) =>
+				job.last_session_id !== null &&
+				job.last_session_id !== "" &&
+				!sessions.rows.some((row) => row.sessionId === job.last_session_id),
+		);
+		if (unknown) requestRefreshIfIdle();
+		return;
+	}
 	if (event.type === "session_search_results") {
 		applySearchResults(event);
 		return;

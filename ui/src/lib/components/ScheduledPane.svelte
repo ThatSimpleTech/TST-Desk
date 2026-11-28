@@ -34,7 +34,7 @@
 		workspaceSuggestions,
 	} from '../scheduled';
 	import { showHome } from '../projects.svelte.js';
-	import { selectRow, sessions } from '../sessions.svelte.js';
+	import { findOrFetchSession, selectRow } from '../sessions.svelte.js';
 	import { visibleRecents, workspaces } from '../workspaces.svelte.js';
 	import { workspaceName } from '../session-status.svelte.js';
 	import EmptyState from './EmptyState.svelte';
@@ -51,10 +51,11 @@
 	let editing = $derived(scheduled.editingId !== null);
 	let missing = $state<Record<string, true>>({});
 
-	function openSession(sessionId: string | null): void {
+	// ARTSCHED-01: the rail's list can lag a run's new session; ask the
+	// daemon before saying it is gone.
+	async function openSession(sessionId: string | null): Promise<void> {
 		if (sessionId === null || sessionId === '') return;
-		const known = sessions.rows.some((row) => row.sessionId === sessionId);
-		if (!known) {
+		if (!(await findOrFetchSession(sessionId))) {
 			missing = { ...missing, [sessionId]: true };
 			return;
 		}
