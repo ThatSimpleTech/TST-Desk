@@ -9,7 +9,7 @@ authors = [{ name = "That Simple Tech" }]
 keywords = ["mcp", "computer-use", "macos", "windows", "linux", "automation", "vision"]
 dependencies = [
     "mcp==2.2.0",
-    "pillow==12.3.0",
+    "pillow==13.0.0",
     "pyyaml==6.0.3",
     # pyobjc is the macOS backend's only dependency and has no Windows wheels.
     # Without these markers `uv sync` fails outright on Windows while resolving
