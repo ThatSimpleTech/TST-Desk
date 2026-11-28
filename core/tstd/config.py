@@ -156,18 +156,48 @@ def allocate_credential_id(name: str, existing: set[str]) -> str:
     raise ConfigError(f"Could not allocate a credential id for {name!r}")
 
 
-def resolve_credential_id(tier: TierConfig) -> str | None:
+def resolve_credential_id(tier: TierConfig, config: ModelConfig | None = None) -> str | None:
     """Keychain account a tier will send, or None when it sends no key.
 
     A bound id always wins, including on loopback (a local server can
     require ``--api-key``). Unbound loopback stays keyless (TD-1801).
-    Unbound remote keeps the historical ``openrouter`` account.
+    Unbound remote sends the historical ``openrouter`` key only when its
+    ``base_url`` is that key's own host (DOCS2-05): a company gateway written
+    without ``credential`` gets no key and keeps its own URL, instead of
+    being sent to OpenRouter with the person's OpenRouter key. The host is
+    *config*'s ``credentials.openrouter.base_url``, or the shipped one.
     """
     if tier.credential:
         return tier.credential
     if is_loopback_url(tier.base_url):
         return None
-    return DEFAULT_CREDENTIAL_ID
+    if _same_host(tier.base_url, _default_credential_url(config)):
+        return DEFAULT_CREDENTIAL_ID
+    return None
+
+
+def _default_credential_url(config: ModelConfig | None) -> str:
+    if config is not None:
+        cred = config.credentials.get(DEFAULT_CREDENTIAL_ID)
+        if cred is not None and cred.base_url:
+            return cred.base_url
+    return _shipped_default_credential_url()
+
+
+@lru_cache(maxsize=1)
+def _shipped_default_credential_url() -> str:
+    loaded = yaml.safe_load(default_config_yaml())
+    creds = loaded.get("credentials") if isinstance(loaded, dict) else None
+    entry = creds.get(DEFAULT_CREDENTIAL_ID) if isinstance(creds, dict) else None
+    url = entry.get("base_url") if isinstance(entry, dict) else None
+    return url if isinstance(url, str) else ""
+
+
+def _same_host(a: str, b: str) -> bool:
+    if not a or not b:
+        return False
+    left, right = urlsplit(a.strip()), urlsplit(b.strip())
+    return (left.scheme, left.hostname, left.port) == (right.scheme, right.hostname, right.port)
 
 
 def is_openrouter_family(credential_id: str) -> bool:
@@ -200,7 +230,7 @@ def resolve_base_url(config: ModelConfig, tier: TierConfig) -> str:
 
     Bound (or implicit) credential host first; otherwise the tier URL.
     """
-    return credential_base_url(config, resolve_credential_id(tier)) or tier.base_url
+    return credential_base_url(config, resolve_credential_id(tier, config)) or tier.base_url
 
 
 def apply_credential_host(config: ModelConfig, tier: TierConfig) -> TierConfig:
@@ -2059,7 +2089,7 @@ class ModelConfig(BaseModel):
         """
         if not self.has_model():
             return False
-        return any(resolve_credential_id(t) is not None for t in self.tiers().values())
+        return any(resolve_credential_id(t, self) is not None for t in self.tiers().values())
 
 
 class ConfigError(Exception):

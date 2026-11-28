@@ -2098,7 +2098,7 @@ for a session with the `set_tier` message.
 |---|---|---|---|
 | `slug` | string, non-empty | none | The model identifier sent as `model` on every request. Optional **only** when `base_url` is on loopback — see §3.4. `slug:` with no value means the same as leaving it out; `slug: ""` is an error. |
 | `base_url` | string | *required* | The OpenAI-compatible endpoint when the bound credential has no host of its own. Requests go to `{base_url}/chat/completions`. A credential `base_url` wins (TD-1718). |
-| `credential` | string | none | Named key from `credentials`. A bound id is sent even on loopback, and that key's host is used when set. Unbound loopback sends no key. Unbound remote uses `openrouter`. |
+| `credential` | string | none | Named key from `credentials`. A bound id is sent even on loopback, and that key's host is used when set. Unbound loopback sends no key. Unbound remote sends the `openrouter` key only when its `base_url` is that key's own host; any other host gets no key and keeps its own URL (DOCS2-05). |
 | `input_price` | float ≥ 0 | *required* | Dollars per **million** prompt tokens that were not served from cache. |
 | `output_price` | float ≥ 0 | *required* | Dollars per **million** completion tokens. |
 | `cache_read_price` | float ≥ 0 | *required* | Dollars per **million** prompt tokens served from cache. |
