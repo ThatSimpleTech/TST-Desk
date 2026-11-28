@@ -38,6 +38,7 @@ from .attachments import (
     render_user_content,
 )
 from .audit import AuditStore, audit_db_path
+from .audit_open import MEMORY, open_audit_store
 from .audit_queries import UsageBucket, export_csv, export_jsonl, usage_rollup
 from .audit_writer import AuditWriter
 from .autonomy.charter import Charter, CharterError
@@ -610,6 +611,7 @@ from .shutdown_phases import (
 from .speech import transcribe as transcribe_speech
 from .steering_proposals import decide as decide_steering
 from .steering_proposals import expire_restored as expire_restored_steering
+from .store_recovery import Recovery
 from .tailscale_bind import InterfaceEnumerator, resolve_remote_bind
 from .task_list import keep_task_list_visible, restore_task_list
 from .tools import ToolDispatcher, create_registry, register_builtin_handlers
@@ -1200,6 +1202,22 @@ def _job_templates_event(views: list[TemplateView]) -> str:
     ).model_dump_json()
 
 
+def _recovery_detail(event: StoreRecovered) -> str:
+    """The Doctor row for one store that could not be read at start."""
+    if event.store == "audit":
+        if event.memory_only:
+            return (
+                "audit.db could not be opened (the data folder cannot be written); "
+                "this run keeps its audit records in memory only."
+            )
+        return f"audit.db was damaged and kept as {event.kept_as}; a new audit log was started."
+    name = "sessions.json" if event.store == "sessions" else "jobs.json"
+    return (
+        f"{name} could not be read and was kept as {event.kept_as}. Read back from the "
+        f"backup: {event.from_backup}; rebuilt from their folders: {event.rebuilt}."
+    )
+
+
 class Daemon:
     """Async daemon process with clean startup and shutdown.
 
@@ -1269,6 +1287,7 @@ class Daemon:
         # Built when the daemon starts serving — the audit database only
         # appears on disk once the daemon actually runs (TD-902).
         self._audit_writer: AuditWriter | None = None
+        self._audit_recovery: Recovery | None = None
         # When set, a watchdog task shuts the daemon down if this host dies.
         self._parent_pid = parent_pid
         self._parent_poll_interval = 1.0
@@ -2577,13 +2596,7 @@ class Daemon:
         for event in self._store_recoveries():
             checks.append(
                 DiagnosticCheck(
-                    name=f"store:{event.store}",
-                    status="warn",
-                    detail=(
-                        f"{'sessions.json' if event.store == 'sessions' else 'jobs.json'} could "
-                        f"not be read and was kept as {event.kept_as}. Read back from the backup: "
-                        f"{event.from_backup}; rebuilt from their folders: {event.rebuilt}."
-                    ),
+                    name=f"store:{event.store}", status="warn", detail=_recovery_detail(event)
                 )
             )
 
@@ -2604,7 +2617,14 @@ class Daemon:
     # read while the first writes, so a separate handle is the supported
     # way to ask, not a workaround.
 
+    def _open_audit(self) -> AuditStore:
+        store, self._audit_recovery = open_audit_store(self.data_dir)
+        return store
+
     def _audit_reader(self) -> AuditStore:
+        # A run whose audit log is in memory has nothing on disk to read.
+        if self._audit_recovery is not None and self._audit_recovery.memory_only:
+            return AuditStore(MEMORY)
         return AuditStore(audit_db_path(self.data_dir))
 
     async def _usage_report(self) -> UsageReport:
@@ -2747,7 +2767,8 @@ class Daemon:
             enable_calibration_persistence(self.data_dir)
 
             # Audit writer before revive so restored loops can record calls.
-            self._audit_writer = AuditWriter(AuditStore(audit_db_path(self.data_dir)))
+            # A damaged or unwritable audit.db never stops the start (ERR2B-06).
+            self._audit_writer = AuditWriter(self._open_audit())
             self._audit_writer.start()
             self._record_sandbox_egress()
 
@@ -2793,7 +2814,7 @@ class Daemon:
     async def _serve(self) -> None:
         """Main serving loop — start subsystems and wait for shutdown."""
         if self._audit_writer is None:
-            self._audit_writer = AuditWriter(AuditStore(audit_db_path(self.data_dir)))
+            self._audit_writer = AuditWriter(self._open_audit())
             self._audit_writer.start()
             self._record_sandbox_egress()
         await self.ws_server.start()
@@ -7583,13 +7604,14 @@ class Daemon:
 
     def _store_recoveries(self) -> list[StoreRecovered]:
         """ERR2B-04: each store that could not be read at start, and what came back."""
-        found = [self._session_store.recovery, jobs_recovery(self.data_dir)]
+        found = [self._session_store.recovery, jobs_recovery(self.data_dir), self._audit_recovery]
         return [
             StoreRecovered(
                 store=r.store,  # type: ignore[arg-type]
                 kept_as=r.kept_as,
                 from_backup=r.from_backup,
                 rebuilt=r.rebuilt,
+                memory_only=r.memory_only,
             )
             for r in found
             if r is not None

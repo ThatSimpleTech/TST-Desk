@@ -2506,7 +2506,8 @@
     "store": "sessions",
     "kept_as": "sessions.json.damaged-20261128T040000Z",
     "from_backup": 3,
-    "rebuilt": 1
+    "rebuilt": 1,
+    "memory_only": false
   },
   "phone_change": {
     "type": "phone_change",

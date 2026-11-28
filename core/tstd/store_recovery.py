@@ -33,11 +33,13 @@ log = get_logger("tstd.store_recovery")
 class Recovery:
     """One store that could not be read, and what came back."""
 
-    store: str  # "sessions" or "jobs"
+    store: str  # "sessions", "jobs" or "audit"
     kept_as: str  # the damaged file's new name, beside the store
     from_backup: int  # rows read back from <name>.bak
     rebuilt: int  # session rows rebuilt from their folders
     error: str
+    #: The store could not be opened at all; this run keeps it in memory (ERR2B-06).
+    memory_only: bool = False
 
 
 def stamp() -> str:

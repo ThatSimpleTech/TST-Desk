@@ -2665,10 +2665,12 @@ export interface ScheduleProposalDecision extends DaemonEvent {
 /** A store file could not be read at start and was kept aside (ERR2B-04). */
 export interface StoreRecovered extends DaemonEvent {
   type: "store_recovered";
-  store: "sessions" | "jobs";
+  store: "sessions" | "jobs" | "audit";
   kept_as: string;
   from_backup: number;
   rebuilt: number;
+  /** ERR2B-06: the audit log could not be opened; this run keeps it in memory only. */
+  memory_only?: boolean;
 }
 
 /** A paired phone used a phone permission (TD-5279). Loopback windows only. */
