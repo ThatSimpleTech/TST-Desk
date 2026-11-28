@@ -42,7 +42,7 @@ describe("webview CSP (TD-4807)", () => {
 
   it("never permits eval or a remote script source in either mode", () => {
     for (const policy of [prod, dev, android]) {
-      const all = Object.values(policy.directives!).flat();
+      const all = Object.values(policy.directives!).flat() as string[];
       expect(all).not.toContain("unsafe-eval");
       expect(all).not.toContain("*");
       expect(all.filter((s) => s.startsWith("https:"))).toEqual([]);

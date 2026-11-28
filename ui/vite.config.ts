@@ -1,6 +1,5 @@
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
-import type { KitConfig } from '@sveltejs/kit';
 import { defineConfig } from 'vite';
 
 // Content security policy for the webview (TD-4807). Emitted as a
@@ -10,6 +9,8 @@ import { defineConfig } from 'vite';
 // changes every build. Tauri amends the meta at serve time with nonces
 // for its bridge scripts (dangerousDisableAssetCspModification stays
 // false for that reason). Exported for src/csp-config.test.ts.
+type KitConfig = NonNullable<Parameters<typeof sveltekit>[0]>;
+
 export function contentSecurityPolicy(mode: string): NonNullable<KitConfig['csp']> {
 	return {
 		mode: 'hash',
@@ -69,7 +70,10 @@ export default defineConfig(({ mode }) => ({
 				fallback: '200.html'
 			}),
 
-			csp: contentSecurityPolicy(mode)
+			csp: contentSecurityPolicy(mode),
+
+			// Kit 3 dropped `$lib` for `#lib`; the routes still import `$lib`.
+			alias: { $lib: 'src/lib' }
 		})
 	]
 }));
