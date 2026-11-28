@@ -31,6 +31,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, ValidationError
 
 from .autonomy.classifier import Boundary, canonical_path
+from .data_version import guard_write
 from .logging import get_logger, redact_secrets
 from .protocol import ArtifactEntry, ArtifactReady
 from .session_persist import SessionPersist
@@ -417,6 +418,7 @@ class ArtifactStore:
             )
 
     def _save(self, session_id: str, records: list[ArtifactRecord]) -> None:
+        guard_write("_save")
         path = self._persist.dir_for(session_id) / _META
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = [r.model_dump() for r in records]
@@ -439,6 +441,7 @@ class ArtifactStore:
 
     @staticmethod
     def _write_bytes(dest: Path, persist_dir: Path, content: bytes) -> None:
+        guard_write("_write_bytes")
         persist_root = canonical_path(persist_dir)
         dest.parent.mkdir(parents=True, exist_ok=True)
         # The id is hex; this is belt-and-braces if that ever changes.

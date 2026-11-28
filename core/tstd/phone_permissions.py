@@ -33,6 +33,8 @@ from typing import Any, Final
 
 import yaml
 
+from .data_version import read_only
+
 # The closed set. A capability is added here together with its verbs in
 # ``peer_policy.PHONE_OPT_IN`` and its own disclosure in Settings, Phones and devices.
 MCP_SERVERS: Final = "mcp_servers"
@@ -120,6 +122,8 @@ def _read_mapping(path: Path) -> dict[str, Any]:
 
 
 def _write_mapping(path: Path, fields: dict[str, Any]) -> None:
+    if read_only() is not None:  # UPGRADE-02: a newer version's folder
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.stem}.", suffix=".tmp")
     try:

@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .data_version import read_only
 from .logging import get_logger
 from .store_recovery import Recovery, folder_rows, keep_backup, read_backup, set_aside
 
@@ -470,6 +471,8 @@ class SessionStore:
             await asyncio.to_thread(self._persist_sync, payload)
 
     def _persist_sync(self, payload: list[dict[str, object]]) -> None:
+        if read_only() is not None:  # UPGRADE-02: a newer version's folder
+            return
         tmp: str | None = None
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)

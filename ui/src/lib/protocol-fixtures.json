@@ -2303,6 +2303,7 @@
     "cu_unhide_on_finish": true,
     "cu_denied_apps": [],
     "config_unknown_keys": [],
+    "data_written_by": null,
     "cu_policy_damaged": null,
     "config_error": null,
     "config_running_on": null,

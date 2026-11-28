@@ -4198,6 +4198,9 @@ class SetupState(DaemonEvent):
     # UPGRADE-02: config.yaml keys this version does not know, ignored at load
     # (a newer version's setting, or a typo). Dotted paths.
     config_unknown_keys: list[str] = Field(default_factory=list)
+    # UPGRADE-02: a newer version wrote this data folder (its version), so
+    # this one runs read-only and changes nothing in it. None: not so.
+    data_written_by: str | None = None
     # CU-20: why the policy file could not be trusted (it reads as Off), or None.
     cu_policy_damaged: str | None = None
 

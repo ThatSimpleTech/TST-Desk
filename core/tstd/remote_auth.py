@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from .data_version import guard_write
 from .logging import get_logger
 
 log = get_logger("tstd.remote_auth")
@@ -27,6 +28,7 @@ def write_remote_token_file(data_dir: Path, token: str) -> Path:
 
     Atomic temp + rename, chmod ``0o600``. The token itself is not logged.
     """
+    guard_write("write_remote_token_file")
     path = data_dir / REMOTE_TOKEN_FILE
     tmp_file = data_dir / f".{REMOTE_TOKEN_FILE}.{os.getpid()}.tmp"
     tmp_file.write_text(token, encoding="utf-8")

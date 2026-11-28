@@ -23,6 +23,7 @@ from typing import Literal
 
 from .config import ConfigError, ModelConfig, default_config_yaml
 from .config_bind import call_config_loader
+from .data_version import read_only
 from .logging import get_logger
 from .store_recovery import set_aside
 
@@ -53,6 +54,8 @@ def last_good_path(config_path: Path) -> Path:
 
 def remember_good(config_path: Path) -> None:
     """Copy a config.yaml that just loaded to ``config.yaml.last-good``. Never raises."""
+    if read_only() is not None:  # UPGRADE-02: a newer version's folder
+        return
     if not config_path.is_file():
         return
     target = last_good_path(config_path)

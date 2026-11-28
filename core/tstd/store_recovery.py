@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .data_version import read_only
 from .logging import get_logger
 
 log = get_logger("tstd.store_recovery")
@@ -52,6 +53,8 @@ def backup_path(path: Path) -> Path:
 
 def keep_backup(path: Path) -> None:
     """Before a save replaces *path*, keep it as ``<name>.bak`` (owner-only)."""
+    if read_only() is not None:  # UPGRADE-02: a newer version's folder
+        return
     if not path.exists():
         return
     bak = backup_path(path)
@@ -69,6 +72,8 @@ def keep_backup(path: Path) -> None:
 
 def set_aside(path: Path) -> Path | None:
     """Move an unreadable *path* to ``<name>.damaged-<stamp>``; the new path, or None."""
+    if read_only() is not None:  # UPGRADE-02: a newer version's folder
+        return None
     target = path.with_name(f"{path.name}.damaged-{stamp()}")
     try:
         os.replace(path, target)

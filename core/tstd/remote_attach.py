@@ -19,6 +19,8 @@ from typing import Any
 
 import yaml
 
+from .data_version import read_only
+
 DEFAULT_REMOTE_BIND = "tailscale0"
 
 
@@ -54,6 +56,8 @@ def _read_fields(path: Path) -> dict[str, Any]:
 
 
 def _write_fields(path: Path, fields: dict[str, Any]) -> None:
+    if read_only() is not None:  # UPGRADE-02: a newer version's folder
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".remote-attach.", suffix=".tmp")
     try:

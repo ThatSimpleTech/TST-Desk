@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from .data_version import read_only
 from .logging import get_logger
 from .protocol import (
     AssistantDelta,
@@ -560,6 +561,8 @@ class SessionIndex:
 
     @staticmethod
     def _write(conn: sqlite3.Connection, session_id: str, live: _Live, ops: _Ops) -> None:
+        if read_only() is not None:  # UPGRADE-02: a newer version's folder
+            return
         for response_id in ops.retract:
             conn.execute(
                 "DELETE FROM messages WHERE session_id = ? AND response_id = ?",

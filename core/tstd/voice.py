@@ -19,6 +19,7 @@ import httpx
 import yaml
 
 from .config import VoiceConfig, is_loopback_url
+from .data_version import read_only
 from .keychain import KeychainError, get_api_key
 from .logging import get_logger
 from .net import direct_transport
@@ -59,6 +60,8 @@ def load_voice(data_dir: str | Path) -> bool:
 
 def save_voice(data_dir: str | Path, enabled: bool) -> None:
     """Persist dictation atomically in the user data dir."""
+    if read_only() is not None:  # UPGRADE-02: a newer version's folder
+        return
     path = voice_path(data_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".voice.", suffix=".tmp")

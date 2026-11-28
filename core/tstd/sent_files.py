@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 from .artifacts import ArtifactError, ArtifactRecord, ArtifactStore
 from .attachments import format_bytes
 from .autonomy.classifier import Boundary, canonical_path
+from .data_version import guard_write
 from .logging import redact_secrets
 from .protocol import CHUNK_MAX
 from .tools.boundary import PathGuard, RefusalError
@@ -550,6 +551,7 @@ class SentFiles:
         tool_call_id: str,
         gate: SendGate,
     ) -> ArtifactRecord:
+        guard_write("_copy_one")
         aid = uuid.uuid4().hex
         part = bytes_dir / f".{aid}.part"
         changed = SendError(

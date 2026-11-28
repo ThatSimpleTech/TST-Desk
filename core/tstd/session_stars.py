@@ -14,6 +14,8 @@ from typing import Any
 
 import yaml
 
+from .data_version import read_only
+
 
 def session_stars_path(data_dir: str | Path) -> Path:
     return Path(data_dir) / "session_stars.yaml"
@@ -37,6 +39,8 @@ def load_session_stars(data_dir: str | Path) -> list[str]:
 
 
 def save_session_stars(data_dir: str | Path, ids: list[str]) -> None:
+    if read_only() is not None:  # UPGRADE-02: a newer version's folder
+        return
     path = session_stars_path(data_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".session_stars.", suffix=".tmp")

@@ -24,6 +24,8 @@ from typing import Any, Literal
 
 import yaml
 
+from .data_version import read_only
+
 CuMode = Literal["background", "full_control"]
 
 
@@ -109,6 +111,8 @@ def _set_aside(target: Path) -> None:
 
 
 def save_cu_policy(policy: CuPolicy, path: Path | None = None) -> None:
+    if read_only() is not None:  # UPGRADE-02: a newer version's folder
+        return
     target = path if path is not None else cu_policy_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     existing: dict[str, Any] = {}
@@ -155,6 +159,8 @@ def save_overlay_prefs(*, enabled: bool, cursor: bool, path: Path | None = None)
     changes, so the switches apply to all of them, not only TST Desk's own.
     Every other key is kept as it is. Returns True when the file changed.
     """
+    if read_only() is not None:  # UPGRADE-02: a newer version's folder
+        return False
     target = path if path is not None else cu_policy_path()
     existing: dict[str, Any] = {}
     if target.exists():

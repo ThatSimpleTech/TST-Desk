@@ -2446,6 +2446,8 @@ export interface SetupState extends DaemonEvent {
   cu_denied_apps?: string[];
   /** UPGRADE-02: config.yaml keys this version ignores (a newer version's, or a typo). */
   config_unknown_keys?: string[];
+  /** UPGRADE-02: a newer version wrote this data folder (its version); this one is read-only. */
+  data_written_by?: string | null;
   /** CU-20: why the policy file could not be trusted (it reads as Off). */
   cu_policy_damaged?: string | null;
 

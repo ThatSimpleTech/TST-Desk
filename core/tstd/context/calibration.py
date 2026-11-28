@@ -70,6 +70,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..data_version import read_only
 from ..logging import get_logger
 from .tokens import CHARS_PER_TOKEN, TokenCount, TokenCounter
 
@@ -243,6 +244,8 @@ class CalibrationStore:
 
 def _atomic_write(path: Path, text: str) -> None:
     """Same-folder temp file plus ``os.replace``; the temp never outlives a failure."""
+    if read_only() is not None:  # UPGRADE-02: a newer version's folder
+        return
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:

@@ -124,6 +124,7 @@ from .cu_indicators import (
 )
 from .cu_policy import CuPolicy, load_cu_policy, save_cu_policy, save_overlay_prefs
 from .data_dir_lock import acquire_data_dir_lock
+from .data_version import READ_ONLY_MESSAGES, check_and_stamp, read_only, set_read_only
 from .desktop import (
     AccessibilityDriver,
     DesktopDriver,
@@ -1240,6 +1241,9 @@ class Daemon:
         dial_policy: DialPolicy | None = None,
     ) -> None:
         self.data_dir = data_dir or user_data_dir()
+        # UPGRADE-02: first, before any store opens. A folder a newer version
+        # wrote is read-only for this process: nothing in it changes.
+        set_read_only(check_and_stamp(self.data_dir, self._version()))
         self.state = DaemonState()
         self._shutdown_event = asyncio.Event()
         self._shutdown_budget = shutdown_budget if shutdown_budget is not None else ShutdownBudget()
@@ -1674,6 +1678,7 @@ class Daemon:
             cu_unhide_on_finish=self.cu_policy.unhide_on_finish,
             cu_denied_apps=list(self.cu_policy.denied_apps),
             config_unknown_keys=self.config.unknown_keys,
+            data_written_by=newer.written_by if (newer := read_only()) else None,
             cu_policy_damaged=self.cu_policy.damaged,
             config_error=self.config_trouble.error if self.config_trouble else None,
             config_running_on=self.config_trouble.running_on if self.config_trouble else None,
@@ -2640,12 +2645,18 @@ class Daemon:
     # way to ask, not a workaround.
 
     def _open_audit(self) -> AuditStore:
+        # UPGRADE-02: a newer version's folder keeps the log in memory, so no
+        # migration or write ever reaches its audit.db.
+        if read_only() is not None:
+            return AuditStore(MEMORY)
         store, self._audit_recovery = open_audit_store(self.data_dir)
         return store
 
     def _audit_reader(self) -> AuditStore:
         # A run whose audit log is in memory has nothing on disk to read.
-        if self._audit_recovery is not None and self._audit_recovery.memory_only:
+        if read_only() is not None or (
+            self._audit_recovery is not None and self._audit_recovery.memory_only
+        ):
             return AuditStore(MEMORY)
         return AuditStore(audit_db_path(self.data_dir))
 
@@ -2901,6 +2912,9 @@ class Daemon:
         flight = ProviderFlight()
 
         async def _distill() -> None:
+            # UPGRADE-02: nothing is distilled into a newer version's folder.
+            if read_only() is not None:
+                return
             await phases.run("distill", self._distill_live_sessions(flight))
 
         distill = asyncio.create_task(_distill(), name="shutdown-distill")
@@ -3169,6 +3183,10 @@ class Daemon:
         a park this process just opened.
         """
         from .scheduler.email_delivery import bind_email_sender, reset_email_sender
+
+        # UPGRADE-02: a newer version's folder runs no scheduled jobs here.
+        if read_only() is not None:
+            return
 
         token = bind_email_sender(self._send_job_email)
         try:
@@ -3490,6 +3508,19 @@ class Daemon:
             # on its message (line comments, TD-5132) is not left waiting.
             kind, comment_ids = _refused_frame(raw)
             return build_error(e.code, e.message, in_reply_to=kind, comment_ids=comment_ids)
+
+        # UPGRADE-02: a newer version's data folder is read-only here. What
+        # reads, quits or stops still works; anything that would change the
+        # folder (or start a turn that would) is refused, before the hub.
+        if (newer := read_only()) is not None and msg.type not in READ_ONLY_MESSAGES:
+            return build_error(
+                "data_read_only",
+                f"This data folder was written by TST Desk {newer.written_by}. Update TST "
+                "Desk to keep working; nothing is changed until then.",
+                session_id=getattr(msg, "session_id", None),
+                in_reply_to=msg.type,
+                comment_ids=_comment_ids(msg),
+            )
 
         # TD-5015: peer policy, machine verbs, bridged ids. Never awaits
         # the network.

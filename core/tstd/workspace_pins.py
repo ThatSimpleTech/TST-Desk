@@ -13,6 +13,8 @@ from typing import Any
 
 import yaml
 
+from .data_version import read_only
+
 
 def workspace_pins_path(data_dir: str | Path) -> Path:
     return Path(data_dir) / "workspace_pins.yaml"
@@ -36,6 +38,8 @@ def load_workspace_pins(data_dir: str | Path) -> list[str]:
 
 
 def save_workspace_pins(data_dir: str | Path, paths: list[str]) -> None:
+    if read_only() is not None:  # UPGRADE-02: a newer version's folder
+        return
     path = workspace_pins_path(data_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".workspace_pins.", suffix=".tmp")
