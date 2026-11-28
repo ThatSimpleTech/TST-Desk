@@ -43,6 +43,8 @@ class InProcessDesktopDriver:
     def __init__(self) -> None:
         self.killed = False
         self.platform = "linux"
+        # CU-10: (region points, image width, image height) of the last screenshot.
+        self._frame: tuple[tuple[int, int, int, int], int, int] | None = None
 
     def set_killed(self, killed: bool) -> None:
         self.killed = bool(killed)
@@ -80,6 +82,8 @@ class InProcessDesktopDriver:
             )
         except Exception as exc:
             raise _map_error(exc) from exc
+        # CU-10: the model answers in this image's pixels; keep what maps them.
+        self._frame = (result.region_points, result.image_px_width, result.image_px_height)
         return json.dumps(
             {
                 "png_base64": base64.b64encode(result.png_bytes).decode("ascii"),
@@ -88,11 +92,28 @@ class InProcessDesktopDriver:
             }
         )
 
+    def _to_points(self, x: float, y: float) -> tuple[float, float]:
+        """A point in the last screenshot's pixels as a global logical point (CU-10)."""
+        frame = self._frame
+        if frame is None:
+            return x, y
+        from tst_cu_mcp.coordinates import image_px_to_global_point
+
+        region, width, height = frame
+        try:
+            gx, gy = image_px_to_global_point(region, width, height, x, y)
+        except ValueError as exc:
+            raise DesktopError("bad_point", str(exc)) from exc
+        return float(gx), float(gy)
+
     async def move(self, x: float, y: float, expect_window: str | None = None) -> str:
         from tst_cu_mcp.input_control import move_mouse
 
         try:
-            await asyncio.to_thread(move_mouse, x, y, expect_window)
+            px, py = self._to_points(x, y)
+            await asyncio.to_thread(move_mouse, px, py, expect_window)
+        except DesktopError:
+            raise
         except Exception as exc:
             raise _map_error(exc) from exc
         return json.dumps({"moved_to": {"x": x, "y": y}})
@@ -108,7 +129,10 @@ class InProcessDesktopDriver:
         from tst_cu_mcp.input_control import click
 
         try:
-            await asyncio.to_thread(click, x, y, button, count, expect_window)
+            px, py = self._to_points(x, y)
+            await asyncio.to_thread(click, px, py, button, count, expect_window)
+        except DesktopError:
+            raise
         except Exception as exc:
             raise _map_error(exc) from exc
         return json.dumps({"clicked": {"x": x, "y": y}, "button": button, "count": count})
@@ -134,8 +158,11 @@ class InProcessDesktopDriver:
 
         try:
             if x is not None and y is not None:
-                await asyncio.to_thread(move_mouse, x, y, expect_window)
+                px, py = self._to_points(x, y)
+                await asyncio.to_thread(move_mouse, px, py, expect_window)
             await asyncio.to_thread(scroll, dx, dy, expect_window)
+        except DesktopError:
+            raise
         except Exception as exc:
             raise _map_error(exc) from exc
         return json.dumps({"scrolled": {"dx": dx, "dy": dy}})

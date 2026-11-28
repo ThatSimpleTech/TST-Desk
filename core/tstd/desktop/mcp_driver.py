@@ -20,8 +20,9 @@ from .stdio_mcp import StdioMcpClient, map_mcp_error
 LIVE_PLATFORMS = frozenset({"darwin", "win32", "linux"})
 _T = TypeVar("_T")
 
-# Product tools → existing MCP tool names. Points, not last-screenshot
-# image space: tstd does not yet thread capture metadata between calls.
+# Product tools → existing MCP tool names. CU-10: a point is in the last
+# screenshot's image space (what the model was shown), and the server maps it
+# with that screenshot's metadata; before any screenshot it is global points.
 MCP_TOOLS = {
     "screenshot": "screenshot",
     "move": "move_mouse",
@@ -51,6 +52,8 @@ class McpDesktopDriver:
         self.killed = False
         # TD-5227: which session's cursor the sidecar draws next.
         self._agent_lock = asyncio.Lock()
+        # CU-10: the last screenshot's pixel size and the screen region it covered.
+        self._frame: dict[str, Any] | None = None
         self._announced: tuple[str, str] | None = None
         self._colors: dict[str, str] = {}
 
@@ -131,13 +134,16 @@ class McpDesktopDriver:
         if display is not None:
             arguments["display"] = display
         result = await self._client.call_tool(MCP_TOOLS["screenshot"], arguments)
+        self._frame = _frame_of(result)
         return _screenshot_json(result)
 
     async def move(self, x: float, y: float, expect_window: str | None = None) -> str:
         self._refuse_if_no_live_path()
         self._refuse_if_killed()
         result = await self._as_agent(
-            lambda: self._client.call_tool(MCP_TOOLS["move"], _point_args(x, y, expect_window))
+            lambda: self._client.call_tool(
+                MCP_TOOLS["move"], _point_args(x, y, expect_window, self._frame)
+            )
         )
         return json.dumps({"moved_to": {"x": x, "y": y}, "sidecar": result}, default=str)
 
@@ -151,7 +157,7 @@ class McpDesktopDriver:
     ) -> str:
         self._refuse_if_no_live_path()
         self._refuse_if_killed()
-        args = _point_args(x, y, expect_window)
+        args = _point_args(x, y, expect_window, self._frame)
         args["button"] = button
         args["count"] = count
         result = await self._as_agent(lambda: self._client.call_tool(MCP_TOOLS["click"], args))
@@ -179,14 +185,9 @@ class McpDesktopDriver:
     ) -> str:
         self._refuse_if_no_live_path()
         self._refuse_if_killed()
-        args: dict[str, Any] = {
-            "dx": dx,
-            "dy": dy,
-            "coordinate_space": "points",
-        }
+        args: dict[str, Any] = {"dx": dx, "dy": dy, "coordinate_space": "points"}
         if x is not None and y is not None:
-            args["x"] = x
-            args["y"] = y
+            args.update(_point_args(x, y, None, self._frame))
         if expect_window is not None:
             args["expect_window"] = expect_window
         await self._as_agent(lambda: self._client.call_tool(MCP_TOOLS["scroll"], args))
@@ -231,11 +232,45 @@ def _agent_color(result: Any) -> str | None:
     return None
 
 
-def _point_args(x: float, y: float, expect_window: str | None) -> dict[str, Any]:
+def _point_args(
+    x: float, y: float, expect_window: str | None, frame: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """A point the model gave, in the space of the image it was shown (CU-10)."""
     args: dict[str, Any] = {"x": x, "y": y, "coordinate_space": "points"}
+    if frame is not None:
+        args.update(
+            coordinate_space="image",
+            image_width=frame["width"],
+            image_height=frame["height"],
+            region=frame["region"],
+        )
     if expect_window is not None:
         args["expect_window"] = expect_window
     return args
+
+
+def _frame_of(result: Any) -> dict[str, Any] | None:
+    """The screenshot's image size and captured region, from its metadata block."""
+    for block in _content_blocks(result):
+        if not isinstance(block, dict) or block.get("type") != "text":
+            continue
+        try:
+            meta = json.loads(str(block.get("text", "")))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(meta, dict):
+            continue
+        size, region = meta.get("image_px"), meta.get("captured_region_points")
+        if isinstance(size, dict) and isinstance(region, dict):
+            try:
+                return {
+                    "width": int(size["width"]),
+                    "height": int(size["height"]),
+                    "region": {k: int(region[k]) for k in ("x", "y", "width", "height")},
+                }
+            except (KeyError, TypeError, ValueError):
+                return None
+    return None
 
 
 def _screenshot_json(result: Any) -> str:
