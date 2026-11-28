@@ -2038,16 +2038,17 @@ class ModelConfig(BaseModel):
         when there is none.
         """
 
-        def local(name: str) -> bool:
-            entry = self.presets.get(name)
-            if entry is None or not entry.has_tiers:
-                return False
-            tiers = [t for tier in entry.tier_map().values() for t in (tier, *tier.fallbacks)]
-            return all(is_loopback_url(resolve_base_url(self, tier)) for tier in tiers)
-
-        if local(self.active_preset):
+        if self.entry_is_local(self.active_preset):
             return self.active_preset
-        return next((name for name in self.presets if local(name)), None)
+        return next((name for name in self.presets if self.entry_is_local(name)), None)
+
+    def entry_is_local(self, name: str) -> bool:
+        """Every role of entry *name*, and every backup, calls a server on this computer."""
+        entry = self.presets.get(name)
+        if entry is None or not entry.has_tiers:
+            return False
+        tiers = [t for tier in entry.tier_map().values() for t in (tier, *tier.fallbacks)]
+        return all(is_loopback_url(resolve_base_url(self, tier)) for tier in tiers)
 
     def requires_api_key(self) -> bool:
         """Whether the active preset will send at least one key (TD-1801, TD-1717).

@@ -1294,6 +1294,9 @@ class Daemon:
         # Built when the daemon starts serving — the audit database only
         # appears on disk once the daemon actually runs (TD-902).
         self._audit_writer: AuditWriter | None = None
+        # LIVE2-08: per chat, turns already distilled, and entries its turns ran on.
+        self._distilled_turns: dict[str, int] = {}
+        self._turn_entries: dict[str, set[str]] = {}
         self._audit_recovery: Recovery | None = None
         # When set, a watchdog task shuts the daemon down if this host dies.
         self._parent_pid = parent_pid
@@ -3379,6 +3382,10 @@ class Daemon:
             used = event.state != "running" and event.reason != SHUTDOWN_REASON
             await self._session_store.update_state(event.session_id, event.state, touch=used)
         elif isinstance(event, TurnComplete) and isinstance(session_id, str):
+            # LIVE2-08: the entry this turn ran on has seen the conversation.
+            ran = self.session_registry.get(session_id)
+            if ran is not None and not event.failed:
+                self._turn_entries.setdefault(session_id, set()).add(ran.preset)
             await self._apply_pending_preset(session_id)
         elif isinstance(event, UserTurn):
             # A turn is use: the rail's newest-first order, quick entry and
@@ -5369,8 +5376,15 @@ class Daemon:
         flight: ProviderFlight | None = None,
     ) -> None:
         """Park a proposal and emit ``memory_proposal`` when memory changed."""
-        if session.turn_in_flight or completed_turn_count(session) < 1:
+        done = completed_turn_count(session)
+        if session.turn_in_flight or done < 1:
             return
+        # LIVE2-08: only a chat with a turn since its last distill, counted
+        # from this run's start, so a quit after a run with no turns sends
+        # nothing, and a distill cut short at quit is not tried at every quit.
+        if done <= self._distilled_turns.get(session.id, 0):
+            return
+        self._distilled_turns[session.id] = done
         native = self._distill_entry(session)
         if native is None:
             log.info(
@@ -5415,9 +5429,18 @@ class Daemon:
         one for this. With no such model it is skipped.
         """
         if session.engine == "grok":
-            return self.config.native_default()
+            # The manager's rule: never a hosted model unless this chat used
+            # it. Grok's own model is not an entry here, so only a local one.
+            return self.config.local_default()
         entry = self.config.presets.get(session.preset)
-        if entry is not None and entry.has_tiers:
+        # A hosted entry only when a turn of this chat ran on it this run; one
+        # picked since the last turn has not seen the conversation.
+        seen = session.preset in self._turn_entries.get(session.id, set())
+        if (
+            entry is not None
+            and entry.has_tiers
+            and (seen or self.config.entry_is_local(session.preset))
+        ):
             return session.preset
         return self.config.local_default()
 
@@ -5431,6 +5454,8 @@ class Daemon:
 
     async def _attach_session_runtime(self, sess: Session) -> None:
         """Boundary, tools, persist hooks, and a running loop for *sess*."""
+        # LIVE2-08: turns before this run were distilled (or offered) then.
+        self._distilled_turns.setdefault(sess.id, completed_turn_count(sess))
         sess.load_global_memory = self.load_global_memory
         # TD-5126: a delegate child's worktree goes here too.
         sess.worktree_folder = (
