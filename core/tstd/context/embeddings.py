@@ -68,7 +68,7 @@ class EmbeddingsClient:
     def from_config(cls, config: ModelConfig) -> EmbeddingsClient:
         cfg = config.embeddings
         return cls(
-            cfg.base_url,
+            cfg.base_url if cfg.enabled else "",
             cfg.model,
             cfg.timeout_seconds,
             top_k=cfg.top_k,

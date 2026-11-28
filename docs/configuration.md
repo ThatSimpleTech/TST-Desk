@@ -110,7 +110,7 @@ with the reason under the field. Line endings stay as the file has them.
 | `credentials` | mapping of id → `{ name, base_url? }` | empty | Named API keys. The `name` is what Settings shows. Optional `base_url` is the host that key talks to (TD-1718). The secret is never here — it lives in the OS keychain as `tst-<id>`. Omitted in an older user copy is filled from the shipped file at load. |
 | `local_servers` | list of `{ name, base_url }` | Ollama, LM Studio, vLLM and llama.cpp on their usual ports | Servers on this computer that **Find models on this computer** in the "Add a model" walkthrough asks for `/models`, only when the user clicks it (TD-5180). Each `base_url` must be loopback (`127.0.0.1`, `::1`, `localhost`); anything else fails the load. No key is sent, proxy settings are ignored, and nothing is written until the user picks a model. Add your own server's port, or set `[]` to turn the search off. Omitted in an older user copy is filled from the shipped file at load. |
 | `search` | mapping | see below | Destination for the `web_search` tool. Omitted in an older user copy is filled from the shipped file at load. |
-| `embeddings` | mapping | see below | Local embeddings sidecar for memory ranking. Omitted in an older user copy is filled from the shipped file at load. Empty `base_url` disables the client. Empty `command` is attach-only — the host never spawns on `base_url` alone. |
+| `embeddings` | mapping | see below | Local embeddings sidecar for memory ranking, off unless `enabled: true`. Omitted in an older user copy is filled from the shipped file at load. Empty `base_url` disables the client. Empty `command` is attach-only — the host never spawns on `base_url` alone. |
 | `computer_use` | mapping | see below | Desktop computer-use sidecar. Omitted in an older user copy is filled from the shipped file at load. Empty `command` is mock-only — the daemon never spawns `mcp/tst-cu-mcp`. Empty `grounding.base_url` leaves click targeting on the intended (x, y). |
 | `session` | mapping | see below | On-disk session event-log window. Omitted in an older user copy is filled from the shipped file at load. Zero is invalid, not unbounded. |
 | `clear_tool_results` | mapping | see below | Clear stale tool results before whole turns are compacted (TD-5115). Omitted in an older user copy is filled from the shipped file at load, which turns it on. |
@@ -256,15 +256,18 @@ cached or not.
 
 ### `embeddings`
 
-Memory ranking (TD-2202). The client sends OpenAI `POST /v1/embeddings` to
-`base_url`. The host is configuration, never a Python literal. Empty
-`base_url` disables the client; a down loopback endpoint falls back to
+Memory ranking (TD-2202). Off unless `enabled` is `true` (ENT2-03): when
+on, each turn sends your message and every memory note in the project to
+`base_url`, so a filled `base_url` alone sends nothing. The client sends
+OpenAI `POST /v1/embeddings`. The host is configuration, never a Python
+literal. Empty `base_url` disables the client too; a down loopback endpoint falls back to
 heading-match (TD-2201) and does not fail the turn. Do not point this at
 Ollama `/api/embed`. The Tauri host spawns a sidecar only when `command`
 is set (TD-2204). A filled `base_url` with no `command` is attach-only.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
+| `enabled` | bool | `false` | Turns memory ranking on. Nothing is sent and the host starts nothing while it is `false` or missing. |
 | `base_url` | string | *shipped* | Embeddings endpoint, including the `/v1` suffix. Empty string disables. |
 | `model` | string | *shipped* | Embeddings model slug. Empty disables even when `base_url` is set. |
 | `timeout_seconds` | float > 0 | `2` | How long a probe may run before heading-match takes over. |

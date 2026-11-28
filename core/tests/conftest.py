@@ -43,6 +43,7 @@ _KEEP_REAL_PING_INTERVAL = {
 # test_embeddings owns from_config against the shipped sidecar URL.
 _KEEP_EMBEDDINGS_FROM_CONFIG = {
     "test_embeddings",
+    "test_embeddings_opt_in",
 }
 
 

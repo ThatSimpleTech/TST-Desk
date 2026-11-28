@@ -1085,6 +1085,10 @@ class EmbeddingsConfig(BaseModel):
     filled ``base_url`` never causes a spawn.
     """
 
+    #: ENT2-03: off unless the person turns it on. Each turn sends the message
+    #: and every memory note to ``base_url``, so a filled URL alone (every
+    #: install's copied config.yaml has one) sends nothing.
+    enabled: bool = False
     base_url: str = ""
     model: str = ""
     timeout_seconds: float = Field(default=2.0, gt=0)
