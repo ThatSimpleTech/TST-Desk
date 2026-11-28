@@ -12,6 +12,23 @@
     "core:default",
     "dialog:allow-open",
     "opener:allow-open-path",
-    "notification:default"
+    "notification:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        {
+          "url": "https://*"
+        },
+        {
+          "url": "http://*"
+        },
+        {
+          "url": "x-apple.systemsettings:*"
+        },
+        {
+          "url": "x-apple.systempreferences:*"
+        }
+      ]
+    }
   ]
 }

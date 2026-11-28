@@ -5,7 +5,7 @@
 // clicks the rendered anchor, and asserts on the opener mock plus
 // defaultPrevented.
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mount, tick, unmount } from "svelte";
 import Markdown from "./components/chat/Markdown.svelte";
 
@@ -15,7 +15,13 @@ vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl }));
 
 let app: ReturnType<typeof mount> | null = null;
 
+// As the packaged app: links go through the opener plugin (SETREST-01).
+beforeEach(() => {
+	(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+});
+
 afterEach(() => {
+	delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
 	if (app !== null) {
 		unmount(app);
 		app = null;
