@@ -13,6 +13,7 @@ mod read_text;
 mod received_files;
 mod sent_files;
 mod session_window;
+mod smoke;
 mod single_instance;
 mod stop_hotkey;
 mod tray;
@@ -378,6 +379,8 @@ pub fn run() {
             stop_hotkey::setup(app.handle(), &daemon::data_dir());
             quick_entry::setup(app)?;
             updater::start(app.handle());
+            // WEBKIT-03: only with TST_DESK_SMOKE_REPORT set (package.yml).
+            smoke::start(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -402,6 +405,7 @@ pub fn run() {
             quick_entry::hide_quick_entry,
             tray::set_tray_running_count,
             session_window::open_session_window,
+            smoke::smoke_report,
             updater::check_for_updates,
             updater::update_status,
             updater::download_update,

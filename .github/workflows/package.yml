@@ -40,12 +40,13 @@ jobs:
           # runner label drives both the Tauri target and the PyInstaller
           # sidecar triple; artifact names follow tauri's bundle layout.
           # macos-15-intel: x86_64-apple-darwin (macos-13 retired Dec 2025);
-          # ubuntu-24.04-arm: aarch64-unknown-linux-gnu (TD-4902).
+          # ubuntu-22.04-arm: aarch64-unknown-linux-gnu (TD-4902); both Linux
+          # legs build on 22.04 for its glibc 2.35 floor (HOST2-01).
           all='[
             {"os":"macos-latest","platform":"macos-arm64"},
             {"os":"macos-15-intel","platform":"macos-x86_64"},
-            {"os":"ubuntu-latest","platform":"linux-x86_64"},
-            {"os":"ubuntu-24.04-arm","platform":"linux-aarch64"},
+            {"os":"ubuntu-22.04","platform":"linux-x86_64"},
+            {"os":"ubuntu-22.04-arm","platform":"linux-aarch64"},
             {"os":"windows-latest","platform":"windows-x86_64"}
           ]'
           picked=$(echo "$all" | jq -c --arg want "$WANT" 'map(select($want == "all" or .platform == $want))')
@@ -70,7 +71,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils xvfb xauth
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -196,6 +197,58 @@ jobs:
             kill $PID || true
             test -f "$DATA/port.json"
           '
+
+      # HOST2-01: the 0.5.0 x86_64 AppImage needed glibc 2.43 (Ubuntu 26.04)
+      # because it was built on ubuntu-latest. The Linux legs build on
+      # ubuntu-22.04 now; this fails the build if anything shipped needs a
+      # newer C library than that image's 2.35.
+      - name: Check the Linux bundles' glibc floor
+        if: runner.os == 'Linux'
+        run: |
+          set -e
+          FLOOR=2.35
+          cd shell/target/release/bundle
+          AI=$(ls appimage/*.AppImage)
+          rm -rf floor && mkdir floor && (cd floor && "$OLDPWD/$AI" --appimage-extract > /dev/null)
+          mkdir -p floor/deb && dpkg-deb -x deb/*.deb floor/deb
+          worst=$(find floor -type f -print0 | while IFS= read -r -d '' f; do
+              if head -c4 "$f" 2>/dev/null | grep -q 'ELF'; then
+                objdump -T "$f" 2>/dev/null | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//'
+              fi
+            done | sort -V | tail -1)
+          echo "highest glibc symbol version needed: $worst (floor $FLOOR)"
+          [ "$(printf '%s\n%s\n' "$worst" "$FLOOR" | sort -V | tail -1)" = "$FLOOR" ] || {
+            echo "::error::a shipped binary needs glibc $worst, newer than $FLOOR"; exit 1; }
+
+      # WEBKIT-03: launch the packaged app itself, not the dev server. With
+      # TST_DESK_SMOKE_REPORT set the host opens a per-session window the way
+      # the rail's menu does, asks every window whether the app shell
+      # rendered, writes the answers and quits (shell/src/smoke.rs). The
+      # session window was a 404 in every 0.5.0 build (WEBKIT-01).
+      - name: Smoke the packaged Linux app's windows
+        if: runner.os == 'Linux'
+        run: |
+          set -e
+          AI=$(ls "$PWD"/shell/target/release/bundle/appimage/*.AppImage)
+          REPORT="$RUNNER_TEMP/smoke.json"
+          export HOME="$RUNNER_TEMP/smoke-home" && mkdir -p "$HOME"
+          APPIMAGE_EXTRACT_AND_RUN=1 TST_DESK_SMOKE_REPORT="$REPORT" \
+            xvfb-run -a timeout 120 "$AI" || true
+          test -s "$REPORT" || { echo "::error::the packaged app wrote no smoke report"; exit 1; }
+          cat "$REPORT"
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          from urllib.parse import parse_qs, urlsplit
+          report = json.load(open(sys.argv[1]))
+          assert "error" not in report, report
+          windows = report["windows"]
+          for label in ("main", "session-smoke"):
+              assert windows[label]["ok"], (label, windows[label])
+          url = urlsplit(windows["session-smoke"]["url"])
+          assert url.path == "/", url
+          assert parse_qs(url.query) == {"bind_session": ["smoke"]}, url
+          print("both windows rendered the app shell")
+          PY
 
       - name: Smoke the bundled sidecar (Windows)
         if: runner.os == 'Windows'
