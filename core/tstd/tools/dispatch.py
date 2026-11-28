@@ -16,7 +16,8 @@ from typing import Any, Literal, cast
 from urllib.parse import urlsplit
 
 from jsonschema import ValidationError as SchemaError
-from jsonschema import validate as validate_schema
+from jsonschema.validators import validator_for
+from referencing import Registry
 
 from .. import shell_sandbox
 from ..after_write import WRITE_TOOLS, run_after_write
@@ -1050,7 +1051,9 @@ class ToolDispatcher:
             return None
 
         try:
-            validate_schema(instance=arguments, schema=tool.parameters)
+            _validator(tool.parameters).validate(arguments)
+        except _RefusedRef as e:
+            return f"Invalid schema for '{tool.name}': {e}"
         except SchemaError as e:
             path = " → ".join(str(p) for p in e.path) if e.path else "(root)"
             return (
@@ -1068,3 +1071,35 @@ def _hook_note(context: str) -> str:
     returns early, so the note is added here instead of being dropped.
     """
     return f"\n\n[hooks]\n{context}" if context else ""
+
+
+class _RefusedRef(Exception):
+    """A schema pointed outside itself; nothing was fetched (SUPPLY-02)."""
+
+
+# An empty registry retrieves nothing: its default ``retrieve`` refuses every
+# URI. Without one, jsonschema's deprecated default registry opens the URI
+# (http, https or file) with no timeout, on the event loop, before the
+# classifier sees the call.
+_NO_FETCH: Registry[Any] = Registry()
+
+
+def _validator(schema: dict[str, Any]) -> Any:
+    cls = validator_for(schema)
+    cls.check_schema(schema)
+    return _CheckedValidator(cls(schema, registry=_NO_FETCH))
+
+
+class _CheckedValidator:
+    """Turns a refused reference into ``_RefusedRef`` instead of a crash."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    def validate(self, instance: Any) -> None:
+        from referencing.exceptions import Unresolvable
+
+        try:
+            self._inner.validate(instance)
+        except Unresolvable as e:
+            raise _RefusedRef(f"it refers to {e} outside itself, which is not fetched") from e
