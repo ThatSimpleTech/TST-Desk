@@ -9,7 +9,7 @@
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Hold-to-talk dictation in the composer. Speech is not captured unless you hold the mic.</string>
 	<key>NSScreenCaptureUsageDescription</key>
-	<string>Computer use takes a screenshot of the desktop when the agent needs to see the screen. Nothing is recorded or sent off this Mac.</string>
+	<string>Computer use takes a screenshot of the desktop when the agent needs to see the screen. Each screenshot is sent to the model you chose for that chat, which may be a service on the internet. Nothing is recorded to a video.</string>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>macOS groups screen capture with system-audio capture. TST Desk does not record the microphone for computer use.</string>
 </dict>
