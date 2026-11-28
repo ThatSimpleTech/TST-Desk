@@ -3336,7 +3336,8 @@
         "allow_skip_all": false,
         "running": false
       }
-    ]
+    ],
+    "unreadable": 0
   },
   "job_runs": {
     "type": "job_runs",

@@ -3435,6 +3435,8 @@ export interface JobEntry {
 export interface JobList extends DaemonEvent {
   type: "job_list";
   jobs: JobEntry[];
+  /** ARTSCHED-32: rows of jobs.json this build cannot read; kept in the file as they are. */
+  unreadable?: number;
 }
 
 /** One fire on job_runs (TD-3811). `scheduled_for` is null for Run now and for a chained fire. */

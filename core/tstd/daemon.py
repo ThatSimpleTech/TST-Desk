@@ -557,7 +557,7 @@ from .scheduler.runner import (
     run_turn_on_daemon,
 )
 from .scheduler.runner import SendFn as NotifySendFn
-from .scheduler.store import delete_job, get_job, list_jobs, save_job
+from .scheduler.store import delete_job, get_job, list_jobs, save_job, unreadable_jobs
 from .scheduler.store import recovery as jobs_recovery
 from .scheduler.templates import (
     TemplateDraft,
@@ -7271,7 +7271,8 @@ class Daemon:
     async def _job_list_event(self) -> str:
         jobs = await asyncio.to_thread(list_jobs, self.data_dir)
         return JobList(
-            jobs=[_job_entry(job, running=job.id in self._in_flight) for job in jobs]
+            jobs=[_job_entry(job, running=job.id in self._in_flight) for job in jobs],
+            unreadable=unreadable_jobs(self.data_dir),
         ).model_dump_json()
 
     def _save_job_record(self, msg: SaveJob, proposer: Session | None = None) -> Job:

@@ -82,6 +82,15 @@
 	<section class="list-col" aria-label="Scheduled">
 		<h1 class="title">Scheduled</h1>
 		<p class="lede">Jobs the daemon runs on a schedule. Run now fires one without moving its next slot.</p>
+		{#if scheduled.unreadable > 0}
+			<p class="unreadable" role="status">
+				{scheduled.unreadable === 1 ? '1 scheduled job' : `${scheduled.unreadable} scheduled jobs`}
+				in scheduler/jobs.json could not be read by this version, so
+				{scheduled.unreadable === 1 ? 'it does' : 'they do'} not run or show here. Nothing
+				deletes {scheduled.unreadable === 1 ? 'it' : 'them'}: a newer version, or a fix to the
+				file, brings {scheduled.unreadable === 1 ? 'it' : 'them'} back.
+			</p>
+		{/if}
 		{#if scheduled.items.length === 0}
 			<EmptyState align="start" body={empty} />
 		{:else}
@@ -501,5 +510,9 @@
 		border: var(--border-width) solid var(--color-hairline);
 		border-radius: var(--radius-md);
 		padding: var(--space-2) var(--space-3);
+	}
+	.unreadable {
+		margin: 0 0 var(--space-3);
+		color: var(--color-warn, var(--color-err));
 	}
 </style>

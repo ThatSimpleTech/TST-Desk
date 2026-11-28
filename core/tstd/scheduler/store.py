@@ -116,6 +116,17 @@ def recovery(data_dir: str | Path) -> Recovery | None:
     return _RECOVERIES.get(str(Path(data_dir)))
 
 
+#: Per data dir, the rows of the last read that this build cannot validate
+#: (ARTSCHED-32). They are written back unchanged by every save, so a row a
+#: newer build or a hand edit wrote is never lost here.
+_UNREADABLE: dict[str, list[dict[str, Any]]] = {}
+
+
+def unreadable_jobs(data_dir: str | Path) -> int:
+    """How many rows of jobs.json this build could not read, as of the last read."""
+    return len(_UNREADABLE.get(str(Path(data_dir)), []))
+
+
 def _read_jobs(data_dir: str | Path) -> list[Job]:
     path = jobs_path(data_dir)
     if not path.exists():
@@ -128,7 +139,14 @@ def _read_jobs(data_dir: str | Path) -> list[Job]:
     rows = None if error else _rows_from_envelope(raw)
     if rows is None:
         rows = _recover(data_dir, path, error or "the file is not a jobs list this build reads")
+    jobs, unreadable = _validate_rows(rows)
+    _UNREADABLE[str(Path(data_dir))] = unreadable
+    return jobs
+
+
+def _validate_rows(rows: list[Any]) -> tuple[list[Job], list[dict[str, Any]]]:
     jobs: list[Job] = []
+    unreadable: list[dict[str, Any]] = []
     for entry in rows:
         if not isinstance(entry, dict):
             continue
@@ -136,10 +154,11 @@ def _read_jobs(data_dir: str | Path) -> list[Job]:
             jobs.append(Job.model_validate(entry))
         except (ValidationError, JobValidationError):
             log.warning(
-                "dropping malformed scheduled job",
-                extra={"extra_fields": {"entry": entry}},
+                "keeping a scheduled job this build cannot read",
+                extra={"extra_fields": {"id": entry.get("id")}},
             )
-    return jobs
+            unreadable.append(entry)
+    return jobs, unreadable
 
 
 def _upsert(data_dir: str | Path, record: Job) -> Job:
@@ -169,7 +188,9 @@ def _recover(data_dir: str | Path, path: Path, error: str) -> list[Any]:
     )
     if rows:
         # The backup is the store now, so the next read finds a good file.
-        _write_jobs(Path(data_dir), [Job.model_validate(r) for r in rows if isinstance(r, dict)])
+        jobs, unreadable = _validate_rows(rows)
+        _UNREADABLE[str(Path(data_dir))] = unreadable
+        _write_jobs(Path(data_dir), jobs)
     return found
 
 
@@ -191,9 +212,11 @@ def _rows_from_envelope(raw: Any) -> list[Any] | None:
 
 def _write_jobs(data_dir: Path, jobs: list[Job]) -> None:
     path = jobs_path(data_dir)
+    ids = {job.id for job in jobs}
+    carried = [row for row in _UNREADABLE.get(str(data_dir), []) if row.get("id") not in ids]
     payload = {
         "version": _ENVELOPE_VERSION,
-        "jobs": [job.model_dump() for job in jobs],
+        "jobs": [job.model_dump() for job in jobs] + carried,
     }
     text = json.dumps(payload, indent=2)
     path.parent.mkdir(parents=True, exist_ok=True)
