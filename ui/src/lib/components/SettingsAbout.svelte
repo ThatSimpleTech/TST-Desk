@@ -34,11 +34,11 @@
 
 <div class="row">
 	<div>
-		<p class="title">Install updates automatically</p>
+		<p class="title">Check online in the background</p>
 		<p class="hint">
 			{automatic
-				? 'On. A newer release downloads in the background. You restart to install it.'
-				: 'Off. Nothing checks until you ask.'}
+				? 'On. TST Desk checks GitHub for a newer release when it opens and every four hours, and downloads it for you to restart into. Once a day it also re-reads each model\'s price and context size from that model\'s own server.'
+				: 'Off. Nothing is checked until you press Check for updates or Refresh from servers.'}
 		</p>
 	</div>
 	<button
