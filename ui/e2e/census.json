@@ -64,7 +64,7 @@
 		"Resume computer use Allow desktop actuation again",
 		"Run doctor Check the daemon, the key, and the provider",
 		"Search sessions and actions",
-		"Stop computer use Halt all desktop actuation immediately. Capture still works.",
+		"Stop computer use Halt all computer use immediately, screenshots included.",
 		"Toggle Design mode Point at the Screen frame instead of describing it (⌘⇧D)",
 		"Toggle background Turn the background off, or back on",
 		"Toggle theme Switch between light and dark"
