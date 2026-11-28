@@ -1643,7 +1643,7 @@ wheels = [
 
 [[package]]
 name = "tstd"
-version = "0.5.3"
+version = "0.5.4"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
