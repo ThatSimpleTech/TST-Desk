@@ -227,7 +227,12 @@
 					<button class="action" type="button" onclick={commitEdit}>Save</button>
 					<button class="action" type="button" onclick={() => (editing = false)}>Cancel</button>
 				</div>
-			{:else if message.text !== ""}<div class="user-md"><Markdown text={message.text} /></div>{/if}
+			{:else if message.text !== ""}
+				<!-- CHAT-04: your own words exactly as you typed and sent them. Not
+				     markdown: Vec<String>, a leading #, __init__.py and line breaks
+				     all stay as they are. Svelte escapes it, so nothing in it runs. -->
+				<p class="user-text">{message.text}</p>
+			{/if}
 			<!-- A row with no number (a chat whose history could not be lined up,
 			     TD-5201) offers only what goes by its turn id: Edit, a branch switch
 			     and Summarize from here name the turn by its number. -->
@@ -386,22 +391,9 @@
 		line-height: var(--leading-normal);
 	}
 
-	.user-md {
-		word-break: break-word;
-	}
 
-	.user-md :global(.markdown) {
-		font-size: inherit;
-		line-height: inherit;
-	}
 
-	.user-md :global(.markdown p:first-child) {
-		margin-top: 0;
-	}
 
-	.user-md :global(.markdown p:last-child) {
-		margin-bottom: 0;
-	}
 
 	.edit {
 		width: 100%;
@@ -434,9 +426,6 @@
 
 	/* Only spaced when there is text above it — an attachment-only message
 	   should not open with a gap. */
-	.user-md + .sent-attachments {
-		margin-top: var(--space-2);
-	}
 
 	.cursor {
 		display: inline-block;
@@ -454,5 +443,14 @@
 		.cursor {
 			animation: none;
 		}
+	}
+	.user-text {
+		margin: 0;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+
+	.user-text + .sent-attachments {
+		margin-top: var(--space-2);
 	}
 </style>
