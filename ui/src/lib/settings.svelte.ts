@@ -24,6 +24,7 @@ import type {
 	PhonePermissionState,
 	RemoteDeviceSummary,
 	TierCard,
+	TrustedFolder,
 } from "./protocol";
 
 export type SettingsSection =
@@ -174,6 +175,8 @@ export const settings = $state({
 	cuMode: "background" as CuMode,
 	cuUnhideOnFinish: true,
 	cuDeniedApps: [] as string[],
+	/** SECUX2-01: folders whose own instructions load. */
+	trustedFolders: [] as TrustedFolder[],
 	cuPolicyDamaged: null as string | null,
 
 	configError: null as string | null,
@@ -296,6 +299,7 @@ export function resetSettings(): void {
 	settings.cuMode = "background";
 	settings.cuUnhideOnFinish = true;
 	settings.cuDeniedApps = [];
+	settings.trustedFolders = [];
 	settings.cuPolicyDamaged = null;
 
 	settings.configError = null;
@@ -503,6 +507,7 @@ function reduce(event: DaemonEventUnion): void {
 		settings.cuMode = event.cu_mode === "full_control" ? "full_control" : "background";
 		settings.cuUnhideOnFinish = event.cu_unhide_on_finish ?? true;
 		settings.cuDeniedApps = event.cu_denied_apps ?? [];
+		settings.trustedFolders = event.trusted_folders ?? [];
 		settings.cuPolicyDamaged = event.cu_policy_damaged ?? null;
 
 		settings.configError = event.config_error ?? null;
@@ -878,6 +883,11 @@ export function setCuIndicators(next: {
 /** SETMODEL-04: put config.yaml's last working copy back. */
 export function restoreLastGoodConfig(): void {
 	sendToDaemon({ type: "restore_last_good_config" });
+}
+
+/** SECUX2-01: forget a folder's trust; its own instructions stop loading. */
+export function revokeFolderTrust(folder: string): void {
+	sendToDaemon({ type: "revoke_folder_trust", folder });
 }
 
 export function setCuPolicy(next: {

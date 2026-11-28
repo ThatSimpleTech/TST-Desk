@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from .. import folder_trust
 from ..logging import get_logger
 from .frontmatter import parse_frontmatter
 from .tokens import heuristic_count
@@ -116,7 +117,9 @@ class SkillDiscoverer:
         the skill and is listed in :attr:`Skill.ignored_keys` (TD-5107).
         """
         workspace = Path(workspace_path).expanduser().resolve()
-        ours_ws = self._skill_files(workspace / ".tst" / "skills")
+        # SECUX2-01: the project's own skills load only from a trusted folder.
+        project = folder_trust.allows(workspace, "skills")
+        ours_ws = self._skill_files(workspace / ".tst" / "skills") if project else []
         ours_user = self._skill_files(self._home / ".tstdesk" / "skills")
         if ours_ws or ours_user:
             return self._merge(
@@ -124,7 +127,7 @@ class SkillDiscoverer:
                 self._parse_tree(ours_user, "user", self._home),
             )
         # On the home folder, `.claude/skills` is the workspace's own tree.
-        claude_ws = self._skill_files(workspace / ".claude" / "skills")
+        claude_ws = self._skill_files(workspace / ".claude" / "skills") if project else []
         claude_user = (
             self._skill_files(self._home / ".claude" / "skills")
             if self._claude_global_fallback

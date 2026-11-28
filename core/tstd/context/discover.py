@@ -37,6 +37,8 @@ from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
 
+from .. import folder_trust
+
 # Directories never searched for nested steering files: VCS metadata,
 # per-workspace runtime state, and known tool convention directories.
 # Everything else is fair game — steering files can legitimately live
@@ -180,8 +182,11 @@ class SteeringFileResolver:
         if global_source is not None:
             sources.append(global_source)
 
+        # SECUX2-01: the project's own files load only from a trusted folder.
+        instructions = folder_trust.allows(workspace, "instructions")
+
         # 2. Workspace root — team conventions, git-tracked.
-        root_result = self._agents_or_claude(workspace)
+        root_result = self._agents_or_claude(workspace) if instructions else None
         if root_result is not None:
             sources.append(
                 SteeringSource(
@@ -196,15 +201,16 @@ class SteeringFileResolver:
         # ``.tst/memory/`` is a different tree (TD-2105) and is never
         # listed here; nested walk also skips ``.tst``.
         rules_dir = workspace / ".tst" / "rules"
-        sources.extend(
-            SteeringSource(path=rule_path, precedence=Precedence.RULES)
-            for rule_path in sorted(rules_dir.glob("*.md"))
-        )
+        if folder_trust.allows(workspace, "rules"):
+            sources.extend(
+                SteeringSource(path=rule_path, precedence=Precedence.RULES)
+                for rule_path in sorted(rules_dir.glob("*.md"))
+            )
 
         # 4. Nested — subtree-specific steering files, shallowest first
         #    so deeper (more specific) files come later and override.
         #    Never below the home folder itself (TD-5004).
-        if not self.is_home_workspace(workspace):
+        if instructions and not self.is_home_workspace(workspace):
             sources.extend(self._nested_sources(workspace))
 
         return sources

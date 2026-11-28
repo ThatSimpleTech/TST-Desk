@@ -1902,3 +1902,7 @@ class SessionRegistry:
     @property
     def count(self) -> int:
         return len(self._sessions)
+
+    def all_sessions(self) -> list[Session]:
+        """A snapshot without the lock, for synchronous readers (a dict copy is atomic)."""
+        return list(self._sessions.values())

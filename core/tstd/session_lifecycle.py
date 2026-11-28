@@ -21,6 +21,7 @@ import asyncio
 from collections.abc import Callable
 from pathlib import Path
 
+from . import folder_trust
 from .boundary_config import (
     BoundaryConfig,
     CapsSection,
@@ -32,7 +33,7 @@ from .config import ConfigError
 from .logging import get_logger
 from .policy import PolicyConfig, policy_from_mapping
 from .protocol import BoundaryUpdate as BoundaryUpdateEvent
-from .protocol import ConfigTrust, LoosenedSetting, build_error
+from .protocol import ConfigTrust, FolderTrust, FolderTrustFile, LoosenedSetting, build_error
 from .session import Session, SessionRegistry
 from .session_persist import SessionPersist
 from .session_store import SessionStore
@@ -183,6 +184,22 @@ async def move_session(
     return None
 
 
+def folder_trust_payload(workspace: str) -> FolderTrust | None:
+    """The folder trust card's payload, or None when nothing waits (SECUX2-01)."""
+    store = folder_trust.bound()
+    if store is None:
+        return None
+    view = store.view(workspace)
+    if view.state not in ("pending", "declined"):
+        return None
+    return FolderTrust(
+        folder=view.folder,
+        state=view.state,
+        files=[FolderTrustFile(kind=f.kind, path=f.path) for f in view.files],
+        trusted_kinds=sorted(view.trusted_kinds),
+    )
+
+
 def _config_trust(session: Session) -> ConfigTrust | None:
     """The trust card's payload: only when the daemon gates and there is something to ask."""
     view = session.config_view
@@ -240,6 +257,7 @@ def boundary_update_event(session: Session, source: str) -> BoundaryUpdateEvent:
         attachments=cfg.attachments,
         spend_configured=configured,
         config_trust=_config_trust(session),
+        folder_trust=folder_trust_payload(session.workspace_path),
         seq=1,
     )
 

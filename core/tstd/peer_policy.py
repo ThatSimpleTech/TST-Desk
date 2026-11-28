@@ -163,6 +163,10 @@ LOOPBACK_VERBS: frozenset[str] = frozenset(
         "reset_config_value",
         # SETMODEL-04: putting config.yaml's last copy back is the computer's call.
         "restore_last_good_config",
+        # SECUX2-01: what a folder's own files may tell the agent is the
+        # computer's call, as for its config (trust_workspace_config).
+        "decide_folder_trust",
+        "revoke_folder_trust",
     }
 )
 

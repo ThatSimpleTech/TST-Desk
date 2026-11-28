@@ -100,6 +100,7 @@ markers = [
     "live: needs a reachable local OpenAI-compatible model endpoint",
     "desktop: drives a real desktop session through accessibility (TD-5220); also needs TST_AX_LIVE=1",
     "shipped_config: new user configs copy the real shipped file (empty catalog), not the test catalog",
+    "folder_trust: the daemon's folder trust gate is live (SECUX2-01); other tests load a workspace's own files as before",
 ]
 # Leaked sockets and exceptions raised from ``__del__`` fail the run.
 # TD-4835 showed the suite can stay clean under these. TD-4846 makes

@@ -76,6 +76,23 @@ def _seeded_config(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(autouse=True)
+def _folder_trust_gate(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[None]:
+    """A daemon binds the folder trust gate (SECUX2-01) only in tests marked ``folder_trust``.
+
+    Every other test's workspace AGENTS.md, rules, skills and workers load as
+    they did, and no gate a daemon bound outlives its test.
+    """
+    import tstd.folder_trust as folder_trust
+
+    if request.node.get_closest_marker("folder_trust") is None:
+        monkeypatch.setattr("tstd.daemon.bind_folder_trust", lambda _store: None)
+    yield
+    folder_trust.bind(None)
+
+
+@pytest.fixture(autouse=True)
 def _seed_test_catalog(
     request: pytest.FixtureRequest, _seeded_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
