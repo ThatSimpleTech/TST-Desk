@@ -3071,6 +3071,10 @@ class ConfigTrust(BaseModel):
     state: Literal["pending", "trusted", "declined"]
     sha256: str
     loosened: list[LoosenedSetting]
+    # STATES1-08: the repository's ``worktree.setup`` command, which trusting
+    # runs at once in this chat's worktree and again in every new chat in
+    # the project. None: the file names none.
+    setup_command: str | None = None
 
 
 class BoundaryUpdate(DaemonEvent):

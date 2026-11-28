@@ -38,6 +38,16 @@
 					<code>.tst/config.yaml</code> loosens TST Desk's defaults. Until you trust it, this
 					workspace runs on the packaged defaults. Trust covers this exact file; a change asks again.
 				</p>
+				{#if session.configTrust.setup_command}
+					<div class="runs" role="note">
+						<p class="runs-head">Trusting runs this command</p>
+						<code class="runs-command">{session.configTrust.setup_command}</code>
+						<p class="runs-when">
+							It runs at once in this chat's worktree, and again each time a new chat starts in
+							this project, with no approval card. Read it before you trust.
+						</p>
+					</div>
+				{/if}
 				<ul class="rules">
 					{#each session.configTrust.loosened as item, i (`${item.key}-${i}`)}
 						<li class="rule">
@@ -212,5 +222,30 @@
 		background: transparent;
 		color: var(--color-accent);
 		padding: var(--space-1) var(--space-2);
+	}
+	.runs {
+		margin: 0 0 var(--space-3);
+		padding: var(--space-2) var(--space-3);
+		border: var(--border-width) solid var(--color-warn, var(--color-err));
+		border-radius: var(--radius-sm);
+	}
+
+	.runs-head {
+		margin: 0;
+		font-weight: 600;
+		color: var(--color-warn, var(--color-err));
+	}
+
+	.runs-command {
+		display: block;
+		margin: var(--space-1) 0;
+		white-space: pre-wrap;
+		word-break: break-all;
+		font-family: var(--font-mono);
+	}
+
+	.runs-when {
+		margin: 0;
+		font-size: var(--text-sm);
 	}
 </style>

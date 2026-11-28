@@ -1504,7 +1504,8 @@
           "value": "registry.npmjs.org",
           "default": "deny"
         }
-      ]
+      ],
+      "setup_command": null
     }
   },
   "turn_complete": {

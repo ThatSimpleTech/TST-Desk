@@ -2038,6 +2038,8 @@ export interface ConfigTrust {
   state: "pending" | "trusted" | "declined";
   sha256: string;
   loosened: LoosenedSetting[];
+  /** STATES1-08: the repo's worktree.setup, which trusting runs now and in every new chat. */
+  setup_command?: string | null;
 }
 
 export interface BoundaryUpdate extends DaemonEvent {
