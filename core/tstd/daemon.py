@@ -606,7 +606,7 @@ from .session_lifecycle import (
 from .session_persist import LoadedSession, SessionPersist
 from .session_search_handler import search_sessions_reply
 from .session_stars import load_session_stars, save_session_stars
-from .session_store import SessionStore
+from .session_store import SessionRecord, SessionStore
 from .shown_artifacts import ShownArtifacts
 from .shutdown_budget import (
     ShutdownBudget,
@@ -1302,6 +1302,12 @@ class Daemon:
         # Built when the daemon starts serving — the audit database only
         # appears on disk once the daemon actually runs (TD-902).
         self._audit_writer: AuditWriter | None = None
+        # The 0.5.4 start-up fix: chats revive after the port opens.
+        self._restore_pending: dict[str, SessionRecord] = {}
+        self._restore_locks: dict[str, asyncio.Lock] = {}
+        self._restore_progress: tuple[int, int] = (0, 0)
+        self._restore_done = asyncio.Event()
+        self._restore_started = False
         # CU-05: why the last Stop could not write the stop-file, or None.
         self._cu_file_error: str | None = None
 
@@ -2854,11 +2860,13 @@ class Daemon:
             self._record_sandbox_egress()
 
             # Rehydrate sessions from the registry plus any persisted
-            # transcript. A session with a conversation snapshot is revived
-            # for real; one without is an interrupted tombstone.
-            await self._restore_sessions()
+            # transcript, in the background once the port is open (the 0.5.4
+            # start-up fix): a long-used install took longer than the host's
+            # wait to revive every chat before it listened. A chat that is
+            # used first is revived first, alone.
+            self._prepare_restore()
 
-            # A signal during restore already requested shutdown. Do not
+            # A signal during start already requested shutdown. Do not
             # bind a port just to tear it down.
             if not self._shutdown_event.is_set():
                 # If the host told us its PID, watch it: if the host dies
@@ -2903,6 +2911,8 @@ class Daemon:
             self._record_sandbox_egress()
         await self.ws_server.start()
         self._remember_remote_port()
+        self._restore_started = True
+        self._tasks.append(asyncio.create_task(self._restore_in_background(), name="revive"))
         if sys.platform == "darwin":
             from .cu_host import start_cu_socket
 
@@ -3173,58 +3183,96 @@ class Daemon:
         can show what was saved — the session stays ``interrupted`` and
         will not accept a new message. That is the honest reading: we
         have a transcript, not a model context.
+
+        Newest first, so the chats a person is likely to open are ready
+        soonest; one already revived on demand is skipped.
         """
-        for record in self._session_store.records():
-            chosen = self._resolved_preset(record.preset)
-            if record.preset != chosen:
-                await self._session_store.set_preset(record.session_id, chosen, touch=False)
-            loaded = await asyncio.to_thread(self._session_persist.load, record.session_id)
-            if loaded is not None and loaded.events:
-                # TD-5129: index what the last process logged but never
-                # indexed (a crash mid-reply, or a log older than the index).
-                await asyncio.to_thread(
-                    self._session_index.catch_up, record.session_id, loaded.events
-                )
-            root, worktree = record_root(record.workspace_path, record.worktree)
-            if worktree is not None and not worktree.filled:
-                # TD-5187: a restart cut the checkout off. Finish it now.
-                await finish_checkout(worktree)
-                await self._session_store.set_worktree(record.session_id, worktree.to_record())
-            if loaded is not None and loaded.conversation is not None:
-                await self._revive_session(record.session_id, root, loaded)
-                continue
-            final_state = "interrupted"
-            if record.state in {"complete", "failed", "cancelled"} and (
-                loaded is None or loaded.conversation is None
-            ):
-                # Terminal with no snapshot stays terminal. Same as before.
-                final_state = record.state
-            sess = await self.session_registry.restore(record.session_id, root, final_state)
-            sess.worktree = worktree
-            sess.preset = chosen
-            # A tombstone never gets a runtime, but Resume, a spend cap and
-            # a move still reload its wall: gated too, or a loosening file
-            # read as trusted (TD-5158).
-            sess.trust_store = self.workspace_trust
-            sess.sandbox_defaults = self.config.sandbox
-            if loaded is not None and loaded.events:
-                sess.event_log.replace(loaded.events)
-                # TD-5140: a replay-only session holds no proposal either.
-                await expire_restored_steering(sess, loaded.events)
-                await expire_restored_schedule(sess, loaded.events)
-                await self._seal_cut_review(sess, loaded.events)
-            if final_state != record.state:
-                await self._session_store.update_state(record.session_id, final_state, touch=False)
-            log.info(
-                "restored session",
-                extra={
-                    "extra_fields": {
-                        "session_id": record.session_id,
-                        "state": final_state,
-                        "revived": False,
-                    }
-                },
-            )
+        if not self._restore_pending:
+            self._prepare_restore()
+        total = len(self._restore_pending)
+        order = sorted(self._restore_pending.values(), key=lambda r: r.updated_at, reverse=True)
+        for done, record in enumerate(order, start=1):
+            if self._shutdown_event.is_set():
+                return
+            await self._restore_one(record)
+            self._restore_progress = (done, total)
+
+    def _prepare_restore(self) -> None:
+        """Every stored chat waits to be revived; nothing is read yet."""
+        self._restore_pending = {r.session_id: r for r in self._session_store.records()}
+        self._restore_progress = (0, len(self._restore_pending))
+
+    async def _restore_in_background(self) -> None:
+        try:
+            await self._restore_sessions()
+        finally:
+            self._restore_done.set()
+        done, total = self._restore_progress
+        log.info("sessions revived", extra={"extra_fields": {"revived": done, "total": total}})
+
+    async def _ensure_restored(self, session_id: str) -> None:
+        """Revive *session_id* now if it is still waiting: its first use waits for it alone."""
+        record = self._restore_pending.get(session_id)
+        if record is not None:
+            await self._restore_one(record)
+
+    async def _restore_one(self, record: SessionRecord) -> None:
+        lock = self._restore_locks.setdefault(record.session_id, asyncio.Lock())
+        async with lock:
+            if self._restore_pending.pop(record.session_id, None) is None:
+                return
+            await self._restore_record(record)
+        self._restore_locks.pop(record.session_id, None)
+
+    async def _restore_record(self, record: SessionRecord) -> None:
+        chosen = self._resolved_preset(record.preset)
+        if record.preset != chosen:
+            await self._session_store.set_preset(record.session_id, chosen, touch=False)
+        loaded = await asyncio.to_thread(self._session_persist.load, record.session_id)
+        if loaded is not None and loaded.events:
+            # TD-5129: index what the last process logged but never
+            # indexed (a crash mid-reply, or a log older than the index).
+            await asyncio.to_thread(self._session_index.catch_up, record.session_id, loaded.events)
+        root, worktree = record_root(record.workspace_path, record.worktree)
+        if worktree is not None and not worktree.filled:
+            # TD-5187: a restart cut the checkout off. Finish it now.
+            await finish_checkout(worktree)
+            await self._session_store.set_worktree(record.session_id, worktree.to_record())
+        if loaded is not None and loaded.conversation is not None:
+            await self._revive_session(record.session_id, root, loaded)
+            return
+        final_state = "interrupted"
+        if record.state in {"complete", "failed", "cancelled"} and (
+            loaded is None or loaded.conversation is None
+        ):
+            # Terminal with no snapshot stays terminal. Same as before.
+            final_state = record.state
+        sess = await self.session_registry.restore(record.session_id, root, final_state)
+        sess.worktree = worktree
+        sess.preset = chosen
+        # A tombstone never gets a runtime, but Resume, a spend cap and
+        # a move still reload its wall: gated too, or a loosening file
+        # read as trusted (TD-5158).
+        sess.trust_store = self.workspace_trust
+        sess.sandbox_defaults = self.config.sandbox
+        if loaded is not None and loaded.events:
+            sess.event_log.replace(loaded.events)
+            # TD-5140: a replay-only session holds no proposal either.
+            await expire_restored_steering(sess, loaded.events)
+            await expire_restored_schedule(sess, loaded.events)
+            await self._seal_cut_review(sess, loaded.events)
+        if final_state != record.state:
+            await self._session_store.update_state(record.session_id, final_state, touch=False)
+        log.info(
+            "restored session",
+            extra={
+                "extra_fields": {
+                    "session_id": record.session_id,
+                    "state": final_state,
+                    "revived": False,
+                }
+            },
+        )
 
     async def _scheduler_loop(self) -> None:
         """Close approvals the last process left parked, then fire due jobs.
@@ -3238,6 +3286,10 @@ class Daemon:
         # UPGRADE-02: a newer version's folder runs no scheduled jobs here.
         if read_only() is not None:
             return
+        # The parked approvals and the jobs' chats are revived in the
+        # background now; the scheduler starts once they are.
+        if self._restore_started:
+            await self._restore_done.wait()
 
         token = bind_email_sender(self._send_job_email)
         try:
@@ -3563,6 +3615,12 @@ class Daemon:
             # on its message (line comments, TD-5132) is not left waiting.
             kind, comment_ids = _refused_frame(raw)
             return build_error(e.code, e.message, in_reply_to=kind, comment_ids=comment_ids)
+
+        # A chat used before the background revive reached it is revived
+        # now, alone; nothing else waits for the rest.
+        sid = getattr(msg, "session_id", None)
+        if isinstance(sid, str) and sid in self._restore_pending:
+            await self._ensure_restored(sid)
 
         # UPGRADE-02: a newer version's data folder is read-only here. What
         # reads, quits or stops still works; anything that would change the
