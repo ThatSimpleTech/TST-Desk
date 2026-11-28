@@ -766,7 +766,10 @@ class TestRedaction:
     """Directive 2: config, the log file and the audit DB never hold the value."""
 
     def test_the_exact_text_scrub(self) -> None:
-        value = "Bearer td5110-charlie-Kp2sN8wQ"
+        # SECUX-02: a Bearer token is a known shape now; the exact-text scrub
+        # is for a shape no pattern knows.
+        assert redact_secrets("Bearer td5110-charlie-Kp2sN8wQ") == "Bearer [REDACTED]"
+        value = "Custom td5110-charlie-Kp2sN8wQ"
         assert redact_secrets(value) == value  # no pattern knows this shape
         register_secret_value(value)
         assert redact_secrets(f"sent {value}") == "sent [REDACTED]"

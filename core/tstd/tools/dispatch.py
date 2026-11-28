@@ -31,7 +31,7 @@ from ..autonomy import (
 from ..cu_verify import ActuationVerifier, StateProbe, Verification
 from ..desktop.protocol import DesktopError
 from ..hooks import after_tool, before_tool, hook_runner
-from ..logging import get_logger
+from ..logging import get_logger, redact_secrets
 from ..memory_commit import MemoryCommitter
 from ..plan_mode import PLAN_MODE_REFUSED, planning_refusal
 from ..policy import (
@@ -859,7 +859,9 @@ class ToolDispatcher:
         ):
             try:
                 dc = cast(Literal["A", "B"], decision_class.value)
-                what = f"{name} {json.dumps(arguments, sort_keys=True)[:200]}"
+                # SECUX-01: redacted before the cut, or a key cut short at 200
+                # characters would no longer match its pattern.
+                what = f"{name} {redact_secrets(json.dumps(arguments, sort_keys=True))[:200]}"
                 why = (
                     classification.reason
                     or (classification.rule.id if classification.rule else "")

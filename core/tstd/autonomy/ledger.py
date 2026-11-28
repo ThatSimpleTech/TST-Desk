@@ -16,6 +16,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from ..logging import redact_secrets
+
 # Advisory locks: flock on POSIX, an MSVCRT byte-range lock on Windows.
 # (Platform-guarded imports so mypy never sees the other OS's module.)
 if sys.platform == "win32":
@@ -59,13 +61,17 @@ class LedgerEntry:
 
 
 def format_entry(entry: LedgerEntry) -> str:
-    """Render *entry* as a §12.3 markdown block."""
+    """Render *entry* as a §12.3 markdown block.
+
+    The ledger lives in the workspace, where a later ``git add -A`` would
+    commit it, so every field is redacted here too (SECUX-01).
+    """
     ts = entry.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
     commit_part = f" · commit {entry.commit}" if entry.commit else ""
     lines = [
         f"## {ts} · Class {entry.decision_class}{commit_part}",
-        f"**Chose:** {entry.what}",
-        f"**Why:** {entry.why}",
+        f"**Chose:** {redact_secrets(entry.what)}",
+        f"**Why:** {redact_secrets(entry.why)}",
     ]
     if entry.undo_command:
         lines.append(f"**Undo:** `{entry.undo_command}`")
