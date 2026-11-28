@@ -128,7 +128,8 @@ def register_desktop_tools(registry: ToolRegistry) -> None:
             name="desktop_type",
             description=(
                 "Type Unicode at the current keyboard focus. Does not move "
-                "focus — click a field first. The typed text is never logged. "
+                "focus — click a field first. The typed text is not kept: logs, "
+                "history and the audit log record only how many characters were typed. "
                 "settle_ms (0-5000) waits, then the result includes foreground_window."
             ),
             parameters={

@@ -88,8 +88,9 @@ def register_browser_tools(registry: ToolRegistry, *, candidate_selection: bool 
             name="browser_type",
             description=(
                 "Type Unicode at the current keyboard focus in the browser. "
-                "Does not move focus — click a field first. The typed text "
-                "is never logged."
+                "Does not move focus — click a field first. The typed text is "
+                "not kept: logs, history and the audit log record only how many "
+                "characters were typed."
             ),
             parameters={
                 "type": "object",

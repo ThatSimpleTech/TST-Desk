@@ -179,6 +179,7 @@ from .tools.consult import offered_tools
 from .tools.delegate_named import with_named_workers, with_worker_mentions
 from .tools.dispatch import build_decision_request, canonicalize_path_fields
 from .tools.tool_search import TOOL_SEARCH_NAME
+from .tools.typed_text import mask_typed_text
 from .worker_turn import inject_worker_notes, owes_the_turn, wait_for_workers
 from .workspace_trust import trusted_imports
 from .worktree_config import config_home, refresh_config
@@ -1295,7 +1296,8 @@ async def _build_assistant_tool_call(
                 session_id=session.id,
                 tool_call_id=tc_id,
                 name=tc_name,
-                arguments=parsed_args,
+                # CU-08: the log and the screen get the length of typed text.
+                arguments=mask_typed_text(tc_name, parsed_args),
                 decision_class=decision_class,
                 seq=1,
             )

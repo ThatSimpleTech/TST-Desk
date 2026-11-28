@@ -25,6 +25,7 @@ from .data_version import read_only
 from .logging import get_logger
 from .protocol import DaemonEvent, EventUnreadable, HandshakeError, parse_daemon_event
 from .provider import ChatMessage, FunctionCall, MessageContent, ToolCall
+from .tools.typed_text import mask_typed_json
 
 log = get_logger("tstd.session_persist")
 
@@ -145,6 +146,11 @@ def chat_message_to_dict(message: ChatMessage) -> dict[str, Any]:
     from .provider import ChatCompletionRequest
 
     row = ChatCompletionRequest._message_to_dict(message)
+    # CU-08: the saved conversation keeps the length of typed text, not the text.
+    for call in row.get("tool_calls") or ():
+        fn = call.get("function") if isinstance(call, dict) else None
+        if isinstance(fn, dict) and isinstance(fn.get("arguments"), str):
+            fn["arguments"] = mask_typed_json(str(fn.get("name", "")), fn["arguments"])
     if message.steer:
         row["steer"] = True
     if message.check:
