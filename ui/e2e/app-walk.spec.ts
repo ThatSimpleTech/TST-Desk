@@ -58,6 +58,11 @@ test("opens a workspace and gets a mock reply", async () => {
 	await composer.fill("Say hello");
 	await page.getByRole("button", { name: "Send message" }).click();
 	await expect(page.getByText(info.reply)).toBeVisible();
+	// The reply text shows while the turn is still finishing: Send is Stop
+	// and the message actions are not drawn yet. The census is of the
+	// settled chat, so wait for the turn's end, not its first words.
+	await expect(page.getByRole("button", { name: "Send message" })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Copy message as markdown" })).toBeVisible();
 
 	// With a session open the composer grows the model bar and the
 	// attach menu.
