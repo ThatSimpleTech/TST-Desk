@@ -64,14 +64,26 @@ export function startOsNotify(injected?: OsNotifyBridge): () => void {
 	const off = onEvent((event) => {
 		void handleOsEvent(event);
 	});
-	if (injected === undefined) {
+	// HOST-01: the notification's buttons come back as the host's
+	// approval-action event. These used to be registered only when no bridge
+	// was injected, and inside Tauri one always is, so Approve and Deny in
+	// the OS notification did nothing in every shipped build.
+	const unlisten: Array<() => void> = [];
+	let stopped = false;
+	if (inShell()) {
 		void listenNotificationClicks();
-		void listenApprovalActions();
+		void listenApprovalActions().then((u) => {
+			if (u === null) return;
+			if (stopped) u();
+			else unlisten.push(u);
+		});
 	}
 	return () => {
 		started = false;
+		stopped = true;
 		off();
 		offFocus();
+		for (const u of unlisten.splice(0)) u();
 	};
 }
 
@@ -134,10 +146,21 @@ export function createTauriOsNotifyBridge(): OsNotifyBridge {
 	};
 }
 
-async function listenApprovalActions(): Promise<void> {
+function inShell(): boolean {
+	return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+/** The host's main window label (shell MAIN_WINDOW_LABEL). */
+const MAIN_WINDOW = "main";
+
+async function listenApprovalActions(): Promise<(() => void) | null> {
 	try {
 		const { listen } = await import("@tauri-apps/api/event");
-		await listen<{
+		const { getCurrentWindow } = await import("@tauri-apps/api/window");
+		// The event reaches every window; only the main one answers, so a
+		// session window open beside it does not send the answer twice.
+		if (getCurrentWindow().label !== MAIN_WINDOW) return null;
+		return await listen<{
 			session_id: string;
 			tool_call_id: string;
 			action: "approve" | "deny" | "show";
@@ -145,7 +168,8 @@ async function listenApprovalActions(): Promise<void> {
 			handleApprovalAction(event.payload);
 		});
 	} catch {
-		// Browser / tests.
+		// Browser / tests without the shell.
+		return null;
 	}
 }
 
