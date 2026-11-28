@@ -16,6 +16,7 @@ vi.mock("./connection-status.svelte.js", () => ({
 }));
 
 import SettingsMcp from "./components/SettingsMcp.svelte";
+import { ARM_MS } from "./approval-arming";
 import { settings } from "./settings.svelte.js";
 
 const TOKEN = "td5110-ui-Wq7zP3kLm9";
@@ -32,6 +33,19 @@ function input(placeholder: string): HTMLInputElement {
 function type(el: HTMLInputElement, value: string): void {
 	el.value = value;
 	el.dispatchEvent(new Event("input", { bubbles: true }));
+	flushSync();
+}
+
+
+// A destructive row action asks first and arms after ARM_MS (INTERACT-12).
+async function confirmRow(root: ParentNode): Promise<void> {
+	await new Promise((r) => setTimeout(r, ARM_MS + 20));
+	flushSync();
+	const group = root.querySelector('[role="group"]');
+	const yes = group?.querySelector("button");
+	if (!(yes instanceof HTMLButtonElement)) throw new Error("no confirmation asked");
+	yes.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+	yes.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
 	flushSync();
 }
 
@@ -115,8 +129,11 @@ describe("SettingsMcp keychain values", () => {
 		]);
 	});
 
-	it("removes one value by name", () => {
+	it("removes one value by name, once confirmed", async () => {
 		button("Remove GITHUB_TOKEN from gh").click();
+		flushSync();
+		expect(mocks.sent).toEqual([]);
+		await confirmRow(document.body);
 		expect(mocks.sent).toEqual([
 			{ type: "delete_mcp_secret", server_id: "gh", target: "env", name: "GITHUB_TOKEN" },
 		]);

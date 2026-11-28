@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ConfirmButton from './ConfirmButton.svelte';
 	// MCP servers (TD-4403). The list is daemon truth from setup_state.
 	// Command is argv tokens. A token goes to the keychain (TD-5110): the
 	// value field is write-only and is cleared once it is sent.
@@ -127,12 +128,12 @@
 					{value.name} · {valueState(value)}
 				</p>
 				{#if canManage}
-				<button
-					class="btn btn--danger"
-					type="button"
-					aria-label={`Remove ${value.name} from ${server.id}`}
-					onclick={() => deleteMcpSecret(server.id, value.name)}>Remove</button
-				>
+				<ConfirmButton
+					label="Remove"
+					question={`Remove ${value.name} from ${server.id}?`}
+					ariaLabel={`Remove ${value.name} from ${server.id}`}
+					onconfirm={() => deleteMcpSecret(server.id, value.name)}
+				/>
 				{/if}
 			</div>
 		{/each}
@@ -175,9 +176,12 @@
 				disabled={!canSaveSecret(server.id)}
 				onclick={() => saveSecret(server.id)}>Save to keychain</button
 			>
-			<button class="btn btn--danger" type="button" onclick={() => deleteMcpServer(server.id)}
-				>Remove</button
-			>
+			<ConfirmButton
+				label="Remove"
+				question={`Remove the MCP server ${server.id}?`}
+				ariaLabel={`Remove the MCP server ${server.id}`}
+				onconfirm={() => deleteMcpServer(server.id)}
+			/>
 		</div>
 		{:else}
 			<p class="meta state">{server.enabled ? "On" : "Off"}</p>
@@ -369,10 +373,5 @@
 		color: var(--color-on-accent);
 		background: var(--color-accent);
 		border-color: var(--color-accent);
-	}
-
-	.btn--danger:hover:not(:disabled) {
-		border-color: var(--color-err);
-		color: var(--color-err);
 	}
 </style>

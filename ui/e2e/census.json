@@ -143,7 +143,7 @@
 		"Add source",
 		"OpenRouter, vLLM, …",
 		"Paste API key",
-		"Remove",
+		"Remove the key OpenRouter",
 		"Test",
 		"http://127.0.0.1:8000/v1",
 		"preset URL"
@@ -212,6 +212,7 @@
 		"Paste JSON",
 		"Paste token",
 		"Remove",
+		"Remove the MCP server walk",
 		"Save to keychain",
 		"example",
 		"http",

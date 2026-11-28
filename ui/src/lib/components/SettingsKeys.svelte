@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ConfirmButton from './ConfirmButton.svelte';
 	// Named API keys (TD-1717). Presence and given names only — the secret
 	// never enters the settings store. Test shows its verdict on the row it
 	// was pressed on (TD-5200).
@@ -138,9 +139,12 @@
 				disabled={!cred.stored || testing(cred.id)}
 				onclick={() => testKey(cred.id)}>{testing(cred.id) ? "Testing…" : "Test"}</button
 			>
-			<button class="btn btn--danger" type="button" onclick={() => deleteNamedKey(cred.id)}
-				>Remove</button
-			>
+			<ConfirmButton
+				label="Remove"
+				question={`Remove the key ${drafts[cred.id] ?? cred.name}? ${usesFor(cred.id)} The stored key cannot be restored.`}
+				ariaLabel={`Remove the key ${cred.name}`}
+				onconfirm={() => deleteNamedKey(cred.id)}
+			/>
 			<!-- Beside the buttons, not under them: the sticky Add form below
 			     covers whatever sits under the last row's buttons. -->
 			<KeyTestResult test={keyTests[cred.id]} />
@@ -276,10 +280,5 @@
 	.btn:disabled {
 		opacity: 0.5;
 		cursor: default;
-	}
-
-	.btn--danger:hover:not(:disabled) {
-		border-color: var(--color-err);
-		color: var(--color-err);
 	}
 </style>

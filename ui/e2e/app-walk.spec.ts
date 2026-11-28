@@ -623,11 +623,21 @@ async function saveWalkSecret(dialog: Locator): Promise<void> {
 	await expect(value).toHaveValue("");
 	expect(await page.content()).not.toContain(token);
 	await dialog.getByRole("button", { name: "Remove WALK_TOKEN from walk", exact: true }).click();
+	await confirmRow(dialog, "Remove WALK_TOKEN from walk?");
 	await expect(dialog.getByText("env WALK_TOKEN")).toHaveCount(0);
 }
 
+/** A destructive row action asks first and arms after 400 ms (INTERACT-12). */
+async function confirmRow(root: Locator, question: string): Promise<void> {
+	const group = root.getByRole("group", { name: question });
+	await expect(group).toBeVisible();
+	await page.waitForTimeout(450);
+	await group.getByRole("button", { name: "Remove", exact: true }).click();
+}
+
 async function removeWalkServer(dialog: Locator): Promise<void> {
-	await dialog.locator(".row", { hasText: "walk" }).getByRole("button", { name: "Remove", exact: true }).click();
+	await dialog.getByRole("button", { name: "Remove the MCP server walk", exact: true }).click();
+	await confirmRow(dialog, "Remove the MCP server walk?");
 	await expect(dialog.getByText("walk", { exact: true })).toHaveCount(0);
 }
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ConfirmButton from './ConfirmButton.svelte';
 	// Policy section (TD-1703 / TD-803 / TD-804): skip-all, then saved
 	// always-allow rules with revoke.
 	//
@@ -89,12 +90,13 @@
 					<span class="rule-args" title={rule.args}>{ruleArgsText(rule)}</span>
 				</span>
 				<span class="rule-effect">{rule.effect}</span>
-				<button
-					class="revoke"
-					type="button"
-					aria-label="Revoke {rule.tool} {ruleArgsText(rule)}"
-					onclick={() => revokeRule(rule.tool, rule.args)}>Revoke</button
-				>
+				<ConfirmButton
+					label="Revoke"
+					buttonClass="revoke"
+					question={`Revoke the ${rule.effect} rule for ${rule.tool} ${ruleArgsText(rule)}?`}
+					ariaLabel="Revoke {rule.tool} {ruleArgsText(rule)}"
+					onconfirm={() => revokeRule(rule.tool, rule.args)}
+				/>
 			</li>
 		{/each}
 	</ul>
@@ -178,19 +180,5 @@
 	.rule-effect {
 		font-size: var(--text-xs);
 		color: var(--color-ink-secondary);
-	}
-
-	.revoke {
-		font-size: var(--text-sm);
-		color: var(--color-ink);
-		background: transparent;
-		border: 1px solid var(--color-hairline);
-		border-radius: var(--radius-sm);
-		padding: var(--space-1) var(--space-3);
-		cursor: pointer;
-	}
-
-	.revoke:hover {
-		border-color: var(--color-accent);
 	}
 </style>
