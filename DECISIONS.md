@@ -20783,3 +20783,27 @@ consult answers and the audit store: cutting queries there would break every
 result link the agent reads and every URL in a chat transcript. User info is
 a credential wherever it appears, so it belongs there; a query is only a
 privacy problem in the log.
+
+## 2026-11-28 — TD-5315: damaged stores are kept, backed up and rebuilt (Class B)
+
+`tstd/store_recovery.py` serves both stores: `<name>.damaged-<stamp>` for an
+unreadable file (never written again), a rolling `<name>.bak` kept before
+every replace, and, for sessions, rows rebuilt from `sessions/<id>/` using the
+`Workspace root:` line (`WORKSPACE_ROOT_LABEL`) of the stored system prompt.
+None of the session event logs records a workspace, so that line is the only
+source; a folder without it is not rebuilt. Windows learn of it through a new
+loopback event, `store_recovered`, sent on connect.
+
+## 2026-11-28 — TD-5319: file opens are checked by the host at call time (Class B)
+
+The opener plugin's path permission is gone; every open is the host's
+`open_path` command, which canonicalises the path and refuses runnable kinds
+and executable files (`shell/src/open_check.rs`). Chosen over a static scope
+because the paths sit in whichever workspace the person picked, which a glob
+cannot name. The host does not know the workspaces, so a containment check is
+left to a daemon-side follow-up.
+
+## 2026-11-28 — TD-5320: only the main window answers a notification's button (Class A, noted)
+
+`approval-action` is app-wide; with session windows open, each would send the
+answer. The main window (`MAIN_WINDOW_LABEL`) alone listens.
