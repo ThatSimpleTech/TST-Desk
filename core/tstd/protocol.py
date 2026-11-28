@@ -631,6 +631,27 @@ class SetCuIndicators(ClientMessage):
     show_on_real_display: bool
 
 
+class DecideFolderTrust(ClientMessage):
+    """Trust, or not, the project's own instructions for this chat's folder (SECUX2-01).
+
+    Answered by a fresh ``boundary_update`` on every chat in that folder.
+    """
+
+    type: Literal["decide_folder_trust"] = "decide_folder_trust"
+    session_id: str
+    trust: bool
+
+
+class RevokeFolderTrust(ClientMessage):
+    """Forget a folder's trust; its instructions stop loading (SECUX2-01).
+
+    Answered with ``setup_state``.
+    """
+
+    type: Literal["revoke_folder_trust"] = "revoke_folder_trust"
+    folder: str
+
+
 class RestoreLastGoodConfig(ClientMessage):
     """Put config.yaml's last working copy back (SETMODEL-04).
 
@@ -3077,6 +3098,35 @@ class ConfigTrust(BaseModel):
     setup_command: str | None = None
 
 
+class FolderTrustFile(BaseModel):
+    """One project file the folder trust card names (SECUX2-01)."""
+
+    kind: Literal["instructions", "rules", "skills", "workers"]
+    path: str
+
+
+class FolderTrust(BaseModel):
+    """Whether this project's own instructions load (SECUX2-01).
+
+    ``pending``: there are files the person has not trusted (all of them, or
+    only kinds new since they trusted the folder); ``declined``: they chose
+    not to load them. ``files`` is what the card asks about.
+    """
+
+    folder: str
+    state: Literal["pending", "declined"]
+    files: list[FolderTrustFile]
+    # Kinds already trusted here, which keep loading while new ones wait.
+    trusted_kinds: list[str] = Field(default_factory=list)
+
+
+class TrustedFolder(BaseModel):
+    """One folder whose own instructions load, for Settings (SECUX2-01)."""
+
+    folder: str
+    kinds: list[str]
+
+
 class BoundaryUpdate(DaemonEvent):
     """The workspace boundary, emitted when a session opens (TD-706).
 
@@ -3105,6 +3155,9 @@ class BoundaryUpdate(DaemonEvent):
     # TD-5113: set when the workspace config loosens anything, so the
     # window can ask before it applies. None when there is nothing to ask.
     config_trust: ConfigTrust | None = None
+    # SECUX2-01: set while the project has instructions, rules, skills or
+    # workers that do not load because the folder is not trusted for them.
+    folder_trust: FolderTrust | None = None
 
 
 class TurnComplete(DaemonEvent):
@@ -4199,6 +4252,8 @@ class SetupState(DaemonEvent):
     cu_mode: Literal["background", "full_control"] = "background"
     cu_unhide_on_finish: bool = True
     cu_denied_apps: list[str] = Field(default_factory=list)
+    # SECUX2-01: folders whose own instructions load, for Settings' Revoke.
+    trusted_folders: list[TrustedFolder] = Field(default_factory=list)
     # UPGRADE-02: config.yaml keys this version does not know, ignored at load
     # (a newer version's setting, or a typo). Dotted paths.
     config_unknown_keys: list[str] = Field(default_factory=list)
@@ -5393,6 +5448,8 @@ ClientMessageT = Annotated[
     | SetCuIndicators
     | SetCuPolicy
     | RestoreLastGoodConfig
+    | DecideFolderTrust
+    | RevokeFolderTrust
     | SetJudgments
     | SetWorkspacePin
     | Resume
@@ -5672,6 +5729,8 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_cu_indicators",
         "set_cu_policy",
         "restore_last_good_config",
+        "decide_folder_trust",
+        "revoke_folder_trust",
         "set_workspace_pin",
         "resume",
         "cancel",

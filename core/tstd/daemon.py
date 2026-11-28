@@ -147,6 +147,10 @@ from .desktop.protocol import DesktopError
 from .discovery import resolve_tier_slugs
 from .effort import effort_record, read_effort_record
 from .endpoint_gate import EndpointGates
+from .folder_trust import FolderTrustStore
+from .folder_trust import bind as bind_folder_trust
+from .folder_trust import bound as folder_trust_bound
+from .folder_trust import real as real_path
 from .grok_acp import GrokEngineError, find_grok_binary
 from .grok_home import (
     grok_configured_model,
@@ -294,6 +298,7 @@ from .protocol import (
     CuPermissions,
     CuSession,
     DaemonEvent,
+    DecideFolderTrust,
     DeleteApiKey,
     DeleteCredential,
     DeleteJob,
@@ -410,6 +415,7 @@ from .protocol import (
     RestoreLastGoodConfig,
     Resume,
     ReviewPlan,
+    RevokeFolderTrust,
     RevokePolicyRule,
     RotateRemoteToken,
     RunDiagnostics,
@@ -476,6 +482,7 @@ from .protocol import (
     TierState,
     Transcribe,
     Transcript,
+    TrustedFolder,
     TrustWorkspaceConfig,
     TurnComplete,
     UsageExported,
@@ -1298,6 +1305,12 @@ class Daemon:
         # LIVE2-08: per chat, turns already distilled, and entries its turns ran on.
         self._distilled_turns: dict[str, int] = {}
         self._turn_entries: dict[str, set[str]] = {}
+
+        # SECUX2-01: which folders' own instructions load. A chat's worktree
+        # reads its project's decision.
+        self.folder_trust = FolderTrustStore(self.data_dir)
+        self.folder_trust.set_project_lookup(self._project_of_workspace)
+        bind_folder_trust(self.folder_trust)
         self._audit_recovery: Recovery | None = None
         # When set, a watchdog task shuts the daemon down if this host dies.
         self._parent_pid = parent_pid
@@ -1681,6 +1694,10 @@ class Daemon:
             cu_mode=self.cu_policy.mode,
             cu_unhide_on_finish=self.cu_policy.unhide_on_finish,
             cu_denied_apps=list(self.cu_policy.denied_apps),
+            trusted_folders=[
+                TrustedFolder(folder=folder, kinds=kinds)
+                for folder, kinds in self.folder_trust.trusted_folders()
+            ],
             config_unknown_keys=self.config.unknown_keys,
             data_written_by=newer.written_by if (newer := read_only()) else None,
             cu_policy_damaged=self.cu_policy.damaged,
@@ -2833,6 +2850,8 @@ class Daemon:
                 self._shutdown_budget.finish()
                 remove_posix_shutdown_signals()
                 remove_windows_console_shutdown()
+                if folder_trust_bound() is self.folder_trust:
+                    bind_folder_trust(None)
 
         log.info(
             "stopped",
@@ -4394,6 +4413,12 @@ class Daemon:
                     COMPUTER_USE, "changed what shows on screen while computer use runs."
                 )
             return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, DecideFolderTrust):
+            return await self._handle_decide_folder_trust(msg)
+
+        if isinstance(msg, RevokeFolderTrust):
+            return await self._handle_revoke_folder_trust(msg)
 
         if isinstance(msg, RestoreLastGoodConfig):
             return await self._handle_restore_config()
@@ -7392,6 +7417,36 @@ class Daemon:
             extra={"extra_fields": {"kept_as": kept}},
         )
         return (await self._setup_state_event()).model_dump_json()
+
+    def _project_of_workspace(self, real_workspace: str) -> str | None:
+        for sess in self.session_registry.all_sessions():
+            if sess.worktree is not None and real_path(sess.workspace_path) == real_workspace:
+                return sess.project_path
+        return None
+
+    async def _handle_decide_folder_trust(self, msg: DecideFolderTrust) -> str | None:
+        """SECUX2-01: trust (or not) this chat's project's own instructions."""
+        found = self.session_registry.get(msg.session_id)
+        if found is None:
+            return build_error("session_not_found", f"Session {msg.session_id!r} not found")
+        view = await asyncio.to_thread(self.folder_trust.decide, found.workspace_path, msg.trust)
+        log.info(
+            "folder trust decided",
+            extra={"extra_fields": {"folder": view.folder, "trust": msg.trust}},
+        )
+        await self._reannounce_folder(view.folder)
+        return None
+
+    async def _handle_revoke_folder_trust(self, msg: RevokeFolderTrust) -> str:
+        await asyncio.to_thread(self.folder_trust.revoke, msg.folder)
+        await self._reannounce_folder(real_path(msg.folder))
+        return (await self._setup_state_event()).model_dump_json()
+
+    async def _reannounce_folder(self, folder: str) -> None:
+        """Every live chat in *folder* re-sends its wall, which carries the card."""
+        for sess in self.session_registry.all_sessions():
+            if self.folder_trust.project_of(sess.workspace_path) == folder:
+                await apply_workspace_config(sess)
 
     async def _handle_test_email(self, msg: TestEmail) -> str:
         from .notify.email_settings import send_test_email

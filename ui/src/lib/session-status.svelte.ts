@@ -21,6 +21,7 @@ import type {
   AttachmentLimits,
   BoundaryUpdate,
   ConfigTrust,
+  FolderTrust,
   DaemonEventUnion,
   EffortLevel,
 } from "./protocol";
@@ -62,6 +63,8 @@ export const session = $state({
    *  Null when there is nothing to ask. Pending and declined mean the
    *  session runs on the packaged defaults. */
   configTrust: null as ConfigTrust | null,
+  /** SECUX2-01: the project's own files waiting on the folder's trust. */
+  folderTrust: null as FolderTrust | null,
   /** Attachment caps for the composer (TD-1709). Held separately from
    *  `boundary` because it is never null: the composer has to judge a
    *  dropped file before any session is bound, and the shipped defaults are
@@ -121,6 +124,7 @@ export function resetSession(): void {
   session.boundary = null;
   session.spendConfigured = false;
   session.configTrust = null;
+  session.folderTrust = null;
   session.attachmentLimits = { ...DEFAULT_ATTACHMENT_LIMITS };
   session.tier = "brain";
   session.tierOverride = null;
@@ -189,6 +193,7 @@ export function ingestEvent(event: DaemonEventUnion): void {
       if (event.attachments !== undefined) session.attachmentLimits = event.attachments;
       session.spendConfigured = event.spend_configured === true;
       session.configTrust = event.config_trust ?? null;
+      session.folderTrust = event.folder_trust ?? null;
       break;
     case "tier_state":
       session.tier = event.tier;
@@ -250,6 +255,12 @@ export function openWorkspace(path: string): void {
 /** Trust or decline the followed session's workspace config (TD-5113).
  *  Only this computer decides: a session on another computer is refused
  *  here, as the daemon would. False when nothing was sent. */
+/** SECUX2-01: trust, or not, this chat's project's own instructions. */
+export function decideFolderTrust(trust: boolean): boolean {
+  if (session.sessionId === null || session.folderTrust === null || isBridged(session.sessionId)) return false;
+  return client?.send({ type: "decide_folder_trust", session_id: session.sessionId, trust }) ?? false;
+}
+
 export function decideWorkspaceTrust(accept: boolean): boolean {
   const trust = session.configTrust;
   if (session.sessionId === null || trust === null || isBridged(session.sessionId)) return false;
@@ -283,6 +294,7 @@ export function focusSession(
   session.boundary = null;
   session.spendConfigured = false;
   session.configTrust = null;
+  session.folderTrust = null;
   session.attachmentLimits = { ...DEFAULT_ATTACHMENT_LIMITS };
   session.tier = "brain";
   session.tierOverride = null;

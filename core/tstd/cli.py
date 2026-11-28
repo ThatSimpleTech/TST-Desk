@@ -289,6 +289,14 @@ def _visible_event_line(event: dict[str, Any]) -> str | None:
     return None
 
 
+def folder_trust_notice(event: dict[str, Any]) -> str | None:
+    """SECUX2-01: the one line a headless run prints when the project's files did not load."""
+    trust = event.get("folder_trust")
+    if not isinstance(trust, dict) or trust.get("state") not in ("pending", "declined"):
+        return None
+    return "note: project instructions not loaded: folder not trusted. Review it in TST Desk."
+
+
 def config_trust_notice(event: dict[str, Any]) -> str | None:
     """A stderr line when the workspace config is not in force (TD-5113).
 

@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from .. import folder_trust
 from ..config import TIER_NAMES, TierName
 from ..policy import WorkerPolicyRule
 from ..tools.delegate_child import (
@@ -141,6 +142,9 @@ def load_workers(workspace: str | Path, home_dir: str | Path | None = None) -> W
     dirs = worker_dirs(workspace, home_dir)
     for source in ("workspace", "user"):
         directory = dirs[source]
+        # SECUX2-01: the project's own workers load only from a trusted folder.
+        if source == "workspace" and not folder_trust.allows(workspace, "workers"):
+            continue
         if not directory.is_dir():
             continue
         for path in sorted(p for p in directory.iterdir() if p.is_file() and p.suffix == ".md"):

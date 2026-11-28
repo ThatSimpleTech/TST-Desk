@@ -274,6 +274,19 @@ export interface SetCuIndicators extends ClientMessage {
   show_on_real_display: boolean;
 }
 
+/** SECUX2-01: trust (or not) this chat's project's own instructions. */
+export interface DecideFolderTrust extends ClientMessage {
+  type: "decide_folder_trust";
+  session_id: string;
+  trust: boolean;
+}
+
+/** SECUX2-01: forget a folder's trust. Answered with setup_state. */
+export interface RevokeFolderTrust extends ClientMessage {
+  type: "revoke_folder_trust";
+  folder: string;
+}
+
 /** SETMODEL-04: put config.yaml's last working copy back. Answered with setup_state. */
 export interface RestoreLastGoodConfig extends ClientMessage {
   type: "restore_last_good_config";
@@ -1429,6 +1442,8 @@ export type ClientMessageUnion =
   | SetCuIndicators
   | SetCuPolicy
   | RestoreLastGoodConfig
+  | DecideFolderTrust
+  | RevokeFolderTrust
   | SetWorkspacePin
   | Resume
   | Cancel
@@ -2042,6 +2057,26 @@ export interface ConfigTrust {
   setup_command?: string | null;
 }
 
+/** One project file the folder trust card names (SECUX2-01). */
+export interface FolderTrustFile {
+  kind: "instructions" | "rules" | "skills" | "workers";
+  path: string;
+}
+
+/** Whether a project's own instructions load (SECUX2-01). */
+export interface FolderTrust {
+  folder: string;
+  state: "pending" | "declined";
+  files: FolderTrustFile[];
+  trusted_kinds?: string[];
+}
+
+/** A folder whose own instructions load, for Settings (SECUX2-01). */
+export interface TrustedFolder {
+  folder: string;
+  kinds: string[];
+}
+
 export interface BoundaryUpdate extends DaemonEvent {
   type: "boundary_update";
   session_id: string;
@@ -2060,6 +2095,8 @@ export interface BoundaryUpdate extends DaemonEvent {
   /** TD-5113: set when the workspace config loosens anything. Omitted or
    *  null when there is nothing to ask (and by older daemons). */
   config_trust?: ConfigTrust | null;
+  /** SECUX2-01: the project's own files that wait on the folder's trust, or null. */
+  folder_trust?: FolderTrust | null;
 }
 
 export interface TurnComplete extends DaemonEvent {
@@ -2446,6 +2483,8 @@ export interface SetupState extends DaemonEvent {
   cu_mode?: "background" | "full_control";
   cu_unhide_on_finish?: boolean;
   cu_denied_apps?: string[];
+  /** SECUX2-01: folders whose own instructions load. */
+  trusted_folders?: TrustedFolder[];
   /** UPGRADE-02: config.yaml keys this version ignores (a newer version's, or a typo). */
   config_unknown_keys?: string[];
   /** UPGRADE-02: a newer version wrote this data folder (its version); this one is read-only. */

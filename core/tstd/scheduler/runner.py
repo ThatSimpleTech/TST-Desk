@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal, Protocol
 
+from .. import folder_trust
 from ..config import ModelConfig
 from ..logging import get_logger
 from ..protocol import TurnComplete
@@ -44,6 +45,10 @@ from .schedule import arm_cadence_job, as_utc, due_jobs, record_run
 from .store import get_job, list_jobs, save_job
 
 log = get_logger("tstd.scheduler.runner")
+
+
+#: The one line a run's result carries when the folder was not trusted.
+NOT_TRUSTED_NOTE = "project instructions not loaded: folder not trusted"
 
 
 @dataclass(frozen=True)
@@ -590,9 +595,14 @@ async def run_turn_on_daemon(host: SessionHost, workspace: Path, message: str) -
     # TD-5263: read by the daemon's skip-all hooks for this session.
     session.ignores_skip_all = pin.ignore_skip_all
     try:
-        return await _await_scheduled_turn(host, session_id, session, message)
+        result = await _await_scheduled_turn(host, session_id, session, message)
     finally:
         session.scheduled_run = False
+    # SECUX2-01: a run nobody watches never waits on the trust card; it ran
+    # without the project's own files, and its receipt says so in one line.
+    if folder_trust.withheld(session.workspace_path):
+        result = replace(result, summary=f"{NOT_TRUSTED_NOTE}\n{result.summary}")
+    return result
 
 
 async def _await_scheduled_turn(

@@ -23,6 +23,7 @@
 	import { forgetRemoteTarget, remoteAttach } from '../connection-status.svelte.js';
 	import { isTauri } from '../open-file';
 	import PolicyRuleList from './PolicyRuleList.svelte';
+	import TrustedFolders from './TrustedFolders.svelte';
 	import SettingsKeys from './SettingsKeys.svelte';
 	import SettingsEmail from './SettingsEmail.svelte';
 	import SettingsGithub from './SettingsGithub.svelte';
@@ -268,6 +269,7 @@
 						sessionId={session.sessionId}
 						canSkipAll={onComputer || phoneMay('approval_switches')}
 					/>
+					{#if onComputer}<TrustedFolders />{/if}
 				{:else if settings.section === 'mcp'}
 					<SettingsMcp canManage={onComputer || phoneMayManageMcp} />
 				{:else if settings.section === 'email'}

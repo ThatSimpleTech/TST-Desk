@@ -1469,7 +1469,8 @@
       "max_total_bytes": 8000000,
       "max_count": 10
     },
-    "config_trust": null
+    "config_trust": null,
+    "folder_trust": null
   },
   "boundary_update_config_trust": {
     "type": "boundary_update",
@@ -1506,7 +1507,8 @@
         }
       ],
       "setup_command": null
-    }
+    },
+    "folder_trust": null
   },
   "turn_complete": {
     "type": "turn_complete",
@@ -2303,6 +2305,7 @@
     "cu_mode": "background",
     "cu_unhide_on_finish": true,
     "cu_denied_apps": [],
+    "trusted_folders": [],
     "config_unknown_keys": [],
     "data_written_by": null,
     "cu_policy_damaged": null,

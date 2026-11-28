@@ -30,6 +30,7 @@
 	import SteeringProposalBar from './SteeringProposalBar.svelte';
 	import MemoryProposalBar from './MemoryProposalBar.svelte';
 	import WorkspaceTrustCard from './WorkspaceTrustCard.svelte';
+	import FolderTrustCard from './FolderTrustCard.svelte';
 	import { onEvent } from '../connection-status.svelte.js';
 	import { entries, push } from '../timeline-store.svelte.js';
 	import { inspectorCounts, tabCount } from '../inspector';
@@ -610,6 +611,7 @@
 <SteeringProposalBar />
 <ScheduleProposalBar />
 <WorkspaceTrustCard />
+<FolderTrustCard />
 {#if projects.surface === 'home'}
 	<MemoryProposalBar />
 {/if}

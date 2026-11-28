@@ -47,6 +47,7 @@ from .cli import (
     _turn_timeout_secs,
     config_trust_notice,
     fallback_notice,
+    folder_trust_notice,
     stop_check_notice,
 )
 from .cli_approvals import prompt_approval
@@ -243,10 +244,10 @@ class _TurnReader:
             if self.permissions_sent and event.get("run_permissions") is None:
                 return await self._unsupported(ws)
         if typ == "boundary_update":
-            notice = config_trust_notice(event)
-            if notice is not None:
-                self.end_line()
-                print(notice, file=sys.stderr)
+            for notice in (config_trust_notice(event), folder_trust_notice(event)):
+                if notice is not None:
+                    self.end_line()
+                    print(notice, file=sys.stderr)
             return None
         if typ == "worktree_state":
             self._worktree(event)
