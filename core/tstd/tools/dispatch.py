@@ -431,6 +431,29 @@ class ToolDispatcher:
                 decision_class=decision_class,
             )
 
+        # 3.18 ERRORS-02: the workspace folder is gone (moved or deleted).
+        # A write would recreate the old path and land in an empty ghost
+        # folder while the person's real folder sits elsewhere, so every
+        # call that works in the workspace is refused instead.
+        root = self.path_guard.boundary.workspace_root if self.path_guard is not None else None
+        if (
+            (tool.path_fields or name == "shell")
+            and root is not None
+            and not await asyncio.to_thread(root.is_dir)
+        ):
+            return ToolResult(
+                tool_call_id=tool_call_id,
+                name=name,
+                status="error",
+                output=(
+                    f"Refused: this chat's folder {root} is gone (moved or deleted). "
+                    "Nothing was written. Tell the person; they can point the chat "
+                    "at the folder's new place."
+                ),
+                error_code="workspace_missing",
+                decision_class=decision_class,
+            )
+
         # 3.2 Path boundary enforcement (TD-602, security-critical).
         # Path-bearing tools are refused before the handler runs: no
         # guard attached is a bypass; a target crossing the boundary is a

@@ -390,6 +390,12 @@ export function daemonErrorCopy(code: string, message: string): NoticeSpec {
 		// banner: the draft is still in the composer and nothing else is blocked.
 		return { severity: "toast", title: "Attachment refused", body: message };
 	}
+	if (code === "workspace_missing") {
+		// ERRORS-02: this chat's folder was moved or deleted, so its turn was
+		// refused rather than run into a recreated, empty folder. A banner:
+		// nothing in this chat can run until it points at a real folder.
+		return { severity: "banner", title: "This chat's folder is gone", body: message };
+	}
 	if (code === "workspace_not_found") {
 		// TD-1103: the user tried to open a path that doesn't exist (usually
 		// from the recents menu — the folder was moved or deleted). The fix
