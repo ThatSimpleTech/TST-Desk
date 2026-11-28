@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from .logging import get_logger
+from .store_recovery import Recovery, folder_rows, keep_backup, read_backup, set_aside
 
 log = get_logger("tstd.session_store")
 
@@ -135,6 +136,8 @@ class SessionStore:
         # In-flight writes. The loop holds tasks weakly, and one whose
         # caller was cancelled has no other owner until it lands.
         self._writes: set[asyncio.Task[None]] = set()
+        #: Set when the store file could not be read at start (ERR2B-04).
+        self.recovery: Recovery | None = None
         self._load()
 
     async def upsert(
@@ -355,17 +358,49 @@ class SessionStore:
         """
         if not self._path.exists():
             return
+        error = ""
         try:
             raw = json.loads(self._path.read_text())
         except (OSError, json.JSONDecodeError) as e:
-            log.warning(
-                "session store unreadable, starting empty",
-                extra={"extra_fields": {"path": str(self._path), "error": str(e)}},
-            )
-            return
+            error = str(e)
+            raw = None
         if not isinstance(raw, list):
-            log.warning("session store malformed, starting empty")
+            self._recover(error or "the file is not a list of sessions")
             return
+        self._load_rows(raw)
+
+    def _recover(self, error: str) -> None:
+        """ERR2B-04: keep the unreadable file, then load the backup and the folders."""
+        kept = set_aside(self._path)
+        backup = read_backup(self._path)
+        from_backup = 0
+        if isinstance(backup, list):
+            self._load_rows(backup)
+            from_backup = len(self._records)
+        rebuilt = folder_rows(self._path.parent / "sessions", set(self._records))
+        for row in rebuilt:
+            record = SessionRecord.from_row(row)
+            self._records[record.session_id] = record
+        self.recovery = Recovery(
+            store="sessions",
+            kept_as=kept.name if kept is not None else self._path.name,
+            from_backup=from_backup,
+            rebuilt=len(rebuilt),
+            error=error,
+        )
+        log.warning(
+            "session store unreadable; recovered",
+            extra={
+                "extra_fields": {
+                    "kept_as": self.recovery.kept_as,
+                    "from_backup": from_backup,
+                    "rebuilt": len(rebuilt),
+                    "error": error,
+                }
+            },
+        )
+
+    def _load_rows(self, raw: list[Any]) -> None:
         dropped = 0
         for entry in raw:
             try:
@@ -451,6 +486,7 @@ class SessionStore:
             # silent no-op there — ACL-based restriction is a separate
             # hardening story (TD-1406).
             os.chmod(tmp, 0o600)
+            keep_backup(self._path)  # ERR2B-04: the last good copy
             os.replace(tmp, self._path)
             tmp = None
         except OSError as e:

@@ -2498,6 +2498,14 @@
     "branch": "tst/child-1",
     "stopped": null
   },
+  "store_recovered": {
+    "type": "store_recovered",
+    "seq": 1,
+    "store": "sessions",
+    "kept_as": "sessions.json.damaged-20261128T040000Z",
+    "from_backup": 3,
+    "rebuilt": 1
+  },
   "phone_change": {
     "type": "phone_change",
     "seq": 1,

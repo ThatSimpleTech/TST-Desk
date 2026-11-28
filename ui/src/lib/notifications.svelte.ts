@@ -26,6 +26,7 @@ import {
 	sessionStateCopy,
 	turnFailureCopy,
 	type NoticeSpec,
+	storeRecoveredNotice,
 } from "./error-copy";
 import { claimedInline } from "./inline-errors";
 import { phoneChangeNotice, phoneLapseNotice } from "./phone-permissions";
@@ -161,6 +162,10 @@ export function notifyEvent(event: DaemonEventUnion): void {
 		// a user with a non-git workspace was never told undo was off.
 		case "checkpoint_notice":
 			notify(`checkpoint:${event.code}`, checkpointNoticeCopy(event.code, event.message));
+			break;
+		case "store_recovered":
+			// ERR2B-04: once per store and file, kept until dismissed.
+			notify(`store:${event.store}:${event.kept_as}`, storeRecoveredNotice(event));
 			break;
 		case "phone_change":
 			// TD-5279: a paired phone changed this computer. One banner per

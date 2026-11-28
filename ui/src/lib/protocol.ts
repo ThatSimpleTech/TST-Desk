@@ -2660,6 +2660,15 @@ export interface ScheduleProposalDecision extends DaemonEvent {
   job_id?: string | null;
 }
 
+/** A store file could not be read at start and was kept aside (ERR2B-04). */
+export interface StoreRecovered extends DaemonEvent {
+  type: "store_recovered";
+  store: "sessions" | "jobs";
+  kept_as: string;
+  from_backup: number;
+  rebuilt: number;
+}
+
 /** A paired phone used a phone permission (TD-5279). Loopback windows only. */
 export interface PhoneChange extends DaemonEvent {
   type: "phone_change";
@@ -3680,6 +3689,7 @@ export type DaemonEventUnion =
   | PairingCode
   | PairingCompleted
   | PhoneChange
+  | StoreRecovered
   | PhonePermissionLapsed
   | ScheduleProposal
   | ScheduleProposalDecision

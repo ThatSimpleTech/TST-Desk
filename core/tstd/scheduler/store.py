@@ -18,6 +18,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from ..logging import get_logger
+from ..store_recovery import Recovery, keep_backup, read_backup, set_aside
 from .history import delete_history
 from .models import Job, JobDraft, JobValidationError, validate_draft
 
@@ -106,21 +107,27 @@ def delete_job(data_dir: str | Path, job_id: str) -> bool:
     return True
 
 
+#: Per data dir, what the last unreadable jobs.json came back as (ERR2B-04).
+_RECOVERIES: dict[str, Recovery] = {}
+
+
+def recovery(data_dir: str | Path) -> Recovery | None:
+    """The jobs.json recovery this process made for *data_dir*, if any."""
+    return _RECOVERIES.get(str(Path(data_dir)))
+
+
 def _read_jobs(data_dir: str | Path) -> list[Job]:
     path = jobs_path(data_dir)
     if not path.exists():
         return []
+    error = ""
     try:
         raw: Any = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        log.warning(
-            "scheduler store unreadable, starting empty",
-            extra={"extra_fields": {"path": str(path), "error": str(exc)}},
-        )
-        return []
-    rows = _rows_from_envelope(raw)
+        error, raw = str(exc), None
+    rows = None if error else _rows_from_envelope(raw)
     if rows is None:
-        return []
+        rows = _recover(data_dir, path, error or "the file is not a jobs list this build reads")
     jobs: list[Job] = []
     for entry in rows:
         if not isinstance(entry, dict):
@@ -145,6 +152,25 @@ def _upsert(data_dir: str | Path, record: Job) -> Job:
     jobs.append(record)
     _write_jobs(Path(data_dir), jobs)
     return record
+
+
+def _recover(data_dir: str | Path, path: Path, error: str) -> list[Any]:
+    """ERR2B-04: keep the unreadable file, never write over it, read the backup."""
+    kept = set_aside(path)
+    backup = read_backup(path)
+    rows = _rows_from_envelope(backup) if backup is not None else None
+    found = rows or []
+    _RECOVERIES[str(Path(data_dir))] = Recovery(
+        store="jobs",
+        kept_as=kept.name if kept is not None else path.name,
+        from_backup=len(found),
+        rebuilt=0,
+        error=error,
+    )
+    if rows:
+        # The backup is the store now, so the next read finds a good file.
+        _write_jobs(Path(data_dir), [Job.model_validate(r) for r in rows if isinstance(r, dict)])
+    return found
 
 
 def _rows_from_envelope(raw: Any) -> list[Any] | None:
@@ -180,6 +206,7 @@ def _write_jobs(data_dir: Path, jobs: list[Job]) -> None:
         # Owner-only before the rename. POSIX mode bits only: on Windows
         # os.chmod can merely toggle the read-only flag (TD-1406).
         os.chmod(tmp, 0o600)
+        keep_backup(path)  # ERR2B-04: the last good copy
         os.replace(tmp, path)
     except BaseException:
         os.unlink(tmp)
