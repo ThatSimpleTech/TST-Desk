@@ -20917,3 +20917,20 @@ turn and the dispatcher refuses before any driver. Capture moves from A to B
 The OS gives no owner for the window under a point without acting, so the
 check is the foreground window's process and title, failing closed when it
 cannot be read. The pane states the limit instead of the old blanket promise.
+
+## 2026-11-28 — TD-5358: revive in the background, on demand per chat (Class B)
+
+Serving first means a client can reach a chat before it is revived. Rather
+than refuse, the dispatcher revives that one chat (a per-chat lock, so the
+background pass and the request never revive it twice) and then handles the
+message. Newest first, so the chats people open are ready soonest. The
+scheduler waits for the whole pass so a parked approval is never re-asked.
+The snapshot's folder-trust view may be up to 15 s old; loading never uses
+it, so a new kind of file still waits for the card.
+
+## 2026-11-28 — TD-5359: a start heartbeat file, not a longer fixed timeout (Class B)
+
+A longer fixed limit would leave a hung daemon unnoticed for as long. A file
+the daemon rewrites every 2 s, carrying its pid, lets the host tell slow from
+stuck and ignore a beat from another process. The 30 s limit still applies to
+a daemon that never beats, so an older daemon behaves as before.
