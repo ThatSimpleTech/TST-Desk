@@ -405,6 +405,16 @@ presets:
           cache_read_price: 5.0
           context_window: 32768
           max_output_tokens: 8192
+    # A file a write may land on must load, so every role is named.
+    validator:
+      slug: "deepseek/deepseek-v4-flash"
+      base_url: https://openrouter.ai/api/v1
+      credential: openrouter
+      input_price: 1.0
+      output_price: 1.0
+      cache_read_price: 1.0
+      context_window: 32768
+      max_output_tokens: 8192
     worker:
       slug: "deepseek/deepseek-v4-flash"
       base_url: https://openrouter.ai/api/v1

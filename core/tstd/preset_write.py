@@ -33,7 +33,7 @@ from .config import (
     ensure_user_config,
     load_config,
 )
-from .config_write import _atomic_write, _block_bounds, _find_key
+from .config_write import _block_bounds, _find_key, write_config
 
 _ENTRY_INDENT_DEFAULT = 2
 
@@ -165,7 +165,7 @@ def duplicate_preset(source: str, name: str, label: str, path: Path | None = Non
     loaded = _checked(text, config_path, f"Could not copy {source!r}")
     if name not in loaded.presets:
         raise ConfigError(f"Could not copy {source!r}: the copy did not load as an entry")
-    _atomic_write(config_path, text)
+    write_config(config_path, text)
     return config_path
 
 
@@ -219,7 +219,7 @@ def save_preset_label(
     loaded = _checked(text, config_path, f"Could not rename {name!r}")
     if loaded.presets[name].label != cleaned:
         raise ConfigError(f"Could not rename {name!r}: the file sets its label somewhere else")
-    _atomic_write(config_path, text)
+    write_config(config_path, text)
     return config_path
 
 
@@ -264,7 +264,7 @@ def delete_preset(name: str, path: Path | None = None) -> Path:
     )
     if name in loaded.presets:
         raise ConfigError(f"Could not remove {name!r}: the file declares it more than once")
-    _atomic_write(config_path, text)
+    write_config(config_path, text)
     return config_path
 
 
@@ -316,5 +316,5 @@ def add_grok_preset(name: str, label: str, description: str, path: Path | None =
     added = loaded.presets.get(name)
     if added is None or added.engine != "grok":
         raise ConfigError("Could not add Grok: the entry did not load")
-    _atomic_write(config_path, text)
+    write_config(config_path, text)
     return config_path
