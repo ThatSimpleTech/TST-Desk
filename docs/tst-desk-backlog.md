@@ -15131,3 +15131,81 @@ of the user's model servers. The log was 0664 and audit.db 0644.
 **Size:** 2 · **Depends on:** TD-1102, TD-1405 · **Status:** Done
 
 **Notes:** scrubbing logs already on disk is not done here: the log rotates.
+
+### TD-5315 — An unreadable sessions.json or jobs.json never wipes the chats or schedules
+
+Inspection finding ERR2B-04 (high). Each store was read whole and believed:
+one truncation and the app started with no chats or no schedules, said
+nothing, and the next save overwrote the file.
+
+- [x] An unreadable file is moved to `<name>.damaged-<UTC stamp>` (0600) and
+      never written again (`test_damaged_stores.py`).
+- [x] Every save keeps the file it replaces as `<name>.bak`; a failed load
+      reads it back.
+- [x] Chats the list does not name are rebuilt from `sessions/<id>/`, where
+      the conversation's `Workspace root:` line says where they belong.
+- [x] A jobs.json in a newer format is kept aside, not read as empty.
+- [x] Each of the computer's windows is told on connect (`store_recovered`,
+      a banner), and Doctor shows it.
+
+**Size:** 3 · **Depends on:** TD-5310 · **Status:** Done
+
+### TD-5316 — The daemon's children get the user's environment, not the AppImage's
+
+Inspection finding PKG-02 (high). In the AppImage every python3 the agent
+ran died ("No module named encodings"): the launcher's PYTHONHOME,
+LD_LIBRARY_PATH and GTK paths reached every child.
+
+- [x] The daemon cleans its own environment first: path lists lose only
+      entries inside `$APPDIR` or the PyInstaller unpack folder,
+      `LD_LIBRARY_PATH` returns to `LD_LIBRARY_PATH_ORIG`, `GDK_BACKEND` and
+      `GTK_THEME` go under an AppImage only (`test_launch_env.py`).
+- [x] A real python3 that fails under the AppImage's PYTHONHOME starts after.
+
+**Size:** 1 · **Status:** Done
+
+### TD-5317 — A per-session window opens the app, not a 404, in release builds
+
+Inspection finding WEBKIT-01 (high). Release builds loaded
+`/index.html?bind_session=<id>`, which the single-page app answers with 404.
+
+- [x] The window loads the main window's own app URL at `/` with an encoded
+      `bind_session` query (Rust unit tests).
+- [x] A packaged-app smoke run opens one and checks the shell rendered (TD-5321).
+
+**Size:** 1 · **Depends on:** TD-4703 · **Status:** Done
+
+### TD-5318 — External links open in the packaged app
+
+Inspection finding SETREST-01 (high). `opener:allow-open-url` was never
+granted, so every external link did nothing, silently.
+
+- [x] The main and session windows grant it for `https://`, `http://` and the
+      macOS settings deep links only (`external-link.test.ts` reads the files).
+- [x] A refused or failed open copies the address and shows a toast.
+
+**Size:** 1 · **Status:** Done
+
+### TD-5319 — Clicking a file name opens it in the released app
+
+Inspection finding PKG-12 (high). `opener:allow-open-path` was granted with
+no scope, which allows nothing, and the refusal was swallowed.
+
+- [x] Every file open goes through the host's `open_path`, which checks the
+      path at call time: it exists, and is not a launcher, script, installer or
+      executable file (INSPECT-03). The unscoped grant is gone.
+- [x] A refusal or failure shows a toast with the host's sentence.
+
+**Size:** 2 · **Depends on:** TD-5318 · **Status:** Done
+
+**Notes:** a workspace check needs the daemon, which knows the workspaces.
+
+### TD-5320 — Approve and Deny in the OS notification act
+
+Inspection finding HOST-01 (high). The `approval-action` listener was
+registered only when no bridge was injected, and inside Tauri one always is.
+
+- [x] Registered whenever the app runs in the shell; only the main window
+      answers (`os-notify-actions.test.ts`, with the real bridge injected).
+
+**Size:** 1 · **Status:** Done
