@@ -3532,6 +3532,19 @@ class Daemon:
                     session_id=msg.session_id,
                     in_reply_to=msg.type,
                 )
+            # ERRORS-02: the chat's folder was moved or deleted. A turn
+            # would recreate the old path and write into an empty ghost.
+            if found.workspace_path and not await asyncio.to_thread(
+                Path(found.workspace_path).is_dir
+            ):
+                return build_error(
+                    "workspace_missing",
+                    f"This chat's folder is gone: {found.workspace_path}. "
+                    "If it moved, use Move in the chat's menu in the sidebar to point "
+                    "it at the new place. The message was not sent.",
+                    session_id=msg.session_id,
+                    in_reply_to=msg.type,
+                )
             # TD-5161: a restore or worktree close is rewriting the folder;
             # a turn started now would write into it (or into a folder
             # about to be deleted).
