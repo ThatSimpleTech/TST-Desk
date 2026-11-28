@@ -177,7 +177,9 @@ async def test_sends_copies_with_0600_files_and_0700_folders(tmp_path: Path) -> 
     _write(env.ws / "out" / "app-release.apk", data)
     result = await env.send(["out/app-release.apk"], caption="0.1.9 release build")
     assert result.status == "success", result.output
-    assert result.decision_class is DecisionClass.A
+    # ANDROID-01: an app asks first; this env approves.
+    assert result.decision_class is DecisionClass.B
+    assert len(env.approvals) == 1
     [record] = env.rows()
     assert record.kind == "sent_file"
     assert record.name == record.title == "app-release.apk"

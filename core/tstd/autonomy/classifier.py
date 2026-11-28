@@ -917,6 +917,44 @@ def _rule_show_artifact(req: DecisionRequest, boundary: Boundary) -> bool:
     )
 
 
+#: Files that install or run software when opened, on a phone or a computer (ANDROID-01).
+INSTALLABLE_SUFFIXES = frozenset(
+    {
+        ".apk",
+        ".apks",
+        ".apkm",
+        ".xapk",
+        ".aab",
+        ".ipa",
+        ".exe",
+        ".msi",
+        ".msix",
+        ".appx",
+        ".appxbundle",
+        ".dmg",
+        ".pkg",
+        ".mpkg",
+        ".deb",
+        ".rpm",
+        ".appimage",
+        ".snap",
+        ".flatpakref",
+        ".jar",
+    }
+)
+
+
+def _rule_send_installable(req: DecisionRequest, _boundary: Boundary) -> bool:
+    """``send_file`` of something that installs software asks first (ANDROID-01).
+
+    A sent APK opens Android's installer from the phone's card, so the
+    agent must not hand one over unasked. Ahead of the in-workspace grant.
+    """
+    return req.tool_name == "send_file" and any(
+        p.suffix.lower() in INSTALLABLE_SUFFIXES for p in req.reads
+    )
+
+
 def _rule_send_file(req: DecisionRequest, boundary: Boundary) -> bool:
     """``send_file`` copies workspace files into the session's own data dir (TD-5143).
 
@@ -1348,6 +1386,12 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="desktop actuation requires approval",
         decision_class=DecisionClass.B,
         match=_rule_desktop_actuation,
+    ),
+    Rule(
+        id="send-file-installable",
+        description="send_file of an app or installer the person could open and install",
+        decision_class=DecisionClass.B,
+        match=_rule_send_installable,
     ),
     Rule(
         id="send-file-in-workspace",

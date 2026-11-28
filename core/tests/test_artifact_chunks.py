@@ -345,7 +345,7 @@ async def test_a_daemon_session_sends_with_no_card_and_serves_the_bytes(tmp_path
     A scripted ``send_file`` runs in the default approval mode with no card,
     and the bytes it sent come back over ``read_artifact_chunk``.
     """
-    call = json.dumps({"files": ["app-release.apk"], "caption": "build"})
+    call = json.dumps({"files": ["build.zip"], "caption": "build"})
     steps = [
         Script(kind="tool_call", tool_name="send_file", tool_arguments=call),
         Script(kind="stream", content="Sent."),
@@ -354,7 +354,7 @@ async def test_a_daemon_session_sends_with_no_card_and_serves_the_bytes(tmp_path
     ws = tmp_path / "ws"
     ws.mkdir()
     data = MARKER + os.urandom(2_000)
-    (ws / "app-release.apk").write_bytes(data)
+    (ws / "build.zip").write_bytes(data)
     sid = await _open(daemon, ws)
     try:
         session = daemon.session_registry.get(sid)
@@ -368,7 +368,7 @@ async def test_a_daemon_session_sends_with_no_card_and_serves_the_bytes(tmp_path
         assert result.status == "success", result.output
         assert not [e for e in events if isinstance(e, ApprovalRequest)]
         [ready] = [e for e in events if isinstance(e, ArtifactReady)]
-        assert (ready.kind, ready.name, ready.caption) == ("sent_file", "app-release.apk", "build")
+        assert (ready.kind, ready.name, ready.caption) == ("sent_file", "build.zip", "build")
         reply = await _chunk(daemon, sid, ready.artifact_id, 0)
         assert (base64.b64decode(reply["data_b64"]), reply["eof"]) == (data, True)
     finally:
@@ -431,7 +431,7 @@ async def test_a_chunk_read_for_an_unknown_session_never_touches_disk(
 ) -> None:
     """Only an exactly known session id reaches the store (TD-5143, follow-up l)."""
     daemon, sid, ws = one
-    record = _send(daemon, sid, ws, "app-release.apk", b"apk")
+    record = _send(daemon, sid, ws, "build.zip", b"apk")
     persist = daemon._artifacts._persist
     real = persist.dir_for
     touched: list[str] = []
@@ -458,7 +458,7 @@ async def test_a_differently_spelled_id_cannot_sweep_a_live_send(
     folder's first load and sweep the send the agent has in flight there.
     """
     daemon, sid, ws = one
-    record = _send(daemon, sid, ws, "app-release.apk", b"apk")
+    record = _send(daemon, sid, ws, "build.zip", b"apk")
     persist = daemon._artifacts._persist
     real = persist.dir_for
     monkeypatch.setattr(persist, "dir_for", lambda session_id: real(session_id.casefold()))

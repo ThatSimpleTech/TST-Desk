@@ -3,7 +3,8 @@
 Each file is copied into the session's data dir and shown as a card. The
 dispatcher guards every path in ``files`` before the handler runs
 (TD-5143 list path fields), and the classifier puts an in-workspace send
-in Class A, so no approval card appears in any mode.
+in Class A, so no approval card appears in any mode, except for an app
+or installer (ANDROID-01), which asks.
 """
 
 from __future__ import annotations
