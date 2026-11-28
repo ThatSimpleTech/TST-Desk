@@ -12049,7 +12049,7 @@ autonomous session starts none, and neither does a workspace whose
 building"; the approach is recorded in DECISIONS.md instead. Docs:
 docs/configuration.md §2 `lsp` and §4.4, docs/architecture.md seams.
 
-### TD-5213 — The phone's keyboard lifts the composer (0.4.7)
+### TD-5213 — The phone's keyboard lifts the composer (0.5.1)
 **Size:** 2 · **Depends on:** TD-5001, TD-5026, TD-1604
 **Filed:** 2026-10-31, from the product report: on the phone, the keyboard
 came up and sat over the composer's card and send button.

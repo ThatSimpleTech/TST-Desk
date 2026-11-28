@@ -49,7 +49,7 @@ Install with `adb install -r` that file, or copy it to the phone and open it. Un
 
 ## Upgrading
 
-0.4.7 (TD-5213) lifts the composer and its toolbar clear of the phone's keyboard. It changes Kotlin: the page's bottom padding is now the deepest of the navigation bar and the keyboard, so the composer's card and Send button stay above the keyboard. It bundles the UI that also lifts the composer by `env(keyboard-inset-height, 0px)` and by the visual viewport's measured inset, so the card never sits under the keyboard on a shell that reports either. Both are zero when the keyboard is down, so desktop layout is unchanged. It installs over 0.4.6 with the same debug keystore.
+0.5.1 (TD-5213) lifts the composer and its toolbar clear of the phone's keyboard. It changes Kotlin: the page's bottom padding is now the deepest of the navigation bar and the keyboard, so the composer's card and Send button stay above the keyboard. It bundles the UI that also lifts the composer by `env(keyboard-inset-height, 0px)` and by the visual viewport's measured inset, so the card never sits under the keyboard on a shell that reports either. Both are zero when the keyboard is down, so desktop layout is unchanged. It installs over 0.5.0 with the same debug keystore.
 
 An APK bundles the UI, so it only understands the events its own UI knew. Against a newer daemon (TD-5150 or later), an older APK draws each in-flight trim of old tool results as an amber compaction row with a blank title, up to a dozen per tool-heavy turn. Nothing is wrong with the session. Build and install a new APK to get the "Trim" rows, which show how many results were trimmed and how many tokens that freed.
 
