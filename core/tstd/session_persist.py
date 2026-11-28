@@ -22,7 +22,7 @@ from typing import Any, cast
 
 from .config import DEFAULT_LOG_MAX_EVENTS
 from .logging import get_logger
-from .protocol import DaemonEvent, HandshakeError, parse_daemon_event
+from .protocol import DaemonEvent, EventUnreadable, HandshakeError, parse_daemon_event
 from .provider import ChatMessage, FunctionCall, MessageContent, ToolCall
 
 log = get_logger("tstd.session_persist")
@@ -460,10 +460,12 @@ class SessionPersist:
 
     @staticmethod
     def _read_events(path: Path) -> list[DaemonEvent] | None:
-        """The events in the file, malformed lines dropped; None if it cannot be read.
+        """The events in the file; None if it cannot be read.
 
         Bytes that are not UTF-8 (a write cut short mid-character) spoil
-        only their own line, which is then dropped as malformed.
+        only their own line. A line that cannot be read, or names an event
+        this build does not know, is replaced by an ``event_unreadable``
+        at its seq, so a replay has no hole (ERR2B-05).
         """
         if not path.is_file():
             return []
@@ -476,16 +478,25 @@ class SessionPersist:
                 extra={"extra_fields": {"path": str(path), "error": str(e)}},
             )
             return None
+        dropped: list[tuple[int | None, str]] = []  # (seq if known, kind) since the last event
         for i, line in enumerate(text.splitlines(), start=1):
             if not line.strip():
                 continue
             try:
-                events.append(cast(DaemonEvent, parse_daemon_event(line)))
+                event = cast(DaemonEvent, parse_daemon_event(line))
             except (HandshakeError, ValueError) as e:
                 log.warning(
-                    "dropping malformed session event",
+                    "unreadable session event kept as a placeholder",
                     extra={"extra_fields": {"path": str(path), "line": i, "error": str(e)}},
                 )
+                dropped.append(_salvage(line))
+                continue
+            if dropped:
+                events.extend(_placeholders(events, dropped, event.seq, path))
+                dropped = []
+            events.append(event)
+        if dropped:
+            events.extend(_placeholders(events, dropped, None, path))
         return events
 
     def _window(self, events: list[DaemonEvent]) -> list[DaemonEvent]:
@@ -543,3 +554,46 @@ class SessionPersist:
                 "failed to write session snapshot",
                 extra={"extra_fields": {"path": str(path), "error": str(e)}},
             )
+
+
+def _salvage(line: str) -> tuple[int | None, str]:
+    """The seq and type an unreadable line still shows, if any."""
+    try:
+        raw = json.loads(line)
+    except json.JSONDecodeError:
+        return None, ""
+    if not isinstance(raw, dict):
+        return None, ""
+    seq = raw.get("seq")
+    kind = raw.get("type")
+    return (
+        seq if isinstance(seq, int) and not isinstance(seq, bool) and seq > 0 else None,
+        kind if isinstance(kind, str) else "",
+    )
+
+
+def _placeholders(
+    events: list[DaemonEvent],
+    dropped: list[tuple[int | None, str]],
+    next_seq: int | None,
+    path: Path,
+) -> list[DaemonEvent]:
+    """One ``event_unreadable`` per seq the dropped lines held.
+
+    Between the last good event and the next one, every missing seq gets a
+    placeholder; a line that still shows its seq lends it its type. After
+    the last good event, only lines whose seq can be read are filled.
+    """
+    last = events[-1].seq if events else 0
+    session_id = next(
+        (str(e.session_id) for e in reversed(events) if hasattr(e, "session_id")),
+        path.parent.name,
+    )
+    kinds = {seq: kind for seq, kind in dropped if seq is not None}
+    if next_seq is None:
+        wanted = sorted(s for s in kinds if s > last)
+    else:
+        wanted = list(range(last + 1, next_seq))
+    return [
+        EventUnreadable(seq=seq, session_id=session_id, kind=kinds.get(seq, "")) for seq in wanted
+    ]

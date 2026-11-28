@@ -27,6 +27,7 @@ import {
 	turnFailureCopy,
 	type NoticeSpec,
 	storeRecoveredNotice,
+	eventUnreadableNotice,
 } from "./error-copy";
 import { claimedInline } from "./inline-errors";
 import { phoneChangeNotice, phoneLapseNotice } from "./phone-permissions";
@@ -118,6 +119,9 @@ function startToastTimer(id: number): void {
  * irrelevant events are ignored, and a user-initiated result (a cancelled
  * turn) never raises anything.
  */
+/** Chats this window has already told about unreadable history (ERR2B-05). */
+const unreadableTold = new Set<string>();
+
 export function notifyEvent(event: DaemonEventUnion): void {
 	recentEvents.push({ type: event.type, seq: "seq" in event ? event.seq : null });
 	if (recentEvents.length > MAX_RECENT_EVENTS) recentEvents.shift();
@@ -162,6 +166,14 @@ export function notifyEvent(event: DaemonEventUnion): void {
 		// a user with a non-git workspace was never told undo was off.
 		case "checkpoint_notice":
 			notify(`checkpoint:${event.code}`, checkpointNoticeCopy(event.code, event.message));
+			break;
+		case "event_unreadable":
+			// ERR2B-05: once per chat in this window, however many lines were
+			// unreadable and however often the chat is replayed.
+			if (!unreadableTold.has(event.session_id)) {
+				unreadableTold.add(event.session_id);
+				notify(`unreadable:${event.session_id}`, eventUnreadableNotice(event.kind));
+			}
 			break;
 		case "store_recovered":
 			// ERR2B-04: once per store and file, kept until dismissed.

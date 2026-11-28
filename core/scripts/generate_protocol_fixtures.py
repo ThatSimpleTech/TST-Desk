@@ -95,6 +95,7 @@ from tstd.protocol import (
     EndpointModels,
     EndSession,
     Error,
+    EventUnreadable,
     ExportUsage,
     ExtractAttachment,
     FilesRestored,
@@ -1674,6 +1675,7 @@ FIXTURES = {
         transcript=[WorkerStep(kind="reply", text="Fixed the parser; 12 tests pass.")],
         branch="tst/child-1",
     ),
+    "event_unreadable": EventUnreadable(session_id="s1", seq=10, kind="a_newer_event"),
     "store_recovered": StoreRecovered(
         store="sessions", kept_as="sessions.json.damaged-20261128T040000Z", from_backup=3, rebuilt=1
     ),

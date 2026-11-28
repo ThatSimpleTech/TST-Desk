@@ -2501,6 +2501,12 @@
     "branch": "tst/child-1",
     "stopped": null
   },
+  "event_unreadable": {
+    "type": "event_unreadable",
+    "seq": 10,
+    "session_id": "s1",
+    "kind": "a_newer_event"
+  },
   "store_recovered": {
     "type": "store_recovered",
     "seq": 1,

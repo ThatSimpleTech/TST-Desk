@@ -2904,6 +2904,20 @@ class CheckpointNotice(DaemonEvent):
     message: str
 
 
+class EventUnreadable(DaemonEvent):
+    """A line of a chat's saved log could not be read; it stands in its place (ERR2B-05).
+
+    Written only on load, at the seq the unreadable line held, so a replay
+    has no hole: a window read the hole as a lost frame and re-attached
+    for ever. ``kind`` is the event's type when the line still names one
+    (a newer build's event), else empty. Session-scoped, in the log.
+    """
+
+    type: Literal["event_unreadable"] = "event_unreadable"
+    session_id: str
+    kind: str = ""
+
+
 class StoreRecovered(DaemonEvent):
     """A store file could not be read at start and was kept aside (ERR2B-04).
 
@@ -5549,6 +5563,7 @@ DaemonEventT = Annotated[
     | PairingCompleted
     | PhoneChange
     | StoreRecovered
+    | EventUnreadable
     | PhonePermissionLapsed
     | McpImportPreview
     | MachineList
@@ -5825,6 +5840,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "pairing_completed",
         "phone_change",
         "store_recovered",
+        "event_unreadable",
         "phone_permission_lapsed",
         "mcp_import_preview",
         "machine_list",

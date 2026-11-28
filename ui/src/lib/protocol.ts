@@ -2665,6 +2665,14 @@ export interface ScheduleProposalDecision extends DaemonEvent {
 }
 
 /** A store file could not be read at start and was kept aside (ERR2B-04). */
+/** A saved log line that could not be read, standing at its seq (ERR2B-05). */
+export interface EventUnreadable extends DaemonEvent {
+  type: "event_unreadable";
+  session_id: string;
+  /** The event's type when the line still names one (a newer build's event), else "". */
+  kind: string;
+}
+
 export interface StoreRecovered extends DaemonEvent {
   type: "store_recovered";
   store: "sessions" | "jobs" | "audit";
@@ -3698,6 +3706,7 @@ export type DaemonEventUnion =
   | PairingCompleted
   | PhoneChange
   | StoreRecovered
+  | EventUnreadable
   | PhonePermissionLapsed
   | ScheduleProposal
   | ScheduleProposalDecision

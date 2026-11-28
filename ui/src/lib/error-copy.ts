@@ -416,6 +416,18 @@ export function daemonErrorCopy(code: string, message: string): NoticeSpec {
 
 /** A store file the daemon could not read at start (ERR2B-04). A banner:
  *  the person needs to know their list may be short, and where the file is. */
+/** ERR2B-05: part of a chat's saved history could not be read. Once per chat. */
+export function eventUnreadableNotice(kind: string): NoticeSpec {
+  const why = kind
+    ? `It was written by a newer version of TST Desk ("${kind}").`
+    : "The file was damaged, for example by a crash in the middle of a save.";
+  return {
+    severity: "toast",
+    title: "Part of this chat's history could not be read",
+    body: `${why} The rest of the chat is shown and keeps working.`,
+  };
+}
+
 export function storeRecoveredNotice(event: {
   store: "sessions" | "jobs" | "audit";
   kept_as: string;
