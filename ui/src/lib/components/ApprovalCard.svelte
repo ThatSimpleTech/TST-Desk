@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { hasHidden, reveal } from '../reveal';
 	// Approval card (TD-1007): the pending tool call, its classification and
 	// reason, and the Approve/Deny actions. Presentational — decisions come
 	// from approval.ts and the store; this just renders and forwards clicks.
@@ -80,6 +81,9 @@
 		);
 		return entries.length === 0 ? null : JSON.stringify(Object.fromEntries(entries), null, 2);
 	});
+	// RENDERSEC-02: shown as it will run, with nothing hidden or reordered.
+	let summary = $derived(reveal(approval.summary));
+	let hidden = $derived(hasHidden(JSON.stringify(approval.arguments ?? null) + approval.summary));
 
 	function decide(): void {
 		if (remember && alwaysAllowable) alwaysAllow(approval);
@@ -108,15 +112,15 @@
 	tabindex="-1"
 	bind:this={cardEl}
 	data-approval-card={approval.toolCallId}
-	aria-label={`Approval required${chat ? ` in ${chat}` : ''}: ${approval.summary}`}
+	aria-label={`Approval required${chat ? ` in ${chat}` : ''}: ${summary}`}
 	onkeydowncapture={onKeydown}
 >
-	<p class="announce" role="status">Approval needed{chat ? ` in ${chat}` : ''}: {approval.summary}</p>
+	<p class="announce" role="status">Approval needed{chat ? ` in ${chat}` : ''}: {summary}</p>
 	<header class="head">
 		<span class="head-icon" aria-hidden="true"><Icon name="alert" size={16} /></span>
 		<div class="head-text">
 			{#if chat}<span class="chat">{chat}</span>{/if}
-			<span class="title">{approval.summary}</span>
+			<span class="title">{summary}</span>
 			{#if workerLine(approval)}
 				<span class="who" title={approval.worker?.task ?? ''}>{workerLine(approval)}</span>
 			{/if}
@@ -132,19 +136,24 @@
 	<div class="body">
 		{#if diff !== null}
 			<p class="diff-head">{diffHeadline(diff)}</p>
-			<pre class="code diff" aria-label="Proposed change">{#each diffLines(diff) as line}<span class="diff-line diff-line--{classifyDiffLine(line)}">{line}</span>{'\n'}{/each}</pre>
+			<pre class="code diff" aria-label="Proposed change">{#each diffLines(diff) as line}<span class="diff-line diff-line--{classifyDiffLine(line)}">{reveal(line)}</span>{'\n'}{/each}</pre>
 		{/if}
 		{#if lead !== null}
 			<div class="lead">
 				<span class="key">{lead.key}</span>
-				<pre class="code">{lead.value}</pre>
+				<pre class="code">{reveal(lead.value)}</pre>
 			</div>
 		{/if}
 		{#if rest !== null}
 			<details class="rest">
 				<summary>{lead === null && diff === null ? 'Arguments' : 'All arguments'}</summary>
-				<pre class="code">{rest}</pre>
+				<pre class="code">{reveal(rest)}</pre>
 			</details>
+		{/if}
+		{#if hidden}
+			<p class="hidden-warn">
+				This call contains hidden or reordering characters. They are shown as ⟨…⟩ markers.
+			</p>
 		{/if}
 		<p class="reason">{approval.reason}</p>
 		{#if approval.sandbox}
@@ -335,6 +344,12 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-2);
+	}
+
+	.hidden-warn {
+		margin: 0;
+		color: var(--color-warn);
+		font-size: var(--text-sm);
 	}
 
 	.lead {

@@ -32,6 +32,7 @@ from .autonomy.charter import Charter
 from .config_editor_wire import ConfigEdit, ConfigModelDef
 from .effort import LEGACY_ULTRACODE, EffortLevel
 from .logging import redact_secrets, redact_structure
+from .reveal import reveal
 from .router import TierName
 
 # Current protocol version
@@ -2772,6 +2773,12 @@ class ApprovalRequest(DaemonEvent):
     # TD-5268: the child that is asking. None: the session's own agent.
     # Additive; an older viewer reads the same thing in ``summary``.
     worker: ApprovalWorker | None = None
+
+    @field_validator("summary")
+    @classmethod
+    def _summary_shows_what_runs(cls, value: str) -> str:
+        # RENDERSEC-02: every reader of an approval sees the logical order.
+        return reveal(value)
 
 
 class QuestionOption(BaseModel):
