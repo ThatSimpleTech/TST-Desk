@@ -24,7 +24,6 @@
 	import LocalServerScan from './LocalServerScan.svelte';
 
 	let urlInput = $state('');
-	let keyInput = $state('');
 	let filter = $state('');
 	let labelInput = $state('');
 	let descriptionInput = $state('');
@@ -133,7 +132,7 @@
 							type="password"
 							autocomplete="off"
 							placeholder="sk-…"
-							bind:value={keyInput}
+							bind:value={form.apiKey}
 						/>
 					</label>
 					{#if form.listing}
@@ -146,8 +145,8 @@
 						<button
 							class="btn btn--primary"
 							type="button"
-							disabled={keyInput.trim().length === 0 || form.listing}
-							onclick={() => listModels(keyInput)}>List models</button
+							disabled={form.apiKey.trim().length === 0 || form.listing}
+							onclick={() => listModels(form.apiKey)}>List models</button
 						>
 					</div>
 				{:else if form.sub === 'pick'}
