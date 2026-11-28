@@ -50,6 +50,8 @@ describe("approvalFromEvent", () => {
       worker: null,
       // TD-5294: not a shell call.
       sandbox: null,
+      // TD-5327: the daemon sent no preview.
+      diff: null,
     });
   });
 

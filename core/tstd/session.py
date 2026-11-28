@@ -925,6 +925,7 @@ class Session:
         transition, and ``running`` resumes when the last one resolves.
         """
         from .protocol import ApprovalRequest as ApprovalRequestEvent
+        from .tools.diff_preview import preview_write_diff
 
         denial = self.unattended_denial(reason)
         if denial is not None:
@@ -968,6 +969,7 @@ class Session:
                 proposed_always_allow=rule_summary(proposed) if proposed is not None else None,
                 worker=worker,
                 sandbox=self._approval_sandbox(tool.name, arguments),
+                diff=preview_write_diff(tool.name, arguments, Path(self.workspace_path)),
                 seq=1,
             )
         )

@@ -8,7 +8,7 @@
 	import { onMount } from 'svelte';
 	import { ARM_MS, cardKey, clickDecides, newArming, notePress } from '../approval-arming';
 	import Icon from './Icon.svelte';
-	import { alwaysAllowLabel, isAlwaysAllowable, isDangerous, workerLine } from '../approval';
+	import { alwaysAllowLabel, diffHeadline, isAlwaysAllowable, isDangerous, workerLine } from '../approval';
 	import { alwaysAllow, approve, canDecide, deny } from '../approval-store.svelte.js';
 	import { approvalWaitCopy } from '../machines';
 	import { machineNameFor } from '../machines.svelte.js';
@@ -64,7 +64,9 @@
 			? (approval.arguments as Record<string, unknown>)
 			: {}
 	);
-	let diff = $derived(typeof args.diff === 'string' ? args.diff : null);
+	// APPROVE-03: the daemon's would-be diff for a write; no tool has a
+	// `diff` argument, so this branch never showed before.
+	let diff = $derived(approval.diff ?? (typeof args.diff === 'string' ? args.diff : null));
 	let lead = $derived.by(() => {
 		for (const key of LEAD_KEYS) {
 			const value = args[key];
@@ -129,6 +131,7 @@
 
 	<div class="body">
 		{#if diff !== null}
+			<p class="diff-head">{diffHeadline(diff)}</p>
 			<pre class="code diff" aria-label="Proposed change">{#each diffLines(diff) as line}<span class="diff-line diff-line--{classifyDiffLine(line)}">{line}</span>{'\n'}{/each}</pre>
 		{/if}
 		{#if lead !== null}
@@ -362,10 +365,17 @@
 	}
 
 	/* The diff gets more room than an argument dump: it is the decision. */
+	.diff-head {
+		margin: 0;
+		font-size: var(--text-xs);
+		color: var(--color-ink-secondary);
+	}
+
 	.diff {
 		white-space: pre;
 		overflow-x: auto;
-		max-height: calc(var(--space-16) * 2);
+		/* Tall enough to read a change before approving it (APPROVE-03). */
+		max-height: calc(var(--space-16) * 5);
 	}
 
 	.diff-line { display: inline; }
