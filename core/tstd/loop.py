@@ -2218,6 +2218,17 @@ async def agent_loop(
         session.consult_tally.used = 0
         clear_turn_writes(session)
         turn_start = time.time()
+        # PERF2-07: a chat's call and clock caps count per turn. Counted from
+        # the loop's start they were a lifetime limit, and the clock was the
+        # app's uptime: every chat refused its next message after 200 calls
+        # or 8 hours. An autonomy run keeps its own whole-run count.
+        if not session.autonomy:
+            _session_start = turn_start
+            _iterations = 0
+            if session.delegate_runtime is not None:
+                session.delegate_runtime.session_start = turn_start
+                session.delegate_runtime.iterations = 0
+                session.delegate_runtime.child_calls = 0
         # TD-5118: imports a deny-and-continue run refused.  No person
         # answered, so they stay out for this turn only; the next turn,
         # whoever sends it, asks again.
@@ -2639,6 +2650,16 @@ async def agent_loop(
                 await session.wait_for_resume()
                 if session.cancel_requested or session.stop_turn_requested:
                     break
+                # PERF2-07: Resume past a call or clock cap is the person
+                # granting another stretch, as the banner says. The spend
+                # cap is money, so it still waits for the cap to be raised.
+                if not violation.startswith("spend cap"):
+                    _session_start = time.time()
+                    _iterations = 0
+                    if session.delegate_runtime is not None:
+                        session.delegate_runtime.session_start = _session_start
+                        session.delegate_runtime.iterations = 0
+                        session.delegate_runtime.child_calls = 0
             if session.cancel_requested:
                 break
             if session.stop_turn_requested:

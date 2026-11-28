@@ -2946,8 +2946,8 @@ sent while it writes is refused with a note to send it again (TD-5161). There is
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `spend_usd` | float ≥ 0 | `25.0` | Session spend, in dollars, that pauses the run. Settings → Budget writes this for the open workspace. Until it is set, the built-in $25 pause still applies and the title bar does not show a budget. |
-| `wall_clock_hours` | float ≥ 0 | `8.0` | Session runtime, in hours, that pauses the run. |
-| `max_iterations` | int ≥ 1 | `200` | Loop iterations that pause the run. |
+| `wall_clock_hours` | float ≥ 0 | `8.0` | Hours one turn may run before it pauses; an autonomy run counts its whole run (TD-5311). Resume grants another stretch. |
+| `max_iterations` | int ≥ 1 | `200` | Model calls one turn may make, delegated workers' included, before it pauses; an autonomy run counts its whole run (TD-5311). Resume grants another stretch. |
 | `shell_memory_mb` | int ≥ 64 \| null | `null` | Memory, in MiB, that one shell command may use: all its processes together in a systemd scope or container, but each process on its own under the `ulimit` fallback (TD-5160). `null` is half of the machine's RAM. A command over it is killed; it does not pause the run. See below. |
 
 The first three are checked **before every model call**, in that order, and all three trigger at
