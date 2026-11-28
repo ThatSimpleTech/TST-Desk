@@ -228,6 +228,9 @@ export function openAddModel(): void {
 /** Step 1: the server's API URL. A server on this computer skips the key. */
 export function setModelUrl(url: string): void {
 	const form = onboarding.model;
+	// ONBOARD-02: a key belongs to the server it was typed for. A different
+	// URL starts with an empty field, so one click cannot send it elsewhere.
+	if (url.trim() !== form.baseUrl) form.apiKey = "";
 	form.baseUrl = url.trim();
 	form.listError = "";
 	if (isLocalUrl(form.baseUrl)) {
