@@ -297,6 +297,7 @@ from tstd.protocol import (
     SteerPoint,
     StopCheck,
     StopCheckItem,
+    StoreRecovered,
     SubmitLineComments,
     SwitchPreset,
     TaskList,
@@ -1672,6 +1673,9 @@ FIXTURES = {
         summary="Fixed the parser; 12 tests pass.",
         transcript=[WorkerStep(kind="reply", text="Fixed the parser; 12 tests pass.")],
         branch="tst/child-1",
+    ),
+    "store_recovered": StoreRecovered(
+        store="sessions", kept_as="sessions.json.damaged-20261128T040000Z", from_backup=3, rebuilt=1
     ),
     "phone_change": PhoneChange(
         device_name="Pixel",

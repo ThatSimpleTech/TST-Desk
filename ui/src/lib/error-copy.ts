@@ -387,3 +387,23 @@ export function daemonErrorCopy(code: string, message: string): NoticeSpec {
 	}
 	return { severity: "toast", title: `Daemon error: ${code}`, body: message };
 }
+
+/** A store file the daemon could not read at start (ERR2B-04). A banner:
+ *  the person needs to know their list may be short, and where the file is. */
+export function storeRecoveredNotice(event: {
+  store: "sessions" | "jobs";
+  kept_as: string;
+  from_backup: number;
+  rebuilt: number;
+}): NoticeSpec {
+  const what = event.store === "sessions" ? "chat list" : "scheduled jobs";
+  const back: string[] = [];
+  if (event.from_backup > 0) back.push(`${event.from_backup} from the last good copy`);
+  if (event.rebuilt > 0) back.push(`${event.rebuilt} rebuilt from their folders`);
+  const recovered = back.length > 0 ? `Recovered ${back.join(" and ")}.` : "Nothing could be recovered from it.";
+  return {
+    severity: "banner",
+    title: `Your ${what} file could not be read`,
+    body: `${recovered} The unreadable file was kept as ${event.kept_as} in the data folder and will not be written over.`,
+  };
+}

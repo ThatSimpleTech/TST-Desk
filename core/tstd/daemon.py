@@ -462,6 +462,7 @@ from .protocol import (
     SteeringEdit,
     SteeringReject,
     StopTurn,
+    StoreRecovered,
     SubmitLineComments,
     SwitchPreset,
     TestEmail,
@@ -557,6 +558,7 @@ from .scheduler.runner import (
 )
 from .scheduler.runner import SendFn as NotifySendFn
 from .scheduler.store import delete_job, get_job, list_jobs, save_job
+from .scheduler.store import recovery as jobs_recovery
 from .scheduler.templates import (
     TemplateDraft,
     TemplateError,
@@ -2546,6 +2548,20 @@ class Daemon:
                         fix=row.fix,
                     )
                 )
+
+        # ERR2B-04: a store that could not be read stays visible here too.
+        for event in self._store_recoveries():
+            checks.append(
+                DiagnosticCheck(
+                    name=f"store:{event.store}",
+                    status="warn",
+                    detail=(
+                        f"{'sessions.json' if event.store == 'sessions' else 'jobs.json'} could "
+                        f"not be read and was kept as {event.kept_as}. Read back from the backup: "
+                        f"{event.from_backup}; rebuilt from their folders: {event.rebuilt}."
+                    ),
+                )
+            )
 
         # TD-5279: a phone permission left on is worth seeing outside Settings.
         phone_row = self.phone_store.doctor_row()
@@ -7538,8 +7554,26 @@ class Daemon:
         if task is not None and not task.done():
             task.cancel()
 
+    def _store_recoveries(self) -> list[StoreRecovered]:
+        """ERR2B-04: each store that could not be read at start, and what came back."""
+        found = [self._session_store.recovery, jobs_recovery(self.data_dir)]
+        return [
+            StoreRecovered(
+                store=r.store,  # type: ignore[arg-type]
+                kept_as=r.kept_as,
+                from_backup=r.from_backup,
+                rebuilt=r.rebuilt,
+            )
+            for r in found
+            if r is not None
+        ]
+
     async def _on_handshake(self, connection: Any) -> None:
         await self.hub.on_handshake(connection)
+        if self.ws_server.peer_view(connection).loopback:
+            for event in self._store_recoveries():
+                with contextlib.suppress(Exception):
+                    await connection.send(event.model_dump_json())
         if self._cu_killed:
             # TD-5223: a window that opens while stopped shows it at once.
             with contextlib.suppress(Exception):

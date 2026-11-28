@@ -2890,6 +2890,24 @@ class CheckpointNotice(DaemonEvent):
     message: str
 
 
+class StoreRecovered(DaemonEvent):
+    """A store file could not be read at start and was kept aside (ERR2B-04).
+
+    Sent to each of this computer's windows when it connects, for as long as
+    the daemon runs. ``store`` is ``sessions`` or ``jobs``; ``kept_as`` the
+    damaged file's new name beside it, never written again; ``from_backup``
+    the rows read back from the last good copy; ``rebuilt`` the chats
+    rebuilt from their own folders.
+    """
+
+    type: Literal["store_recovered"] = "store_recovered"
+    seq: int = 1
+    store: Literal["sessions", "jobs"]
+    kept_as: str
+    from_backup: int
+    rebuilt: int
+
+
 class VerifyStarted(DaemonEvent):
     """An after-write review started running (TD-5158).
 
@@ -5504,6 +5522,7 @@ DaemonEventT = Annotated[
     | PairingCode
     | PairingCompleted
     | PhoneChange
+    | StoreRecovered
     | PhonePermissionLapsed
     | McpImportPreview
     | MachineList
@@ -5779,6 +5798,7 @@ _KNOWN_EVENT_TYPES = frozenset(
         "pairing_code",
         "pairing_completed",
         "phone_change",
+        "store_recovered",
         "phone_permission_lapsed",
         "mcp_import_preview",
         "machine_list",
