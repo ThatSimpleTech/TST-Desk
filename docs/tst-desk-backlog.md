@@ -2197,7 +2197,7 @@ Tauri window once TD-1004's chat pane drives real turns.
 **Acceptance criteria:**
 - [x] Card renders in place with tool, arguments, decision class, and reason
 - [x] Actions: Approve, Deny, Always allow in this workspace
-- [x] Keyboard accessible; focus moves to the card on appearance
+- [x] Keyboard accessible; focus moves to the card on appearance (superseded by TD-5307: the card is announced and no longer takes focus)
 - [x] Dangerous actions visually distinct
 - [x] Denial offers an optional note passed back to the model
 - [x] Resolved cards remain in the timeline showing what was chosen
@@ -14987,3 +14987,147 @@ older build once on newer data emptied History for good.
 
 **Notes:** a data-folder version stamp, a recovery screen and rebuilding
 the list from `sessions/*/` are fix-first item 2.
+
+
+### TD-5307 — A new approval card cannot be answered by the last gesture
+
+Inspection findings APPROVE-01 and INTERACT-02 (both critical). A card took
+keyboard focus when it appeared and plain Enter approved it, so a person
+typing the next message, or pressing Enter in Settings, ran a command
+unseen. And a turn's second gated call mounted under the unmoved pointer
+within 90 ms, so a double-click, a second Enter or a held Enter approved it.
+
+- [x] A new card does not take focus; it is announced through a live region
+      (`approval-arming-component.test.ts`).
+- [x] For 400 ms after it appears the card's buttons are inert, and visibly
+      so (`aria-disabled`, dimmed).
+- [x] A pointer click decides only when its press began after the card
+      armed, so the second click of a double-click never does.
+- [x] Plain Enter never approves; Ctrl+Enter (⌘+Enter on a Mac) does, from
+      inside the card, once armed. Esc denies once armed.
+- [x] Any auto-repeated key inside the card is swallowed.
+- [x] The tray reveal still focuses the card the person went to.
+
+**Size:** 2 · **Depends on:** TD-1007 · **Status:** Done
+
+### TD-5308 — Nothing in a chat message styles the app
+
+Inspection finding CHAT-01 (critical). A `<style>` block or a `style`
+attribute in a reply, or in the person's own pasted text, survived the
+sanitizer and restyled the whole window: it could blank it on every launch
+or lay a fake full-window prompt over the approval cards.
+
+- [x] `style`, `link`, `base` and `meta` tags and every `style` attribute are
+      stripped from chat HTML, text kept (`markdown-style.test.ts`).
+- [x] A `<style>` inside an `<svg>` in a message goes too; one in a code
+      fence stays text.
+- [x] A mermaid diagram's own `%%{init}%%` directive can no longer set
+      `themeCSS`, `themeVariables`, the theme or its fonts: mermaid writes
+      those into the SVG's `<style>`.
+
+**Size:** 1 · **Depends on:** TD-4807 · **Status:** Done
+
+**Notes:** the allow-list sanitizer and a shadow root for chat HTML are
+fix-first item 5, not this point fix.
+
+### TD-5309 — Every config.yaml write loads before it lands
+
+Inspection findings ONBOARD-01, SETMODEL-01 and SETMODEL-02 (all critical).
+The writers edit config.yaml by line to keep its comments. Under a YAML alias
+(`worker: *main`, the shape docs/models.md teaches) the background card
+refresh and the Build a team fields inserted keys that broke the file; under
+an anchor they silently changed every role sharing it. Removing a key a model
+used deleted the secret, cut the catalog row and then failed to unbind it.
+Each left a config.yaml the daemon could not start on.
+
+- [x] Every config.yaml writer builds the would-be file and loads it as the
+      daemon would before replacing the file; a refusal leaves the file
+      byte for byte as it was (`test_config_write_safety.py`).
+- [x] A role written as `*alias` or `&anchor` is refused by the slug, key and
+      card writers with one sentence; a role of its own beside it saves.
+- [x] The card refresh over every docs/models.md example either writes a
+      file that loads or leaves it untouched, and a refused write is shown
+      as a failed write, never "Updated automatically".
+- [x] Removing a key: unbound from local models first, catalog row next,
+      secret last; refused, naming the model, while a hosted model uses it
+      (unbinding would send the default key to that model's host).
+- [x] A copy of the live owner config (seven models, two `fast:` blocks)
+      loads, and all 63 tier writes over it produce a file that loads.
+
+**Size:** 3 · **Depends on:** TD-1717, TD-5185, TD-5197 · **Status:** Done
+
+**Notes:** expanding a shared role into its own entry from Settings, and a
+recovery screen for an invalid config, are fix-first item 2.
+
+### TD-5311 — An interactive chat's call and clock caps count per turn
+
+Inspection finding PERF2-07. `max_iterations` (200) and `wall_clock_hours`
+(8) counted from the moment a session's loop started, never per turn, so a
+chat stopped for good after 200 model calls, or 8 hours of app uptime (a
+restored chat's loop starts with the daemon). Resume re-checked the same
+counter and paused again; only a hand-written `.tst/config.yaml` got out.
+
+- [x] For an interactive chat both count from the start of each turn,
+      workers' calls included (`test_cap_enforcement.py::TestPerTurn`).
+- [x] The clock is the turn's, not the app's: a chat idle past the cap
+      still answers its next message.
+- [x] Resume past a call or clock cap grants another stretch; the spend cap
+      still waits until it is raised.
+- [x] An autonomy run keeps counting its whole run.
+
+**Size:** 1 · **Depends on:** TD-707, TD-5195 · **Status:** Done
+
+### TD-5312 — Neither trust store trusts the distrusted emSign roots
+
+Inspection finding SUPPLY-01. 0.5.0's daemon shipped certifi 2026.7.22 (with
+"emSign ECC Root CA - G3", PYSEC-2026-4320) and the updater shipped
+webpki-roots 1.0.9 (RUSTSEC-2026-0381), rustls-webpki 0.103.15
+(RUSTSEC-2026-0382) and rustls 0.23.44.
+
+- [x] certifi 2026.11.20; the G3 root is gone (`test_trust_roots.py`).
+- [x] webpki-roots 1.0.12, rustls-webpki 0.103.17, rustls 0.23.46 in
+      `shell/Cargo.lock`.
+
+**Size:** 1 · **Status:** Done
+
+**Notes:** the OS trust store (truststore, rustls-platform-verifier) and an
+audit gate in CI are fix-first item 12 and SUPPLY-03.
+
+### TD-5313 — Enter during IME composition, and AltGr off the quick-switch
+
+Inspection findings COMPOSER-08 and INTERACT-03 (both high).
+
+- [x] Enter that belongs to an input method (`isComposing`, `keyCode` 229, or
+      WebKit's Enter just after `compositionend`) never sends from the
+      composer, its slash palette, an inline message edit or a question's
+      text answer (`ime-composer.test.ts`, `ime-altgr.test.ts`).
+- [x] AltGr, which Windows reports as Ctrl+Alt, is never the model
+      quick-switch: not when `getModifierState('AltGraph')` says so, nor off
+      a Mac when the key typed is anything but the digit. The German, French
+      and Spanish digit-row characters type again.
+- [x] Ctrl+Alt+digit that types the digit, and ⌘⌥digit on a Mac, still
+      switch.
+
+**Size:** 1 · **Depends on:** TD-5236 · **Status:** Done
+
+### TD-5314 — The daemon log holds no URL query or credential, and is owner-only
+
+Inspection findings LIVE2-01 (high) and LIVE-08. httpx logged every request
+with its full URL: on the real install, 3,245 lines with web-search words,
+fetched addresses with their parameters, and the LAN and tailnet addresses
+of the user's model servers. The log was 0664 and audit.db 0644.
+
+- [x] The httpx and httpcore loggers are capped at WARNING
+      (`test_log_privacy.py`).
+- [x] Model calls, web search and web fetch log one `http request` line
+      through the app logger: method and scheme, host, port and path, never
+      user info, query or fragment.
+- [x] Every log line has its URLs' query strings cut, in the message, the
+      exception and the extra fields.
+- [x] `redact_secrets` also redacts URL user info on every output path; it
+      keeps query strings, because it also cleans what the agent reads.
+- [x] The log file and audit.db are 0600; the log folder is made 0700.
+
+**Size:** 2 · **Depends on:** TD-1102, TD-1405 · **Status:** Done
+
+**Notes:** scrubbing logs already on disk is not done here: the log rotates.
