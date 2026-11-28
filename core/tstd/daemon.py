@@ -1651,6 +1651,7 @@ class Daemon:
             cu_mode=self.cu_policy.mode,
             cu_unhide_on_finish=self.cu_policy.unhide_on_finish,
             cu_denied_apps=list(self.cu_policy.denied_apps),
+            cu_policy_damaged=self.cu_policy.damaged,
             judgments_verification=self.config.judgments.verification,
             judgments_semantic_breaker=self.config.judgments.semantic_breaker,
             judgments_candidate_selection=self.config.judgments.candidate_selection,

@@ -37,6 +37,13 @@
 		<span class="badge">Beta</span>
 	</div>
 	<p class="hint">Not available in cloud sessions, which don't run on this computer.</p>
+	{#if settings.cuPolicyDamaged}
+		<p class="damaged" role="alert">
+			Computer use is off because its policy file could not be read: {settings.cuPolicyDamaged}.
+			The next change here saves a new file and keeps the old one beside it as
+			<code>config.yaml.damaged-…</code>.
+		</p>
+	{/if}
 </div>
 
 <div class="row">
@@ -290,6 +297,10 @@
 	}
 
 	.status--stale {
+		color: var(--color-warn, var(--color-err));
+	}
+	.damaged {
+		margin: var(--space-2) 0 0;
 		color: var(--color-warn, var(--color-err));
 	}
 </style>
