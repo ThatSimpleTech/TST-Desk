@@ -144,6 +144,7 @@
 				shiftKey: event.shiftKey,
 				altKey: event.altKey,
 				code: event.code,
+				altGraph: event.getModifierState?.('AltGraph') === true,
 			},
 			{
 				workspaceMenuOpen: workspaces.menuOpen,
@@ -190,6 +191,7 @@
 				ctrlKey: event.ctrlKey,
 				shiftKey: event.shiftKey,
 				altKey: event.altKey,
+				altGraph: event.getModifierState?.('AltGraph') === true,
 			});
 			if (slot !== null) pickSlot(slot);
 		} else openSettings();

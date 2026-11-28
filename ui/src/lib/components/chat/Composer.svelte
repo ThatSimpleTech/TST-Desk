@@ -30,6 +30,7 @@
 		type AttachmentRefusal,
 	} from "../../attachments";
 	import { shouldSubmit } from "../../chat-store";
+	import { composing } from "../../ime";
 	import { capturePhoto, captureRoute, photoName } from "../../camera";
 	import { detectPlatform } from "../../sent-files";
 	import { COMPOSER_LINE_PADDING } from "../../composer-layout";
@@ -316,7 +317,16 @@
 		if (path !== null) loadCommands(path);
 	}
 
+	// WebKit ends a composition before it delivers the Enter that accepted
+	// it, so the flag drops one task after compositionend (COMPOSER-08).
+	let imeActive = false;
+
+	function compositionEnded(): void {
+		setTimeout(() => (imeActive = false), 0);
+	}
+
 	function handleKeydown(event: KeyboardEvent): void {
+		if (composing(event, imeActive)) return;
 		if (slashHits.length > 0 && event.key === "Tab") {
 			event.preventDefault();
 			pickSlash(slashHits[0].name);
@@ -426,6 +436,8 @@
 					aria-controls={paletteOpen ? "slash-list" : undefined}
 					aria-autocomplete="list"
 					onkeydown={handleKeydown}
+					oncompositionstart={() => (imeActive = true)}
+					oncompositionend={compositionEnded}
 					onpaste={handlePaste}
 					onfocus={handleFocus}
 				></textarea>

@@ -14,6 +14,7 @@
 	// A send_file call's cards sit right after its fold, outside it, so they
 	// stay when the fold collapses (TD-5144).
 	import type { ChatMessage } from "../../chat-store";
+	import { composing } from '../../ime';
 	import { forkFrom, requestCompact, setBranch } from "../../chat-store.svelte.js";
 	import { openRestore, takeUnsentEdit } from "../../rewind-store.svelte.js";
 	import { hasReasoning } from "../../reasoning-disclosure.svelte.js";
@@ -208,6 +209,7 @@
 					class="edit"
 					bind:value={editDraft}
 					onkeydown={(e) => {
+						if (composing(e)) return;
 						if (e.key === 'Enter' && !e.shiftKey) {
 							e.preventDefault();
 							commitEdit();

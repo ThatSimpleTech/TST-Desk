@@ -5,6 +5,7 @@
 	// Skip (or Esc) tells the model the person chose not to answer. The
 	// phone shows this same card, so every option is a full-size tap target.
 	import { onMount, untrack } from 'svelte';
+	import { composing } from '../ime';
 	import Icon from './Icon.svelte';
 	import { ANSWER_TEXT_MAX, canSend, emptyDrafts, sendsOnTap, toggle, type Draft } from '../question';
 	import { answer, canAnswer, decline, type QuestionCard } from '../question-store.svelte.js';
@@ -69,6 +70,7 @@
 	}
 
 	function onTextKeydown(event: KeyboardEvent): void {
+		if (composing(event)) return;
 		if (event.key === 'Enter' && !event.shiftKey) {
 			event.preventDefault();
 			submit();
