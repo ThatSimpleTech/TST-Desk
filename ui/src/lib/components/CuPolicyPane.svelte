@@ -116,8 +116,9 @@
 <div class="denied">
 	<p class="title">Denied apps</p>
 	<p class="hint">
-		Any request the agent makes to access these apps is automatically rejected. It may still
-		affect them indirectly through actions in allowed apps.
+		While one of these apps is in front, the agent cannot click, type, scroll or take a
+		screenshot, and its requests to read or open them are rejected. It can still click on one's
+		window behind another app, or affect them through actions in allowed apps.
 	</p>
 	{#if settings.cuDeniedApps.length === 0}
 		<p class="empty">No apps denied. Add an app to automatically reject requests for it.</p>

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from ..cu_indicators import hide_real_display_for_screenshot
 from ..desktop import DesktopDriver, DesktopError
+from ..desktop.denied import refuse_if_denied
 from ..desktop.grounding_client import GroundingLocator, GroundingResult
 from ..desktop.settle import (
     AFTER_MS_SCHEMA,
@@ -228,6 +229,7 @@ async def desktop_screenshot(
     # wait twice — the sidecar tool has its own after_ms (TD-4847).
     wait_ms = bound_ms(after_ms, name="after_ms")
     await pause(wait_ms)
+    await refuse_if_denied(driver)  # CU-02
     with hide_real_display_for_screenshot():
         raw = await driver.screenshot(display=display)
     png = _png_from_driver_json(raw)
@@ -249,6 +251,7 @@ async def desktop_move(
     expect_window: str | None = None,
     tool_call_id: str = "",
 ) -> str:
+    await refuse_if_denied(driver)  # CU-02
     return await driver.move(x=x, y=y, expect_window=expect_window)
 
 
@@ -267,6 +270,7 @@ async def desktop_click(
 ) -> str:
     # Bound before aiming so a bad settle_ms does not capture or click.
     wait_ms = bound_ms(settle_ms, name="settle_ms")
+    await refuse_if_denied(driver)  # CU-02
     aimed_x, aimed_y, grounding = await aim_desktop_click(
         driver,
         x,
@@ -293,6 +297,7 @@ async def desktop_type(
     settle_ms: int | None = None,
 ) -> str:
     wait_ms = bound_ms(settle_ms, name="settle_ms")
+    await refuse_if_denied(driver)  # CU-02
     raw = await driver.type_text(text=text, expect_window=expect_window)
     return await with_foreground(raw, driver, wait_ms)
 
@@ -309,6 +314,7 @@ async def desktop_scroll(
     settle_ms: int | None = None,
 ) -> str:
     wait_ms = bound_ms(settle_ms, name="settle_ms")
+    await refuse_if_denied(driver)  # CU-02
     raw = await driver.scroll(dx=dx, dy=dy, x=x, y=y, expect_window=expect_window)
     return await with_foreground(raw, driver, wait_ms)
 
