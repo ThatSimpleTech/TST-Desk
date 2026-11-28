@@ -63,6 +63,7 @@ from .results import (
     ValidationError,
     truncate_output,
 )
+from .typed_text import mask_typed_text
 
 __all__ = [
     "ToolDispatcher",
@@ -860,9 +861,11 @@ class ToolDispatcher:
         ):
             try:
                 dc = cast(Literal["A", "B"], decision_class.value)
-                # SECUX-01: redacted before the cut, or a key cut short at 200
-                # characters would no longer match its pattern.
-                what = f"{name} {redact_secrets(json.dumps(arguments, sort_keys=True))[:200]}"
+                # CU-08: the ledger in the workspace gets the length of typed
+                # text. SECUX-01: redacted before the cut, or a key cut short at
+                # 200 characters would no longer match its pattern.
+                shown = json.dumps(mask_typed_text(name, arguments), sort_keys=True)
+                what = f"{name} {redact_secrets(shown)[:200]}"
                 why = (
                     classification.reason
                     or (classification.rule.id if classification.rule else "")

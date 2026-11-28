@@ -463,7 +463,9 @@ class AuditStore:
         call run without asking (TD-5103). They go in ``allowed_calls`` in
         the same transaction, against this row's id.
         """
-        scrubbed = redact_structure(dict(arguments))
+        from .tools.typed_text import mask_typed_text
+
+        scrubbed = redact_structure(mask_typed_text(name, dict(arguments)))
         cur = self._conn.execute(
             "INSERT INTO tool_calls (session_id, tool_call_id, name, arguments,"
             " decision_class, status, result_hash, ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
