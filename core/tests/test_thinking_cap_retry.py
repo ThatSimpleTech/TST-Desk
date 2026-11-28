@@ -183,12 +183,27 @@ async def test_both_attempts_at_the_cap_fail_naming_the_setting(tmp_path: Path) 
     assert _shown(session) == text
 
 
-async def test_an_empty_reply_not_at_the_cap_is_not_retried(tmp_path: Path) -> None:
+async def test_an_empty_reply_not_at_the_cap_is_asked_once_more(tmp_path: Path) -> None:
+    # LIVE2-13: an empty completion ended long unattended turns as failed.
     thinks_then_stops = Script(kind="stream", reasoning="Hmm, well")
-    session, turn, mock = await _run(tmp_path, [thinks_then_stops], _config())
+    session, turn, mock = await _run(
+        tmp_path, [thinks_then_stops, Script(kind="stream", content=_ANSWER)], _config()
+    )
+
+    assert (turn.failed, turn.error_code) == (False, None)
+    assert len(_brain_calls(mock)) == 2
+    # Both calls carried the same request: nothing was added in between.
+    first, second = _brain_calls(mock)
+    assert first.messages == second.messages
+    assert _last_assistant(session) == _ANSWER
+
+
+async def test_two_empty_replies_fail_the_turn(tmp_path: Path) -> None:
+    empty = Script(kind="stream", reasoning="Hmm, well")
+    session, turn, mock = await _run(tmp_path, [empty, empty], _config())
 
     assert (turn.failed, turn.error_code) == (True, "empty_completion")
-    assert len(_brain_calls(mock)) == 1
+    assert len(_brain_calls(mock)) == 2
     assert not _of(session, AssistantRetract)
     assert _last_assistant(session) == _NO_ANSWER
 
@@ -372,7 +387,7 @@ async def test_a_backup_that_thought_to_its_cap_names_its_own_setting(tmp_path: 
     ("scripts", "code", "sent", "finish"),
     [
         ([_thinks_to_cap(), _thinks_to_cap()], "output_cap_thinking", _RAISED, "length"),
-        ([Script(kind="stream", reasoning="Hmm")], "empty_completion", _CAP, "stop"),
+        ([Script(kind="stream", reasoning="Hmm")] * 2, "empty_completion", _CAP, "stop"),
     ],
 )
 async def test_the_empty_reply_warning_names_model_cap_reason_prompt_and_code(
@@ -408,17 +423,21 @@ async def test_a_near_full_context_adds_the_new_chat_note(
     # A single turn cannot be compacted, so the prompt stays past the
     # budget (0.8 of 7000) and leaves no room for a larger cap.
     session, turn, mock = await _run(
-        tmp_path, [script], _config(cap=1_000, window=8_000), message="hi " + "word " * 4_600
+        tmp_path,
+        [script, script],
+        _config(cap=1_000, window=8_000),
+        message="hi " + "word " * 4_600,
     )
 
     assert (turn.failed, turn.error_code) == (True, code)
-    assert len(_brain_calls(mock)) == 1
+    # No room for a larger cap; an empty reply is still asked once more.
+    assert len(_brain_calls(mock)) == (2 if code == "empty_completion" else 1)
     assert _last_assistant(session).endswith(" " + _CONTEXT_NOTE)
 
 
 async def test_the_note_is_left_out_when_the_context_is_not_near_full(tmp_path: Path) -> None:
     session, _, _ = await _run(
-        tmp_path, [Script(kind="stream", reasoning="Hmm")], _config(cap=1_000, window=8_000)
+        tmp_path, [Script(kind="stream", reasoning="Hmm")] * 2, _config(cap=1_000, window=8_000)
     )
     assert _last_assistant(session) == _NO_ANSWER
 
