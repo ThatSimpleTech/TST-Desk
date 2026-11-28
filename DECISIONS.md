@@ -20715,3 +20715,71 @@ ends the same way); writing a larger cap into the tier's config (that is the
 user's setting, and the line says where to change it); more than one cap
 retry (each is a long, paid call); limiting the thinking with OpenRouter's
 `reasoning` fields (point 4).
+
+## 2026-11-28 — TD-5307: arming the approval card (Class B)
+
+**Decision:** `ui/src/lib/approval-arming.ts` holds the rules; the card uses
+them. A new card does not focus itself (it carries a `role="status"`
+announcement), is inert for 400 ms (`ARM_MS`), counts a pointer click only
+when the press began after arming (a keyboard activation of a button the
+person focused counts once armed), approves on Ctrl/⌘+Enter rather than
+Enter, and swallows every auto-repeated key in a capturing handler.
+
+**Rationale:** the inspection reproduced both ways through: a focus grab
+plus one-key Approve, and a second card under the pointer within 90 ms. The
+press-after-arming rule closes the double-click tail even past 400 ms. This
+reverses TD-1007's "focus moves to the card on appearance".
+
+**Rejected:** moving the next card's button away from the last one's spot
+(layout that shifts per card is its own hazard); one card for a whole batch
+(a protocol change, not a point fix for 0.5.1).
+
+## 2026-11-28 — TD-5308: chat HTML carries no styling (Class A, noted)
+
+`renderMarkdown` forbids `style`, `link`, `base` and `meta` and the `style`
+attribute on top of TD-4807's form controls; mermaid gets a `secure` list
+that adds its theme and font keys to its own defaults, because `themeCSS` from
+a diagram directive is written into the SVG's `<style>`. A deny addition
+rather than the allow-list rewrite, which is fix-first item 5.
+
+## 2026-11-28 — TD-5309: config writes are checked, shared roles refused (Class B)
+
+**Decision:** `config_write.write_config` (and `check_config_text`) is the
+one way a config.yaml writer replaces the file: it parses the would-be text,
+loads it with `config_from_data` (ConfigError or ValidationError becomes a
+ConfigError) and only then does the atomic replace. `refuse_shared_role`
+stops the slug, key and card writers at a role whose value is a YAML alias
+or anchor. Key removal unbinds local models, drops the row, reloads, and
+deletes the keychain item last; a key a hosted model uses is refused.
+
+**Rationale:** one check covers every writer and every YAML shape a line
+edit cannot read, now and later. Refusing a hosted binding rather than
+unbinding it: a hosted tier with no key falls back to the default key and
+would send that to the model's own host (fix-first item 6).
+
+**Rejected:** a YAML round-trip writer (loses every comment the shipped
+config teaches with); expanding aliases automatically (it rewrites the
+person's file shape without asking).
+
+## 2026-11-28 — TD-5311: interactive caps count per turn (Class B)
+
+The loop resets its call counter, its clock and the delegate runtime's
+counters at every turn start unless the session is an autonomy run, and
+again when the person resumes past a call or clock cap. Spend is not reset:
+it is the session's money, and its banner already says to raise it first.
+A "Raise the limit" control in Settings stays a separate story.
+
+## 2026-11-28 — TD-5314: URL queries are cut from logs, not from redact_secrets (Class B)
+
+**Decision:** query strings are stripped on the log path only
+(`logging._for_log`, used by `JSONFormatter` for the message, exception and
+extra fields); `redact_secrets` gains only URL user info. httpx and httpcore
+are capped at WARNING, and `net_log.REQUEST_HOOKS` logs method and host and
+path for the model, web search and web fetch clients.
+
+**Rationale:** the inspection asked for the URL scrubber in `redact_secrets`.
+That function also cleans the session event log, web search results,
+consult answers and the audit store: cutting queries there would break every
+result link the agent reads and every URL in a chat transcript. User info is
+a credential wherever it appears, so it belongs there; a query is only a
+privacy problem in the log.
