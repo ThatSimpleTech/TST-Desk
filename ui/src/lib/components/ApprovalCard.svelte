@@ -17,9 +17,11 @@
 
 	interface Props {
 		approval: PendingApproval;
+		/** Whose chat this is, "title · folder" (JOURNEY2-10). */
+		chat?: string;
 	}
 
-	let { approval }: Props = $props();
+	let { approval, chat = '' }: Props = $props();
 
 	let dangerous = $derived(isDangerous(approval));
 	let alwaysAllowable = $derived(isAlwaysAllowable(approval));
@@ -104,13 +106,14 @@
 	tabindex="-1"
 	bind:this={cardEl}
 	data-approval-card={approval.toolCallId}
-	aria-label={`Approval required: ${approval.summary}`}
+	aria-label={`Approval required${chat ? ` in ${chat}` : ''}: ${approval.summary}`}
 	onkeydowncapture={onKeydown}
 >
-	<p class="announce" role="status">Approval needed: {approval.summary}</p>
+	<p class="announce" role="status">Approval needed{chat ? ` in ${chat}` : ''}: {approval.summary}</p>
 	<header class="head">
 		<span class="head-icon" aria-hidden="true"><Icon name="alert" size={16} /></span>
 		<div class="head-text">
+			{#if chat}<span class="chat">{chat}</span>{/if}
 			<span class="title">{approval.summary}</span>
 			{#if workerLine(approval)}
 				<span class="who" title={approval.worker?.task ?? ''}>{workerLine(approval)}</span>
@@ -215,6 +218,11 @@
 		border-radius: var(--radius-lg);
 		box-shadow: var(--shadow-md);
 		animation: rise var(--dur-enter) var(--ease-out);
+	}
+
+	.chat {
+		font-size: var(--text-xs);
+		color: var(--color-ink-secondary);
 	}
 
 	/* Spoken when the card appears; the card itself does not take focus. */

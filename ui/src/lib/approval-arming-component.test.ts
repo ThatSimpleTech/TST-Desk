@@ -14,7 +14,8 @@ const connection = vi.hoisted(() => {
   return { handlers, sent: [] as Array<Record<string, unknown>> };
 });
 
-vi.mock("./connection-status.svelte.js", () => ({
+vi.mock("./connection-status.svelte.js", async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
   onDaemonEvent: (handler: (event: unknown) => void) => {
     connection.handlers.add(handler);
     return () => connection.handlers.delete(handler);
