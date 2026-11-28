@@ -8,6 +8,7 @@ mod cu_capture;
 mod cu_cf;
 pub mod cu_identity;
 pub mod daemon;
+mod nav_guard;
 mod open_check;
 mod quick_entry;
 mod read_text;
@@ -335,6 +336,8 @@ pub fn run() {
         // TD-5024: first, so a second launch hands over and exits before
         // any other plugin, window or daemon supervisor starts in it.
         .plugin(single_instance::plugin())
+        // RENDERSEC-01: no webview navigates away from the app.
+        .plugin(nav_guard::plugin())
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_denylist(&[quick_entry::WINDOW_LABEL])

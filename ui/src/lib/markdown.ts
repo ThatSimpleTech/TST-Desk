@@ -116,7 +116,17 @@ function ensureConfigured(): void {
 	// href and renders as inert text. The click itself routes through the
 	// Tauri opener in Markdown.svelte.
 	DOMPurify.addHook("afterSanitizeAttributes", (node) => {
-		if (!(node instanceof HTMLAnchorElement)) return;
+		const cls = node.getAttribute("class");
+		if (cls !== null) {
+			const own = cls.split(/\s+/).filter((c) => OWN_CLASS.test(c));
+			if (own.length > 0) node.setAttribute("class", own.join(" "));
+			else node.removeAttribute("class");
+		}
+		// href is allowed on <a> only; anything else that kept one loses it.
+		if (!(node instanceof HTMLAnchorElement)) {
+			node.removeAttribute("href");
+			return;
+		}
 		const href = node.getAttribute("href") ?? "";
 		if (!/^https?:\/\//i.test(href.trim())) {
 			node.removeAttribute("href");
@@ -130,36 +140,54 @@ function ensureConfigured(): void {
 	configured = true;
 }
 
-// Interactive form chrome is forbidden outright (TD-4807): assistant text
-// renders next to real approval cards, and DOMPurify's default profile
-// allows form elements — a lookalike approval form is a phishing surface
-// inside the trust boundary. Stripped tags leave their text behind, which
-// is inert.
+// An allow-list, not a forbid-list (item 5: CHAT-01, RENDERSEC-01, -03, -04,
+// -05). Chat HTML sits in the app's own document next to real approval
+// cards, so anything not named here is dropped, its text kept as inert text:
 //
-// Nor may a message style anything (CHAT-01): chat HTML sits in the app's
-// own document, so a <style> block or a style attribute in a reply or a
-// pasted message restyled the whole window — blanked it on every launch, or
-// laid a fake full-window prompt over the approval cards. Markdown never
-// produces either, and math and diagrams are drawn after this pass. The
-// tags that act on the page rather than the message go with them.
-export const FORBIDDEN_TAGS = [
-	"form",
-	"input",
-	"textarea",
-	"select",
-	"option",
-	"optgroup",
-	"button",
-	"style",
-	"link",
-	"base",
-	"meta",
+// - no style, <style>, <link>, <base> or <meta>: a message must not restyle
+//   or re-base the window (CHAT-01);
+// - no SVG and no image maps: an SVG <a> or an <area> navigated the whole
+//   webview past the link guard (RENDERSEC-01);
+// - no id or name: an element named __TAURI_INTERNALS__ clobbered host
+//   detection on the phone client (RENDERSEC-03);
+// - no role or aria-*: a reply could announce itself to a screen reader as an
+//   assertive modal "TST Desk Security" dialog (RENDERSEC-04);
+// - no src, srcset, poster, background, <img>, media or <picture>: nothing in a
+//   message makes a request (RENDERSEC-05);
+// - no form controls (TD-4807).
+//
+// The CSP stays as the second wall, not the first.
+export const ALLOWED_TAGS = [
+	"p", "br", "hr", "h1", "h2", "h3", "h4", "h5", "h6",
+	"strong", "em", "b", "i", "u", "s", "del", "ins", "mark", "small", "sub", "sup",
+	"code", "pre", "kbd", "samp", "var", "span", "div", "blockquote", "q", "cite", "abbr",
+	"ul", "ol", "li", "dl", "dt", "dd",
+	"a",
+	"table", "thead", "tbody", "tfoot", "tr", "th", "td", "caption",
+	"details", "summary",
 ];
+export const ALLOWED_ATTRS = ["href", "title", "class", "align", "start", "open", "data-copy-btn", "data-display"];
+
+// The classes the renderer itself writes: code blocks and their copy chip,
+// highlight.js tokens, and the math and diagram placeholders drawn after
+// this pass. A class a message names itself must not borrow app styles.
+const OWN_CLASS = /^(?:code-block|copy-btn|hljs(?:-[a-z0-9_-]+)?|language-[a-z0-9_+#-]+|md-katex-[a-z-]+|md-mermaid(?:-src)?)$/;
+
+/** Kept for callers that list what is never allowed (TD-4807). */
+export const FORBIDDEN_TAGS = ["form", "input", "textarea", "select", "option", "optgroup", "button", "style", "link", "base", "meta"];
 export const FORBIDDEN_ATTRS = ["style"];
 
 /** Render markdown to sanitized HTML, safe for {@html}. */
 export function renderMarkdown(md: string): string {
 	ensureConfigured();
 	const html = marked.parse(md, { async: false });
-	return DOMPurify.sanitize(html, { FORBID_TAGS: FORBIDDEN_TAGS, FORBID_ATTR: FORBIDDEN_ATTRS });
+	return DOMPurify.sanitize(html, {
+		ALLOWED_TAGS,
+		ALLOWED_ATTR: ALLOWED_ATTRS,
+		ALLOW_DATA_ATTR: false,
+		ALLOW_ARIA_ATTR: false,
+		FORBID_TAGS: FORBIDDEN_TAGS,
+		FORBID_ATTR: FORBIDDEN_ATTRS,
+		SANITIZE_NAMED_PROPS: true,
+	});
 }
