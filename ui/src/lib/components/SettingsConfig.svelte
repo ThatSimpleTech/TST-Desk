@@ -11,6 +11,7 @@
 	} from '../config-editor.svelte.js';
 	import { pathKey, visibleKeys } from '../config-editor.js';
 	import ConfigSection from './config/ConfigSection.svelte';
+	import { restoreLastGoodConfig, settings } from '../settings.svelte.js';
 	import './config/config-editor.css';
 
 	onMount(() => {
@@ -28,6 +29,25 @@
 </script>
 
 <div class="cfg-root">
+	{#if settings.configError}
+		<div class="cfg-broken" role="alert">
+			<p class="cfg-error">config.yaml did not load when the app started: {settings.configError}</p>
+			{#if settings.configRunningOn === 'last_good'}
+				<p class="cfg-hint">
+					The app is running on the last copy of config.yaml that worked. Restore puts that
+					copy back and keeps the broken file beside it as config.yaml.damaged-….
+				</p>
+				<button class="cfg-restore" type="button" onclick={restoreLastGoodConfig}
+					>Restore the last working copy</button
+				>
+			{:else}
+				<p class="cfg-hint">
+					There is no earlier working copy, so the app is running on the shipped defaults.
+					Fix config.yaml by hand; the next start uses it once it loads.
+				</p>
+			{/if}
+		</div>
+	{/if}
 	<p class="cfg-hint">
 		Every key in config.yaml. A change saves as you make it and applies to new sessions; the
 		comments in the file stay as they are. Reset puts back what TST Desk ships.

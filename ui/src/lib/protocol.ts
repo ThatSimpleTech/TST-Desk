@@ -274,6 +274,11 @@ export interface SetCuIndicators extends ClientMessage {
   show_on_real_display: boolean;
 }
 
+/** SETMODEL-04: put config.yaml's last working copy back. Answered with setup_state. */
+export interface RestoreLastGoodConfig extends ClientMessage {
+  type: "restore_last_good_config";
+}
+
 /** Background vs full-control computer use, denylist, master switch (TD-4830). */
 export interface SetCuPolicy extends ClientMessage {
   type: "set_cu_policy";
@@ -1423,6 +1428,7 @@ export type ClientMessageUnion =
   | Transcribe
   | SetCuIndicators
   | SetCuPolicy
+  | RestoreLastGoodConfig
   | SetWorkspacePin
   | Resume
   | Cancel
@@ -2440,6 +2446,11 @@ export interface SetupState extends DaemonEvent {
   cu_denied_apps?: string[];
   /** CU-20: why the policy file could not be trusted (it reads as Off). */
   cu_policy_damaged?: string | null;
+
+  /** SETMODEL-04: config.yaml did not load at start; the loader's message. */
+  config_error?: string | null;
+  /** What the daemon runs on meanwhile. */
+  config_running_on?: "last_good" | "defaults" | null;
   /** TD-708 dev: judgment-seam toggles. Additive; defaults all off. */
   judgments_verification?: boolean;
   judgments_semantic_breaker?: boolean;

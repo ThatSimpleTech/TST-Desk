@@ -428,6 +428,17 @@ export function eventUnreadableNotice(kind: string): NoticeSpec {
   };
 }
 
+/** SETMODEL-04: config.yaml did not load at start; the app runs on a fallback. */
+export function configBrokenNotice(runningOn: "last_good" | "defaults"): NoticeSpec {
+  const on = runningOn === "last_good" ? "the last copy that worked" : "the shipped defaults";
+  const restore = runningOn === "last_good" ? " and can put the last working copy back" : "";
+  return {
+    severity: "banner",
+    title: "config.yaml could not be loaded",
+    body: `TST Desk started on ${on}. Settings, Configuration says what is wrong${restore}.`,
+  };
+}
+
 export function storeRecoveredNotice(event: {
   store: "sessions" | "jobs" | "audit";
   kept_as: string;

@@ -79,6 +79,7 @@ from .config_bind import call_config_loader
 from .config_editor import apply_edit, build_view, shipped_defaults
 from .config_editor_checks import ConfigEditRefused, dotted
 from .config_editor_wire import ConfigEdit
+from .config_recovery import load_with_recovery, restore_last_good
 from .config_schema import ROOT_MODEL, editor_defs
 from .config_write import (
     delete_credential_entry,
@@ -404,6 +405,7 @@ from .protocol import (
     ResetConfigValue,
     ResetCuPermissions,
     RestoreFiles,
+    RestoreLastGoodConfig,
     Resume,
     ReviewPlan,
     RevokePolicyRule,
@@ -1257,7 +1259,8 @@ class Daemon:
         # A zero-arg test double still injects; a real loader is not caught
         # and retried against the default path (TD-4843).
         self.config_path = config_yaml_path(self.data_dir)
-        self.config = call_config_loader(cached_config, self.config_path)
+        # SETMODEL-04: a config.yaml that does not load never stops the start.
+        self.config, self.config_trouble = load_with_recovery(cached_config, self.config_path)
         self._session_persist = SessionPersist(
             self.data_dir,
             log_max_events=self.config.session.log_max_events,
@@ -1671,6 +1674,8 @@ class Daemon:
             cu_unhide_on_finish=self.cu_policy.unhide_on_finish,
             cu_denied_apps=list(self.cu_policy.denied_apps),
             cu_policy_damaged=self.cu_policy.damaged,
+            config_error=self.config_trouble.error if self.config_trouble else None,
+            config_running_on=self.config_trouble.running_on if self.config_trouble else None,
             judgments_verification=self.config.judgments.verification,
             judgments_semantic_breaker=self.config.judgments.semantic_breaker,
             judgments_candidate_selection=self.config.judgments.candidate_selection,
@@ -1830,6 +1835,7 @@ class Daemon:
     def _reload_user_config(self) -> None:
         """Re-read this daemon's config.yaml, keep the live preset, drop clients."""
         loaded = call_config_loader(load_config, self.config_path)
+        self.config_trouble = None  # the file loads again
         live = self.config.active_preset
         # A live preset the file no longer has (or none yet, TD-5172) falls
         # back to what the loader chose.
@@ -4332,6 +4338,9 @@ class Daemon:
                     COMPUTER_USE, "changed what shows on screen while computer use runs."
                 )
             return (await self._setup_state_event()).model_dump_json()
+
+        if isinstance(msg, RestoreLastGoodConfig):
+            return await self._handle_restore_config()
 
         if isinstance(msg, SetCuPolicy):
             denied = tuple(item.strip() for item in msg.denied_apps if item.strip())
@@ -7283,6 +7292,32 @@ class Daemon:
                 "half of an emoji written as an escape); fix it by hand",
                 in_reply_to=in_reply_to,
             )
+
+    async def _handle_restore_config(self) -> str:
+        """SETMODEL-04: put config.yaml's last working copy back and run on it."""
+        if self.config_trouble is None:
+            return build_error(
+                "config_loads",
+                "config.yaml loads; there is nothing to restore",
+                in_reply_to="restore_last_good_config",
+            )
+        try:
+            kept = await asyncio.to_thread(restore_last_good, self.config_path)
+            if kept is None:
+                return build_error(
+                    "no_last_good_config",
+                    "There is no last working copy of config.yaml to restore. Fix the "
+                    "file by hand; the app runs on the shipped defaults until then.",
+                    in_reply_to="restore_last_good_config",
+                )
+            self._reload_user_config()
+        except (ConfigError, OSError) as exc:
+            return build_error("config_invalid", str(exc), in_reply_to="restore_last_good_config")
+        log.info(
+            "config.yaml restored from its last working copy",
+            extra={"extra_fields": {"kept_as": kept}},
+        )
+        return (await self._setup_state_event()).model_dump_json()
 
     async def _handle_test_email(self, msg: TestEmail) -> str:
         from .notify.email_settings import send_test_email

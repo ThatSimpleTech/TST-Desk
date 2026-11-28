@@ -631,6 +631,16 @@ class SetCuIndicators(ClientMessage):
     show_on_real_display: bool
 
 
+class RestoreLastGoodConfig(ClientMessage):
+    """Put config.yaml's last working copy back (SETMODEL-04).
+
+    Only while config.yaml does not load. The broken file is kept as
+    ``config.yaml.damaged-<stamp>``. Answered with ``setup_state``.
+    """
+
+    type: Literal["restore_last_good_config"] = "restore_last_good_config"
+
+
 class SetCuPolicy(ClientMessage):
     """Background vs full-control computer use, denylist, master switch (TD-4830).
 
@@ -4187,6 +4197,11 @@ class SetupState(DaemonEvent):
     cu_denied_apps: list[str] = Field(default_factory=list)
     # CU-20: why the policy file could not be trusted (it reads as Off), or None.
     cu_policy_damaged: str | None = None
+
+    # SETMODEL-04: config.yaml did not load at start. The loader's message,
+    # and what the daemon runs on instead ("last_good" or "defaults").
+    config_error: str | None = None
+    config_running_on: Literal["last_good", "defaults"] | None = None
     # TD-708/709/710/711 (dev): judgment-seam toggles. Additive; the
     # defaults match the shipped config (everything off), so an older
     # client that ignores them reads the product as unchanged.
@@ -5367,6 +5382,7 @@ ClientMessageT = Annotated[
     | SetVoice
     | SetCuIndicators
     | SetCuPolicy
+    | RestoreLastGoodConfig
     | SetJudgments
     | SetWorkspacePin
     | Resume
@@ -5645,6 +5661,7 @@ _KNOWN_CLIENT_TYPES = frozenset(
         "set_voice",
         "set_cu_indicators",
         "set_cu_policy",
+        "restore_last_good_config",
         "set_workspace_pin",
         "resume",
         "cancel",
