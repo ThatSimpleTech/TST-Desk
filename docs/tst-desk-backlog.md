@@ -15209,3 +15209,105 @@ registered only when no bridge was injected, and inside Tauri one always is.
       answers (`os-notify-actions.test.ts`, with the real bridge injected).
 
 **Size:** 1 · **Status:** Done
+
+### TD-5322 — Stop ends a turn that is waiting on the provider or a retry
+
+Inspection finding ERR2A-05 (high). Stop set the flag, but a turn parked in
+the provider's stream or between retries kept waiting until the call ended.
+
+- [x] The stream's next chunk races the session's turn-abort signal
+      (`abortable.until_abort`), so Stop ends the turn mid-wait and mid-retry
+      (`test_stop_through_retries.py`).
+
+**Size:** 2 · **Status:** Done
+
+### TD-5323 — One-click Remove and Revoke rows ignore the tail of the last gesture
+
+Inspection findings INTERACT-12 and SETMODEL-05 (medium). A key, rule or MCP
+row could be removed by a double-click's second click or a held Enter.
+
+- [x] `row-guard.ts` and `ConfirmButton` give every one-click Remove and Revoke
+      row the approval card's arming rule (`ROW_QUIET_MS`, 400 ms), in API keys,
+      policy rules, MCP servers and the computer-use policy.
+
+**Size:** 2 · **Depends on:** TD-5307 · **Status:** Done
+
+### TD-5324 — Every approval card names its chat, and the bar follows the view
+
+Inspection finding JOURNEY2-10 (medium). A card from a background chat read
+as if it belonged to the chat on screen.
+
+- [x] The card's text, aria-label and announcement name the chat; off the home
+      surface the bar shows a "… is waiting for approval — Review" chip
+      (`approval-context-component.test.ts`).
+
+**Size:** 2 · **Status:** Done
+
+### TD-5325 — "Open session" reaches a parked scheduled run
+
+Inspection finding ARTSCHED-01 (medium). A scheduled run whose session was
+not yet listed opened nothing.
+
+- [x] `findOrFetchSession` asks the daemon for an unlisted session and waits
+      for it; a job list naming an unlisted session refreshes the list.
+
+**Size:** 1 · **Status:** Done
+
+### TD-5326 — Turning approvals off asks first, and the window says while it is off
+
+Inspection finding APPROVE-05 (high). Skip-all switched on with one click and
+showed nowhere outside Settings.
+
+- [x] An armed confirm ("Turn off approvals" / "Keep asking") before it turns on.
+- [x] A title-bar "Approvals are off" chip opens the policy settings; every
+      window learns of the change (`test_skip_all_broadcast.py`).
+
+**Size:** 2 · **Status:** Done
+
+### TD-5327 — A write's approval card shows the change it would make
+
+Inspection finding APPROVE-03 (high). No tool sent the `diff` the card read.
+
+- [x] The daemon computes a workspace-relative unified diff for `fs_write` and
+      `fs_edit` when it asks, capped at 20,000 characters, and sends it as
+      `ApprovalRequest.diff`; none when the change cannot be known.
+- [x] The card shows a headline ("New file, 2 lines") above the diff.
+
+**Size:** 2 · **Status:** Done
+
+### TD-5328 — Commands on an approval show hidden and reordering characters
+
+Inspection finding RENDERSEC-02 (high). A bidi override made a command display
+as something other than what runs.
+
+- [x] Bidi controls, zero-width characters and C0/C1 controls (not newline or
+      tab) show as named markers (`⟨RLO U+202E⟩`) in the approval summary on
+      every surface, and in the card's arguments and diff and the activity row.
+- [x] The card says when a call holds such characters; the arguments that run
+      are unchanged (`test_reveal.py`, `reveal.test.ts`).
+
+**Size:** 2 · **Status:** Done
+
+### TD-5329 — Destructive shell commands outside the workspace rate dangerous
+
+Inspection finding APPROVE-02 (high). `rm -rf ~` and `rm -rf build` got the
+same card, and both offered Always allow.
+
+- [x] Rule `shell-dangerous` (Class C): a delete, move, truncate, overwrite or
+      permission change outside the workspace, of the workspace itself, or of
+      a target only the shell can place; and any line under sudo, doas, pkexec,
+      su or run0 (`test_shell_dangerous.py`).
+
+**Size:** 2 · **Status:** Done
+
+**Notes:** Windows `cmd` forms (`del`, `rd`) are not read yet.
+
+### TD-5330 — Sending an app or installer asks first
+
+Inspection finding ANDROID-01 (high). `send_file` was Class A, so an APK could
+reach a paired phone's card, one tap from the installer, unasked.
+
+- [x] Rule `send-file-installable` (Class B) ahead of the in-workspace grant,
+      for app and installer suffixes in any case.
+
+**Size:** 1 · **Status:** Done

@@ -20807,3 +20807,25 @@ left to a daemon-side follow-up.
 
 `approval-action` is app-wide; with session windows open, each would send the
 answer. The main window (`MAIN_WINDOW_LABEL`) alone listens.
+
+## 2026-11-28 — TD-5327: write approvals carry a daemon-computed diff (Class B)
+
+`ApprovalRequest` gains an optional `diff`. The daemon computes it from the
+file on disk when it asks (`tools/diff_preview.py`), because only it sees the
+workspace; the card renders what it is given. Optional, so an older viewer
+reads the same event.
+
+## 2026-11-28 — TD-5328: hidden characters are revealed, not stripped (Class B)
+
+The approval summary is revealed in a protocol validator, so every reader (the
+card, OS notifications, phones, chat notifiers) gets the same text. Markers
+name the character instead of deleting it, so the person sees that something
+was there. The arguments are never changed. The two tables are written as
+escapes only, so the source itself holds no invisible characters.
+
+## 2026-11-28 — TD-5329: "dangerous" is a classifier rule, read from the command's words (Class B)
+
+A static rule in `autonomy/destructive.py`, like the redirect table, not model
+judgment. Unplaceable targets (`~`, `$VAR`) count as outside: the error can
+only withhold Always allow, never grant it. Class C still asks under the
+default `class_c_default: ask`.
