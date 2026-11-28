@@ -5118,6 +5118,9 @@ class JobList(DaemonEvent):
     type: Literal["job_list"] = "job_list"
     seq: int = 1
     jobs: list[JobEntry] = Field(default_factory=list)
+    # ARTSCHED-32: rows of jobs.json this build cannot read. They are kept
+    # in the file as they are; the list says so instead of hiding them.
+    unreadable: int = 0
 
 
 class JobRunEntry(BaseModel):

@@ -29,6 +29,8 @@ import {
 
 export const scheduled = $state({
 	items: [] as JobEntry[],
+	/** ARTSCHED-32: jobs in the file this version cannot read (kept, not shown). */
+	unreadable: 0,
 	loading: false,
 	error: null as string | null,
 	draft: emptyDraft(null),
@@ -315,6 +317,7 @@ function reduce(event: DaemonEventUnion): void {
 	}
 	if (event.type === "job_list") {
 		scheduled.items = event.jobs;
+		scheduled.unreadable = event.unreadable ?? 0;
 		scheduled.loading = false;
 		scheduled.error = null;
 		syncOpenHistory(event.jobs);
