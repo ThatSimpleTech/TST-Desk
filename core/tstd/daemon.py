@@ -620,6 +620,7 @@ from .shutdown_phases import (
     reap_shutdown_distill,
 )
 from .speech import transcribe as transcribe_speech
+from .start_heartbeat import StartHeartbeat
 from .steering_proposals import decide as decide_steering
 from .steering_proposals import expire_restored as expire_restored_steering
 from .store_recovery import Recovery
@@ -1302,6 +1303,8 @@ class Daemon:
         # Built when the daemon starts serving — the audit database only
         # appears on disk once the daemon actually runs (TD-902).
         self._audit_writer: AuditWriter | None = None
+        # Set by main(): stopped once port.json is written.
+        self.start_heartbeat: StartHeartbeat | None = None
         # CU-05: why the last Stop could not write the stop-file, or None.
         self._cu_file_error: str | None = None
 
@@ -2903,6 +2906,8 @@ class Daemon:
             self._record_sandbox_egress()
         await self.ws_server.start()
         self._remember_remote_port()
+        if self.start_heartbeat is not None:
+            self.start_heartbeat.stop()
         if sys.platform == "darwin":
             from .cu_host import start_cu_socket
 
@@ -7915,14 +7920,19 @@ def main() -> None:
         )
         raise SystemExit(1)
 
+    # The host waits on this beat, not a fixed clock, until the port opens.
+    heartbeat = StartHeartbeat(data_dir).start()
+
     async def _run() -> None:
         daemon = Daemon(data_dir=data_dir, parent_pid=args.parent_pid)
+        daemon.start_heartbeat = heartbeat
         await daemon.run()
 
     try:
         with contextlib.suppress(KeyboardInterrupt):
             asyncio.run(_run())
     finally:
+        heartbeat.stop()
         lock.release()
 
 

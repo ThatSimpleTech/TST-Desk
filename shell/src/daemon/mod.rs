@@ -61,8 +61,14 @@ pub(crate) use system_exit::on_host_exit;
 pub const PROTOCOL_VERSION: u32 = 1;
 /// Hard cap on automatic restarts after crashes before giving up.
 pub const MAX_RESTARTS: u32 = 3;
-/// How long the host waits for a fresh port file after spawning.
+/// How long the host waits for a port file from a daemon that never beats.
 const PORT_FILE_TIMEOUT: Duration = Duration::from_secs(30);
+/// While the daemon's start heartbeat (`starting.json`) stays fresh, the host
+/// keeps waiting up to this ceiling (the 0.5.4 start-up fix): a long-used
+/// install is slow, not dead.
+const PORT_FILE_CEILING: Duration = Duration::from_secs(300);
+/// A heartbeat older than this is a daemon that stopped making progress.
+const HEARTBEAT_STALE: Duration = Duration::from_secs(15);
 /// How long the host waits for a `hello_ack` before declaring the daemon bad.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long the host waits after sending `shutdown` before sending SIGKILL.
@@ -651,7 +657,8 @@ pub async fn wait_for_port_file(
     timeout: Duration,
 ) -> Result<PortFile, String> {
     let path = dir.join("port.json");
-    let deadline = tokio::time::Instant::now() + timeout;
+    let started = tokio::time::Instant::now();
+    let deadline = started + timeout;
     loop {
         if let Ok(raw) = tokio::fs::read_to_string(&path).await {
             if let Ok(pf) = serde_json::from_str::<PortFile>(&raw) {
@@ -660,7 +667,10 @@ pub async fn wait_for_port_file(
                 }
             }
         }
-        if tokio::time::Instant::now() >= deadline {
+        let now = tokio::time::Instant::now();
+        let beating = now - started < PORT_FILE_CEILING
+            && heartbeat_fresh(dir, pid, HEARTBEAT_STALE).await;
+        if now >= deadline && !beating {
             return Err(format!(
                 "timed out waiting for a port file belonging to pid {pid} (or a descendant) at {}",
                 path.display()
@@ -668,6 +678,27 @@ pub async fn wait_for_port_file(
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+}
+
+/// Whether the daemon this host spawned wrote `starting.json` within *stale*.
+pub async fn heartbeat_fresh(dir: &Path, pid: u32, stale: Duration) -> bool {
+    let Ok(raw) = tokio::fs::read_to_string(dir.join("starting.json")).await else {
+        return false;
+    };
+    let Ok(beat) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return false;
+    };
+    let Some(beat_pid) = beat["pid"].as_u64().and_then(|p| u32::try_from(p).ok()) else {
+        return false;
+    };
+    let Some(at) = beat["at"].as_f64() else {
+        return false;
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0);
+    port_file_belongs_to_spawn(pid, beat_pid) && now - at <= stale.as_secs_f64()
 }
 
 /// Open a WebSocket to the daemon and complete the token handshake.
@@ -991,5 +1022,51 @@ mod tests {
         assert!(canonical.join("config.yaml").is_file());
         assert!(legacy.join("port.json").is_file());
         let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
+#[cfg(test)]
+mod heartbeat_tests {
+    use super::heartbeat_fresh;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    fn dir() -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "tst-heartbeat-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn beat(dir: &std::path::Path, pid: u32, age: f64) {
+        let at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs_f64() - age;
+        let body = format!(r#"{{"pid": {pid}, "phase": "starting", "at": {at}}}"#);
+        std::fs::write(dir.join("starting.json"), body).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_fresh_beat_from_our_daemon_keeps_the_host_waiting() {
+        let d = dir();
+        let me = std::process::id();
+        beat(&d, me, 1.0);
+        assert!(heartbeat_fresh(&d, me, Duration::from_secs(15)).await);
+    }
+
+    #[tokio::test]
+    async fn a_stale_or_missing_beat_does_not() {
+        let d = dir();
+        let me = std::process::id();
+        assert!(!heartbeat_fresh(&d, me, Duration::from_secs(15)).await);
+        beat(&d, me, 60.0);
+        assert!(!heartbeat_fresh(&d, me, Duration::from_secs(15)).await);
+    }
+
+    #[tokio::test]
+    async fn another_processs_beat_does_not() {
+        let d = dir();
+        beat(&d, 1, 0.0);
+        assert!(!heartbeat_fresh(&d, std::process::id(), Duration::from_secs(15)).await);
     }
 }
