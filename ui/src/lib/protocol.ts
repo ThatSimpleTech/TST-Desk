@@ -2438,6 +2438,8 @@ export interface SetupState extends DaemonEvent {
   cu_mode?: "background" | "full_control";
   cu_unhide_on_finish?: boolean;
   cu_denied_apps?: string[];
+  /** CU-20: why the policy file could not be trusted (it reads as Off). */
+  cu_policy_damaged?: string | null;
   /** TD-708 dev: judgment-seam toggles. Additive; defaults all off. */
   judgments_verification?: boolean;
   judgments_semantic_breaker?: boolean;

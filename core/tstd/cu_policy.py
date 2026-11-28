@@ -4,12 +4,19 @@ The file is ``~/.tst-cu-mcp/config.yaml`` — the same document
 ``tst-cu-mcp`` re-reads on every background tool call. This module does
 not import that package: tstd's tests and the sidecar do not share an
 install. The YAML shape is the contract.
+
+A file that cannot be read, or that says something this loader does not
+understand, reads as Off (CU-20): never the permissive defaults. Only a
+missing file is a fresh install. The reason travels with the policy so
+Settings can say so, and the next save moves the damaged file aside
+(``config.yaml.damaged-<stamp>``) instead of writing over it.
 """
 
 from __future__ import annotations
 
 import os
 import tempfile
+import time
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +34,16 @@ class CuPolicy:
     unhide_on_finish: bool = True
     denied_apps: tuple[str, ...] = ()
     allowed_apps: tuple[str, ...] = ()
+    #: Why the file could not be trusted, or None. A damaged file reads as Off.
+    damaged: str | None = None
+
+
+_TRUE = {"1", "true", "yes", "on"}
+_FALSE = {"0", "false", "no", "off"}
+
+
+def _damaged(reason: str) -> CuPolicy:
+    return CuPolicy(enabled=False, damaged=reason)
 
 
 def cu_policy_path() -> Path:
@@ -42,26 +59,53 @@ def load_cu_policy(path: Path | None = None) -> CuPolicy:
         return CuPolicy()
     try:
         raw: Any = yaml.safe_load(target.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
+    except OSError as exc:
+        return _damaged(f"the file could not be read ({exc.strerror or exc})")
+    except yaml.YAMLError:
+        return _damaged("the file is not valid YAML")
+    if raw is None:
         return CuPolicy()
     if not isinstance(raw, dict):
-        return CuPolicy()
+        return _damaged("the file does not hold a mapping")
     actuation = _as_map(raw.get("actuation"))
     scoping = _as_map(raw.get("scoping"))
     mode_raw = raw.get("mode") or scoping.get("mode") or "background"
     mode: CuMode = "full_control" if str(mode_raw).strip() == "full_control" else "background"
-    enabled_raw = actuation.get("enabled", True)
-    if isinstance(enabled_raw, str):
-        enabled = enabled_raw.strip().lower() in {"1", "true", "yes", "on"}
-    else:
-        enabled = enabled_raw is not False
+    enabled = _flag(actuation.get("enabled", True))
+    if enabled is None:
+        return _damaged("actuation.enabled is not true or false")
+    lists: dict[str, tuple[str, ...]] = {}
+    for key in ("denied_apps", "allowed_apps"):
+        value = scoping.get(key)
+        if value is not None and not isinstance(value, (list, str)):
+            return _damaged(f"scoping.{key} is not a list of apps")
+        lists[key] = _string_tuple(value)
     return CuPolicy(
         enabled=enabled,
         mode=mode,
         unhide_on_finish=scoping.get("unhide_on_finish", True) is not False,
-        denied_apps=_string_tuple(scoping.get("denied_apps")),
-        allowed_apps=_string_tuple(scoping.get("allowed_apps")),
+        denied_apps=lists["denied_apps"],
+        allowed_apps=lists["allowed_apps"],
     )
+
+
+def _flag(value: object) -> bool | None:
+    """True or False as YAML or a person might write it; None when unclear."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return {0: False, 1: True}.get(value)
+    if isinstance(value, str):
+        word = value.strip().lower()
+        return True if word in _TRUE else False if word in _FALSE else None
+    return None
+
+
+def _set_aside(target: Path) -> None:
+    """Keep a file this module cannot read, under a name nothing reads."""
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    with suppress(OSError):
+        target.replace(target.with_name(f"{target.name}.damaged-{stamp}"))
 
 
 def save_cu_policy(policy: CuPolicy, path: Path | None = None) -> None:
@@ -69,12 +113,12 @@ def save_cu_policy(policy: CuPolicy, path: Path | None = None) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     existing: dict[str, Any] = {}
     if target.exists():
-        try:
+        if load_cu_policy(target).damaged is not None:
+            _set_aside(target)
+        else:
             loaded = yaml.safe_load(target.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
                 existing = loaded
-        except (OSError, yaml.YAMLError):
-            existing = {}
     overlay = _as_map(existing.get("overlay"))
     killswitch = _as_map(existing.get("killswitch"))
     body: dict[str, Any] = {

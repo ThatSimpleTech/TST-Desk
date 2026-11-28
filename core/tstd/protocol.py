@@ -4168,6 +4168,8 @@ class SetupState(DaemonEvent):
     cu_mode: Literal["background", "full_control"] = "background"
     cu_unhide_on_finish: bool = True
     cu_denied_apps: list[str] = Field(default_factory=list)
+    # CU-20: why the policy file could not be trusted (it reads as Off), or None.
+    cu_policy_damaged: str | None = None
     # TD-708/709/710/711 (dev): judgment-seam toggles. Additive; the
     # defaults match the shipped config (everything off), so an older
     # client that ignores them reads the product as unchanged.

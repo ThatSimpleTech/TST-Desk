@@ -174,6 +174,7 @@ export const settings = $state({
 	cuMode: "background" as CuMode,
 	cuUnhideOnFinish: true,
 	cuDeniedApps: [] as string[],
+	cuPolicyDamaged: null as string | null,
 	/** TD-708 dev: judgment-seam toggles. All default off; from setup_state. */
 	judgmentsVerification: false,
 	judgmentsSemanticBreaker: false,
@@ -292,6 +293,7 @@ export function resetSettings(): void {
 	settings.cuMode = "background";
 	settings.cuUnhideOnFinish = true;
 	settings.cuDeniedApps = [];
+	settings.cuPolicyDamaged = null;
 	settings.judgmentsVerification = false;
 	settings.judgmentsSemanticBreaker = false;
 	settings.judgmentsCandidateSelection = false;
@@ -495,6 +497,7 @@ function reduce(event: DaemonEventUnion): void {
 		settings.cuMode = event.cu_mode === "full_control" ? "full_control" : "background";
 		settings.cuUnhideOnFinish = event.cu_unhide_on_finish ?? true;
 		settings.cuDeniedApps = event.cu_denied_apps ?? [];
+		settings.cuPolicyDamaged = event.cu_policy_damaged ?? null;
 		settings.judgmentsVerification = event.judgments_verification ?? false;
 		settings.judgmentsSemanticBreaker = event.judgments_semantic_breaker ?? false;
 		settings.judgmentsCandidateSelection = event.judgments_candidate_selection ?? false;

@@ -605,6 +605,15 @@ describe("computer-use indicators", () => {
 		expect(settings.cuDeniedApps).toEqual(["Bank"]);
 	});
 
+	it("reads a damaged computer-use policy as Off with its reason (CU-20)", () => {
+		startSettings();
+		emit(setupState({ cu_enabled: false, cu_policy_damaged: "the file is not valid YAML" }));
+		expect(settings.cuEnabled).toBe(false);
+		expect(settings.cuPolicyDamaged).toBe("the file is not valid YAML");
+		emit(setupState({ cu_enabled: false }));
+		expect(settings.cuPolicyDamaged).toBeNull();
+	});
+
 	it("sends set_judgments and reads the ack (TD-708 dev)", () => {
 		startSettings();
 		emit(setupState({ judgments_verification: false, judgments_confidence_threshold: 0.6 }));
