@@ -20626,3 +20626,15 @@ and a timed-out command turned job without new lifecycle code.
 up (R3's second option; R7 territory); a TCP listener on the host; running
 the bridge on the frozen sidecar (a onefile binary cannot run a script, and
 unpacking it per command is slow), so the packaged app needs `python3`.
+
+## 2026-11-28 — CI: every pull request runs all four jobs (Class B)
+
+**Decision:** the `pull_request` trigger in `ci.yml` has no `paths:` filter
+any more; `python`, `rust`, `typescript` and `ui-walk` run on every PR. The
+`push` filter on main stays.
+
+**Rationale:** the four jobs are becoming required checks on main. With the
+filter, a PR that touches only docs or another workflow would never start
+them and could never merge. This reverses the PR half of the 2026-10 budget
+choice above (line "a path filter so docs-only changes do not"); the cost is
+one Ubuntu run per docs-only PR.
