@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+from .abortable import until_abort
 from .audit_writer import ModelCallSink, forward_classifier_judgment
 from .autonomy import (
     AmbiguousClassifier,
@@ -826,7 +827,9 @@ async def _stream_and_parse(
         ),
     )
     try:
-        async for chunk in stream:
+        # ERR2A-05: Stop and Cancel end the wait for the next chunk too,
+        # including a hung request or a retry's sleep inside the provider.
+        async for chunk in until_abort(stream, session):
             if session.cancel_requested or session.stop_turn_requested:
                 failed = True
                 error_msg = "cancelled" if session.cancel_requested else "stopped"
@@ -906,6 +909,11 @@ async def _stream_and_parse(
                 usage = chunk.usage
             if chunk.finish_reason:
                 finish_reason = chunk.finish_reason
+        else:
+            # The stream ended because Stop or Cancel cut it short.
+            if (session.cancel_requested or session.stop_turn_requested) and not failed:
+                failed = True
+                error_msg = "cancelled" if session.cancel_requested else "stopped"
     finally:
         # A generator cannot close itself when its consumer stops reading
         # (Stop, a provider error): left to the async-generator finalizer,
