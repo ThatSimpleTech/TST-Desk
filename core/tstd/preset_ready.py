@@ -79,7 +79,7 @@ async def _check(
         # The Grok CLI brings its own model and sign-in: nothing else to check.
         return PresetReady(preset=name, status="ready")
     for tier in preset.tier_map().values():
-        credential = resolve_credential_id(tier)
+        credential = resolve_credential_id(tier, config)
         if credential is not None and not await key_stored(credential):
             shown = config.credentials[credential].name if credential in config.credentials else ""
             return PresetReady(

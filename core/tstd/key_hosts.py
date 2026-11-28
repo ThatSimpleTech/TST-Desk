@@ -81,7 +81,7 @@ def key_hosts(config: ModelConfig, credential_id: str) -> list[str]:
         return [own]
     urls: list[str] = []
     for tier in every_tier(config):
-        if resolve_credential_id(tier) == credential_id:
+        if resolve_credential_id(tier, config) == credential_id:
             url = resolve_base_url(config, tier)
             if url not in urls:
                 urls.append(url)
@@ -139,7 +139,7 @@ def key_probe(config: ModelConfig, credential_id: str) -> KeyProbe:
     if unknown is not None:
         return KeyProbe(None, unknown)
     for candidate in [*config.tiers().values(), *every_tier(config)]:
-        if resolve_credential_id(candidate) == credential_id:
+        if resolve_credential_id(candidate, config) == credential_id:
             return KeyProbe(apply_credential_host(config, candidate))
     own = credential_base_url(config, credential_id)
     if own is None:

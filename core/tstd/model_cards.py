@@ -212,7 +212,7 @@ async def refresh_cards(
         if target.config.slug is None:
             results.append(match(target, host, EndpointModels(base_url=host)))
             continue
-        credential = resolve_credential_id(target.config)
+        credential = resolve_credential_id(target.config, config)
         key = (host, credential)
         if key not in listings:
             listings[key] = await _fetch(config, host, credential, read_key, client)

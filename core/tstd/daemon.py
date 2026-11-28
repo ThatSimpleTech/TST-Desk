@@ -1505,7 +1505,7 @@ class Daemon:
             initial_delay=self.config.provider_retry.initial_delay,
             max_delay=self.config.provider_retry.max_delay,
         )
-        cred_id = resolve_credential_id(tier_cfg)
+        cred_id = resolve_credential_id(tier_cfg, self.config)
         base_url = resolve_base_url(self.config, tier_cfg)
         timeouts = tier_cfg.timeouts()
         if cred_id is None:
@@ -1559,7 +1559,7 @@ class Daemon:
         if self._provider is not None:
             return self._provider
         base_url = resolve_base_url(self.config, tier_cfg)
-        cred_id = resolve_credential_id(tier_cfg) or ""
+        cred_id = resolve_credential_id(tier_cfg, self.config) or ""
         # The client carries its timeouts, so a tier or backup (TD-5120)
         # with other timeouts on the same host and key gets its own.
         cache_key = (base_url, cred_id, tier_cfg.timeout_key())
@@ -2218,7 +2218,7 @@ class Daemon:
             tier_cfg = self.config.tier("brain")
             if credential:
                 for candidate in self.config.tiers().values():
-                    if resolve_credential_id(candidate) == credential:
+                    if resolve_credential_id(candidate, self.config) == credential:
                         tier_cfg = candidate
                         break
             tier_cfg = apply_credential_host(self.config, tier_cfg)
@@ -2539,7 +2539,7 @@ class Daemon:
         # API key presence first — presence is free, validity needs the probe.
         needed: list[str] = []
         for tier in self.config.tiers().values():
-            cid = resolve_credential_id(tier)
+            cid = resolve_credential_id(tier, self.config)
             if cid and cid not in needed:
                 needed.append(cid)
         missing = [cid for cid in needed if not await self._credential_is_stored(cid)]

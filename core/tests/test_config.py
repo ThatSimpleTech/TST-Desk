@@ -568,10 +568,24 @@ class TestCredentials:
             assert tier.credential is None
             assert resolve_credential_id(tier) is None
 
-    def test_unbound_remote_uses_openrouter(self) -> None:
+    def test_unbound_remote_on_another_host_sends_no_key(self) -> None:
+        # DOCS2-05: a company gateway written without `credential` keeps its
+        # own URL and gets no key, never the person's OpenRouter key.
         tier = TierConfig(
             slug="demo/brain",
             base_url="https://example.com/v1",
+            input_price=0,
+            output_price=0,
+            cache_read_price=0,
+            context_window=100,
+            max_output_tokens=10,
+        )
+        assert resolve_credential_id(tier) is None
+
+    def test_unbound_remote_on_openrouter_keeps_the_openrouter_key(self) -> None:
+        tier = TierConfig(
+            slug="demo/brain",
+            base_url="https://openrouter.ai/api/v1",
             input_price=0,
             output_price=0,
             cache_read_price=0,
