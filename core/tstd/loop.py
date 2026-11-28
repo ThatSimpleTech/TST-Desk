@@ -2248,6 +2248,10 @@ async def agent_loop(
                 session.delegate_runtime.session_start = turn_start
                 session.delegate_runtime.iterations = 0
                 session.delegate_runtime.child_calls = 0
+
+        # LIVE2-13: one empty completion a turn is asked again before the
+        # turn fails; on the real install it ended long unattended turns.
+        empty_retries_left = 1
         # TD-5118: imports a deny-and-continue run refused.  No person
         # answered, so they stay out for this turn only; the next turn,
         # whoever sends it, asks again.
@@ -2907,6 +2911,24 @@ async def agent_loop(
                 if session.stop_turn_requested:
                     await _finish_stopped_turn(session, tier, turn_start, tracker)
                     break
+                # LIVE2-13: a reply with nothing in it, and not cut at the
+                # output limit (TD-5233 has that one), is the endpoint's
+                # hiccup more often than the model's answer. Ask the same
+                # request once more; the work done so far stays as it is.
+                if finish_reason != LENGTH_FINISH and empty_retries_left > 0:
+                    empty_retries_left -= 1
+                    log.warning(
+                        "empty completion; asking once more",
+                        extra={
+                            "extra_fields": {
+                                "session_id": session.id,
+                                "tier": tier,
+                                "model": model_slug,
+                                "finish_reason": finish_reason,
+                            }
+                        },
+                    )
+                    continue
                 router.record_failure()
                 # The context is the cause only near the compaction budget;
                 # otherwise a new chat would not help (TD-5233).
