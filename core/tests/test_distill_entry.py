@@ -39,7 +39,29 @@ def _watch(daemon: Daemon, monkeypatch: pytest.MonkeyPatch) -> Asked:
     monkeypatch.setattr(daemon, "_client_for", client_for)
     monkeypatch.setattr("tstd.daemon.distill_if_due", fake_distill)
     monkeypatch.setattr("tstd.daemon.completed_turn_count", lambda _s: 1)
+    # These check which entry is asked, as if a turn just ran on the chat's
+    # entry and nothing was distilled yet (LIVE2-08's own tests are apart).
+    monkeypatch.setattr(daemon, "_distilled_turns", _NothingDistilled())
+    monkeypatch.setattr(daemon, "_turn_entries", _RanOnItsEntry())
     return seen
+
+
+class _NothingDistilled(dict[str, int]):
+    def get(self, key: str, default: int | None = None) -> int:  # type: ignore[override]
+        return 0
+
+    def setdefault(self, key: str, default: int | None = None) -> int:  # type: ignore[override]
+        return 0
+
+
+class _Everything(set[str]):
+    def __contains__(self, item: object) -> bool:
+        return True
+
+
+class _RanOnItsEntry(dict[str, set[str]]):
+    def get(self, key: str, default: object = None) -> set[str]:  # type: ignore[override]
+        return _Everything()
 
 
 async def _chat(daemon: Daemon, ws: Any, workspace: Path) -> Session:
@@ -117,10 +139,10 @@ async def test_the_active_entry_changing_does_not_move_another_chats_distill(
         await _stop(task, ws)
 
 
-async def test_a_grok_chat_keeps_the_active_entry(
+async def test_a_grok_chat_is_distilled_only_on_this_computer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The Grok engine has no model of its own here: the TD-5239 rule stands."""
+    """Grok's own model is not an entry here: only a local one (LIVE2-08)."""
     daemon, task, ws, workspace = await _seeded(tmp_path, monkeypatch)
     try:
         seen = _watch(daemon, monkeypatch)
@@ -132,7 +154,7 @@ async def test_a_grok_chat_keeps_the_active_entry(
         daemon._bind_session_preset(sess, "local")
         sess.engine = "grok"
         await daemon._run_distill(sess)
-        assert seen == [_where(daemon, "tst-default")] * 2
+        assert seen == [_where(daemon, "local")] * 2
     finally:
         await _stop(task, ws)
 

@@ -406,21 +406,25 @@ class TestDistill:
             )
             sess = daemon.session_registry.get(opened["session_id"])
             assert sess is not None and sess.engine == "grok"
+            daemon._distilled_turns[sess.id] = 0  # LIVE2-08: a turn not yet distilled
             await daemon._run_distill(sess)
         finally:
             await _stop(task, ws)
         return seen
 
-    async def test_with_grok_active_it_uses_the_first_entry_that_has_a_model(
+    async def test_with_grok_active_it_uses_a_model_on_this_computer(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # The manager's rule (LIVE2-08): never a hosted model unless the chat
+        # used it, and Grok's own model is not an entry here.
         seen = await self._run(tmp_path, monkeypatch, _text())
         config = _config(tmp_path)
-        first = next(n for n, p in config.presets.items() if p.has_tiers)
-        worker = config.presets[first].worker
+        local = config.local_default()
+        assert local is not None
+        worker = config.presets[local].worker
         assert worker is not None
-        # Once from this test, and once more when the daemon shuts down.
-        assert seen and set(seen) == {(first, worker.slug)}
+        # Once: the quit finds nothing new since.
+        assert seen == [(local, worker.slug)]
 
     async def test_with_no_model_anywhere_it_is_skipped(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
