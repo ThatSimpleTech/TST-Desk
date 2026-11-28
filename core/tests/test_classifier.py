@@ -633,10 +633,21 @@ class TestSendFile:
     def test_in_workspace_is_a(self) -> None:
         decision = classify(
             boundary(),
-            req(tool_name="send_file", reads=(WS / "out/app.apk", WS / "notes.pdf")),
+            req(tool_name="send_file", reads=(WS / "out/app.zip", WS / "notes.pdf")),
         )
         assert decision.decision_class is DecisionClass.A
         assert fired_as(decision, "send-file-in-workspace")
+
+    @pytest.mark.parametrize(
+        "name", ["app-release.apk", "App.APK", "bundle.aab", "setup.exe", "x.AppImage"]
+    )
+    def test_an_app_or_installer_asks(self, name: str) -> None:
+        # ANDROID-01: a sent APK opens Android's installer from the phone's card.
+        decision = classify(
+            boundary(), req(tool_name="send_file", reads=(WS / "notes.pdf", WS / "out" / name))
+        )
+        assert decision.decision_class is DecisionClass.B
+        assert fired_as(decision, "send-file-installable")
 
     @pytest.mark.parametrize(
         "outside", [Path("/etc/passwd"), WS / ".." / "other" / "x.apk", Path("/work/projX/a")]
