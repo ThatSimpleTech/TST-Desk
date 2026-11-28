@@ -15591,3 +15591,24 @@ Inspection finding CU-02 (high).
 **Size:** 1 · **Status:** Done
 
 **Notes:** a click on a denied app's window behind another app is not caught; the pane says so.
+
+### TD-5358 — tstd listens before it revives any chat
+
+A long-used install (183 chats) failed to start on 0.5.4 and 0.5.5.
+
+- [x] `port.json` and the WebSocket come before any chat is revived; revive runs in
+      the background, newest first.
+- [x] A message for a chat not yet revived waits only for that chat.
+- [x] The scheduler starts once the background revive is done.
+- [x] Folder trust's nested walk is bounded, and the chat snapshot reuses a recent view.
+- [x] Release gate: the packaged Linux app connects within 10 s on a 300-chat data folder.
+
+**Size:** 3 · **Status:** Done
+
+### TD-5359 — The host waits on a start heartbeat, not a fixed 30 s
+
+- [x] Until `port.json` exists, tstd writes `starting.json` (pid, phase, time) every 2 s.
+- [x] The host keeps waiting while its own daemon's beat is fresh (15 s), up to 5 minutes;
+      a daemon that never beats still fails after 30 s.
+
+**Size:** 1 · **Status:** Done
