@@ -4,6 +4,7 @@
 	// blocks are wired by one delegated click handler; feedback is written to
 	// the clicked button directly since the markup is generated.
 	import { renderMarkdown } from "../../markdown";
+	import { openExternal } from '../../external-link';
 	import { hydrateMermaid } from "../../markdown-mermaid";
 	// Token-driven hljs theme (TD-1609): follows the warm palette in both
 	// color schemes — replaces highlight.js's light-only github.css.
@@ -32,8 +33,7 @@
 	});
 
 	async function openLink(url: string): Promise<void> {
-		const { openUrl } = await import("@tauri-apps/plugin-opener");
-		await openUrl(url);
+		await openExternal(url);
 	}
 
 	function handleClick(event: MouseEvent): void {

@@ -1,6 +1,7 @@
 // Release-updater store (TD-4837). The host emits `update-status`; this
 // module holds that snapshot for the banner and Settings → About.
 
+import { openExternal } from "./external-link";
 import { isTauri } from "./open-file";
 import {
 	type UpdateStatus,
@@ -54,8 +55,7 @@ export async function setAutomaticUpdates(enabled: boolean): Promise<void> {
 export async function openReleasePage(): Promise<void> {
 	const url = update.status?.release_url;
 	if (!url || !isTauri()) return;
-	const { openUrl } = await import("@tauri-apps/plugin-opener");
-	await openUrl(url);
+	await openExternal(url);
 }
 
 /** Listen for the life of the window. Safe to call once per webview. */
