@@ -15515,3 +15515,24 @@ Inspection finding SECUX2-01 (high), with the manager's rules.
 - [x] Settings → Policy lists trusted folders with Revoke.
 
 **Size:** 5 · **Status:** Done
+
+### TD-5350 — Chat HTML goes through an allow-list, and no webview leaves the app
+
+Inspection findings CHAT-01 (critical), RENDERSEC-01 (high), RENDERSEC-03,
+RENDERSEC-04 and RENDERSEC-05 (medium): wave 2 item 5.
+
+- [x] An allow-list of tags and attributes: no style, SVG, image maps, id,
+      name, role, aria-*, src, srcset, poster, background or base; `class`
+      keeps only the renderer's own names.
+- [x] A host plugin refuses every webview navigation outside the app's origin.
+- [x] The CSP stays as the second wall.
+
+**Size:** 3 · **Depends on:** TD-5308 · **Status:** Done
+
+### TD-5351 — Your own message is shown exactly as you typed it
+
+Inspection finding CHAT-04 (high).
+
+- [x] User bubbles are plain text with their line breaks, never markdown.
+
+**Size:** 1 · **Status:** Done

@@ -20891,3 +20891,16 @@ Manager's calls: per folder, no grandfathering, a new kind asks again, unattende
 runs never wait. Stored as `folder_trust.yaml` in the data folder. The gate is a
 module-level store the daemon binds; unbound (library callers, ordinary tests)
 loads everything as before.
+
+## 2026-11-28 — TD-5350: chat HTML is an allow-list; navigation is refused in the host (Class B)
+
+The manager's item 5 asked for an allow-list with the CSP as the second wall.
+`ALLOWED_TAGS`/`ALLOWED_ATTRS` in `markdown.ts` name what markdown produces;
+`class` is filtered to the renderer's own names so a message cannot wear app
+styles. Navigation is refused by a host plugin (`nav_guard.rs`) rather than in
+the page, so it holds whatever in the page starts it.
+
+## 2026-11-28 — TD-5351: user messages render as plain text (Class A, noted)
+
+The transcript shows what was sent. A user who wants formatting gets it in
+the reply, not in their own bubble.
