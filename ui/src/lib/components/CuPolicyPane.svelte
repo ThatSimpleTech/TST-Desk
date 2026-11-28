@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ConfirmButton from './ConfirmButton.svelte';
 	// Computer-use policy (TD-4830). Mirrors Claude Desktop's Computer use
 	// panel: master switch, background vs full control, unhide-on-finish,
 	// denied apps, and the two macOS grants.
@@ -118,7 +119,13 @@
 			{#each settings.cuDeniedApps as name (name)}
 				<li>
 					<span>{name}</span>
-					<button class="link" type="button" onclick={() => removeDenied(name)}>Remove</button>
+					<ConfirmButton
+						label="Remove"
+						buttonClass="link"
+						question={`Let computer use reach ${name} again?`}
+						ariaLabel={`Remove ${name} from the denied apps`}
+						onconfirm={() => removeDenied(name)}
+					/>
 				</li>
 			{/each}
 		</ul>
@@ -270,21 +277,6 @@
 	}
 
 	.btn,
-	.link {
-		font-size: var(--text-sm);
-		color: var(--color-ink);
-		background: transparent;
-		border: 1px solid var(--color-hairline);
-		border-radius: var(--radius-sm);
-		padding: var(--space-1) var(--space-3);
-		cursor: pointer;
-	}
-
-	.link {
-		border: 0;
-		color: var(--color-ink-secondary);
-	}
-
 	.status {
 		font-size: var(--text-xs);
 		color: var(--color-ink-muted);

@@ -16,10 +16,23 @@ vi.mock("./connection-status.svelte.js", () => ({
 }));
 
 import PolicyRuleList from "./components/PolicyRuleList.svelte";
+import { ARM_MS } from "./approval-arming";
 import { settings } from "./settings.svelte.js";
 
 let target: HTMLElement;
 let component: ReturnType<typeof mount> | null = null;
+
+// A destructive row action asks first and arms after ARM_MS (INTERACT-12).
+async function confirmRow(root: ParentNode): Promise<void> {
+	await new Promise((r) => setTimeout(r, ARM_MS + 20));
+	flushSync();
+	const group = root.querySelector('[role="group"]');
+	const yes = group?.querySelector("button");
+	if (!(yes instanceof HTMLButtonElement)) throw new Error("no confirmation asked");
+	yes.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+	yes.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+	flushSync();
+}
 
 beforeEach(() => {
 	mocks.sent = [];
@@ -52,8 +65,11 @@ describe("PolicyRuleList", () => {
 		expect(revoke?.getAttribute("aria-label")).toBe("Revoke fs_read exactly app/[id]/page.tsx");
 	});
 
-	it("revokes by the saved pattern, not the text it shows", () => {
+	it("revokes by the saved pattern, not the text it shows", async () => {
 		(target.querySelector("button.revoke") as HTMLButtonElement).click();
+		flushSync();
+		expect(mocks.sent).toEqual([]);
+		await confirmRow(target);
 		expect(mocks.sent).toEqual([
 			{ type: "revoke_policy_rule", session_id: "s1", tool: "fs_read", args: "app/[[]id]/page.tsx" },
 		]);
