@@ -12,12 +12,33 @@ async function mermaidApi(): Promise<typeof import("mermaid").default> {
 	return mod.default;
 }
 
-function ensureStarted(api: { initialize: (c: Record<string, unknown>) => void }): void {
+// Keys a diagram's own %%{init}%% directive may not set (CHAT-01). Mermaid
+// writes theme CSS into a <style> in the SVG it returns, and themeCSS is
+// raw CSS from the diagram text: one closing brace and it could restyle the
+// whole app, as a <style> in a message could. The first six are mermaid's
+// own defaults, kept.
+export const MERMAID_SECURE = [
+	"secure",
+	"securityLevel",
+	"startOnLoad",
+	"maxTextSize",
+	"suppressErrorRendering",
+	"maxEdges",
+	"theme",
+	"themeCSS",
+	"themeVariables",
+	"fontFamily",
+	"altFontFamily",
+	"darkMode",
+];
+
+export function ensureStarted(api: { initialize: (c: Record<string, unknown>) => void }): void {
 	if (started) return;
 	api.initialize({
 		startOnLoad: false,
 		securityLevel: "strict",
 		theme: "base",
+		secure: MERMAID_SECURE,
 	});
 	started = true;
 }
