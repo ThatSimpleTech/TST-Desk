@@ -2,9 +2,11 @@
 	// Approval card (TD-1007): the pending tool call, its classification and
 	// reason, and the Approve/Deny actions. Presentational — decisions come
 	// from approval.ts and the store; this just renders and forwards clicks.
-	// Focus moves here on appearance (AC #3) so keyboard users land on the
-	// decision they must make: ⏎ approves, Esc denies, from the card itself.
+	// A new card never takes focus and never decides on the tail of the last
+	// gesture (INTERACT-02, APPROVE-01): it is announced, it is inert for
+	// ARM_MS, Ctrl/⌘+Enter approves and Esc denies from inside it.
 	import { onMount } from 'svelte';
+	import { ARM_MS, cardKey, clickDecides, newArming, notePress } from '../approval-arming';
 	import Icon from './Icon.svelte';
 	import { alwaysAllowLabel, isAlwaysAllowable, isDangerous, workerLine } from '../approval';
 	import { alwaysAllow, approve, canDecide, deny } from '../approval-store.svelte.js';
@@ -29,8 +31,24 @@
 	// turns Approve into the rule-writing form of itself.
 	let remember = $state(false);
 	let cardEl: HTMLElement | null = null;
+	let arming = $state(newArming());
+	const mac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+	const chord = mac ? '⌘⏎' : 'Ctrl ⏎';
 
-	onMount(() => cardEl?.focus());
+	onMount(() => {
+		const timer = setTimeout(() => (arming = { ...arming, armed: true }), ARM_MS);
+		return () => clearTimeout(timer);
+	});
+
+	function press(): void {
+		arming = notePress(arming);
+	}
+
+	function clicked(event: MouseEvent, act: () => void): void {
+		if (!clickDecides(arming, event.detail)) return;
+		arming = { ...arming, pressed: false };
+		act();
+	}
 
 	// The body leads with the one argument that says what will happen — the
 	// diff for a write, the command for a shell call — and folds the rest
@@ -66,17 +84,16 @@
 
 	function onKeydown(event: KeyboardEvent): void {
 		if (event.defaultPrevented) return;
-		if (event.key === 'Enter' && event.target === cardEl) {
-			event.preventDefault();
-			decide();
-		} else if (event.key === 'Escape') {
-			// Esc inside the card is Deny — the layer to peel is the decision
-			// itself, not the turn behind it. Stop it short of the shell's
-			// global handler, which would cancel that turn.
-			event.preventDefault();
-			event.stopPropagation();
-			deny(approval, note);
-		}
+		const action = cardKey(arming, event);
+		if (action === null) return;
+		// Captured, so a repeat never reaches a focused button's own Enter.
+		event.preventDefault();
+		event.stopPropagation();
+		if (action === 'approve') decide();
+		// Esc inside the card is Deny — the layer to peel is the decision
+		// itself, not the turn behind it, so it stops short of the shell's
+		// global handler, which would cancel that turn.
+		else if (action === 'deny') deny(approval, note);
 	}
 </script>
 
@@ -88,8 +105,9 @@
 	bind:this={cardEl}
 	data-approval-card={approval.toolCallId}
 	aria-label={`Approval required: ${approval.summary}`}
-	onkeydown={onKeydown}
+	onkeydowncapture={onKeydown}
 >
+	<p class="announce" role="status">Approval needed: {approval.summary}</p>
 	<header class="head">
 		<span class="head-icon" aria-hidden="true"><Icon name="alert" size={16} /></span>
 		<div class="head-text">
@@ -156,11 +174,27 @@
 			/>
 			{#if waiting !== null}<p class="waiting" role="status">{waiting}</p>{/if}
 			<div class="buttons">
-				<button class="btn btn--deny" type="button" disabled={waiting !== null} onclick={() => deny(approval, note)}>
+				<button
+					class="btn btn--deny"
+					class:btn--arming={!arming.armed}
+					type="button"
+					disabled={waiting !== null}
+					aria-disabled={!arming.armed}
+					onpointerdown={press}
+					onclick={(e) => clicked(e, () => deny(approval, note))}
+				>
 					Deny <kbd aria-hidden="true">Esc</kbd>
 				</button>
-				<button class="btn btn--approve" type="button" disabled={waiting !== null} onclick={decide}>
-					{remember && alwaysAllowable ? 'Always allow' : 'Approve'} <kbd aria-hidden="true">⏎</kbd>
+				<button
+					class="btn btn--approve"
+					class:btn--arming={!arming.armed}
+					type="button"
+					disabled={waiting !== null}
+					aria-disabled={!arming.armed}
+					onpointerdown={press}
+					onclick={(e) => clicked(e, decide)}
+				>
+					{remember && alwaysAllowable ? 'Always allow' : 'Approve'} <kbd aria-hidden="true">{chord}</kbd>
 				</button>
 			</div>
 		</div>
@@ -183,8 +217,24 @@
 		animation: rise var(--dur-enter) var(--ease-out);
 	}
 
-	/* The card takes focus programmatically, so the ring is drawn for plain
-	   :focus too — a keyboard user must see where the decision landed. */
+	/* Spoken when the card appears; the card itself does not take focus. */
+	.announce {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+	}
+
+	/* Inert for ARM_MS after it appears, and visibly so. */
+	.btn--arming {
+		opacity: 0.55;
+		cursor: default;
+	}
+
+	/* Drawn for plain :focus too: the reveal from the tray still moves
+	   focus here, and a keyboard user must see where it landed. */
 	.card:focus {
 		outline: 2px solid var(--color-accent);
 		outline-offset: 2px;
