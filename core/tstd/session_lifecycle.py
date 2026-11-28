@@ -189,7 +189,7 @@ def folder_trust_payload(workspace: str) -> FolderTrust | None:
     store = folder_trust.bound()
     if store is None:
         return None
-    view = store.view(workspace)
+    view = store.recent_view(workspace)
     if view.state not in ("pending", "declined"):
         return None
     return FolderTrust(

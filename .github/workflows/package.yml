@@ -250,6 +250,43 @@ jobs:
           print("both windows rendered the app shell")
           PY
 
+      # The 0.5.4 start-up failure: a long-used install (183 chats) never
+      # connected, because every chat was revived before the daemon wrote
+      # port.json and the host gave up after 30 s. Gate every release on a
+      # data folder like that one: 300 chats, long event logs, a project
+      # tree each. The packaged app must connect within 10 s of launch.
+      - name: Gate a long-used install's start (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -e
+          AI=$(ls "$PWD"/shell/target/release/bundle/appimage/*.AppImage)
+          export HOME="$RUNNER_TEMP/gate-home" && mkdir -p "$HOME"
+          DATA="$HOME/.local/share/tst-desk"
+          (cd core && uv run python scripts/make_startup_fixture.py "$DATA" --sessions 300 --turns 60 --files 200)
+          LOG="$DATA/logs/host.log"
+          OUT="$RUNNER_TEMP/gate-app.log"
+          START=$(date +%s.%N)
+          APPIMAGE_EXTRACT_AND_RUN=1 xvfb-run -a timeout 90 "$AI" >"$OUT" 2>&1 &
+          APP=$!
+          # Watch for up to 60 s so a miss reports how long it really took.
+          ELAPSED=""
+          for i in $(seq 1 600); do
+            if grep -q "connected to tstd" "$LOG" 2>/dev/null; then
+              ELAPSED=$(python3 -c "import sys,time; print(round(time.time() - float(sys.argv[1]), 2))" "$START")
+              break
+            fi
+            sleep 0.1
+          done
+          kill "$APP" 2>/dev/null || true
+          pkill -f "appimage_extracted|\.mount_|/tstd" 2>/dev/null || true
+          echo "connected after: ${ELAPSED:-never (60 s)}"
+          ls -la "$DATA" "$DATA/logs" 2>/dev/null || true
+          tail -20 "$LOG" 2>/dev/null || true
+          tail -20 "$DATA/logs/tstd.stderr.log" 2>/dev/null || true
+          tail -20 "$OUT" || true
+          [ -n "$ELAPSED" ] || { echo "::error::the packaged app never connected to tstd on a 300-chat data folder"; exit 1; }
+          python3 -c "import sys; sys.exit(0 if float(sys.argv[1]) <= 10 else 1)" "$ELAPSED" || { echo "::error::the packaged app took ${ELAPSED} s to connect to tstd on a 300-chat data folder (limit 10 s)"; exit 1; }
+
       - name: Smoke the bundled sidecar (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

@@ -28,6 +28,7 @@ from __future__ import annotations
 import os
 import tempfile
 import threading
+import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,6 +49,11 @@ State = Literal["none", "pending", "trusted", "declined"]
 
 #: How deep a nested AGENTS.md or CLAUDE.md is looked for, and folders skipped.
 _NESTED_DEPTH = 6
+#: At most this many folders are looked in for nested files, so a huge tree
+#: costs a bounded walk (the 0.5.4 start-up fix).
+_NESTED_MAX_DIRS = 2000
+#: A folder's view is reused for this long; a decision clears it at once.
+_VIEW_TTL_SECONDS = 15.0
 _SKIP_DIRS = frozenset({".git", ".tst", "node_modules", ".venv", "venv", "__pycache__", "target"})
 
 
@@ -107,7 +113,11 @@ def project_files(folder: str | Path) -> list[ProjectFile]:
 
 def _nested_instructions(root: Path) -> list[Path]:
     out: list[Path] = []
+    seen = 0
     for dirpath, dirnames, filenames in os.walk(root):
+        seen += 1
+        if seen > _NESTED_MAX_DIRS:
+            break
         here = Path(dirpath)
         depth = len(here.relative_to(root).parts)
         dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS and not d.startswith("."))
@@ -130,6 +140,7 @@ class FolderTrustStore:
         self._lock = threading.Lock()
         self._aliases: dict[str, str] = {}
         self._lookup: Callable[[str], str | None] | None = None
+        self._views: dict[str, tuple[float, FolderView]] = {}
 
     # ── records ───────────────────────────────────────────────────────
 
@@ -197,6 +208,24 @@ class FolderTrustStore:
 
     def view(self, workspace: str | Path) -> FolderView:
         folder = self.project_of(workspace)
+        view = self._compute_view(folder)
+        self._views[folder] = (time.monotonic(), view)
+        return view
+
+    def recent_view(self, workspace: str | Path) -> FolderView:
+        """The view, reusing one computed in the last few seconds.
+
+        For the chat snapshot only, where reviving many chats in one folder
+        tree would walk it once per chat. Loading never reads this: it asks
+        `allows`, so a new kind of file still waits for the card.
+        """
+        folder = self.project_of(workspace)
+        cached = self._views.get(folder)
+        if cached is not None and time.monotonic() - cached[0] < _VIEW_TTL_SECONDS:
+            return cached[1]
+        return self.view(folder)
+
+    def _compute_view(self, folder: str) -> FolderView:
         files = project_files(folder)
         decision, kinds = self._record(folder)
         if not files:
@@ -220,10 +249,12 @@ class FolderTrustStore:
             else:
                 records[folder] = {"decision": "declined", "kinds": []}
             self._save(records)
+        self._views.pop(folder, None)
         return self.view(folder)
 
     def revoke(self, folder: str | Path) -> None:
         key = real(folder)
+        self._views.pop(key, None)
         with self._lock:
             records = self._load()
             records.pop(key, None)

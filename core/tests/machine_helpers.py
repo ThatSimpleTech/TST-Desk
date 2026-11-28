@@ -183,6 +183,9 @@ class Fleet:
         await eventually(lambda: daemon.ws_server.port > 0 or task.done(), within=10)
         if task.done():
             task.result()
+        # Chats revive in the background once the port is open; these tests
+        # read the registry right away, so let the revive finish first.
+        await asyncio.wait_for(daemon._restore_done.wait(), 30)
         self._running[id(daemon)] = (daemon, task)
         return daemon
 
