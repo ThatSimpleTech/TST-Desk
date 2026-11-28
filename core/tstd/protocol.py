@@ -2916,10 +2916,13 @@ class StoreRecovered(DaemonEvent):
 
     type: Literal["store_recovered"] = "store_recovered"
     seq: int = 1
-    store: Literal["sessions", "jobs"]
+    store: Literal["sessions", "jobs", "audit"]
     kept_as: str
     from_backup: int
     rebuilt: int
+    # ERR2B-06: the audit log could not be opened at all (a read-only data
+    # folder); this run's audit records are kept in memory only.
+    memory_only: bool = False
 
 
 class VerifyStarted(DaemonEvent):

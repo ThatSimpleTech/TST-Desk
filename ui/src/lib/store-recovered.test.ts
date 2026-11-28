@@ -24,4 +24,16 @@ describe("store_recovered", () => {
     expect(notice.title).toBe("Your scheduled jobs file could not be read");
     expect(notice.body.startsWith("Nothing could be recovered from it.")).toBe(true);
   });
+
+  it("names a damaged audit log and where it was kept (ERR2B-06)", () => {
+    const n = storeRecoveredNotice({ store: "audit", kept_as: "audit.db.damaged-x", from_backup: 0, rebuilt: 0 });
+    expect(n.title).toBe("The audit log was damaged");
+    expect(n.body).toContain("audit.db.damaged-x");
+  });
+
+  it("says when this run's audit log is in memory only (ERR2B-06)", () => {
+    const n = storeRecoveredNotice({ store: "audit", kept_as: "", from_backup: 0, rebuilt: 0, memory_only: true });
+    expect(n.title).toBe("The audit log could not be opened");
+    expect(n.body).toContain("in memory only");
+  });
 });

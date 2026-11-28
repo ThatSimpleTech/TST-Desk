@@ -417,11 +417,28 @@ export function daemonErrorCopy(code: string, message: string): NoticeSpec {
 /** A store file the daemon could not read at start (ERR2B-04). A banner:
  *  the person needs to know their list may be short, and where the file is. */
 export function storeRecoveredNotice(event: {
-  store: "sessions" | "jobs";
+  store: "sessions" | "jobs" | "audit";
   kept_as: string;
   from_backup: number;
   rebuilt: number;
+  memory_only?: boolean;
 }): NoticeSpec {
+  if (event.store === "audit") {
+    // ERR2B-06: the audit log is a record of the work, so the app starts
+    // without it rather than not at all.
+    if (event.memory_only) {
+      return {
+        severity: "banner",
+        title: "The audit log could not be opened",
+        body: "The data folder cannot be written, so this run keeps its audit records in memory only and they end when the app quits. Check the folder's permissions and free space.",
+      };
+    }
+    return {
+      severity: "banner",
+      title: "The audit log was damaged",
+      body: `It was kept as ${event.kept_as} in the data folder and a new audit log was started. Your chats, settings and schedules are not affected.`,
+    };
+  }
   const what = event.store === "sessions" ? "chat list" : "scheduled jobs";
   const back: string[] = [];
   if (event.from_backup > 0) back.push(`${event.from_backup} from the last good copy`);
