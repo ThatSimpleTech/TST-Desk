@@ -71,6 +71,7 @@ from ..shell_read_only import match as read_only_match
 from ..shell_read_only import probe_repo_config
 from .charter import CHARTER_RELATIVE_PARTS
 from .cmd_targets import cmd_write_targets
+from .destructive import read_danger, unplaceable
 
 # ── Decision classes (spec §12.2) ─────────────────────────────────────
 
@@ -682,6 +683,36 @@ def _rule_shell_exec_later_write(req: DecisionRequest, boundary: Boundary) -> bo
     return any(is_exec_later_write(boundary, t) for t in _shell_target_paths(req, boundary))
 
 
+def _rule_shell_dangerous(req: DecisionRequest, boundary: Boundary) -> bool:
+    """A shell command deletes or overwrites outside the workspace, or sudo (APPROVE-02).
+
+    It still asks, as every shell command does; Class C makes the card
+    show it as dangerous and withholds Always allow. Deleting the
+    workspace itself counts, and a target only the shell can place
+    (``~``, ``$VAR``) counts as outside.
+    """
+    command = req.arguments.get("command")
+    if req.tool_name != "shell" or not isinstance(command, str):
+        return False
+    danger = read_danger(command)
+    if danger.privileged or danger.disk_tool:
+        return True
+    root = boundary.workspace_root
+    if root is None:
+        return bool(danger.targets or danger.search_roots)
+
+    def outside(token: str) -> bool:
+        target = Path(token)
+        target = target if target.is_absolute() else root / target
+        return unplaceable(token) or not is_in_workspace(boundary, target)
+
+    if any(outside(t) for t in danger.search_roots):
+        return True
+    return any(
+        outside(t) or canonical_path(root / t) == canonical_path(root) for t in danger.targets
+    )
+
+
 def _read_only_entries(req: DecisionRequest, boundary: Boundary) -> tuple[str, ...]:
     """The read-only list entries covering a builtin shell call (TD-5103).
 
@@ -1227,6 +1258,15 @@ RULE_TABLE: tuple[Rule, ...] = (
         description="shell command redirects or tees into a path that runs code later",
         decision_class=DecisionClass.C,
         match=_rule_shell_exec_later_write,
+    ),
+    Rule(
+        id="shell-dangerous",
+        description=(
+            "shell command deletes or overwrites something outside the workspace,"
+            " or runs with raised privileges"
+        ),
+        decision_class=DecisionClass.C,
+        match=_rule_shell_dangerous,
     ),
     Rule(
         id="cap-exceeded",
