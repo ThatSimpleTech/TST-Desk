@@ -36,9 +36,7 @@ def open_audit_store(data_dir: Path) -> tuple[AuditStore, Recovery | None]:
     except (sqlite3.Error, OSError) as exc:
         first = exc
     error = str(first)
-    if isinstance(first, OSError) or (
-        isinstance(first, sqlite3.Error) and _cannot_write(first)
-    ):
+    if isinstance(first, OSError) or (isinstance(first, sqlite3.Error) and _cannot_write(first)):
         return _in_memory(error)
     kept = set_aside(path)
     for suffix in ("-wal", "-shm"):
