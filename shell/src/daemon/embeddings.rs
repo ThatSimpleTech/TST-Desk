@@ -195,11 +195,16 @@ pub fn load_embeddings_argv(path: &Path) -> Option<Vec<String>> {
 }
 
 /// Parse `embeddings.command` from a YAML body. Never looks at `base_url`.
+/// Nothing is spawned unless `embeddings.enabled` is `true` (ENT2-03): the
+/// same switch the daemon reads before it sends a word to the server.
 pub fn embeddings_argv_from_yaml(text: &str) -> Option<Vec<String>> {
     let root: serde_yml::Value = serde_yml::from_str(text).ok()?;
     let map = root.as_mapping()?;
     let embeddings = map.get("embeddings")?;
     let section = embeddings.as_mapping()?;
+    if section.get("enabled").and_then(serde_yml::Value::as_bool) != Some(true) {
+        return None;
+    }
     let command = section.get("command")?;
     argv_from_command(command)
 }
@@ -300,6 +305,13 @@ mod tests {
     }
 
     #[test]
+    fn a_command_without_enabled_does_not_spawn() {
+        // ENT2-03: an install's copied config.yaml must not start a server.
+        let text = "embeddings:\n  command: llama-server --embeddings\n";
+        assert_eq!(embeddings_argv_from_yaml(text), None);
+    }
+
+    #[test]
     fn base_url_alone_does_not_spawn() {
         let text = "embeddings:\n  base_url: http://127.0.0.1:8080/v1\n  model: nomic-embed-text\n";
         assert_eq!(embeddings_argv_from_yaml(text), None);
@@ -321,14 +333,14 @@ mod tests {
     #[test]
     fn string_command_splits_on_whitespace() {
         assert_eq!(
-            embeddings_argv_from_yaml("embeddings:\n  command: llama-server --embeddings\n"),
+            embeddings_argv_from_yaml("embeddings:\n  enabled: true\n  command: llama-server --embeddings\n"),
             Some(vec!["llama-server".to_string(), "--embeddings".to_string()])
         );
     }
 
     #[test]
     fn list_command_keeps_args_and_stringifies_ports() {
-        let text = "embeddings:\n  command: [llama-server, --port, 8080]\n";
+        let text = "embeddings:\n  enabled: true\n  command: [llama-server, --port, 8080]\n";
         assert_eq!(
             embeddings_argv_from_yaml(text),
             Some(vec![

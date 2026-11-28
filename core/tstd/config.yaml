@@ -134,12 +134,15 @@ search:
   fetch_page_chars: 30000
   fetch_cache_seconds: 900
 
-# Local embeddings sidecar. OpenAI POST /v1/embeddings only — never Ollama
-# /api/embed (that evicts a resident chat model). Empty base_url disables.
-# A down sidecar falls back to heading-match memory loading (TD-2201).
-# command (string or argv list) is host-only (TD-2204). Empty / omitted is
-# attach-only — a filled base_url never causes the host to spawn.
+# Local embeddings server that ranks memory notes. Off until you set
+# enabled: true (ENT2-03): when on, each turn sends your message and every
+# memory note in the project to base_url. OpenAI POST /v1/embeddings only,
+# never Ollama /api/embed (that evicts a resident chat model). A down server
+# falls back to heading-match memory loading (TD-2201). command (string or
+# argv list) makes the app start the server itself, also only when enabled
+# (TD-2204); empty or omitted means the server must already be running.
 embeddings:
+  enabled: false
   base_url: http://127.0.0.1:8080/v1
   model: nomic-embed-text
   timeout_seconds: 2

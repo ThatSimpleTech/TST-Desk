@@ -87,8 +87,8 @@ _MODEL_HELP: dict[str, str | tuple[str, str]] = {
     "ModelConfig.search": "Where web_search sends queries, and how web_fetch reads pages.",
     "ModelConfig.local_servers": "Model servers on this computer that Add a model's search "
     "asks for their models. Loopback only; no key is sent.",
-    "ModelConfig.embeddings": "Local embeddings server that ranks memory files. Empty base_url "
-    "turns it off.",
+    "ModelConfig.embeddings": "Local embeddings server that ranks memory files. Off unless "
+    "enabled is true; when on, each turn sends your message and the memory notes to base_url.",
     "ModelConfig.project_context": "Budget for pinned project files on the brain prompt.",
     "ModelConfig.steering": "Which steering files are read besides ~/.tstdesk/AGENTS.md.",
     "ModelConfig.session": "The session event log, sent-file caps, and what a new session "
