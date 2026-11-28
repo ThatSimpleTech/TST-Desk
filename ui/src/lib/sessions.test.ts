@@ -95,6 +95,7 @@ vi.mock("./workspaces.svelte.js", () => ({
 }));
 
 import {
+  findOrFetchSession,
   sessions,
   startSessions,
   resetSessions,
@@ -1243,5 +1244,50 @@ describe("sessions on another computer (TD-5015)", () => {
     expect(moveTargets(REMOTE)).toEqual([]);
     requestMove(REMOTE);
     expect(sessions.moveFor).toBeNull();
+  });
+});
+
+
+// ── ARTSCHED-01: a scheduled run's session, not yet in the rail ────────────
+
+describe("finding a session the rail has not listed yet", () => {
+  it("asks the daemon, and opens it when the fresh list has it", async () => {
+    emit(sessionList([["s1", "2026-11-28T10:00:00Z"]]));
+    mocks.sent.length = 0;
+    const found = findOrFetchSession("run-1");
+    expect(sentTypes()).toEqual(["list_sessions"]);
+    emit(sessionList([["s1", "2026-11-28T10:00:00Z"], ["run-1", "2026-11-28T10:05:00Z", "awaiting_approval"]]));
+    expect(await found).toBe(true);
+  });
+
+  it("says it is gone only when the daemon's own list leaves it out", async () => {
+    const found = findOrFetchSession("gone-1");
+    emit(sessionList([["s1", "2026-11-28T10:00:00Z"]]));
+    expect(await found).toBe(false);
+  });
+
+  it("a listed session needs no question", async () => {
+    emit(sessionList([["s1", "2026-11-28T10:00:00Z"]]));
+    mocks.sent.length = 0;
+    expect(await findOrFetchSession("s1")).toBe(true);
+    expect(mocks.sent).toEqual([]);
+  });
+
+  it("gives up when no list comes", async () => {
+    vi.useFakeTimers();
+    const found = findOrFetchSession("run-2", 1000);
+    vi.advanceTimersByTime(1000);
+    expect(await found).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it("a job_list naming an unlisted run's session refreshes the rail", () => {
+    emit(sessionList([["s1", "2026-11-28T10:00:00Z"]]));
+    mocks.sent.length = 0;
+    emit({ type: "job_list", seq: 1, jobs: [{ last_session_id: "run-1" }] } as unknown as DaemonEventUnion);
+    expect(sentTypes()).toEqual(["list_sessions"]);
+    mocks.sent.length = 0;
+    emit({ type: "job_list", seq: 1, jobs: [{ last_session_id: "s1" }] } as unknown as DaemonEventUnion);
+    expect(mocks.sent).toEqual([]);
   });
 });

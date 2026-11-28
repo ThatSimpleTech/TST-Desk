@@ -6,7 +6,7 @@
 // when the status or the summary changes.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mount, tick, unmount } from "svelte";
+import { flushSync, mount, tick, unmount } from "svelte";
 import type { ClientMessageUnion, DaemonEventUnion, JobEntry, JobRunEntry } from "./protocol";
 
 const mocks = vi.hoisted(() => ({
@@ -29,11 +29,20 @@ vi.mock("./connection-status.svelte.js", () => ({
 	},
 }));
 
+async function settle(): Promise<void> {
+	await new Promise((r) => setTimeout(r, 0));
+	flushSync();
+}
+
 vi.mock("./sessions.svelte.js", () => ({
 	selectRow: (sessionId: string) => {
 		mocks.selectRow(sessionId);
 	},
 	sessions: mocks.sessions,
+	// ARTSCHED-01: the pane asks the daemon before calling a session gone;
+	// here the mocked rows stand in for the daemon's fresh list.
+	findOrFetchSession: async (sessionId: string) =>
+		mocks.sessions.rows.some((row: { sessionId: string }) => row.sessionId === sessionId),
 }));
 
 import ScheduledPane from "./components/ScheduledPane.svelte";
@@ -126,6 +135,7 @@ describe("parked approval on the scheduled pane (TD-3815)", () => {
 
 		mocks.sessions.rows = [{ sessionId: "sess-park" }];
 		button("Open session", card ?? document.body).click();
+		await settle();
 		await tick();
 		expect(mocks.selectRow).toHaveBeenCalledTimes(1);
 		expect(mocks.selectRow).toHaveBeenCalledWith("sess-park");
@@ -138,6 +148,7 @@ describe("parked approval on the scheduled pane (TD-3815)", () => {
 		await tick();
 		const card = document.querySelector(".card");
 		button("Open session", card ?? document.body).click();
+		await settle();
 		await tick();
 		expect(mocks.selectRow).not.toHaveBeenCalled();
 		expect(card?.textContent).toContain(sessionMissingCopy());
@@ -163,6 +174,7 @@ describe("parked approval on the scheduled pane (TD-3815)", () => {
 
 		mocks.sessions.rows = [{ sessionId: "sess-park" }];
 		button("Open session", history ?? document.body).click();
+		await settle();
 		await tick();
 		expect(mocks.selectRow).toHaveBeenCalledWith("sess-park");
 		expect(projects.surface).toBe("home");

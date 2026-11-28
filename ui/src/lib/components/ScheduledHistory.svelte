@@ -8,7 +8,7 @@
 	import { showHome } from '../projects.svelte.js';
 	import { jobRunLabel, sessionMissingCopy } from '../scheduled';
 	import { scheduled, toggleJobHistory } from '../scheduled.svelte.js';
-	import { selectRow, sessions } from '../sessions.svelte.js';
+	import { findOrFetchSession, selectRow } from '../sessions.svelte.js';
 
 	let { jobId }: { jobId: string } = $props();
 
@@ -16,10 +16,11 @@
 	let runs = $derived(scheduled.runs[jobId]);
 	let missing = $state<Record<string, true>>({});
 
-	function openSession(sessionId: string | null): void {
+	// ARTSCHED-01: the rail's list can lag a run's new session; ask the
+	// daemon before saying it is gone.
+	async function openSession(sessionId: string | null): Promise<void> {
 		if (sessionId === null || sessionId === '') return;
-		const known = sessions.rows.some((row) => row.sessionId === sessionId);
-		if (!known) {
+		if (!(await findOrFetchSession(sessionId))) {
 			missing = { ...missing, [sessionId]: true };
 			return;
 		}
