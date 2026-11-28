@@ -4,6 +4,7 @@
 	// a syntax-highlighted diff for file writes, and the live shell stream.
 	// All visual decisions come from entry-view.ts (AC #6); this stays a view.
 	import Icon from './Icon.svelte';
+	import { reveal } from '../reveal';
 	import DiffPreview from './DiffPreview.svelte';
 	import type { TimelineEntry } from '../timeline';
 	import type { WorkerStep } from '../protocol';
@@ -40,12 +41,12 @@
 	);
 
 	function pretty(value: unknown): string {
-		if (typeof value === 'string') return value;
-		return JSON.stringify(value, null, 2);
+		if (typeof value === 'string') return reveal(value);
+		return reveal(JSON.stringify(value, null, 2));
 	}
 
 	function inline(value: string | number | boolean | null): string {
-		return value === null ? '—' : String(value);
+		return value === null ? '—' : reveal(String(value));
 	}
 </script>
 
@@ -53,8 +54,8 @@
 	<button class="row-main" type="button" onclick={ontoggle} aria-expanded={expanded}>
 		<span class="glyph" aria-hidden="true"><Icon name={icon} size={14} /></span>
 		<span class="kind">{kindLabel}</span>
-		<span class="title">{entry.title}</span>
-		<span class="preview">{entry.preview}</span>
+		<span class="title">{reveal(entry.title)}</span>
+		<span class="preview">{reveal(entry.preview)}</span>
 		{#if entry.progress}<span class="progress" aria-live="polite">{entry.progress}</span>{/if}
 		<span class="chevron" class:chevron--open={expanded} aria-hidden="true">
 			<Icon name="chevron-right" size={14} />
