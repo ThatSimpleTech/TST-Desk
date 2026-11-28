@@ -2038,7 +2038,18 @@ class Daemon:
         return cred_id
 
     async def _delete_named_credential(self, credential_id: str) -> None:
-        """Drop catalog row, secret, and tier bindings."""
+        """Unbind, then drop the catalog row, then the secret (ONBOARD-01).
+
+        The other order deleted the secret, cut the row and then failed to
+        unbind, because the file then named a key it no longer declared:
+        the key was gone and config.yaml no longer loaded. Every config
+        write is checked before it replaces the file, so a refusal here
+        leaves the key and the file as they were.
+
+        Only a model on this computer is unbound. A hosted model with no key
+        would fall back to the default key and send that to its own host,
+        so a key a hosted model uses is refused with the model named.
+        """
         cred_id = credential_id.strip()
         backups = self.config.fallback_bindings(cred_id)
         if backups:
@@ -2048,24 +2059,37 @@ class Daemon:
                 f"The key {cred_id!r} is used by {', '.join(backups)} in config.yaml. "
                 "Remove it there first."
             )
-        bound: list[tuple[str, str]] = []
+        local: list[tuple[str, str]] = []
+        hosted: list[str] = []
         for preset_name, preset in self.config.presets.items():
             for tier_name, tier in preset.tier_map().items():
-                if tier.credential == cred_id:
-                    bound.append((preset_name, tier_name))
+                if tier.credential != cred_id:
+                    continue
+                if is_loopback_url(tier.base_url):
+                    local.append((preset_name, tier_name))
+                elif (label := preset.label or preset_name) not in hosted:
+                    hosted.append(label)
+        if hosted:
+            raise ConfigError(
+                f"{', '.join(hosted)} {'uses' if len(hosted) == 1 else 'use'} this key. "
+                "Remove that model or give it another key first."
+            )
+        for bound_preset, bound_tier in local:
+            save_tier_credential(bound_preset, bound_tier, None, self.config_path)
+        if cred_id in self.config.credentials:
+            delete_credential_entry(cred_id, self.config_path)
+        self._reload_user_config()
         try:
             await delete_api_key(cred_id)
         except KeychainLockedError:
             raise
-        except KeychainError:
-            # Catalog-only row (never stored a secret) is still removable.
-            if cred_id not in self.config.credentials:
-                raise
-        if cred_id in self.config.credentials:
-            delete_credential_entry(cred_id, self.config_path)
-        for bound_preset, bound_tier in bound:
-            save_tier_credential(bound_preset, bound_tier, None, self.config_path)
-        self._reload_user_config()
+        except KeychainError as e:
+            # A catalog-only row never stored a secret. Otherwise the config
+            # no longer names the key, so a secret left behind is unused.
+            log.warning(
+                "key removed from config; keychain item not deleted",
+                extra={"extra_fields": {"credential": cred_id, "error": str(e)}},
+            )
 
     def _cu_permissions_session(self, event: DaemonEvent) -> str | None:
         """Session to notify about computer-use permissions, or None.

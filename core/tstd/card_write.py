@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 
 from .config import ConfigError, ensure_user_config
-from .config_write import _atomic_write, _block_bounds, _find_key
+from .config_write import _block_bounds, _find_key, refuse_shared_role, write_config
 
 _VALUE_LINE = re.compile(
     r"^(?P<head>\s*(?:-\s+)?[A-Za-z_]+:\s*)(?P<value>[^#]*?)(?P<tail>\s+#.*)?$"
@@ -63,7 +63,7 @@ def save_tier_values(
         _set_key(lines, lo, hi, indent, key, format_value(value))
         # An inserted line moves the block's end by one.
         hi = _block_end(lines, lo, indent, fallback is not None)
-    _atomic_write(config_path, "\n".join(lines))
+    write_config(config_path, "\n".join(lines))
     return config_path
 
 
@@ -80,6 +80,7 @@ def _tier_block(lines: list[str], preset: str, tier: str, where: Path) -> tuple[
     tier_at = _find_key(lines, preset_at + 1, preset_end, tier, 4)
     if tier_at < 0:
         raise ConfigError(f"{where} declares no `{tier}:` block under `presets: {preset}:`")
+    refuse_shared_role(lines, tier_at)
     tier_end = _block_bounds(lines, tier_at, 4)
     return tier_at, tier_end, _body_indent(lines, tier_at, tier_end, 6)
 

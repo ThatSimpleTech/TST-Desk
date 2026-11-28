@@ -23,6 +23,8 @@ import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from pydantic import ValidationError
+
 from .config import (
     CREDENTIAL_ID_RE,
     DEFAULT_CREDENTIAL_ID,
@@ -31,6 +33,8 @@ from .config import (
     ConfigError,
     JudgmentsConfig,
     McpServerConfig,
+    ModelConfig,
+    config_from_data,
     ensure_user_config,
     is_loopback_url,
     load_config,
@@ -64,7 +68,7 @@ def save_active_preset(name: str, path: Path | None = None) -> Path:
     else:
         text = text.rstrip("\n") + "\n\n" + new_line + "\n"
 
-    _atomic_write(config_path, text)
+    write_config(config_path, text)
     return config_path
 
 
@@ -95,7 +99,7 @@ def save_engine_kind(kind: str, path: Path | None = None) -> Path:
         )
     else:
         text = text.rstrip("\n") + f'\n\nengine:\n  kind: {cleaned}\n  binary: ""\n'
-    _atomic_write(config_path, text)
+    write_config(config_path, text)
     return config_path
 
 
@@ -115,6 +119,50 @@ def _atomic_write(config_path: Path, text: str, *, newline: str | None = None) -
         with contextlib.suppress(OSError):
             os.unlink(tmp_name)
         raise
+
+
+def check_config_text(text: str, config_path: Path, why: str = "") -> ModelConfig:
+    """Load *text* as the daemon would load *config_path*, or raise ``ConfigError``."""
+    import yaml
+
+    lead = why or "The change was not saved: config.yaml would no longer load"
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        raise ConfigError(f"{lead} ({e})") from e
+    if not isinstance(data, dict):
+        raise ConfigError(lead)
+    try:
+        return config_from_data(data, config_path)
+    except (ConfigError, ValidationError) as e:
+        raise ConfigError(f"{lead} ({e})") from e
+
+
+def write_config(config_path: Path, text: str, *, why: str = "") -> None:
+    """Replace config.yaml with *text* only when *text* loads (SETMODEL-01/-02).
+
+    Every writer edits the file by line to keep its comments, and a line
+    edit can break a shape it does not read, such as a YAML alias. Checking
+    the whole would-be file first means a refused edit leaves the file as
+    it was, never a file the daemon cannot start on.
+    """
+    check_config_text(text, config_path, why)
+    _atomic_write(config_path, text)
+
+
+SHARED_ROLE = (
+    "This role shares one entry with others in config.yaml (a YAML anchor or "
+    "alias), so changing it here would change them too or break the file. "
+    "Give it its own entry first: Settings, Configuration, or config.yaml."
+)
+
+
+def refuse_shared_role(lines: list[str], tier_at: int) -> None:
+    """Refuse an edit to a role written as ``role: *name`` or ``role: &name``."""
+    _, _, rest = lines[tier_at].partition(":")
+    value = rest.split("#", 1)[0].strip()
+    if value.startswith(("*", "&")):
+        raise ConfigError(SHARED_ROLE)
 
 
 def _block_bounds(lines: list[str], start: int, header_indent: int) -> int:
@@ -202,6 +250,7 @@ def save_tier_slug(preset: str, tier: str, slug: str, path: Path | None = None) 
     tier_at = _find_key(lines, preset_at + 1, preset_end, tier, 4)
     if tier_at < 0:
         raise ConfigError(f"{config_path} declares no `{tier}:` block under `presets: {preset}:`")
+    refuse_shared_role(lines, tier_at)
 
     tier_end = _block_bounds(lines, tier_at, 4)
     body_indent = 6
@@ -232,7 +281,7 @@ def save_tier_slug(preset: str, tier: str, slug: str, path: Path | None = None) 
         else:
             lines.insert(tier_at + 1, new_line)
 
-    _atomic_write(config_path, "\n".join(lines))
+    write_config(config_path, "\n".join(lines))
     return config_path
 
 
@@ -302,7 +351,7 @@ def save_credential(
             elif host_at >= 0:
                 del lines[host_at]
 
-    _atomic_write(config_path, "\n".join(lines))
+    write_config(config_path, "\n".join(lines))
     return config_path
 
 
@@ -320,7 +369,7 @@ def delete_credential_entry(credential_id: str, path: Path | None = None) -> Pat
         raise ConfigError(f"{config_path} declares no credential {cleaned_id!r}")
     id_end = _block_bounds(lines, id_at, 2)
     del lines[id_at:id_end]
-    _atomic_write(config_path, "\n".join(lines))
+    write_config(config_path, "\n".join(lines))
     return config_path
 
 
@@ -368,6 +417,7 @@ def save_tier_credential(
     tier_at = _find_key(lines, preset_at + 1, preset_end, tier, 4)
     if tier_at < 0:
         raise ConfigError(f"{config_path} declares no `{tier}:` block under `presets: {preset}:`")
+    refuse_shared_role(lines, tier_at)
 
     tier_end = _block_bounds(lines, tier_at, 4)
     body_indent = 6
@@ -387,7 +437,7 @@ def save_tier_credential(
         else:
             lines.insert(tier_at + 1, new_line)
 
-    _atomic_write(config_path, "\n".join(lines))
+    write_config(config_path, "\n".join(lines))
     return config_path
 
 
@@ -427,7 +477,7 @@ def save_judgments(
     else:
         end = _block_bounds(lines, at, 0)
         lines[at:end] = block
-    _atomic_write(config_path, "\n".join(lines))
+    write_config(config_path, "\n".join(lines))
     return config_path
 
 
@@ -541,7 +591,7 @@ def save_mcp_server(server_id: str, spec: McpServerConfig, path: Path | None = N
         id_end = _block_bounds(lines, id_at, 4)
         lines[id_at:id_end] = block
 
-    _atomic_write(config_path, "\n".join(lines))
+    write_config(config_path, "\n".join(lines))
     return config_path
 
 
@@ -571,7 +621,7 @@ def delete_mcp_server_entry(server_id: str, path: Path | None = None) -> Path:
     if not remaining:
         lines[servers_at] = "  servers: {}"
 
-    _atomic_write(config_path, "\n".join(lines))
+    write_config(config_path, "\n".join(lines))
     return config_path
 
 
@@ -665,5 +715,5 @@ def save_model_preset(
     else:
         raise ConfigError(f"{config_path} has a `presets:` value this writer cannot edit")
 
-    _atomic_write(config_path, "\n".join(lines))
+    write_config(config_path, "\n".join(lines))
     return config_path

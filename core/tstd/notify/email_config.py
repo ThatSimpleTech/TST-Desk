@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 
 from ..config import EmailNotifyConfig, ensure_user_config
-from ..config_write import _atomic_write, _block_bounds, _find_key
+from ..config_write import _block_bounds, _find_key, write_config
 
 
 def save_email_notify(email: EmailNotifyConfig, path: Path | None = None) -> Path:
@@ -33,7 +33,7 @@ def save_email_notify(email: EmailNotifyConfig, path: Path | None = None) -> Pat
         else:
             email_end = _block_bounds(lines, email_at, 2)
             lines[email_at:email_end] = block
-    _atomic_write(config_path, "\n".join(lines))
+    write_config(config_path, "\n".join(lines))
     return config_path
 
 
