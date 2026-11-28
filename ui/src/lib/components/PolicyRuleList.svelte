@@ -1,5 +1,6 @@
 <script lang="ts">
 	import ConfirmButton from './ConfirmButton.svelte';
+	import { ARM_MS, clickDecides, newArming, notePress } from '../approval-arming';
 	// Policy section (TD-1703 / TD-803 / TD-804): skip-all, then saved
 	// always-allow rules with revoke.
 	//
@@ -24,6 +25,24 @@
 		canSkipAll?: boolean;
 	}
 	let { sessionId, canSkipAll = true }: Props = $props();
+	let confirmingSkipAll = $state(false);
+	let skipArming = $state(newArming());
+
+	function toggleSkipAll(): void {
+		if (settings.skipAllApprovals) {
+			setSkipAllApprovals(false);
+			return;
+		}
+		confirmingSkipAll = true;
+		skipArming = newArming();
+		setTimeout(() => (skipArming = { ...skipArming, armed: true }), ARM_MS);
+	}
+
+	function confirmSkipAll(event: MouseEvent): void {
+		if (!clickDecides(skipArming, event.detail)) return;
+		confirmingSkipAll = false;
+		setSkipAllApprovals(true);
+	}
 	const skipAllOffNote = permissionCopy('approval_switches')?.offOnPhone ?? '';
 	// TD-5015: another computer's workspace keeps its own rules.
 	let remoteName = $derived(machineNameFor(sessionId));
@@ -46,10 +65,34 @@
 		role="switch"
 		aria-checked={settings.skipAllApprovals}
 		disabled={!settings.skipAllApprovals && !canSkipAll}
-		onclick={() => setSkipAllApprovals(!settings.skipAllApprovals)}
+		onclick={toggleSkipAll}
 		>{settings.skipAllApprovals ? 'On' : 'Off'}</button
 	>
 </div>
+{#if confirmingSkipAll}
+	<!-- APPROVE-05: turning approvals off is one deliberate step, not one
+	     click; turning them back on needs no confirmation. -->
+	<div class="skip-confirm" role="alertdialog" aria-label="Turn off approvals?">
+		<p class="skip-question">
+			Turn off approvals for every session on this computer? Commands and file
+			changes then run without anyone confirming them, including Class C and ones
+			outside the project folder, until you turn this back on.
+		</p>
+		<div class="skip-actions">
+			<button
+				class="choice choice--danger"
+				class:arming={!skipArming.armed}
+				type="button"
+				aria-disabled={!skipArming.armed}
+				onpointerdown={() => (skipArming = notePress(skipArming))}
+				onclick={confirmSkipAll}>Turn off approvals</button
+			>
+			<button class="choice" type="button" onclick={() => (confirmingSkipAll = false)}
+				>Keep asking</button
+			>
+		</div>
+	</div>
+{/if}
 {#if !settings.skipAllApprovals && !canSkipAll}
 	<!-- TD-5283: a phone turns this on only if the computer allowed it. -->
 	<p class="hint off-note">{skipAllOffNote}</p>
@@ -103,6 +146,34 @@
 {/if}
 
 <style>
+	.skip-confirm {
+		margin: var(--space-2) 0 var(--space-3);
+		padding: var(--space-3);
+		border: 1px solid var(--color-err);
+		border-radius: var(--radius-sm);
+	}
+
+	.skip-question {
+		margin: 0 0 var(--space-2);
+		font-size: var(--text-sm);
+		color: var(--color-ink);
+	}
+
+	.skip-actions {
+		display: flex;
+		gap: var(--space-2);
+	}
+
+	.choice--danger {
+		border-color: var(--color-err);
+		color: var(--color-err);
+	}
+
+	.arming {
+		opacity: 0.55;
+		cursor: default;
+	}
+
 	.skip-all {
 		display: flex;
 		align-items: flex-start;
