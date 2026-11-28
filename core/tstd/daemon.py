@@ -1302,6 +1302,8 @@ class Daemon:
         # Built when the daemon starts serving — the audit database only
         # appears on disk once the daemon actually runs (TD-902).
         self._audit_writer: AuditWriter | None = None
+        # CU-05: why the last Stop could not write the stop-file, or None.
+        self._cu_file_error: str | None = None
         # LIVE2-08: per chat, turns already distilled, and entries its turns ran on.
         self._distilled_turns: dict[str, int] = {}
         self._turn_entries: dict[str, set[str]] = {}
@@ -1444,15 +1446,23 @@ class Daemon:
         self.desktop_driver.set_killed(killed)
         if self.ax_driver is not None:
             self.ax_driver.set_killed(killed)
+        if not killed:
+            self._cu_file_error = None
         if not write_file:
             return
         try:
             path = cu_stopfile.engage() if killed else cu_stopfile.clear()
-        except OSError:
+        except OSError as exc:
             log.exception(
                 "computer-use stop-file could not be %s", "created" if killed else "removed"
             )
+            if killed:
+                # CU-05: Stop fails closed. The latch stays engaged here, and
+                # the watcher must not read the missing file as "cleared
+                # outside TST Desk" and let it go a second later.
+                self._cu_file_error = f"{exc.strerror or exc}"
             return
+        self._cu_file_error = None
         log.info("computer-use stop-file %s: %s", "created" if killed else "removed", path)
 
     def _agent_cursor_wanted(self) -> bool:
@@ -1499,6 +1509,10 @@ class Daemon:
             except OSError:
                 continue
             if engaged == self._cu_killed:
+                continue
+            # CU-05: the file is missing because writing it failed, not
+            # because someone cleared it: Stop stays on.
+            if self._cu_killed and not engaged and self._cu_file_error is not None:
                 continue
             log.info(
                 "computer-use stop-file %s outside TST Desk", "engaged" if engaged else "cleared"
@@ -5145,7 +5159,9 @@ class Daemon:
                 self.set_computer_use_killed(killed, write_file=False)
             # Connection-scoped: the switch is process-wide, so this is
             # not written to any session log (TD-3404).
-            return CuKillState(killed=killed).model_dump_json()
+            return CuKillState(
+                killed=killed, file_error=self._cu_file_error if killed else None
+            ).model_dump_json()
 
         return None
 

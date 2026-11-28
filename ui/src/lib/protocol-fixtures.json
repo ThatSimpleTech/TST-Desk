@@ -3179,7 +3179,8 @@
   "cu_kill_state": {
     "type": "cu_kill_state",
     "seq": 1,
-    "killed": true
+    "killed": true,
+    "file_error": null
   },
   "cu_session": {
     "type": "cu_session",

@@ -53,16 +53,19 @@ pub fn setting(data_dir: &Path) -> Setting {
 }
 
 /// Create the stop-file for these sources. Never removes it.
+/// Sent to the windows when the shortcut could not write the stop-file (CU-05).
+pub const STOP_FALLBACK_EVENT: &str = "cu-stop-fallback";
+
 pub fn engage(sources: &Sources) -> std::io::Result<PathBuf> {
-    let path = cu_stop::resolve(sources).ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::NotFound, "no home directory")
-    })?;
+    let path = cu_stop::resolve(sources)
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no home directory"))?;
     cu_stop::engage_at(&path)?;
     Ok(path)
 }
 
 /// Register the shortcut. The global-shortcut plugin must already be built.
 pub fn setup(app: &tauri::AppHandle, data_dir: &Path) {
+    use tauri::Emitter;
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
     let combo = match setting(data_dir) {
@@ -81,13 +84,19 @@ pub fn setup(app: &tauri::AppHandle, data_dir: &Path) {
     };
     let registered = app
         .global_shortcut()
-        .on_shortcut(shortcut, |_app, _shortcut, event| {
+        .on_shortcut(shortcut, |app, _shortcut, event| {
             if event.state() != ShortcutState::Pressed {
                 return;
             }
             match engage(&Sources::live()) {
                 Ok(path) => log::info!("computer use stopped by shortcut: {}", path.display()),
-                Err(err) => log::error!("computer-use stop shortcut could not stop: {err}"),
+                Err(err) => {
+                    // CU-05: Stop fails closed. The stop-file could not be
+                    // written, so the window asks the daemon to hold Stop
+                    // itself and says what did not work.
+                    log::error!("computer-use stop shortcut could not write the stop-file: {err}");
+                    let _ = app.emit(STOP_FALLBACK_EVENT, err.to_string());
+                }
             }
         });
     match registered {
