@@ -175,6 +175,9 @@ export const settings = $state({
 	cuUnhideOnFinish: true,
 	cuDeniedApps: [] as string[],
 	cuPolicyDamaged: null as string | null,
+
+	configError: null as string | null,
+	configRunningOn: null as "last_good" | "defaults" | null,
 	/** TD-708 dev: judgment-seam toggles. All default off; from setup_state. */
 	judgmentsVerification: false,
 	judgmentsSemanticBreaker: false,
@@ -294,6 +297,9 @@ export function resetSettings(): void {
 	settings.cuUnhideOnFinish = true;
 	settings.cuDeniedApps = [];
 	settings.cuPolicyDamaged = null;
+
+	settings.configError = null;
+	settings.configRunningOn = null;
 	settings.judgmentsVerification = false;
 	settings.judgmentsSemanticBreaker = false;
 	settings.judgmentsCandidateSelection = false;
@@ -498,6 +504,9 @@ function reduce(event: DaemonEventUnion): void {
 		settings.cuUnhideOnFinish = event.cu_unhide_on_finish ?? true;
 		settings.cuDeniedApps = event.cu_denied_apps ?? [];
 		settings.cuPolicyDamaged = event.cu_policy_damaged ?? null;
+
+		settings.configError = event.config_error ?? null;
+		settings.configRunningOn = event.config_running_on ?? null;
 		settings.judgmentsVerification = event.judgments_verification ?? false;
 		settings.judgmentsSemanticBreaker = event.judgments_semantic_breaker ?? false;
 		settings.judgmentsCandidateSelection = event.judgments_candidate_selection ?? false;
@@ -866,6 +875,11 @@ export function setCuIndicators(next: {
 }
 
 /** Persist computer-use policy (TD-4830). Acked with setup_state. */
+/** SETMODEL-04: put config.yaml's last working copy back. */
+export function restoreLastGoodConfig(): void {
+	sendToDaemon({ type: "restore_last_good_config" });
+}
+
 export function setCuPolicy(next: {
 	enabled?: boolean;
 	mode?: CuMode;

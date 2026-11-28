@@ -39,6 +39,7 @@ from .config import (
     is_loopback_url,
     load_config,
 )
+from .config_recovery import remember_good
 
 
 def save_active_preset(name: str, path: Path | None = None) -> Path:
@@ -148,6 +149,8 @@ def write_config(config_path: Path, text: str, *, why: str = "") -> None:
     """
     check_config_text(text, config_path, why)
     _atomic_write(config_path, text)
+    # SETMODEL-04: the file loads, so it is the copy to fall back to.
+    remember_good(config_path)
 
 
 SHARED_ROLE = (

@@ -371,3 +371,22 @@
 	gap: var(--space-2);
 	font-size: var(--text-xs);
 }
+
+/* SETMODEL-04: config.yaml did not load at start. */
+.cfg-root .cfg-broken {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	margin-bottom: var(--space-3);
+}
+
+.cfg-root .cfg-restore {
+	align-self: flex-start;
+	font-size: var(--text-sm);
+	padding: var(--space-1) var(--space-3);
+	border-radius: var(--radius-sm);
+	border: var(--border-width) solid var(--color-hairline);
+	background: var(--color-ground);
+	color: var(--color-ink);
+	cursor: pointer;
+}

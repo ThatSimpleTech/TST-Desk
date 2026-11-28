@@ -2303,6 +2303,8 @@
     "cu_unhide_on_finish": true,
     "cu_denied_apps": [],
     "cu_policy_damaged": null,
+    "config_error": null,
+    "config_running_on": null,
     "judgments_verification": false,
     "judgments_semantic_breaker": false,
     "judgments_candidate_selection": false,

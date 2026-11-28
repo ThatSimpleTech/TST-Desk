@@ -28,6 +28,7 @@ import {
 	type NoticeSpec,
 	storeRecoveredNotice,
 	eventUnreadableNotice,
+	configBrokenNotice,
 } from "./error-copy";
 import { claimedInline } from "./inline-errors";
 import { phoneChangeNotice, phoneLapseNotice } from "./phone-permissions";
@@ -175,6 +176,16 @@ export function notifyEvent(event: DaemonEventUnion): void {
 				notify(`unreadable:${event.session_id}`, eventUnreadableNotice(event.kind));
 			}
 			break;
+		case "setup_state": {
+			// SETMODEL-04: config.yaml did not load at start. Standing until it does.
+			const shown = banners.find((n) => n.key === "config:broken");
+			if (event.config_error) {
+				notify("config:broken", configBrokenNotice(event.config_running_on ?? "defaults"));
+			} else if (shown) {
+				dismiss(shown.id);
+			}
+			break;
+		}
 		case "store_recovered":
 			// ERR2B-04: once per store and file, kept until dismissed.
 			notify(`store:${event.store}:${event.kept_as}`, storeRecoveredNotice(event));
