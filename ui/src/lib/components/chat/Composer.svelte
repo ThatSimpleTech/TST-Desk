@@ -20,7 +20,7 @@
 	// holds. Deliberately no `accept` filter on the picker: a file the
 	// user cannot even select produces no copy explaining why, and the
 	// copy is the point.
-	import { onMount } from "svelte";
+	import { onMount, untrack } from "svelte";
 	import {
 		acceptAttachment,
 		applyExtracted,
@@ -200,6 +200,29 @@
 			if (result.refusal !== null) refusal = result.refusal;
 		}),
 	);
+
+	// COMPOSER-02: staged files belong to the chat they were staged in. The
+	// composer stays mounted when the chat changes, so they are parked under
+	// that chat and the new chat's own come back; a file meant for a local
+	// model is never sent to the next chat, which may be a hosted one.
+	const stagedByChat = new Map<string | null, { files: AttachmentDraft[]; refusal: AttachmentRefusal | null }>();
+	let stagedFor: string | null = untrack(() => session.sessionId);
+	$effect(() => {
+		const id = session.sessionId;
+		untrack(() => {
+			if (id === stagedFor) return;
+			if (attachments.length > 0 || refusal !== null) {
+				stagedByChat.set(stagedFor, { files: attachments, refusal });
+			}
+			const back = stagedByChat.get(id);
+			stagedByChat.delete(id);
+			// An answer to a read sent from the other chat may have been missed.
+			const files = back?.files ?? [];
+			attachments = unmeasurePending(files) ?? files;
+			refusal = back?.refusal ?? null;
+			stagedFor = id;
+		});
+	});
 
 	// TD-5161: a dropped connection never answers; don't leave "reading…".
 	$effect(() =>
