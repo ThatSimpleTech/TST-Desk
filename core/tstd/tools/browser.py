@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..browser import BrowserDriver, BrowserError
 from ..browser.candidates import candidate_from_node, select_candidate
@@ -337,8 +337,36 @@ async def browser_pick(
     )
 
 
+NO_REAL_BROWSER = (
+    "No real browser is behind the browser tools here (computer_use.browser is "
+    "mock, or Playwright is not installed), so nothing was opened, clicked or "
+    "read. Tell the person; do not report a page as visited."
+)
+
+
+async def _no_real_browser(*_args: Any, **_kwargs: Any) -> str:
+    raise HandlerRefusal("no_real_browser", NO_REAL_BROWSER)
+
+
 def register_browser_handlers(dispatcher: ToolDispatcher, driver: BrowserDriver) -> None:
-    """Bind the six browser tools to *driver* (plus browser_pick when registered)."""
+    """Bind the six browser tools to *driver* (plus browser_pick when registered).
+
+    CU-09: a mock standing in for a missing browser answers every call with
+    ``no_real_browser`` instead of pretending a page was visited.
+    """
+    if getattr(driver, "stands_in", False):
+        for name in (
+            "browser_screenshot",
+            "browser_navigate",
+            "browser_click",
+            "browser_type",
+            "browser_scroll",
+            "browser_wait",
+            "browser_pick",
+        ):
+            if dispatcher.registry.get(name) is not None:
+                dispatcher.register_handler(name, _no_real_browser)
+        return
     dispatcher.register_handler("browser_screenshot", partial(browser_screenshot, driver=driver))
     dispatcher.register_handler("browser_navigate", partial(browser_navigate, driver=driver))
     dispatcher.register_handler("browser_click", partial(browser_click, driver=driver))

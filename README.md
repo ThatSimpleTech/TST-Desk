@@ -298,8 +298,9 @@ boundaries and spend/time/iteration caps, the live cost meter and usage export, 
 append-only audit log, agent memory that rides the brain prompt and accepts distilled
 updates, sessions that revive from disk after a restart or a closed window (close vs quit
 below), headless runs via `tst run`, computer-use — a screenshot and clicks through the
-same classifier, behind a kill switch — on macOS, Windows, and Linux X11 via `tst-cu-mcp` (browser
-path on any OS), the agent sends files to the chat (`send_file`) as cards you can open, save,
+same classifier, behind a kill switch — on macOS, Windows, and Linux X11 via `tst-cu-mcp` (the browser
+tools need Playwright installed and `computer_use.browser: playwright`; without them they say no
+browser is there), the agent sends files to the chat (`send_file`) as cards you can open, save,
 or download to the paired phone, where an APK opens the installer, steering edits the agent
 proposes (`propose_steering_edit`) as a diff that only your Accept writes, a task list the
 agent keeps (`task_list`) in the Plan pane and above the composer that outlives compaction,
