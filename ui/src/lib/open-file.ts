@@ -12,16 +12,24 @@ export function isTauri(): boolean {
 	return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-/** Open *path* with the OS default application (tauri-plugin-opener).
- *  Best-effort: returns false when there is no shell to ask or the open
- *  failed, so the caller can decide whether to surface anything. */
+/** Open *path* with the OS default application, through the host's
+ *  `open_path` command, which checks the path first (PKG-12). The window has
+ *  no open-path grant of its own: the plugin's was granted with no scope,
+ *  which allows nothing, so every file click did nothing in a release build.
+ *  A refusal or a failed open says so; false when nothing opened. */
 export async function openInEditor(path: string): Promise<boolean> {
 	if (!isTauri()) return false;
 	try {
-		const { openPath } = await import("@tauri-apps/plugin-opener");
-		await openPath(path);
+		const { invoke } = await import("@tauri-apps/api/core");
+		await invoke("open_path", { path });
 		return true;
-	} catch {
+	} catch (error) {
+		const { notify } = await import("./notifications.svelte.js");
+		notify(`open-path:${path}`, {
+			severity: "toast",
+			title: "Couldn't open the file",
+			body: typeof error === "string" && error !== "" ? error : `Could not open ${path}.`,
+		});
 		return false;
 	}
 }
