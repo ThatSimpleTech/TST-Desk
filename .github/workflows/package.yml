@@ -263,22 +263,29 @@ jobs:
           export HOME="$RUNNER_TEMP/gate-home" && mkdir -p "$HOME"
           DATA="$HOME/.local/share/tst-desk"
           (cd core && uv run python scripts/make_startup_fixture.py "$DATA" --sessions 300 --turns 60 --files 200)
-          (cd "$RUNNER_TEMP" && "$AI" --appimage-extract >/dev/null)
           LOG="$DATA/logs/host.log"
+          OUT="$RUNNER_TEMP/gate-app.log"
           START=$(date +%s.%N)
-          xvfb-run -a timeout 60 "$RUNNER_TEMP/squashfs-root/AppRun" >/dev/null 2>&1 &
+          APPIMAGE_EXTRACT_AND_RUN=1 xvfb-run -a timeout 90 "$AI" >"$OUT" 2>&1 &
           APP=$!
-          CONNECTED=""
-          for i in $(seq 1 100); do
-            if grep -q "connected to tstd" "$LOG" 2>/dev/null; then CONNECTED=1; break; fi
+          # Watch for up to 60 s so a miss reports how long it really took.
+          ELAPSED=""
+          for i in $(seq 1 600); do
+            if grep -q "connected to tstd" "$LOG" 2>/dev/null; then
+              ELAPSED=$(python3 -c "import sys,time; print(round(time.time() - float(sys.argv[1]), 2))" "$START")
+              break
+            fi
             sleep 0.1
           done
-          ELAPSED=$(python3 -c "import sys,time; print(round(time.time() - float(sys.argv[1]), 2))" "$START")
           kill "$APP" 2>/dev/null || true
-          pkill -f squashfs-root 2>/dev/null || true
-          echo "connected after ${ELAPSED}s"
-          tail -5 "$LOG" 2>/dev/null || true
-          [ -n "$CONNECTED" ] || { echo "::error::the packaged app did not connect to tstd within 10 s on a 300-chat data folder"; exit 1; }
+          pkill -f "appimage_extracted|\.mount_|/tstd" 2>/dev/null || true
+          echo "connected after: ${ELAPSED:-never (60 s)}"
+          ls -la "$DATA" "$DATA/logs" 2>/dev/null || true
+          tail -20 "$LOG" 2>/dev/null || true
+          tail -20 "$DATA/logs/tstd.stderr.log" 2>/dev/null || true
+          tail -20 "$OUT" || true
+          [ -n "$ELAPSED" ] || { echo "::error::the packaged app never connected to tstd on a 300-chat data folder"; exit 1; }
+          python3 -c "import sys; sys.exit(0 if float(sys.argv[1]) <= 10 else 1)" "$ELAPSED" || { echo "::error::the packaged app took ${ELAPSED} s to connect to tstd on a 300-chat data folder (limit 10 s)"; exit 1; }
 
       - name: Smoke the bundled sidecar (Windows)
         if: runner.os == 'Windows'
