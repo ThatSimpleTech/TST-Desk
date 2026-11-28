@@ -185,14 +185,21 @@ directives in [`AGENTS.md`](AGENTS.md) §2 and enforced in code.
   authors of TST Desk or to a service of ours, because there is none. Every host the daemon
   does contact is named in your `config.yaml`:
   - each model's `base_url`, for chat and, once a day, to re-read that model's price and
-    context size (`model_refresh`; `auto: false` turns it off);
+    context size (see **Background checks** below);
   - the search pages `web_search` reads (`search.base_url` and its fallbacks) and the pages
     `web_fetch` opens, under the same approval rules as any other tool call;
   - what you switch on yourself: notification channels, connectors, and an MCP server you
     marked `allow_remote`.
 
-  The packaged app, not the daemon, also asks GitHub releases for a newer version when it
-  opens and every four hours ([Updates](#updates)). There is exactly one chat client
+  **Background checks.** Two calls happen without you asking, and both are **on by
+  default**: the packaged app asks GitHub releases for a newer version when it opens and
+  every four hours ([Updates](#updates)), and the daemon re-reads each model's price and
+  context size from that model's own server a little after start and then once a day. One
+  switch turns both off: **Settings → About → Check online in the background**. With it
+  off, nothing is checked until you press **Check for updates** or **Refresh from servers**.
+  (`model_refresh.auto: false` in `config.yaml` turns off only the price refresh.)
+
+  There is exactly one chat client
   ([`provider.py`](core/tstd/provider.py)), and its endpoint comes from config, never from a
   literal in the source. Model discovery refuses any non-loopback endpoint *before* it sends
   ([`discovery.py`](core/tstd/discovery.py)).
@@ -457,7 +464,8 @@ machine and installs it only if the file matches `SHA256SUMS.txt` on that
 release. macOS and AppImage builds replace themselves when you choose
 **Restart to update**. Windows runs the MSI. A `.deb` opens in the system
 installer. The check sends no account and no identifier. Turn it off under
-Settings → About. A build you are running from a source checkout reports
+Settings → About → **Check online in the background**, which also stops the daily
+model price refresh. A build you are running from a source checkout reports
 the release and does not replace itself.
 
 ## License

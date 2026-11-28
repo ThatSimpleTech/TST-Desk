@@ -119,7 +119,7 @@ with the reason under the field. Line endings stay as the file has them.
 | `delegate` | mapping | see below | How many model calls one `delegate` child may make (TD-5265). Omitted in an older user copy defaults to 8, what it was before the key existed. |
 | `model_concurrency` | mapping | no limits | How many calls one model server answers at once, across the whole daemon (TD-5269). Omitted in an older user copy means no limit, as before. A new install's `config.yaml` sets `loopback_default: 2` (TD-5282). |
 | `workflow` | mapping | see below | Limits for the `workflow` tool, which runs workers side by side while a session's Ultracode switch is on (TD-5195). Omitted means the defaults: 3 at once, 8 a call. |
-| `model_refresh` | mapping | see below | Refresh every model's prices, windows and slug spelling in the background (TD-5197). Omitted means on, every 24 hours. |
+| `model_refresh` | mapping | see below | Refresh every model's prices, windows and slug spelling in the background (TD-5197), while Settings → About → Check online in the background is on. Omitted means on, every 24 hours. |
 | `shell` | mapping | see below | The read-only shell list (TD-5103): commands that run without asking. Omitted in an older user copy means the whole built-in list, on. Config can shrink it or switch it off, never add to it. |
 | `remote` | mapping | see below | Opt-in Tailscale bind. Omitted in an older user copy is filled from the shipped file at load. Empty `bind` is loopback only. |
 | `notify` | mapping | see below | Outbound notification channels. Omitted in an older user copy is filled from the shipped file at load. Slack and ntfy are off until their `enabled` flag is true and a destination URL is stored in the OS keychain. |
@@ -1023,6 +1023,12 @@ for it, and a server that is down leaves that model's numbers as they were.
 When it changes something, Settings says so under the role ("Updated
 automatically: input price, output price.") and the log has a
 `model card refreshed` line with `auto: true`.
+
+It runs only while **Settings → About → Check online in the background** is
+on (ENTERPRISE-04), the one switch for the app's own background calls, which
+also covers the release check. That switch is `automatic` in the data
+folder's `update.yaml`, read before every pass. `auto: false` here turns off
+only this refresh.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|

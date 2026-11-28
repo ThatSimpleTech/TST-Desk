@@ -45,6 +45,7 @@ from .autonomy.charter import Charter, CharterError
 from .autonomy.charter_io import read_charter_document, write_charter_document
 from .autonomy.runner import first_prompt, notify_autonomy_stop
 from .autonomy.start import run_autonomy_start
+from .background_checks import background_checks_on
 from .boundary_config import (
     boundary_from_mapping,
     save_spend_cap,
@@ -1930,7 +1931,9 @@ class Daemon:
                 return
             except TimeoutError:
                 pass
-            if self.config.model_refresh.auto:
+            # The one background-calls switch (Settings, About), read each
+            # time so turning it off applies at once (ENTERPRISE-04).
+            if self.config.model_refresh.auto and background_checks_on(self.data_dir):
                 await self._auto_refresh_cards()
             delay = self.config.model_refresh.every_hours * CARD_REFRESH_HOUR
 
