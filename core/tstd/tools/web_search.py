@@ -37,6 +37,7 @@ import httpx
 from ..config import SearchConfig, cached_config
 from ..logging import redact_secrets
 from ..net import direct_transport
+from ..net_log import REQUEST_HOOKS
 from .search_bind import bind_search, current_search, reset_search
 from .web_extract import extract_answer
 from .web_page import PAGE_CACHE, FetchedPage, render_page, strip_hidden, window_size
@@ -456,7 +457,10 @@ async def web_search(
             # One client per URL: a search server on this computer is asked
             # directly, never through a proxy (TD-5181).
             async with httpx.AsyncClient(
-                timeout=timeout, follow_redirects=True, transport=direct_transport(url)
+                timeout=timeout,
+                follow_redirects=True,
+                transport=direct_transport(url),
+                event_hooks=REQUEST_HOOKS,
             ) as client:
                 response = await client.get(url, params={"q": text})
                 response.raise_for_status()
@@ -550,7 +554,10 @@ async def _download(target: str, limit_seconds: float, cap: int) -> FetchedPage 
     current = target
     try:
         async with httpx.AsyncClient(
-            timeout=limit_seconds, follow_redirects=False, transport=_pinned_transport()
+            timeout=limit_seconds,
+            follow_redirects=False,
+            transport=_pinned_transport(),
+            event_hooks=REQUEST_HOOKS,
         ) as client:
             response: httpx.Response | None = None
             for _ in range(_MAX_REDIRECTS):

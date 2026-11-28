@@ -21,8 +21,10 @@ loop must wrap calls in ``asyncio.to_thread``; the TD-902 writer does.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import os
 import sqlite3
 import time
 from collections.abc import Mapping, Sequence
@@ -321,6 +323,10 @@ class AuditStore:
         # Safety comes from the writer's single drain task serializing
         # every call, not from sqlite's thread affinity.
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        # Owner-only (LIVE-08: it was 0644), and its WAL files with it.
+        for path in (db_path, db_path.with_name(db_path.name + "-wal")):
+            with contextlib.suppress(OSError):
+                os.chmod(path, 0o600)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._migrate(self._conn, MIGRATIONS)

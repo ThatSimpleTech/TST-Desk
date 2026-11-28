@@ -257,6 +257,9 @@ _OUTBOUND_CAPABLE = {
         "refuses unless it is loopback; only on the person's set_fast or their next turn"
     ),
     "provider.py": "the one chat client; base_url is a constructor argument from config",
+    "net_log.py": (
+        "LIVE2-01: an httpx request hook that logs method, host and path; it sends nothing"
+    ),
     "sandbox/proxy.py": (
         "TD-5305: the sandbox egress proxy; it dials only a host the person put on "
         "boundary.network, for a command they ran, and names no host itself"

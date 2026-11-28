@@ -6,6 +6,7 @@ A logging filter redacts known credential patterns before anything is written.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import logging.handlers
@@ -53,6 +54,20 @@ SECRET_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"(AKIA[0-9A-Z]{16})"),  # AWS access key
     re.compile(r"(-----BEGIN\s+(RSA |EC |DSA |OPENSSH )?PRIVATE KEY)"),  # Private key
 ]
+
+# The user info of a URL (``https://user:pass@host`` or ``https://token@host``)
+# is a credential on every output path (LIVE2-01).
+_URL_USERINFO = re.compile(r"(?i)\b((?:https?|wss?|ftp)://)[^\s/?#@\"'<>]+@")
+# A URL's query string: search words, share links, signed parameters. Cut
+# from the log only (LIVE2-01): redact_secrets also cleans what the agent
+# reads, where a link without its query would be a different link.
+_URL_QUERY = re.compile(r"(?i)\b((?:https?|wss?)://[^\s?#\"'<>]+)\?[^\s#\"'<>]*")
+QUERY_REMOVED = "?[query removed]"
+
+
+def strip_url_queries(text: str) -> str:
+    """*text* with every URL's query string cut, for the log."""
+    return _URL_QUERY.sub(lambda m: m.group(1) + QUERY_REMOVED, text)
 
 
 # XDG leaf. The Tauri identifier is ``com.thatsimpletech.tstdesk``; a
@@ -139,7 +154,18 @@ def redact_secrets(text: str) -> str:
             text = text.replace(known, REDACTED)
     for pattern in SECRET_PATTERNS:
         text = pattern.sub(REDACTED, text)
-    return text
+    return _URL_USERINFO.sub(lambda m: f"{m.group(1)}{REDACTED}@", text)
+
+
+def _for_log(value: Any) -> Any:
+    """What a log line may hold: secrets redacted, and no URL query strings."""
+    if isinstance(value, str):
+        return strip_url_queries(redact_secrets(value))
+    if isinstance(value, dict):
+        return {_for_log(k): _for_log(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_for_log(item) for item in value]
+    return value
 
 
 def redact_structure(value: Any) -> Any:
@@ -188,17 +214,17 @@ class JSONFormatter(logging.Formatter):
             "logger": record.name,
             # The filter scrubs msg and string args; an arg whose str() holds
             # a secret only shows up once the message is built (TD-5110).
-            "message": redact_secrets(record.getMessage()),
+            "message": _for_log(record.getMessage()),
         }
         if record.exc_info and record.exc_info[0]:
             # Tracebacks can carry secrets in exception messages and local
             # variable reprs; the filter runs on msg/args before formatting,
             # so the last mile scrubs here (TD-4802).
-            obj["exception"] = redact_secrets(self.formatException(record.exc_info))
+            obj["exception"] = _for_log(self.formatException(record.exc_info))
         # Merge extra fields passed via extra={} — scrubbed for the same
         # reason: the filter never sees these values.
         for key, value in getattr(record, "extra_fields", {}).items():
-            obj[key] = redact_structure(value)
+            obj[key] = _for_log(value)
         return json.dumps(obj, default=str, ensure_ascii=False)
 
 
@@ -232,9 +258,14 @@ def setup_logging(
     # is pattern-based, so an unusually-shaped key would survive it — cap
     # the frame logger at INFO no matter what --log-level was requested.
     logging.getLogger("websockets").setLevel(max(level, logging.INFO))
+    # LIVE2-01: httpx logs every request's full URL at INFO, so the log held
+    # every web search's words, every fetched address and the user's model
+    # servers. Their own lines stay out; tstd.http logs host and path only.
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(max(level, logging.WARNING))
 
     log_dir = log_dir or log_directory(user_data_dir())
-    log_dir.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     log_file = log_dir / LOG_FILE_NAME
 
     root = logging.getLogger()
@@ -244,7 +275,7 @@ def setup_logging(
     root.handlers.clear()
 
     # Rotating file handler
-    file_handler = logging.handlers.RotatingFileHandler(
+    file_handler = _OwnerOnlyFileHandler(
         log_file,
         maxBytes=max_bytes,
         backupCount=backup_count,
@@ -261,6 +292,16 @@ def setup_logging(
         root.addHandler(stdout_handler)
 
     return root
+
+
+class _OwnerOnlyFileHandler(logging.handlers.RotatingFileHandler):
+    """A rotating log the owner alone can read (LIVE-08: it was 0664)."""
+
+    def _open(self) -> Any:
+        stream = super()._open()
+        with contextlib.suppress(OSError):
+            os.chmod(self.baseFilename, 0o600)
+        return stream
 
 
 def get_logger(name: str) -> logging.Logger:
