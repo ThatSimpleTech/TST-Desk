@@ -97,12 +97,18 @@ class TestWhatConfigGives:
         gates.configure(ModelConcurrencyConfig())
         assert gates.for_url(LOCAL) is None
 
-    @pytest.mark.parametrize("block", ["loopback_default: 0", "remote_default: 65", "limit: 1"])
+    @pytest.mark.parametrize("block", ["loopback_default: 0", "remote_default: 65"])
     def test_a_bad_section_is_an_error_at_load(self, tmp_path: Path, block: str) -> None:
         path = tmp_path / "config.yaml"
         path.write_text(catalog_config_yaml() + f"\nmodel_concurrency:\n  {block}\n")
         with pytest.raises(ConfigError, match="model_concurrency"):
             load_config(path)
+
+    def test_an_unknown_key_is_ignored_and_named(self, tmp_path: Path) -> None:
+        # UPGRADE-02: a newer version's key (or a typo) loads, named in the window.
+        path = tmp_path / "config.yaml"
+        path.write_text(catalog_config_yaml() + "\nmodel_concurrency:\n  limit: 1\n")
+        assert "model_concurrency.limit" in load_config(path).unknown_keys
 
     def test_the_shipped_config_limits_only_this_computers_servers(self, tmp_path: Path) -> None:
         # TD-5282: two for a model served here; a provider's server is not limited.

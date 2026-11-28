@@ -439,6 +439,16 @@ export function configBrokenNotice(runningOn: "last_good" | "defaults"): NoticeS
   };
 }
 
+/** UPGRADE-02: config.yaml keys this version ignores. One line, at start. */
+export function unknownConfigKeysNotice(keys: string[]): NoticeSpec {
+  const shown = keys.length > 3 ? `${keys.slice(0, 3).join(", ")} and ${keys.length - 3} more` : keys.join(", ");
+  return {
+    severity: "toast",
+    title: "Some config.yaml settings are ignored",
+    body: `This version does not know ${shown}. A newer version may use them; otherwise check for a typo. Doctor lists them.`,
+  };
+}
+
 export function storeRecoveredNotice(event: {
   store: "sessions" | "jobs" | "audit";
   kept_as: string;

@@ -1673,6 +1673,7 @@ class Daemon:
             cu_mode=self.cu_policy.mode,
             cu_unhide_on_finish=self.cu_policy.unhide_on_finish,
             cu_denied_apps=list(self.cu_policy.denied_apps),
+            config_unknown_keys=self.config.unknown_keys,
             cu_policy_damaged=self.cu_policy.damaged,
             config_error=self.config_trouble.error if self.config_trouble else None,
             config_running_on=self.config_trouble.running_on if self.config_trouble else None,
@@ -2598,6 +2599,20 @@ class Daemon:
                         fix=row.fix,
                     )
                 )
+
+        # UPGRADE-02: keys config.yaml holds that this version ignores.
+        if self.config.unknown_keys:
+            checks.append(
+                DiagnosticCheck(
+                    name="config:unknown_keys",
+                    status="warn",
+                    detail=(
+                        "config.yaml has keys this version does not know, so they are "
+                        f"ignored: {', '.join(self.config.unknown_keys)}. A newer version "
+                        "may use them; otherwise check them for a typo."
+                    ),
+                )
+            )
 
         # ERR2B-04: a store that could not be read stays visible here too.
         for event in self._store_recoveries():
