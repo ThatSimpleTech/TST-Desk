@@ -39,7 +39,12 @@ class MockBrowserDriver:
         candidates: list[dict[str, Any]] | None = None,
         crash: bool = False,
         stall: bool = False,
+        stands_in: bool = False,
     ) -> None:
+        # CU-09: True when this mock is what the app runs on because no real
+        # browser is configured or installed. The tools then refuse, saying
+        # so, instead of reporting pages that were never opened.
+        self.stands_in = stands_in
         self.pages = dict(pages) if pages is not None else {"about:blank": "Blank"}
         # TD-711: scripted interactive elements for candidate selection.
         self.candidates = list(candidates) if candidates is not None else _DEFAULT_CANDIDATES

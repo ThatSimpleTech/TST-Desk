@@ -27,4 +27,5 @@ def browser_driver_from_config(config: ModelConfig, data_dir: Path) -> BrowserDr
     """Return the configured browser driver. Never binds a socket."""
     if config.computer_use.browser == "playwright" and playwright_available():
         return PlaywrightBrowserDriver(browser_profile_dir(data_dir))
-    return MockBrowserDriver()
+    # CU-09: no real browser behind the tools; they say so on every call.
+    return MockBrowserDriver(stands_in=True)

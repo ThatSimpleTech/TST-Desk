@@ -309,7 +309,7 @@ under the user data dir. Playwright missing always falls back to mock.
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `command` | string or list | *empty* | Argv for the computer-use MCP sidecar. A string is split with the shell; a list is used as-is. Empty or omitted is mock-only. |
-| `browser` | `mock` or `playwright` | `mock` | Browser driver. `mock` never launches Chrome. `playwright` uses a persistent profile under the user data dir when Playwright is installed; otherwise the mock. |
+| `browser` | `mock` or `playwright` | `mock` | Browser driver. `mock` never launches Chrome. `playwright` uses a persistent profile under the user data dir when Playwright is installed. Otherwise there is no real browser, and every browser tool refuses with `no_real_browser` instead of reporting a page it never opened (CU-09). |
 | `grounding` | mapping | see below | Local vision model for click targeting (TD-3902). |
 | `accessibility` | mapping | see below | Element-level desktop tools on the accessibility tree (TD-5220). Off by default. |
 | `stop_shortcut` | string | `Ctrl+Alt+Super+Period` | System-wide shortcut that stops computer use on the whole machine, even while TST Desk is in the background (TD-5224): ⌃⌥⌘. on macOS, Ctrl+Alt+Super+. elsewhere. It creates the same stop-file as the title-bar Stop, so every computer-use client halts. It only engages: resume is a click in TST Desk, because an agent can press key combos. Modifiers `Ctrl`, `Alt`/`Option`, `Super`/`Cmd`, `Shift` joined with `+`, then one key (`Period`, `F12`, `KeyS`, …). Empty turns it off. Read at launch. Not available in a Wayland session. |
