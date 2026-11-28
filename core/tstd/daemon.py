@@ -7592,6 +7592,11 @@ class Daemon:
 
 def main() -> None:
     """CLI entry point: run the daemon until interrupted."""
+    # PKG-02: before anything is started, hand children the user's own
+    # environment, not the AppImage's or PyInstaller's packaging.
+    from .launch_env import restore_user_environment
+
+    restore_user_environment()
     if "--cu-mcp" in sys.argv:
         from .cu_host import run_cu_mcp
 
