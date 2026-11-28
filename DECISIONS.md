@@ -20904,3 +20904,16 @@ the page, so it holds whatever in the page starts it.
 
 The transcript shows what was sent. A user who wants formatting gets it in
 the reply, not in their own bubble.
+
+## 2026-11-28 — TD-5354: one computer-use gate; a screen capture is Class B (Class B)
+
+`cu_gate` is a module-level reason function the daemon binds: Off, a damaged
+policy and Stop close it. Closed, the loop drops `desktop_*` definitions per
+turn and the dispatcher refuses before any driver. Capture moves from A to B
+(CU-07), keyed on "not a `browser_` tool" so an MCP server's screenshot asks too.
+
+## 2026-11-28 — TD-5357: the deny list is checked against the front window only (Class B)
+
+The OS gives no owner for the window under a point without acting, so the
+check is the foreground window's process and title, failing closed when it
+cannot be read. The pane states the limit instead of the old blanket promise.

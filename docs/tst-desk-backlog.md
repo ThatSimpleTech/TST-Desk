@@ -15536,3 +15536,58 @@ Inspection finding CHAT-04 (high).
 - [x] User bubbles are plain text with their line breaks, never markdown.
 
 **Size:** 1 · **Status:** Done
+
+### TD-5352 — The macOS Screen Recording prompt says where screenshots go
+
+Inspection finding HOST-11 (high).
+
+- [x] `NSScreenCaptureUsageDescription` says each screenshot goes to the chat's model.
+
+**Size:** 1 · **Status:** Done
+
+### TD-5353 — Stop holds when its stop-file cannot be written
+
+Inspection finding CU-05 (high).
+
+- [x] A failed create keeps the latch; the watcher does not read the missing
+      file as a clear; `cu_kill_state.file_error` and a banner say so.
+- [x] The shortcut's failed create makes the daemon hold Stop.
+
+**Size:** 1 · **Status:** Done
+
+### TD-5354 — Off and Stop close computer use, and a screen capture asks first
+
+Inspection findings CU-01 and CU-07 (high).
+
+- [x] Off and Stop close one gate: desktop tools are not offered, and a call is
+      refused (`computer_use_closed`), capture included.
+- [x] A screen capture is Class B; only the agent's own browser page is Class A.
+
+**Size:** 2 · **Status:** Done
+
+### TD-5355 — Browser tools say when no real browser is behind them
+
+Inspection finding CU-09 (high).
+
+- [x] The fallback mock refuses every browser tool with `no_real_browser`.
+
+**Size:** 1 · **Status:** Done
+
+### TD-5356 — Clicks land where the model pointed on the screenshot it saw
+
+Inspection finding CU-10 (high).
+
+- [x] Both drivers map points from the last screenshot's pixels to the screen.
+
+**Size:** 1 · **Status:** Done
+
+### TD-5357 — The denied apps list holds for the pointer, keyboard and screenshots
+
+Inspection finding CU-02 (high).
+
+- [x] The five desktop tools refuse while a denied app (process or title) is in
+      front, and fail closed when the front window cannot be read.
+
+**Size:** 1 · **Status:** Done
+
+**Notes:** a click on a denied app's window behind another app is not caught; the pane says so.
