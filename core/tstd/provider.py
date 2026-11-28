@@ -26,6 +26,7 @@ from httpx_sse import aconnect_sse
 
 from .logging import get_logger
 from .net import direct_transport
+from .net_log import REQUEST_HOOKS
 
 log = get_logger("tstd.provider")
 
@@ -1115,6 +1116,7 @@ class ProviderClient:
             follow_redirects=True,
             # A local model's prompts never ride a proxy (TD-5181).
             transport=direct_transport(self.base_url),
+            event_hooks=REQUEST_HOOKS,
         )
 
         log.info(
