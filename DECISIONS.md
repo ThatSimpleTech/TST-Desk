@@ -20638,3 +20638,13 @@ filter, a PR that touches only docs or another workflow would never start
 them and could never merge. This reverses the PR half of the 2026-10 budget
 choice above (line "a path filter so docs-only changes do not"); the cost is
 one Ubuntu run per docs-only PR.
+
+## 2026-11-28 — TD-5310: session rows keep what they do not understand (Class B)
+
+`SessionRecord` carries a non-stored `unknown` dict; `from_row` splits a
+row into this build's fields and the rest, `to_row` writes the rest back
+under this build's fields. A row missing a required field is still dropped,
+but the store first copies the file to `sessions.json.unread-<UTC stamp>`
+(0600). Chosen over a schema version stamp for 0.5.1 because it fixes the
+loss in both directions with no format change; the stamp and recovery
+screen are fix-first item 2.

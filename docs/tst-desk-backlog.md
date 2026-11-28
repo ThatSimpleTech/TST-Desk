@@ -14885,3 +14885,21 @@ setting; the network stays fully off by default.
 **Notes:** Linux only; macOS (Seatbelt) is R2 and not tested in CI. Tools
 that ignore proxy variables, and SSH, cannot connect; that is documented,
 not solved. The packaged app runs the bridge on the system's `python3`.
+
+### TD-5310 — An older build never empties the chat history
+
+Inspection finding UPGRADE-01 (critical). `sessions.json` rows were loaded
+with `SessionRecord(**entry)`: a row with one key the running build did not
+know was dropped, and the next save wrote back only what loaded. Running an
+older build once on newer data emptied History for good.
+
+- [x] Keys this build does not know are kept and written back as they were;
+      this build's own fields win (`test_session_rows_kept.py`).
+- [x] A new chat saved after loading such rows keeps every row.
+- [x] A row that truly cannot be read (no id, not an object) is dropped only
+      after a dated owner-only copy of the file is kept beside it.
+
+**Size:** 2 · **Depends on:** TD-1715 · **Status:** Done
+
+**Notes:** a data-folder version stamp, a recovery screen and rebuilding
+the list from `sessions/*/` are fix-first item 2.

@@ -12,8 +12,9 @@ import asyncio
 import contextlib
 import json
 import os
+import shutil
 import tempfile
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -93,6 +94,25 @@ class SessionRecord:
     # "ultracode" means Max with the switch on. None on a row written before
     # the field (revive then uses the configured defaults).
     effort: str | None = None
+    # Keys this build does not know, from a newer build (UPGRADE-01): kept
+    # and written back as they were, so running an older build once never
+    # drops a row or the field. Not a field of the stored row itself.
+    unknown: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
+
+    def to_row(self) -> dict[str, Any]:
+        """The stored row: this build's fields over the ones it carried through."""
+        row = asdict(self)
+        row.pop("unknown")
+        return {**self.unknown, **row}
+
+    @classmethod
+    def from_row(cls, entry: dict[str, Any]) -> SessionRecord:
+        """Raises ``TypeError`` only when a field every row has is missing."""
+        known = {f.name for f in fields(cls)} - {"unknown"}
+        kept = {k: v for k, v in entry.items() if k in known}
+        record = cls(**kept)
+        record.unknown = {k: v for k, v in entry.items() if k not in known}
+        return record
 
 
 class SessionStore:
@@ -346,10 +366,14 @@ class SessionStore:
         if not isinstance(raw, list):
             log.warning("session store malformed, starting empty")
             return
+        dropped = 0
         for entry in raw:
             try:
-                record = SessionRecord(**entry)
+                if not isinstance(entry, dict):
+                    raise TypeError("not an object")
+                record = SessionRecord.from_row(entry)
             except TypeError:
+                dropped += 1
                 log.warning(
                     "dropping malformed session record",
                     extra={"extra_fields": {"entry": entry}},
@@ -360,9 +384,33 @@ class SessionStore:
             if isinstance(entry, dict) and "auto_title" not in entry and record.title is not None:
                 record.auto_title = record.title
             self._records[record.session_id] = record
+        if dropped:
+            self._keep_aside()
         log.info(
             "session store loaded",
             extra={"extra_fields": {"count": len(self._records)}},
+        )
+
+    def _keep_aside(self) -> None:
+        """A dated copy of a store with rows this build could not read.
+
+        The next save writes only the rows that loaded; the copy is what
+        lets the rest be found again.
+        """
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        copy = self._path.with_name(f"{self._path.name}.unread-{stamp}")
+        try:
+            shutil.copy2(self._path, copy)
+            os.chmod(copy, 0o600)
+        except OSError as e:
+            log.warning(
+                "could not keep a copy of the session store",
+                extra={"extra_fields": {"path": str(copy), "error": str(e)}},
+            )
+            return
+        log.warning(
+            "session store had rows this build could not read; kept a copy",
+            extra={"extra_fields": {"path": str(copy)}},
         )
 
     async def _persist(self) -> None:
@@ -383,7 +431,7 @@ class SessionStore:
         # never reads ``_records`` while the loop changes it, and the last
         # write to land holds every change made before it took the lock.
         async with self._write_lock:
-            payload = [asdict(r) for r in self._records.values()]
+            payload = [r.to_row() for r in self._records.values()]
             await asyncio.to_thread(self._persist_sync, payload)
 
     def _persist_sync(self, payload: list[dict[str, object]]) -> None:
