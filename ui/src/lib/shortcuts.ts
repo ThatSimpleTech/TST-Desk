@@ -16,6 +16,10 @@ export interface ShortcutEvent {
 	/** The physical key (`Digit1`). Option changes what a digit key types on
 	 *  a Mac, so the model slots read this (TD-5236). */
 	code?: string;
+	/** AltGr is down (`getModifierState('AltGraph')`). On Windows it arrives
+	 *  as Ctrl+Alt, and on many layouts it types the characters on the
+	 *  digit row: never a shortcut (INTERACT-03). */
+	altGraph?: boolean;
 }
 
 export interface ShortcutContext {
@@ -59,7 +63,12 @@ export function sessionSlot(event: ShortcutEvent): number | null {
  *  Option+1 types "¡". Shift stays out of it. */
 export function modelSlot(event: ShortcutEvent): number | null {
 	if (!(event.metaKey || event.ctrlKey) || event.altKey !== true) return null;
-	if (event.shiftKey === true) return null;
+	if (event.shiftKey === true || event.altGraph === true) return null;
+	// Ctrl+Alt off a Mac is AltGr on many layouts (INTERACT-03): AltGr+7 is
+	// `{` on a German one. A press that types something other than the digit
+	// itself is that character, not a shortcut. On a Mac ⌘ is held, and
+	// Option alone changes what the digit types (TD-5236).
+	if (!event.metaKey && !/^[1-9]$/.test(event.key)) return null;
 	const digit = /^Digit([1-9])$/.exec(event.code ?? "")?.[1] ?? event.key;
 	return /^[1-9]$/.test(digit) ? Number(digit) : null;
 }
