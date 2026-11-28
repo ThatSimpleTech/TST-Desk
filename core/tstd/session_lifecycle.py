@@ -197,6 +197,9 @@ def _config_trust(session: Session) -> ConfigTrust | None:
             LoosenedSetting(key=item.key, value=item.value, default=item.default)
             for item in view.loosened
         ],
+        setup_command=next(
+            (item.value for item in view.loosened if item.key == "worktree.setup"), None
+        ),
     )
 
 
