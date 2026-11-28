@@ -11,7 +11,6 @@ import json
 from pathlib import Path
 
 from tests.test_desktop_tools import _dispatcher
-from tstd.autonomy import DecisionClass
 from tstd.daemon import Daemon
 from tstd.desktop import MockDesktopDriver
 from tstd.protocol import CuKillState, CuSession, parse_daemon_event
@@ -79,7 +78,8 @@ async def test_set_cu_kill_emits_cu_session_false(tmp_path: Path) -> None:
     await daemon._shutdown()
 
 
-async def test_killed_blocks_click_not_screenshot(tmp_path: Path) -> None:
+async def test_killed_blocks_click_and_screenshot(tmp_path: Path) -> None:
+    """CU-07: Stop closes capture too, not only actuation."""
     daemon = Daemon(data_dir=tmp_path)
     mock = MockDesktopDriver()
     daemon.desktop_driver = mock
@@ -97,9 +97,7 @@ async def test_killed_blocks_click_not_screenshot(tmp_path: Path) -> None:
     dispatcher, _ = _dispatcher(tmp_path, mock)
     click = await dispatcher.dispatch("c1", "desktop_click", {"x": 1, "y": 2})
     shot = await dispatcher.dispatch("c2", "desktop_screenshot", {})
-    assert click.status == "error"
-    assert click.error_code == "cu_killed"
+    assert click.status == "error" and click.error_code == "computer_use_closed"
+    assert shot.status == "error" and shot.error_code == "computer_use_closed"
     assert mock.actuations == []
-    assert shot.status == "success"
-    assert shot.decision_class is DecisionClass.A
-    assert [name for name, _ in mock.calls if name != "overlay_session"] == ["screenshot"]
+    assert mock.calls == []

@@ -16,7 +16,7 @@
 		remote
 			? 'Stops computer use on this computer only. This session runs on another computer.'
 			: cuKill.killed
-				? 'Computer use is stopped. Capture still works. Click to resume.'
+				? 'Computer use is stopped, screenshots included. Click to resume.'
 				: 'Stop all computer-use actuation immediately (⌘.)',
 	);
 </script>

@@ -496,13 +496,19 @@ class TestPathOutsideWritable:
 
 
 class TestDesktopComputerUse:
-    def test_capture_is_class_a(self) -> None:
+    def test_capture_asks_first(self) -> None:
+        # CU-07: a whole-screen capture sends the screen to the model.
         decision = classify(
             boundary(),
             req(tool_name="desktop_screenshot", actuates=False),
         )
-        assert decision.decision_class is DecisionClass.A
+        assert decision.decision_class is DecisionClass.B
         assert fired_as(decision, "desktop-capture")
+
+    def test_a_browser_page_capture_stays_class_a(self) -> None:
+        decision = classify(boundary(), req(tool_name="browser_screenshot", actuates=False))
+        assert decision.decision_class is DecisionClass.A
+        assert fired_as(decision, "page-capture")
 
     def test_actuation_is_class_b(self) -> None:
         decision = classify(

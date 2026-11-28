@@ -93,6 +93,15 @@ def _folder_trust_gate(
 
 
 @pytest.fixture(autouse=True)
+def _cu_gate_unbound() -> Iterator[None]:
+    """No daemon's computer-use gate (CU-01) outlives its test."""
+    yield
+    import tstd.cu_gate as cu_gate
+
+    cu_gate.unbind()
+
+
+@pytest.fixture(autouse=True)
 def _seed_test_catalog(
     request: pytest.FixtureRequest, _seeded_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

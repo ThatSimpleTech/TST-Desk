@@ -146,7 +146,7 @@ export const ACTION_ENTRIES: readonly PaletteEntry[] = [
 	{
 		id: "action:stop-computer-use",
 		title: "Stop computer use",
-		subtitle: "Halt all desktop actuation immediately. Capture still works.",
+		subtitle: "Halt all computer use immediately, screenshots included.",
 		icon: "stop",
 		keywords: "kill switch cu actuation emergency halt",
 		command: { kind: "stop-computer-use" },

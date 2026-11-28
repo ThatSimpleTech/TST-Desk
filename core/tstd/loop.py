@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+from . import cu_gate
 from .abortable import until_abort
 from .audit_writer import ModelCallSink, forward_classifier_judgment
 from .autonomy import (
@@ -1308,6 +1309,17 @@ async def _build_assistant_tool_call(
     return provider_tool_calls
 
 
+def _cu_offered(
+    definitions: list[ProviderToolDefinition] | None,
+) -> list[ProviderToolDefinition] | None:
+    """CU-01: the desktop tools are not offered while computer use is off or stopped."""
+    if definitions is None or cu_gate.closed_reason() is None:
+        return definitions
+    return [
+        d for d in definitions if d.function is None or not cu_gate.is_desktop_tool(d.function.name)
+    ]
+
+
 def _image_part(mime: str, data: bytes) -> dict[str, Any]:
     """One ``image_url`` part carrying *data* as a data URL (TD-4705)."""
     url = f"data:{mime};base64," + base64.b64encode(data).decode("ascii")
@@ -2193,7 +2205,7 @@ async def agent_loop(
         # so a definition the user just saved is listed; ``@name`` in the
         # message points the turn at that worker.
         workers = await load_workers_async(session.workspace_path)
-        turn_tool_definitions = with_named_workers(all_tool_definitions, workers)
+        turn_tool_definitions = with_named_workers(_cu_offered(all_tool_definitions), workers)
         if turn_tool_definitions is not None and any(
             d.function is not None and d.function.name == "delegate" for d in turn_tool_definitions
         ):
@@ -2345,7 +2357,7 @@ async def agent_loop(
             # TD-5136: pick up a tools/list_changed swap; TD-5133: keep
             # this turn's named workers on ``delegate``.
             _read_tool_definitions()
-            turn_tool_definitions = with_named_workers(all_tool_definitions, workers)
+            turn_tool_definitions = with_named_workers(_cu_offered(all_tool_definitions), workers)
             tool_definitions = offered_tools(turn_tool_definitions, tier, config.consult)
             cu_heavy = session_is_cu_heavy(session)
             tier_cfg = effective_tier(config, tier, cu_heavy=cu_heavy)
