@@ -29,6 +29,10 @@ FEATURE_HELP: dict[str, str | tuple[str, str]] = {
         "How long a fetched page stays in memory, never on disk. 0 turns the cache off.",
         S,
     ),
+    "EmbeddingsConfig.enabled": (
+        "Turns memory ranking on. Each turn then sends your message and the memory notes "
+        "to base_url; off sends nothing."
+    ),
     "EmbeddingsConfig.base_url": "Embeddings endpoint, including /v1. Empty turns embeddings off.",
     "EmbeddingsConfig.model": "Embeddings model name. Empty turns embeddings off.",
     "EmbeddingsConfig.timeout_seconds": (
