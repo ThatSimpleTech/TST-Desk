@@ -14,15 +14,11 @@ on:
       - "mcp/**"
       - "android/**"
       - ".github/workflows/ci.yml"
+  # Every pull request runs all four jobs, whatever it touches: they are
+  # the required checks on main, and a path filter would leave a docs-only
+  # or workflow-only PR waiting on checks that never start.
   pull_request:
     branches: [main]
-    paths:
-      - "core/**"
-      - "shell/**"
-      - "ui/**"
-      - "mcp/**"
-      - "android/**"
-      - ".github/workflows/ci.yml"
   workflow_dispatch:
 
 concurrency:
