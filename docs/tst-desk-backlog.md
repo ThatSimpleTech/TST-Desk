@@ -15408,3 +15408,110 @@ and wrote over what it could not read.
       and no store file's content or mtime changes.
 
 **Size:** 3 · **Status:** Done
+
+### TD-5339 — Memory ranking sends nothing unless it is turned on
+
+Inspection finding ENT2-03 (high), and the manager's network rule. Every
+install's copied config posted each message and every memory note to
+127.0.0.1:8080.
+
+- [x] `embeddings.enabled` (default and missing: off) gates the client and the
+      host's spawn of `embeddings.command`.
+
+**Size:** 1 · **Status:** Done
+
+### TD-5340 — Quitting distils only what is new, and only where the chat went
+
+Inspection finding LIVE2-08 (medium), and the manager's network rule.
+
+- [x] Only a chat with a turn since its last distill, counted from this run.
+- [x] A hosted entry only when a turn of this chat ran on it this run; else a
+      local model or nothing. A Grok-engine chat: a local model only.
+
+**Size:** 2 · **Status:** Done
+
+### TD-5341 — One switch for the app's own background calls, on and stated
+
+Inspection findings DOCS-28 and ENTERPRISE-04 (medium), with the manager's
+decision: keep prime directive 3 and change the features.
+
+- [x] The release check and the daily price refresh both follow Settings →
+      About → Check online in the background (`update.yaml`), on by default;
+      the README states both and the switch.
+
+**Size:** 1 · **Status:** Done
+
+### TD-5342 — A remote model without `credential` goes only to its own base_url
+
+Inspection finding DOCS2-05 (high).
+
+- [x] An unbound remote tier sends the `openrouter` key only to that key's own
+      host; any other host gets no key and keeps its URL.
+
+**Size:** 1 · **Status:** Done
+
+### TD-5343 — A key typed into Add a model never goes to the next server
+
+Inspection finding ONBOARD-02 (high).
+
+- [x] The field is the store's key, cleared when the wizard closes and when the
+      server URL changes.
+
+**Size:** 1 · **Status:** Done
+
+### TD-5344 — Staged files stay with the chat they were staged in
+
+Inspection finding COMPOSER-02 (high).
+
+- [x] Staged files and refusals are parked per chat and come back with it.
+
+**Size:** 1 · **Status:** Done
+
+### TD-5345 — The ledger is redacted, and redaction knows the common shapes
+
+Inspection findings SECUX-01 and SECUX-02 (high).
+
+- [x] The workspace decisions ledger is redacted before its 200-character cut.
+- [x] Stripe, Slack, Google, GitLab and Hugging Face keys, JWTs, Bearer
+      tokens, env-style secret assignments, connection-string passwords and
+      whole PEM blocks are redacted; ordinary code is left alone.
+
+**Size:** 2 · **Status:** Done
+
+### TD-5346 — Text the agent types is never kept, only its length
+
+Inspection finding CU-08 (high).
+
+- [x] `desktop_type`, `browser_type` and an MCP `type_text` are recorded as
+      `[N characters typed]` in the event log, conversation, audit log and ledger.
+
+**Size:** 1 · **Status:** Done
+
+### TD-5347 — An MCP tool's schema can make the daemon fetch nothing
+
+Inspection finding SUPPLY-02 (high).
+
+- [x] A tool whose schema refers outside itself is left out at load, and every
+      validation uses a registry that retrieves nothing.
+
+**Size:** 1 · **Status:** Done
+
+### TD-5348 — The trust card names the setup command trusting runs
+
+Inspection finding STATES1-08 (medium).
+
+- [x] `ConfigTrust.setup_command`; the card says it runs at once and in every
+      new chat in the project.
+
+**Size:** 1 · **Status:** Done
+
+### TD-5349 — A project's own instructions load only once its folder is trusted
+
+Inspection finding SECUX2-01 (high), with the manager's rules.
+
+- [x] One decision per folder by real path, covering edits to the kinds present;
+      a new kind asks again with only its files; nothing grandfathered.
+- [x] Unattended runs go ahead without the files and say so in one line.
+- [x] Settings → Policy lists trusted folders with Revoke.
+
+**Size:** 5 · **Status:** Done

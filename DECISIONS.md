@@ -20861,3 +20861,33 @@ Manager's call (read-only over refusing to start). Two layers: the dispatcher
 refuses every client message outside `READ_ONLY_MESSAGES`, and every
 data-folder writer skips. `data_version.json` holds `format` (raised only
 when an older build would misread a store) and `written_by`.
+
+## 2026-11-28 — TD-5339: memory ranking is opt-in (`embeddings.enabled`) (Class B)
+
+Manager's rule: the embeddings call runs only when configured. A filled
+`base_url` cannot mean "configured", because every install copied one, so an
+explicit switch, default off, gates both the daemon and the host spawn.
+
+## 2026-11-28 — TD-5340: distill only new turns, only where the chat went (Class B)
+
+The baseline is in memory, set when a run attaches a chat, so no new file is
+needed: turns from earlier runs were distilled (or offered) then. A Grok chat
+is distilled only locally, replacing TD-5239's active-entry rule.
+
+## 2026-11-28 — TD-5341: one switch for background calls is update.yaml's `automatic` (Class B)
+
+Manager's decision: prime directive 3 stays and the features change. The host
+already owned `update.yaml`; the daemon reads the same key the same way, so
+one Settings switch governs both calls without a new protocol message.
+
+## 2026-11-28 — TD-5342: the implicit OpenRouter key is bound to OpenRouter's host only (Class B)
+
+`resolve_credential_id` gains an optional config; the host compared is config's
+`credentials.openrouter.base_url` or the shipped one, never a literal.
+
+## 2026-11-28 — TD-5349: folder trust is per real path and per kind of file (Class B)
+
+Manager's calls: per folder, no grandfathering, a new kind asks again, unattended
+runs never wait. Stored as `folder_trust.yaml` in the data folder. The gate is a
+module-level store the daemon binds; unbound (library callers, ordinary tests)
+loads everything as before.
