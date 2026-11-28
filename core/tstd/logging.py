@@ -52,12 +52,42 @@ SECRET_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"(gho_[A-Za-z0-9_]{20,})"),  # GitHub OAuth token
     re.compile(r"(ghs_[A-Za-z0-9_]{20,})"),  # GitHub server token
     re.compile(r"(AKIA[0-9A-Z]{16})"),  # AWS access key
-    re.compile(r"(-----BEGIN\s+(RSA |EC |DSA |OPENSSH )?PRIVATE KEY)"),  # Private key
+    # SECUX-02: the whole PEM block, body and END line too; a block cut
+    # short still loses everything after its BEGIN line.
+    re.compile(
+        r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----"
+        r"(?:[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----|[A-Za-z0-9+/=\s]*)"
+    ),
+    re.compile(r"(-----BEGIN\s+(RSA |EC |DSA |OPENSSH )?PRIVATE KEY)"),  # a header alone
+    re.compile(r"\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}"),  # Stripe secret / restricted
+    re.compile(r"\bxox[abposr]-[A-Za-z0-9-]{10,}"),  # Slack token
+    re.compile(r"\bxapp-[0-9]-[A-Za-z0-9-]{10,}"),  # Slack app token
+    re.compile(r"\bAIza[0-9A-Za-z_-]{35}"),  # Google API key
+    re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}"),  # GitLab personal access token
+    re.compile(r"\bhf_[A-Za-z0-9]{30,}"),  # Hugging Face token
+    # A JSON Web Token: three base64url parts, the first two JSON objects.
+    re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
+    # The token after "Bearer " in a header (the word stays).
+    re.compile(r"(?i)(?<=\bbearer )[A-Za-z0-9._~+/=-]{12,}"),
 ]
+
+# SECUX-02: an env-style secret assignment, ``DB_PASSWORD=hunter2`` or
+# ``API_TOKEN: "abc…"``. Only the value goes. Names must be in that shape
+# (capitals, digits, underscores) so code the agent reads, such as
+# ``token = get_token()``, is left alone, and a reference (``$VAR``,
+# ``${VAR}``) or a call is never taken for a value.
+_SECRET_ASSIGNMENT = re.compile(
+    r"\b([A-Z][A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|APIKEY|ACCESS_KEY|PRIVATE_KEY)"
+    r"[A-Z0-9_]*\s*[=:]\s*[\"']?)(?![$({\[<])([^\s\"'(){}\[\],;&]{4,})"
+)
 
 # The user info of a URL (``https://user:pass@host`` or ``https://token@host``)
 # is a credential on every output path (LIVE2-01).
-_URL_USERINFO = re.compile(r"(?i)\b((?:https?|wss?|ftp)://)([^\s/?#@:\"'<>]+)(:[^\s/?#@\"'<>]*)?@")
+_URL_USERINFO = re.compile(
+    # Any scheme (SECUX-02): postgres://, mongodb+srv://, redis://, amqp://
+    # carry a password in a connection string just as https:// does.
+    r"(?i)\b([a-z][a-z0-9+.-]{1,20}://)([^\s/?#@:\"'<>]+)(:[^\s/?#@\"'<>]*)?@"
+)
 # A URL's query string: search words, share links, signed parameters. Cut
 # from the log only (LIVE2-01): redact_secrets also cleans what the agent
 # reads, where a link without its query would be a different link.
@@ -154,6 +184,7 @@ def redact_secrets(text: str) -> str:
             text = text.replace(known, REDACTED)
     for pattern in SECRET_PATTERNS:
         text = pattern.sub(REDACTED, text)
+    text = _SECRET_ASSIGNMENT.sub(lambda m: m.group(1) + REDACTED, text)
     return _URL_USERINFO.sub(_masked_userinfo, text)
 
 
